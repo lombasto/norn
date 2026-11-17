@@ -526,7 +526,7 @@ export function tickMergeq(p, state, { metaCmd, spawnFn } = {}) {
   const r = spawnFn ? spawnFn(process.execPath, args) : spawnDetached(process.execPath, args, p.root);
   return `mergeq: started pid ${r?.pid ?? '?'}`;
 }
-function spawnDetached(exe, args, cwd) {
+export function spawnDetached(exe, args, cwd) {
   const away = process.env.META_JOB ? spawnOutside(exe, args, { cwd }) : null;   // from inside a reaped run's job: break away (runs.mjs)
   if (away) return away;
   const c = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true, cwd: fs.existsSync(cwd || '') ? cwd : undefined });

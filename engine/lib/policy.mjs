@@ -35,6 +35,7 @@ export const POLICY_DEFAULTS={
   agents:{max_lane_writers:1},
   delegate:{max_per_parent:4},
   ask:{max_per_day:10},
+  fixer:{batch:40},   // META-UX-BUILD S7: the findings one fixer run (docs class) takes; a Send approves ceil(n / batch) runs (fixer.mjs)
   mail:{nudge_after_min:10},   // META-GTP-MAIL: an urgent mail not acked this long nudges the run (0 = off)
   executors:{implementation:ex('auto','',''),critical_implementation:ex('implementer','claude-opus-5-5','high'),review:ex('codex-sol','gpt-6.1-sol','medium'),
     diagnosis:ex('codex-sol','gpt-6.1-sol','medium'),planning:ex('planner','claude-opus-5-5','xhigh'),chores:ex('auto','',''),passfail:ex('auto','',''),

@@ -130,11 +130,11 @@ test('POST /api/fixall: ONE decision + ONE directive with the ids, the picked wa
     assert.equal(r.data.n, n);
     assert.equal(dec.data.lane, 'fixall'); assert.equal(dec.data.findings.length, n);
     assert.deepEqual(dec.data.picks.map(p => [p.key, p.way]), [[call.key, call.ways[1]]]);
-    assert.match(dec.data.why, /approves one fixer run/i); assert.equal(dec.data.usage, sh.usage.line);
+    const m = Math.ceil(n / sh.usage.batch); assert.equal(dec.data.runs, m, 'the tap approves the real number of runs (S7)'); assert.ok(dec.data.why.includes(`approves ${m} fixer run(s) of at most ${sh.usage.batch} findings`), dec.data.why); assert.equal(dec.data.usage, sh.usage.line);
     assert.deepEqual(dir.data.findings, dec.data.findings); assert.equal(dir.data.fixall, dec.id);
     assert.match(dir.data.text, new RegExp(`${dec.id}[^]*${dec.data.findings[0]}`));
     assert.match(dir.data.text, /edits nothing/);
-    assert.match(dir.data.text, /start ONE fixer run \(docs work: runner, claude-sonnet-5-5 medium\)/); assert.doesNotMatch(dir.data.text, /One fixer run/, 'the usage is said once');
+    assert.match(dir.data.text, /the engine starts the fixer by code \(\d+ runs? of at most \d+ findings \(docs work: runner, claude-sonnet-5-5 medium\)[^)]*\)[^]*never reads these ids/); assert.doesNotMatch(dir.data.text, /One fixer run/, 'the usage is said once');
     const again = await f.post('/api/fixall', body);
     assert.equal(again.status, 409, 'the sheet it was drawn from changed: its findings are with the fixer now');
     // the server remembers the send: the summary + a fresh sheet leave the sent findings out (leaving the tab no longer loses it)

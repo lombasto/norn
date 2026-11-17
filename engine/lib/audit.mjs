@@ -53,7 +53,7 @@ export function writeStamp(state, stamp) {
   const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(stamp, null, 1)); fs.renameSync(tmp, f);
 }
 /** META-DASH-ASYNC R1: the files auditsView reads (the stamp + each audit run's notes), for the dash to prime */
-export const auditFiles = (p, items) => [path.join(auditsDir(p.state), 'stamp.json'), ...Object.values(items).filter(i => i.kind === 'run' && i.data?.kind === 'audit' && i.data?.notes).map(r => r.data.notes)];
+export const auditFiles = (p, items) => [path.join(auditsDir(p.state), 'stamp.json'), ...Object.values(items).filter(i => i.kind === 'run' && i.data?.kind === 'audit' && i.data?.lane !== 'fixall' && i.data?.notes).map(r => r.data.notes)];
 export const readStamp = state => (state ? readJson(path.join(auditsDir(state), 'stamp.json')) : null);
 
 /** -> [{ key, why }]: the events that call for an audit now (empty = none) */
@@ -195,7 +195,7 @@ export function stopRule(audits) {
 }
 /** the Audits view: { runs [{ id, created, state, outcome, scope, hunks, accepted, declined, open, watch }], cards (open hunks), advisories (watch alarms), triggers, rule, command } */
 export function auditsView(p, items, { rows = [], cards = [], machine = null } = {}) {
-  const runs = Object.values(items).filter(i => i.kind === 'run' && i.data?.kind === 'audit').sort((a, b) => String(a.created).localeCompare(String(b.created)));
+  const runs = Object.values(items).filter(i => i.kind === 'run' && i.data?.kind === 'audit' && i.data?.lane !== 'fixall').sort((a, b) => String(a.created).localeCompare(String(b.created)));
   const audits = runs.map(r => {
     const hunks = auditHunks(r, p, items).map(h => ({ ...h, watch: watchAfter(h, items) }));
     const n = s => hunks.filter(h => h.status === s).length;

@@ -49,7 +49,7 @@ export const chipView = g => ({ ...g, rows: (g.rows || []).filter(r => !/^[HT]-/
 export function guardSummary(g) {
   const rows = g.rows || [];
   return { project: g.project, pending: g.pending, slop: g.slop, voice: g.voice, errors: g.errors || [], total: g.total ?? rows.length, new: g.new ?? 0,
-    warn: rows.filter(r => WARN(r.severity)).length, kinds: kindsOf(rows), fixable: rows.filter(TICK).length, offer: rows.filter(OFFER).length, sent: g.sent || [], batches: batchesOf(rows).filter(b => b.kind !== 'count').length, ledger: g.ledger ?? null, top: rows.slice(0, 1),
+    warn: rows.filter(r => WARN(r.severity)).length, kinds: kindsOf(rows), fixable: rows.filter(TICK).length, offer: rows.filter(OFFER).length, sent: g.sent || [], fixcards: g.fixcards || [], batches: batchesOf(rows).filter(b => b.kind !== 'count').length, ledger: g.ledger ?? null, top: rows.slice(0, 1),
     labels: Object.fromEntries((g.types || []).map(t => [t.type, t.label])),
     counts: { fix: rows.length, types: (g.types || []).filter(t => t.open).length, rules: ruleRows(g).length, growing: null }, sig: sig(g) };
 }

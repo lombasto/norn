@@ -118,6 +118,7 @@ tr:last-child td{border-bottom:0}
 .wlines svg{display:block;width:100%;height:150px}.lnax{stroke:var(--line);stroke-width:1}.ln polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.ln circle{stroke:none}.ln-1 polyline{stroke:var(--k3)}.ln-1 circle,i.ln-1{fill:var(--k3);background:var(--k3)}.ln-2 polyline{stroke:var(--k2)}.ln-2 circle,i.ln-2{fill:var(--k2);background:var(--k2)}.ln-3 polyline{stroke:var(--k1)}.ln-3 circle,i.ln-3{fill:var(--k1);background:var(--k1)}.ln-4 polyline{stroke:var(--k4)}.ln-4 circle,i.ln-4{fill:var(--k4);background:var(--k4)}.ln-5 polyline{stroke:var(--k5)}.ln-5 circle,i.ln-5{fill:var(--k5);background:var(--k5)}.ln-6 polyline{stroke:var(--k6)}.ln-6 circle,i.ln-6{fill:var(--k6);background:var(--k6)}.ln-7 polyline{stroke:var(--k7)}.ln-7 circle,i.ln-7{fill:var(--k7);background:var(--k7)}.ln-8 polyline{stroke:var(--k8)}.ln-8 circle,i.ln-8{fill:var(--k8);background:var(--k8)}.ln-9 polyline{stroke:var(--k9)}.ln-9 circle,i.ln-9{fill:var(--k9);background:var(--k9)}
 .pstrip{display:flex;height:22px;border-radius:4px;overflow:hidden;gap:1px;background:var(--line);margin:4px 0}.psg{position:relative;display:block;min-width:3px}.psg.stale{outline:2px solid var(--bad);outline-offset:-2px}.age-new,.stkdot.age-new{background:var(--ok)}.age-mid,.stkdot.age-mid{background:var(--warn)}.age-old,.stkdot.age-old{background:var(--mute)}.age-unk{background:var(--line)}.pread{position:absolute;left:2px;top:2px;width:6px;height:6px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--panel)}.pcite{position:absolute;right:2px;bottom:2px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--accent)}.pread.inl,.pcite.inl{position:static;display:inline-block;margin-right:4px;vertical-align:middle}
 .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px;padding:6px 12px 10px}.tlist{margin:6px 0;padding:0 12px 0 28px}.tlist li{margin:5px 0;overflow-wrap:anywhere}.seg-tests{background:var(--codex)}.seg-code{background:var(--ok)}
+.fxres{list-style:none;margin:0;padding:0 14px}.fxcard{padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;min-width:0}.fxcard:last-child{border-bottom:0}.fxtop{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.fxfile{margin:8px 0;min-width:0}.fxfile.fxoff .fxdiff{opacity:.4;text-decoration:line-through}.fxfilehead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.fxdiff .fxadd{color:var(--ok)}.fxdiff .fxdel{color:var(--bad)}.fxcard .fxbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.fxmisfit{margin:4px 0}.fxmisfit+.fxdiff{opacity:.55}
 .tablecard>h3{margin:0;padding:10px 14px;font-size:13px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
 .big{font-size:26px;font-weight:650;line-height:1.1}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center}
@@ -454,6 +455,15 @@ function fxCount() {
   const sum = q => [...document.querySelectorAll(q)].reduce((a, x) => a + Number(x.dataset.n || 0), 0);
   const n = sum('#fixall input[data-fx-key]:checked') + sum('#fixall [data-act=fx-way][aria-pressed=true]'), o = $('#fx-n'), b = document.querySelector('#fixall [data-act=fixall-send]');
   if (o) o.textContent = n; if (b && !S.fixall?.sent) b.disabled = !n;
+  const r = $('#fx-runs'); if (r) { const m = Math.ceil(n / Number(r.dataset.batch)); r.textContent = `${m} fixer run${m === 1 ? '' : 's'}`; }   // S7: the real number of runs before the tap
+}
+// META-UX-BUILD S7: the result card's "Skip this file" toggles live in S.fxSkip (run -> files; a re-render keeps them); Apply all n counts the rest
+function fxPaint() {
+  for (const c of document.querySelectorAll('.fxcard')) {
+    const run = c.id.slice(7), skip = S.fxSkip?.[run] || new Set(); let n = 0;
+    for (const f of c.querySelectorAll('.fxfile')) { const off = skip.has(f.dataset.file); f.classList.toggle('fxoff', off); f.querySelector('[data-act=fx-skip]')?.setAttribute('aria-pressed', String(off)); if (!off) n += Number(f.dataset.n); }
+    const k = c.querySelector('.fx-kept'); if (k) { k.textContent = n; k.closest('button').disabled = !n; }
+  }
 }
 document.addEventListener('change', e => { if (e.target.matches?.('#fixall input[data-fx-key]')) { fxKeys(); fxCount(); } });
 const err = m => { $('#error').textContent = m || ''; $('#error').style.display = m ? 'block' : 'none'; };
@@ -573,7 +583,7 @@ async function render(force = false, why = []) {
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) box.value = S.find; S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
-    step('render:finish'); recFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
+    step('render:finish'); fxPaint(); recFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
     document.body.dataset.ready = S.tab;   // the ready signal: this tab's data is fetched and painted (tests wait on it, not on a clock)
   } catch (e) { err('Refresh failed: ' + e.message); document.body.dataset.ready = 'error'; }
 }
@@ -934,6 +944,9 @@ document.addEventListener('click', e => {
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
+  if (d.act === 'fx-skip') { const k = (S.fxSkip ??= {})[d.run] ??= new Set(); if (k.has(d.file)) k.delete(d.file); else k.add(d.file); fxPaint(); return; }   // META-UX-BUILD S7
+  if (d.act === 'fixresult' && (d.choice === 'discard' || confirm('Apply: a decision + a directive ask the check-in to apply these hunks. Norn edits nothing itself.'))) act(() => post('/api/fixresult', { project: d.project || p, run: d.run, choice: d.choice, skip: [...(S.fxSkip?.[d.run] || [])] }));
+  if (d.act === 'fixall-rest') act(() => post('/api/fixall', { project: d.project || p, rest: d.dir }));
   if (d.act === 'audit-decline') act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'decline' }));
   if (d.act === 'advice-keep') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'keep' }));
   if (d.act === 'answer-from') act(() => post('/api/answer', { project: p, id: d.id, from: d.from }));

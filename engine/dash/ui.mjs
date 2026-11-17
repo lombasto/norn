@@ -359,6 +359,7 @@ function inbox(d, ctx) {
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
   const aud = items.filter(i => i.type === 'audit');
   const audCard = aud.length ? `<section class="tablecard" id="inbox-audit" style="margin-bottom:12px"><h3>Audit hunks <span class="mute small">${int(aud.length)} open · the vendor prompt audit proposed them; accept = the check-in applies it, decline = keep the text; Norn edits nothing</span></h3><ul>${aud.map(i => auditCard(i.card, i.project)).join('')}</ul></section>` : '';
+  const fxCard = fxSection(items.filter(i => i.type === 'fixresult').map(i => [i.card, i.project]), 'inbox-fixer', 'tablecard');
   const enf = items.filter(i => i.type === 'enforce');
   const enfCard = enf.length ? `<section class="tablecard" id="inbox-enforce" style="margin-bottom:12px"><h3>Make it enforced? <span class="mute small">${int(enf.length)} correction(s) said again · approve = a directive asks the check-in for a brief; Norn installs nothing</span></h3><ul>${enf.map(i => enforceCard({ ...i.card, approve: i.approve }, i.project)).join('')}</ul></section>` : '';
   const dlvCard = (items.some(i => i.type === 'setup' || i.type === 'login') ? `<section class="card needs" style="margin-bottom:12px">${items.filter(i => i.type === 'login').map(i => loginRow(i, ctx)).join('')}${items.filter(i => i.type === 'setup').map(i => setupRow(i, ctx)).join('')}</section>` : '')
@@ -372,7 +373,7 @@ function inbox(d, ctx) {
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${enfCard}${audCard}${dlvCard}${advCard}
+  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
 }
 
@@ -471,6 +472,30 @@ function fixItem(i, sel) {
     <div class="fxways">${i.ways.map(w => `<button class="ghost" data-act="fx-way" data-key="${esc(i.key)}" data-way="${esc(w)}" data-n="${i.n}" aria-pressed="${sel?.picks?.[i.key] === w}">${esc(w)}</button>`).join('')}</div></li>`;
   return `<li class="fxitem"><label class="fxbody"><input type="checkbox" data-fx-key="${esc(i.key)}" data-n="${i.n}"${(sel?.keys ? sel.keys.has(i.key) : i.tick) ? ' checked' : ''}> ${head}${more}</label></li>`;
 }
+// META-UX-BUILD S7 (REPORT s.3 step 4): the fixer's ONE result card per run - every file (Skip this file), every hunk as a diff, Apply all n
+// (minus skipped files) / Discard = POST /api/fixresult (one decision + one directive: the audit accept path); the rest = a new tap.
+// A run with no parsable hunk is failed: Discard only.
+const fxDiff = p => `<pre class="fxdiff inspatch">${String(p ?? '').split('\n').map(l => { const c = /^[+](?![+][+])/.test(l) ? 'fxadd' : /^-(?!--)/.test(l) ? 'fxdel' : ''; return c ? `<span class="${c}">${esc(l)}</span>` : esc(l); }).join('\n')}</pre>`;
+export function fixResultCard(c, project) {
+  const pj = ` data-project="${esc(project)}" data-run="${esc(c.run)}"`, failed = c.state === 'failed', st = c.status || [];
+  const count = ['drafted', 'skipped', 'missing'].map(k => [k, st.filter(x => x.state === k).length]).filter(([, n]) => n).map(([k, n]) => `${int(n)} ${k}`).join(' · ');
+  const why = st.filter(x => x.state !== 'drafted'), fn = f => f.n ?? f.hunks.filter(h => h.applies !== false).length;
+  const files = (c.files || []).map(f => `<div class="fxfile" data-file="${esc(f.file)}" data-n="${int(fn(f))}"><div class="fxfilehead"><span class="mono">${esc(f.file)}</span> <span class="small mute">${plural(f.hunks.length, 'hunk')}</span><span class="spacer"></span>${fn(f) ? `<button class="ghost" data-act="fx-skip" data-file="${esc(f.file)}"${pj} aria-pressed="false">Skip this file</button>` : ''}</div>
+    ${f.hunks.map(h => `<div class="small mute">${esc(f.file)}${h.line ? ':' + esc(h.line) : ''}</div>${h.applies === false ? `<p class="small fxmisfit">${chip('bad', 'does not apply')} ${esc(h.why ?? '')} · not in Apply all; its finding stays open</p>` : ''}${fxDiff(h.patch)}`).join('')}</div>`).join('');
+  const rest = c.more ? `<p class="small"><button class="lnk" data-act="fixall-rest" data-dir="${esc(c.directive)}" data-project="${esc(project)}">${int(c.left)} left: send the fixer for the rest (${plural(c.more, 'run')})</button></p>` : '';
+  return `<li class="fxcard" id="fxcard-${esc(c.run)}"><div class="fxtop">${chip(failed ? 'bad' : 'needs', failed ? `failed: ${c.fail || 'no parsable hunk'}` : 'to apply')} <b>Fixer result ${esc(c.run)}</b> <span class="small mute">${esc(c.directive)} · ${esc(c.dec ?? '')} · ${plural(c.n, 'hunk')} in ${plural((c.files || []).length, 'file')}</span></div>
+    ${count || c.bad ? `<p class="small">${[count, c.bad ? `${plural(c.bad, 'hunk')} ${c.bad === 1 ? 'does' : 'do'} not apply` : ''].filter(Boolean).join(' · ')}</p>` : ''}${why.length ? `<details><summary class="small">not drafted (${int(why.length)})</summary><ul class="small">${why.map(x => `<li><span class="mono">${esc(x.id)}</span> ${esc(x.state)}${x.why ? ': ' + esc(x.why) : ''}</li>`).join('')}</ul></details>` : ''}
+    ${failed ? `<p class="small">${c.fail === 'no hunk applies' ? 'No hunk applies to the files as they are: nothing to apply. Discard it; the findings stay open.' : 'The run ended without one hunk in the audit format: nothing to apply. Discard it; the findings stay open.'}</p>${c.fail === 'no hunk applies' ? files : ''}` : files}
+    <div class="fxbtns">${failed ? '' : `<button class="primary" data-act="fixresult" data-choice="apply"${pj}>Apply all <span class="fx-kept">${int(c.n)}</span></button> `}<button data-act="fixresult" data-choice="discard"${pj}>Discard</button></div>${rest}</li>`;
+}
+const fxSection = (cards, id, wrap) => (cards.length ? `<section class="${wrap}" id="${id}" style="margin-bottom:12px"><h3>Fixer results <span class="mute small">${plural(cards.length, 'run')} to decide · Apply = the check-in applies the hunks; Norn edits nothing</span></h3><ul class="fxres">${cards.map(([c, p]) => fixResultCard(c, p)).join('')}</ul></section>` : '');
+// where a sent Fix all is (server.mjs fixSent: fixer.at); a failed run never reads "with the fixer"
+function fixerWords(x) {
+  const f = x.fixer || {}, run = esc(f.run ?? '');
+  const w = { queued: [chip('prov', 'with the fixer'), `fixer ${run} queued`], running: [chip('prov', 'with the fixer'), `fixer ${run} running`], card: [chip('needs', 'to apply'), `${run} drafted: apply on its card`],
+    failed: [chip('bad', 'failed'), `${run} failed: no parsable hunk (Discard it on its card)`], starting: [chip('prov', 'with the fixer'), 'the engine starts the fixer'], rest: [chip('needs', 'to send'), `${int(f.left)} left: send the fixer for the rest`] }[f.at];
+  return w ? `${w[0]} ${esc(x.id)} + ${esc(x.directive)}: ${int(x.open)} finding(s), ${w[1]}` : `${chip('ok', 'sent')} ${esc(x.id)} + ${esc(x.directive)}: ${int(x.open)} finding(s)`;
+}
 function fixAll(sh, sent, sel = null) {
   const of = k => sh.items.filter(i => i.kind === k), n = k => of(k).reduce((a, i) => a + i.n, 0);
   const on = sh.items.reduce((a, i) => a + ((i.kind === 'call' ? sel?.picks?.[i.key] : sel?.keys ? sel.keys.has(i.key) : i.tick) ? i.n : 0), 0);
@@ -479,7 +504,7 @@ function fixAll(sh, sent, sel = null) {
   return `<section class="card fixall" id="fixall"><h2>Fix all <span class="mute small">${int(sh.ticked)} ticked of ${int(n('ready') + n('drafts') + n('call'))} · nothing is edited when you tap</span></h2>
     <p class="small">The fixer drafts every change. You get <b>one card</b> with the exact text, and you apply it there.</p>
     ${sec('ready')}${sec('drafts')}${sec('call')}${sh.items.length ? '' : `<p class="mute">${chip('ok', 'all clear')} nothing to fix or decide</p>`}
-    ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
+    ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${sh.usage?.batch ? `<b id="fx-runs" data-batch="${int(sh.usage.batch)}">${plural(Math.ceil(on / sh.usage.batch), 'fixer run')}</b> of at most ${int(sh.usage.batch)} findings ${esc(sh.usage.run ?? '')}` : esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
     <button class="strong" data-act="fixall-send" data-sig="${esc(sh.sig)}"${sent || !on ? ' disabled' : ''}>Send the fixer (<span id="fx-n">${int(on)}</span>)</button></span></div></section>`;
 }
 // META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / Is it
@@ -492,7 +517,8 @@ function guard(d, ctx) {
   const offer = d.offer ?? (K.ready ?? 0) + (K.drafts ?? 0) + (K.call ?? 0), sentL = d.sent || [];
   const fixBtn = offer ? `<button class="strong" data-act="fixall-open" id="slop-fixall">Fix all (${int(d.fixable ?? 0)})</button> ` : '';
   // findings already sent (an active Fix all directive): said here, so a Send is not lost when the tab is left; Fix all leaves them out
-  const sentLine = sentL.length ? `<div class="small" id="slop-sent">${chip('prov', 'with the fixer')} ${sentL.map(x => `${esc(x.id)} + ${esc(x.directive)}: ${int(x.open)} finding(s)`).join(' · ')}. The check-in starts the fixer run; its card is where you apply. ${offer ? 'Fix all offers only the rest.' : 'Nothing else to send.'}</div>` : '';
+  const sentLine = sentL.length ? `<div class="small" id="slop-sent">${sentL.map(fixerWords).join(' · ')}. The engine starts the fixer by code; its card is where you apply. ${offer ? 'Fix all offers only the rest.' : 'Nothing else to send.'}</div>` : '';
+  const cards = fxSection((d.fixcards || []).map(c => [c, d.project]), 'slop-fixcards', 'card');
   // META-BETA-PREP (DIR-52): SloppaChoppa off for the project = a plain list with a plain count badge, no orc, no pop-up line
   const plain = `<section class="card" id="slop-plain"><h2>Slop ${chip(fresh ? 'warn' : 'ok', fresh ? `${int(fresh)} new` : 'nothing new')}</h2>
     <p class="small mute">Code checks at run end, their merge hold and pop-ups are off for this project · <button class="lnk" data-tab="settings">Settings</button> (Slop voice) turns them back on; code findings show again from the next check.</p>${fixBtn ? `<div>${fixBtn}</div>` : ''}${sentLine}</section>`;
@@ -515,7 +541,7 @@ function guard(d, ctx) {
     { n: int(K.drafts ?? 0), label: 'to draft: a worker writes it' }, { n: int(K.call ?? 0), label: 'your call: two ways' }];
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
   return `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}
-   ${him}
+   ${him}${cards}
    ${subviewPage('slop', { numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P })}`;
 }
 

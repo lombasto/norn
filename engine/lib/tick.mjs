@@ -11,7 +11,7 @@ import { tryDigest } from './digest.mjs';
 import { providersOf, executorInfo } from './executors.mjs';
 import { authRefusal, authNoticeDue, loginHolds } from './authguard.mjs';
 import { limitRefusal } from './limitgate.mjs';
-import { readEvents, recordsFile, fold } from './records.mjs';
+import { readEvents, recordsFile, fold, loadState } from './records.mjs';
 import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate, rateBand, idleProbe, STALL_IDLE_MIN } from './gate.mjs';
 import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
@@ -19,7 +19,8 @@ import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv } from './launchpolicy.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
-import { tickMergeq, mqProbe } from './mergeq.mjs';
+import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
+import { tickFix } from './fixer.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
@@ -152,6 +153,8 @@ function tickPass(o, g = {}) {
     for (const f of fillQueue(state)) tickLog(state, `${tag}: queue: ${f.queued} -> STARTED ${f.next}`);   // a due not_before or a freed slot (META-GT12)
     // META-GTP-MERGEQ piece 5: the merge queue right after the fill - a detached `norn mergeq --run` (code only; a dry tick only with o.spawnMergeq)
     if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq }); if (m) tickLog(state, `${tag}: ${m}`); }
+    // META-UX-BUILD S7: the fixer of an active Fix all directive starts by code - a detached `norn fix start DIR-n --queue` (a dry tick only with o.spawnFix)
+    if (o.fix !== false && (!o.dry || o.spawnFix)) { try { for (const m of tickFix(p, state, { metaCmd: META_CMD, items: loadState(state).items, spawnFn: o.spawnFix ?? ((exe, args) => spawnDetached(exe, args, p.root)) })) tickLog(state, `${tag}: ${m}`); } catch (e) { tickLog(state, `${tag}: fix: ${e.message}`); } }
     // META-SLOP-A: the daily slop report on the same schedule - a detached `norn slop daily` once a day (a dry tick only with o.spawnSlop)
     if (o.slop !== false && (!o.dry || o.spawnSlop)) { try { const s = tickSlop(p, state, { metaCmd: META_CMD, spawnFn: o.spawnSlop }); if (s) tickLog(state, `${tag}: ${s}`); } catch (e) { tickLog(state, `${tag}: slop daily: ${e.message}`); } }
     const running = liveRuns(state, { staleMs }).find(r => r.state_dir === path.resolve(state) && r.data.kind === 'checkin');

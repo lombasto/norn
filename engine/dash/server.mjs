@@ -55,6 +55,7 @@ import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
+import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
@@ -341,6 +342,8 @@ export function createDashboard(o) {
     for (const c of await openCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
+    // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
+    for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
     for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
@@ -647,20 +650,27 @@ export function createDashboard(o) {
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, pending: ig.pending, slop, voice: pol.voice, errors };
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, errors };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
   // are fixed. Without this a sent sheet came back whole once the tab was left (the sent state lived only in the page).
   function fixSent(p, rows) {
     const live = Object.values(st(p).items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall && Array.isArray(i.data.findings));
-    if (!live.length) return { rows, sent: [] };
+    if (!live.length) return { rows, sent: [], cards: [] };
+    try { keepFindings(p.state, st(p).items, rows); } catch { /* read-only state: the fixer waits for the next draw */ }   // S7: the rows `norn fix start` briefs
+    const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), cards = fixCards(items, { batch, root: p.root });
     const by = new Map();
     for (const d of live) for (const id of d.data.findings) if (!by.has(id)) by.set(id, d.data.fixall);
     const out = rows.map(r => (by.has(r.id) ? { ...r, sent: by.get(r.id) } : r));
-    const sent = live.map(d => ({ id: d.data.fixall, directive: d.id, n: d.data.findings.length, open: out.filter(r => r.sent === d.data.fixall).length, at: d.created ?? null }))
-      .filter(x => x.open > 0);
-    return { rows: out, sent };
+    // S7: where each directive's fixer is - queued / running (its run), a card to decide (ready / failed), the rest left, or starting
+    const sent = live.map(d => {
+      const pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), c = cards.filter(x => x.directive === d.id), run = pl.live ? items[pl.live] : null;
+      const at = run ? (run.state === 'queued' ? 'queued' : 'running') : c.some(x => x.state === 'ready') ? 'card' : c.length ? 'failed' : pl.next ? 'starting' : pl.left.length ? 'rest' : 'done';
+      return { id: d.data.fixall, directive: d.id, n: d.data.findings.length, open: out.filter(r => r.sent === d.data.fixall).length, at: d.created ?? null,
+        fixer: { at, run: pl.live ?? c[0]?.run ?? null, left: pl.left.length, more: pl.more, approved: pl.approved, ran: pl.runs.length } };
+    }).filter(x => x.open > 0 || x.fixer.at === 'card' || x.fixer.at === 'failed');
+    return { rows: out, sent, cards };
   }
   // META-UX-BUILD S2: ?part=summary (no list) or one sub-view's part (&limit= rows, SUB_CAP by default); no part = the full view (chips)
   async function guardAt(p, url) {
@@ -676,7 +686,8 @@ export function createDashboard(o) {
     const c = classesFor(p, Date.now()).byClass.filter(x => x.project === p.name && x.class === 'docs').sort((a, b) => b.measured - a.measured)[0];
     const med = c?.measured ? c.cache_read.median : null;
     const run = `(docs work: ${who || 'the docs class'})${med !== null ? ` · the median docs run is ~${(med / 1e6).toFixed(1)} M cache reads (${c.measured} runs, 7 days)` : ' · no measured docs run in 7 days'}`;
-    return { executor: e.executor ?? null, model: e.model ?? null, effort: e.effort ?? null, median_cache_read: med, runs: c?.measured ?? 0, run, line: `One fixer run ${run}` };
+    const batch = fixBatch(withDefaults(settingsState(p).view).policy);   // S7: one run takes at most batch findings; the sheet counts the runs
+    return { executor: e.executor ?? null, model: e.model ?? null, effort: e.effort ?? null, median_cache_read: med, runs: c?.measured ?? 0, run, batch, line: `One fixer run ${run}` };
   }
   const lockFreshA = p => fs.promises.stat(path.join(p.state, 'tick.lock')).then(s => Date.now() - s.mtimeMs < LOCK_STALE_MIN * 60000, () => false);
   function lockFresh(p) { const x = statS(path.join(p.state, 'tick.lock')); return !!x && Date.now() - x.mtimeMs < LOCK_STALE_MIN * 60000; }
@@ -1199,6 +1210,30 @@ data: ${JSON.stringify(l)}
       const d = data.verdict === 'accept' ? await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: acceptText(c).slice(0, 4000), via: 'dashboard' } }) : null;
       return { ...r, directive: d?.id ?? null };
     }
+    if (route === '/api/fixall' && data.rest) {   // S7: "n left: send the fixer for the rest (m runs)" = ONE decision (lane fixall, rest_of) approving m more runs
+      const items = st(p).items, d = items[String(data.rest)];
+      if (!d || d.kind !== 'directive' || !d.data?.fixall || d.state !== 'active') throw fail(409, 'That Fix all is closed. Reload.');
+      const u = fixUsage(p), pl = fixPlan(d, items, { batch: u.batch, readBrief: readRunBrief });
+      if (pl.live || pl.next || !pl.left.length) throw fail(409, pl.live ? `The fixer run ${pl.live} is still on it.` : pl.next ? 'The approved runs are not all done yet.' : 'Nothing is left.');
+      const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: FIX_LANE, rest_of: d.id, runs: pl.more, question: `Fix all ${d.id}: ${pl.left.length} finding(s) left`,
+        choice: `send the fixer for the rest (${pl.more} run${pl.more === 1 ? '' : 's'})`, why: `The owner's tap approves ${pl.more} more fixer run(s): ${u.line}. Each drafts at most ${u.batch} findings; nothing lands before Apply.` } });
+      return { ok: true, id: r.id, directive: d.id, runs: pl.more, left: pl.left.length };
+    }
+    if (route === '/api/fixresult') {   // S7 (REPORT s.3 step 4): the result card's tap - Apply all (minus skipped files) or Discard = ONE decision (+ ONE directive: the audit accept path)
+      if (!['apply', 'discard'].includes(data.choice)) throw fail(400, 'choice must be apply or discard');
+      const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), c = fixCards(items, { batch, root: p.root }).find(x => x.run === String(data.run));
+      if (!c) throw fail(409, 'That result is decided already. Reload.');
+      if (data.choice === 'apply' && c.state === 'failed') throw fail(409, 'This run drafted no hunk: there is nothing to apply.');
+      const skip = (Array.isArray(data.skip) ? data.skip.map(String) : []).filter(x => c.files.some(f => f.file === x));
+      const kept = c.files.filter(f => !skip.includes(f.file)).reduce((n, f) => n + f.n, 0), choice = data.choice === 'apply' && kept ? 'apply' : 'discard';
+      const d = items[c.directive], pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), { ids: took, open } = verdictIds(c), done = new Set([...pl.resolved, ...took]);
+      const closes = d.state === 'active' && (d.data.findings || []).every(x => done.has(x));
+      const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall-result', directive: c.directive, run: c.run, ids: took, ...(open.length ? { open } : {}), choice, skipped_files: skip,
+        question: `Fixer result ${c.run} (${c.directive}): ${c.n} hunk(s) in ${c.files.length} file(s)`, why: choice === 'apply' ? `The owner applies ${kept} hunk(s)${skip.length ? `; skipped: ${skip.join(', ')}` : ''}.` : 'The owner discards the drafts: nothing changes.' } });
+      const text = verdictText(c, { choice, skip, close: closes ? r.id : null });
+      const x = text ? await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: text.slice(0, 4000), via: 'dashboard' } }) : null;
+      return { ...r, directive: x?.id ?? null, closes };
+    }
     if (route === '/api/fixall') {   // META-UX-BUILD S6 (REPORT s.3 step 2, DIR-65 Q2 A): Send the fixer = ONE decision + ONE directive (the audit card's path) with the ids
       const g = await guardOf(p);
       if (g.pending) throw fail(409, 'The instruction-file scan is still running: reload the sheet when it lands.');
@@ -1210,9 +1245,9 @@ data: ${JSON.stringify(l)}
       if (wasDir) return { ok: true, id: was.id, directive: wasDir.id, n: x.ids.length, again: true };
       const u = fixUsage(p), ways = x.picks.map(q => `${q.key}: ${q.way} (${q.ids.length})`).join('; ');
       const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall', question: `Fix all on ${p.name}: ${x.ids.length} finding(s) in ${x.batches} batch(es)`,
-        choice: `send the fixer${ways ? ` - your call: ${ways}` : ''}`, why: `The owner's tap on the Fix all sheet approves one fixer run: ${u.line}. It drafts every change and edits nothing; a change lands only on Apply on its one result card (DIR-65 Q2 A).`,
-        findings: x.ids, picks: x.picks.map(q => ({ key: q.key, way: q.way, n: q.ids.length })), usage: u.line, set: x.set } });
-      const head = `Fix all (${r.id}): start ONE fixer run ${u.run} on ${x.ids.length} finding(s)${ways ? `; your call: ${ways}` : ''}. It drafts every change as hunks in the audit format and edits nothing; the owner applies them on one result card. Findings:`;
+        choice: `send the fixer${ways ? ` - your call: ${ways}` : ''}`, why: `The owner's tap on the Fix all sheet approves ${runsFor(x.ids.length, u.batch)} fixer run(s) of at most ${u.batch} findings: ${u.line}. It drafts every change and edits nothing; a change lands only on Apply on its one result card (DIR-65 Q2 A).`,
+        findings: x.ids, picks: x.picks.map(q => ({ key: q.key, way: q.way, n: q.ids.length })), usage: u.line, set: x.set, runs: runsFor(x.ids.length, u.batch), batch: u.batch } });
+      const m = runsFor(x.ids.length, u.batch), head = `Fix all (${r.id}): the engine starts the fixer by code (${m} run${m === 1 ? '' : 's'} of at most ${u.batch} findings ${u.run}) on ${x.ids.length} finding(s)${ways ? `; your call: ${ways}` : ''}. A check-in never reads these ids. It drafts every change as hunks in the audit format and edits nothing; the owner applies them on one result card. Findings:`;
       const ids = []; let len = head.length;
       for (const id of x.ids) { if (len + id.length + 1 > 3900) break; ids.push(id); len += id.length + 1; }
       const text = `${head} ${ids.join(' ')}${ids.length < x.ids.length ? ` +${x.ids.length - ids.length} more (every id in ${r.id} and in this directive's findings)` : ''}`;

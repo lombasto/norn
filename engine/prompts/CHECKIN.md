@@ -13,6 +13,7 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Active directives: `META rec list --open --kind DIR` (only these bind). Obey them above dispatch defaults,
   but below the rules' stops / owner-only asks and the hard safety rules, caps, RATE_OK and one-writer gate below.
   Never interpret a directive as permission to violate section 4, exceed a cap, or dispatch a paused lane.
+  A Fix all directive (data.fixall) is the engine's: never read its ids; `META fix start DIR-n` only if the tick log shows it did not.
 - HELD lanes: the digest's "HELD (skip)" rows are lanes the controller (the owner's chat) works on until the time shown. Skip them
   this pass: no dispatch, ruling, question, park, stop, re-queue or review there - Norn refuses a check-in write on a held lane with
   exit 5 (accept it, never work around it). To tell the holder something: `META mail send --to role:controller --subject S --body B`.

@@ -77,6 +77,7 @@
 :root.norn .mn.faded { opacity: 1; }
 :root.norn .mn.faded .box { stroke: var(--line); } :root.norn .mn.faded text { fill: var(--mute); }
 :root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
+:root.norn .fxfile.fxoff .fxdiff, :root.norn .fxmisfit+.fxdiff { opacity: 1; color: var(--dim); }
 :root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now { border-radius: 0; }
 
 /* the woven rule under section headings */

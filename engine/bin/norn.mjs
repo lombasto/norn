@@ -14,6 +14,7 @@ import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOT
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
+import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
@@ -90,7 +91,7 @@ const USAGE = {
   archive: 'norn rec archive L:name',
   unarchive: 'norn rec unarchive L:name',
   list: 'norn rec list [--open] [--kind Q|DEC|DIR|L|RUN] [--lane x] [--json]',
-  show: 'norn rec show ID [--json]',
+  show: 'norn rec show ID [--json] [--full]    (a long id list prints as its first ids + a count; --full prints all)',
   views: 'norn rec views',
 };
 const COMMON = ['state', 'project', 'as'];
@@ -102,13 +103,22 @@ const FLAGS = {
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
-  list: ['open!', 'kind', 'lane', 'json!'], show: ['json!'], views: [],
+  list: ['open!', 'kind', 'lane', 'json!'], show: ['json!', 'full!'], views: [],
 };
 const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
 const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
 
+// META-UX-BUILD S7: `rec show` without --full - a long id list (a Fix all directive holds hundreds) = its first ids + a count, a long
+// text = its head + a count; a check-in reads what the record is, never the whole list
+const SHOW_IDS = 5, SHOW_CHARS = 400;
+export function shortData(d) {
+  const one = v => (Array.isArray(v) && v.length > SHOW_IDS * 2 ? [...v.slice(0, SHOW_IDS).map(one), `+${v.length - SHOW_IDS} more (--full prints all)`]
+    : typeof v === 'string' && v.length > SHOW_CHARS ? `${v.slice(0, SHOW_CHARS)}... (+${v.length - SHOW_CHARS} chars, --full prints all)`
+      : v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, one(x)])) : v);
+  return one(d);
+}
 function parse(cmd, argv) {
   const spec = [...FLAGS[cmd], ...COMMON];
   const flags = {}, pos = [];
@@ -1304,6 +1314,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'plan') return planCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'instructions') return instructionsCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'audit') return auditCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'fix') return fixCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'critique') return critiqueCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mergeq') return mergeqCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mail') return mailCmd(argv.slice(1), env, out, err);
@@ -1344,8 +1355,8 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       if (!it) throw new Usage(`${pos[0]} does not exist`, cmd);
       if (flags.json) out(JSON.stringify(it, null, 1));
       else {
-        out(`${it.id} ${it.kind} ${it.state}: ${title(it)}`);
-        for (const h of it.history) out(`  #${h.seq} ${h.ts} ${h.ev} by ${h.by}${h.run ? ' (' + h.run + ')' : ''} ${JSON.stringify(h.data)}`);
+        out(`${it.id} ${it.kind} ${it.state}: ${flags.full ? title(it) : shortData(String(title(it)))}`);
+        for (const h of it.history) out(`  #${h.seq} ${h.ts} ${h.ev} by ${h.by}${h.run ? ' (' + h.run + ')' : ''} ${JSON.stringify(flags.full ? h.data : shortData(h.data))}`);
       }
       return 0;
     }
@@ -1638,6 +1649,48 @@ function auditCmd(argv, env, out, err) {
   }
 }
 
+
+// ---------- META-UX-BUILD S7: norn fix start DIR-n (the fixer run of a Fix all directive; the tick starts it by code) ----------
+const FIX_USAGE = 'norn fix start DIR-n [--queue] [--json] [--project F | --state D] [--machine F] [--budget F] [--as role]   (the tick runs it for every active Fix all directive: a check-in never reads the ids)';
+function fixCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--json' || a === '--queue') { flags[a.slice(2)] = true; continue; }
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      if (!['--project', '--state', '--machine', '--budget', '--as'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    const [verb, id, extra] = pos;
+    if (verb !== 'start' || !id || extra) throw new RunError('start DIR-n');
+    const w = where(flags, env), { project, state } = w;
+    if (!project) throw new RunError('norn fix needs --project (the files the findings name are in its repo)');
+    const items = loadState(state).items, d = items[id];
+    if (!d || d.kind !== 'directive' || !d.data?.fixall) throw new RunError(`${id} is not a Fix all directive`);
+    const batch = fixBatch(withDefaults({ policy: project.policy }).policy), pick = classExecutor(project, 'docs');   // the project policy (Settings): the docs route the dash names
+    const plan = fixPlan(d, items, { batch, readBrief: readRunBrief });
+    if (!plan.next) { out(`${id}: nothing to start (${plan.live ? `fixer run ${plan.live} is ${items[plan.live]?.state}` : d.state !== 'active' ? `the directive is ${d.state}` : plan.left.length ? `${plan.left.length} left: the tap approved ${plan.approved} run(s), all ran` : 'every finding taken'})`); return 0; }
+    const ff = findingsFile(state, id);
+    if (!fs.existsSync(ff)) throw new RunError(`${id}: no findings file yet (${ff.replace(/\\/g, '/')}): the dashboard writes it when it draws the guard view`);
+    const kept = new Map(readJsonFile(ff).rows.map(r => [r.id, r])), rows = plan.next.map(x => kept.get(x)).filter(Boolean);
+    if (!rows.length) throw new RunError(`${id}: none of the next batch's ids is in ${path.basename(ff)}`);
+    const dec = items[d.data.fixall], stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '');
+    const notes = path.join(fixerDir(state), `${id}-${stamp}.md`), brief = notes.replace(/\.md$/, '.brief.md');
+    const text = fixerBrief({ project: project.name, dir: id, dec: dec?.id ?? d.data.fixall, rows, picks: dec?.data?.picks || [], root: project.root });
+    fs.mkdirSync(fixerDir(state), { recursive: true });
+    fs.writeFileSync(brief, text);
+    const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
+    const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: fixerPrompt(brief), ...(flags.queue ? { queue: true } : {}) });
+    const msg = { run: r.run, queued: !!r.queued, directive: id, batch: rows.length, left: plan.left.length - rows.length, brief: brief.replace(/\\/g, '/') };
+    out(flags.json ? JSON.stringify(msg) : `${r.queued ? 'QUEUED' : 'STARTED'} ${r.run} fixer of ${id}: ${rows.length} finding(s), read-only, docs class (${[o.executor, o.agent, o.model, o.effort].filter(Boolean).join(' ')}); ${msg.left} left after it; answer -> ${notes.replace(/\\/g, '/')}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError || e instanceof RunRefused) { err('error: ' + e.message); err('usage: ' + FIX_USAGE); return 2; }
+    throw e;
+  }
+}
 // ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
 const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P3] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
 const FLOW_FLAGS = ['project', 'state', 'locks', 'machine', 'budget', 'as', 'var*', 'executor', 'priority', 'flows-dir', 'briefs-dir', 'dry-run!', 'json!', 'no-tick!'];
