@@ -2,6 +2,7 @@
 // once each, the daily cap, never while the owner types, Mute, one at a time, pop-ups off unless Settings turns them on.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ORC_STRIPS } from '../engine/dash/norn/assets.mjs';
 import { badgeCount, bestAction, orcLine, inWords, badgeLabel, mayAppear, logAppearance, stillOnly, stageBottom, avoidRects, STRIPS } from '../engine/dash/norn/orc.mjs';
 
 const now = Date.parse('2026-11-14T12:00:00Z');
@@ -48,7 +49,8 @@ test('still frames when the mode is quiet or nothing may move; the stage clears 
   assert.equal(stageBottom({ innerHeight: 800, avoid: [] }), 16);
   assert.equal(stageBottom({ innerHeight: 800, avoid: [{ top: 700, height: 40 }, { top: 744, height: 56 }, null, { top: 900, height: 10 }] }), 112);
   assert.deepEqual(Object.fromEntries(Object.entries(STRIPS).map(([k, v]) => [k, v.reduce((a, b) => a + b, 0)])),
-    { idle: 880, warn: 840, appear: 550, speak: 420, 'fidget-axe': 1000, 'fidget-look': 1100, chop: 560, exit: 390 });
+    { appear: 770, idle: 1800, speak: 740, 'fidget-axe': 1350, 'fidget-look': 2220, chop: 1450, warn: 1280, exit: 1170 });
+  for (const [k, v] of Object.entries(STRIPS)) assert.equal(v.length, ORC_STRIPS[k], `${k}: one time per frame of the strip`);
 });
 
 test('the stage clears the phone bottom nav: a fixed nav (offsetParent null) is measured by its real rect, a hidden one is skipped; index.html uses it', async () => {

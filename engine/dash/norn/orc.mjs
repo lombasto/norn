@@ -3,9 +3,9 @@
 // the one best action, and the pop-up gate (Settings mode off / on / quiet, the daily cap, once per finding, never while the owner
 // types, Mute, one appearance at a time). The browser part (createStage) plays the ORC-1 round-6 strips frame by frame at their real
 // times; still frames when the mode is quiet or nothing may move (motion.mjs: QUIET, reduced motion, a hidden page).
-export const STRIPS = {   // the art's README: frames left to right, ms per frame
-  idle: [220, 220, 220, 220], warn: [120, 160, 400, 160], appear: [90, 90, 90, 120, 160], speak: [140, 140, 140],
-  'fidget-axe': [200, 200, 200, 200, 200], 'fidget-look': [220, 220, 220, 220, 220], chop: [100, 80, 80, 160, 140], exit: [120, 90, 90, 90],
+export const STRIPS = {   // ORC-1 R8 (norn-art-orc out-r8/anim/timings.json): frames left to right, ms per frame
+  appear: [80, 90, 90, 100, 110, 300], idle: [700, 180, 260, 180, 100, 380], speak: [120, 110, 150, 110, 100, 150], 'fidget-axe': [300, 140, 240, 170, 150, 350],
+  'fidget-look': [300, 120, 600, 180, 120, 600, 300], chop: [180, 170, 240, 60, 110, 160, 180, 350], warn: [150, 130, 350, 180, 170, 300], exit: [220, 150, 100, 100, 100, 500],
 };
 export const POPUP_MODES = ['off', 'on', 'quiet'];
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen',
