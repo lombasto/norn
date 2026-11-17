@@ -1,8 +1,9 @@
 // NORN-WATCH S5 (DEC-683): the Windows half of "a run's process tree dies with the run" (jobguard.mjs). Compiled on first use with
 // the csc.exe of .NET Framework 4 (in every Windows 10 / 11), cached by source hash. Three verbs:
 //   hold <pid> <name>        create the named Job Object <name> (KILL_ON_JOB_CLOSE | BREAKAWAY_OK), put <pid> (the run's supervisor)
-//                            in it, print "ok", then wait for stdin EOF (the supervisor ended or died) and exit: the handle closes,
-//                            and while KILL_ON_JOB_CLOSE is still set the job kills everything in it.
+//                            in it, print "ok", then wait for stdin EOF OR the supervisor's process handle (whichever first: it ended
+//                            or died) and exit: the handle closes, and while KILL_ON_JOB_CLOSE is still set the job kills everything
+//                            in it. A supervisor already gone at start = exit at once.
 //   reap <name> <keep-pid>   kill every process of the job but <keep-pid>, then clear KILL_ON_JOB_CLOSE (what the supervisor starts
 //                            after its end - tick, auto-resume - lives on); prints "reaped <n> <pid,pid>".
 //   spawn <cwd> <cmdline>    start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
@@ -13,6 +14,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 static class JobGuard {
   [StructLayout(LayoutKind.Sequential)] struct BASIC { public long PerProcessUserTimeLimit, PerJobUserTimeLimit; public uint LimitFlags; public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize; public uint ActiveProcessLimit; public UIntPtr Affinity; public uint PriorityClass, SchedulingClass; }
@@ -28,9 +30,11 @@ static class JobGuard {
   [DllImport("kernel32", SetLastError = true)] static extern IntPtr OpenProcess(int a, bool inh, int pid);
   [DllImport("kernel32", SetLastError = true)] static extern bool TerminateProcess(IntPtr p, uint code);
   [DllImport("kernel32", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
   [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inh, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PI pi);
   const uint KILL_ON_CLOSE = 0x2000, BREAKAWAY_OK = 0x800;
-  const int EXTENDED = 9, PID_LIST = 3, JOB_ALL = 0x1F001F, SET_QUOTA = 0x0100, TERMINATE = 0x0001;
+  const int EXTENDED = 9, PID_LIST = 3, JOB_ALL = 0x1F001F, SET_QUOTA = 0x0100, TERMINATE = 0x0001, SYNCHRONIZE = 0x00100000;
+  const uint INFINITE = 0xFFFFFFFF, WAIT_OBJECT_0 = 0;
 
   static void Limits(IntPtr job, uint flags) {
     var e = new EXT(); e.Basic.LimitFlags = flags;
@@ -51,12 +55,16 @@ static class JobGuard {
     IntPtr job = CreateJobObject(IntPtr.Zero, name);
     if (job == IntPtr.Zero) throw new Win32Exception();
     Limits(job, KILL_ON_CLOSE | BREAKAWAY_OK);
-    IntPtr p = OpenProcess(SET_QUOTA | TERMINATE, false, pid);
+    IntPtr p = OpenProcess(SET_QUOTA | TERMINATE | SYNCHRONIZE, false, pid);   // a pid already gone: no handle -> err, exit at once
     if (p == IntPtr.Zero || !AssignProcessToJobObject(job, p)) throw new Win32Exception();
-    CloseHandle(p);
+    if (WaitForSingleObject(p, 0) == WAIT_OBJECT_0) return 0;   // the supervisor ended before the wait began
     Console.Out.WriteLine("ok"); Console.Out.Flush();
-    while (Console.In.ReadLine() != null) { }
-    return 0;   // EOF: the handle closes with this process
+    // CI-RED-7D65D2D (DEC-383): stdin EOF alone let a hold outlive its supervisor while any process still held the write end. Exit
+    // on whichever fires first: stdin EOF (reader thread) or the supervisor's process handle signalled (it exited).
+    var eof = new Thread(() => { while (Console.In.ReadLine() != null) { } Environment.Exit(0); });
+    eof.IsBackground = true; eof.Start();
+    WaitForSingleObject(p, INFINITE);
+    return 0;   // the job handle closes with this process
   }
 
   static int Reap(string name, int keep) {
