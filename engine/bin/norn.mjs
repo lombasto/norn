@@ -2183,14 +2183,14 @@ async function initCmd(argv, env, out, err) {
 // ---------- META-GTP-MAIL: norn mail send | check [--inject] | ack | list (agent mail; engine/lib/mail.mjs) ----------
 // ---------- META-GTP-CV piece 2: norn cv (the worker track record per routing key; read-only but for views/CV.md via `norn rec views`) ----------
 // ---------- META-GUARD R1 item 2: norn usage - where the week's tokens went (per lane + stage, top 5 spenders, the context producers) ----------
-const USAGE_USAGE = 'usage: norn usage [--week] [--json] [--sources] [--project project.json | --state D] [--machine F] [--budget F]    (read-only; default the last 7 days, --week = the plan week since the budget reset; --sources reads every run\'s transcript for its context producers)';
+const USAGE_USAGE = 'usage: norn usage [--week] [--json] [--sources] [--project project.json | --state D] [--machine F] [--budget F] [--now UTC]    (read-only; default the last 7 days to now, --week = the plan week since the budget reset; --sources reads every run\'s transcript for its context producers)';
 function usageCmd(argv, env, out, err) {
   try {
     const flags = {};
     for (let i = 0; i < argv.length; i++) {
       const a = argv[i];
       if (['--week', '--json', '--sources'].includes(a)) { flags[a.slice(2)] = true; continue; }
-      if (!['--project', '--state', '--machine', '--budget'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (!['--project', '--state', '--machine', '--budget', '--now'].includes(a)) throw new RunError(`unexpected ${a}`);
       if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
     }
@@ -2199,8 +2199,10 @@ function usageCmd(argv, env, out, err) {
     if (flags.project || flags.state) { const { project, state } = where(flags, env); targets = [{ project, state }]; }
     else if (m.machine?.projects?.length) targets = m.machine.projects.map(p => { const project = loadProject(p.config, { meta: m.root }); return { project, state: project.state }; });
     else { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    const now = flags.now ? Date.parse(flags.now) : Date.now();   // the caller's clock (tests pin it)
+    if (!Number.isFinite(now)) throw new RunError(`--now ${flags.now} is not a date`);
     const B = withDefaults(m.budget || {});
-    const u = usageWeek(targets.map(t => cvPart(t.project || {}, { state: t.state })), { week: !!flags.week, resetAt: B.reset, cacheRPerPct: B.cacheR_per_pct ?? null,
+    const u = usageWeek(targets.map(t => cvPart(t.project || {}, { state: t.state })), { now, week: !!flags.week, resetAt: B.reset, cacheRPerPct: B.cacheR_per_pct ?? null,
       projectsDir: projectsDirOf(m.machine, env), codexDir: path.join(env.USERPROFILE || env.HOME || '', '.codex', 'sessions'), sources: !!flags.sources, lean: true });
     out(flags.json ? JSON.stringify(u, null, 1) : formatUsageWeek(u));
     return 0;

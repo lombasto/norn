@@ -58,7 +58,7 @@ test('weekly table per lane + stage: runs, tokens by type, ~plan share, outcomes
 test('norn usage [--week] [--json]: the CLI prints the table (read-only)', () => {
   const { st } = fixture();
   const o = [], e = [];
-  const code = main(['usage', '--json', '--state', st], { ...process.env, META_ROOT: path.dirname(st) }, s => o.push(s), s => e.push(s));
+  const code = main(['usage', '--json', '--state', st, '--now', new Date(NOW).toISOString()], { ...process.env, META_ROOT: path.dirname(st) }, s => o.push(s), s => e.push(s));
   assert.equal(code, 0, e.join('\n'));
   const j = JSON.parse(o.join('\n'));
   assert.ok(j.rows.length >= 3 && j.top.length === 5);
