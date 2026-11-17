@@ -30,7 +30,7 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
       blocks: [{ rule: 'K2', level: 'BLOCK', file: 'engine/a.mjs', line: 4, msg: 'an empty catch', fp: 'fp1' }] } }));
     let g = (await f.get('/api/guard?project=kestrel')).data;
     const code = g.rows.find(r => r.type === 'code');
-    assert.deepEqual([code.severity, code.go], ['high', { tab: 'agents', jump: 'node-RUN-1' }]);
+    assert.deepEqual([code.severity, code.go], ['high', { tab: 'slop', jump: 'slop-S-fp1' }], 'a branch block opens its own Slop row (its run may have ended)');
     assert.equal(code.new, true, 'first seen after the baseline = new');
     assert.equal(g.rows[0].id, code.id, 'the new blocker ranks first');
     assert.ok(g.rows.some(r => r.type === 'tests' && r.go.tab === 'tests' && !r.new), 'a baseline row stays not new on a later scan');
@@ -42,7 +42,7 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
     // META-UX-BUILD S2: the page = the summary + one sub-view's part at a time; every sub-view together shows what the one page did
     const html = GUARD_SUBS.map(([sub]) => renderTab('slop', { ...guardSummary(g), sub, limit: 40, ...guardPart(g, sub), parts_loading: false }, { project: 'kestrel' })).join('');
     for (const id of ['slop-orc', 'slop-line', 'slop-types', 'slop-ledger', 'slop-rows', `slop-${code.id}`]) assert.ok(html.includes(`id="${id}"`), id);
-    assert.match(html, /data-go="agents" data-gojump="node-RUN-1"/);
+    assert.match(html, /data-go="slop" data-gojump="slop-S-fp1"/);
     assert.match(html, /Pop-ups: <b>off<\/b>/);
     assert.match(html, /data-act="orc-call"/);
     // a chip in place on the run that owns the block

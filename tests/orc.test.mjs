@@ -25,6 +25,7 @@ test('his line: a template with the number in plain words; the one best action g
   assert.equal(orcLine({ rows: [] }), 'Nothing open. The tree is tended.');
   assert.equal(orcLine({ rows: [], pending: true }), 'Still looking: the instruction-file scan is running.', 'an unfinished scan is not a tended tree');
   assert.deepEqual(bestAction(rows), { label: 'Fix it in Docs', go: { tab: 'docs', ins: 'm' }, row: rows[0] });
+  assert.equal(bestAction([{ go: { tab: 'slop', jump: 'slop-S-f' } }]).label, 'Fix it in Slop', 'a branch block is fixed from its Slop row');
   assert.deepEqual(bestAction([]).go, { tab: 'slop' });
 });
 

@@ -14,7 +14,7 @@ const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eig
 export const inWords = n => (Number.isInteger(n) && n >= 0 && n <= 20 ? WORDS[n] : String(n));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const warns = s => s === 'high' || s === 'medium';
-const TAB_WORD = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs' };
+const TAB_WORD = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs', slop: 'Slop' };
 
 /** the badge: warn-level findings first seen after the Guard page was last opened (never opened: the ones new in the last day) */
 export function badgeCount(rows = [], seenAt = 0) {

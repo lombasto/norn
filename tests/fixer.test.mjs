@@ -245,7 +245,7 @@ test('the dash: Send keeps the findings file; a fixer run\'s end is ONE Inbox ca
   try {
     let s = (await f.get('/api/guard?project=kestrel&part=summary')).data;
     for (let i = 0; s.pending && i < 1200; i++) { await new Promise(r => setTimeout(r, 100)); s = (await f.get('/api/guard?project=kestrel&part=summary')).data; }
-    const sh = (await f.get('/api/guard?project=kestrel&part=sheet')).data.sheet, keys = sh.items.filter(i => i.tick).map(i => i.key);
+    const sh = (await f.get('/api/guard?project=kestrel&part=sheet')).data.sheet, keys = sh.items.filter(i => i.kind !== 'call').map(i => i.key);   // the fixture findings are on Norn's own prompts: offered, never pre-ticked, so ticked by hand
     assert.equal(sh.usage.batch, 40, 'the sheet gets the batch: it says the real number of runs before the tap');
     const sent = await f.post('/api/fixall', { project: 'kestrel', sig: sh.sig, keys, picks: {} });
     assert.equal(sent.status, 200, JSON.stringify(sent.data));

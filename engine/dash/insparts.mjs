@@ -45,6 +45,30 @@ export const CONTEXT_SUBS = [['role', 'Per role'], ['file', 'Per file'], ['growi
 // META-UX-BUILD S5: hints and suggest (Tighten) are Slop rows now - the checks page no longer loads them
 export const contextParts = sub => (sub === 'file' ? ['files'] : sub === 'checks' ? INS_PARTS.filter(k => k !== 'hints' && k !== 'suggest') : []);
 const tk = n => (!Number.isFinite(n) ? '-' : n >= 1000 ? `~${(n / 1000).toFixed(1)}k` : `~${n}`);
+// Per file: which files to look at first, and what to do about each. A file's cost per day = its standing tokens x its loads per day
+// (the file map's measure); its problems = what the checks found. Advice is plain: one line per problem, the worst first.
+export const FILE_BUDGET = 3000;   // a file every session loads, past this many tokens, is a candidate to slim (audit.mjs AUDIT_BUDGET_TOKENS)
+export const perDay = r => Math.round((r.standing_tokens ?? r.tokens ?? 0) * (r.loads_day || 0));
+/** a file row -> [{ sev: bad | warn | idle, text, go? }] (empty = nothing to do) */
+export function fileAdvice(r) {
+  const out = [], st = r.standing_tokens ?? r.tokens ?? 0;
+  if (!r.exists && !r.generated) out.push({ sev: 'bad', text: 'listed as loaded, but the file is missing: restore it or drop the reference' });
+  if (r.generated && ['drift', 'missing', 'unmanaged'].includes(r.drift)) out.push({ sev: 'bad', text: 'a generated copy out of sync with its source: regenerate it' });
+  if (r.load === 'session' && st > FILE_BUDGET) out.push({ sev: 'warn', text: `every session loads it at ${tk(st)} tokens (budget ${tk(FILE_BUDGET).slice(1)}): move detail that only some tasks need into an on-demand doc or a skill` });
+  if (r.map_state === 'conflict') out.push({ sev: 'warn', text: 'says something another loaded file also says: keep it in one place' });
+  if (r.stale) out.push({ sev: 'warn', text: `${r.stale} paragraph${r.stale > 1 ? 's' : ''} no run has read lately: delete or confirm ${r.stale > 1 ? 'them' : 'it'}`, go: 'slop' });
+  if (r.findings) out.push({ sev: 'warn', text: `${r.findings} finding${r.findings > 1 ? 's' : ''} from the checks`, go: 'slop' });
+  if (r.hints) out.push({ sev: 'idle', text: `${r.hints} lint hint${r.hints > 1 ? 's' : ''}`, go: 'slop' });
+  return out;
+}
+const SEV_W = { bad: 3, warn: 2, idle: 1 };
+/** the files to look at first: cost per day, then how bad its problems are; only files with something to do; at most n */
+export function worstFiles(rows = [], n = 5) {
+  const all = rows.filter(r => r.load !== 'source').map(r => ({ r, adv: fileAdvice(r), day: perDay(r) })).filter(x => x.adv.length);
+  // strictly by tokens per day (what a fix saves), then how bad its problems are
+  const sev = x => x.adv.reduce((k, a) => k + SEV_W[a.sev], 0);
+  return all.sort((a, b) => b.day - a.day || sev(b) - sev(a)).slice(0, n);
+}
 const roleOf = (m, key) => (m?.roles || []).find(r => r.key === key);
 
 /** the summary numbers (4): one check-in and one worker before any work (measured median), today's load, the check-in load trend */

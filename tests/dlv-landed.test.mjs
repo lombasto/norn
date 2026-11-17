@@ -68,6 +68,29 @@ test('DLV-45 shape: merged by a merge commit, then the merge queue merged main I
   assert.equal(deliverablesView({ stateDir: s.state, project: s.project, now: NOW }).rows.find(r => r.id === s.ids.ootb).state, 'merged');
 });
 
+test('rule 5: the merge queue syncs main INTO the branch, then main merges the PRE-sync tip - merged; a sync that adds its own edit stays done', () => {
+  const s = setup({ ootb: { file: 'ootb.txt', text: 'o', n: 2 }, evil: { file: 'evil.txt', text: 'e', n: 2 } })   // two commits each: no single patch-id is the branch;
+  // the real DLV-123 shape: sync 1 (main into the branch), main moves on, sync 2 (main again), THEN main merges sync 1, not sync 2.
+  // Sync 2's merge-bases (sync 1, the old main) are a criss-cross whose trees differ from its own - rules 2-4 cannot see it.
+  const sync = (b, msg, edit) => {
+    g(s.repo, 'checkout', '-q', b); g(s.repo, 'merge', '-q', '--no-ff', '--no-commit', 'main');
+    if (edit) { fs.writeFileSync(path.join(s.repo, edit), 'changed in the merge\n'); g(s.repo, 'add', edit); }
+    g(s.repo, 'commit', '-q', '-m', msg); g(s.repo, 'checkout', '-q', 'main');
+    return g(s.repo, 'rev-parse', b);
+  };
+  const s1 = { ootb: sync('feat/ootb', 'merge: main into feat/ootb (sync 1)'), evil: sync('feat/evil', 'merge: main into feat/evil (sync 1)') };
+  commit(s.repo, 'second.txt', 's\n', 'main moves on');
+  commit(s.repo, 'third.txt', 't\n', 'main moves on again (two commits: no single patch-id matches the sync)');
+  sync('feat/ootb', 'merge: main into feat/ootb (sync 2)');
+  sync('feat/evil', 'merge: main into feat/evil (sync 2, with an edit of its own)', 'evil.txt');   // work that is on no main
+  g(s.repo, 'merge', '-q', '--no-ff', '-m', 'merge: feat/ootb at sync 1', s1.ootb);
+  g(s.repo, 'merge', '-q', '--no-ff', '-m', 'merge: feat/evil at sync 1', s1.evil);
+  pushBranches(s.repo);
+  const rows = Object.fromEntries(deliverablesView({ stateDir: s.state, project: s.project, now: NOW }).rows.map(r => [r.id, r]));
+  assert.equal(rows[s.ids.ootb].state, 'merged', 'only clean syncs of main beyond main: landed');
+  assert.equal(rows[s.ids.evil].state, 'done', 'the edit inside the merge is unlanded work');
+});
+
 test('rebase (new shas) and squash: the branch ref keeps the old tip, the DLV is merged; a conflicting DLV stays done with a conflict', () => {
   const s = setup({ reb: { file: 'reb.txt', text: 'r', n: 2 }, sq: { file: 'sq.txt', text: 's', n: 2 }, clash: { file: 'shared.txt', text: 'branch' } });
   // rebase: the MERGE cherry-picks the branch's commits onto main (new shas); the branch ref is not moved

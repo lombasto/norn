@@ -45,7 +45,8 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   const out = [], docAt = new Map(docs.map(d => [fwd(d.path), d.i]));
   const rowOf = a => a.row || (ins?.rows || []).find(r => fwd(r.path) === fwd(a.path))?.id || null;
   // META-UX-BUILD S6 (REPORT s.7): a row on one of the owner's own files (the scan's machine_only rows) says so - Fix all never ticks it for him
-  const own = new Set((ins?.rows || []).filter(r => r.machine_only).map(r => fwd(r.path).toLowerCase()));
+  // Norn's own prompts (norn_file: the engine's, shared by every project) are offered the same way: never ticked by a project's Fix all
+  const own = new Set((ins?.rows || []).filter(r => r.machine_only || r.norn_file).map(r => fwd(r.path).toLowerCase()));
   const ownerOf = x => (x.owner_file === true || (x.path && own.has(fwd(x.path).toLowerCase())) ? { owner_file: true } : {});
   const seen = new Set();
   for (const a of [...(ins?.findings || []), ...(ins?.rules?.advisories || [])]) {
@@ -79,12 +80,12 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   for (const h of holds) for (const b of h.blocks || [])
     out.push({ id: 'S-' + b.fp, type: 'code', severity: 'high', surface: `branch ${h.branch}`, path: b.file, line: b.line ?? null, why: `${b.rule}: ${b.msg}`,
       source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn slop waive)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
-      go: { tab: 'agents', ...(h.run ? { jump: 'node-' + h.run } : {}) } });
+      go: { tab: 'slop', jump: 'slop-S-' + b.fp } });   // its own Slop row (an ended run is on no live Agents view)
   // META-DOD 2: a call Norn's scope hook refused (scope.mjs refusals: the run, its tool, the target, the plain reason)
   for (const r of refusals)
     out.push({ id: 'R-' + hash(`${r.run}|${r.tool}|${r.target}|${r.why}`), type: 'code', severity: 'medium', surface: `run ${r.run}${r.lane ? ' · ' + r.lane : ''} · ${r.tool}`, path: null, line: null,
       why: `refused: ${r.why}`.slice(0, 300), source: 'Norn scope hook (norn scope check)', action: 'widen the brief Scope and resume the run, or leave it refused', run: r.run,
-      ...fixOf('scope-refusal', SCOPE_FIX, SCOPE_FIX.title), go: { tab: 'agents', jump: 'node-' + r.run } });
+      ...fixOf('scope-refusal', SCOPE_FIX, SCOPE_FIX.title), go: { tab: 'slop', jump: 'slop-R-' + hash(`${r.run}|${r.tool}|${r.target}|${r.why}`) } });
   return out;
 }
 

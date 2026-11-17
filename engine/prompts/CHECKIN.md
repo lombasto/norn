@@ -102,8 +102,8 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF`) and its three Ready lines (DoR, policy.dod.ready):
   `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <the end marker>`. At the run end Norn
   runs those Tests + the merge gate itself and checks the tree is clean and inside Scope: only that green record makes a DONE count.
-- Launch: `META run --lane <l> --stage <S> --round <n> --executor claude|codex-sol|codex-astra --agent <a> --model <m>
-  --effort <e> --brief <f> --budget-min <n> [--item RM-n]` (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force; exit 6 = the brief lacks its Ready lines - add them, launch again). `--item RM-n`
+- Launch: `META run --lane <l> --stage <S> --round <n> --executor claude|codex-sol|codex-astra [--agent <a>] --model <m>
+  --effort <e> --brief <f> --budget-min <n> [--item RM-n]` (<a> = one of the agents installed here: {{agents}}; no other name - leave --agent out for the default) (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force; exit 6 = the brief lacks its Ready lines - add them, launch again). `--item RM-n`
   links the run to the roadmap item it builds (a new lane: `META rec add lane --name L --item RM-n`).
 - ONE writer per worktree is enforced by "norn run" (all executors, all projects); never bypass it.
 

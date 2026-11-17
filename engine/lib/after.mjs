@@ -144,15 +144,32 @@ export function successorOf(runs, r, seen = new Set()) {
  *  3. else the branch's WHOLE diff (one synthetic commit: head's tree on the merge-base, `git commit-tree`) has the patch-id of a commit
  *     on main - a squash merge;
  *  4. (META-DLV-LANDED) else head's tree IS its merge-base's tree: the branch adds nothing to main - merged, then the merge queue's update
- *     step merged main into it (a merge commit that no patch-id matches; DLV-45 11-13).
+ *     step merged main into it (a merge commit that no patch-id matches; DLV-45 11-13);
+ *  5. else every commit of main..head is a merge and each one is CLEAN (its tree = git's own merge of its parents: no edits of its
+ *     own) - the branch landed, then the merge queue merged main into it, and main has moved on since (so 4's trees differ).
  * A rebase that resolved a conflict changes that commit's patch: git cannot see it, so the condition is held for a ruling (norn runs
  * landed). Not used: "a merge commit naming the branch" (a branch name is reused across rounds - R1 / R2 of meta-plan - so it would
  * count an older round's merge).
  */
+// rule 5: main..head holds merge commits only, each with exactly the tree git's merge of its two parents gives (no conflict, no edit)
+function onlyCleanMerges(repo, head, base, git) {
+  const own = git(repo, ['rev-list', '--no-merges', '--count', `${base}..${head}`], { allowFail: true });
+  if (own === null || Number(own.trim()) !== 0) return false;
+  const merges = String(git(repo, ['rev-list', '--merges', '--parents', `${base}..${head}`], { allowFail: true }) ?? '').split('\n').filter(Boolean);
+  if (!merges.length) return false;
+  return merges.every(l => {
+    const [m, ...ps] = l.trim().split(/\s+/);
+    if (ps.length !== 2) return false;   // an octopus: not judged
+    const r = git(repo, ['merge-tree', '--write-tree', ps[0], ps[1]], { status: true });
+    return r.code === 0 && r.out.split('\n')[0].trim() === git(repo, ['rev-parse', `${m}^{tree}`], { allowFail: true })?.trim();
+  });
+}
+
 export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) {
   const lines = out => String(out ?? '').split('\n').map(l => l.trim()).filter(Boolean);
   for (const base of [main, `refs/remotes/origin/${main}`]) {
     if (isAncestor(repo, head, base, git)) return true;
+    if (onlyCleanMerges(repo, head, base, git)) return true;
     const mb = git(repo, ['merge-base', base, head], { allowFail: true })?.trim();
     if (!mb) continue;
     const tree = git(repo, ['rev-parse', `${head}^{tree}`], { allowFail: true })?.trim();

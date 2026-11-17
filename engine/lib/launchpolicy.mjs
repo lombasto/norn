@@ -59,6 +59,26 @@ export function inlineAgent(profile, agent, { claudeDir, worktree } = {}) {
   return def ? { ...profile, agents: { [agent]: def } } : profile;
 }
 
+/**
+ * The Claude agents a run may name with --agent: the user's (<claudeDir>/agents), the worktree's (.claude/agents) and the project's own
+ * (install.agents). -> sorted names. A plugin agent (plugin:name) is not listed here and is never refused (Claude Code resolves it).
+ */
+export function knownAgents({ claudeDir, worktree, project } = {}) {
+  const names = new Set();
+  for (const d of [claudeDir && path.join(claudeDir, 'agents'), worktree && path.join(worktree, '.claude', 'agents'), project?.install?.agents]) {
+    if (!d) continue;
+    try { for (const f of fs.readdirSync(d)) if (f.endsWith('.md')) names.add(f.slice(0, -3)); } catch { /* no dir */ }
+  }
+  return [...names].sort();
+}
+/** null = agent ok (none, a plugin agent, or a known one); else the refusal text. A Claude run on an unknown agent used to start and
+ *  crash at once ("--agent 'worker' not found"): it is refused before it starts, naming the agents there are. */
+export function agentRefusal(agent, o = {}) {
+  if (!agent || String(agent).includes(':')) return null;
+  const names = knownAgents(o);
+  return names.includes(agent) ? null : `--agent ${agent}: no such agent (known: ${names.join(', ') || 'none'}; or leave --agent out)`;
+}
+
 /** the parts the fill resolves again, in record order */
 export const FILL_PARTS = ['memory', 'profile', 'model', 'effort', 'agent', 'class'];
 /** the flags that win over the policy (flag name -> spec key) */

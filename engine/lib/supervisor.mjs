@@ -129,7 +129,10 @@ async function finish(code, signal, error) {
     if (cmd?.parse === 'claude') { try { text = String(JSON.parse(raw).result ?? ''); } catch { text = ''; } }
     try { if (text.trim()) fs.writeFileSync(spec.notes, text.endsWith('\n') ? text : text + '\n'); } catch (e) { logLine(`answer not written: ${e.message}`); }
   }
-  const marker = parseOutcome(spec.notes ? read(spec.notes) : null);
+  let marker = parseOutcome(spec.notes ? read(spec.notes) : null);
+  // a NOTES file this run never wrote keeps an earlier run's end marker (a lane's notes reused: a second fixer on docs-fixer "ended
+  // DONE" with nothing drafted). Only a marker written during this run counts; an older one = no marker.
+  try { if (marker.marker_line && spec.notes && fs.statSync(spec.notes).mtimeMs < supStarted - 2000) { logLine(`end marker "${marker.marker_line}" is older than this run: the notes were not written by it`); marker = { outcome: 'no-marker', marker_line: null, stale: true }; } } catch { /* no notes file */ }
   // a check-in has no NOTES end marker: its outcome is its exit (S5); so has an audit (its notes = the vendor report)
   let outcome = code !== 0 ? 'crash' : spec.kind === 'checkin' || spec.kind === 'audit' ? 'done' : marker.outcome;
   // META-AUTH: a crash whose log tail / final carries the executor's auth-failure signature is `auth` (its login is down), not a crash

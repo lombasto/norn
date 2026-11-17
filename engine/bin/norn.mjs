@@ -25,8 +25,8 @@ import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
-import { providersOf, typedExe } from '../lib/executors.mjs';
-import { launchParts, refillOf } from '../lib/launchpolicy.mjs';
+import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
+import { launchParts, refillOf, agentRefusal } from '../lib/launchpolicy.mjs';
 import { loginCommand } from '../lib/authguard.mjs';
 import { presetExe } from '../lib/presets.mjs';
 import { capsMatrix, formatCapsMatrix } from '../lib/harness/index.mjs';
@@ -407,6 +407,9 @@ function runSpec(flags, env, { project, state, locks }) {
   const explicit = { model: flags.model, effort: flags.effort, agent: flags.agent, class: flags.class };
   const claudeDir = machine?.claude?.config_dir || path.join(os.homedir(), '.claude'), wt = flags.worktree || late(project?.lane_defaults?.worktree);
   const parts = launchParts({ project, budget, executor: ex, lane: flags.lane, explicit, claudeDir, worktree: wt }), prov = parts.provider;
+  const harnessClaude = ex === 'claude' || (prov && executorInfo(ex, prov)?.harness === 'claude');
+  const noAgent = harnessClaude ? agentRefusal(parts.agent, { claudeDir, worktree: wt, project }) : null;
+  if (noAgent) throw new RunError(noAgent);
   if (prov?.preset && !presetExe(prov, env)) throw new RunError(`executor ${ex}: preset ${prov.preset}: exe ${prov.exe} is not detected (not on PATH) - install it or set executors.${ex}.exe`);
   const exe = prov?.preset ? presetExe(prov, env) : prov ? typedExe(prov, machine) : { claude: machine?.claude?.exe, 'codex-sol': machine?.codex?.exe, 'codex-astra': machine?.codex?.exe }[ex];
   const cadence = project?.policy?.cadence || {};

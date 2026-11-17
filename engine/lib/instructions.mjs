@@ -24,6 +24,7 @@ import { memoryOf, roleOfSpec } from './launchpolicy.mjs';
 import { ruleLedger, rowCounts } from './rules.mjs';
 import { readEvidence } from './readev.mjs';
 import { auditsView } from './audit.mjs';
+import { subdirOf } from './monorepo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), ENGINE = path.join(HERE, '..');
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -140,13 +141,19 @@ export function discover(p, { home, machine = null, git = true } = {}) {
   const tmpl = s => s.replace(/\$\{(\w+)\}/g, (a, v) => vars[v] ?? a);
 
   // 1. the repo: root files every session of the family, nested ones on demand; repo agents (role) and skills (their description)
-  const root = p.root;
+  // A monorepo project (p.subdir): its runs work inside the subdir, so the files of every folder from the repo root down to it load
+  // every session; files nested under the subdir load on demand; the other folders of the repo are other projects' and are left out
+  // (their CLAUDE.md was scanned, flagged and sent to the fixer as this project's).
+  const root = p.root, sub = subdirOf(p), inSub = rel => !sub || rel === sub || rel.startsWith(sub + '/');
+  const upTo = sub ? sub.split('/').map((_, i, a) => a.slice(0, i + 1).join('/')) : [];
   if (root && fs.existsSync(root)) {
     for (const h of hs) for (const n of h.repo) { const f = path.join(root, n); if (isFile(f)) add(f, { kind: 'repo', harness0: h.family }, [{ class: 'session', families: [h.family] }]); }
+    for (const d of upTo) for (const h of hs) for (const n of h.repo) { const f = path.join(root, d, n); if (isFile(f)) add(f, { kind: 'repo', harness0: h.family }, [{ class: 'session', families: [h.family] }]); }
     const names = [...new Set(hs.flatMap(h => h.repo.map(n => path.posix.basename(n))))];
     for (const rel of repoFiles(root, names)) {
       const f = path.join(root, rel), base = path.posix.basename(rel);
       if (rows.has(key(f))) continue;
+      if (!inSub(rel) && !/^\.claude\//.test(rel)) continue;   // another folder of the monorepo: not this project's
       if (/^\.claude\/agents\//.test(rel)) { add(f, { kind: 'agent' }, [{ class: 'role', role: path.basename(rel, '.md'), families: ['claude'] }]); continue; }
       if (/^\.claude\/rules\//.test(rel)) { add(f, { kind: 'rule' }, [ruleLoad(f)]); continue; }   // META-PRACTICE-P1: no (parsable) paths = every session
       if (/^\.claude\/skills\//.test(rel)) { add(f, { kind: 'skill' }, [{ class: 'session', families: ['claude'], part: 'description' }]); continue; }
@@ -224,7 +231,7 @@ export function discover(p, { home, machine = null, git = true } = {}) {
     const { harness0, planned, ...rest } = r;
     out.push({ ...rest, id: r.id || idOf(r.path), name: path.basename(r.path), where, harness: [...new Set([harness0, ...r.loads.flatMap(s => s.families || [])].filter(Boolean))],
       load, ...(role ? { role } : {}), tokens, desc_tokens: desc, standing_tokens: full ? tokens : desc, lines: text != null ? text.split(/\r?\n/).length - (text.endsWith('\n') ? 1 : 0) : 0,
-      chars: text != null ? text.length : 0, ...(when.get(key(r.path)) || { changed: null, changed_by: null }), machine_only: where === 'home', exists });
+      chars: text != null ? text.length : 0, ...(when.get(key(r.path)) || { changed: null, changed_by: null }), machine_only: where === 'home', ...(where === 'engine' ? { norn_file: true } : {}), exists });
   }
   const order = r => [LOADS.indexOf(r.load), r.where, r.path];
   return out.sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });

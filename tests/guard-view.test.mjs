@@ -28,7 +28,7 @@ test('guardRows: every phase and SloppaChoppa typed, each with the tab that fixe
   assert.deepEqual(by['models:class chores'].go, { tab: 'usage', jump: 'usage-advice' });
   assert.equal(by['models:class chores'].cls, 'chores');
   assert.ok(!rows.some(r => r.id === 'M-k2'), 'a decided advice card is closed');
-  assert.deepEqual(by['code:a.mjs'].go, { tab: 'agents', jump: 'node-RUN-9' });
+  assert.deepEqual(by['code:a.mjs'].go, { tab: 'slop', jump: 'slop-S-f00' });
   assert.equal(by['code:a.mjs'].severity, 'high');
 });
 

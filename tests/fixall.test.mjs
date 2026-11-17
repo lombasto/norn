@@ -116,7 +116,8 @@ test('POST /api/fixall: ONE decision + ONE directive with the ids, the picked wa
     assert.equal(sh.sig, s.sig);
     for (const k of ['ready', 'drafts', 'call']) assert.equal(sh.items.filter(i => i.kind === k).reduce((n, i) => n + i.n, 0), s.kinds[k], k);
     assert.match(sh.usage.line, /One fixer run \(docs work: runner, claude-sonnet-5-5 medium\)/);
-    const keys = sh.items.filter(i => i.tick).map(i => i.key), call = sh.items.find(i => i.kind === 'call');
+    // the fixture's findings sit on Norn's own prompts (norn_file: offered, never pre-ticked), so the owner ticks them by hand here
+    const picked = sh.items.filter(i => i.kind !== 'call'), keys = picked.map(i => i.key), call = sh.items.find(i => i.kind === 'call');
     assert.ok(keys.length && call, 'the fixture has ticked batches and a your-call batch');
     const before = (await f.get('/api/records?project=kestrel')).data;
     assert.equal((await f.post('/api/fixall', { project: 'kestrel', sig: 'stale', keys, picks: {} })).status, 409, 'a sheet of an older scan is refused');
@@ -126,7 +127,7 @@ test('POST /api/fixall: ONE decision + ONE directive with the ids, the picked wa
     const after = (await f.get('/api/records?project=kestrel')).data;
     assert.equal(after.decisions.length, before.decisions.length + 1); assert.equal(after.directives.length, before.directives.length + 1);
     const dec = after.decisions.find(x => x.id === r.data.id), dir = after.directives.find(x => x.id === r.data.directive);
-    const n = sh.items.filter(i => i.tick).reduce((a, i) => a + i.n, 0) + call.n;
+    const n = picked.reduce((a, i) => a + i.n, 0) + call.n;
     assert.equal(r.data.n, n);
     assert.equal(dec.data.lane, 'fixall'); assert.equal(dec.data.findings.length, n);
     assert.deepEqual(dec.data.picks.map(p => [p.key, p.way]), [[call.key, call.ways[1]]]);

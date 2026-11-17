@@ -236,6 +236,20 @@ test('the launcher records a deliverable at a DONE exit: one per repo + branch, 
   assert.equal(onRunDone(f.state, runDone(f.state, { lane: 'a', worktree: path.join(f.wt, 'gone'), brief: 'x.md' }), {}), null, 'no git worktree: none');
 });
 
+test('a lane whose first run handed off and whose resume ended DONE gets its deliverable (launcher + backfill)', () => {
+  const f = backfillFixture();
+  const st = loadState(f.state).items[f.run];
+  const first = record(f.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'a', worktree: f.wt, brief: 'x.md' } }, { now: () => at(-40), views: false });
+  record(f.state, { kind: 'run', ev: 'end', id: first.id, by: 'launcher', data: { exit: 0, outcome: 'handoff' } }, { now: () => at(-39), views: false });
+  const resume = runDone(f.state, { lane: 'a', worktree: f.wt, brief: 'x.md', parent: first.id }, -3);
+  assert.ok(st, 'the fixture run exists');
+  const plan = backfillPlan({ stateDir: f.state, project: f.p, now: NOW });
+  assert.equal(plan.rows.find(r => r.branch === 'feat/a').evidence, resume, 'the backfill takes the resume as the evidence');
+  const r = onRunDone(f.state, resume, { now: () => at(-3) });
+  assert.ok(r && r.id, 'the launcher records it');
+  assert.equal(loadDeliverables(f.state)[r.id].data.branch, 'feat/a');
+});
+
 // ---------- CLI (DELIVERABLES-SPEC 6): norn deliverables [--json] | backfill [--apply] | park / unpark ----------
 import { main } from '../engine/bin/norn.mjs';
 function cli(argv) {
@@ -282,7 +296,25 @@ test('backfill --only: the named branches are created whatever their evidence (p
 });
 
 // ---------- check-in rule (DELIVERABLES-SPEC 4): DONE > 24 h and not MERGED = ONE question per deliverable, never one per tick ----------
-import { askDeliverable } from '../engine/lib/deliverables.mjs';
+import { askDeliverable, closeLandedQuestions } from '../engine/lib/deliverables.mjs';
+
+test('a merge / batch / park question is withdrawn once its deliverable lands; an open one stays; a dry pass writes nothing', () => {
+  const { repo, a, b } = fixture();
+  const state = tmp('state'), p = { ...project(repo, tmp('doors'), { target: 'main' }), state };
+  mkDlv(state, { repo, branch: 'feat/a', tip: a, lane: 'a', delivers: 'native a', done_utc: at(-30).toISOString() }, -30);
+  mkDlv(state, { repo, branch: 'fix/b', tip: b, lane: 'b', delivers: 'docs b', done_utc: at(-30).toISOString() }, -30);
+  for (const id of ['DLV-1', 'DLV-2']) assert.ok(askDeliverable(state, id, { project: p, by: 'checkin', nowMs: NOW }).id);
+  assert.deepEqual(closeLandedQuestions(state, { project: p, nowMs: NOW }), [], 'nothing landed yet');
+  g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
+  assert.deepEqual(closeLandedQuestions(state, { project: p, nowMs: NOW, dry: true }).map(c => c.q), ['Q-1']);
+  assert.equal(loadState(state).items['Q-1'].state, 'open', 'dry: nothing written');
+  const closed = closeLandedQuestions(state, { project: p, nowMs: NOW });
+  assert.deepEqual(closed.map(c => [c.q, c.dlv]), [['Q-1', 'DLV-1']]);
+  assert.match(closed[0].why, /DLV-1 feat\/a is merged: nothing left to ask/);
+  const items = loadState(state).items;
+  assert.equal(items['Q-1'].state, 'withdrawn'); assert.equal(items['Q-2'].state, 'open', 'fix/b is not on main: still asked');
+  assert.deepEqual(closeLandedQuestions(state, { project: p, nowMs: NOW }), [], 'a second pass finds nothing');
+});
 
 test('due + ask: one question per deliverable; parked = quiet; a park resurfaces after 7 days and may be asked again', () => {
   const { repo, a } = fixture();

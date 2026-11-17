@@ -164,7 +164,10 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
 
 // ---------- backfill (DELIVERABLES-SPEC 2) + the launcher's record at a DONE exit ----------
 const NOT_DELIVERING = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
-const isDeliveringRun = r => r?.kind === 'run' && r.end?.outcome === 'done' && !NOT_DELIVERING.includes(r.data?.kind) && r.data?.role !== 'helper' && !r.data?.parent;
+// a resume (--parent RUN-n: the lane's first run handed off) delivers like any worker - its DONE is often the lane's only one; a
+// helper (role helper, under a parent) never does. A parent alone used to exclude the run, so a lane finished by a resume never
+// reached the merge queue.
+const isDeliveringRun = r => r?.kind === 'run' && r.end?.outcome === 'done' && !NOT_DELIVERING.includes(r.data?.kind) && r.data?.role !== 'helper';
 const isMainBranch = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const endTs = r => r.history.find(h => h.ev === 'end')?.ts || r.updated;
 const runNum = id => Number(String(id).replace(/\D/g, ''));
@@ -343,6 +346,26 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
     class: 'iii', blocks: [], source: `deliverable ${id}`, deliverable: id };
   const e = record(stateDir, { kind: 'question', ev: 'create', by, data }, { views: project.views || {}, ...(now ? { now } : {}) });
   return { id: e.id };
+}
+
+/**
+ * A "merge, batch or park?" question goes stale once its deliverable reaches its target (merged / installed / superseded): the
+ * tick withdraws it, so the owner's Inbox never asks about work that already landed. Returns [{ q, dlv, why }] (written unless dry).
+ */
+export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
+  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items)
+    .filter(q => q.kind === 'question' && q.state === 'open' && q.data?.deliverable);
+  if (!open.length) return [];
+  const rows = new Map(deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.map(r => [r.id, r]));
+  const out = [];
+  for (const q of open) {
+    const r = rows.get(q.data.deliverable);
+    if (!r?.at_target) continue;
+    const why = `${r.id} ${r.branch} is ${r.superseded ? `superseded by ${r.superseded.by}` : r.state}: nothing left to ask (closed by the tick)`;
+    if (!dry) record(stateDir, { kind: 'question', ev: 'withdraw', id: q.id, by: 'checkin', data: { why } }, { views: project.views || {}, ...(now ? { now } : {}) });
+    out.push({ q: q.id, dlv: r.id, why });
+  }
+  return out;
 }
 
 // ---------- META-DLV-R2: the rebase / resolve lane (Gas Town done_rebase.go, GT-4) ----------
