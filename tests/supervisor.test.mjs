@@ -131,7 +131,7 @@ test('jobguard hold exits when its supervisor dies even while its stdin write en
     const r2 = await Promise.race([new Promise(res => gone.on('exit', () => res('exited'))), sleep(5000).then(() => 'alive')]);
     if (r2 !== 'exited') gone.kill();
     assert.equal(r2, 'exited', 'a hold whose supervisor is already gone exits at once');
-  } finally { try { hold.stdin.end(); } catch { /* gone */ } if (hold.exitCode === null) hold.kill(); if (sup.exitCode === null) sup.kill(); }
+  } finally { try { hold.stdin.end(); } catch { /* the hold already exited and closed its stdin: nothing to end, the kills below still run */ } if (hold.exitCode === null) hold.kill(); if (sup.exitCode === null) sup.kill(); }
 });
 
 test('K3 round 2: a run the supervisor starts itself (auto-resume) breaks away from the supervisor\'s own job', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
