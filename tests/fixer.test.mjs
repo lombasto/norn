@@ -171,7 +171,8 @@ test('norn fix start: another directive\'s fixer queued = refused before its bri
   const root = tmp('fixer-held-'), state = path.join(root, 'state'), repo = path.join(root, 'repo'), fwd = s => s.split(path.sep).join('/');
   fs.mkdirSync(repo, { recursive: true });
   const pf = path.join(root, 'kestrel.json');
-  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'K', root: fwd(repo), policy: { lanes: {}, executors: { docs: { executor: 'fake', model: 'm', effort: 'low' } } } }));
+  // the first start must QUEUE, not start: a fill floor no host meets holds it at the resource gate (an idle CI box started it - CI 44200322839)
+  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'K', root: fwd(repo), policy: { lanes: {}, fill: { min_free_gb: 1e6 }, executors: { docs: { executor: 'fake', model: 'm', effort: 'low' } } } }));
   const e = [], o = [], run = argv => main(argv, { META_ROOT: root, META_ROLE: 'owner', META_NO_TICK: '1' }, s => o.push(s), s => e.push(s));
   const dirs = ['I-1', 'I-2'].map(f => {
     const dec = record(state, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall', question: 'Fix all', choice: 'send', why: 'tap', findings: [f] } });
