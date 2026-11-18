@@ -117,6 +117,26 @@ test('GET /api/guard?part=: the summary + one part; no part = the full view the 
   } finally { await f.done(); }
 });
 
+// RM-18 S1 moved `const nav` into paintNav() and left render()'s scroll-into-view on the bare name: the FIRST visit to each tab threw
+// "Refresh failed: nav is not defined" (S.navTab was already set, so a second click worked). Every nav tab, first visit, no error.
+test('every nav tab paints on its first visit: no "Refresh failed" (the selected tab scrolls into view from #tabs)', { skip: skipWhy, timeout: 180000 }, async () => {
+  const f = await fixture(), pg = await openPage([1280, 900]);
+  try {
+    await pg.go(`${f.url}/?project=kestrel&tab=home`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'home'`, 60000), 'home painted');
+    const tabs = JSON.parse(await pg.ev(`JSON.stringify([...document.querySelectorAll('#tabs [data-tab]')].map(b => b.dataset.tab).filter(t => t !== 'home'))`));
+    assert.ok(tabs.length >= 3, `nav tabs found: ${tabs}`);
+    for (const t of tabs) {
+      const was = await pg.ev(`document.body.dataset.tab`);
+      if (was === t) continue;
+      await pg.ev(`document.querySelector('#tabs [data-tab="${t}"]').click()`);
+      assert.ok(await pg.until(`document.body.dataset.tab !== '${was}' && (document.body.dataset.ready === document.body.dataset.tab || document.body.dataset.ready === 'error')`, 60000), `${t}: painted or failed`);
+      assert.notEqual(await pg.ev(`document.body.dataset.ready`), 'error', `${t}: ${await pg.ev(`document.querySelector('#error').textContent`)}`);
+      assert.equal(await pg.ev(`document.querySelector('#error').textContent`), '', `${t}: no error line`);
+    }
+  } finally { await pg.close(); await f.done(); }
+});
+
 test('the chosen sub-view lives in the URL: a shared link lands on it, a tap pushes it, Back returns, reload keeps it', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {

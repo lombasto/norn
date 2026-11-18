@@ -592,7 +592,7 @@ async function render(force = false, why = []) {
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
     paintNav();
-    if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
+    if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => $('#tabs').querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
     step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });
     // Settings: a stream re-render never wipes edits, search or scroll - re-render only on a new version (and never over unsaved edits)
