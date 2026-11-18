@@ -53,6 +53,7 @@ export const POLICY_DEFAULTS={
   checkin:{routine:['merge_done','worker_done_stage'],debounce_min:5,auto_stage:[],none_lanes:[],on_end_lanes:[],merge_agent:'',merge_model:'claude-sonnet-5-5',merge_effort:'medium'},
   speed_mode:{A:true,B:true,C:true,D:true},
   instructions:{stale_days:30},
+  done_lanes:{old_days:2},   // RM-19 S1: a lane done longer ago than this is Old on the Lanes page - faded, says stopped (lanes.mjs laneGroup)
   dod:{ready:'off',scope:'off',critique:'off',critique_filter:'',test_cmd:'',timeout_min:20},   // META-DOD 1 (DIR-68): the Ready gate of norn run (off | warn | refuse) + the Done check's test runner (dod.mjs); META-DOD 2: the scope guard (off | on, scope.mjs); META-DOD 3: the plan review (off | on, critique.mjs)
   slop:{enabled:true},   // META-BETA-PREP (DIR-52): ONE switch for all of SloppaChoppa (slopOn)
   overlap:{enabled:true},   // GAP-12: the overlap check of running lanes against the remote's branches and open PRs (overlap.mjs overlapOn)
@@ -118,6 +119,7 @@ export const SETTINGS=[
   S('voice','policy.voice.popups','SloppaChoppa pop-ups',en(['off','on','quiet']),'He pops up bottom-right by himself only for a NEW finding at warn level or above, once per finding: on = animated, quiet = still frames, off = never (the header badge and the Guard page work either way; a click on him always calls him up).','off','On = an interruption per new finding, up to the daily cap; never while you type, never over Send.',['dashboard header + Guard page']),
   S('voice','policy.voice.daily_cap','SloppaChoppa pop-ups per day',int(0,10),'At most this many unprompted appearances a day (this browser); 0 = none.','3','Higher = more interruptions.',['dashboard header']),
   S('agents','policy.instructions.stale_days','Instruction paragraph stale after (days)',int(1,365),'An instruction paragraph older than this (its stated date, else its last commit / first-seen date) and never confirmed (meta instructions confirm) is flagged STALE on the Instructions tab and in meta instructions suggest.','30','Shorter = more paragraphs to re-read or confirm; longer = old rules linger.',['meta instructions suggest','dashboard Instructions']),
+  S('agents','policy.done_lanes.old_days','Done lane old after (days)',int(1,365),'A lane done longer ago than this is Old on the Lanes page: its row is faded, says it is stopped, and sits under the Old filter instead of Done recently.','2','Display only: shorter = fewer lanes under Done recently.',['dashboard Lanes']),
   ...['worker','merge','checkin','chat'].map(r=>S('agents',`policy.launch.roles.${r}`,`Launch profile: ${{worker:'workers',merge:'merge runs',checkin:'check-ins',chat:'the chat'}[r]}`,en(['full','lean']),"full = today's launch (everything the user setup loads). lean = only Norn's MCP server, no user-level settings (plugins with their hooks and skills; ~/.claude/skills stay), no dynamic system-prompt sections, no Artifact / Workflow / ScheduleWakeup / ReportFindings tools (Claude Code flags; never --bare; calibrated 46.6k -> 20.5k turn 1). The doctor lists what lean drops that a brief or agent file names.",'full','lean cuts the standing context every turn re-reads (see NOTES / meta instructions suggest); a role that needs a skill or MCP server it drops loses it.',['meta run / meta tick / the chat (harness adapter flags)'])),
   S('agents','policy.overlap.enabled','Overlap check (upstream work on the same files)',bool,'On: when a lane starts and at each check-in, Norn fetches the project origin (at most every 10 min; offline = the last fetched refs) and lists the remote branches and open pull requests (gh, GitHub only) that change the same files as a running lane: a row in the check-in digest and a chip on the lane in Lanes. Off: no fetch, no gh call, no rows.','on','One git fetch and one gh call per 10 min per project, plus a git diff per new remote branch tip; nothing while no lane runs.',['the run supervisor (lane start)','norn tick (digest row overlap)','norn overlap','dashboard Lanes']),
   S('agents','policy.agents.max_lane_writers','Max writers per lane',int(1,1),'One writer per worktree; meta run refuses a second.','1','Fixed at 1: two writers in one tree corrupt each other.',['worker.ps1 (worktree refusal)'],{readonly:true}),
@@ -251,6 +253,7 @@ export const SECTION_RULES=[
   [/^policy\.dod\./,'agents/iteration'],
   [/^policy\.overlap\./,'agents/iteration'],
   [/^policy\.instructions\./,'agents/iteration'],
+  [/^policy\.done_lanes\./,'agents/iteration'],
   [/^policy\.slop\./,'voice/switch'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
