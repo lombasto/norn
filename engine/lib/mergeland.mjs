@@ -2,13 +2,14 @@
 // takes an approved PR). For each lane branch of the merge it checks the branch is pushed (origin/<branch>) and that the merge
 // worktree's tested merge holds the branch's commits, then reuses the open PR of that branch to main or opens one (`gh pr create`),
 // and records the PR on the branch's deliverable (a `pr` event). The owner approves and merges the PR; Norn never touches main.
+// From then on the deliverable follows the PR (prstate.mjs, RM-7 S2): merged when GitHub says merged, never before.
 // Repo = the owner/name of the remote's URL, base = project deliverables.main, title = the deliverable's `delivers` line (the lane
 // brief's heading), else the branch: project data, nothing chosen here.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { makeGit } from './dlvgit.mjs';
+import { makeGh } from './prstate.mjs';
 import { mergeConfig } from './mergeq.mjs';
 import { loadDeliverables, sameRepo } from './deliverables.mjs';
 import { record } from './records.mjs';
@@ -18,11 +19,6 @@ const s7 = s => String(s || '').slice(0, 7);
 /** exit codes of norn merge-land: every PR opened (or already open), some branch has no PR */
 export const LAND_EXIT = { opened: 0, refused: 3 };
 
-/** gh run synchronously: (args) -> { code, out, err } (tests inject a fake: no network) */
-export const makeGh = () => args => {
-  const r = spawnSync('gh', args, { encoding: 'utf8', windowsHide: true });
-  return { code: r.error ? -1 : r.status, out: r.stdout || '', err: r.error ? r.error.message : r.stderr || '' };
-};
 /** owner/name of a GitHub remote URL (https or ssh), else null */
 export const ghSlug = url => (String(url || '').trim().match(/github\.com[:/]+([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/) || [])[1] || null;
 

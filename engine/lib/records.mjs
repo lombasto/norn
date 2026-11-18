@@ -85,7 +85,8 @@ export const KINDS = {
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
   // DELIVERABLES-SPEC 1: a lane's / DONE run's branch followed to main and the install. Its own file (deliverables.jsonl), so
-  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived from git (deliverables.mjs), never events.
+  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived from git (deliverables.mjs), never typed; once
+  // the branch has a PR, GitHub's word on it (pr-state, read by the tick: prstate.mjs) decides MERGED (RM-7 S2).
   deliverable: { prefix: 'DLV-', file: 'deliverables', events: {
     create: { from: null, to: 'open', roles: ['launcher', ...CK] },
     done: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },          // a later DONE run on the same branch
@@ -95,6 +96,8 @@ export const KINDS = {
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
     // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
     pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
+    // RM-7 S2: GitHub reported that PR in a new state (gh pr view): { url, number, state open|merged|closed, merged_at }
+    'pr-state': { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
@@ -416,6 +419,7 @@ function validateData(kind, ev, d, target, st, by) {
       if (dup) fail(`${d.repo} ${d.branch} already has ${dup.id}`);
     }
     if (ev === 'done') for (const k of ['run', 'tip', 'done_utc']) str(d[k], k, { req: false });
+    if (ev === 'pr-state') { str(d.url, 'url'); oneOf(d.state, 'state', ['open', 'merged', 'closed']); str(d.merged_at, 'merged_at', { req: false }); }
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
