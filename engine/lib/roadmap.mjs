@@ -11,12 +11,14 @@ import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
 import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
+import { lookWords } from './look.mjs';
 
 export class RoadmapError extends Error {}
 
 // ---------- the structure fold (pure) ----------
 /** events -> { items: { RM-n: node }, kids: { parentId | '': [ids in order] } }; node = { id, kind, title, note, horizon, stages,
- *  links, parent, caveat {text, by, ts} | null, legacy | null, state open | dropped, dropped {why, ref, by, ts} | null, by, created, updated, history } */
+ *  links, parent, caveat {text, by, ts} | null, legacy | null, state open | dropped, dropped {why, ref, by, ts} | null, by, created, updated, history,
+ *  proof look | null, views [name], verdict {verdict, image, by, ts} | null (META-CATCH S2: the latest look verdict) } */
 export function foldRoadmap(events) {
   const items = {}, kids = { '': [] };
   const unplace = id => { const l = kids[items[id].parent || '']; const i = l ? l.indexOf(id) : -1; if (i >= 0) l.splice(i, 1); };
@@ -31,7 +33,7 @@ export function foldRoadmap(events) {
     if (e.ev === 'create') {
       items[e.id] = { id: e.id, kind: d.kind, title: d.title, note: d.note ?? '', horizon: d.horizon ?? null, stages: [...(d.stages || [])],
         links: [...(d.links || [])], parent: d.parent ?? null, caveat: null, legacy: d.legacy ?? null, state: 'open', dropped: null,
-        by: e.by, created: e.ts, updated: e.ts, history: [] };
+        proof: null, views: [], verdict: null, by: e.by, created: e.ts, updated: e.ts, history: [] };
       place(e.id, d.after);
     }
     const it = items[e.id];
@@ -39,7 +41,10 @@ export function foldRoadmap(events) {
     if (e.ev === 'edit') {
       for (const k of ['title', 'note', 'horizon', 'stages']) if (k in d) it[k] = d[k] ?? (k === 'stages' ? [] : k === 'note' ? '' : null);
       if ('caveat' in d) it.caveat = d.caveat ? { text: d.caveat, by: e.by, ts: e.ts } : null;
+      if ('views' in d) it.views = [...(d.views || [])];
+      if ('proof' in d) { it.proof = d.proof ?? null; if (!it.proof) it.views = []; }   // --proof none clears the views with it
     }
+    if (e.ev === 'verdict') it.verdict = { verdict: d.verdict, image: d.image, by: e.by, ts: e.ts };
     if (e.ev === 'move') { unplace(e.id); if ('parent' in d) it.parent = d.parent ?? null; place(e.id, d.after); }
     if (e.ev === 'link') for (const x of d.links || []) { if (!it.links.includes(x)) it.links.push(x); }
     if (e.ev === 'unlink') it.links = it.links.filter(x => !(d.links || []).includes(x));
@@ -343,6 +348,7 @@ export function renderItem(n, depth = 0) {
   const pad = '  '.repeat(depth), out = [];
   out.push(`${pad}${n.id}  ${n.status.padEnd(8)}  ${n.progress.done}/${n.progress.total}  ${n.title}${n.horizon ? ` [${n.horizon}]` : ''}`);
   out.push(`${pad}      ${n.why}`);
+  if (n.proof) out.push(`${pad}      ${lookWords(n)}`);   // META-CATCH S2
   if (n.stuck?.runs) out.push(`${pad}      ${stuckWords(n.stuck)}${n.stuck.flag ? ` - STUCK since ${n.stuck.flag.ts.slice(0, 16)}Z: ${n.stuck.flag.why.join(', ')}` : ''}`);
   for (const s of n.stages) out.push(`${pad}      - ${s.key}${s.lane ? ` (${s.lane})` : ''}: ${s.state}${s.run ? ` ${s.run}` : ''}`);
   for (const f of flagWords(n)) out.push(`${pad}      ! ${f}`);

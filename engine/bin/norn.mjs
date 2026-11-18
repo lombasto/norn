@@ -25,6 +25,7 @@ import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../li
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
+import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
 import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
@@ -499,6 +500,14 @@ function runCmd(argv, env, out, err) {
     if (rg.refused) throw new RunRefused(rg.refused, 6);
     if (rg.dod) o.dod = { ...rg.dod, ...(o.notes ? { notes: o.notes } : {}) };
     if (flags.item) openItem(state, flags.item);   // META-ROADMAP S3: refuse before any run is recorded
+    // META-CATCH S2: a look item's round >= 2 / MERGE / INSTALL brief names its before / after sheet (Look:) or is refused (exit 6)
+    const looks = lookItemsFor(loadRoadmap(state), { item: flags.item, lane: o.lane });
+    if (looks.length) {
+      let text = null;
+      try { text = o.brief && o.brief !== '-' ? fs.readFileSync(o.brief, 'utf8') : null; } catch { /* unreadable: no Look: line */ }
+      const lr = lookBriefRefusal({ items: looks, text, brief: o.brief, stage: o.stage, round: o.round, policy: project?.policy });
+      if (lr) throw new RunRefused(lr, 6);
+    }
     // META-CATCH S1: a stuck item (stuck.json, the tick's flags) takes no further round until its approach review (exit 7)
     const sr = stuckRefusal(state, { lane: o.lane, item: flags.item, stage: o.stage, executor: ex, model: o.model });
     if (sr) throw new RunRefused(sr, 7);
@@ -1577,10 +1586,11 @@ function mergeqCmd(argv, env, out, err) {
     }
     const q = mergeQueue({ stateDir: state, project });
     const s = mqSummary(state);
-    if (flags.json) { out(JSON.stringify({ rows: q.rows, gate: q.cfg.gate, batch_max: q.cfg.batch_max, mq: s.mq, batch: s.batch }, null, 1)); return 0; }
+    if (flags.json) { out(JSON.stringify({ rows: q.rows, held: q.held, gate: q.cfg.gate, batch_max: q.cfg.batch_max, mq: s.mq, batch: s.batch }, null, 1)); return 0; }
     if (q.cfg.gate?.fast) for (const l of s.lines) out(l);
     for (const r of q.rows) out(formatMq(r));
     if (!q.rows.length) out('merge queue empty');
+    for (const h of q.held) out(`HELD ${h.id} ${h.branch}: ${h.why}`);   // META-CATCH S2: a look item's row waits for its picture proof
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + MQ_USAGE); return 2; }
@@ -1813,7 +1823,7 @@ function fixCmd(argv, env, out, err) {
   }
 }
 // ---------- gap #3: norn done (a run's own result: the ONLY source of its outcome; NOTES are its free-form log) ----------
-const DONE_USAGE = 'norn done [--outcome done|stopped|handoff] [--why "<why>" (stopped: required)] [--handoff-file F | --handoff "<text>" (handoff: required)] [--summary "<one line>"] [--run RUN-n --state D (default: $META_RUN_ID, $META_RUN_STATE)]'
+const DONE_USAGE = 'norn done [--outcome done|stopped|handoff] [--why "<why>" (stopped: required)] [--handoff-file F | --handoff "<text>" (handoff: required)] [--summary "<one line>"] [--look <image> (done: the picture proof of a look item)] [--run RUN-n --state D (default: $META_RUN_ID, $META_RUN_STATE)]'
   + '   (inside a run, as its last step: writes $META_RESULT_DIR = <state>/results/RUN-n/ (result.json, HANDOFF.md); a run that never runs it ends no-result)';
 const fwdSlash = p => String(p).replace(/\\/g, '/');
 function doneCmd(argv, env, out, err) {
@@ -1821,7 +1831,7 @@ function doneCmd(argv, env, out, err) {
     const flags = {};
     for (let i = 0; i < argv.length; i++) {
       const a = argv[i];
-      if (!['--outcome', '--why', '--summary', '--handoff', '--handoff-file', '--run', '--state'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (!['--outcome', '--why', '--summary', '--handoff', '--handoff-file', '--look', '--run', '--state'].includes(a)) throw new RunError(`unexpected ${a}`);
       if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
     }
@@ -1836,7 +1846,7 @@ function doneCmd(argv, env, out, err) {
     if (flags['handoff-file'] !== undefined) { try { handoff = fs.readFileSync(flags['handoff-file'], 'utf8'); } catch (e) { throw new RunError(`--handoff-file ${flags['handoff-file']}: ${e.code || e.message}`); } }
     // the supervisor's directory when it is this run's (META_RESULT_DIR), else the state's
     const dir = (env.META_RESULT_DIR && env.META_RUN_ID === run ? env.META_RESULT_DIR : null) || resultDir(state, run);
-    const r = writeResult(dir, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary, handoff });
+    const r = writeResult(dir, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary, handoff, look: flags.look });
     out(`${run} ${r.outcome.toUpperCase()}${r.why ? `: ${r.why}` : ''} -> ${fwdSlash(path.join(dir, 'result.json'))}${r.handoff ? ` + ${r.handoff}` : ''}`);
     return 0;
   } catch (e) {
@@ -2013,10 +2023,10 @@ function stuckCmd(argv, env, out, err) {
 }
 
 const ROAD_USAGE = 'norn road show [RM-n] [--json] | list [--json] | audit [--json] (exit 1 while Unplaced is not empty) | add --title T (--theme RM-n | --kind theme) [--from DIR-n] [--after RM-n | --first] '
-  + '[--horizon now|next|later] [--note N] [--links kind:id,..] [--stages "S1 a;S2 b"] | edit RM-n [--title T] [--note N] [--horizon now|next|later|none] [--stages "a;b"] [--caveat C|none] '
-  + '| move RM-n [--theme RM-n] [--after RM-n | --first] [--ref DEC-n|DIR-n] | link RM-n kind:id.. | unlink RM-n kind:id.. | drop RM-n --why W --ref DEC-n|DIR-n | reopen RM-n --why W '
+  + '[--horizon now|next|later] [--note N] [--links kind:id,..] [--stages "S1 a;S2 b"] | edit RM-n [--title T] [--note N] [--horizon now|next|later|none] [--stages "a;b"] [--caveat C|none] [--proof look|none] [--views "a,b"] '
+  + '| verdict RM-n pass|fail --image <sheet> (a look item: the picture verdict the merge queue waits for) | move RM-n [--theme RM-n] [--after RM-n | --first] [--ref DEC-n|DIR-n] | link RM-n kind:id.. | unlink RM-n kind:id.. | drop RM-n --why W --ref DEC-n|DIR-n | reopen RM-n --why W '
   + '| apply plan.json | import --legacy FILE [--sections 1,2,..|title,..] [--out plan.json] [--json] (a dry run: the plan of a hand-kept catalogue for review; exit 1 = no row placed)    [--project F | --state D] [--as role]    (links: dir: dec: q: lane: run: dlv: ep: branch: sha: doc:)';
-const ROAD_FLAGS = ['project', 'state', 'as', 'title', 'kind', 'theme', 'parent', 'from', 'after', 'first!', 'horizon', 'note', 'links', 'stages', 'caveat', 'ref', 'why', 'json!', 'legacy', 'sections', 'out'];
+const ROAD_FLAGS = ['project', 'state', 'as', 'title', 'kind', 'theme', 'parent', 'from', 'after', 'first!', 'horizon', 'note', 'links', 'stages', 'caveat', 'ref', 'why', 'json!', 'legacy', 'sections', 'out', 'proof', 'views', 'image'];
 
 function roadCmd(argv, env, out, err) {
   try {
@@ -2067,7 +2077,7 @@ function roadCmd(argv, env, out, err) {
       out(flags.json ? JSON.stringify(auditOf(tr), null, 1) : renderAudit(tr));
       return tr.unplaced.length ? 1 : 0;
     }
-    const W = ['add', 'edit', 'move', 'link', 'unlink', 'drop', 'reopen', 'apply'];
+    const W = ['add', 'edit', 'move', 'link', 'unlink', 'drop', 'reopen', 'apply', 'verdict'];
     if (!W.includes(sub)) throw new RunError(sub ? `unknown subcommand ${sub}` : 'missing subcommand');
     const by = flags.as || env.META_ROLE;
     if (!by) throw new RunError('no role: pass --as <role> or set META_ROLE');
@@ -2106,6 +2116,14 @@ function roadCmd(argv, env, out, err) {
       return 0;
     }
     if (!id) throw new RunError(`${sub} needs an RM-n`);
+    if (sub === 'verdict') {   // META-CATCH S2: the look verdict (pass | fail + the image looked at); Norn checks the image exists, never what it shows
+      if (more.length !== 1 || !['pass', 'fail'].includes(more[0])) throw new RunError('verdict needs pass or fail: norn road verdict RM-n pass|fail --image <sheet>');
+      if (!flags.image) throw new RunError('verdict needs --image <the sheet looked at>');
+      if (!fs.existsSync(flags.image)) throw new RunError(`--image ${flags.image}: no such file`);
+      put('verdict', id, { verdict: more[0], image: path.resolve(flags.image).replace(/\\/g, '/') });
+      out(`${id} verdict ${more[0]}`);
+      return 0;
+    }
     if (sub === 'link' || sub === 'unlink') {
       const terms = [...more, ...list(flags.links)];
       if (sub === 'link') checkLinks(state, terms, { project: P });
@@ -2118,6 +2136,8 @@ function roadCmd(argv, env, out, err) {
         if (flags.horizon !== undefined) data.horizon = none(flags.horizon);
         if (flags.caveat !== undefined) data.caveat = none(flags.caveat);
         if (flags.stages !== undefined) data.stages = stages(flags.stages);
+        if (flags.proof !== undefined) data.proof = none(flags.proof);   // META-CATCH S2: none clears the views with it
+        if (flags.views !== undefined) data.views = list(flags.views);
         put('edit', id, data);
       }
       if (sub === 'move') {

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mergeParallel, mergeWtPath } from './mergewt.mjs';
+import { subdirOf, gateText } from './monorepo.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const MERGE_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE.md');
@@ -37,10 +38,17 @@ function suiteStep(p, rebase, dir, metaRoot) {
   const st = suiteText(p, rebase, dir);
   return { ...st, step: st.step + testsCheck(p, dir, rebase ? `origin/${p.deliverables?.main || 'main'}` : 'HEAD', metaRoot) };
 }
+// the full suite: the project's own merge gate (project.json merge.gate.cmd, run from its subdir in a monorepo - the gate merge-land
+// and the merge queue run) when it declares one; Norn's ci-suite otherwise. A pytest project told to run ci-suite.mjs had no such file.
+const suiteCmd = p => {
+  const g = p?.merge?.gate, sub = subdirOf(p);
+  return g?.cmd ? `\`${gateText(g.dir === undefined && sub ? { ...g, dir: sub } : g)}\` (the project's merge gate, project.json merge.gate.cmd)`
+    : '`node engine/bin/ci-suite.mjs` (smoke.test.mjs runs alone after the rest)';
+};
 function suiteText(p, rebase, dir) {
   if (suiteMode(p) === 'full') return { ran: 'suite', step: rebase
-    ? `Suite in ${dir}: \`node engine/bin/ci-suite.mjs\` (smoke.test.mjs runs alone after the rest). Only the known reds of the project's known-red list may be\n   red; a load red must pass alone (run it alone, name it). Any other red = STOPPED, nothing merged.`
-    : `Suite in ${dir} on the uncommitted merge: \`node engine/bin/ci-suite.mjs\` (smoke.test.mjs runs alone after the rest). Only the known reds of\n   the project's known-red list may be red; a load red must pass alone (run it alone, name it). Any other red =\n   \`git -C ${dir} merge --abort\`, STOPPED, nothing merged.` };
+    ? `Suite in ${dir}: ${suiteCmd(p)}. Only the known reds of the project's known-red list may be\n   red; a load red must pass alone (run it alone, name it). Any other red = STOPPED, nothing merged.`
+    : `Suite in ${dir} on the uncommitted merge: ${suiteCmd(p)}. Only the known reds of\n   the project's known-red list may be red; a load red must pass alone (run it alone, name it). Any other red =\n   \`git -C ${dir} merge --abort\`, STOPPED, nothing merged.` };
   const [what, where, abort, smoke] = rebase ? ["step 1's rebase", dir, '', 4] : ["step 2's merge", `${dir} on the uncommitted merge`, `\`git -C ${dir} merge --abort\`, `, 5];
   return {
     ran: 'suite skipped (policy merge.suite = skip), conflicted-area tests <the test files run, or none>',

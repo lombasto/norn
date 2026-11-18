@@ -183,7 +183,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // the result counts unless the outcome is the exit's (a forced hand-off's result is Norn's own: its HANDOFF.md feeds the resume)
   const fromResult = !!byResult && (!byExit || !!ctxForced);
   const outcomeSource = fromResult ? 'result' : byExit ? 'exit' : 'none';
-  const data = { exit: Number.isInteger(code) ? code : null, outcome, outcome_source: outcomeSource, ...(fromResult ? { result: fwdPath(RESULT_DIR), ...(byResult.summary ? { summary: byResult.summary } : {}), ...(byResult.handoff ? { handoff: fwdPath(byResult.handoff) } : {}) } : {}), pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
+  const data = { exit: Number.isInteger(code) ? code : null, outcome, outcome_source: outcomeSource, ...(fromResult ? { result: fwdPath(RESULT_DIR), ...(byResult.summary ? { summary: byResult.summary } : {}), ...(byResult.handoff ? { handoff: fwdPath(byResult.handoff) } : {}), ...(byResult.look ? { look: byResult.look } : {}) } : {}), pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
   if (outcome === 'stopped') data.why = byResult?.why;

@@ -63,7 +63,9 @@ export const POLICY_DEFAULTS={
   // GAP-1 (holds.mjs): ALL queued work held on one machine-level hold this long = one needs-you item, one digest row, one notice
   holds:{notice_min:60},
   // META-CATCH S1 (stuck.mjs): an item past one threshold since its last merge is STUCK - a MAJOR wake, one notice, further rounds refused until an approach review; 0 = that threshold off
-  stuck:{stopped_rounds:3,runs_without_merge:8,days_without_merge:3}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
+  stuck:{stopped_rounds:3,runs_without_merge:8,days_without_merge:3},
+  // META-CATCH S2 (look.mjs): a look item's brief needs a Look: line from this round on and in every brief of these stages (first word, any case)
+  look:{stages:['MERGE','INSTALL'],min_round:2}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
 
 // META-OOTB F-2 + FOLLOWUP R1: the routing `project new` writes, derived in ONE place from the executors setup found AND the caps in
 // force (local/budget.json; an unset cap = no limit). A Codex executor is allowed only when the Codex total and its own cap

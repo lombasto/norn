@@ -173,3 +173,15 @@ test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as befo
   }
   assert.ok(kinds.staged(suite('skip')).includes(`a red there = \`git -C ${W} merge --abort\``));
 });
+
+test('MERGE briefs: a project with merge.gate.cmd runs its own gate (from its monorepo subdir), never ci-suite.mjs; gate.dir wins', () => {
+  const p = { name: 'shack', root: '/h/mono', subdir: 'shack', meta: '/h/norn', state: '/h/state/shack', deliverables: { main: 'main' }, policy: {},
+    merge: { gate: { cmd: '"/h/mono/shack/.venv/Scripts/python.exe" -m pytest tests -q' } } };
+  const o = { lane: 'L', branch: 'feat/x', worktree: '/h/wt', notes: '/h/n/NOTES.md' };
+  for (const brief of [renderMergeBrief(p, o), renderMergeBrief(p, { ...o, sha: 'abcdef1' })]) {
+    assert.match(brief, /Suite in .*: `cd shack && "\/h\/mono\/shack\/\.venv\/Scripts\/python\.exe" -m pytest tests -q` \(the project's merge gate, project\.json merge\.gate\.cmd\)\. Only the known reds/);
+    assert.doesNotMatch(brief, /ci-suite\.mjs/);
+  }
+  const own = renderMergeBrief({ ...p, merge: { gate: { cmd: 'make test', dir: 'other' } } }, o);
+  assert.match(own, /`cd other && make test`/);
+});
