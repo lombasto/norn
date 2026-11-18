@@ -50,7 +50,7 @@ import { costRollup, accountUsage, weekStart, nextReset, parseReset } from '../l
 import { Worker } from 'node:worker_threads';
 import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, readdirS, readdirA, prime, forget, readJsonS } from '../lib/fsnap.mjs';
 import { ART_FILES } from './norn/assets.mjs';
-import { homeEvents } from './home.mjs';
+import { homeEvents, chatState } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
@@ -962,7 +962,7 @@ export function createDashboard(o) {
   }
 
   // GET /api/chat?live=1: Server-Sent Events, one `line` event per thread line (id = its line number) from `from` / Last-Event-ID + 1,
-  // then each line as it is appended
+  // then each line as it is appended; + a `clock` event each second while a turn runs (the header's state line: the page holds no timer)
   // META-DASH-ASYNC R1: the thread is read on fs.promises, so the replay and the subscription are no longer one tick - it subscribes
   // first (lines appended meanwhile wait), reads, replays, then sends the waiting lines past the replay (by line number: no repeat, no gap)
   async function openChat(p, res, from) {
@@ -983,6 +983,12 @@ data: ${JSON.stringify(l)}
     t.items.forEach((l, k) => write(l, from + k));
     for (const [l, i] of early) if (i >= t.count && i >= from) write(l, i);
     send = write;
+    const clock = setInterval(() => { const s = chatStatus(p); if (!s.busy || !s.since) return;
+      try { res.write(`event: clock
+data: ${JSON.stringify({ text: chatState(s) })}
+
+`); } catch { /* gone */ } }, o.chatClockMs ?? 1000);
+    clock.unref?.(); res.on('close', () => clearInterval(clock));
   }
 
   async function body(req) {

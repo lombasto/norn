@@ -249,7 +249,7 @@ export function slashMenu(text, st = {}) {
   return `<ul class="slash" role="listbox" aria-label="Commands">${[...a, ...b, ...more, ...none, ...tail].join('')}</ul>`;
 }
 /** The chat's state line in the thread header: while a turn runs, what it is doing (its last tool), for how long, and the messages
- * waiting in Norn; the page ticks the clock each second (the thread-only repaint refreshes the rest). */
+ * waiting in Norn; the chat stream ticks the clock each second (server.mjs openChat) (the thread-only repaint refreshes the rest). */
 export function chatState(st = {}, now = Date.now()) {
   const q = st.queued ? ` · ${st.queued} message${st.queued === 1 ? '' : 's'} waiting` : '';
   if (st.handing_off) return `handing off ...${q}`;

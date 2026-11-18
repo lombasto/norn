@@ -661,8 +661,6 @@ async function paintThread() {
     homeRestore(k); err('');
   } catch (e) { err('Refresh failed: ' + e.message); }
 }
-// the state line's clock: one tick a second while a turn runs (text only - no fetch, no repaint)
-setInterval(() => { const st = $('#chat-state'), s = S.lastTab === 'home' ? S.last?.status : null; if (st && s?.busy && s.since) st.textContent = chatState(s); }, 1000);
 let chatEs = null, chatFor = null;
 function chatLive(project) {
   if (project === chatFor) return;
@@ -670,6 +668,8 @@ function chatLive(project) {
   if (!project) return;
   chatEs = new EventSource(`/api/chat?project=${encodeURIComponent(project)}&live=1&from=1000000000`);
   chatEs.addEventListener('line', () => sched.poke('chat'));
+  // the state line's clock: the chat stream ticks each second while a turn runs (text only - no fetch, no repaint; META-VISUAL-B: no page timer)
+  chatEs.addEventListener('clock', m => { const st = $('#chat-state'); if (st && S.lastTab === 'home') st.textContent = JSON.parse(m.data).text; });
 }
 // META-CHAT-CONTROLS R1: the "/" menu under the box (Norn's commands, then the session's own), the picker's two buttons
 function slashShow() {

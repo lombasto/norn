@@ -124,7 +124,7 @@ test('GET / serves the UI shell with the token; /ui.mjs is the same module; no t
     const all = html + fs.readFileSync(path.join(ENGINE, 'dash', 'ui.mjs'), 'utf8');
     assert.ok(!/animation\s*:|transition\s*:|@keyframes/.test(all), 'no animation');
     assert.deepEqual([...all.matchAll(/setInterval\(([^)]*)\)/g)].length, 0, 'no refetch timer'); assert.ok(!/requestAnimationFrame/.test(all), 'no frame loop');
-    assert.match(html, /new EventSource\(`\/api\/stream/);
+    assert.match(html, /new EventSource\(`\/api\/stream/); assert.match(html, /chatEs\.addEventListener\('clock'/, "the chat state line's clock comes from the chat stream");
     assert.match(html, /prefers-color-scheme:dark/); assert.match(html, /:root\.light/); assert.match(html, /:root\.dark/);
     assert.match(html, /font-variant-numeric:tabular-nums/);
   } finally { await f.done(); }
