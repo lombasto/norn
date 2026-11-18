@@ -4,6 +4,7 @@
 import { loadState, fold, readEvents, recordsFile } from './records.mjs';
 import fs from 'node:fs';
 import { makeGit, isAncestor, refTip } from './dlvgit.mjs';
+import { prVerdict } from './prstate.mjs';
 
 // kind -> { prefix, default state, allowed states }
 export const AFTER_KINDS = {
@@ -78,6 +79,8 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
   const merged = r => {
     const d = Object.values(dlvs()).find(x => x.data.run === r.id || x.history.some(h => h.ev === 'done' && h.data?.run === r.id));
     if (d?.state === 'superseded') return { met: true, gone: null };
+    const pv = d && prVerdict(d);   // RM-7 S2: a branch with a PR is merged when GitHub says so - an open / closed PR holds the run
+    if (pv) return { met: pv === 'merged', gone: null };
     const head = r.end?.head;
     if (!head) return { met: false, gone: `${r.id} ended done with no head sha evidence` };
     const repo = [d?.data.repo, r.data.worktree].find(p => p && fs.existsSync(p));
@@ -88,6 +91,8 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
     if (c.kind === 'dlv') {
       const d = dlvs()[c.id];
       if (!d) return { met: false, gone: `${c.id} does not exist` };
+      const pv = prVerdict(d);
+      if (pv) return { met: pv === 'merged', gone: null };
       const tip = refTip(d.data.repo, d.data.branch, { git }) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
       return { met: !!tip && workOnMain(d.data.repo, tip, d.data.main || 'main', { git }), gone: null };   // META-DLV-LANDED: the one rule
     }

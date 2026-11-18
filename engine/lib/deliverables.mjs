@@ -1,11 +1,13 @@
 // Deliverables (the Norn project's design/DELIVERABLES-SPEC.md): follow every lane's finished work to main and to an install.
 // Records: kind `deliverable` (DLV-n) in deliverables.jsonl (records.mjs). State DONE -> MERGED -> INSTALLED is derived here from
-// git (dlvgit.mjs) and the newest install receipt (project.json `deliverables.receipts`), never typed by hand.
+// git (dlvgit.mjs) and the newest install receipt (project.json `deliverables.receipts`), never typed by hand; a branch with a PR is
+// MERGED when GitHub reported the PR merged (prstate.mjs, RM-7 S2), never before.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile, loadState, record } from './records.mjs';
 import { scanRepo, makeGit, pruneCache } from './dlvgit.mjs';
 import { workOnMain } from './after.mjs';
+import { prOf, prVerdict } from './prstate.mjs';
 import { pathKey } from './config.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
@@ -127,21 +129,23 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const target = d.target || (own ? cfg.target : 'main');
     const sc = scanner.get(d.repo);
     const g = sc.s ? sc.s.info(d.branch, tipAtDone) : { tip: tipAtDone, merged: false, installed: false, behind: null, ahead: null, native: null, native_files: [] };
-    if (!g.merged && g.tip && sc.s?.mainSha && (landedOn(sc, d.repo, g.tip, own ? cfg.main : 'main', cfg.remote || 'origin', git) || landedOnHistory(sc, d.repo, g.tip, git))) Object.assign(g, { merged: true, ahead: 0 });
+    const verdict = prVerdict(it);   // RM-7 S2: a branch with a PR is merged when GitHub says so - an open / closed PR holds it
+    if (verdict) Object.assign(g, verdict === 'merged' ? { merged: true, ahead: 0 } : { merged: false, installed: false });
+    else if (!g.merged && g.tip && sc.s?.mainSha && (landedOn(sc, d.repo, g.tip, own ? cfg.main : 'main', cfg.remote || 'origin', git) || landedOnHistory(sc, d.repo, g.tip, git))) Object.assign(g, { merged: true, ahead: 0 });
     if (g.tip) sc.tips.push(g.tip);
     const state = g.merged ? (g.installed && target === 'install' ? 'installed' : 'merged') : 'done';
     const at_target = target === 'main' ? state !== 'done' : state === 'installed';
     const parkEv = it.state === 'parked' ? lastEv(it, ['park']) : null;
     // META-GTP-MERGEQ piece 0: superseded = terminal (the work landed another way): at its target, never due / resolved / rehearsed
     const supEv = it.state === 'superseded' ? lastEv(it, ['supersede']) : null;
-    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;   // the PR norn merge-land opened
+    const pr = (p => p && { url: p.url, number: p.number, state: p.state, merged_at: p.merged_at })(prOf(it));   // the PR norn merge-land opened, as GitHub last said
     const superseded = supEv ? { by: supEv.data.by, why: supEv.data.why, at: supEv.ts } : null;
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
     const since = Date.parse((lastEv(it, ['park', 'unpark']) || it.history[0]).ts);
     const asked = qs.filter(q => q.data?.deliverable === it.id && Date.parse(q.created) >= since).sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0]?.id ?? null;
     const days = +((now - Date.parse(doneUtc)) / DAY).toFixed(1);
-    const due = !superseded && state === 'done' && now - Date.parse(doneUtc) > cfg.ask_after_h * 3600e3 && (!park || park.expired) && !asked;
+    const due = !superseded && state === 'done' && pr?.state !== 'open' && now - Date.parse(doneUtc) > cfg.ask_after_h * 3600e3 && (!park || park.expired) && !asked;
     // META-DLV-R2: the merge rehearsal of a DONE tip onto main, and the resolve flag (conflict, or more than resolve_behind behind)
     const rehearses = !superseded && state === 'done' && sc.s && g.tip;
     if (rehearses) sc.want.push(g.tip);
@@ -305,7 +309,7 @@ export function formatDeliverable(r) {
   const flag = r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : '';
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
-    pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
+    pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} ${r.pr.state} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
 }
 
 /**

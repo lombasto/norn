@@ -102,8 +102,8 @@ test('the PR norn merge-land opened shows on its row and listing line; the newes
   assert.equal(row().pr, null);
   assert.doesNotMatch(formatDeliverable(row()), /PR #/);
   for (const n of [4, 7]) record(state, { kind: 'deliverable', ev: 'pr', id, by: 'launcher', data: { url: `https://github.com/o/r/pull/${n}`, number: n, repo: 'o/r', head: 'fix/b', base: 'main' } }, { now: () => at(-1), views: false });
-  assert.deepEqual(row().pr, { url: 'https://github.com/o/r/pull/7', number: 7 });
-  assert.match(formatDeliverable(row()), /fix\/b +PR #7 \| DUE \| clean \| docs b$/);
+  assert.deepEqual(row().pr, { url: 'https://github.com/o/r/pull/7', number: 7, state: 'open', merged_at: null });
+  assert.match(formatDeliverable(row()), /fix\/b +PR #7 open \| +clean \| docs b$/, 'an open PR is the ask: not DUE (RM-7 S2)');
 });
 
 test('a deliverable whose branch is gone falls back to its recorded tip', () => {
