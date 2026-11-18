@@ -446,6 +446,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
       : String(d.word || '').startsWith('conflict') ? 'needs a conflict fix first' : d.word === 'clean' ? 'ready to merge' : 'not checked against main yet';
     landing.push({ kind: 'work', id: d.id, run: q?.id ?? null, label: d.lane ? label({ lane: d.lane }) : String(d.branch ?? d.id).replace(SHA, ''), branch: d.branch ?? null, what: d.delivers ?? null, word });
   }
+  for (const d of merges?.awaiting || []) landing.push({ kind: 'work', id: d.id, run: null, label: d.lane ? label({ lane: d.lane }) : String(d.branch ?? d.id).replace(SHA, ''), branch: d.branch ?? null, what: d.delivers ?? null, word: `PR #${d.pr.number ?? '?'} open: waits for the owner to merge it` });   // RM-7 S2
   for (const q of qm) if (!used.has(q.id)) landing.push({ kind: 'run', id: q.id, label: label({ ...map[q.id].data, id: q.id }), word: mergeRunWord(q.id) });
 
   // 4. Forecast: usage now + the queued Claude work's rough cost

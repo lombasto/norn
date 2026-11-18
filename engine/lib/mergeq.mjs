@@ -55,7 +55,8 @@ function retriesOf(runs, stateDir, row, since) {
 
 /**
  * The queue: every DONE-not-merged deliverable that is open (not parked, not superseded) and whose branch exists, in score order.
- * Returns { rows: [{ ...view row, score, priority, epic, epic_hours, dlv_hours, retries, gate, word (rehearsal), into (target branch) }], cfg }
+ * RM-7 S2: a row whose PR is open waits for the owner to merge it on GitHub, not for another merge: it is in `awaiting`, not in rows.
+ * Returns { rows: [{ ...view row, score, priority, epic, epic_hours, dlv_hours, retries, gate, word (rehearsal), into (target branch) }], awaiting: [view row], cfg }
  */
 export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = makeGit(), view = null } = {}) {
   const cfg = mergeConfig(project), slop = slopOn(project.policy);
@@ -64,9 +65,10 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
   const dlvs = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items);
   const red = loadMq(stateDir).red || {};   // piece 3: a bisect culprit stays out (no update, no batch) until its tip changes
-  const rows = [], into1 = new Map(), ib1 = into => (into1.has(into) ? into1.get(into) : into1.set(into, intoSha(cfg, into, git)).get(into));
+  const rows = [], awaiting = [], into1 = new Map(), ib1 = into => (into1.has(into) ? into1.get(into) : into1.set(into, intoSha(cfg, into, git)).get(into));
   for (const r of v.rows) {
     if (r.state !== 'done' || r.record_state !== 'open' || r.superseded || r.branch_exists === false) continue;
+    if (r.pr?.state === 'open') { awaiting.push(r); continue; }
     const ep = epicOf(epics, r);
     const into = ep?.data.integration_branch || cfg.main;
     // piece 4: a row already on its epic's integration branch has reached its queue target (main follows when the branch lands)
@@ -82,7 +84,7 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
       slop: slop ? openBlocks(stateDir, r.branch).length : 0 });   // META-SLOP-A: open BLOCK findings hold the branch out of a batch (META-BETA-PREP: not while off)
   }
   rows.sort((a, b) => b.score - a.score || Number(a.id.slice(4)) - Number(b.id.slice(4)));
-  return { rows, cfg };
+  return { rows, awaiting, cfg };
 }
 
 /** one `norn mergeq` line: id, score, priority / epic, gate kind, rehearsal, behind, target, branch, what it delivers */

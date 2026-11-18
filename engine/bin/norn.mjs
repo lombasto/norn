@@ -1565,10 +1565,11 @@ function mergeqCmd(argv, env, out, err) {
     }
     const q = mergeQueue({ stateDir: state, project });
     const s = mqSummary(state);
-    if (flags.json) { out(JSON.stringify({ rows: q.rows, gate: q.cfg.gate, batch_max: q.cfg.batch_max, mq: s.mq, batch: s.batch }, null, 1)); return 0; }
+    if (flags.json) { out(JSON.stringify({ rows: q.rows, awaiting: q.awaiting, gate: q.cfg.gate, batch_max: q.cfg.batch_max, mq: s.mq, batch: s.batch }, null, 1)); return 0; }
     if (q.cfg.gate?.fast) for (const l of s.lines) out(l);
     for (const r of q.rows) out(formatMq(r));
     if (!q.rows.length) out('merge queue empty');
+    for (const r of q.awaiting) out(`${r.id} PR #${r.pr.number ?? '?'} open: waits for the owner to merge ${r.pr.url} (${r.branch})`);   // RM-7 S2
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + MQ_USAGE); return 2; }
