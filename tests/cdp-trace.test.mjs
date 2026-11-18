@@ -26,36 +26,41 @@ async function serve() {
   return { url: `http://127.0.0.1:${s.address().port}`, close: () => new Promise(res => { s.closeAllConnections(); s.close(res); }) };
 }
 
+// CI 44335427788 (ubuntu, HANG RED): openPage threw (no DevTools port in 30 s) before the try, so the server made before it
+// stayed open and held the file to the 600 s cap. openPage runs inside the try; the finally closes what was made.
 test('a slow go() report carries the browser trace of the gap: a page busy-loop is named as a long renderer task with its function', { skip: skipWhy, timeout: 120000 }, async () => {
-  const srv = await serve(), pg = await openPage([800, 600]);
+  const srv = await serve(); let pg;
   try {
+    pg = await openPage([800, 600]);
     assert.equal(await pg.go(`${srv.url}/busy`), 'busy');
     assert.match(pg.slow ?? '', /slow go\(/, 'the step was slow, so it reported');
     assert.match(pg.slow, /trace: renderer tasks: \d+ ms/, pg.slow);
     const ms = Number(pg.slow.match(/trace: renderer tasks: (\d+) ms/)[1]);
     assert.ok(ms >= 2000, `the longest renderer task covers the 2.5 s busy loop (${ms} ms)\n${pg.slow}`);
     assert.match(pg.slow, /trace: renderer tasks: \d+ ms [^\n]*stallHere/, 'the task is named by its JS function');
-  } finally { await pg.close(); await srv.close(); }
+  } finally { await pg?.close(); await srv.close(); }
 });
 
 test('a slow go() whose page waits on a late fetch: the trace names the request in flight, the renderer idle', { skip: skipWhy, timeout: 120000 }, async () => {
-  const srv = await serve(), pg = await openPage([800, 600]);
+  const srv = await serve(); let pg;
   try {
+    pg = await openPage([800, 600]);
     assert.equal(await pg.go(`${srv.url}/late`), 'late');
     assert.match(pg.slow ?? '', /slow go\(/);
     assert.match(pg.slow, /trace: network: [^\n]*\/api\/late-one \d+ ms/, pg.slow);
     const ms = Number(pg.slow.match(/\/api\/late-one (\d+) ms/)[1]);
     assert.ok(ms >= 2000, `the request spans the server's 2.5 s (${ms} ms)\n${pg.slow}`);
-  } finally { await pg.close(); await srv.close(); }
+  } finally { await pg?.close(); await srv.close(); }
 });
 
 test('an until() timeout carries the trace too; a quick go() reports nothing', { skip: skipWhy, timeout: 120000 }, async () => {
-  const srv = await serve(), pg = await openPage([800, 600]);
+  const srv = await serve(); let pg;
   try {
+    pg = await openPage([800, 600]);
     await assert.rejects(pg.until(`(() => { const t = Date.now(); while (Date.now() - t < 1200) {} return false; })()`, 1500),
       e => /still falsy/.test(e.message) && /trace: renderer tasks: \d+ ms/.test(e.message));
     assert.equal(await pg.go(`${srv.url}/quick`), 'quick'); assert.equal(pg.slow, null, 'a quick step: no report, no trace');
-  } finally { await pg.close(); await srv.close(); }
+  } finally { await pg?.close(); await srv.close(); }
 });
 
 // CI 43999056272 (ubuntu, SUID sandbox): a browser that aborted with a FATAL line but did not exit cost every browser test 30 s, then
