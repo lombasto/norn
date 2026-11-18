@@ -137,7 +137,7 @@ test('the Norn tab bar (UX review 2, was META-NAV R2): the plain destinations + 
   assert.ok(!/navgroups/.test(html), 'the R1 ?navgroups switch is gone'); assert.ok(!/data-navgroups/.test(css), 'the R1 variant blocks are gone');
   const nav = renderNav('records', {});
   assert.ok(!/class="ng /.test(nav) && !/nav \.ng\b/.test(css), 'the Norn group frames are gone');
-  assert.match(nav, /id="tab-history"[^>]*aria-selected="true"[^]*<div class="pages" id="pages-history"[^]*id="tab-records"[^>]*aria-selected="true"/, 'the active page sits on its destination\'s row');
+  assert.match(nav, /id="tab-history"[^>]*aria-selected="true"[^]*<div class="pages[^"]*" id="pages-history"[^]*id="tab-records"[^>]*aria-selected="true"/, 'the active page sits on its destination\'s row');
   const nr = rules(css.replace(/@media[^{]*\{/g, '')), body = sel => nr.filter(r => r.sel.split(',').map(s => s.trim()).includes(sel)).map(r => r.body).join(';');
   const n = (s, v) => assert.match(body(s), v, s);
   for (const g of ['dark', 'light']) for (const v of ['--nv', '--nu', '--ns', '--ninv']) assert.match(body(`:root.norn[data-ground=${g}]`), new RegExp(`${v}\\s*:\\s*#`), `${g} ${v}`);
@@ -151,6 +151,12 @@ test('the Norn tab bar (UX review 2, was META-NAV R2): the plain destinations + 
   const last = navRules.filter(r => /overflow-x/.test(r.body)).at(-1);
   assert.match(last.body, /overflow-x\s*:\s*visible/); assert.ok(navRules.some(r => /flex-wrap\s*:\s*wrap/.test(r.body)), 'nav wraps');
   assert.match(html, /nav \.dests,nav \.pages\{display:flex;flex-wrap:wrap;[^}]*max-width:100%/, 'both rows wrap inside the bar');
+  // RM-18 S1: the tones - the three time colours and the Health states, a thin underline, the open one filled in the inverse ink
+  for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['ok', 'ok'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));
+  const tb = ':root nav button[class*=tone-]', ts = `${tb}[aria-selected=true]`;
+  n(tb, /border-bottom-color\s*:\s*var\(--t\)/); n(tb, /--g\s*:\s*var\(--t\)/);
+  n(ts, /background\s*:\s*var\(--t\)/); n(ts, /color\s*:\s*var\(--rm-inv\)/);
+  n(':root nav .pages[class*=tone-]', /border-top-color\s*:\s*var\(--t\)/);
 });
 
 // META-TEND P6: SloppaChoppa's vendored art (norn-art-orc/out, ORC-1 round 5 + 6) under the asset map's names: each file its exact

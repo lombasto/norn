@@ -73,9 +73,9 @@ and the project's `project.json` and regenerates the marked policy lines (`<!-- 
 ## Look
 Norn (default; `engine/dash/norn/`: pixel kit, 9-slice panels, palette lock to `palette.hex`, integer art scale, state tokens and art behind one asset map `norn/assets.mjs`, drop-in folder `norn/art/`) or classic: the header Look button, `?look=classic`, remembered per browser.
 Norn vocabulary (display only; tab ids, routes, record kinds, paths and the CLI are unchanged): the bar is the same plain bar as
-classic (the Norn group frames Verdandi / Urd / Skuld / Wyrd left the bar in UX review 2; `NORN_GROUPS` still feeds the lore); the
-title says Norn and the header shows the wordmark; the Overview carries the hero (night / day by ground) with the three lore lines
-(Verdandi what is, Urd what was, Skuld what shall be, Wyrd all three); empty lists show the empty-state art. The picked art is vendored in `norn/art/` (source + name map in
+classic (the Norn group frames left the bar in UX review 2); the title says Norn and the header shows the wordmark; empty lists show
+the empty-state art. Both looks open the Overview with the strip of the three Norns (RM-18 S2), each part a link in its colour: Urd
+(landed today, last landed) to History, Verdandi (running, parked) to Work, Skuld (open questions, queued, next check-in) to Inbox. The picked art is vendored in `norn/art/` (source + name map in
 its README). The classic look keeps the plain "norn" title and no art.
 
 ## Tests
