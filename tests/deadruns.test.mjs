@@ -87,7 +87,32 @@ test('tick: dead runs are swept and handled by code before any model, with ONE n
   const go = () => tick({ project, machine: {}, budget: {}, reason: 'test', dry: true, mergeq: false, fix: false, slop: false, overlap: false });
   const r = go();
   assert.match(r.msg, /check-in .* running/);
-  assert.equal(d.item(a).state, 'lost'); assert.equal(d.item(a).resume.refused, 'cap 0/0');
+  assert.equal(d.item(a).resume.refused, 'cap 0/0');
+  assert.equal(d.item(a).state, 'exited', 'refused, its pids gone: the sweep ends it'); assert.equal(d.item(a).end.outcome, 'crash');
   assert.match(r.lost_notice.body, /^run supervisor gone: 1 run lost, 0 relaunched/);
   assert.equal(go().lost_notice, undefined, 'once');
+});
+
+// norn RUN-33: start 15:16, lost 15:30 (a stale beat: maybe a stall), reviewed 15:36, no end - it listed as live for hours. Once its
+// supervisor and executor are gone the sweep ends it (outcome crash, the lost why); never while a pid lives, never twice.
+test('end the lost: start + lost + no live pid -> the sweep writes ONE end (crash, the why) and drops the heartbeat; a live pid is left alone', async () => {
+  const { endLost } = await import('../engine/lib/runs.mjs');
+  const d = sandbox(), a = d.start(), alive = d.start(), fresh = d.start();
+  const dead = deadPid();
+  d.hb(a, { supervisor_pid: dead, pid: null }); stale(d, a);
+  d.hb(alive, { supervisor_pid: process.pid }); stale(d, alive);
+  record(d.state, { kind: 'run', ev: 'lost', id: a, by: 'status', data: { why: 'heartbeat 878 s old', supervisor_pid: dead } });   // RUN-33's record (before causes)
+  record(d.state, { kind: 'run', ev: 'review', id: a, by: 'checkin', data: { refs: [] } });
+  record(d.state, { kind: 'run', ev: 'lost', id: alive, by: 'status', data: { why: 'heartbeat 900 s old', cause: 'stale', supervisor_pid: process.pid } });
+  d.spec(fresh); d.hb(fresh, { supervisor_pid: dead }); sweepLost(d.state);   // a certain death the auto-resume policy has not seen yet
+  assert.deepEqual(endLost(d.state), [a], 'not the live supervisor, not a run the relaunch still owns');
+  const e = d.item(a);
+  assert.equal(e.state, 'exited'); assert.equal(e.end.outcome, 'crash'); assert.match(e.end.why, /lost: heartbeat 878 s old/);
+  assert.equal(e.history.filter(h => h.ev === 'end').length, 1);
+  assert.equal(fs.existsSync(hbPath(d.state, a)), false, 'no heartbeat file is left to look live');
+  assert.equal(d.item(alive).state, 'lost');
+  assert.deepEqual(endLost(d.state), [], 'idempotent');
+  relaunchLost(d.state, { start: () => { throw new Error('no slot'); } });   // the policy has its say (refused) -> then the sweep ends it
+  assert.deepEqual(endLost(d.state), [fresh]);
+  assert.equal(d.item(fresh).end.cause, 'gone');
 });

@@ -268,13 +268,13 @@ export const LOST_RESUME_MAX_AGE_MS = 24 * 3600e3;   // an older dead run is the
  * routine, or its `resume` record says why not (the check-in rules it). Level-triggered from the records: whoever swept it. Once per run.
  * Returns [{ id, cause, boot?, next?, refused? }].
  */
+// a lost run relaunchLost still has to judge (a check-in is the tick's own; a helper belongs to its parent)
+const relaunchable = (it, now) => it.state === 'lost' && !it.review && DEAD_CAUSES.includes(it.lost?.cause) && !it.history.some(h => h.ev === 'resume')
+  && it.data.kind !== 'checkin' && it.data.role !== 'helper' && now - Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts) <= LOST_RESUME_MAX_AGE_MS;
 export function relaunchLost(state, { now = Date.now(), start = startRun } = {}) {
   const out = [];
   for (const it of runsOf(state)) {
-    if (it.state !== 'lost' || it.review || !DEAD_CAUSES.includes(it.lost?.cause) || it.history.some(h => h.ev === 'resume')) continue;
-    if (it.data.kind === 'checkin' || it.data.role === 'helper') continue;   // a check-in is the tick's own; a helper belongs to its parent
-    const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
-    if (!(now - lostAt <= LOST_RESUME_MAX_AGE_MS)) continue;
+    if (!relaunchable(it, now)) continue;
     const spec = readJson(path.join(state, 'runs', it.id + '.spec.json'));
     let { refused, count, max } = spec ? autoResumeRefusal(spec, state) : { refused: 'no spec file', count: 0, max: 0 };
     let next = null;
@@ -292,6 +292,26 @@ export function relaunchLost(state, { now = Date.now(), start = startRun } = {})
       if (next) record(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
     } catch (e) { if (!(e instanceof RecordError)) throw e; }
     out.push(drop({ id: it.id, cause: it.lost.cause, boot: it.lost.boot, next, refused }));
+  }
+  return out;
+}
+/**
+ * A lost run is not an ended one: `lost` only says the beat stopped (a stale one may be a stall whose supervisor still ends it), so
+ * nothing wrote its `end` and it looked live for hours (norn RUN-33: stale-lost, reviewed, never relaunched). Once its supervisor and
+ * executor pids are both gone - and the auto-resume policy has had its say (relaunchable) - the sweep writes the one `end` (outcome
+ * crash, the lost why) and drops its heartbeat file. A pid alive again (a stall, or a reused pid) leaves it alone. -> [ids ended]
+ */
+export function endLost(state, { now = Date.now(), gone = pidGone } = {}) {
+  const out = [];
+  for (const it of runsOf(state)) {
+    if (it.state !== 'lost' || it.data.kind === 'interactive' || relaunchable(it, now)) continue;
+    const hb = readJson(hbPath(state, it.id)), pids = [hb?.supervisor_pid, hb?.pid, it.lost?.supervisor_pid].filter(p => Number.isInteger(p) && p > 0);
+    if (!pids.every(gone)) continue;
+    const why = `lost: ${it.lost?.why ?? 'no heartbeat'}; supervisor and executor gone, no end record`;
+    try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } }); }
+    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
+    out.push(it.id);
   }
   return out;
 }

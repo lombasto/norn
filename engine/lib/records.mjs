@@ -59,7 +59,8 @@ export const KINDS = {
   } },
   run: { prefix: 'RUN-', file: 'runs', events: {
     start: { from: null, to: 'running', roles: ['launcher'] },
-    end: { from: ['running'], to: 'exited', roles: ['launcher'] },
+    // from lost too: a stalled supervisor that ends after the sweep called it lost, and the sweep's own end of a dead lost run (runs.mjs endLost)
+    end: { from: ['running', 'lost'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
     kill: { from: ['running'], to: 'killed', roles: [...OWNER, 'controller'] },
     // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5); META-CATCH S1: the
