@@ -25,9 +25,20 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
   return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool: t, ...(rules ? { rules } : {}) }) };
 }
 
-/** the resume prompt: the list and what to do with it */
-export function slopPrompt(open, brief) {
-  return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds:`, ...open.map(f => '- ' + findingLine(f)),
+// the resume prompt names at most SLOP_GROUPS (rule, file) groups and SLOP_FIRST lines of each: a BLOCK list of thousands of hits
+// (one fixture's trailing whitespace) once made a prompt too long to start the resume (solve-shack RUN-140)
+export const SLOP_GROUPS = 20, SLOP_FIRST = 3;
+/** the full BLOCK list, one finding a line (the file the resume prompt names) */
+export const slopList = open => open.map(f => '- ' + findingLine(f)).join('\n') + '\n';
+/** the resume prompt: per rule and file a count and the first lines, the full list in listFile, and what to do with it */
+export function slopPrompt(open, brief, listFile) {
+  const groups = new Map();
+  for (const f of open) { const k = `${f.rule} ${f.file}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
+  const shown = [...groups].slice(0, SLOP_GROUPS), rest = groups.size - shown.length;
+  return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds, in ${groups.size} rule / file group(s):`,
+    ...shown.flatMap(([k, fs_]) => [`- ${k}: ${fs_.length}`, ...fs_.slice(0, SLOP_FIRST).map(f => '  - ' + findingLine(f)), ...(fs_.length > SLOP_FIRST ? [`  - ... ${fs_.length - SLOP_FIRST} more`] : [])]),
+    ...(rest > 0 ? [`- ... ${rest} more group(s)`] : []),
+    ...(listFile ? [`The full list: ${listFile}`] : []),
     'Fix each one in this worktree and commit; run `norn slop check` until it lists none; then end with `norn done` as before.',
     'A finding that must stay needs a waiver from the owner or the controller: say so and end with `norn done --outcome stopped --why "slop waiver needed"`.',
     ...(brief ? [`Your brief: ${brief}`] : [])].join('\n');

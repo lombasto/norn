@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import claude from './claude.mjs';
-import { modeOf, logFeed } from './common.mjs';
+import { modeOf, logFeed, promptArg } from './common.mjs';
 
 export const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'fake-executor.mjs');
 export const FAKE_CHAT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'fake-chat.mjs');
@@ -12,9 +12,11 @@ const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'no
 function command(o) {
   const mode = modeOf(o, 'fake', caps);
   if (o.mcp) throw new Error('fake has no MCP');
-  return { exe: process.execPath, stdin: null, stdout: 'final', parse: 'claude', args: [
+  // a long nudge prompt comes on stdin (--prompt-stdin), as claude's does
+  const p = o.resumeSid && o.promptText ? promptArg(o.promptText) : null;
+  return { exe: process.execPath, stdin: null, stdout: 'final', parse: 'claude', ...p?.fields, args: [
     FAKE, '--brief', o.brief, ...(o.notes ? ['--notes', o.notes] : []), ...(mode === 'read-only' ? ['--read-only'] : []), '--resumes', String(o.resumes || 0),
-    ...(o.resumeSid ? ['--resume', o.resumeSid, ...(o.promptText ? ['--prompt', o.promptText] : [])] : [])] };
+    ...(o.resumeSid ? ['--resume', o.resumeSid, ...(p ? (p.arg.length ? ['--prompt', ...p.arg] : ['--prompt-stdin']) : [])] : [])] };
 }
 
 // META-CONTROLLER C1: the scripted chat CLI (engine/bin/fake-chat.mjs) speaks claude's stream-json, so claude's chatEvents parse it;

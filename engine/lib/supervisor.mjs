@@ -22,7 +22,7 @@ import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
-import { checkBranch, slopPrompt } from './slop/runend.mjs';
+import { checkBranch, slopPrompt, slopList } from './slop/runend.mjs';
 import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
@@ -102,6 +102,11 @@ Object.assign(env, { META_RUN_ID: run, META_RUN_STATE: path.resolve(state), META
 
 let cmd;
 try { cmd = buildCommand({ ...spec, result: RESULT, resultDir: RESULT_DIR }); } catch (e) { finish(null, null, String(e.message)); }
+// a prompt too long for the command line (common.mjs PROMPT_ARG_MAX): the executor reads it on stdin, from a file in the run's result dir
+if (cmd?.input !== undefined) {
+  try { const f = path.join(RESULT_DIR, 'prompt.md'); fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(f, cmd.input); cmd.stdin = f; }
+  catch (e) { finish(null, null, `prompt file not written: ${e.message}`); cmd = null; }
+}
 // NORN-WATCH S5 (DEC-683): the whole tree ends with the run - Windows: this supervisor enters a job before the executor is born
 // (jobguard.mjs); POSIX: the executor leads its own process group. Check-ins are not guarded (they dispatch the workers: a worker
 // must never hang on its dispatcher's job), nor is policy reap "off".
@@ -381,7 +386,9 @@ function slopEnd() {
   let next = null, refused = null;
   try {
     const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
-    next = startRun({ ...rest, resumeOf: run, slopOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: slopPrompt(open, spec.brief) }).run;
+    const list = path.join(RESULT_DIR, 'slop-blocks.md');   // the full list: the prompt carries a summary
+    fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(list, slopList(open));
+    next = startRun({ ...rest, resumeOf: run, slopOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: slopPrompt(open, spec.brief, fwdPath(list)) }).run;
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, slop: open.length } : { refused, slop: open.length } }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }

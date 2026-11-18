@@ -20,7 +20,8 @@ const brief = Object.fromEntries(fs.readFileSync(arg('brief'), 'utf8').split(/\r
 const notes = brief.writes || arg('notes');
 const resumes = Number(arg('resumes') || 0);
 // a nudge (META-GTP-MAIL): --resume <sid> --prompt <mail> = the same session resumed; it follows brief.resumed_mode (default done), no until
-const resumeSid = arg('resume'), resumePrompt = arg('prompt');
+// --prompt-stdin: a long prompt comes on stdin, as claude -p reads one (harness/common.mjs PROMPT_ARG_MAX)
+const resumeSid = arg('resume'), resumePrompt = process.argv.includes('--prompt-stdin') ? fs.readFileSync(0, 'utf8') : arg('prompt');
 let mode = resumeSid ? (brief.resumed_mode || 'done') : (brief.mode || 'done');
 if (mode === 'handoff-once') mode = resumes === 0 ? 'handoff' : 'done';
 const ms = Number(brief.ms || process.env.FAKE_MS || (mode === 'sleep' ? 60000 : 0));

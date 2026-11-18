@@ -12,6 +12,12 @@ export function prompt({ brief, worktree, resumes = 0, handoffFile }) {
   return p;
 }
 
+// Windows caps a whole command line at 32 767 chars (`spawn ENAMETOOLONG`, solve-shack RUN-140: a slop resume prompt of thousands of
+// hits): a prompt longer than this never rides the command line - the command carries it as `input` and the supervisor feeds it on
+// stdin (from a file in the run's result dir). The bound leaves the rest of the line (settings JSON, system prompt, dirs) its room.
+export const PROMPT_ARG_MAX = 8000;
+export const promptArg = text => text.length > PROMPT_ARG_MAX ? { arg: [], fields: { input: text } } : { arg: [text], fields: {} };
+
 export const MODES = ['write', 'read-only', 'no-tools'];
 // capability flags (META-GTP-HARNESS; Gas Town internal/config/agents.go:20-110 SupportsForkSession / SupportsHooks / ResumeStyle /
 // NonInteractive): fork = the CLI can fork a session (gates a seance); hooks = 'settings' (lifecycle hooks from a settings file) |
