@@ -46,6 +46,18 @@ test('file tools: inside the worktree (in Scope), its addDirs and the NOTES fold
   assert.equal(checkTool({ tool_name: 'Write', tool_input: { file_path: 'tests/b.test.mjs' }, cwd: w.wt }, ctx(w)), null);
 });
 
+// solve-shack RUN-124: Scope listed solve-shack/README.md and an Edit of it was refused (the hook folded one side's case only)
+test('file tools: Scope matches a path in any case on Windows (case-insensitive there), exactly elsewhere; a file outside Scope is still refused', () => {
+  const w = world();
+  fs.writeFileSync(w.brief, '# t\nScope: solve-shack/README.md, Engine/**\n');
+  const c = ctx(w), edit = p => checkTool({ tool_name: 'Edit', tool_input: { file_path: path.join(w.wt, ...p.split('/')) }, cwd: w.wt }, c);
+  assert.equal(edit('solve-shack/README.md'), null);
+  assert.equal(edit('Engine/lib/x.mjs'), null);
+  if (process.platform === 'win32') { assert.equal(edit('solve-shack/readme.md'), null); assert.equal(edit('engine/lib/x.mjs'), null); }
+  else refusedBy(edit('solve-shack/readme.md'), /Scope/);   // POSIX: another file
+  refusedBy(edit('solve-shack/OTHER.md'), /solve-shack\/OTHER\.md is outside the brief's Scope/);
+});
+
 test('git: force push in any spelling, push to main / master and remote branch deletes are refused; a feature push passes', () => {
   const w = world(), c = ctx(w);
   for (const cmd of ['git push --force', 'git push -f origin feat/x', 'git push origin feat/x --force-with-lease', 'git -C . push -f', 'git push origin +feat/x',

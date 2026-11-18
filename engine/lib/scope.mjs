@@ -20,7 +20,10 @@ export const SCOPE_TOOLS = 'Bash|PowerShell|Edit|Write|NotebookEdit';
 export const REFUSAL_DAYS = 30;
 const WIN = process.platform === 'win32';
 const fwd = p => String(p).replace(/\\/g, '/');
-const norm = p => { const a = fwd(path.resolve(p)).replace(/\/+$/, ''); return WIN ? a.toLowerCase() : a; };
+// a path's identity for every comparison here: Windows paths are case-insensitive (README.md and readme.md are one file), so BOTH
+// sides fold there - the run's paths (norm) and the brief's Scope entries (fold); POSIX keeps case (they are two files)
+const fold = s => WIN ? s.toLowerCase() : s;
+const norm = p => fold(fwd(path.resolve(p)).replace(/\/+$/, ''));
 const under = (p, root) => p === root || p.startsWith(root + '/');
 // a check-in works in the main checkout and may push main; a MERGE stage opens a PR (norn merge-land) and a lane run never pushes main
 const mayPushMain = spec => spec.kind === 'checkin';
@@ -77,11 +80,11 @@ const at = (cwd, word, env) => { const v = expand(word, env); if (v === null || 
 
 // ---------- the file tools ----------
 function checkFile(file, cwd, c) {
-  const p = norm(path.resolve(cwd || c.worktree, file));
+  const abs = path.resolve(cwd || c.worktree, file), p = norm(abs);
   if (c.free.some(r => under(p, r))) return null;
   if (!under(p, c.worktree)) return `${fwd(file)} is outside this run's working directories (${c.shown.join(', ')}): write inside the worktree, or put the need in your NOTES`;
-  const rel = p.slice(c.worktree.length + 1);
-  if (c.scope.length && !inScope(rel, c.scope)) return `${rel} is outside the brief's Scope (${c.scope.join(', ')}): stay inside Scope, or say in your NOTES why the file must change`;
+  const rel = fwd(abs).slice(c.worktree.length + 1);   // as written (the message); the match folds both sides
+  if (c.scope.length && !inScope(fold(rel), c.scope.map(fold))) return `${rel} is outside the brief's Scope (${c.scope.join(', ')}): stay inside Scope, or say in your NOTES why the file must change`;
   return null;
 }
 
