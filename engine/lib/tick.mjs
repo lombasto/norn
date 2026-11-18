@@ -192,7 +192,7 @@ function tickPass(o, g = {}) {
     // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
     if (o.overlap !== false && !o.dry) projectOverlap(p);
     // RM-7 S2: each open PR of a deliverable is read once (gh pr view): merged on GitHub = the deliverable is merged (never fails the tick)
-    if (!o.dry && o.prs !== false) try { for (const x of syncPrStates(state, o.gh ? { gh: o.gh } : {})) tickLog(state, `${tag}: ${x.id} PR ${x.url} ${x.error ? 'not read - ' + x.error : x.state}`); } catch (e) { tickLog(state, `${tag}: PR states: ${e.message}`); }
+    if (!o.dry) try { for (const x of syncPrStates(state, o.gh ? { gh: o.gh } : {})) tickLog(state, `${tag}: ${x.id} PR ${x.url} ${x.error ? 'not read - ' + x.error : x.state}`); } catch (e) { tickLog(state, `${tag}: PR states: ${e.message}`); }
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
     const start = new Date().toISOString();
