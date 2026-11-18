@@ -64,7 +64,7 @@ export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, a
     '## Answer contract',
     '- At most 40 lines. Every claim cites file:line (or log:line).',
     '- "UNKNOWN" is allowed and preferred to a guess.',
-    `- Your final message IS the answer (saved to ${out}); its last line is exactly \`## DONE\`.`,
+    `- Your final message IS the answer (saved to ${out}).`,
     '',
   ].join('\n');
 }

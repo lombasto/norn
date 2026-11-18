@@ -43,7 +43,7 @@ test('the dashboard shows run names: agents tree, lanes, overview running rows, 
     assert.equal(n2.name, agentName('RUN-2'));
     const lanes = (await f.get('/api/lanes')).data.lanes; assert.equal(lanes.find(l => l.name === 'render').run_name, agentName('RUN-2'));
     const get = async r => (await f.get(r)).data;
-    for (const tab of ['agents', 'lanes', 'overview']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(agentName('RUN-2')), tab);
+    for (const tab of ['runs', 'lanes', 'overview']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(agentName('RUN-2')), tab);
     assert.ok(renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' }).includes(agentName('RUN-1')), 'inbox unreviewed run');
   } finally { await f.done(); }
 });

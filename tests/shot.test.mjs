@@ -220,3 +220,34 @@ test('waitDevToolsPort: a Linux SUID sandbox helper not root/4755 (CI-RED-7D65D2
     return true;
   });
 });
+
+// CI 43999056272 (ubuntu): the SUID abort above came from a browser that did NOT exit (the crashpad handler / the wrapper script
+// lived on), so every browser test waited the whole 30 s for a port that could never come, then (its tree never killed) held its
+// file open to the 600 s cap: 14 reds at 30 s and 5 HANG reds. A FATAL line on stderr is the browser's own verdict: fail on it.
+test('waitDevToolsPort: a FATAL line on stderr fails at once though the process lives on (no 30 s wait)', async () => {
+  const profile = mkTmp('meta-shot-');
+  const fixture = path.join(HERE, 'fixtures', 'edge-suid-sandbox-stderr.txt');
+  const hang = `process.stderr.write(require("fs").readFileSync(${JSON.stringify(fixture)}, "utf8")); setInterval(() => {}, 1e6)`;
+  const browser = { kind: 'edge', exe: process.execPath, prefix: ['-e', hang, '--'] };
+  const child = launchBrowser({ browser, profile, size: [800, 600], platform: process.platform });
+  try {
+    await assert.rejects(waitDevToolsPort({ browser, profile, child }), e => {
+      assert.match(e.message, /^no DevTools port/);
+      assert.match(e.message, /FATAL on stderr, still running/, 'failed on the FATAL line, not on the 30 s port wait');
+      assert.match(e.message, /SUID sandbox misconfigured: \/opt\/microsoft\/msedge\/msedge-sandbox/);
+      return true;
+    });
+    assert.equal(child.exitCode, null, 'the process was still alive when it failed');
+  } finally { const gone = new Promise(r => child.once('exit', r)); child.kill('SIGKILL'); await gone; }
+});
+
+test('waitDevToolsPort: ERROR lines (crashpad noise every Linux runner prints) are not a failure', async () => {
+  const profile = mkTmp('meta-shot-');
+  const noise = `const n = String.fromCharCode(10); process.stderr.write("[1117/014440.518755:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open x" + n);
+    setTimeout(() => require("fs").writeFileSync(require("path").join(${JSON.stringify(profile)}, "DevToolsActivePort"), "4321" + n + "/devtools/browser/x"), 300); setTimeout(() => process.exit(0), 600)`;
+  const browser = { kind: 'chrome', exe: process.execPath, prefix: ['-e', noise, '--'] };
+  const child = launchBrowser({ browser, profile, size: [800, 600], platform: process.platform });
+  const gone = new Promise(r => child.once('exit', r));
+  assert.equal(await waitDevToolsPort({ browser, profile, child }), 4321);
+  await gone;
+});

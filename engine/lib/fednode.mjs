@@ -75,7 +75,7 @@ function nodeSpec(spec, { m, metaRoot, cfg, state, served, claim_of, ws }) {
   const bf = path.join(metaRoot, 'local', 'budget.json');
   return { ...rest, state, locksDir: path.join(cfg.state_root, 'locks'), brief: P(spec.brief), worktree: P(spec.worktree), notes: P(spec.notes),
     quiet: P(spec.quiet), gpu_lock: P(spec.gpu_lock), writable_roots: spec.writable_roots?.map(P), exe, node_labels: served, claim_of,
-    budget: readJson(bf) || spec.budget, paused: [path.join(cfg.state_root, 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
+    budget: readJson(bf) || spec.budget, budget_file: bf, paused: [path.join(cfg.state_root, 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
     ledger: undefined, projectsDir: m.claude?.projects_dir, tick: null, ...W };
 }
 

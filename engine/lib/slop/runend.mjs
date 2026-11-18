@@ -28,7 +28,7 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
 /** the resume prompt: the list and what to do with it */
 export function slopPrompt(open, brief) {
   return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds:`, ...open.map(f => '- ' + findingLine(f)),
-    'Fix each one in this worktree and commit; run `norn slop check` until it lists none; then end your NOTES as before (## DONE).',
-    'A finding that must stay needs a waiver from the owner or the controller: say so in NOTES and end with ## STOPPED: slop waiver needed.',
+    'Fix each one in this worktree and commit; run `norn slop check` until it lists none; then end with `norn done` as before.',
+    'A finding that must stay needs a waiver from the owner or the controller: say so and end with `norn done --outcome stopped --why "slop waiver needed"`.',
     ...(brief ? [`Your brief: ${brief}`] : [])].join('\n');
 }

@@ -9,13 +9,13 @@
 
 :root.norn { --px: 2px; --d1: 1px; --pix: 'Silkscreen', ui-monospace, monospace; }
 :root.norn[data-ground=dark] { --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
-  --accent: #e2683f; --accent-bg: #241a14; --ok: #94b44c; --ok-bg: #34431c; --run: #eec24a; --run-bg: #6e430f; --warn: #52b8a0; --warn-bg: #0e2b30;
-  --bad: #e2683f; --bad-bg: #571a22; --codex: #a0569a; --codex-bg: #0b0e1a; --bar: #2e3f5f; --on-accent: #0b0e1a; --shadow: #0b0e1a; --zebra: #1f2b45;
+  --accent: #9eecc9; --accent-bg: #0e2b30; --ok: #94b44c; --ok-bg: #34431c; --run: #93aec6; --run-bg: #2e3f5f; --warn: #eec24a; --warn-bg: #6e430f;
+  --bad: #e2683f; --bad-bg: #241a14; --codex: #a0569a; --codex-bg: #0b0e1a; --bar: #2e3f5f; --on-accent: #0b0e1a; --shadow: #0b0e1a; --zebra: #1f2b45;
   --gold: #eec24a; --dim: #6380a0;
   --k1: #93aec6; --k2: #a0569a; --k3: #e2683f; --k4: #eec24a; --k5: #52b8a0; --k6: #94b44c; --k7: #b8801e; --k8: #6380a0; --k9: #9c7048; --kgen: #a0569a; }   /* META-TEND P1-VISUAL: stack / bars series */
 :root.norn[data-ground=light] { --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
-  --accent: #a5302e; --accent-bg: #f7f0dc; --ok: #34431c; --ok-bg: #94b44c; --run: #6e430f; --run-bg: #fff0a8; --warn: #17504f; --warn-bg: #9eecc9;
-  --bad: #a5302e; --bad-bg: #c9b48c; --codex: #a0569a; --codex-bg: #d3e2ec; --bar: #c9b48c; --on-accent: #f7f0dc; --shadow: #8c7656; --zebra: #e9dcbc;
+  --accent: #17504f; --accent-bg: #9eecc9; --ok: #34431c; --ok-bg: #94b44c; --run: #2e3f5f; --run-bg: #d3e2ec; --warn: #6e430f; --warn-bg: #fff0a8;
+  --bad: #a5302e; --bad-bg: #e9dcbc; --codex: #a0569a; --codex-bg: #d3e2ec; --bar: #c9b48c; --on-accent: #f7f0dc; --shadow: #8c7656; --zebra: #e9dcbc;
   --gold: #6e430f; --dim: #6b4a30;
   --k1: #425a7d; --k2: #a0569a; --k3: #a5302e; --k4: #6e430f; --k5: #17504f; --k6: #5a7a2c; --k7: #b8801e; --k8: #2e3f5f; --k9: #6b4a30; --kgen: #a0569a; }
 
@@ -50,14 +50,14 @@
 :root.norn .chip.running::before, :root.norn .chip.active::before, :root.norn .chip.done::before, :root.norn .chip.applied::before,
 :root.norn .chip.in-force::before, :root.norn .chip.ok::before, :root.norn .chip.handoff::before, :root.norn .chip.answered::before,
 :root.norn .chip.warn::before, :root.norn .chip.parked::before, :root.norn .chip.stopped::before, :root.norn .chip.lost::before,
-:root.norn .chip.no-marker::before, :root.norn .chip.bad::before, :root.norn .chip.overruled::before, :root.norn .chip.open::before,
+:root.norn .chip.no-result::before, :root.norn .chip.bad::before, :root.norn .chip.overruled::before, :root.norn .chip.open::before,
 :root.norn .chip.needs::before, :root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before,
 :root.norn .chip.withdrawn::before, :root.norn .chip.idle::before { display: inline-block; }
 :root.norn .chip.running::before { background-image: var(--tk-running); } :root.norn .chip.active::before { background-image: var(--tk-idle); }
 :root.norn .chip.done::before, :root.norn .chip.applied::before, :root.norn .chip.in-force::before, :root.norn .chip.ok::before { background-image: var(--tk-done); }
 :root.norn .chip.handoff::before, :root.norn .chip.answered::before, :root.norn .chip.warn::before { background-image: var(--tk-handoff); }
 :root.norn .chip.parked::before { background-image: var(--tk-parked); }
-:root.norn .chip.stopped::before, :root.norn .chip.lost::before, :root.norn .chip.no-marker::before, :root.norn .chip.bad::before,
+:root.norn .chip.stopped::before, :root.norn .chip.lost::before, :root.norn .chip.no-result::before, :root.norn .chip.bad::before,
 :root.norn .chip.overruled::before { background-image: var(--tk-stopped); }
 :root.norn .chip.open::before, :root.norn .chip.needs::before { background-image: var(--tk-needs); }
 :root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before, :root.norn .chip.withdrawn::before,
@@ -106,19 +106,14 @@
    header, the hero (night / day by ground) with the three lore lines, the empty-state art. Classic keeps its flat bar + h1. */
 :root.classic header .h1-norn, :root.norn header .h1-classic { display: none; }
 :root.norn header h1 { display: flex; align-items: center; margin: 0; }
-/* the bar (META-NAV R2, owner Q-16: A + C): each Norn's tabs in a frame in its colour, the name + subtitle in the frame's top edge
-   like a fieldset legend; the active tab filled with its Norn's colour in the inverse ink. One colour per Norn per ground
-   (palette.hex). The bar wraps at every width - frames wrap their tabs inside themselves, then stack (no sideways scroll). */
+/* the bar (UX review 2, was META-NAV R2's Norn frames): the 7 plain destinations, then the open destination's pages; the active one
+   filled with the accent in the inverse ink. The bar wraps at every width (no sideways scroll). --nv / --nu / --ns stay the Norn
+   colours (Roadmap time colours, the Home tags). */
 :root.norn[data-ground=dark] { --nv: #eec24a; --nu: #52b8a0; --ns: #93aec6; --ninv: #0b0e1a; }
 :root.norn[data-ground=light] { --nv: #6e430f; --nu: #17504f; --ns: #425a7d; --ninv: #f7f0dc; }
-:root.norn nav { flex-wrap: wrap; overflow-x: visible; gap: calc(4 * var(--px)); row-gap: calc(10 * var(--px)); padding-top: calc(8 * var(--px)); padding-bottom: calc(3 * var(--px)); }
-:root.norn nav .ng-verdandi { --g: var(--nv); } :root.norn nav .ng-urd { --g: var(--nu); } :root.norn nav .ng-skuld { --g: var(--ns); }
-:root.norn nav .ng { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px; flex: 0 1 auto; max-width: 100%;
-  border: calc(1 * var(--px)) solid var(--g); padding: calc(4 * var(--px)) calc(2 * var(--px)) 0; margin: 0; }
-:root.norn nav .nh { position: absolute; top: -10px; left: calc(4 * var(--px)); display: flex; align-items: baseline; gap: 6px; margin: 0;
-  padding: 0 calc(2 * var(--px)); background: var(--panel); width: max-content; line-height: 1.1; }
-:root.norn nav .nn { font-family: var(--pix); font-size: calc(8 * var(--px)); -webkit-font-smoothing: none; text-transform: uppercase; color: var(--g); }
-:root.norn nav .nh small { color: var(--dim); font-size: 11px; font-style: italic; }
+:root.norn nav { --g: var(--accent); flex-wrap: wrap; overflow-x: visible; gap: calc(2 * var(--px)); padding-top: calc(2 * var(--px)); padding-bottom: 0; }
+:root.norn nav .pages { border-top: calc(1 * var(--px)) solid var(--line); }
+:root.norn nav .pages button { font-size: calc(8 * var(--px)); }
 :root.norn nav button:hover { background: var(--soft); color: var(--ink); }
 :root.norn nav button[aria-selected=true] { background: var(--g); color: var(--ninv); border-bottom: calc(2 * var(--px)) solid var(--g); }
 :root.norn nav button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
@@ -136,10 +131,6 @@
    running / mute), Norn: one Norn colour each (past = Urd, present = Verdandi, future = Skuld). Palette lock holds: var() only. ---------- */
 :root { --rm-past: var(--ok); --rm-now: var(--run); --rm-fut: var(--mute); --rm-inv: var(--panel); }
 :root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
-/* the bar: the Roadmap sits in its own frame after Skuld; its border and its active fill carry all three Norn colours */
-:root.norn nav .ng-wyrd { --g: var(--ink); border-color: var(--nu) var(--ns) var(--ns) var(--nu); border-top-color: var(--nv); }
-:root.norn nav .ng-wyrd .nn { color: var(--ink); }
-:root.norn nav .ng-wyrd button[aria-selected=true] { background: linear-gradient(90deg, var(--nu) 0 33.4%, var(--nv) 33.4% 66.7%, var(--ns) 66.7% 100%); color: var(--rm-inv); border-bottom-color: var(--nv); }
 .rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rmtop .chip { border: 0; cursor: pointer; }
 /* the scope switch: three toggle buttons, the pressed one filled in its time colour */
@@ -268,10 +259,8 @@
   .rmgh { position: static; }
 }
 
-/* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). The Norn frame (the thread) in the accent colour, first in the
-   bar; the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
-:root.norn nav .ng-norn { --g: var(--accent); }
-:root.norn nav .ng-norn button { min-width: calc(64 * var(--px)); }   /* the frame as wide as its legend (NORN the thread) */
+/* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). Home is first in the bar (UX review 2: no Norn frames);
+   the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
 :root.norn .hn, :root.norn .hs h4, :root.norn .tag, :root.norn .bbar .bl { font-family: var(--pix); font-weight: 400; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .hn { font-size: calc(6 * var(--px)); letter-spacing: 3px; }
 :root.norn .hs h4 { font-size: calc(5 * var(--px)); letter-spacing: 3px; color: var(--mute); }
@@ -294,3 +283,15 @@
 /* META-TEND P1-VISUAL: the stack widget and the file map square on the pixel grid (the series --k1..--k9 sit in the ground blocks above) */
 :root.norn .insbar, :root.norn .insdot, :root.norn .stkdot, :root.norn .fmblk { border-radius: 0; }
 :root.norn .fmblk { color: var(--panel); }
+
+/* the live dots - the hand-off chip (widgets.mjs hoChip, .pulse) and the chat header's busy dot (index.html .chat-live::before) - and
+   their one pulse, the animation both looks share, so it lives here under .motion (index.html holds none): the classic dot breathes
+   (scale only: no opacity, no colour); the Norn dot is square on the pixel grid and blinks on and off in two steps.
+   No .motion (QUIET, reduced motion, hidden tab) = a still dot beside the same words. */
+:root.motion .pulse, :root.motion .chat-live::before { animation: ho-pulse 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes ho-pulse { 50% { transform: scale(0.45); } }
+:root.norn .ho, :root.norn .chat-live::before { border-radius: 0; }
+:root.norn .pulse { border-radius: 0; width: calc(4 * var(--px)); height: calc(4 * var(--px)); }
+:root.norn.motion .pulse, :root.norn.motion .chat-live::before { animation: norn-blink 1.2s steps(1, end) infinite; }
+@keyframes norn-blink { 50% { visibility: hidden; } }
+:root.norn .lbl .ho { margin: 0 0 0 4px; padding: 0 4px; font-size: 11px; }

@@ -22,13 +22,13 @@ const end = (state, id, min, outcome = 'done', extra = {}) => record(state, { ki
 const items = state => loadState(state).items;
 const cp = (o = {}) => checkinPolicy({ checkin: o });
 
-test('routine ends: MERGE DONE and a pushed worker DONE on an auto-stage lane are routine; STOPPED / HANDOFF / no-marker / unpushed / asked are not', () => {
+test('routine ends: MERGE DONE and a pushed worker DONE on an auto-stage lane are routine; STOPPED / HANDOFF / no-result / unpushed / asked are not', () => {
   const state = path.join(mkTmp('meta-diet-r-'), 'state', 'demo');
   const m = start(state, 0, { lane: 'a', stage: 'MERGE' }), mq = start(state, 0, { lane: 'mq', stage: 'MERGE' });
   const w = start(state, 0, { lane: 'meta-x', worktree: 'W' }), s = start(state, 0, { lane: 'b' }), h = start(state, 0, { lane: 'b' }), n = start(state, 0, { lane: 'b' });
   const u = start(state, 0, { lane: 'meta-y', worktree: 'W' }), q = start(state, 0, { lane: 'meta-z', worktree: 'W' }), ms = start(state, 0, { lane: 'a', stage: 'MERGE' });
   const git = { head: 'a'.repeat(40), branch: 'feat/x', dirty: { files: 0, untracked: 0 } };
-  end(state, m.id, 5); end(state, mq.id, 5); end(state, w.id, 5, 'done', git); end(state, s.id, 5, 'stopped'); end(state, h.id, 5, 'handoff'); end(state, n.id, 5, 'no-marker');
+  end(state, m.id, 5); end(state, mq.id, 5); end(state, w.id, 5, 'done', git); end(state, s.id, 5, 'stopped'); end(state, h.id, 5, 'handoff'); end(state, n.id, 5, 'no-result');
   end(state, u.id, 5, 'done', { ...git, branch: 'feat/u' }); end(state, q.id, 5, 'done', git); end(state, ms.id, 5, 'stopped');
   const recEvs = [{ kind: 'question', ev: 'create', run: q.id }], pushed = (_wt, b) => b === 'feat/x' || b === 'feat/z';
   const it = items(state), c = cp({ auto_stage: ['meta-*'] }), of = id => routineOf(it[id], { cp: c, recEvs, pushed })?.kind ?? null;
@@ -134,7 +134,7 @@ test('tick: a routine MERGE DONE end is handled with NO check-in and a launcher 
   assert.match(r.msg, /skip: no change since RUN-3/, r.msg);
   assert.equal(f.checkins(), 1, 'no tick for the routine end');
   const rv = loadState(f.state).items[m.id].history.find(h => h.ev === 'review');
-  assert.equal(rv.by, 'launcher'); assert.equal(rv.data.routine, 'merge_done'); assert.match(rv.data.why, /ended DONE with its NOTES marker/);
+  assert.equal(rv.by, 'launcher'); assert.equal(rv.data.routine, 'merge_done'); assert.match(rv.data.why, /ended DONE \(its norn done result\)/);
   assert.match(fs.readFileSync(path.join(f.state, 'tick.log'), 'utf8'), new RegExp(`routine merge_done ${m.id}: reviewed`));
   f.fin(w.id, 'stopped');
   r = tick(f.o);

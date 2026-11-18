@@ -13,7 +13,7 @@ test('ledgerInline: ids link (records rows / inbox / agents only when shown / de
   assert.match(h, /<a class="rid r-dir" href="#rec-DIR-4" data-rid="DIR-4">DIR-4<\/a>/);
   assert.match(h, /<a class="rid r-q" href="#q-Q-5" data-rid="Q-5">Q-5<\/a>/);
   assert.match(h, /<a class="rid r-run" href="#node-RUN-6" data-rid="RUN-6">RUN-6<\/a>/);
-  assert.match(h, /<span class="id">RUN-7<\/span>/, 'a run the Agents tab does not show stays plain mono');
+  assert.match(h, /<span class="id">RUN-7<\/span>/, 'a run the Runs page does not show stays plain mono');
   assert.match(h, /data-dlv="DLV-8"/); assert.match(h, /<span class="id">EP-9<\/span>/);
   assert.match(h, /<span class="sha">53a3f65<\/span>/); assert.match(h, /<code>x&lt;y&gt;<\/code>/);
   assert.ok(!/<span class="sha">(?:1234567|abcdefa)</.test(ledgerInline('1234567 abcdefa')), 'all-digit / all-letter words are no sha');
@@ -49,7 +49,7 @@ test('shownRunIds = the runs the Agents tree lists (live, or ended within 2 h; n
   assert.deepEqual([...ids].sort(), ['RUN-1', 'RUN-2']);
 });
 
-test('/api/ledger: default 100 lines, count + offset page older lines, total / more, runs the Agents tab shows', async () => {
+test('/api/ledger: default 100 lines, count + offset page older lines, total / more, runs the Runs page shows', async () => {
   const f = await fixture();
   try {
     const all = (await f.get('/api/ledger')).data;

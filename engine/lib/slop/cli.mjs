@@ -10,6 +10,7 @@ import { makeTool } from './tools.mjs';
 import { locReport, formatLoc } from './loc.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
 import { dailyReport } from './daily.mjs';
+import { subdirOf, inDir } from '../monorepo.mjs';
 
 export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | daily | fixtures    '
   + '[--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings; fixtures: the real tools on the rule fixtures, nightly)';
@@ -35,6 +36,8 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   catch (e) { err('error: ' + e.message); err(SLOP_USAGE); return 2; }
   const w = where(f), state = w?.state || null, project = w?.project || null;
   const repoOf = () => toplevel(f.repo || project?.deliverables?.repo || project?.root || process.cwd());
+  // gap #7: a monorepo project (project.subdir; not with an explicit --repo) counts and sweeps only its own folder / branches
+  const own = !f.repo && project && subdirOf(project) ? { name: project.name, subdir: subdirOf(project) } : null;
   if (verb === 'check') {
     let repo = f.repo ? toplevel(f.repo) : process.cwd();
     if (f.lane) {
@@ -60,18 +63,18 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     return open.length ? 1 : 0;
   }
   if (verb === 'loc') {
-    const r = locReport(repoOf(), { since: f.since });
+    const r = locReport(own ? inDir(repoOf(), own.subdir) : repoOf(), { since: f.since });
     out(f.json ? JSON.stringify(r, null, 1) : formatLoc(r));
     return 0;
   }
   if (verb === 'sweep') {
-    const r = sweep(repoOf(), { state });
+    const r = sweep(repoOf(), { state, own });
     out(f.json ? JSON.stringify(r, null, 1) : formatSweep(r));
     return 0;
   }
   if (verb === 'daily') {
     if (!state) { err('error: daily needs --project / --state (it writes the report there)'); return 2; }
-    const r = dailyReport({ repo: repoOf(), state, env });
+    const r = dailyReport({ repo: repoOf(), state, env, own });
     out(`slop daily: ${r.line} -> ${r.file}`);
     return 0;
   }

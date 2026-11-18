@@ -11,8 +11,8 @@ export const BATCH_ROWS = 3;
 /** the order of the kinds of fix = advisory.mjs FIX_KINDS (this file is served to the page, which cannot load lib/; a test holds them equal) */
 export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 
-/** [id, label]: To fix (every open finding) · Per type (the counts per type) · Rules (the rule ledger + the rule rows) · Is it growing? */
-export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['growing', 'Is it growing?']];
+/** [id, label]: To fix (every open finding) · Per type (the counts per type) · Rules (the rule ledger + the rule rows) · By age (the open findings by first-seen day) */
+export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['growing', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
 const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}`)]));

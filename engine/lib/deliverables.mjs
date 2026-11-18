@@ -6,8 +6,7 @@ import path from 'node:path';
 import { fold, readEvents, recordsFile, loadState, record } from './records.mjs';
 import { scanRepo, makeGit, pruneCache } from './dlvgit.mjs';
 import { workOnMain } from './after.mjs';
-import { expandLate, pathKey } from './config.mjs';
-import { parseOutcome } from './runs.mjs';
+import { pathKey } from './config.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
@@ -135,6 +134,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const parkEv = it.state === 'parked' ? lastEv(it, ['park']) : null;
     // META-GTP-MERGEQ piece 0: superseded = terminal (the work landed another way): at its target, never due / resolved / rehearsed
     const supEv = it.state === 'superseded' ? lastEv(it, ['supersede']) : null;
+    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;   // the PR norn merge-land opened
     const superseded = supEv ? { by: supEv.data.by, why: supEv.data.why, at: supEv.ts } : null;
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
@@ -151,7 +151,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
     return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
       delivers: d.delivers ?? g.subject ?? '', tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
-      native: g.native, native_files: g.native_files, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}) };
+      native: g.native, native_files: g.native_files, pr, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}) };
     };
   });
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
@@ -208,7 +208,7 @@ function worktrees(repo, git) {
 }
 const findDlv = (items, repo, branch) => Object.values(items).find(i => sameRepo(i.data.repo, repo) && i.data.branch === branch) || null;
 
-/** Dry run: { rows [{ repo, branch, tip, evidence RUN-n | notes | null, run, lane, delivers, done_utc, days, behind, ahead, native, action }], scanned, merged, install, git } */
+/** Dry run: { rows [{ repo, branch, tip, evidence RUN-n | null (a DONE run; a lane's NOTES are never evidence: gap #3), run, lane, delivers, done_utc, days, behind, ahead, native, action }], scanned, merged, install, git } */
 export function backfillPlan({ stateDir, project = {}, now = Date.now(), git = makeGit() } = {}) {
   const t0 = Date.now();
   const cfg = deliverableConfig(project);
@@ -228,7 +228,6 @@ export function backfillPlan({ stateDir, project = {}, now = Date.now(), git = m
     const k = key(w.repo, w.branch);
     cand.set(k, { ...(cand.get(k) || { repo: w.repo, branch: w.branch }), run: r.id, lane: r.data.lane ?? null, done_utc: endTs(r), brief: r.data.brief, notes: r.data.notes });
   }
-  const tpl = project.lane_defaults?.notes || null;
   let merged = 0;
   const rows = [];
   for (const c of cand.values()) {
@@ -238,15 +237,8 @@ export function backfillPlan({ stateDir, project = {}, now = Date.now(), git = m
     if (!i.tip) continue;
     sc.tips.push(i.tip);
     if (i.merged) { merged++; continue; }
-    let evidence = c.run || null, notes = c.notes || null, lane = c.lane ?? null, done = c.done_utc || null;
-    if (!evidence && tpl) {
-      const ln = c.branch.split('/').pop();
-      let f = null;
-      try { f = expandLate(tpl, { lane: ln }); } catch { f = null; }
-      if (f && fs.existsSync(f) && parseOutcome(fs.readFileSync(f, 'utf8')).outcome === 'done') {
-        evidence = 'notes'; notes = fwd(f); lane = ln; done = fs.statSync(f).mtime.toISOString();
-      }
-    }
+    const evidence = c.run || null, notes = c.notes || null, lane = c.lane ?? null;
+    let done = c.done_utc || null;
     done ||= i.ref_date ? new Date(i.ref_date).toISOString() : null;
     const ex = findDlv(existing, c.repo, c.branch);
     rows.push({ repo: fwd(c.repo), branch: c.branch, tip: i.tip, evidence, run: c.run || null, lane, notes, delivers: heading(c.brief) || heading(notes) || i.subject || '',
@@ -308,12 +300,12 @@ export function onRunDone(stateDir, runId, { now, git = makeGit() } = {}) {
 // the merge rehearsal in a few words (META-DLV-R2): clean | conflict: a, b, c +n | '' (none: merged, or git failed)
 export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean'
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
-// one listing line: id, state, age, behind main, native, branch, park / question, merge rehearsal, what it delivers
+// one listing line: id, state, age, behind main, native, branch, its PR, park / question, merge rehearsal, what it delivers
 export function formatDeliverable(r) {
   const flag = r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : '';
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
-    pad(r.branch, 34), flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
+    pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
 }
 
 /**
@@ -423,10 +415,10 @@ export function resolveDeliverable(stateDir, id, { project = {}, nowMs = Date.no
     `1. \`git fetch ${R}\`, then bring the worktree to the pushed tip: \`git merge --ff-only ${R}/${B}\`.`,
     `2. \`git merge ${R}/${M}\` into the branch - a merge, not a rebase: the branch is pushed and may be consumed, so no force-push.`,
     "3. Resolve every conflicting path keeping BOTH intents (main's newer code + the branch's own change); never drop a side to make it apply.",
-    "   A conflict that needs a design choice outside the branch's own change: stop (`## STOPPED: <why>`) with the paths and both sides.",
+    "   A conflict that needs a design choice outside the branch's own change: stop (`norn done --outcome stopped --why \"<why>\"`) with the paths and both sides.",
     "4. Run the covering tests of the touched files under the repo's CLAUDE.md / AGENTS.md rules; a new red is a stop, never a loosened test.",
     `5. Commit the merge (\`merge: ${M} into ${B} (resolve ${id})\`), push \`${R} ${B}\` - no force-push. Do not merge to ${M}; touch no other branch.`,
-    `NOTES ${notes}: what conflicted, how each path was resolved, the tests run; last line \`## DONE\`, \`## STOPPED: <why>\` or \`## HANDOFF\`.`, ''].join('\n');
+    `NOTES ${notes}: what conflicted, how each path was resolved, the tests run. End with \`norn done\` (or \`--outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).`, ''].join('\n');
   fs.writeFileSync(brief, text);
   const run = ['run', '--executor', executor, '--lane', lane, '--brief', brief, '--worktree', wt.path, '--notes', notes, '--stage', 'resolve', '--queue'];
   return { id, why: row.resolve.why, brief, notes, worktree: wt.path, create_worktree: wt.exists ? null : { repo: row.repo, branch: B, remote: R }, run };

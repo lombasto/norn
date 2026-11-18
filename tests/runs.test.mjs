@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseOutcome, parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, stopRun, RunRefused, hbPath } from '../engine/lib/runs.mjs';
+import { parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, stopRun, RunRefused, hbPath } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { resolveShim } from '../engine/lib/paths.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
@@ -39,17 +39,6 @@ function sandbox() {
 }
 
 // ---------- pure parts ----------
-test('outcome grammar: last "## " line is exactly DONE / STOPPED: why / HANDOFF, else no-marker', () => {
-  assert.deepEqual(parseOutcome('## S1\nwork\n## DONE\nsummary text\n'), { outcome: 'done', marker_line: '## DONE' });
-  assert.deepEqual(parseOutcome('## S1\r\n## STOPPED: d - brief contradicts itself\r\n'), { outcome: 'stopped', marker_line: '## STOPPED: d - brief contradicts itself', why: 'd - brief contradicts itself' });
-  assert.deepEqual(parseOutcome('x\n## HANDOFF\nnext: step 3\n'), { outcome: 'handoff', marker_line: '## HANDOFF' });
-  assert.equal(parseOutcome('## HANDOFF\n## S5 notes\n').outcome, 'no-marker');
-  assert.equal(parseOutcome('## DONE (mostly)\n').outcome, 'no-marker');
-  assert.equal(parseOutcome('## STOPPED:\n').outcome, 'no-marker');
-  assert.equal(parseOutcome('### DONE\n').outcome, 'no-marker');
-  assert.deepEqual(parseOutcome(null), { outcome: 'no-marker', marker_line: null });
-});
-
 test('codex exit banner: model, effort, session id and tokens used parse from the fixture', () => {
   const r = parseCodexLog(fs.readFileSync(path.join(HERE, 'fixtures', 'runs', 'codex-banner.log'), 'utf8'));
   assert.deepEqual(r, { model: 'gpt-6-astra', effort: 'xhigh', session_id: '01a18e15-b95e-7293-b130-0cf69a414641', tokens: 119286 });
@@ -74,8 +63,8 @@ test('command lines: claude gets --session-id + agent / model / effort; codex re
   assert.match(at('-p'), /Read the brief \/b\/brief\.md and execute it exactly\. Your worktree is \/w\./);
   assert.doesNotMatch(at('-p'), /AUTO-RESUME/);
   assert.equal(c.stdout, 'final'); assert.equal(c.parse, 'claude');
-  const r = buildCommand({ ...base, executor: 'claude', exe: '/x/claude', agent: 'a', model: 'm', effort: 'e', session_id: 'u', resumes: 2 });
-  assert.match(r.args[r.args.indexOf('-p') + 1], /AUTO-RESUME \(2\) after the previous agent's HANDOFF: read the LAST '## HANDOFF' block of \/n\/NOTES\.md/);
+  const r = buildCommand({ ...base, executor: 'claude', exe: '/x/claude', agent: 'a', model: 'm', effort: 'e', session_id: 'u', resumes: 2, handoffFile: '/s/results/RUN-1/HANDOFF.md' });
+  assert.match(r.args[r.args.indexOf('-p') + 1], /AUTO-RESUME \(2\) after the previous agent's hand-off: read its hand-off \/s\/results\/RUN-1\/HANDOFF\.md first/);
   const x = buildCommand({ ...base, executor: 'codex-sol', exe: '/x/codex', model: 'gpt-6.1-sol', effort: 'medium', writable_roots: ['/r/.git', '/notes'] });
   assert.deepEqual(x.args.slice(0, 3), ['exec', '--skip-git-repo-check', '--disable']);
   assert.equal(x.args[x.args.indexOf('-m') + 1], 'gpt-6.1-sol');
@@ -119,7 +108,7 @@ test('stale heartbeat -> lost (role status); fresh heartbeat and interactive run
 });
 
 // ---------- supervised fake runs ----------
-for (const [mode, outcome, exit] of [['done', 'done', 0], ['stopped', 'stopped', 0], ['handoff', 'handoff', 0], ['no-marker', 'no-marker', 0], ['crash', 'crash', 3]]) {
+for (const [mode, outcome, exit] of [['done', 'done', 0], ['stopped', 'stopped', 0], ['handoff', 'handoff', 0], ['no-result', 'no-result', 0], ['crash', 'crash', 3]]) {
   test(`fake ${mode}: supervisor records exit ${exit} + outcome ${outcome} + usage, frees lock + heartbeat, ticks once`, async () => {
     const d = sandbox();
     const r = startRun(d.opts({ brief: d.brief(`mode: ${mode}\n`) }));

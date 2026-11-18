@@ -135,7 +135,7 @@ test('resolve: refuses native (door work), clean + current, merged; writes a rea
   const r = resolveDeliverable(state, 'DLV-1', { project: p, nowMs: NOW, executor: 'fake' });
   assert.equal(r.refused, undefined);
   const brief = fs.readFileSync(r.brief, 'utf8');
-  for (const s of ['DLV-1', 'feat/c', 'README.md', 'git merge', 'no force-push', '## DONE', r.notes]) assert.ok(brief.includes(s), s);
+  for (const s of ['DLV-1', 'feat/c', 'README.md', 'git merge', 'no force-push', 'norn done', r.notes]) assert.ok(brief.includes(s), s);
   assert.deepEqual(r.run.slice(0, 6), ['run', '--executor', 'fake', '--lane', 'c', '--brief']);
   for (const k of ['--worktree', '--notes', '--stage', '--queue']) assert.ok(r.run.includes(k), k);
   assert.equal(r.run[r.run.indexOf('--stage') + 1], 'resolve');

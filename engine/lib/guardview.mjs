@@ -8,7 +8,7 @@ import { HINT_FIX, TIGHTEN_FIX } from './instructions.mjs';
 import { ADVICE_FIX } from './advice.mjs';
 
 /** [type, label, the tab that owns it] in display order */
-export const GUARD_TYPES = [['code', 'code', 'agents'], ['tests', 'tests', 'tests'], ['instructions', 'instruction files', 'context'],
+export const GUARD_TYPES = [['code', 'code', 'runs'], ['tests', 'tests', 'tests'], ['instructions', 'instruction files', 'context'],
   ['memory', 'memory', 'context'], ['rules', 'rules', 'context'], ['docs', 'docs', 'docs'], ['models', 'models', 'usage']];
 const SEV_RANK = { high: 0, medium: 1, low: 2, count: 3 };
 /** warn level or above: only these warn (the badge, a pop-up); low and count rows are listed, never announced */
@@ -80,7 +80,7 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   for (const h of holds) for (const b of h.blocks || [])
     out.push({ id: 'S-' + b.fp, type: 'code', severity: 'high', surface: `branch ${h.branch}`, path: b.file, line: b.line ?? null, why: `${b.rule}: ${b.msg}`,
       source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn slop waive)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
-      go: { tab: 'slop', jump: 'slop-S-' + b.fp } });   // its own Slop row (an ended run is on no live Agents view)
+      go: { tab: 'slop', jump: 'slop-S-' + b.fp } });   // its own Slop row (an ended run is on no live Runs view)
   // META-DOD 2: a call Norn's scope hook refused (scope.mjs refusals: the run, its tool, the target, the plain reason)
   for (const r of refusals)
     out.push({ id: 'R-' + hash(`${r.run}|${r.tool}|${r.target}|${r.why}`), type: 'code', severity: 'medium', surface: `run ${r.run}${r.lane ? ' · ' + r.lane : ''} · ${r.tool}`, path: null, line: null,

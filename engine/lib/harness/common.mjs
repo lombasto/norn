@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolveShim } from '../paths.mjs';
 
-export function prompt({ brief, worktree, notes, resumes = 0 }) {
-  let p = `Read the brief ${brief} and execute it exactly. Your worktree is ${worktree}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.`;
-  if (resumes > 0) p += ` AUTO-RESUME (${resumes}) after the previous agent's HANDOFF: read the LAST '## HANDOFF' block of ${notes} first and continue from its exact next step; re-check the worktree HEAD + git status before your first commit.`;
+// gap #3: a run ends with `norn done` (its own result: the outcome); NOTES are the worker's free-form log, never its outcome
+export const DONE_LINE = 'End with `norn done` (done) or `norn done --outcome stopped --why "<why>"` or `norn done --outcome handoff --handoff-file F` (F: state, commits, the exact next step, open questions): that records your outcome; a run that does not run it ends no-result.';
+export function prompt({ brief, worktree, resumes = 0, handoffFile }) {
+  let p = `Read the brief ${brief} and execute it exactly. Your worktree is ${worktree}. You run headless: no one answers questions. ${DONE_LINE.replace(/`/g, '')}`;
+  if (resumes > 0) p += ` AUTO-RESUME (${resumes}) after the previous agent's hand-off: ${handoffFile ? `read its hand-off ${handoffFile} first and continue from its exact next step` : 'continue the brief'}; re-check the worktree HEAD + git status before your first commit.`;
   return p;
 }
 
@@ -56,11 +58,12 @@ export function detectExe(exe) {
   return { exe, version };
 }
 
-// the per-family HEADLESS snippet core: the outcome contract is the same for every harness (the NOTES end marker)
+// the per-family HEADLESS snippet core: the outcome contract is the same for every harness - `norn done` writes the run's own result
+// (gap #3: the only source of its outcome); its NOTES are its free-form log
 // META-BETA-PREP (DIR-52): the slop sentence on its own - a pack of a project whose SloppaChoppa switch is off leaves it out (setup.mjs)
-export const HEADLESS_SLOP = ' Before you write `## DONE`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
+export const HEADLESS_SLOP = ' Before you end with `norn done`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
 export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
-  + "brief's DECISION-RULES or stop. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`."
+  + "brief's DECISION-RULES or stop. Write your log to your NOTES file. " + DONE_LINE
   + HEADLESS_SLOP;
 // META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
 export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP norn_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (norn_mail ack / norn mail ack MAIL-n).';
@@ -129,11 +132,10 @@ export function argSummary(input) {
   return e ? oneLine(typeof e[1] === 'string' ? e[1] : `${e[0]} ${JSON.stringify(e[1])}`, 80) : '';
 }
 
-/** A plain-text log line -> a text event, or a marker for a NOTES end marker; blank lines -> nothing. */
+/** A plain-text log line -> a text event; blank lines -> nothing. */
 export function logLine(text) {
   const t = String(text).trim();
   if (!t) return [];
-  if (/^## (DONE|STOPPED|HANDOFF)\b/.test(t)) return [{ kind: 'marker', summary: oneLine(t) }];
   return [{ kind: 'text', summary: oneLine(t) }];
 }
 /** The plain-log feed (a cli executor, fake, a run without a structured transcript): the run's log, optional extra files. */

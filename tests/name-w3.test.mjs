@@ -65,7 +65,7 @@ test('check-in pack: {{norn}} and {{meta}} in a custom checkin_extra render the 
 });
 
 test('merge brief: the shipped MERGE templates render with no placeholder left', () => {
-  const P = { name: 'norn', root: '/h/dev/x', meta: '/h/dev/x', deliverables: { main: 'main' }, policy: {} };
+  const P = { name: 'norn', root: '/h/dev/x', meta: '/h/dev/x', state: '/h/state/norn', deliverables: { main: 'main' }, policy: {} };
   const O = { lane: 'l', branch: 'feat/l', worktree: '/h/dev/x-l', notes: '/h/r/l/NOTES.md' };
   for (const t of [renderMergeBrief(P, O), renderMergeBrief(P, { ...O, sha: 'abcdef1' })]) {
     assert.doesNotMatch(t, /\{\{\w+\}\}/); assert.match(t, /node "\/h\/dev\/x\/engine\/bin\/norn\.mjs"/);

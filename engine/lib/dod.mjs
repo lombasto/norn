@@ -29,7 +29,7 @@ export function readyGate({ brief, policy, stage, gate = null }) {
   try { text = brief && brief !== '-' ? fs.readFileSync(brief, 'utf8') : null; } catch { /* unreadable: text stays null, the gate names it not readable */ }
   const ready = parseReady(text), ok = text !== null && !ready.missing.length;
   const why = text === null ? `brief ${fwd(brief ?? '-')} is not readable` : `brief ${fwd(brief)} lacks ${ready.missing.join(', ')}`;
-  const msg = `${why} (policy.dod.ready = ${mode}): add the lines Scope: / Tests: / Done: (the paths the run may change, the tests that prove it, the end marker)`;
+  const msg = `${why} (policy.dod.ready = ${mode}): add the lines Scope: / Tests: / Done: (the paths the run may change, the tests that prove it, what done means)`;
   const dod = { mode, ok, missing: ready.missing, ...(ok ? { ready } : {}), ...(gate?.cmd ? { gate: { cmd: gate.cmd, timeout_min: gate.timeout_min, ...(gate.dir ? { dir: gate.dir } : {}) } } : {}),
     ...(policy?.dod?.test_cmd ? { test_cmd: policy.dod.test_cmd } : {}), timeout_min: policy?.dod?.timeout_min ?? 20, ...(ok ? {} : { why: msg }) };
   if (ok) return { refused: null, warning: null, dod };
@@ -104,7 +104,7 @@ export function dodPrompt(d, brief) {
   return [`Norn's Done check failed on your branch (${d.why}). Your DONE does not count until Norn's own check is green:`,
     ...d.dirty.map(p => `- uncommitted / untracked: ${p}`), ...d.out_of_scope.map(p => `- changed outside the brief's Scope: ${p}`),
     ...d.tests.map(x => `- ${x.ok ? 'green' : 'RED'}: \`${x.cmd}\` ${testLine(x)} (log ${x.log})`), ...d.problems.map(p => `- ${p}`),
-    'Fix each one in this worktree (commit your work; revert what the brief\'s Scope does not allow; make the tests green - never loosen one), then end your NOTES as before (## DONE).',
-    'If the Scope or the Tests line itself is wrong, say so in NOTES and end with ## STOPPED: Done check: <why>.',
+    'Fix each one in this worktree (commit your work; revert what the brief\'s Scope does not allow; make the tests green - never loosen one), then end with `norn done` as before.',
+    'If the Scope or the Tests line itself is wrong, say so and end with `norn done --outcome stopped --why "Done check: <why>"`.',
     ...(brief ? [`Your brief: ${brief}`] : [])].join('\n');
 }

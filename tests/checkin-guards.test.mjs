@@ -140,6 +140,6 @@ test('dash: the Usage replay card shows before / after with refused as its own c
     record(f.pa.state, { kind: 'run', ev: 'refuse', id: ck, by: 'launcher', data: { guard: 'busy', why: 'lane busy: worktree C:/w has live run RUN-1 (river S1)', lane: 'river', stage: 'S2' } });
     const a = (await f.get('/api/agents?project=kestrel')).data;
     assert.deepEqual(a.tree.find(n => n.id === ck).refused.map(x => [x.words, x.lane, x.stage]), [['lane busy', 'river', 'S2']]);
-    assert.match(renderTab('agents', a, { project: 'kestrel', now: Date.now() }), new RegExp(`id="node-${ck}"[^]*class="node lvl1 refusedrow" data-p="p-${ck}"[^]*refused: lane busy</span> river S2[^]*has live run RUN-1`));
+    assert.match(renderTab('runs', a, { project: 'kestrel', now: Date.now() }), new RegExp(`id="node-${ck}"[^]*class="node lvl1 refusedrow" data-p="p-${ck}"[^]*refused: lane busy</span> river S2[^]*has live run RUN-1`));
   } finally { await f.done(); }
 });

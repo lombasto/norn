@@ -14,7 +14,7 @@ const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eig
 export const inWords = n => (Number.isInteger(n) && n >= 0 && n <= 20 ? WORDS[n] : String(n));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const warns = s => s === 'high' || s === 'medium';
-const TAB_WORD = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs', slop: 'Slop' };
+const TAB_WORD = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 
 /** the badge: warn-level findings first seen after the Guard page was last opened (never opened: the ones new in the last day) */
 export function badgeCount(rows = [], seenAt = 0) {
@@ -32,7 +32,7 @@ export function orcLine({ rows = [], fresh = 0, pending = false, total = rows.le
   return `${cap(inWords(n))} ${what}${n === 1 ? '' : 's'}. The worst: ${top.why}`;
 }
 /** the badge's accessible name */
-export const badgeLabel = n => `SloppaChoppa: ${inWords(n)} new warning${n === 1 ? '' : 's'}`;
+export const badgeLabel = n => `SloppaChoppa: ${inWords(n)} new finding${n === 1 ? '' : 's'}`;   // UX review 4: the same word as his line and the Slop count
 
 /**
  * may he pop up by himself? -> { ok, why, row }. mode = Settings popups (off | on | quiet), cap = the daily cap, log = { day, n, shown [ids] }

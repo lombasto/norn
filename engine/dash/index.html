@@ -6,16 +6,18 @@
 <title>norn</title>
 <!-- Engine dashboard UI (META-GENERAL-DESIGN 7, 12-S7). Look = the Norn project's design/mock/index.html; renderers in /ui.mjs. -->
 <style>
+/* Status colours (UX review 3; tests/dash-colours.test.mjs): ok green, warn amber, bad red, run blue (in progress), accent = needs you
+   (cyan; never the bad red, so an error never reads as a highlight). Each X on X-bg is WCAG AA (>= 4.5:1) for chip text, light and dark. */
 :root{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#e3e6ea;--soft:#eef1f4;
-  --accent:#c2410c;--accent-bg:#fff1e8;--ok:#15803d;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#a16207;--warn-bg:#fdf5dc;
+  --accent:#0e7490;--accent-bg:#e0f5f9;--ok:#166534;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#854d0e;--warn-bg:#fdf5dc;
   --bad:#b91c1c;--bad-bg:#fdecec;--codex:#6d28d9;--codex-bg:#f1eafe;--bar:#d5dae0;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
 @media (prefers-color-scheme:dark){:root{--bg:#121417;--panel:#1a1d21;--ink:#e6e8eb;--mute:#9aa3ad;--line:#2b3036;--soft:#22262b;
-  --accent:#fb923c;--accent-bg:#3a2316;--ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;
-  --bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}}
-:root.light{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#e3e6ea;--soft:#eef1f4;--accent:#c2410c;--accent-bg:#fff1e8;
-  --ok:#15803d;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#a16207;--warn-bg:#fdf5dc;--bad:#b91c1c;--bad-bg:#fdecec;--codex:#6d28d9;--codex-bg:#f1eafe;--bar:#d5dae0;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
-:root.dark{--bg:#121417;--panel:#1a1d21;--ink:#e6e8eb;--mute:#9aa3ad;--line:#2b3036;--soft:#22262b;--accent:#fb923c;--accent-bg:#3a2316;
-  --ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;--bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
+  --accent:#22d3ee;--accent-bg:#13303a;--ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;
+  --bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#121417;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}}
+:root.light{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#e3e6ea;--soft:#eef1f4;--accent:#0e7490;--accent-bg:#e0f5f9;
+  --ok:#166534;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#854d0e;--warn-bg:#fdf5dc;--bad:#b91c1c;--bad-bg:#fdecec;--codex:#6d28d9;--codex-bg:#f1eafe;--bar:#d5dae0;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
+:root.dark{--bg:#121417;--panel:#1a1d21;--ink:#e6e8eb;--mute:#9aa3ad;--line:#2b3036;--soft:#22262b;--accent:#22d3ee;--accent-bg:#13303a;
+  --ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;--bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#121417;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
 header{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
@@ -27,7 +29,10 @@ button.ghost{background:transparent}
 button.strong{border-color:var(--ink);font-weight:600}
 a{color:inherit}
 .spacer{flex:1}.mute{color:var(--mute)}.small{font-size:12px}.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
-nav{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+nav{display:flex;flex-wrap:wrap;gap:0 2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+/* UX review 2: 7 destinations (.dests), the open destination's pages on a second row (.pages); both wrap, never scroll sideways */
+nav .dests,nav .pages{display:flex;flex-wrap:wrap;gap:2px;min-width:0;max-width:100%}nav .pages{flex-basis:100%;border-top:1px solid var(--line);padding:2px 0}
+nav .pages button{padding:5px 10px;font-size:13px}nav .dest[aria-selected=true]{color:var(--ink)}
 nav button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:9px 12px;color:var(--mute)}
 nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
 /* META-TEND P6: SloppaChoppa - the header button (32 bust; the 16 axe on a phone, in a 44 px tap target), his quiet badge, the
@@ -41,12 +46,16 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .orc-stage>*{pointer-events:auto}
 .orc-bubble{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 4px 16px var(--shadow);position:relative;margin-right:40px}
 .orc-bubble::after{content:"";position:absolute;right:28px;bottom:-8px;border:8px solid transparent;border-top-color:var(--line);border-bottom:0}
-.orc-bubble p{margin:0 0 8px}.orc-acts{display:flex;gap:6px;flex-wrap:wrap}
+.orc-bubble p{margin:0 0 8px}.orc-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .orc-stage.busy .orc-bubble{visibility:hidden}
 .orc-fig{width:192px;height:192px;image-rendering:pixelated;background-repeat:no-repeat}
-.orc-section{display:flex;gap:14px;align-items:flex-start}
-.orc-portrait{flex:none;width:192px;height:192px;image-rendering:pixelated;background:url(/norn/art/orc-96-idle.png) 0 0 / 400% 100% no-repeat}
-.orc-line{font-size:15px;margin:4px 0 8px}
+/* UX review 5: the Slop header is one row - a compact portrait (the 32 bust at 2x), his line, the chip, Fix all, a "More" menu */
+.orc-section{display:flex;gap:12px;align-items:center}.orc-head{flex:1;min-width:0}
+.orc-portrait{flex:none;width:64px;height:64px;image-rendering:pixelated;background:url(/norn/art/orc-32.png) 0 0 / 100% 100% no-repeat}
+.orc-line{font-size:14px;margin:0 0 6px;overflow-wrap:anywhere}
+.kmenu{position:relative;display:inline-block}.kmenu>summary{list-style:none;cursor:pointer;display:inline-block;border:1px solid var(--line);border-radius:6px;padding:4px 10px}.kmenu>summary::-webkit-details-marker{display:none}
+.kpop{position:absolute;right:0;z-index:5;margin-top:4px;width:min(320px,calc(100vw - 40px));background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px var(--shadow);padding:8px;display:flex;flex-wrap:wrap;gap:6px}
+.kpop>div{flex-basis:100%;margin-top:4px}
 .glist{margin:0;padding:0 0 0 18px}
 /* META-UX-BUILD S2: the sub-view pattern (subviews.mjs) - a summary row of at most 4 numbers, the sub-view row, the chosen part */
 .subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
@@ -67,7 +76,7 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .insseg.seg-rl-prose,.insdot.seg-rl-prose{background:var(--warn)}.insseg.seg-rl-repeated,.insdot.seg-rl-repeated{background:var(--accent)}
 .insseg.seg-rl-enforced,.insdot.seg-rl-enforced{background:var(--ok)}.insseg.seg-rl-retired,.insdot.seg-rl-retired{background:var(--bar)}
 @media (max-width:700px){#orc .o32{display:none}#orc .o16{display:block}#orc{min-width:44px;min-height:44px;justify-content:center}
- .orc-section{flex-direction:column}.orc-portrait{width:144px;height:144px}}
+ .orc-portrait{width:32px;height:32px}}
 nav .count{display:inline-block;min-width:18px;padding:0 5px;margin-left:5px;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:11px;text-align:center}
 main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .glance{display:grid;grid-template-columns:1.15fr 1.4fr 1fr;gap:14px;margin-bottom:16px}
@@ -75,17 +84,27 @@ main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .card h2{margin:0 0 10px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);display:flex;gap:8px;align-items:baseline}
 .card h2 b{font-size:20px;letter-spacing:0;text-transform:none;color:var(--ink)}
 .card.needs{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.hub{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}.hubcard h2 button{font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit}.hubnow{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.pagehead{margin:0 0 8px;font-size:15px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}.pagehead>b{font-size:20px}
 .item{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}
 .item:first-of-type{border-top:0}
 .chip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap}
 .chip.open,.chip.needs{background:var(--accent-bg);color:var(--accent)}
 .chip.running,.chip.claude{background:var(--run-bg);color:var(--run)}
 .chip.codex{background:var(--codex-bg);color:var(--codex)}
-.chip.prov{background:var(--warn-bg);color:var(--warn)}
+.chip.prov{background:var(--soft);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
 .chip.done,.chip.applied,.chip.in-force,.chip.active,.chip.ok{background:var(--ok-bg);color:var(--ok)}
 .chip.handoff,.chip.answered,.chip.parked,.chip.warn{background:var(--warn-bg);color:var(--warn)}
-.chip.stopped,.chip.lost,.chip.no-marker,.chip.bad,.chip.overruled{background:var(--bad-bg);color:var(--bad)}
+.chip.stopped,.chip.lost,.chip.no-result,.chip.bad,.chip.overruled{background:var(--bad-bg);color:var(--bad)}
 .chip.superseded,.chip.archived,.chip.revoked,.chip.withdrawn,.chip.idle{background:var(--soft);color:var(--mute)}
+/* the live hand-off state (lanes.mjs handoffOf; widgets.mjs hoChip): amber while the next session is on its way, blue once it talks. It
+   wraps (never widens a phone row). .pulse = the shared pulsing dot (HTML span or SVG circle); it moves only under the motion policy
+   (norn.css, :root.motion: not QUIET, not reduced motion, tab visible) - this sheet holds no animation */
+.ho{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:1px 8px;margin:2px 0 0 4px;border-radius:10px;font-size:12px;font-weight:600;white-space:normal;vertical-align:middle}
+td .ho{min-width:13em}.ho.pending{background:var(--warn-bg);color:var(--warn)}.ho.resumed{background:var(--run-bg);color:var(--run)}.ho .id{color:inherit}
+.pulse{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:currentColor}
+circle.pulse.ho-pending{fill:var(--warn)}circle.pulse.ho-resumed{fill:var(--run)}.mn .ns.ho-w{fill:var(--ink);font-weight:600}
+.node .horow{grid-column:1/-1;padding-left:28px}.node .horow .ho{margin-left:0}.fh-ho{margin-top:6px}.fh-ho .ho{margin-left:0;font-size:13px}.hrow.ho-row{border-bottom:0;padding:0 0 6px}
 .chip.refused{background:var(--soft);color:var(--accent);outline:1px solid var(--accent)}.refusedrow{padding-left:44px}
 .seg-v-agree{background:var(--ok)}.seg-v-harmless{background:var(--mute)}.seg-v-refused{background:var(--codex)}.seg-v-recoverable{background:var(--warn)}.seg-v-harmful,.seg-v-errors{background:var(--bad)}
 .id{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--mute)}
@@ -117,7 +136,7 @@ tr:last-child td{border-bottom:0}
 /* META-TEND (REPORT s.5.3): the shared widgets - bars (ranked list), columns (over time), stack (parts of one bar) - and the Tests tab */
 .wboard{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:0 12px 12px}.wbcol{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0;max-height:640px;overflow:auto}.wbcol h4{margin:0 0 6px;font-size:13px;text-transform:capitalize}.wbcard{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin:0 0 6px;overflow-wrap:anywhere}.wbtext{font-size:13px;margin-bottom:2px}.wb-prose{border-top:3px solid var(--warn)}.wb-repeated{border-top:3px solid var(--bad)}.wb-enforced{border-top:3px solid var(--ok)}.wb-retired{border-top:3px solid var(--mute)}.inspara.focus{outline:2px solid var(--accent);outline-offset:2px}@media (max-width:720px){.wboard{grid-template-columns:minmax(0,1fr)}.wbcol{max-height:420px}}
 .wbars{list-style:none;margin:0;padding:0}.wbars li{margin:6px 0}.wbl{display:flex;gap:8px;justify-content:space-between;align-items:baseline}.wbn{overflow-wrap:anywhere;min-width:0}.wbnote{margin-top:2px}
-.wcols{margin:4px 0}.wcolrow{display:flex;align-items:flex-end;gap:2px;height:72px;border-bottom:1px solid var(--line)}.wcol{flex:1;min-width:2px;background:var(--run);border-radius:2px 2px 0 0;min-height:1px}.wcolax{display:flex;justify-content:space-between;gap:6px}
+.wcols{margin:4px 0}.wplot{display:flex;gap:4px;align-items:stretch;min-width:0}.wplot>.wcolrow,.wplot>svg{flex:1;min-width:0}.wyax{display:flex;flex-direction:column;justify-content:space-between;text-align:right;line-height:1;flex:none;max-width:30%;overflow-wrap:anywhere}.wtitle{margin:2px 0}.wcolrow{display:flex;align-items:flex-end;gap:2px;height:72px;border-bottom:1px solid var(--mute)}.wcol{flex:1;min-width:2px;background:var(--run);border-radius:2px 2px 0 0;min-height:1px}.wcolax{display:flex;justify-content:space-between;gap:6px}
 /* META-TEND P5: the lines widget (REPORT 5.3 view 1) on the --k series; the per-file strip (view 4): paragraphs by age + read / cite marks */
 .wlines svg{display:block;width:100%;height:150px}.lnax{stroke:var(--line);stroke-width:1}.ln polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.ln circle{stroke:none}.ln-1 polyline{stroke:var(--k3)}.ln-1 circle,i.ln-1{fill:var(--k3);background:var(--k3)}.ln-2 polyline{stroke:var(--k2)}.ln-2 circle,i.ln-2{fill:var(--k2);background:var(--k2)}.ln-3 polyline{stroke:var(--k1)}.ln-3 circle,i.ln-3{fill:var(--k1);background:var(--k1)}.ln-4 polyline{stroke:var(--k4)}.ln-4 circle,i.ln-4{fill:var(--k4);background:var(--k4)}.ln-5 polyline{stroke:var(--k5)}.ln-5 circle,i.ln-5{fill:var(--k5);background:var(--k5)}.ln-6 polyline{stroke:var(--k6)}.ln-6 circle,i.ln-6{fill:var(--k6);background:var(--k6)}.ln-7 polyline{stroke:var(--k7)}.ln-7 circle,i.ln-7{fill:var(--k7);background:var(--k7)}.ln-8 polyline{stroke:var(--k8)}.ln-8 circle,i.ln-8{fill:var(--k8);background:var(--k8)}.ln-9 polyline{stroke:var(--k9)}.ln-9 circle,i.ln-9{fill:var(--k9);background:var(--k9)}
 .pstrip{display:flex;height:22px;border-radius:4px;overflow:hidden;gap:1px;background:var(--line);margin:4px 0}.psg{position:relative;display:block;min-width:3px}.psg.stale{outline:2px solid var(--bad);outline-offset:-2px}.age-new,.stkdot.age-new{background:var(--ok)}.age-mid,.stkdot.age-mid{background:var(--warn)}.age-old,.stkdot.age-old{background:var(--mute)}.age-unk{background:var(--line)}.pread{position:absolute;left:2px;top:2px;width:6px;height:6px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--panel)}.pcite{position:absolute;right:2px;bottom:2px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--accent)}.pread.inl,.pcite.inl{position:static;display:inline-block;margin-right:4px;vertical-align:middle}
@@ -258,7 +277,7 @@ svg.map .band{fill:var(--soft);opacity:.55}svg.map .band.alt{opacity:.25}
 .mn.c-running .st,.mn.c-running .box{stroke:var(--run)}.mn.c-running .st{fill:var(--run)}.mn.c-running .nw{fill:var(--run)}
 .mn.c-done .st{fill:var(--ok)}.mn.c-done .nw{fill:var(--ok)}
 .mn.c-handoff .st,.mn.c-parked .st,.mn.c-warn .st{fill:var(--warn)}.mn.c-handoff .nw,.mn.c-parked .nw{fill:var(--warn)}
-.mn.c-stopped .st,.mn.c-bad .st,.mn.c-lost .st,.mn.c-no-marker .st{fill:var(--bad)}.mn.c-stopped .nw,.mn.c-bad .nw,.mn.c-lost .nw,.mn.c-no-marker .nw{fill:var(--bad)}
+.mn.c-stopped .st,.mn.c-bad .st,.mn.c-lost .st,.mn.c-no-result .st{fill:var(--bad)}.mn.c-stopped .nw,.mn.c-bad .nw,.mn.c-lost .nw,.mn.c-no-result .nw{fill:var(--bad)}
 .mn.needs .box{fill:var(--accent-bg);stroke:var(--accent);stroke-width:2}.mn.needs .st,.mn.needs .nw{fill:var(--accent)}
 .mn.faded{opacity:.7}
 .mn[data-feed]{cursor:pointer}.mn[data-feed]:hover .box{stroke-width:2.2}.mn[data-feed]:focus{outline:none}.mn[data-feed]:focus .box{stroke:var(--ink)}
@@ -304,7 +323,7 @@ svg.map .dlv.due rect{stroke:var(--accent);stroke-width:2}
  main{padding:10px 8px}.glance,.grid2{grid-template-columns:minmax(0,1fr)}.card,.tablecard,.mapwrap{min-width:0;overflow-x:auto}
  .srow,.srow.inline{grid-template-columns:minmax(0,1fr)}.srow .sc{justify-content:flex-start}}
 /* META-CONTROLLER C2: the Home tab (Look 3, owner Q-25) - the thread between the side columns, full bleed under the bar; the composer
-   under the thread. Phone: one column, the page scrolls, the composer sticks over the bottom bar (Talk / Inbox / Agents / Plan / More) */
+   under the thread. Phone: one column, the page scrolls, the composer sticks over the bottom bar (Home / Inbox / Runs / Plan / More) */
 body[data-tab=home] main{padding:0;max-width:none}
 .home{display:grid;grid-template-columns:minmax(220px,290px) minmax(0,1fr) minmax(220px,290px);height:calc(100vh - var(--home-top,110px));min-height:420px}
 .home-l,.home-r{background:var(--panel);padding:12px 14px;overflow-y:auto;min-width:0;font-size:13px}
@@ -317,6 +336,8 @@ body[data-tab=home] main{padding:0;max-width:none}
 .hbar i{position:absolute;left:0;top:0;bottom:0;background:var(--warn)}.hbar b{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--run)}
 .home-c{display:flex;flex-direction:column;min-width:0;min-height:0}
 .hhead{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12.5px;white-space:nowrap;overflow:hidden;min-width:0}
+#chat-state{overflow:hidden;text-overflow:ellipsis;min-width:0}.chat-live{color:var(--accent);font-variant-numeric:tabular-nums}
+.chat-live::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle}
 .hn{font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
 .hchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--warn);color:var(--warn);padding:2px 8px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .hchip i{flex:none;width:8px;height:8px;background:var(--ok);display:inline-block}
@@ -399,7 +420,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
   <button class="ghost" id="theme" title="Light / dark / system">Theme: system</button>
   <button id="pause">Pause check-ins</button><button id="tick">Run tick now</button>
 </header>
-<nav role="tablist" id="tabs"></nav>
+<nav id="tabs" aria-label="Dashboard"></nav>
 <div id="error" role="alert"></div>
 <main id="main"></main>
 <div id="bbar" class="bbar" role="navigation" aria-label="Sections"></div>
@@ -425,21 +446,17 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody } from '/ui.mjs';
+import { hoChip } from '/widgets.mjs';
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
 import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, stillOnly, createStage, avoidRects } from '/norn/orc.mjs';
 import { createScheduler } from '/norn/motion.mjs';
 import { createEvents, eventsOfRecords, beatOf } from '/norn/live.mjs';
-import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, slashMenu, HOME_FILTERS } from '/home.mjs';
+import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, chatStateClass, slashMenu, HOME_FILTERS } from '/home.mjs';
 // META-CI-WORKCLASS R2 (DEC-332): body.dataset.step = the last boot / render() step reached (a test timeout names where ready stalled)
 const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-// META-UX-BUILD S4 (owner DIR-65): Instructions is Context - an old tab=instructions link lands on Context (the URL then says context).
-// META-UX-BUILD S5 (owner DIR-64): the Guard is Slop - an old tab=guard link lands on Slop the same way.
-const OLD_TAB = { instructions: 'context', guard: 'slop' };
-const tabOf = t => OLD_TAB[t] ?? t;
-if (OLD_TAB[qs.get('tab')]) { qs.set('tab', OLD_TAB[qs.get('tab')]); history.replaceState(null, '', '?' + qs.toString() + location.hash); }
 const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, allLanes: false, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
@@ -537,7 +554,7 @@ function popUp() {
 // a Guard row / chip: the tab that fixes it, opened at its file + line, its doc, or its element
 // META-UX-BUILD S3: a file (an Instructions file link, a doc) opens in the Docs reader at its line
 function goTo(g) {
-  document.body.classList.remove('more'); S.tab = tabOf(g.tab); S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
+  document.body.classList.remove('more'); S.tab = g.tab; S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
   const file = g.ins ? g.ins : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
   if (file) { S.tab = 'docs'; S.doc = file; S.docLine = Number(g.line) || null; S.docScroll = !!S.docLine; }
   if (g.jump) S.jump = g.jump;
@@ -558,7 +575,7 @@ async function partsFetch(tab, d) {
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
 const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
-  const q = new URLSearchParams(location.search), t = tabOf(q.get('tab'));
+  const q = new URLSearchParams(location.search), t = q.get('tab');
   if (!TABS.some(x => x[0] === t) || q.get('project') !== S.project) return;
   S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; render();
 });
@@ -569,7 +586,7 @@ async function render(force = false, why = []) {
     document.body.dataset.tab = S.tab; $('#bbar').innerHTML = S.project ? renderBottomBar(S.tab, { inbox: S.needs }) : '';
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
-    const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }, look()); nav.scrollLeft = navX;
+    const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }); nav.scrollLeft = navX;
     if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
     step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });
@@ -639,11 +656,12 @@ async function paintThread() {
     const d = await get(`/api/home?project=${encodeURIComponent(S.project)}`), k = homeKeep();
     S.last = d; S.lastTab = 'home';
     $('#thread').innerHTML = renderThread(d.events || [], { project: d.project ?? S.project, filter: S.homeFilter, open: S.homeOpen });
-    const st = $('#chat-state'); if (st) st.textContent = chatState(d.status);
+    const st = $('#chat-state'); if (st) { st.textContent = chatState(d.status); st.className = chatStateClass(d.status); }
     const nb = $('[data-act="home-filter"][data-filter="needs"] b'); if (nb) nb.textContent = d.needs_you ?? 0;
     homeRestore(k); err('');
   } catch (e) { err('Refresh failed: ' + e.message); }
 }
+// the state line's clock moves with the chat stream (each event re-renders it), never by a timer (META-VISUAL-B)
 let chatEs = null, chatFor = null;
 function chatLive(project) {
   if (project === chatFor) return;
@@ -672,7 +690,7 @@ async function chatSend() {
   const t = $('#chat-text'), text = t?.value.trim(); if (!text) return;
   const btn = $('[data-act="chat-send"]'); if (btn) btn.disabled = true;
   // a live line may have re-painted the composer while the post was in flight: clear the one on the page now
-  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) st.textContent = 'sent - the controller is on it ...'; }
+  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) { st.textContent = r?.queued ? 'sent - waiting in Norn until the chat restarts ...' : 'sent - the controller is on it ...'; st.className = 'small chat-live'; } }
   catch (e) { err('Not sent: ' + e.message); }
   finally { if (btn) btn.disabled = false; }
 }
@@ -786,6 +804,7 @@ function openStream() {
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-set-search]')) { S.setQ = e.target.value; setFilter(); } if (e.target.matches('[data-key]')) dirty(); });
 document.addEventListener('change', e => {
+  if (e.target.matches('[data-set-billing]')) { const o = e.target.selectedOptions[0]; $('#set-billing-note').textContent = o ? o.title : ''; }
   if (e.target.matches('[data-set-profile]')) { const o = e.target.selectedOptions[0]; $('#set-profile-note').textContent = o ? o.title : ''; }
   if (e.target.matches('[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-key]')) dirty();
@@ -807,21 +826,41 @@ function addEv(e) {
   } else {
     list.insertAdjacentHTML('beforeend', renderFeedEvent(e));
     if (e.kind === 'tool' && e.id) F.tools.set(e.id, { ts: e.ts, el: list.lastElementChild });
-    if (e.kind === 'step' || e.kind === 'text') $('#feed-now').innerHTML = `<b>now</b> ${esc(e.summary)}`;
+    if ((e.kind === 'step' || e.kind === 'text') && !F.hoNow) $('#feed-now').innerHTML = `<b>now</b> ${esc(e.summary)}`;
   }
   while (list.childElementCount > 600) list.firstElementChild.remove();
   if (F.tools.size > 400) F.tools.delete(F.tools.keys().next().value);
   if ($('#feed-follow').checked) list.scrollTop = list.scrollHeight;
 }
+// the live hand-off state (head.handoff, lanes.mjs handoffOf): while the next session is on its way, or once the chain went on in
+// another run, the "now" line is the hand-off, not this session's last words ("I stopped this run with a hand-off ..." read as stopped)
+function feedHead(h) {
+  F.head = h; $('#feed-head').innerHTML = renderFeedHead(h);
+  const ho = h.handoff, now = ho && (ho.phase === 'pending' || ho.run !== h.run) ? hoChip(ho, h.run) : '';
+  if (now !== (F.hoNow || '')) { F.hoNow = now; if (now) $('#feed-now').innerHTML = `<b>now</b> ${now}`; }
+}
+// a run that ended in a hand-off: ask for its head again until the supervisor names the next run, then follow that run's feed
+function feedEnded(project, run, tries = 0) {
+  if (F.run !== run) return;
+  const ho = F.head?.handoff;
+  if (ho && ho.run !== run && ho.phase) { openFeed(project, ho.run); $('#feed-status').textContent = `followed the hand-off from ${run} to ${ho.run} · live`; return; }
+  if (!ho || ho.phase !== 'pending' || tries >= 20) { $('#feed-status').textContent = 'run ended · feed closed'; return; }
+  $('#feed-status').textContent = 'run ended in a hand-off · waiting for the next session ...';
+  setTimeout(() => { if (F.run !== run) return;
+    const es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}`);   // head only: its backlog is on screen
+    es.addEventListener('head', m => { if (F.run === run) feedHead(JSON.parse(m.data)); });
+    es.addEventListener('end', () => { es.close(); feedEnded(project, run, tries + 1); });
+    es.onerror = () => { es.close(); feedEnded(project, run, tries + 1); }; }, 3000);
+}
 function openFeed(project, run) {
-  closeFeed(); F.run = run; F.project = project; markFeed();
+  closeFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; markFeed();
   $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = '';
   $('#feed-status').textContent = 'connecting ...';
   const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}`);
   es.onopen = () => { $('#feed-status').textContent = 'live · the server polls the run files every 2 s'; };
-  es.addEventListener('head', m => { $('#feed-head').innerHTML = renderFeedHead(JSON.parse(m.data)); });
+  es.addEventListener('head', m => feedHead(JSON.parse(m.data)));
   es.addEventListener('ev', m => addEv(JSON.parse(m.data)));
-  es.addEventListener('end', () => { es.close(); $('#feed-status').textContent = 'run ended · feed closed'; });
+  es.addEventListener('end', () => { es.close(); feedEnded(project, run); });
   es.onerror = () => { if (F.es !== es) return; $('#feed-status').textContent = es.readyState === EventSource.CLOSED ? 'feed refused or gone (at most 4 live feeds: close one)' : 'reconnecting ...'; };
 }
 $('#feed-close').onclick = closeFeed;
@@ -878,9 +917,9 @@ document.addEventListener('click', e => {
   const rid = e.target.closest('a[data-rid]');   // record-id chips in Docs: open the item where it lives
   if (rid) { e.preventDefault(); const id = rid.dataset.rid, k = id.split(/[-:]/)[0];
     if (k === 'RM') { S.tab = 'roadmap'; S.rm = { item: id, view: S.rm.view }; S.rmJump = true; history.replaceState(null, '', rmUrl()); render(); return; }   // META-ROADMAP S2
-    S.tab = { DEC: 'records', DIR: 'records', Q: 'inbox', RUN: 'agents', L: 'lanes' }[k] ?? 'records';
+    S.tab = { DEC: 'records', DIR: 'records', Q: 'inbox', RUN: 'runs', L: 'lanes' }[k] ?? 'records';
     if (S.tab === 'records') S.find = id; if (S.tab === 'lanes') { S.find = id.slice(2); S.allLanes = true; }
-    S.jump = { inbox: 'q-' + id, agents: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
+    S.jump = { inbox: 'q-' + id, runs: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
     history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
   const b = e.target.closest('button,[data-t]'); if (!b) return;
   const p = b.dataset.project, d = b.dataset;
@@ -928,6 +967,13 @@ document.addEventListener('click', e => {
   if (b.dataset.setLevel) { S.setLevel = b.dataset.setLevel; try { localStorage.setItem('meta-setlevel', S.setLevel); } catch { /* private mode */ }
     for (const x of document.querySelectorAll('[data-set-level]')) { const on = x === b; x.className = on ? 'strong' : 'ghost'; x.setAttribute('aria-pressed', on); }
     setFilter(); return; }
+  if (d.act === 'set-billing') {   // billing modes: fill the billing key + the caps that fit it; Review changes + Save stay the human step
+    const sel = $('[data-set-billing]'), ch = JSON.parse(sel.dataset.billing)[sel.value]; let n = 0;
+    for (const [k, v] of Object.entries(ch)) {
+      const el = document.querySelector(`[data-key="${CSS.escape(k)}"]:not([disabled])`); if (!el) continue;
+      el.value = String(v ?? ''); n++;
+    }
+    dirty(); $('#set-billing-note').textContent = `Filled ${n} setting(s) for ${sel.selectedOptions[0].textContent}. Nothing is saved yet: Review changes, then Save.`; return; }
   if (d.act === 'set-profile') {   // F-6: fill the form from the profile; Review changes + Save stay the human step
     const sel = $('[data-set-profile]'), cost = $('[data-set-cost]').value, ch = JSON.parse(sel.dataset.profiles)[sel.value][cost]; let n = 0;
     for (const [k, v] of Object.entries(ch)) {
@@ -946,6 +992,8 @@ document.addEventListener('click', e => {
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
+  if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
+  if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, paused: false }));   // GAP-1: the hold row of a PAUSED file
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
   if (d.act === 'fx-skip') { const k = (S.fxSkip ??= {})[d.run] ??= new Set(); if (k.has(d.file)) k.delete(d.file); else k.add(d.file); fxPaint(); return; }   // META-UX-BUILD S7
@@ -961,7 +1009,12 @@ document.addEventListener('click', e => {
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
   if (d.act === 'first-task') { const t = $('#first-task-text').value.trim(); if (t) act(() => post('/api/first-task', { project: d.project || p, text: t })); }
   if (d.act === 'adv-approve' && confirm('Approve: a directive asks the check-in for a task brief that adds this enforcement. Norn installs nothing itself.')) act(() => post('/api/directive', { project: d.project || p, text: d.text }));   // META-TEND P3
-  if (d.act === 'directive') { const t = prompt('New directive (binds the check-in):'); if (t) act(() => post('/api/directive', { project: p, text: t })); }
+  if (d.act === 'directive') {   // gap #5: a restatement of an active directive is refused (409); the owner may create it anyway
+    const t = prompt('New directive (binds the check-in):');
+    if (t) act(async () => { try { await post('/api/directive', { project: p, text: t }); } catch (e) {
+      if (!/looks like a duplicate of DIR-/.test(e.message) || !confirm(`${e.message.replace(/ \(a directive has no edit.*$/, '')}\n\nCreate it anyway?`)) throw e;
+      await post('/api/directive', { project: p, text: t, new: true }); } });
+  }
   if (d.act === 'settings-review') {   // META-PROFILE-BUG R1: each change in plain words + a flag on a recorded ruling / a retired executor
     const changes = {};
     for (const el of document.querySelectorAll('[data-key]:not([disabled])')) if (changed(el)) changes[el.dataset.key] = valueOf(el);

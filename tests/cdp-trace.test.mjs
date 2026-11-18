@@ -4,7 +4,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
 
 const PAGE = {
   '/busy': `<!doctype html><body><script>function stallHere() { const t = Date.now(); while (Date.now() - t < 2500) { /* the stall */ } document.body.dataset.ready = 'busy'; }
@@ -53,4 +56,18 @@ test('an until() timeout carries the trace too; a quick go() reports nothing', {
       e => /still falsy/.test(e.message) && /trace: renderer tasks: \d+ ms/.test(e.message));
     assert.equal(await pg.go(`${srv.url}/quick`), 'quick'); assert.equal(pg.slow, null, 'a quick step: no report, no trace');
   } finally { await pg.close(); await srv.close(); }
+});
+
+// CI 43999056272 (ubuntu, SUID sandbox): a browser that aborted with a FATAL line but did not exit cost every browser test 30 s, then
+// kept its test file alive to the 600 s cap (HANG). openPage fails within seconds with the browser's stderr and ends the browser.
+test('openPage: a browser that aborts on launch (FATAL, process still alive) fails fast with its stderr and is not left running', { timeout: 60000 }, async () => {
+  const dir = mkTmp('meta-cdp-fatal-'), pidf = path.join(dir, 'pid'), fixture = path.join(import.meta.dirname, 'fixtures', 'edge-suid-sandbox-stderr.txt');
+  const hang = `require("fs").writeFileSync(${JSON.stringify(pidf)}, String(process.pid)); process.stderr.write(require("fs").readFileSync(${JSON.stringify(fixture)}, "utf8")); setInterval(() => {}, 1e6)`;
+  await assert.rejects(openPage([800, 600], { browser: { kind: 'edge', exe: process.execPath, prefix: ['-e', hang, '--'] } }), e => {
+    assert.match(e.message, /no DevTools port .*FATAL on stderr, still running.*SUID sandbox misconfigured/s, 'failed on the FATAL line, not on the 30 s port wait');
+    assert.match(e.message, /setuid_sandbox_host\.cc/, 'the browser\'s stderr is in the message');
+    return true;
+  });
+  const pid = Number(fs.readFileSync(pidf, 'utf8'));
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'the browser process was ended');
 });

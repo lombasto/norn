@@ -1,9 +1,11 @@
 // NORN-WATCH S5 (DEC-683): the Windows half of "a run's process tree dies with the run" (jobguard.mjs). Compiled on first use with
 // the csc.exe of .NET Framework 4 (in every Windows 10 / 11), cached by source hash. Three verbs:
 //   hold <pid> <name>        create the named Job Object <name> (KILL_ON_JOB_CLOSE | BREAKAWAY_OK), put <pid> (the run's supervisor)
-//                            in it, print "ok", then wait for stdin EOF OR the supervisor's process handle (whichever first: it ended
-//                            or died) and exit: the handle closes, and while KILL_ON_JOB_CLOSE is still set the job kills everything
-//                            in it. A supervisor already gone at start = exit at once.
+//                            in it, print "ok", then wait for stdin EOF or the exit of <pid> itself, whichever comes first (the
+//                            supervisor ended or died) and exit: the handle closes, and while KILL_ON_JOB_CLOSE is still set the job
+//                            kills everything in it. The process wait: the hold ends with its supervisor however the pipe behaves
+//                            (a hold seen alive after its supervisor = ci-suite LEAK RED, CI 44141688462 / 43996467416). A supervisor
+//                            already gone at start = exit at once.
 //   reap <name> <keep-pid>   kill every process of the job but <keep-pid>, then clear KILL_ON_JOB_CLOSE (what the supervisor starts
 //                            after its end - tick, auto-resume - lives on); prints "reaped <n> <pid,pid>".
 //   spawn <cwd> <cmdline>    start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
@@ -63,8 +65,9 @@ static class JobGuard {
     // on whichever fires first: stdin EOF (reader thread) or the supervisor's process handle signalled (it exited).
     var eof = new Thread(() => { while (Console.In.ReadLine() != null) { } Environment.Exit(0); });
     eof.IsBackground = true; eof.Start();
-    WaitForSingleObject(p, INFINITE);
-    return 0;   // the job handle closes with this process
+    WaitForSingleObject(p, INFINITE);   // the held process exited
+    Environment.Exit(0);   // EOF or the held process gone: the handles close with this process (Exit: the reader thread may sit in a read)
+    return 0;
   }
 
   static int Reap(string name, int keep) {

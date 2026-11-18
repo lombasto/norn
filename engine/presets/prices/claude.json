@@ -1,0 +1,31 @@
+{
+  "about": "ESTIMATE ONLY: list prices of Claude models in USD per million tokens, used to put a $ figure on a RUNNING Claude run (billing.mjs live spend: claude -p --output-format json reports total_cost_usd only at the end). An ended run counts the CLI's own total_cost_usd, never this table. A model is matched by the longest prefix of its id; an alias (opus, sonnet, haiku, fable) by the aliases map; anything else by the default. Cache writes = input x cache_write_5m_x (5-minute) or x cache_write_1h_x (1-hour, the CLI's default when the usage does not split them).",
+  "verified": "2026-11-17 from the Claude API pricing table (cached 2026-11-03); re-check when a model or price changes",
+  "unit": "usd_per_mtok",
+  "cache_write_5m_x": 1.25,
+  "cache_write_1h_x": 2,
+  "default": "claude-opus-5-5",
+  "aliases": { "opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-2", "opusplan": "claude-opus-5-5" },
+  "models": {
+    "claude-fable-5-2": { "input": 8, "output": 40, "cache_read": 0.2 },
+    "claude-mythos-5-2": { "input": 8, "output": 40, "cache_read": 0.2 },
+    "claude-fable-5-1": { "input": 10, "output": 50, "cache_read": 1 },
+    "claude-mythos-5-1": { "input": 10, "output": 50, "cache_read": 1 },
+    "claude-fable-5": { "input": 10, "output": 50, "cache_read": 1 },
+    "claude-mythos-5": { "input": 10, "output": 50, "cache_read": 1 },
+    "claude-opus-5-5": { "input": 4, "output": 20, "cache_read": 0.2 },
+    "claude-opus-5": { "input": 5, "output": 25, "cache_read": 0.5 },
+    "claude-opus-4-8": { "input": 5, "output": 25, "cache_read": 0.5 },
+    "claude-opus-4-7": { "input": 5, "output": 25, "cache_read": 0.5 },
+    "claude-opus-4-6": { "input": 5, "output": 25, "cache_read": 0.5 },
+    "claude-opus-4-5": { "input": 5, "output": 25, "cache_read": 0.5 },
+    "claude-opus-4": { "input": 15, "output": 75, "cache_read": 1.5 },
+    "claude-sonnet-5-5": { "input": 2, "output": 10, "cache_read": 0.1 },
+    "claude-sonnet-5": { "input": 2, "output": 10, "cache_read": 0.2 },
+    "claude-sonnet-4": { "input": 3, "output": 15, "cache_read": 0.3 },
+    "claude-3-7-sonnet": { "input": 3, "output": 15, "cache_read": 0.3 },
+    "claude-haiku-5-5": { "input": 0.1, "output": 0.5, "cache_read": 0.01 },
+    "claude-haiku-4-5": { "input": 1, "output": 5, "cache_read": 0.1 },
+    "claude-3-5-haiku": { "input": 0.8, "output": 4, "cache_read": 0.08 }
+  }
+}

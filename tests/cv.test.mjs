@@ -25,7 +25,7 @@ function fixture() {
   return [
     run('RUN-1', 1, W('kestrel-implementer', { budget_min: 60 }), done(1000, 1.5), 30),
     run('RUN-2', 2, W('kestrel-implementer', { budget_min: 60 }), done(3000, 2.5), 90),
-    run('RUN-3', 3, W('kestrel-implementer', { budget_min: 60 }), { outcome: 'stopped', marker_line: '## STOPPED: x', usage: usage(500), cost_usd: 0.5 }, 60),
+    run('RUN-3', 3, W('kestrel-implementer', { budget_min: 60 }), { outcome: 'stopped', why: 'x', usage: usage(500), cost_usd: 0.5 }, 60),
     run('RUN-4', 4, W('kestrel-implementer', { budget_min: 60 }), { outcome: 'handoff', usage: usage(500), cost_usd: 0.5 }, 120),
     run('RUN-5', 5, W('kestrel-implementer', { budget_min: 60 }), 'killed', 6),
     run('RUN-6', 6, W('kestrel-planner', { effort: 'high' }), { outcome: 'limit', usage: usage(100), cost_usd: 0.1 }),
@@ -92,7 +92,7 @@ test('merged within 72 h (DLV run -> merged_at) and reverted (a MERGE STOPPED "s
     run('RUN-2', 50, W('kestrel-implementer'), done(1, 1)),
     run('RUN-3', 40, W('kestrel-implementer', { lane: 'z' }), done(1, 1)),
     run('RUN-4', 30, { kind: 'worker', executor: 'claude', model: 'claude-opus-5-5', effort: 'medium', agent: 'kestrel-implementer', lane: 'z', stage: 'MERGE' },
-      { outcome: 'stopped', marker_line: '## STOPPED: smoke red after the merge, reverted', usage: usage(1), cost_usd: 1 }),
+      { outcome: 'stopped', why: 'smoke red after the merge, reverted', usage: usage(1), cost_usd: 1 }),
   ];
   const dlvs = [
     { id: 'DLV-1', runs: ['RUN-1'], merged_at: at(10) },        // 90 h after RUN-1 ended: merged, not within 72 h

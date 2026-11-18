@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState, RecordError } from '../engine/lib/records.mjs';
 import { scanRepo, globToRe, makeGit } from '../engine/lib/dlvgit.mjs';
-import { deliverablesView, loadDeliverables, lastInstall, deliverableConfig } from '../engine/lib/deliverables.mjs';
+import { deliverablesView, loadDeliverables, lastInstall, deliverableConfig, formatDeliverable } from '../engine/lib/deliverables.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
 
@@ -92,6 +92,18 @@ test('target main: a deliverable on another repo is done once MERGED (no install
   const r2 = deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
   assert.equal(r2.state, 'merged'); assert.equal(r2.at_target, true);
   void a;
+});
+
+test('the PR norn merge-land opened shows on its row and listing line; the newest pr event wins', () => {
+  const { repo } = fixture();
+  const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
+  const id = mkDlv(state, { repo, branch: 'fix/b', delivers: 'docs b', done_utc: at(-30).toISOString() }).id;
+  const row = () => deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
+  assert.equal(row().pr, null);
+  assert.doesNotMatch(formatDeliverable(row()), /PR #/);
+  for (const n of [4, 7]) record(state, { kind: 'deliverable', ev: 'pr', id, by: 'launcher', data: { url: `https://github.com/o/r/pull/${n}`, number: n, repo: 'o/r', head: 'fix/b', base: 'main' } }, { now: () => at(-1), views: false });
+  assert.deepEqual(row().pr, { url: 'https://github.com/o/r/pull/7', number: 7 });
+  assert.match(formatDeliverable(row()), /fix\/b +PR #7 \| DUE \| clean \| docs b$/);
 });
 
 test('a deliverable whose branch is gone falls back to its recorded tip', () => {
@@ -202,7 +214,7 @@ test('backfill dry run: one row per unmerged origin feat/* fix/* branch + DONE r
   assert.deepEqual(Object.keys(by).sort(), ['feat/a', 'feat/c', 'feat/d']);
   assert.equal(by['feat/a'].evidence, f.run); assert.equal(by['feat/a'].lane, 'a'); assert.equal(by['feat/a'].delivers, 'task A-1 - the native a layer');
   assert.equal(by['feat/a'].native, true); assert.equal(by['feat/a'].action, 'create');
-  assert.equal(by['feat/d'].evidence, 'notes'); assert.equal(by['feat/d'].action, 'create'); assert.equal(by['feat/d'].delivers, 'D lane');
+  assert.equal(by['feat/d'].evidence, null, 'a lane NOTES ending ## DONE is no evidence (gap #3)'); assert.equal(by['feat/d'].action, 'skip: no DONE evidence');
   assert.equal(by['feat/c'].evidence, null); assert.equal(by['feat/c'].action, 'skip: no DONE evidence'); assert.equal(by['feat/c'].delivers, 'feat(c): c');
   const table = formatBackfill(plan);
   assert.match(table, /feat\/a .*create/); assert.match(table, /feat\/c .*skip: no DONE evidence/);
@@ -213,14 +225,14 @@ test('backfill dry run: one row per unmerged origin feat/* fix/* branch + DONE r
 test('backfill --apply creates the evidenced rows (--all: every row); a second plan shows them as existing', () => {
   const f = backfillFixture();
   const made = applyBackfill(f.state, backfillPlan({ stateDir: f.state, project: f.p, now: NOW }), { by: 'controller', now: () => at(0) });
-  assert.deepEqual(made.map(m => m.branch).sort(), ['feat/a', 'feat/d']);
+  assert.deepEqual(made.map(m => m.branch).sort(), ['feat/a']);
   const dl = Object.values(loadDeliverables(f.state));
   assert.equal(dl.find(i => i.data.branch === 'feat/a').data.run, f.run);
   assert.equal(dl.find(i => i.data.branch === 'feat/a').data.source, 'backfill');
   const again = backfillPlan({ stateDir: f.state, project: f.p, now: NOW });
   assert.match(again.rows.find(r => r.branch === 'feat/a').action, /^exists DLV-\d+$/);
   const all = applyBackfill(f.state, again, { by: 'controller', all: true, now: () => at(0) });
-  assert.deepEqual(all.map(m => m.branch), ['feat/c']);
+  assert.deepEqual(all.map(m => m.branch).sort(), ['feat/c', 'feat/d']);
 });
 
 test('the launcher records a deliverable at a DONE exit: one per repo + branch, a later DONE appends; main / helpers none', () => {
@@ -275,7 +287,7 @@ test('norn deliverables: list / --json / backfill dry run + --apply / park + unp
   const ls = cli(base);
   assert.equal(ls.code, 0, ls.err); assert.match(ls.out, /DLV-\d+ +done .*feat\/a/);
   const js = JSON.parse(cli([...base, '--json']).out);
-  assert.equal(js.rows.length, 2); assert.ok(js.rows.every(r => r.state === 'done'));
+  assert.equal(js.rows.length, 1, 'feat/a only: a lane NOTES ending ## DONE is no evidence (gap #3)'); assert.ok(js.rows.every(r => r.state === 'done'));
   const id = js.rows.find(r => r.branch === 'feat/a').id;
   assert.equal(cli([...base, 'park', id, '--why', 'owner: after the door', '--as', 'controller']).code, 0);
   const parked = JSON.parse(cli([...base, '--json']).out).rows.find(r => r.id === id);

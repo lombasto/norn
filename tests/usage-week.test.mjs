@@ -76,7 +76,7 @@ test('dashboard: the Usage tab shows the weekly table + top 5; an Agents run nod
   const html = renderTab('usage', { parts: [p] }, { project: 'x', now: NOW });
   assert.match(html, /id="usage-week"[\s\S]*Where the tokens went[\s\S]*<b>water<\/b><\/td><td>S1<\/td>/);
   assert.match(html, /id="usage-top"[\s\S]*200 turns x ~100k context/);
-  const ag = renderTab('agents', { tree: [{ id: 'RUN-7', kind: 'run', state: 'running', executor: 'claude', lane: 'water', project: 'x',
+  const ag = renderTab('runs', { tree: [{ id: 'RUN-7', kind: 'run', state: 'running', executor: 'claude', lane: 'water', project: 'x',
     guard: [{ id: 'GRD-1', cls: 'runaway', why: '43.5M cache reads = 6.1x', state: 'open', action: null }] }], queue: [] }, { project: 'x', now: NOW });
   assert.match(ag, /guard-chip" title="GRD-1: 43\.5M cache reads = 6\.1x"><span class="chip bad">runaway<\/span>/);
 });

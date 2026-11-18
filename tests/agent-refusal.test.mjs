@@ -31,6 +31,6 @@ test('the check-in prompt names the installed agents on its launch line', () => 
   const prev = process.env.CLAUDE_CONFIG_DIR; process.env.CLAUDE_CONFIG_DIR = mkTmp('agents-empty-');
   try {
     const out = renderCheckin({ name: 'p', root: state, state, install: { agents: proj } }, {});
-    assert.match(fs.readFileSync(out, 'utf8'), /\[--agent <a>\][^]*agents installed here: runner; no other name/);
+    assert.match(fs.readFileSync(out, 'utf8'), /\[--agent <a>\][^]*agents installed here: runner \(no other name/);
   } finally { if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev; }
 });

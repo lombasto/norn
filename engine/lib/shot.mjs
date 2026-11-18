@@ -100,15 +100,22 @@ export function stderrHint(stderr) {
   const m = /SUID sandbox helper binary was found, but is not configured correctly[\s\S]*?make sure that (\S+) is owned by root and has mode 4755/.exec(stderr || '');
   return m ? `SUID sandbox misconfigured: ${m[1]} (must be owned by root, mode 4755)` : '';
 }
+/** Chromium's own fatal log line ("[pid:tid:date:FATAL:file.cc:line] ..."): the browser gave up, whether or not its process (a
+ * wrapper script, the crashpad handler) exits. ERROR / WARNING lines are routine noise on a headless Linux runner. */
+export const fatalLine = stderr => /^\[[^\]\n]*:FATAL:[^\]\n]*\].*$/m.exec(stderr || '')?.[0] ?? '';
 /** wait for the DevTools port the browser writes into its profile; none within ms (or a failing exit first: Edge's Windows launcher
- * hands off and exits 0) = an Error naming the binary, its exit and the tail of its stderr */
-export async function waitDevToolsPort({ browser, profile, child, ms = 30000 }) {
+ * hands off and exits 0; or a FATAL line on its stderr: CI 43999056272, the SUID abort with the process still alive) = an Error
+ * naming the binary, its exit and the tail of its stderr. The caller ends the browser (closeBrowser): it may still run. */
+export async function waitDevToolsPort({ browser, profile, child, ms = 30000, fatalGraceMs = 2000 }) {
   const end = Date.now() + ms;
+  let fatalAt = null;   // a FATAL of a child process (GPU) the browser survives: the port may still come within the grace
   for (;;) {
     try { const port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]); if (port) return port; } catch { /* not yet */ }
     const failed = child && child.exitCode !== null && child.exitCode !== 0;
-    if (failed || Date.now() > end) {
-      const how = failed ? `exit ${child.exitCode}` : `no exit, ${Math.round(ms / 1000)} s`;
+    if (!failed && fatalAt === null && fatalLine(stderrTail(profile, Infinity))) fatalAt = Date.now();
+    const fatal = !failed && fatalAt !== null && Date.now() - fatalAt >= fatalGraceMs;
+    if (failed || fatal || Date.now() > end) {
+      const how = failed ? `exit ${child.exitCode}` : fatal ? 'FATAL on stderr, still running' : `no exit, ${Math.round(ms / 1000)} s`;
       const tail = stderrTail(profile), hint = stderrHint(stderrTail(profile, Infinity));
       throw new Error(`no DevTools port from ${browser.exe} (${how})${hint ? `: ${hint}` : ''}; its stderr ${tail ? `ends:\n${tail}` : 'is empty'}`);
     }

@@ -104,6 +104,14 @@ function flowSandbox({ modeB = 'done' } = {}) {
   const allSettled = () => runs().length && runs().every(r => r.state === 'queued' || settled(r));
   return { t, state, flows, briefs, common, runs, status, allSettled, root: t.replace(/\\/g, '/') };
 }
+// the project root as a git repo with a main branch (one empty commit): the repo a MERGE step's merge worktree is made from
+function gitMain(dir) {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  for (const a of [['init', '-q', '-b', 'main'], ['commit', '-q', '--allow-empty', '-m', 'init']]) {
+    const r = spawnSync('git', ['-C', dir, ...a], { env, encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+  }
+}
 const startChain = (d, topic) => meta(['flow', 'start', 'chain', '--var', `topic=${topic}`, '--var', `root=${d.root}`, '--as', 'controller', ...d.common]);
 
 test('flow start: one epic, every step queued with --epic and after: from needs; the chain runs to DONE; status = step -> run -> state', async () => {
@@ -202,14 +210,16 @@ test('every shipped flow validates; no code branch names a flow (the kill criter
   // a whole-var need holds after terms; empty = no need
   const f = validateFlow({ name: 'x', title: 't', vars: { after: { default: '' } }, steps: [{ id: 'a', title: 'a', needs: ['{{after}}'], executor: 'fake', budget_min: 1,
     lane: 'l', worktree: 'w', notes: 'n', brief_template: { builtin: 'merge', args: { lane: 'l', branch: 'b', worktree: 'w', notes: 'n' } } }] }, { dir: tmp() });
-  assert.deepEqual(renderFlow(f, {}).steps[0].needs, []);
-  assert.deepEqual(renderFlow(f, { after: 'run:RUN-1:done,q:Q-2' }).steps[0].needs.map(n => n.term.id), ['RUN-1', 'Q-2']);
+  const st = tmp();   // GAP-6: the merge builtin's merge worktree lives under the flow's state dir
+  assert.deepEqual(renderFlow(f, {}, { state: st }).steps[0].needs, []);
+  assert.deepEqual(renderFlow(f, { after: 'run:RUN-1:done,q:Q-2' }, { state: st }).steps[0].needs.map(n => n.term.id), ['RUN-1', 'Q-2']);
 });
 
 for (const name of Object.keys(SHIPPED)) {
   test(`shipped flow ${name}: dry run renders every step brief; on the fake executor it runs to DONE`, async () => {
     const d = flowSandbox();
     d.wt = n => { const w = path.join(d.t, n); fs.mkdirSync(w, { recursive: true }); return w.split(path.sep).join('/'); };
+    if (STEPS[name].includes('merge')) gitMain(d.t);   // GAP-6: a MERGE run works in its own merge worktree of the project's repo
     const vars = Object.entries(SHIPPED[name](d.root, d)).flatMap(([k, v]) => ['--var', `${k}=${v}`]);
     const common = d.common.filter((x, i, a) => x !== '--flows-dir' && a[i - 1] !== '--flows-dir');   // the shipped flows dir
     const dry = meta(['flow', 'start', name, ...vars, '--dry-run', ...common]);

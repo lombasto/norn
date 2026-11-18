@@ -1,5 +1,5 @@
 // META-STANDING-CONTEXT R1 (DIR-21): the standing context - what one session loads before any work, re-read on EVERY turn.
-// MEASURE: per run, from the transcripts Norn already reads (the cost / Agents tab tails): turn-1 context (input + cache create +
+// MEASURE: per run, from the transcripts Norn already reads (the cost / Runs page tails): turn-1 context (input + cache create +
 // cache read of the first API call), its cache create, the run's total cache reads (each API message once: message id + request
 // id; an ended run: its CLI final = that process's sum) and its turns; per role (worker, merge, check-in, chat; other harnesses
 // apart) and per day: the median standing context + the day's cache-read total.

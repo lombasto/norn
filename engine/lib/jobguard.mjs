@@ -65,7 +65,8 @@ export async function holdJob(pid, { exe, name = `meta-run-${pid}-${Date.now()}`
   if (!exe) return Promise.resolve({ error: 'no jobguard helper (not Windows, or no .NET Framework csc.exe)' });
   return new Promise(resolve => {
     let buf = '', done = false;
-    const end = v => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+    // a failed / timed-out hold is ended: left running it would still put the caller in a job nobody reaps, and outlive it
+    const end = v => { if (!done) { done = true; clearTimeout(t); if (v.error) { try { proc?.kill(); } catch { /* gone */ } } resolve(v); } };
     let proc;
     try { proc = spawn(exe, ['hold', String(pid), name], { detached: true, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }); }
     catch (e) { return end({ error: e.message }); }
@@ -107,6 +108,15 @@ export function spawnOutside(exePath, args, { cwd = process.cwd(), exe = jobguar
   const r = spawnSync(exe, ['spawn', cwd, [exePath, ...args].map(winQuote).join(' ')], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
   const m = /^pid (\d+) (breakaway|inside)/m.exec(r.stdout || '');
   return m ? { pid: Number(m[1]), breakaway: m[2] === 'breakaway' } : null;
+}
+
+/** the hold process's exit (its stdin ended by reapJob, or the held process gone), at most ms: a supervisor awaits it before its
+ * own exit, so "the supervisor is gone" (settled) means its hold is gone too - never a hold seen alive after the file (LEAK RED) */
+export function holdGone(job, ms = 5000) {
+  const p = job?.proc;
+  if (!p || p.exitCode !== null || p.signalCode !== null) return Promise.resolve(true);
+  try { p.stdin?.end(); } catch { /* gone */ }
+  return new Promise(r => { const t = setTimeout(() => r(false), ms); t.unref?.(); p.once('exit', () => { clearTimeout(t); r(true); }); });
 }
 
 /** POSIX: kill the executor's process group (it was spawned detached = group leader) */

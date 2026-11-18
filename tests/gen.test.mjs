@@ -85,7 +85,7 @@ test('packs: the project\'s SloppaChoppa switch off drops the "run norn slop che
   for (const fam of ['codex', 'grok']) {
     const impl = fs.readFileSync(`${sb.p.state}/packs/demo-implementer.${fam}.md`, 'utf8');
     assert.ok(!/slop check/.test(impl), fam);
-    assert.match(impl, /## Headless\nYou run headless: [^\n]*`## HANDOFF`\. (Use only|The brief)/, 'the rest of the snippet stays');
+    assert.match(impl, /## Headless\nYou run headless: [^\n]*ends no-result\. (Use only|The brief)/, 'the rest of the snippet stays');
   }
 });
 

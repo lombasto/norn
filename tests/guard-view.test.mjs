@@ -57,8 +57,8 @@ test('guardView: counts per type, new first, the trend = open findings by the da
 
 test('the worst pick: a low row (path not found), even a new one, never outranks a warn-level finding in the order, his line or the best action', () => {
   const rows = rankRows([
-    { id: 'q', type: 'rules', severity: 'low', new: true, why: 'a rule names a path git never had: C:/x/.superpowers/QUIET does not exist', go: { tab: 'instructions' } },
-    { id: 'm', type: 'memory', severity: 'medium', new: false, why: 'MEMORY.md is over 200 lines.', go: { tab: 'instructions', ins: 'm' } },
+    { id: 'q', type: 'rules', severity: 'low', new: true, why: 'a rule names a path git never had: C:/x/.superpowers/QUIET does not exist', go: { tab: 'context' } },
+    { id: 'm', type: 'memory', severity: 'medium', new: false, why: 'MEMORY.md is over 200 lines.', go: { tab: 'context', ins: 'm' } },
     { id: 'h', type: 'tests', severity: 'high', new: false, why: 'a test is red.', go: { tab: 'tests' } },
     { id: 'n', type: 'docs', severity: 'medium', new: true, why: 'a doc is stale.', go: { tab: 'docs', doc: 1 } }]);
   assert.deepEqual(rows.map(r => r.id), ['n', 'h', 'm', 'q'], 'warn level first (new first inside it), low last');

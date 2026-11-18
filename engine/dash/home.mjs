@@ -5,7 +5,7 @@
 // file, the run records, the ledger entries and the inbox rows); renderThread is the reusable component (Look 2's dock later
 // mounts the same list); renderHome is the Look 3 page around it. C3: approval cards (Approve once / Deny -> POST /api/chat/approve)
 // and done cards (Undo -> POST /api/chat/undo) come from the chat profile's outbox lines; a card without a verb keeps its button disabled.
-import { dodChips } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips
+import { dodChips, hoChip } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips; the live hand-off chip
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fin = v => typeof v === 'number' && Number.isFinite(v);
 const hhmm = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 16) : ''; };
@@ -123,7 +123,7 @@ export function homeEvents({ thread = [], runs = [], items = null, ledger = [], 
     if (r.state !== 'queued') out.push({ key: `r${r.id}`, ts: startTs(r), cat, kind: 'run-start', ...head, executor: d.executor ?? null, model: d.model ?? null, effort: d.effort ?? null });
     const end = endOf(r), ets = endTs(r);
     if (end && ets) out.push({ key: `e${r.id}`, ts: ets, cat, kind: 'run-end', ...head, outcome: end.outcome ?? r.state, why: end.why ?? null, dod_ready: d.dod_ready ?? null, dod: end.dod ?? null,
-      images: imagePaths(`${end.marker_line ?? ''} ${end.why ?? ''}`) });
+      images: imagePaths(`${end.why ?? ''} ${end.summary ?? ''}`) });
   }
   const checkins = runs.filter(r => r.data?.kind === 'checkin').map(r => ({ id: r.id, start: Date.parse(startTs(r) ?? ''), end: endTs(r) ? Date.parse(endTs(r)) : null }))
     .filter(c => Number.isFinite(c.start)), all = items ?? runs;
@@ -189,7 +189,7 @@ function card(e, ctx) {
   const what = e.kind === 'unreviewed' ? `${rid(e.id)} <b>${esc(e.lane ?? 'run')}</b> ended ${esc(String(e.outcome ?? e.state).toUpperCase())}${e.why ? `: ${esc(e.why)}` : ''} - not reviewed yet`
     : e.kind === 'parked' ? `lane <b>${esc(String(e.id).slice(2))}</b> parked${e.q ? ` by ${rid(e.q)}` : e.why ? `: ${esc(e.why)}` : ''}`
     : e.kind === 'login' ? `${esc(e.title)}` : `${esc(e.title ?? e.id)}`;
-  const go = e.kind === 'unreviewed' ? 'agents' : 'inbox';
+  const go = e.kind === 'unreviewed' ? 'runs' : 'inbox';
   return `<div class="head">${tag('needs', 'NEEDS YOU')}<span class="txt">${what}</span><span class="spacer"></span><button class="ghost" data-tab="${go}">open</button></div>`;
 }
 const LINE = new Set(['segment', 'stop', 'checkin', 'handoff']), PLAIN = new Set(['you', 'controller', 'tools', 'show', 'norn']);
@@ -210,7 +210,7 @@ const sh = (h, body) => `<section class="hs"><h4>${esc(h)}</h4>${body}</section>
 const NOW_GLYPH = { running: ['run', '▶'], queued: ['idle', '‖'], claimed: ['idle', '‖'] };
 function left(s, ctx) {
   const now = (s.now || []).map(n => { const [c, g] = NOW_GLYPH[n.state] ?? ['idle', '○'];
-    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>`; }).join('')
+    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
     || '<div class="mute small">no run is running or queued</div>';
   const u = s.usage || {}, pct = fin(u.used) ? u.used : null;
   const usage = `<div class="hbar"><i style="width:${pct === null ? 0 : Math.min(100, pct)}%"></i>${fin(u.stop) ? `<b style="left:${Math.min(100, u.stop)}%"></b>` : ''}</div>
@@ -248,11 +248,21 @@ export function slashMenu(text, st = {}) {
   const none = !a.length && !b.length && st.commands ? [`<li class="mute small">no command matches /${esc(q)} - it would not be sent</li>`] : [];
   return `<ul class="slash" role="listbox" aria-label="Commands">${[...a, ...b, ...more, ...none, ...tail].join('')}</ul>`;
 }
-/** The chat's state word in the thread header (the thread-only repaint refreshes it too). */
-export const chatState = (st = {}) => (st.handing_off ? 'handing off ...' : st.busy ? 'thinking ...' : st.running ? 'session open' : 'idle');
+/** The chat's state line in the thread header: while a turn runs, what it is doing (its last tool), for how long, and the messages
+ * waiting in Norn; the page ticks the clock each second (the thread-only repaint refreshes the rest). */
+export function chatState(st = {}, now = Date.now()) {
+  const q = st.queued ? ` · ${st.queued} message${st.queued === 1 ? '' : 's'} waiting` : '';
+  if (st.handing_off) return `handing off ...${q}`;
+  if (st.rolling === 'settings' && !st.since) return `restarting with the new settings ...${q}`;
+  if (!st.busy) return st.running ? 'session open' : 'idle';
+  const s = Number.isFinite(st.since) ? Math.max(0, Math.floor((now - st.since) / 1000)) : null;
+  return `${st.doing ?? 'thinking'}${s === null ? ' ...' : ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`}${q}`;
+}
+/** the state line's class: the pulsing dot while the chat works */
+export const chatStateClass = (st = {}) => (st.busy || st.handing_off ? 'small chat-live' : 'mute small');
 /** The Home tab body. d: GET /api/home; ctx: { project, homeFilter, now } */
 export function renderHome(d, ctx = {}) {
-  const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you ?? (d.events || []).filter(e => e.cat === 'needs').length;
+  const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you, approvals = d.approvals;   // UX review 4: the Inbox's count; approvals by name beside it
   const harness = `${HARNESS[st.executor] ?? esc(st.executor ?? 'claude')}${st.model ? ` · ${esc(SHORT(st.model))}` : ''}${st.effort ? `<span class="heff"> · ${esc(st.effort)}</span>` : ''}`;
   const lim = fin(st.handoff_k) ? st.handoff_k * 1000 : null;
   const amber = fin(st.ctx) && fin(st.no_new_step_k) && st.ctx >= st.no_new_step_k * 1000;
@@ -273,9 +283,9 @@ export function renderHome(d, ctx = {}) {
   // C5 cost line: tokens are counted (per turn), the weekly % is an estimate (~); API-equivalent $ only in the hover (not money on a plan)
   const c = st.cost, costLine = c ? `<div class="hcost small mute"${fin(c.usd) && c.turns ? ` title="~${c.usd.toFixed(2)} API-equivalent (the CLI's figure; on a subscription it is plan share, not money)"` : ''}>${c.turns
     ? `chat today ${c.tokens >= 1e6 ? (c.tokens / 1e6).toFixed(2) + 'M' : (c.tokens / 1000).toFixed(1) + 'k'} tokens${fin(c.weekly_pct) ? ` · ~${c.weekly_pct.toFixed(2)} % of the week` : ''} · ${c.turns} turn${c.turns === 1 ? '' : 's'}` : 'chat today: no turns'}</div>` : '';
-  const filters = HOME_FILTERS.map(([k, l]) => `<button class="hf" data-act="home-filter" data-filter="${k}" aria-pressed="${k === filter}">${esc(l)}${k === 'needs' ? ` <b>${needs}</b>` : ''}</button>`).join('');
+  const filters = HOME_FILTERS.map(([k, l]) => `<button class="hf" data-act="home-filter" data-filter="${k}" aria-pressed="${k === filter}">${esc(l)}${k === 'needs' ? ` <b id="home-needs">${needs}</b>${approvals ? ` <span class="small">+ ${approvals} to approve</span>` : ''}` : ''}</button>`).join('');
   return `<div class="home">${left(d.side || {}, ctx)}<section class="home-c">
-    <div class="htop"><div class="hhead"><span class="hn">Norn</span>${picker}${ctxBar}<button type="button" class="hnote" data-act="open-setting" data-setting="chat_raw_shell" title="${esc(sl.long)}">${esc(sl.short)}</button><span class="spacer"></span><span class="mute small" id="chat-state">${state}</span></div>
+    <div class="htop"><div class="hhead"><span class="hn">Norn</span>${picker}${ctxBar}<button type="button" class="hnote" data-act="open-setting" data-setting="chat_raw_shell" title="${esc(sl.long)}">${esc(sl.short)}</button><span class="spacer"></span><span class="${chatStateClass(st)}" id="chat-state" role="status" aria-live="polite">${esc(state)}</span></div>
     <div class="hfilters" role="toolbar" aria-label="Show">${filters}</div></div>
     <div class="hscroll" id="thread">${renderThread(d.events || [], { project: d.project ?? ctx.project, filter, open: ctx.homeOpen })}</div>
     <form class="composer" onsubmit="return false"><textarea id="chat-text" rows="1" maxlength="8000" placeholder="Message, or / for commands" aria-label="Message to the controller"></textarea><div id="slash-menu" class="slashmenu" hidden></div>
@@ -285,7 +295,7 @@ export function renderHome(d, ctx = {}) {
 }
 
 // ---------- the phone bottom bar (SPEC sec. 10: Talk / Inbox / Agents / Plan / More) ----------
-const BAR = [['home', 'Talk', '✉'], ['inbox', 'Inbox', '⚑'], ['agents', 'Agents', '⚙'], ['plan', 'Plan', '☰']];
+const BAR = [['home', 'Home', '✉'], ['inbox', 'Inbox', '⚑'], ['runs', 'Runs', '⚙'], ['plan', 'Plan', '☰']];
 export function renderBottomBar(tab, counts = {}) {
   return BAR.map(([k, l, g]) => `<button data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}><span class="bg" aria-hidden="true">${g}</span>${counts[k] ? `<span class="count" aria-label="${counts[k]} need you">${counts[k]}</span>` : ''}<span class="bl">${l}</span></button>`).join('')
     + `<button data-act="more" aria-expanded="false"><span class="bg" aria-hidden="true">⋯</span><span class="bl">More</span></button>`;

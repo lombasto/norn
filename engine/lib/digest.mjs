@@ -2,7 +2,8 @@
 // every row comes from STATE on every call (DONE and not merged, a crash with no successor, an open Q, a directive nothing cites)
 // and leaves only when the target state is reached - never because someone reviewed or read it. Read-only: writes no record.
 // Sections: finished (not on main), queued (+ after / inputs, evaluated by S4), questions, ended (no clean successor), directives,
-// ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green).
+// ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green),
+// overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes).
 import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
 import { deliverablesView, deliverableConfig } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
@@ -19,13 +20,16 @@ import { digestRow } from './slop/daily.mjs';
 import { slopOn } from './policy.mjs';
 import { adviceDigestRow } from './advice.mjs';
 import { critiqueRows } from './critique.mjs';
+import { dupPairs } from './dupdirs.mjs';
+import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
+import { overlapRows, overlapOn } from './overlap.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
 const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
 const isWork = d => !NOT_WORK.includes(d.kind) && d.role !== 'helper' && !d.parent;
 const endOf = r => r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)) || null;
-const BAD_END = ['crash', 'no-marker'];
+const BAD_END = ['crash', 'no-result'];
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const isMain = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const age = (now, ts) => +((now - Date.parse(ts)) / H).toFixed(1);
@@ -165,7 +169,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const main = deliverableConfig(project).main;
   const sections = {
     finished: [...finished(runs, dlvRows, { now, git, main, cited: actedOn(items) }), ...nodeFinished(stateDir, st.items, { now, git, main, cited: actedOn(items) })],
-    queued: queued(items.filter(i => i.kind === 'run'), { evalAfter: evalAfter || makeEval(stateDir, { git }), ready: ready || readiness(stateDir, { now }) }),
+    queued: queued(items.filter(i => i.kind === 'run'), { evalAfter: evalAfter || makeEval(stateDir, { git }), ready: (ready ||= readiness(stateDir, { now })) }),
     questions: questions(items, { now }),
     ended: ended(runs, { now }),
     directives: directives(items, { now }),
@@ -175,6 +179,14 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const held = heldLanes(st.items, now);
   if (held.length) sections.held = held.map(h => ({ id: h.id, lane: h.lane, holder: h.holder, who: holdWho(h), until: h.until,
     min: Math.max(0, Math.ceil((Date.parse(h.until) - now) / 60000)), why: h.why }));
+  // GAP-1 (holds.mjs): ALL queued work waits on one machine-level hold (usage guard / PAUSED) past policy.holds.notice_min - ONE row, first;
+  // the walk says it holds NOW, hold.json (the tick's) says since when; it leaves when the walk no longer holds
+  const hw = wholeHold(ready), hr = hw ? readHold(stateDir) : null;
+  if (hw && hr?.term === hw.term) {
+    let status = ''; try { status = fs.readFileSync(path.join(stateDir, 'STATUS.md'), 'utf8'); } catch { /* no reset words */ }
+    const it = holdItem({ ...hr, ...hw }, { now, min: noticeMin(project?.policy), status });
+    if (it) sections.hold = [{ id: 'HOLD', term: it.term, scope: it.scope, runs: it.runs, merges: it.merges, since: it.since, min: it.minutes, reason: it.reason, fix: it.fix, clears: it.clears }];
+  }
   // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0
   let rm = null;
   try { rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows }); } catch { rm = null; }
@@ -191,6 +203,13 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // META-DOD 3: the plan reviews with findings (or no clean end) the check-in has not reviewed yet - the builds they hold wait for it
   const cr = critiqueRows(st.items);
   if (cr.length) sections.critique = cr;
+  // gap #5: two active directives where the newer restates the older - the check-in folds them (supersede the older by the newer)
+  const dd = dupPairs(st.items);
+  if (dd.length) sections.dupdirs = dd;
+  // GAP-12: a running lane whose changed files overlap a remote branch / open PR (overlap.mjs; the tick and a lane start refresh the
+  // cache, the digest only reads it) - the check-in decides: carry on, rebase onto it, or ask the owner
+  const ov = overlapOn(project?.policy) ? overlapRows(stateDir, st.items) : [];
+  if (ov.length) sections.overlap = ov;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }

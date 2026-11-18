@@ -1,12 +1,12 @@
 // META-UX-BUILD S4: Context = Instructions without the reader and the checks (REPORT s.2, owner DIR-65 "3) A": label + URL renamed,
-// old tab=instructions links still land). Summary of at most 4 numbers + Per role / Per file / Is it growing? / Check-ins per day,
+// the URL says tab=context). Summary of at most 4 numbers + Per role / Per file / Is it growing? / Check-ins per day,
 // each its own part, state in the URL; the two standing-context tables are ONE table in Per role; the checks stay reachable from
 // one link (not in the default view) until the Slop slice moves them.
 // Sandbox only: pure renders, the shared dash fixture (temp dirs, no real ~/.claude) and a private headless browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONTEXT_SUBS, contextNumbers, standingRows, INS_PARTS } from '../engine/dash/insparts.mjs';
-import { TABS, NORN_GROUPS, ONE_PROJECT, renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
+import { TABS, NAV, ONE_PROJECT, renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
@@ -32,7 +32,7 @@ const ROWS = Array.from({ length: 45 }, (_, i) => row(`f${i}`, `file-${i}.md`, i
 test('the tab is Context (label + URL id); the API route stays /api/instructions', () => {
   assert.ok(TABS.some(t => t[0] === 'context' && t[1] === 'Context')); assert.ok(!TABS.some(t => t[0] === 'instructions'));
   assert.ok(SERVER_TABS.includes('context') && !SERVER_TABS.includes('instructions'));
-  assert.ok(NORN_GROUPS.find(g => g[0] === 'verdandi')[3].includes('context')); assert.ok(ONE_PROJECT.includes('context'));
+  assert.ok(NAV.find(d => d[0] === 'health')[2].includes('context')); assert.ok(ONE_PROJECT.includes('context'));
   assert.deepEqual(CONTEXT_SUBS.map(x => x[0]), ['role', 'file', 'growing', 'checkins']);
   assert.deepEqual(CONTEXT_SUBS.map(x => x[1]), ['Per role', 'Per file', 'Is it growing?', 'Check-ins per day']);
 });
@@ -111,12 +111,12 @@ test('the loader: the summary alone for Per role / growing / check-ins; the file
   assert.equal((await loadTab('context', 'kestrel', get, { sub: 'nope' })).sub, 'role');
 });
 
-test('the browser: an old tab=instructions link lands on Context; a sub-view tap is in the URL (Back returns); the phone has no sideways scroll', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser: tab=context opens Context; a sub-view tap is in the URL (Back returns); the phone has no sideways scroll', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-    await pg.go(`${f.url}/?project=kestrel&tab=instructions`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'context' && !!document.querySelector('#context-subs')`, 90000), 'the old link lands on Context');
+    await pg.go(`${f.url}/?project=kestrel&tab=context`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'context' && !!document.querySelector('#context-subs')`, 90000), 'tab=context opens Context');
     assert.match(await pg.ev('location.search'), /tab=context/);
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (Per role)');
     await pg.ev(`document.querySelector('#context-sub-file').click()`);

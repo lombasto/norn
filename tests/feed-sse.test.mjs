@@ -81,7 +81,7 @@ test('feed: run end -> a final head + `end`, the stream closes; an ended run str
   fs.appendFileSync(log, '## DONE\n');
   record(f.pa.state, { kind: 'run', ev: 'end', id, by: 'launcher', data: { exit: 0, outcome: 'done' } });
   await c.wait(x => x.closed && x.events.some(e => e.event === 'end'));
-  assert.ok(c.events.some(e => e.event === 'ev' && e.json.kind === 'marker'), 'the last lines arrive before end');
+  assert.ok(c.events.some(e => e.event === 'ev' && e.json.summary === '## DONE'), 'the last lines arrive before end');
   assert.equal(c.events.filter(e => e.event === 'head').at(-1).json.state, 'exited');
   const d = sse(url);
   await d.wait(x => x.closed);
@@ -107,10 +107,10 @@ test('feed: one shared tailer per run (refcounted), stopped after the linger; a 
   assert.equal(n.status, 404);
 }));
 
-test('feed head: context from the latest usage event, last commit of the run worktree, the NOTES end marker of THIS run', async () => {
+test('feed head: context from the latest usage event, last commit of the run worktree, the result (norn done) of THIS run', async () => {
   const f = await fixture({ dash: DASH });
   try {
-    // the lane's notes file still ends with the PREVIOUS run's marker (written an hour before this run started)
+    // the lane's notes file ends with an old "## HANDOFF" line: a log, never the chip
     const notes = path.join(f.root, 'NOTES.md'); fs.writeFileSync(notes, '# notes\nwork\n## HANDOFF\n');
     const old = new Date(Date.now() - 3600e3); fs.utimesSync(notes, old, old);
     // a claude run whose transcript is the feed fixture: usage -> head.ctx
@@ -121,10 +121,11 @@ test('feed head: context from the latest usage event, last commit of the run wor
     await c.wait(x => x.events.some(e => e.event === 'head' && e.json.commit));
     const h = c.events.filter(e => e.event === 'head').at(-1).json;
     assert.equal(h.ctx, 3 + 200 + 21500); assert.equal(h.executor, 'claude');
-    assert.equal(h.marker, null, "a running run shows no chip for the previous run's HANDOFF");
+    assert.equal(h.marker, null, 'no result yet: no chip, whatever the NOTES say');
     assert.match(h.commit.sha, /^[0-9a-f]{7,}$/); assert.equal(typeof h.commit.subject, 'string');
     assert.ok(c.events.some(e => e.event === 'ev' && e.json.kind === 'tool' && e.json.name === 'Bash'));
-    fs.appendFileSync(notes, 'resumed\n## HANDOFF\n');   // this run writes its own marker -> the chip shows
+    fs.mkdirSync(path.join(f.pa.state, 'results', r.id), { recursive: true });   // this run writes its result (norn done) -> the chip shows
+    fs.writeFileSync(path.join(f.pa.state, 'results', r.id, 'result.json'), JSON.stringify({ v: 1, run: r.id, outcome: 'handoff', handoff: 'HANDOFF.md', at: new Date().toISOString() }));
     await c.wait(x => x.events.filter(e => e.event === 'head').at(-1).json.marker === 'HANDOFF');
     c.close();
   } finally { await f.done(); }

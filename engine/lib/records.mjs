@@ -62,8 +62,9 @@ export const KINDS = {
     end: { from: ['running'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
     kill: { from: ['running'], to: 'killed', roles: [...OWNER, 'controller'] },
-    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5)
-    resume: { from: ['exited'], to: null, roles: ['launcher'] },
+    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5); META-CATCH S1: the
+    // same verdict on a run lost for a certain death (runs.mjs relaunchLost)
+    resume: { from: ['exited', 'lost'], to: null, roles: ['launcher'] },
     // META-CHECKIN-DIET R1: the launcher reviews a ROUTINE end itself ({ refs, routine, why[, queued, brief] }: checkins.mjs)
     review: { from: ['exited', 'lost', 'killed'], to: null, roles: ['checkin', 'controller', 'launcher'] },
     // META-GT12 queue: a run waiting for a cap slot (all start fields + not_before); filled by the launcher ({ next: RUN-m }) or withdrawn
@@ -93,6 +94,8 @@ export const KINDS = {
     unpark: { from: ['parked'], to: 'open', roles: [...CK, ...OWNER] },
     // META-GTP-MERGEQ piece 0: the work landed another way (another DLV, or a port commit): terminal, never resurfaces
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
+    // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
+    pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
@@ -125,6 +128,7 @@ export const KINDS = {
     unlink: { from: ['open'], to: null, roles: [...CK, ...OWNER, 'launcher'] },
     drop: { from: ['open'], to: 'dropped', roles: [...CK, ...OWNER] },
     reopen: { from: ['dropped'], to: 'open', roles: [...OWNER, 'controller'] },
+    verdict: { from: ['open'], to: null, roles: [...CK, ...OWNER] },   // META-CATCH S2: a look verdict (pass | fail + image) on a look item
   } },
   // META-ADOPT A1 (meta-adopt SPEC sec. 4): a draft setup ADP-n of a project (adopt.jsonl); bulk (facts, drafts) in files beside it
   // (state/adopt/ADP-n/), events carry path + sha256. One open per project. A check-in may create and draft, never decide or apply.
@@ -172,6 +176,13 @@ export const itemLinks = it => {
   }
   return l;
 };
+// META-CATCH S2: an item's proof form and views from its edits (proof none clears the views, as roadmap.mjs folds it)
+const itemLook = it => {
+  let proof = null, views = [];
+  for (const h of it.history) if (h.ev === 'edit') { if ('views' in h.data) views = h.data.views || []; if ('proof' in h.data) { proof = h.data.proof ?? null; if (!proof) views = []; } }
+  return { proof, views };
+};
+const itemProof = it => itemLook(it).proof, itemViews = it => itemLook(it).views;
 export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in a body_file
 export const MAIL_TO_RE = /^(RUN-\d+|lane:[A-Za-z0-9][A-Za-z0-9_.-]*|role:(checkin|controller))$/;
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
@@ -365,6 +376,7 @@ function validateData(kind, ev, d, target, st, by) {
       str(d.owner_words, 'owner_words', { req: false, max: 4000 });   // META-Q-RECONCILE R1
       if (d.not_an_answer !== undefined && d.not_an_answer !== true) fail('not_an_answer must be true');
       if (d.not_an_answer && d.answers) fail('--answers and --not-an-answer exclude each other');
+      if (d.approach_review !== undefined && !/^RM-\S+$/.test(d.approach_review)) fail('approach_review must name a roadmap item (RM-n)');   // META-CATCH S1 (stuck.mjs)
     }
     if (ev === 'notanswer') {
       if (kindOfId(d.q) !== 'question' || st.items[d.q]?.kind !== 'question') fail(`q must name an existing Q-n (got ${JSON.stringify(d.q)})`);
@@ -380,7 +392,10 @@ function validateData(kind, ev, d, target, st, by) {
     }
   }
   if (kind === 'directive') {
-    if (ev === 'create') { str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false }); }
+    if (ev === 'create') {
+      str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false });
+      list(d.distinct_from, 'distinct_from');   // gap #5: the active DIRs this one was created next to on purpose (--new): no duplicate row
+    }
     if (ev === 'done') list(d.refs, 'refs', { req: true });
     if (ev === 'supersede') {
       str(d.why, 'why');
@@ -454,7 +469,7 @@ function validateData(kind, ev, d, target, st, by) {
     // META-GTP-FLOW piece 2: the flow step a run is (norn flow start / resume): { name, step, vars: { k: string } }
     if ((ev === 'start' || ev === 'queue') && d.flow !== undefined && !(d.flow && typeof d.flow.name === 'string' && typeof d.flow.step === 'string'
       && d.flow.vars && typeof d.flow.vars === 'object' && Object.values(d.flow.vars).every(v => typeof v === 'string'))) fail('flow must be { name, step, vars: { k: string } }');
-    if (ev === 'end') { oneOf(d.outcome, 'outcome', ['done', 'stopped', 'handoff', 'no-marker', 'crash', 'limit', 'auth', 'nudged', ...(target?.data?.kind === 'interactive' ? ['ended'] : []),...(by === 'migration' ? ['legacy'] : [])]); if (d.exit !== null && !Number.isInteger(d.exit)) fail('exit must be an integer or null'); }
+    if (ev === 'end') { oneOf(d.outcome, 'outcome', ['done', 'stopped', 'handoff', 'no-result', 'crash', 'limit', 'auth', 'nudged', ...(target?.data?.kind === 'interactive' ? ['ended'] : []),...(by === 'migration' ? ['legacy'] : [])]); if (d.exit !== null && !Number.isInteger(d.exit)) fail('exit must be an integer or null'); }
     if (ev === 'review') list(d.refs, 'refs');
     if (ev === 'resume' && !d.next === !d.refused) fail('resume needs exactly one of next / refused');
     if (ev === 'fill') str(d.next, 'next');
@@ -500,12 +515,21 @@ function validateItem(ev, d, target, st, by) {
     place(d.kind, d.parent, d.after, null);
   }
   if (ev === 'edit') {
-    if (!['title', 'note', 'horizon', 'stages', 'caveat'].some(k => k in d)) fail('edit needs one of title, note, horizon, stages, caveat');
+    if (!['title', 'note', 'horizon', 'stages', 'caveat', 'proof', 'views'].some(k => k in d)) fail('edit needs one of title, note, horizon, stages, caveat, proof, views');
     if ('title' in d) str(d.title, 'title', { max: 200 });
     if ('note' in d) str(d.note, 'note', { max: 4000, req: false });
     if ('horizon' in d && d.horizon !== null) oneOf(d.horizon, 'horizon', HORIZONS);
     if ('stages' in d) { list(d.stages, 'stages'); for (const x of d.stages || []) str(x, 'stage', { max: 120 }); }
     if ('caveat' in d && d.caveat !== null) str(d.caveat, 'caveat', { max: 300 });
+    // META-CATCH S2: the proof form (look | null) and the views a look item is judged at; a look item names at least one view
+    if ('proof' in d && d.proof !== null) oneOf(d.proof, 'proof', ['look']);
+    if ('views' in d) { list(d.views, 'views'); for (const x of d.views || []) str(x, 'view', { max: 80 }); }
+    const proof = 'proof' in d ? d.proof : itemProof(target), views = 'views' in d ? d.views : itemViews(target);
+    if (proof === 'look' && !(views || []).length) fail('a look item names its views (--views "a,b")');
+  }
+  if (ev === 'verdict') {
+    oneOf(d.verdict, 'verdict', ['pass', 'fail']); str(d.image, 'image', { max: 600 });
+    if (itemProof(target) !== 'look') fail(`${target.id} is not a look item (norn road edit ${target.id} --proof look --views ..)`);
   }
   if (ev === 'move') {
     if (!('parent' in d) && !('after' in d)) fail('move needs a parent and / or after');
@@ -794,7 +818,7 @@ function recordCtx(stateDir, evIn, opts) {
     if (kind === 'decision' && ev.ev === 'create' && caller !== 'migration') {
       const d = ev.data || {}, g = ownerPickGuard(st.items, d);
       // NORN-WATCH S3 + META-CHECKIN-GUARDS R1 guard B (checkinguards.ownerOnlyRefusal, the grader's too): an open owner_only Q is
-      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Agents tab shows it)
+      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Runs page shows it)
       const oo = d.answers ? ownerOnlyRefusal(st.items[d.answers], caller) : null;
       if (oo) throw Object.assign(new RecordError(oo, OWNER_ONLY_EXIT), { refusal: { guard: 'owner-only', lane: d.lane ?? null, answers: d.answers } });
       if (g) throw new RecordError(`${g.id} is open on lane ${d.lane} - pass --answers ${g.id} or --not-an-answer`, 3);
@@ -844,7 +868,7 @@ function recordCtx(stateDir, evIn, opts) {
 }
 /**
  * META-CHECKIN-GUARDS R1: a guard's refusal noted on the refused writer's own RUNNING run (env META_RUN_ID, when it belongs to this
- * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Agents tab see it. No run = no note.
+ * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Runs page see it. No run = no note.
  */
 export function noteRefusal(stateDir, why, { guard, ...extra }, env = process.env) {
   const id = env.META_RUN_ID;

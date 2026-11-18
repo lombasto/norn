@@ -8,6 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { renderMergeBrief, briefMarker } from '../engine/lib/mergebrief.mjs';
+import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { startRun, lockPath, readiness } from '../engine/lib/runs.mjs';
 import { deliverablesView, askDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
 import { main } from '../engine/bin/norn.mjs';
@@ -70,7 +71,7 @@ function batchFixture(branches, { flakyCounter, mainRed } = {}) {
   const state = path.join(tmp('bst'), 'state', 'norn');
   branches.forEach(([b], i) => record(state, { kind: 'deliverable', ev: 'create', by: 'controller', data: { repo: fwd(repo), branch: b, tip: tips[b], lane: b.slice(5), delivers: b, done_utc: at(-(20 - i)).toISOString() } }, { now: () => at(-(20 - i)), views: false }));
   const gate = { cmd: flakyCounter ? `node flaky.mjs "${fwd(flakyCounter)}"` : 'node gate.mjs', timeout_min: 2, fast: true };
-  const project = { name: 'norn', root: fwd(repo), meta: '/m', deliverables: { receipts: [] }, merge: { gate, batch_max: 4, ui: ['engine/dash/**'] }, policy: {} };
+  const project = { name: 'norn', root: fwd(repo), meta: '/m', state: fwd(state), deliverables: { receipts: [] }, merge: { gate, batch_max: 4, ui: ['engine/dash/**'] }, policy: {} };
   return { origin, repo, tips, state, project, locks: path.join(path.dirname(state), 'locks') };
 }
 function buildBatchBase(root) {
@@ -89,7 +90,7 @@ function buildBatchBase(root) {
 // the MERGE worker's step 3 + 4, as the brief says: fast-forward main to the gated tip, push
 const mergeBatch = (f, rec) => { g(f.repo, 'merge', '-q', '--ff-only', rec.merge_tip); g(f.repo, 'push', '-q', 'origin', 'main'); };
 
-test('batch: a green gate -> ONE MERGE brief for the batch (one revert per branch); one batch at a time; merged -> the next', async () => {
+test('batch: a green gate -> ONE MERGE brief for the batch (one PR per branch); one batch at a time; merged -> the next', async () => {
   const f = batchFixture([['feat/a', 'docs/a.md'], ['feat/b', 'docs/b.md'], ['feat/u', 'engine/dash/u.css']]);
   f.project.merge.batch_max = 2;
   const r = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
@@ -100,21 +101,28 @@ test('batch: a green gate -> ONE MERGE brief for the batch (one revert per branc
   assert.equal(g(f.repo, 'rev-list', '--count', '--first-parent', `${b.base}..${b.merge_tip}`), '2', 'one --no-ff merge commit per branch');
   assert.equal(g(f.repo, 'rev-parse', 'main'), b.base, 'main is untouched: the MERGE stage merges');
   const brief = fs.readFileSync(b.brief, 'utf8');
-  for (const m of b.members) assert.ok(brief.includes(`revert -m 1 ${m.merge}`), 'one revert command per branch');
-  assert.match(brief, new RegExp(`merge --ff-only ${b.merge_tip}`));
+  assert.doesNotMatch(brief, /revert -m 1/, 'RM-7: the batch opens PRs, it never reverts on main');
+  // GAP-6: the batch lands from its own merge worktree (the tip checked out there, then norn merge-land), never the owner checkout
+  const mwt = briefMarker(brief).merge_wt;
+  assert.equal(mwt, mergeWtPath(f.state, 'mq-batch-1'));
+  assert.ok(brief.includes(`git -C ${mwt} checkout --quiet --detach ${b.merge_tip}`));
+  assert.ok(brief.includes(`merge-land --project <project.json> --worktree ${mwt}${b.members.map(m => ` --branch ${m.branch}`).join('')}`), 'one --branch per member: one PR each');
+  assert.doesNotMatch(brief, new RegExp(`git -C ${fwd(f.repo)} (pull|merge|push)`));
   assert.match(brief, /no dash \/ UI change in the batch/);
   assert.equal(briefMarker(brief).mode, 'staged');
   assert.deepEqual(b.dispatch.slice(0, 5), ['run', '--lane', 'mq', '--stage', 'MERGE']);
+  assert.equal(b.dispatch[b.dispatch.indexOf('--worktree') + 1], mwt);
   // one batch at a time: the green batch waits for its MERGE stage
   const w = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
   assert.match(w.why, /batch-1 green: waiting for its MERGE stage/);
-  // a live MERGE run holding the main checkout lock: no batch either
+  // a writer holding the scratch worktree: no batch either (the owner checkout's lock no longer matters: no merge writes there)
   mergeBatch(f, b);
+  const scratch = mergeConfig(f.project).scratch;
   fs.mkdirSync(f.locks, { recursive: true });
-  fs.writeFileSync(lockPath(f.locks, f.repo), JSON.stringify({ run: 'RUN-77', pid: 1, ts: new Date().toISOString() }));
+  fs.writeFileSync(lockPath(f.locks, scratch), JSON.stringify({ run: 'RUN-77', pid: 1, ts: new Date().toISOString() }));
   const held = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
-  assert.match(held.why, /no batch now: the main checkout: .*RUN-77/);
-  fs.unlinkSync(lockPath(f.locks, f.repo));
+  assert.match(held.why, /no batch now: the scratch worktree: .*RUN-77/);
+  fs.unlinkSync(lockPath(f.locks, scratch));
   const n2 = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
   assert.equal(loadBatch(f.state, 1).status, 'merged');
   assert.equal(g(f.repo, 'branch', '--list', 'mq/batch-1'), '', 'landed: Norn deletes its batch branch (META-SLOP-A)');

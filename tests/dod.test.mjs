@@ -197,7 +197,7 @@ test('Agents shows Ready and Done with the evidence', () => {
       end: { outcome: 'stopped', dod: { ok: false, why: '1 uncommitted / untracked file(s)', tests: [] } }, history: [] }];
   const tree = agentsTree(runs, { now });
   assert.deepEqual(tree.map(n => [n.dod_ready?.ok, n.dod?.ok]), [[true, true], [false, false]]);
-  const html = renderTab('agents', { tree }, { now, projects: [] });
+  const html = renderTab('runs', { tree }, { now, projects: [] });
   assert.match(html, /Ready ✓/); assert.match(html, /Done ✓/); assert.match(html, /Ready ✗/); assert.match(html, /Done ✗/);
   assert.match(html, /tests exit 0, 3 pass 0 fail/); assert.match(html, /1 uncommitted \/ untracked file/); assert.match(html, /lacks Tests:/);
 });

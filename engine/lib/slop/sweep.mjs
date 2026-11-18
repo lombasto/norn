@@ -42,14 +42,22 @@ function liveWorktrees(state) {
   return new Set(Object.values(loadState(state).items).filter(i => i.kind === 'run' && ['running', 'queued'].includes(i.state) && i.data.worktree).map(i => fwd(i.data.worktree)));
 }
 
-/** sweep(repo, { state (live / queued runs), now, main, remote }) -> { main, real, empty, dead, at_risk, remote_merged } */
-export function sweep(repo, { state = null, now = Date.now(), main = 'main', remote = 'origin' } = {}) {
+// Gap #7: a monorepo project (own = { name, subdir }) sweeps only its own part of the shared repo: its lane branches
+// (norn/<name>/...) and any other branch whose unmerged work changes its folder; another project's lane branch (norn/<other>/...),
+// a branch that changes only other folders, a merged / empty branch nobody can attribute, and a worktree with no work of its own
+// in the folder are the other projects' (their own sweep lists them). own = null: the whole repo, as before.
+const otherLane = (own, b) => !!own && !!b && b.startsWith('norn/') && !b.startsWith(`norn/${own.name}/`);
+const touches = (repo, ref, tip, own) => !!gitRun(repo, ['diff', '--name-only', `${ref}...${tip}`, '--', `:(top)${own.subdir}`]).trim();
+
+/** sweep(repo, { state (live / queued runs), now, main, remote, own ({ name, subdir }: a monorepo project) }) -> { main, real, empty, dead, at_risk, remote_merged } */
+export function sweep(repo, { state = null, now = Date.now(), main = 'main', remote = 'origin', own = null } = {}) {
   const ref = mainRef(repo, { main, remote }), mainTree = gitRun(repo, ['rev-parse', ref + '^{tree}']).trim();
   const real = [], empty = [], kinds = new Map();
   for (const l of gitRun(repo, ['for-each-ref', '--format=%(refname:short)%09%(objectname)%09%(committerdate:unix)', 'refs/heads']).split('\n').filter(Boolean)) {
     const [branch, tip, t] = l.split('\t');
-    if (branch === main) continue;
+    if (branch === main || otherLane(own, branch)) continue;
     const c = classify(repo, ref, mainTree, tip);
+    if (own && !branch.startsWith(`norn/${own.name}/`) && (c.kind !== 'real' || !touches(repo, ref, tip, own))) continue;
     kinds.set(branch, c.kind);
     const age_days = Math.floor((now - Number(t) * 1000) / D);
     if (c.kind === 'real') {
@@ -59,8 +67,10 @@ export function sweep(repo, { state = null, now = Date.now(), main = 'main', rem
   }
   const live = liveWorktrees(state), dead = [], at_risk = [];
   for (const w of worktrees(repo).slice(1)) {   // the first is the main checkout
-    if (w.prunable || !fs.existsSync(w.path) || live.has(fwd(w.path))) continue;
-    const st = gitRun(w.path, ['status', '--porcelain']).split('\n').filter(Boolean);
+    if (w.prunable || !fs.existsSync(w.path) || live.has(fwd(w.path)) || otherLane(own, w.branch)) continue;
+    // a monorepo project: only the changes in its own folder put the worktree at risk; a clean one is its own only on its branch
+    const st = gitRun(w.path, ['status', '--porcelain', ...(own ? ['--', `:(top)${own.subdir}`] : [])]).split('\n').filter(Boolean);
+    if (own && !st.length && !kinds.has(w.branch)) continue;
     const gitDir = gitRun(w.path, ['rev-parse', '--git-dir']).trim(), abs = path.resolve(w.path, gitDir);
     const merging = fs.existsSync(path.join(abs, 'MERGE_HEAD'));
     const unmerged = st.filter(x => /^(UU|AA|DD|AU|UA|DU|UD) /.test(x)).length;
@@ -71,7 +81,8 @@ export function sweep(repo, { state = null, now = Date.now(), main = 'main', rem
     if (!adds && now - touched >= IDLE_DAYS * D) dead.push({ path: w.path, branch: w.branch ?? null, idle_days: Math.floor((now - touched) / D) });
   }
   const remote_merged = gitRun(repo, ['branch', '-r', '--merged', `${remote}/${main}`, '--format=%(refname:short)'], { ok: [0, 1, 128] })
-    .split('\n').map(s => s.trim()).filter(b => b && b.startsWith(remote + '/') && b !== `${remote}/${main}` && b !== `${remote}/HEAD` && b !== remote);
+    .split('\n').map(s => s.trim()).filter(b => b && b.startsWith(remote + '/') && b !== `${remote}/${main}` && b !== `${remote}/HEAD` && b !== remote)
+    .filter(b => !own || b.startsWith(`${remote}/norn/${own.name}/`));   // merged: only a project's own lane branch is attributable
   return { main: ref, real, empty, dead, at_risk, remote_merged };
 }
 

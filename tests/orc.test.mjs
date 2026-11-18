@@ -15,7 +15,7 @@ test('the badge: warn-level findings new since the Guard was last opened (never 
   assert.equal(badgeCount(rows, 0), 1);
   assert.equal(badgeCount(rows, Date.parse('2026-11-09T00:00:00Z')), 2);
   assert.equal(badgeCount(rows, now), 0, 'opening the Guard clears it');
-  assert.equal(badgeLabel(2), 'SloppaChoppa: two new warnings');
+  assert.equal(badgeLabel(2), 'SloppaChoppa: two new findings');
 });
 
 test('his line: a template with the number in plain words; the one best action goes to the tab that fixes it', () => {

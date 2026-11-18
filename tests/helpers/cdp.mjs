@@ -41,15 +41,23 @@ trace: network: ${reqs.map(r => `${r.url} ${ms(r.us)} ms at ${at(r.t0)}${r.t1 ? 
 let shotLib = null;
 try { shotLib = await import('../../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch */ }
 export const browser = shotLib?.findBrowser?.() ?? null;
+const installed = browser;
 export const skipWhy = !shotLib ? 'engine/lib/shot.mjs (norn shot) is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false;
 
-export async function openPage(size = [1440, 900]) {
+/** o.browser: another { kind, exe, prefix? } than the installed one (a test of the launch failure path) */
+export async function openPage(size = [1440, 900], { browser = installed } = {}) {
   const profile = mkTmp('meta-shot-'), child = shotLib.launchBrowser({ browser, profile, size });
-  const port = await shotLib.waitDevToolsPort({ browser, profile, child });
-  let page = null;
-  for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  // CI 43999056272: a browser that never came up was left running - its handle held the test file open to the 600 s cap (HANG).
+  // A launch that fails ends the browser before the error (with its stderr) goes to the test.
+  let port, ws;
+  try {
+    port = await shotLib.waitDevToolsPort({ browser, profile, child });
+    let page = null;
+    for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
+    if (!page) throw new Error(`the browser (${browser.exe}) is up on port ${port} but has no page target after 10 s; its stderr ends:\n${shotLib.stderrTail(profile)}`);
+    ws = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`the DevTools WebSocket of ${browser.exe} failed`)); });
+  } catch (e) { await shotLib.closeBrowser(child, profile, { dir: path.dirname(path.dirname(profile)) }); throw e; }
   let id = 0; const pend = new Map(), on = new Map();
   // META-CI-WORKCLASS R2 (DEC-332): the page's own story, kept for a timeout's message - console errors, uncaught exceptions /
   // unhandled rejections (Runtime.exceptionThrown), browser log errors (a failed module load) and the requests still in flight

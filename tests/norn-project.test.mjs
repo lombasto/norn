@@ -15,6 +15,7 @@ import { startRun } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { readGate, gateFile } from '../engine/lib/gate.mjs';
 import { renderMergeBrief, renderBatchBrief, MERGE_TEMPLATE } from '../engine/lib/mergebrief.mjs';
+import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -112,17 +113,17 @@ test('checkin.max_quiet_min overrides the machine checkin_max_quiet_min for that
 test('MERGE brief template: filled from the lane + the project policy merge.shots (default "after"); bad mode refused', () => {
   const t = tmp('meta-norn5-');
   assert.ok(fs.existsSync(MERGE_TEMPLATE));
-  const p = { name: 'norn', root: '/h/dev/sdd-codex', meta: '/h/dev/sdd-codex', deliverables: { main: 'main' }, policy: {} };
+  const p = { name: 'norn', root: '/h/dev/sdd-codex', meta: '/h/dev/sdd-codex', state: '/h/state/norn', deliverables: { main: 'main' }, policy: {} };
   const o = { lane: 'meta-watch', branch: 'feat/norn-watch', worktree: '/h/dev/sdd-codex-watch', notes: '/h/dev/sdd-codex-reviews/meta-watch/MERGE-NOTES.md', ui: true };
   const after = renderMergeBrief(p, o);
   assert.doesNotMatch(after, /\{\{/);
-  for (const s of ['feat/norn-watch', '/h/dev/sdd-codex-watch', 'git -C /h/dev/sdd-codex merge --no-ff', 'norn.mjs" smoke', 'revert -m 1 HEAD', '## DONE', 'MERGE-NOTES.md']) assert.ok(after.includes(s), s);
+  for (const s of ['feat/norn-watch', '/h/dev/sdd-codex-watch', 'merge --no-ff -m "merge: feat/norn-watch (meta-watch)" origin/feat/norn-watch', 'norn.mjs" smoke', 'merge-land --project', '--branch feat/norn-watch', 'norn.mjs" done', 'MERGE-NOTES.md']) assert.ok(after.includes(s), s);
   assert.match(after, /SHOTS AFTER/);
   // 11-09 VISUAL-B merge: the notice named a local folder (useless on a phone) - the shots ride as ntfy attachments
   assert.match(after, /up to 3 key shots/); assert.doesNotMatch(after, /shot paths in --body/);
   assert.doesNotMatch(after, /SHOTS BEFORE/);
   const before = renderMergeBrief({ ...p, policy: { merge: { shots: 'before' } } }, o);
-  assert.match(before, /SHOTS BEFORE/); assert.match(before, /## STOPPED: shots sent before the merge/);
+  assert.match(before, /SHOTS BEFORE/); assert.match(before, /done --outcome stopped --why "shots sent before the merge/);
   const noUi = renderMergeBrief(p, { ...o, ui: false });
   assert.match(noUi, /no dash \/ UI change: no screenshots/);
   assert.throws(() => renderMergeBrief({ ...p, policy: { merge: { shots: 'sometimes' } } }, o), /merge\.shots must be one of after, before/);
@@ -139,7 +140,8 @@ test('MERGE brief template: filled from the lane + the project policy merge.shot
 });
 
 test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as before) | skip (no ci-suite; conflicted-area tests only; smoke stays); bad value refused (DIR-24)', () => {
-  const p = { name: 'norn', root: '/h/dev/sdd-codex', meta: '/h/dev/sdd-codex', deliverables: { main: 'main' }, policy: {} };
+  const p = { name: 'norn', root: '/h/dev/sdd-codex', meta: '/h/dev/sdd-codex', state: '/h/state/norn', deliverables: { main: 'main' }, policy: {} };
+  const W = mergeWtPath(p.state, 'L', 'abcdef1');   // GAP-6: the staged merge's own merge worktree
   const suite = s => ({ ...p, policy: { merge: { suite: s } } });
   const o = { lane: 'L', branch: 'feat/x', worktree: '/h/wt', notes: '/h/n/NOTES.md', ui: true };
   const b = { n: 3, tip: 'a'.repeat(40), base: 'b'.repeat(40), gate: 'node engine/bin/ci-suite.mjs', gate_log: '/g.log', scratch: '/s', notes: '/h/n/N.md', ui: false,
@@ -147,10 +149,10 @@ test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as befo
   const kinds = { rebase: q => renderMergeBrief(q, o), staged: q => renderMergeBrief(q, { ...o, sha: 'abcdef1' }), batch: q => renderBatchBrief(q, b) };
   const today = {   // today's text, bit for bit
     rebase: ["2. Suite in /h/wt: `node engine/bin/ci-suite.mjs` (smoke.test.mjs runs alone after the rest). Only the known reds of the project's known-red list may be\n   red; a load red must pass alone (run it alone, name it). Any other red = STOPPED, nothing merged.\n",
-      '--body "<sha>, suite + smoke green; revert', 'Write NOTES: merge sha, suite counts + named reds, smoke result'],
-    staged: ["3. Suite in /h/dev/sdd-codex on the uncommitted merge: `node engine/bin/ci-suite.mjs` (smoke.test.mjs runs alone after the rest). Only the known reds of\n   the project's known-red list may be red; a load red must pass alone (run it alone, name it). Any other red =\n   `git -C /h/dev/sdd-codex merge --abort`, STOPPED, nothing merged.\n",
-      '--body "<sha>, suite + smoke green; revert', 'Write NOTES: merge sha, suite counts + named reds, smoke result'],
-    batch: ['The gate `node engine/bin/ci-suite.mjs` ran GREEN on the batch tip ' + 'a'.repeat(40), '--body "<tip>, gate + smoke green; revert one'],
+      '--body "<PR url>, suite + smoke green"', 'Write NOTES: the PR url, the tested merge sha, the merge-land line, suite counts + named reds, smoke result'],
+    staged: [`3. Suite in ${W} on the uncommitted merge: \`node engine/bin/ci-suite.mjs\` (smoke.test.mjs runs alone after the rest). Only the known reds of\n   the project's known-red list may be red; a load red must pass alone (run it alone, name it). Any other red =\n   \`git -C ${W} merge --abort\`, STOPPED, nothing merged.\n`,
+      '--body "<PR url>, abcdef1 tested, suite + smoke green"', 'Write NOTES: the PR url, the tested merge sha, the merge-land line, suite counts + named reds, smoke result'],
+    batch: ['The gate `node engine/bin/ci-suite.mjs` ran GREEN on the batch tip ' + 'a'.repeat(40), '--body "<one PR url per branch>, gate + smoke green"'],
   };
   for (const [k, render] of Object.entries(kinds)) {
     const dflt = render(p), full = render(suite('full')), skip = render(suite('skip'));
@@ -160,14 +162,26 @@ test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as befo
     assert.doesNotMatch(skip, /\{\{|ci-suite\.mjs` \(|Suite in/, `${k}: skip runs no ci-suite`);
     assert.match(skip, /merge\.suite = skip/);
     assert.match(skip, /norn\.mjs" smoke/, `${k}: the smoke always stays`);
-    assert.match(skip, k === 'batch' ? /--body "<tip>, gate skipped \(policy merge\.suite = skip\) \+ smoke green/ : /--body "<sha>, suite skipped \(policy merge\.suite = skip\)/, `${k}: the notify body says which ran`);
+    assert.match(skip, k === 'batch' ? /--body "<one PR url per branch>, gate skipped \(policy merge\.suite = skip\) \+ smoke green/ : /--body "<PR url>, (abcdef1 tested, )?suite skipped \(policy merge\.suite = skip\)/, `${k}: the notify body says which ran`);
     if (k !== 'batch') {
       assert.match(skip, /conflicts?.*only the test files of the conflicted areas/s);
-      assert.match(skip, /a red there = .*## STOPPED: red in a conflicted area/s);
+      assert.match(skip, /a red there = .*--outcome stopped --why "red in a conflicted area/s);
       assert.match(skip, /clean .* runs no test/);
-      assert.match(skip, /Write NOTES: merge sha, suite skipped \(policy merge\.suite = skip\)/);
+      assert.match(skip, /Write NOTES: the PR url, the tested merge sha, the merge-land line, suite skipped \(policy merge\.suite = skip\)/);
     }
     assert.throws(() => render(suite('sometimes')), /merge\.suite must be one of full, skip/);
   }
-  assert.match(kinds.staged(suite('skip')), /a red there = `git -C \/h\/dev\/sdd-codex merge --abort`/);
+  assert.ok(kinds.staged(suite('skip')).includes(`a red there = \`git -C ${W} merge --abort\``));
+});
+
+test('MERGE briefs: a project with merge.gate.cmd runs its own gate (from its monorepo subdir), never ci-suite.mjs; gate.dir wins', () => {
+  const p = { name: 'shack', root: '/h/mono', subdir: 'shack', meta: '/h/norn', state: '/h/state/shack', deliverables: { main: 'main' }, policy: {},
+    merge: { gate: { cmd: '"/h/mono/shack/.venv/Scripts/python.exe" -m pytest tests -q' } } };
+  const o = { lane: 'L', branch: 'feat/x', worktree: '/h/wt', notes: '/h/n/NOTES.md' };
+  for (const brief of [renderMergeBrief(p, o), renderMergeBrief(p, { ...o, sha: 'abcdef1' })]) {
+    assert.match(brief, /Suite in .*: `cd shack && "\/h\/mono\/shack\/\.venv\/Scripts\/python\.exe" -m pytest tests -q` \(the project's merge gate, project\.json merge\.gate\.cmd\)\. Only the known reds/);
+    assert.doesNotMatch(brief, /ci-suite\.mjs/);
+  }
+  const own = renderMergeBrief({ ...p, merge: { gate: { cmd: 'make test', dir: 'other' } } }, o);
+  assert.match(own, /`cd other && make test`/);
 });

@@ -181,9 +181,9 @@ test('norn_run starts a fake run (via stamped on the run), norn_run_show reports
   assert.equal(r.structuredContent.run, 'RUN-1'); assert.equal(r.structuredContent.executor, 'fake');
   let show;
   for (let i = 0; i < 100; i++) { show = (await m.tool('norn_run_show', { run: 'RUN-1', notes_tail: 5 })).structuredContent; if (show.state !== 'running') break; await new Promise(res => setTimeout(res, 100)); }
-  assert.equal(show.state, 'exited'); assert.equal(show.outcome, 'done'); assert.match(show.notes_tail, /## DONE/);
+  assert.equal(show.state, 'exited'); assert.equal(show.outcome, 'done'); assert.match(show.notes_tail, /work: done/);
   const bad = await m.tool('norn_run', { lane: 'demo', brief: path.join(wt, 'missing.md'), executor: 'fake', worktree: wt });
-  assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2); assert.match(text(bad), /brief not found/);
+  assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2); assert.match(text(bad), /--brief .*missing\.md: no such file \(write the brief first\)/);
   const stop = await m.tool('norn_stop', { run: 'RUN-1', why: 'x' });
   assert.equal(stop.isError, true);
   await m.close();
@@ -263,7 +263,7 @@ test('norn_run_show ask (META-GTP-ASK): checkin / controller ask an ENDED run (n
   const r = await m.tool('norn_run_show', { run: 'RUN-1', ask: 'why the X table?', executor: 'fake', max_s: 15 });
   assert.ok(!r.isError, text(r));
   assert.equal(r.structuredContent.code, 0); assert.match(r.structuredContent.ask_run, /^RUN-\d+$/); assert.equal(r.structuredContent.mode, 'cold');
-  assert.match(text(r), /## DONE/);
+  assert.match(text(r), /work: done/);
   await m.close();
   const w = server(['--state', s, '--profile', 'worker'], { META_RUN_ID: 'RUN-1' }); await w.init();
   const no = await w.tool('norn_run_show', { run: 'RUN-1', ask: 'x' });

@@ -81,9 +81,9 @@ The records are the memory: name their ids, do not restate them.`;
 export function runOrder(level, ctx, c) {
   if (level === 'no_new_step') return `NORN CONTEXT (from Norn, not the owner): this session's context is ${kTok(ctx)}, past the no-new-step mark (${c.no_new_step_k}k). `
     + `Start no new step: finish the step you are in and commit it. At ${c.handoff_k}k you hand off; at ${c.hard_max_k}k Norn ends this run.`;
-  return `${handoffHead(ctx, c)} Hand off NOW: start no new step, commit your work (named files), write a HANDOFF section (state, commits, `
-    + `exact next step, open questions, verified vs not) into your notes file ending with the line ## HANDOFF, then end your turn. `
-    + `At ${c.hard_max_k}k (hard max) Norn ends this run as HANDOFF whatever its state; a fresh run picks the brief up from your notes.`;
+  return `${handoffHead(ctx, c)} Hand off NOW: start no new step, commit your work (named files), write the hand-off (state, commits, `
+    + `exact next step, open questions, verified vs not) to a file and run \`norn done --outcome handoff --handoff-file <it>\`, then end your turn. `
+    + `At ${c.hard_max_k}k (hard max) Norn ends this run as HANDOFF whatever its state; a fresh run picks the brief up from the hand-off.`;
 }
 
 // ---------- the hook side: each order once per run (state/ctx/<run>.json { sent: [level] }) ----------

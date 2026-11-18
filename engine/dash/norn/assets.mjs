@@ -31,7 +31,7 @@ export const ART_FILES = Object.values(ASSETS).map(a => a.file);
 export const CHIP_TOKEN = {
   running: 'running', done: 'done', applied: 'done', 'in-force': 'done', active: 'idle', ok: 'done',
   handoff: 'handoff', answered: 'handoff', warn: 'handoff', parked: 'parked',
-  stopped: 'stopped', lost: 'stopped', 'no-marker': 'stopped', bad: 'stopped', overruled: 'stopped',
+  stopped: 'stopped', lost: 'stopped', 'no-result': 'stopped', bad: 'stopped', overruled: 'stopped',
   open: 'needs', needs: 'needs', superseded: 'idle', archived: 'idle', revoked: 'idle', withdrawn: 'idle', idle: 'idle',
 };
 // placeholder drawing for each asset (browser): which glyph, on what

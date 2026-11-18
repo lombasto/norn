@@ -56,10 +56,11 @@ test('git: force push in any spelling, push to main / master and remote branch d
   for (const cmd of ['git push origin --delete feat/old', 'git push origin :feat/old']) refusedBy(checkTool(bash(cmd, w.wt), c), /delet/);
   assert.equal(checkTool(bash('git push -u origin feat/x', w.wt), c), null);
   assert.equal(checkTool(bash('git status && git push origin feat/x 2>&1 | tail -3', w.wt), c), null);
-  // a MERGE stage run (Norn's own merge brief) pushes main; a force push stays refused
-  const m = ctx(w, { stage: 'MERGE' });
-  assert.equal(checkTool(bash('git push origin main', w.wt), m), null);
-  refusedBy(checkTool(bash('git push --force origin main', w.wt), m), /force/);
+  // a MERGE stage run opens a PR (norn merge-land) and never pushes main; a check-in works in the main checkout and may push it, never by force
+  refusedBy(checkTool(bash('git push origin main', w.wt), ctx(w, { stage: 'MERGE' })), /main/);
+  const k = ctx(w, { kind: 'checkin' });
+  assert.equal(checkTool(bash('git push origin main', w.wt), k), null);
+  refusedBy(checkTool(bash('git push --force origin main', w.wt), k), /force/);
 });
 
 test('a bare git push from a checkout on main is a push to main', () => {
@@ -115,8 +116,9 @@ test('the claude command of a guarded run: one --settings with the deny rules, t
   assert.equal(set.hooks.PreToolUse[0].hooks[0].command, hook);
   const dirs = args.flatMap((a, i) => (a === '--add-dir' ? [args[i + 1]] : []));
   assert.deepEqual(dirs, [w.wt, w.extra, path.dirname(w.notes)]);
-  // a MERGE run keeps its push to main: no main rule in its deny list
-  assert.ok(!scopeSettings({ ...w.spec, stage: 'MERGE' }, hook).permissions.deny.includes('Bash(git push * main)'));
+  // a MERGE run opens a PR and gets the main rule like a lane run; only a check-in has none
+  assert.ok(scopeSettings({ ...w.spec, stage: 'MERGE' }, hook).permissions.deny.includes('Bash(git push * main)'));
+  assert.ok(!scopeSettings({ ...w.spec, kind: 'checkin' }, hook).permissions.deny.includes('Bash(git push * main)'));
 });
 
 test('norn scope check = the PreToolUse hook: a refusal is a deny with its reason, recorded for the run feed and the Slop list; a pass prints nothing', async () => {

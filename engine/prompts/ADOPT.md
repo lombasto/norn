@@ -14,7 +14,7 @@ names; the planning files FACTS names; the top 60 lines of the changelog; the fi
 files; manifests in sub-folders that FACTS.manifests names. Read source files only to settle one named doubt, at most 10.
 Never open an untracked or ignored file.
 
-Your final message is ONE JSON object, then one last line that is exactly `## DONE`. Nothing else: no prose, no code fence.
+Your final message is ONE JSON object. Nothing else: no prose, no code fence.
 
 { "schema": 1,
   "summary": "at most 3 sentences: what this project is and where it stands today",

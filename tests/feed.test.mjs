@@ -94,14 +94,14 @@ test('first open of a big file starts at the backlog window on a line boundary; 
   assert.deepEqual((await readLines(f, r.offset, { backlog: 100 })).lines.map(l => l.text), ['fresh']);
 });
 
-test('cli / fake / check-in feeds tail their logs (plain text: no tool echo, no context); "## DONE" is a marker', async () => {
+test('cli / fake / check-in feeds tail their logs (plain text: no tool echo, no context); "## DONE" is text (gap #3)', async () => {
   const root = tmp(), log = path.join(root, 'run.log');
   fs.writeFileSync(log, 'working on it\n\n## DONE\n');
   for (const fam of ['cli', 'fake']) {
     const r = (await ADAPTERS[fam].feed(run(fam, { log }), null, {}));
     shape(r.events);
-    assert.deepEqual(r.events.map(e => [e.kind, e.summary]), [['text', 'working on it'], ['marker', '## DONE']], fam);
+    assert.deepEqual(r.events.map(e => [e.kind, e.summary]), [['text', 'working on it'], ['text', '## DONE']], fam);
   }
   const ci = (await ADAPTERS.claude.feed(run('claude', { kind: 'checkin', log, session_id: 'no-such-session' }), null, { projectsDir: root, memo: new Map() }));
-  assert.deepEqual(ci.events.map(e => e.kind), ['text', 'marker'], 'a claude run without a transcript (check-in) falls back to its log');
+  assert.deepEqual(ci.events.map(e => e.kind), ['text', 'text'], 'a claude run without a transcript (check-in) falls back to its log');
 });

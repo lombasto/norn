@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
-import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/jobguard.mjs';
+import { jobguardExe, jobguardExeAsync, winQuote, holdGone } from '../engine/lib/jobguard.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -92,6 +92,28 @@ process.exit(0);`;
   assert.equal(o.outside.breakaway, true);
   assert.equal(alive(o.outside.pid), true, 'the breakaway process lives on');
   process.kill(o.outside.pid);
+});
+
+// LEAK RED (CI 44141688462 mergelock, 43996467416 queue, Windows): a `jobguard hold` was alive after its test file, its supervisor
+// gone. The hold now ends with the held process itself, not only at stdin EOF: here its stdin stays open in THIS process (as an
+// inherited pipe end would), the held process exits, and the hold must follow. And holdGone(job) resolves once the hold has exited.
+test('jobguard hold: ends when the held process exits even while its stdin stays open; holdGone waits for its exit', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
+  const exe = jobguardExe({ dir: mkTmp('meta-jgh-') });
+  assert.ok(exe, 'csc.exe of .NET Framework 4 compiles the helper');
+  const held = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+  await new Promise(r => held.once('spawn', r));
+  const hold = spawn(exe, ['hold', String(held.pid), `meta-test-${held.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  try {
+    let out = '';
+    await new Promise((res, rej) => { hold.stdout.on('data', d => { out += d; if (/^ok/m.test(out)) res(); if (/^err/m.test(out)) rej(new Error(out)); }); hold.once('exit', c => rej(new Error(`hold exited ${c}: ${out}`))); });
+    const gone = new Promise(r => hold.once('exit', r));
+    held.kill();   // the held process ends; the hold's stdin is still open here
+    assert.equal(await Promise.race([gone.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]), true, 'the hold exited with the held process');
+  } finally { try { hold.kill(); } catch { /* gone */ } try { held.kill(); } catch { /* gone */ } }
+  const p = spawn(process.execPath, ['-e', 'process.stdin.resume(); process.stdin.on("end", () => setTimeout(() => process.exit(0), 200))'], { stdio: ['pipe', 'ignore', 'ignore'] });
+  await new Promise(r => p.once('spawn', r));
+  assert.equal(await holdGone({ proc: p }), true, 'holdGone ends its stdin and resolves at its exit');
+  assert.ok(p.exitCode !== null, 'exited before holdGone resolved');
 });
 
 // CI-RED-D5B3788 (agnostic delegate --mode, Windows): holdJob compiled the helper with a blocking spawnSync (csc, cap 60 s) right after

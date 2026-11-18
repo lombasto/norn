@@ -104,10 +104,10 @@ test('chains: a withdrawn chain is broken for 24 h - "chain broken: X stopped, Y
 
 test('landing next: merging now, then the merge queue in its order, plain-words state; CI red on main blocks', () => {
   const runs = [run(1, 'running', { lane: 'road', stage: 'MERGE' }), run(2, 'queued', { lane: 'adopt', stage: 'MERGE' })];
-  const ready = [{ id: 'RUN-2', ready: false, terms: ['worktree held by RUN-1'] }];
+  const ready = [{ id: 'RUN-2', ready: false, terms: ['merge slots full: 2 merge(s) running in /r (RUN-1, RUN-9; policy.merge.parallel 2)'] }];
   const merges = { rows: [{ id: 'DLV-7', lane: 'cv', branch: 'feat/cv', word: 'clean', delivers: 'cv view' }, { id: 'DLV-3', lane: 'adopt', branch: 'feat/adopt', word: 'conflict: a.mjs' }] };
   const p = buildPlan({ runs, ready, merges, now: NOW, status: STATUS('0.62') });
-  assert.deepEqual(p.landing.map(l => [l.id, l.word]), [['RUN-1', 'merging now'], ['DLV-7', 'ready to merge'], ['DLV-3', 'waits for the main checkout']]);
+  assert.deepEqual(p.landing.map(l => [l.id, l.word]), [['RUN-1', 'merging now'], ['DLV-7', 'ready to merge'], ['DLV-3', 'waits for a merge slot (2 merges running)']]);
   const red = buildPlan({ runs: [], ready: [], merges, now: NOW, status: STATUS('0.62').replace('CI main: success', 'CI main: failure') });
   assert.deepEqual(red.landing.map(l => l.word), ['blocked: CI red on main', 'blocked: CI red on main']);
 });
@@ -143,7 +143,7 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   assert.match(empty.stdout, /^Plan - demo   \(times in UTC\)\n\nUp next\n  nothing is waiting to start\n\nChains\n  no queued run waits for another\n\nLanding next\n  nothing is heading to main/);
   record(state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'adopt', stage: 'A1', budget_min: 30, not_before: '2099-01-01T00:00:00Z' } });
   fs.mkdirSync(path.dirname(queueSpecPath(state, 'RUN-1')), { recursive: true });
-  fs.writeFileSync(queueSpecPath(state, 'RUN-1'), JSON.stringify({ state, executor: 'fake', lane: 'adopt', stage: 'A1', worktree: t, budget: {} }));
+  fs.writeFileSync(queueSpecPath(state, 'RUN-1'), JSON.stringify({ state, executor: 'fake', lane: 'adopt', stage: 'A1', worktree: t, budget_file: path.join(t, 'budget.json') }));
   const before = fs.readFileSync(path.join(state, 'runs.jsonl'), 'utf8');
   const txt = meta('plan', '--state', state);
   assert.equal(txt.status, 0, txt.stderr);
@@ -155,13 +155,13 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   assert.equal(bad.status, 2); assert.match(bad.stderr, /usage: norn plan/);
 });
 
-test('ui: Skuld = plan, inbox, settings; Agents has no queue table; Plan renders sections, all-projects groups and plain-words empty states', async () => {
-  const { NORN_GROUPS, TABS, renderTab } = await import('../engine/dash/ui.mjs');
+test('ui: Plan sits in Work; Runs has no queue table; Plan renders sections, all-projects groups and plain-words empty states', async () => {
+  const { NAV, TABS, renderTab } = await import('../engine/dash/ui.mjs');
   const { TABS: SERVER_TABS } = await import('../engine/dash/server.mjs');
-  assert.deepEqual(NORN_GROUPS.find(g => g[0] === 'skuld')[3], ['plan', 'inbox', 'settings']);
+  assert.ok(NAV.find(d => d[0] === 'work')[2].includes('plan'));
   assert.ok(TABS.some(t => t[0] === 'plan') && SERVER_TABS.includes('plan'));
   const queue = [{ id: 'RUN-4', position: 1, lane: 'qlane', state: 'queued', project: 'demo' }];
-  const ag = renderTab('agents', { tree: [], queue }, { project: 'demo' });
+  const ag = renderTab('runs', { tree: [], queue }, { project: 'demo' });
   assert.ok(!/Queued|RUN-4|qlane/.test(ag), 'the queue moved to Plan');
   const empty = renderTab('plan', { parts: [buildPlan({ project: 'demo', now: NOW })] }, { project: 'demo', now: NOW });
   for (const s of ['id="panel-plan"', 'Up next', 'Nothing is waiting to start.', 'Chains', 'No queued run waits for another run.', 'Landing next', 'Nothing is heading to main.',

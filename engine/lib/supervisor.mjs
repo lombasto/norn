@@ -13,11 +13,11 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, parseOutcome, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree } from './runs.mjs';
+import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
-import { holdJob, reapJob, reapGroup, spawnOutside } from './jobguard.mjs';
+import { holdJob, reapJob, reapGroup, spawnOutside, holdGone } from './jobguard.mjs';
 import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
@@ -27,18 +27,27 @@ import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
+import { removeMergeWorktree } from './mergewt.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
+import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const { run, state } = spec;
+// gap #3: this run's own result directory (`norn done` writes result.json [+ HANDOFF.md] there; META_RESULT_DIR / META_RESULT)
+const RESULT_DIR = resultDir(path.resolve(state), run), RESULT = resultPath(path.resolve(state), run);
+const fwdPath = p => String(p).split(path.sep).join('/');
+try { fs.mkdirSync(RESULT_DIR, { recursive: true }); } catch { /* norn done makes it */ }
+// GAP-6: a merge worktree is removed at the run end - nothing but the executor may sit in it (Windows keeps a folder that is a live
+// process's cwd: this process, and the job hold process it starts, would inherit it from the launcher)
+if (spec.merge_wt) { try { process.chdir(path.resolve(state)); } catch { /* the launcher's cwd stays */ } }
 const iso = () => new Date().toISOString();
 const logLine = s => { try { fs.appendFileSync(spec.log, `${iso()} ${s}\n`); } catch { /* log dir gone */ } };
 const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const TAIL = 8192;
 const tail = f => { const t = read(f); return t === null ? '' : t.slice(-TAIL); };
-// META-MERGELOCK: every lock the run holds (runs.writeTrees: a MERGE holds the main checkout's beside its own worktree's)
+// META-MERGELOCK: every lock the run holds (runs.writeTrees + GAP-6: a MERGE holds a merge slot beside its own worktree's)
 const lockFiles = spec.lockFiles ?? (spec.lockFile ? [spec.lockFile] : []);
 let childPid = null;
 let finished = false;
@@ -55,6 +64,18 @@ let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // 
 const probeDelay = Number(process.env.META_TEST_PROBE_DELAY_MS) || 0;   // test knob: a slow probe (the CI runner's slow spawns)
 let supStarted = null;
 const supStartedP = new Promise(r => setTimeout(r, probeDelay)).then(() => procStartAsync(process.pid)).then(t => { supStarted = t; beat(); return t; });
+// META-CATCH S1: between ticks (15 min apart) a live supervisor sweeps its state for dead siblings once per SIBLING_SWEEP_MS - one
+// sweeper per window (the stamp's mtime), the first beat only plants the stamp - so a dead run is recorded lost within minutes
+const SIBLING_SWEEP_MS = 3 * 60e3, sweepStamp = path.join(path.resolve(state), 'hb', '.sweep');
+function siblingSweep() {
+  try {
+    let age; try { age = Date.now() - fs.statSync(sweepStamp).mtimeMs; } catch { fs.writeFileSync(sweepStamp, iso()); return; }
+    if (age < SIBLING_SWEEP_MS) return;
+    fs.writeFileSync(sweepStamp, iso());
+    const lost = sweepLost(state, { staleMs: spec.staleMs, by: 'launcher' }).filter(id => id !== run);
+    if (lost.length) logLine(`sibling sweep: ${lost.join(', ')} lost`);
+  } catch { /* next window */ }
+}
 const beat = () => {
   try {
     const f = hbPath(state, run), t = `${f}.${process.pid}.tmp`;
@@ -62,6 +83,7 @@ const beat = () => {
     fs.renameSync(t, f);
   } catch { /* next beat */ }
   for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
+  siblingSweep();
 };
 beat();
 const timer = setInterval(beat, spec.hbMs);
@@ -76,10 +98,10 @@ for (const [k, v] of Object.entries(spec.env || {})) {
 // a typed executor: claude-compatible gets ANTHROPIC_* from its entry (openai-compatible / cli: none); the key comes from this process's env only (never the spec / a record)
 if (spec.provider) for (const [k, v] of Object.entries(providerEnv(spec.provider, process.env).vars)) { if (v === null) delete env[k]; else env[k] = String(v); }
 // OOTB-R2 N-16: META_RUN_STATE = the state dir of this run: META_RUN_ID / META_ROLE speak only for records of THAT state
-Object.assign(env, { META_RUN_ID: run, META_RUN_STATE: path.resolve(state), META_RESUMES: String(spec.resumes || 0), ...(spec.notes ? { META_NOTES: spec.notes } : {}), ...(spec.session_id ? { META_SESSION_ID: spec.session_id } : {}) });
+Object.assign(env, { META_RUN_ID: run, META_RUN_STATE: path.resolve(state), META_RESUMES: String(spec.resumes || 0), META_RESULT_DIR: RESULT_DIR, META_RESULT: RESULT, ...(spec.notes ? { META_NOTES: spec.notes } : {}), ...(spec.session_id ? { META_SESSION_ID: spec.session_id } : {}) });
 
 let cmd;
-try { cmd = buildCommand(spec); } catch (e) { finish(null, null, String(e.message)); }
+try { cmd = buildCommand({ ...spec, result: RESULT, resultDir: RESULT_DIR }); } catch (e) { finish(null, null, String(e.message)); }
 // NORN-WATCH S5 (DEC-683): the whole tree ends with the run - Windows: this supervisor enters a job before the executor is born
 // (jobguard.mjs); POSIX: the executor leads its own process group. Check-ins are not guarded (they dispatch the workers: a worker
 // must never hang on its dispatcher's job), nor is policy reap "off".
@@ -104,6 +126,12 @@ if (cmd) {
     child = spawn(sp.exe, sp.args, { cwd: spec.worktree, env, stdio: [inFd, outFd, logFd], windowsHide: true, ...(guard && process.platform !== 'win32' ? { detached: true } : {}) });
     childPid = child.pid ?? null;
     beat();
+    // GAP-12: a lane start refreshes the overlap check (fetch origin + gh, overlap.mjs) in its own detached process - never on this
+    // process's loop (the heartbeat); outside this run's job like the tick. A work run on a lane only; a failure is a log line
+    if (spec.overlap && spec.lane && !['checkin', 'audit', 'talk'].includes(spec.kind) && spec.role !== 'helper' && !spec.parent) {
+      try { const away = job ? spawnOutside(spec.overlap[0], spec.overlap.slice(1)) : null; if (!away) spawn(spec.overlap[0], spec.overlap.slice(1), { detached: true, stdio: 'ignore', windowsHide: true }).unref(); }
+      catch (e) { logLine(`overlap check not started: ${e.message}`); }
+    }
     child.on('error', e => finish(null, null, String(e.message)));
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);
@@ -129,12 +157,14 @@ async function finish(code, signal, error) {
     if (cmd?.parse === 'claude') { try { text = String(JSON.parse(raw).result ?? ''); } catch { text = ''; } }
     try { if (text.trim()) fs.writeFileSync(spec.notes, text.endsWith('\n') ? text : text + '\n'); } catch (e) { logLine(`answer not written: ${e.message}`); }
   }
-  let marker = parseOutcome(spec.notes ? read(spec.notes) : null);
-  // a NOTES file this run never wrote keeps an earlier run's end marker (a lane's notes reused: a second fixer on docs-fixer "ended
-  // DONE" with nothing drafted). Only a marker written during this run counts; an older one = no marker.
-  try { if (marker.marker_line && spec.notes && fs.statSync(spec.notes).mtimeMs < supStarted - 2000) { logLine(`end marker "${marker.marker_line}" is older than this run: the notes were not written by it`); marker = { outcome: 'no-marker', marker_line: null, stale: true }; } } catch { /* no notes file */ }
-  // a check-in has no NOTES end marker: its outcome is its exit (S5); so has an audit (its notes = the vendor report)
-  let outcome = code !== 0 ? 'crash' : spec.kind === 'checkin' || spec.kind === 'audit' ? 'done' : marker.outcome;
+  // gap #3: a worker run's outcome is its own result (`norn done`, <state>/results/RUN-n/) and nothing else: none = no-result
+  const res = readResult(RESULT_DIR, { run, since: supStarted });
+  if (res?.error) logLine(`result in ${RESULT_DIR} ignored: ${res.error}`);
+  const byResult = res && !res.error ? res : null;
+  // by exit, as before: a check-in (S5), an audit (its notes = the report) and a run whose answer is its final message (a helper, a
+  // plan review): exit 0 = done; any run that exits non-zero = crash
+  const byExit = code !== 0 || spec.kind === 'checkin' || spec.kind === 'audit' || spec.role === 'helper' || !!spec.critique;
+  let outcome = code !== 0 ? 'crash' : byExit ? 'done' : byResult ? byResult.outcome : NO_RESULT;
   // META-AUTH: a crash whose log tail / final carries the executor's auth-failure signature is `auth` (its login is down), not a crash
   let auth = null;
   try {
@@ -142,18 +172,21 @@ async function finish(code, signal, error) {
 ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? { auth: spec.auth } : undefined)));
   } catch (e) { logLine(`auth patterns failed: ${e.message}`); }
   if (auth) outcome = 'auth';
-  // a crash / no-marker exit whose log tail carries the executor's usage-limit signature is a `limit` (META-GT12)
+  // a crash / no-result exit whose log tail carries the executor's usage-limit signature is a `limit` (META-GT12)
   let limit = null;
   try {
-    if (!auth && ['crash', 'no-marker'].includes(outcome) && cmd) limit = classifyLimit(`${tail(spec.log)}\n${tail(spec.final)}`, limitPatterns(spec.executor, spec.provider || (spec.limit ? { limit: spec.limit } : undefined)));
+    if (!auth && ['crash', NO_RESULT].includes(outcome) && cmd) limit = classifyLimit(`${tail(spec.log)}\n${tail(spec.final)}`, limitPatterns(spec.executor, spec.provider || (spec.limit ? { limit: spec.limit } : undefined)));
   } catch (e) { logLine(`limit patterns failed: ${e.message}`); }   // a broken project pattern never costs the end record
   if (limit) outcome = 'limit';
   if (nudging) { outcome = 'nudged'; limit = null; auth = null; }   // stopped by the nudge: whatever the killed tree exited with
   if (ctxForced) { outcome = 'handoff'; limit = null; auth = null; }   // ended at the hard max: a HANDOFF whatever the killed tree exited with
-  const data = { exit: Number.isInteger(code) ? code : null, outcome, marker_line: marker.marker_line, pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
+  // the result counts unless the outcome is the exit's (a forced hand-off's result is Norn's own: its HANDOFF.md feeds the resume)
+  const fromResult = !!byResult && (!byExit || !!ctxForced);
+  const outcomeSource = fromResult ? 'result' : byExit ? 'exit' : 'none';
+  const data = { exit: Number.isInteger(code) ? code : null, outcome, outcome_source: outcomeSource, ...(fromResult ? { result: fwdPath(RESULT_DIR), ...(byResult.summary ? { summary: byResult.summary } : {}), ...(byResult.handoff ? { handoff: fwdPath(byResult.handoff) } : {}), ...(byResult.look ? { look: byResult.look } : {}) } : {}), pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
-  if (outcome === 'stopped') data.why = marker.why;
+  if (outcome === 'stopped') data.why = byResult?.why;
   if (nudging) data.nudge = nudging.mail.id;
   if (ctxForced) data.ctx_forced = ctxForced;
   if (signal) data.signal = signal;
@@ -195,9 +228,10 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     if (!killedByMeta()) {
       try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
       for (const lf of lockFiles) releaseLock(lf, run);
+      dropMergeWt(outcome);
       try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
     }
-    process.exit(0);
+    await holdGone(job); process.exit(0);
   }
   // DELIVERABLES-SPEC 1: a DONE run's branch becomes (or refreshes) its deliverable; never fails the exit
   if (outcome === 'done') { try { const d = onRunDone(state, run); if (d) logLine(`deliverable ${d.id} ${d.ev}`); } catch (e) { logLine(`deliverable not recorded: ${e.message}`); } }
@@ -216,11 +250,12 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (auth) authExit(auth, data);
   if (spec.kind === 'checkin' && spec.fallback && (outcome !== 'done' || !(read(spec.final) || '').trim())) fallback(outcome === 'done' ? 'no final' : outcome);
   let resumed = false;
-  if (outcome === 'handoff') resumed = autoResume();
+  if (outcome === 'handoff') resumed = autoResume(data.handoff);
   else if (outcome === 'nudged') resumed = nudgeResume();
   else if (outcome === 'done') resumed = slopEnd();
   else if (data.dod?.ok === false) resumed = dodEnd(data.dod);
   if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
+  if (!resumed) dropMergeWt(outcome);
   try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
   if (!resumed && spec.tick && spec.policy?.trigger_on_exit !== false) {
     // CI-RED-319CAF8: born inside this run's job, the tick died with this exit whenever the supervisor had spawned a console child
@@ -232,7 +267,16 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     }
     catch (e) { logLine(`tick failed: ${e.message}`); }
   }
+  await holdGone(job);   // its hold ends before it: a settled run leaves no process (LEAK RED)
   process.exit(0);
+}
+
+// GAP-6: a MERGE run's merge worktree goes with the run (DONE, STOPPED, a crash, a limit re-queue: the next start makes a
+// fresh one); a HANDOFF keeps it for its resume (the start-time sweep collects it after a day). A norn stop leaves it to that sweep.
+function dropMergeWt(outcome) {
+  if (!spec.merge_wt || !spec.merge_repo || outcome === 'handoff') return;
+  try { logLine(`merge worktree ${spec.merge_wt}: ${removeMergeWorktree({ repo: spec.merge_repo, wt: spec.merge_wt }) ? 'removed' : 'NOT removed (the next merge start sweeps it)'}`); }
+  catch (e) { logLine(`merge worktree not removed: ${e.message}`); }
 }
 
 function killedByMeta() {
@@ -299,22 +343,15 @@ function fallback(why) {
   } catch (e) { logLine(`gate baseline not moved: ${e.message}`); }
 }
 
-function autoResume() {
-  const pol = spec.policy || {};
-  const count = spec.resumes || 0;
-  const max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
-  let refused = null;
-  if (pol.auto_resume_handoff === false) refused = 'auto-resume off';
-  else if (count >= max) refused = `cap ${count}/${max}`;
-  else if ((spec.paused || []).some(f => fs.existsSync(f))) refused = 'paused';
-  else refused = usageRefusal(spec, state, { rate: false });   // the weekly guard (one home with the queue fill: usageguard.mjs)
+function autoResume(handoff) {
+  let { refused, count, max } = autoResumeRefusal(spec, state);   // one home with the lost relaunch (runs.mjs)
   let next = null, spawned = null;
   if (!refused) {
     try {
       // a HANDOFF is a fresh agent on the same brief: never the nudged session or its mail prompt (META-GTP-MAIL)
       const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, resumeSid: _rs, nudge: _n, ...rest } = spec;
       if (spec.nudge) delete rest.promptText;
-      ({ run: next, spawned } = startRun({ ...rest, resumes: count + 1, resumeOf: run }));
+      ({ run: next, spawned } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));
     } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   }
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, count: count + 1, max } : { refused, count, max } }); }
@@ -423,7 +460,7 @@ function nudgeResume() {
 
 // ---------- META-CTX-ENFORCE R1 (owner DIR-56): the hard max in code. Every hbMs the run's CURRENT context (its transcript's last
 // request) is held against its role's hard_max_k from the CURRENT project policy (ctxlimit.mjs); past it the tree is stopped and
-// the run ends as HANDOFF (a forced note closes its NOTES; committed work is kept; auto-resume as for any HANDOFF). The no-new-step
+// the run ends as HANDOFF (Norn writes its result + HANDOFF.md; committed work is kept; auto-resume as for any HANDOFF). The no-new-step
 // and hand-off orders before it are the PostToolUse hook's (norn mail check --inject). A claude-shaped run with a transcript only.
 function ctxWatched() { return cmd?.parse === 'claude' && !!spec.session_id && !!spec.projectsDir; }
 function ctxWait(why) { if (why !== ctxWaitLast) logLine(`context check waits: ${why}`); ctxWaitLast = why; }
@@ -437,11 +474,14 @@ function ctxCheck() {
   if (ctxLevel(ctx, c) !== 'hard_max') return;
   ctxForced = { ctx, hard_max_k: c.hard_max_k, role: c.role };
   logLine(`context ${Math.round(ctx / 1000)}k past the hard max (${c.hard_max_k}k, role ${c.role}): stopping the executor, the run ends as HANDOFF`);
-  if (spec.notes && spec.role !== 'helper' && spec.kind !== 'checkin' && spec.kind !== 'audit') {
+  // the run's result is the hand-off Norn writes for it - unless the worker handed off itself first (its own HANDOFF.md is better)
+  if (spec.role !== 'helper' && spec.kind !== 'checkin' && spec.kind !== 'audit' && readResult(RESULT_DIR, { run, since: supStarted })?.outcome !== 'handoff') {
     try {
-      fs.appendFileSync(spec.notes, `\n## Forced hand-off (Norn, ${iso()})\nThe context reached ${Math.round(ctx / 1000)}k, past the hard max (${c.hard_max_k}k) of role ${c.role}: Norn ended this run. `
-        + 'Committed work is kept; anything uncommitted is still in the worktree. The next run picks the brief up from these notes.\n## HANDOFF\n');
-    } catch (e) { logLine(`forced note not written: ${e.message}`); }
+      writeResult(RESULT_DIR, { run, outcome: 'handoff', summary: `forced at ${Math.round(ctx / 1000)}k context (hard max ${c.hard_max_k}k, role ${c.role})`,
+        handoff: `# Forced hand-off (Norn, ${iso()})\n\nThe context reached ${Math.round(ctx / 1000)}k, past the hard max (${c.hard_max_k}k) of role ${c.role}: Norn ended this run. `
+          + 'Committed work is kept; anything uncommitted is still in the worktree. Re-check the worktree HEAD + git status and the brief, then continue'
+          + `${spec.notes ? ` (this run's own log: ${fwdPath(spec.notes)})` : ''}.` });
+    } catch (e) { logLine(`forced hand-off not written: ${e.message}`); }
   }
   killTree(childPid);
 }

@@ -132,18 +132,16 @@ function pngIndices(b) {
   return out;
 }
 
-test('the Norn tab bar (META-NAV R2, owner Q-16 A + C): each Norn group framed in its colour with the name as a legend, the active tab filled with its Norn colour in inverse ink, hover / focus distinct, wraps (no sideways scroll); no switch left', async () => {
-  const { renderNav, NORN_GROUPS } = await import('../engine/dash/ui.mjs');
+test('the Norn tab bar (UX review 2, was META-NAV R2): the plain destinations + the open one\'s pages, the active one filled with the accent in inverse ink, hover / focus distinct, wraps (no sideways scroll); no switch left', async () => {
+  const { renderNav } = await import('../engine/dash/ui.mjs');
   assert.ok(!/navgroups/.test(html), 'the R1 ?navgroups switch is gone'); assert.ok(!/data-navgroups/.test(css), 'the R1 variant blocks are gone');
-  const nav = renderNav('records', {}, 'norn');
-  for (const [k] of NORN_GROUPS) assert.match(nav, new RegExp(`<span class="ng ng-${k}"`), k);
-  assert.match(nav, /class="ng ng-urd"[^]*?id="tab-records"[^>]*aria-selected="true"[^]*?<\/span>/, 'the active tab sits in its Norn group');
+  const nav = renderNav('records', {});
+  assert.ok(!/class="ng /.test(nav) && !/nav \.ng\b/.test(css), 'the Norn group frames are gone');
+  assert.match(nav, /id="tab-history"[^>]*aria-selected="true"[^]*<div class="pages" id="pages-history"[^]*id="tab-records"[^>]*aria-selected="true"/, 'the active page sits on its destination\'s row');
   const nr = rules(css.replace(/@media[^{]*\{/g, '')), body = sel => nr.filter(r => r.sel.split(',').map(s => s.trim()).includes(sel)).map(r => r.body).join(';');
   const n = (s, v) => assert.match(body(s), v, s);
   for (const g of ['dark', 'light']) for (const v of ['--nv', '--nu', '--ns', '--ninv']) assert.match(body(`:root.norn[data-ground=${g}]`), new RegExp(`${v}\\s*:\\s*#`), `${g} ${v}`);
-  n(':root.norn nav .ng-verdandi', /--g\s*:\s*var\(--nv\)/); n(':root.norn nav .ng-urd', /--g\s*:\s*var\(--nu\)/); n(':root.norn nav .ng-skuld', /--g\s*:\s*var\(--ns\)/);
-  n(':root.norn nav .ng', /position\s*:\s*relative/); n(':root.norn nav .ng', /border\s*:[^;]*solid var\(--g\)/);
-  n(':root.norn nav .nh', /position\s*:\s*absolute/); n(':root.norn nav .nh', /background\s*:\s*var\(--panel\)/); n(':root.norn nav .nn', /color\s*:\s*var\(--g\)/);
+  n(':root.norn nav', /--g\s*:\s*var\(--accent\)/); n(':root.norn nav .pages', /border-top\s*:[^;]*solid var\(--line\)/);
   const act = ':root.norn nav button[aria-selected=true]';
   n(act, /background\s*:\s*var\(--g\)/); n(act, /color\s*:\s*var\(--ninv\)/);
   n(':root.norn nav button:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/var\(--g\)/.test(body(':root.norn nav button:hover')), 'hover is not the active fill');
@@ -152,8 +150,7 @@ test('the Norn tab bar (META-NAV R2, owner Q-16 A + C): each Norn group framed i
   const navRules = rules(css).filter(r => r.sel.split(',').map(s => s.trim()).includes(':root.norn nav'));
   const last = navRules.filter(r => /overflow-x/.test(r.body)).at(-1);
   assert.match(last.body, /overflow-x\s*:\s*visible/); assert.ok(navRules.some(r => /flex-wrap\s*:\s*wrap/.test(r.body)), 'nav wraps');
-  n(':root.norn nav .ng', /flex-wrap\s*:\s*wrap/); n(':root.norn nav .ng', /max-width\s*:\s*100%/);
-  assert.equal(renderNav('records', {}, 'classic'), renderNav('records', {}), 'classic bar unchanged');
+  assert.match(html, /nav \.dests,nav \.pages\{display:flex;flex-wrap:wrap;[^}]*max-width:100%/, 'both rows wrap inside the bar');
 });
 
 // META-TEND P6: SloppaChoppa's vendored art (norn-art-orc/out, ORC-1 round 5 + 6) under the asset map's names: each file its exact

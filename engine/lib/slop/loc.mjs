@@ -47,14 +47,18 @@ export function mainRef(repo, { main = 'main', remote = 'origin' } = {}) {
 }
 const dayOf = t => new Date(t).toISOString().slice(0, 10);
 
-/** churn of each first-parent commit since a day: [{ sha, day, subject, added: { class: n }, deleted, code_changed, big }] */
+/** churn of each first-parent commit since a day: [{ sha, day, subject, added: { class: n }, deleted, code_changed, big }].
+ * repo = a folder below the top (a monorepo project's subdir): only the changes inside it count, paths relative to it, and a commit
+ * that changes nothing there is another project's landing (left out). */
 export function landings(repo, ref, since) {
+  const below = gitRun(repo, ['rev-parse', '--show-prefix']).trim() !== '';
   const log = gitRun(repo, ['log', '--first-parent', '--format=%H%x09%cI%x09%P%x09%s', `--since=${since}T00:00:00Z`, ref]).split('\n').filter(Boolean);
   return log.map(l => {
     const [sha, at, parents, subject] = l.split('\t');
     const added = {}, deleted = {};
     const p1 = parents.split(' ')[0];   // none = the root commit: everything it adds
-    const ns = gitRun(repo, p1 ? ['diff', '--numstat', '-z', '--no-renames', p1, sha] : ['diff-tree', '-r', '--root', '--no-commit-id', '--numstat', '-z', '--no-renames', sha]).split('\0').filter(Boolean);
+    const ns = gitRun(repo, p1 ? ['diff', '--numstat', '-z', '--no-renames', '--relative', p1, sha] : ['diff-tree', '-r', '--root', '--no-commit-id', '--numstat', '-z', '--no-renames', '--relative', sha]).split('\0').filter(Boolean);
+    if (below && !ns.length) return null;
     for (const x of ns) {
       const [a, d, f] = x.split('\t');
       if (a === '-') continue;   // binary
@@ -63,10 +67,12 @@ export function landings(repo, ref, since) {
     }
     const code_changed = (added.code || 0) + (deleted.code || 0);
     return { sha, day: dayOf(at), subject, added, deleted, code_changed, big: code_changed > BIG_LANDING };
-  });
+  }).filter(Boolean);
 }
 
 /**
+ * repo = the repo's top level, or a monorepo project's folder in it: git grep then counts only that folder (paths relative to it)
+ * and the landings only its changes.
  * locReport(repo, { since (YYYY-MM-DD; default the first commit's day), until (default today, UTC), ref (default main) }) ->
  * { ref, head, ...snapshot(head), series: [{ day, sha, totals, areas }], landings }
  */

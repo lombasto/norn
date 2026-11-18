@@ -12,5 +12,6 @@ asks.
 - A conflict or a failure you cannot resolve mechanically: stop and report the state as found.
 - Report results plainly in the notes file the brief names (numbers, commands, what passed and failed).
 - Screenshots and dashboard walks: only with `norn shot` (see `norn shot --help`: a private, signed-out headless browser on a temp profile, deleted after); never start a browser by hand.
-- Context: when your context is getting full, stop at a clean point and write a HANDOFF section.
-- End the notes file with exactly one of these lines, as its last line: `## DONE`, `## STOPPED: <why>` or `## HANDOFF`.
+- Context: when your context is getting full, stop at a clean point and hand off (`norn done --outcome handoff --handoff-file F`).
+- End your run with `norn done` (done), `norn done --outcome stopped --why "<why>"` or `norn done --outcome handoff --handoff-file F`
+  (F: the hand-off: state, commits, the exact next step, open questions). That is the run's outcome; the notes file is your log.

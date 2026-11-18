@@ -707,13 +707,13 @@ const ADOPT_MD = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 export function readBrief(facts, answers = {}, { retry } = {}) {
   const fill = { root: facts.root, branch: facts.default_branch, facts: JSON.stringify(facts, null, 1), answers: JSON.stringify(answers, null, 1),
     focus: facts.subdir ? `\n- FOCUS: this project is only the folder ${facts.subdir}/ of the repository (a monorepo). Read files under ${facts.root}/${facts.subdir}/;\n  outside it read only a top-level README or agent file that applies to the whole repo. Every goal, command, rule, roadmap item\n  and first task is about ${facts.subdir}/ alone: leave out the other folders' work. A command runs from ${facts.subdir}/ (write it as\n  run there, without a cd). Sources stay repo-relative (${facts.subdir}/README.md:3).` : '',
-    retry: retry ? `\nRETRY: your last answer was not one valid JSON object (${String(retry).slice(0, 300)}). Answer again: the JSON object, then ## DONE.\n` : '' };
+    retry: retry ? `\nRETRY: your last answer was not one valid JSON object (${String(retry).slice(0, 300)}). Answer again: the JSON object only.\n` : '' };
   return fs.readFileSync(ADOPT_MD, 'utf8').replace(/\{\{(\w+)\}\}/g, (m, k) => (k in fill ? fill[k] : m));
 }
 
-/** the read's final -> its JSON object (an end marker, a code fence or prose around it are tolerated) or AdoptError */
+/** the read's final -> its JSON object (a code fence or prose around it are tolerated) or AdoptError */
 export function parseRead(text) {
-  const t = String(text || '').replace(/^##\s+(DONE|STOPPED|HANDOFF)\b.*$/gm, '');
+  const t = String(text || '');
   const a = t.indexOf('{'), b = t.lastIndexOf('}');
   if (a < 0 || b < a) throw new AdoptError('no JSON object in the answer');
   let j;

@@ -133,7 +133,7 @@ test('Agents: the plan row shows its review (queued / running / reviewed ✓ (n 
     run('RUN-4', 'running', { class: 'review', critique: { of: 'RUN-3', plan: '/p/B.md' } })];
   const tree = agentsTree(runs, { now });
   assert.deepEqual(tree.find(n => n.id === 'RUN-1').critique, { run: 'RUN-2', state: 'exited', outcome: 'done', findings: 2, file: '/p/PLAN-CRITIQUE.md' });
-  const html = renderTab('agents', { tree }, { now, projects: [] });
+  const html = renderTab('runs', { tree }, { now, projects: [] });
   assert.match(html, /reviewed ✓ \(2 findings\)/);
   assert.match(html, /review running/);
 });

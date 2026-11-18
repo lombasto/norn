@@ -106,10 +106,10 @@ test('delegate: parent auto-filled from META_RUN_ID; RUN row role helper + class
   assert.ok(r.dir.startsWith(path.join(d.state, 'delegate')));
   assert.equal(it.data.brief, path.join(r.dir, 'brief.md')); assert.equal(it.data.notes, path.join(r.dir, 'out.md'));
   const brief = fs.readFileSync(it.data.brief, 'utf8');
-  assert.match(brief, /water picture/); assert.match(brief, /a\.rs/); assert.match(brief, /at most 40 lines/i); assert.match(brief, /UNKNOWN/); assert.match(brief, /## DONE/);
+  assert.match(brief, /water picture/); assert.match(brief, /a\.rs/); assert.match(brief, /at most 40 lines/i); assert.match(brief, /UNKNOWN/); assert.match(brief, /final message IS the answer/); assert.doesNotMatch(brief, /## DONE/);
   const e = await d.ended(r.run);
   assert.equal(e.end.outcome, 'done');
-  assert.match(fs.readFileSync(r.out, 'utf8'), /## DONE/);
+  assert.match(fs.readFileSync(r.out, 'utf8'), /work: done/);
   assert.equal(d.item(p).state, 'running');
   stopRun({ state: d.state, locksDir: d.locks, run: p, by: 'owner' });
 });
@@ -172,7 +172,7 @@ test('delegate wait: exit 5 while a helper runs, 0 once all ended; prints outcom
   const w2 = delegateWait({ state: d.state, runs: [slow.run, fast.run], maxS: 20 });
   assert.equal(w2.code, 0);
   const txt = w2.lines.join('\n');
-  assert.match(txt, new RegExp(`${fast.run} exited done`)); assert.match(txt, /## DONE/); assert.ok(txt.includes(fast.out.replace(/\\/g, '/')));
+  assert.match(txt, new RegExp(`${fast.run} exited done`)); assert.match(txt, /work: done/); assert.ok(txt.includes(fast.out.replace(/\\/g, '/')));
   assert.ok(w2.lines.length <= 60);
   assert.throws(() => delegateWait({ state: d.state, runs: ['RUN-999'], maxS: 1 }), e => e instanceof RunError && e.code === 2);
   stopRun({ state: d.state, locksDir: d.locks, run: p, by: 'owner' });
@@ -243,7 +243,7 @@ test('norn delegate CLI: ask blocks and prints the answer (exit 0); start prints
   const GUARD = String(HANG_CAP_MS / 1000);
   const a = run('ask', '--executor', 'fake', '--q', 'who calls Y?', '--max-s', GUARD);
   assert.equal(a.status, 0, a.stderr + a.stdout);
-  assert.match(a.stdout, /exited done/); assert.match(a.stdout, /## DONE/); assert.ok(a.stdout.trim().split('\n').length <= 60);
+  assert.match(a.stdout, /exited done/); assert.match(a.stdout, /work: done/); assert.ok(a.stdout.trim().split('\n').length <= 60);
   const s = run('start', '--executor', 'fake', '--q', 'mode: sleep\nms: 2000');
   assert.equal(s.status, 0, s.stderr); const id = s.stdout.trim().match(/^(RUN-\d+)/)[1];
   assert.equal(run('wait', id, '--max-s', '0.2').status, 5);

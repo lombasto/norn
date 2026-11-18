@@ -38,8 +38,14 @@ function sandbox(name = 'demo') {
   d.wt = n => { const w = path.join(t, 'wt' + n); fs.mkdirSync(w, { recursive: true }); return w; };
   d.brief = (body = 'mode: done\n', n = 'brief.md') => { const f = path.join(t, n); fs.writeFileSync(f, body); return f; };
   d.item = id => loadState(d.state).items[id];
-  d.opts = (o = {}) => ({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), brief: d.brief(), notes: d.notes, hbMs: 150, staleMs: 3000,
-    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 4 }, tick: null, ...o });
+  // GAP-2: a queued run reads its budget FILE at fill (no copy is kept): each launch writes the budget it is given to a file of its own
+  let nb = 0;
+  d.opts = (o = {}) => {
+    const budget = o.budget ?? { max_claude_workers: 4 }, budget_file = path.join(t, `budget-${++nb}.json`);
+    fs.writeFileSync(budget_file, JSON.stringify(budget));
+    return { state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), brief: d.brief(), notes: d.notes, hbMs: 150, staleMs: 3000,
+      policy: { auto_resume_max: 0 }, tick: null, ...o, budget, budget_file };
+  };
   // progress-based (DEC-84 B): fails when the run's supervisor is gone unsettled, never on a clock
   d.ended = id => runEnded(d.state, id);
   return d;
@@ -286,7 +292,7 @@ test('node run: claims the offered linux run, runs it in its own state dir (RUN-
   assert.equal(it.state, 'exited');
   assert.equal(it.end.outcome, 'done');
   assert.deepEqual(it.data.claim_of, { home: 'home', project: 'demo', run: q.run, node: 'nodew' });
-  assert.match(fs.readFileSync(d.notes, 'utf8'), /## DONE/, 'the NOTES path (shared filesystem: path_map) got the marker');
+  assert.match(fs.readFileSync(d.notes, 'utf8'), /work: done/, 'the NOTES path (shared filesystem: path_map) got the log');
   const claim = JSON.parse(remoteFile(g, 'refs/heads/claims', claimKey('home', 'demo', q.run)));
   assert.deepEqual([claim.state, claim.node_run, claim.outcome], ['done', 'RUN-wsl-1', 'done']);
   assert.match(remoteFile(g, 'refs/heads/machine/nodew', 'meta/state/demo/runs.jsonl'), /RUN-wsl-1/, 'the node events are on machine/<host>');
@@ -421,7 +427,7 @@ test('proof: a node with NO path_map runs a labelled run from its own checkout, 
   fillQueue(d.state, { resources: () => PIN });
   const h = loadState(d.state).items[q.run];
   assert.deepEqual([h.state, h.fill.outcome, h.fill.node, h.fill.next], ['filled', 'done', 'nodew', 'RUN-wsl-1'], 'DONE seen at home');
-  assert.match(fs.readFileSync(h.fill.notes, 'utf8'), /## fake RUN-wsl-1[\s\S]*## DONE/, 'with its notes');
+  assert.match(fs.readFileSync(h.fill.notes, 'utf8'), /## fake RUN-wsl-1[\s\S]*work: done/, 'with its notes');
   const after = est();
   assert.equal(crTotal(after.all) - crTotal(before.all), N, 'the account cacheR moved by exactly the node run\'s cache_read');
   assert.equal(after.pct - before.pct, N / G.budget.cacheR_per_pct, 'the estimate moved by exactly N / cacheR_per_pct');

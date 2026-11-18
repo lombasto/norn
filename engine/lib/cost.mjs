@@ -2,7 +2,7 @@
 // executor, weighted to a %-of-week through the budget's calibration (cacheR_per_pct). Claude: an ended run counts its CLI final
 // usage (claude -p json, = its transcript sum), a running / killed / lost one its transcript (+ subagents), tailed incrementally.
 // Codex: totals only (rollout token_count live, end.tokens at the end) - its own plan, no Claude %. Providers bill their own
-// account. Node built-ins only; the transcript tail and the finders are the Agents tab's (agents.mjs).
+// account. Node built-ins only; the transcript tail and the finders are the Runs page's (agents.mjs).
 import { tail, codexInfo, findTranscript, findRollout } from './agents.mjs';
 import { parseCodexLog } from './runs.mjs';
 import fs from 'node:fs';
@@ -27,7 +27,7 @@ export function fromUsage(u = {}) {
   return t;
 }
 
-const COST_KEY = '\u0000cost:';   // own entries in a shared tail cache (the Agents tab keys its by plain path)
+const COST_KEY = '\u0000cost:';   // own entries in a shared tail cache (the Runs page keys its by plain path)
 function onAssistant(c, j) {
   const m = j.message, us = m?.usage;
   if (j.type !== 'assistant' || !us) return;

@@ -8,6 +8,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { record } from '../engine/lib/records.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
 
 const DASH = { streamPollMs: 30, streamPulseMs: 200, streamLingerMs: 100 };
 
@@ -178,4 +179,41 @@ test('stream (DEC-341): an urgent() sig change goes out at once, outside the pul
     await settle(150);
     assert.equal(n(), 2, 'one event per urgent change; the pending ordinary change rode on it');
   } finally { s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// CI 43999056272 (Windows): the Last-Event-ID resume above lost a record. A poll snapshots its clients, then awaits the records
+// file's size / lines; a tab resuming DURING those awaits read the hub's not-yet-advanced cursor (no catch-up) and was not in the
+// poll's snapshot (no live send): the record appended before the resume reached it by neither path. A join's catch-up now runs
+// between polls, never inside one. Deterministic: the poll is held inside its stat while the tab resumes.
+test('stream: a resume that lands while a poll is reading the records file gets the record exactly once (no lost append)', async () => {
+  const { createStreams } = await import('../engine/dash/stream.mjs');
+  const dir = mkTmp('norn-resume-'), f = path.join(dir, 'records.jsonl'), hb = path.join(dir, 'hb');
+  fs.mkdirSync(hb); fs.writeFileSync(f, JSON.stringify({ id: 'DIR-1' }) + '\n');
+  const s = createStreams({ pollMs: 10, pulseMs: 60000, lingerMs: 50 });
+  const sink = () => { const out = []; return { out, res: { destroyed: false, writeHead() {}, on() {}, end() {}, write(t) {
+    const e = /event: (\w+)/.exec(t)?.[1], d = /data: (.*)/.exec(t)?.[1], id = /id: (.*)/.exec(t)?.[1]; if (e) out.push({ e, d: d && JSON.parse(d), id }); return true; } } }; };
+  const src = [{ project: 'p', files: { records: f }, flags: () => ({}), hbDir: hb }];
+  const stat = fs.promises.stat;
+  let gate = null, held = null;
+  fs.promises.stat = async (p, ...a) => { if (gate && path.resolve(String(p)) === path.resolve(f)) { const g = gate; gate = null; held(); await g; } return stat(p, ...a); };
+  try {
+    const a = sink();
+    assert.equal(await s.join('k', src, a.res), true);
+    const cursor = a.out.find(x => x.e === 'hello').id;
+    let release; const g = new Promise(r => { release = r; }), inPoll = new Promise(r => { held = r; });
+    gate = g;
+    fs.appendFileSync(f, JSON.stringify({ id: 'DIR-2' }) + '\n');
+    await inPoll;   // a poll is now inside its stat of the records file, its client list already taken
+    const b = sink(), { decodeCursor } = await import('../engine/dash/feed.mjs');
+    const joined = s.join('k', src, b.res, decodeCursor(cursor));
+    await settle(30);
+    release();
+    await joined;
+    const got = () => b.out.filter(x => x.e === 'rec').flatMap(x => x.d.records.map(r => r.id));
+    const t0 = performance.now();
+    while (!got().includes('DIR-2') && performance.now() - t0 < 2000) await settle(10);
+    await settle(60);
+    assert.deepEqual(got(), ['DIR-2'], 'the resumed tab gets the record appended before it resumed, once');
+    assert.deepEqual(a.out.filter(x => x.e === 'rec').flatMap(x => x.d.records.map(r => r.id)), ['DIR-2'], 'the first tab too, once');
+  } finally { fs.promises.stat = stat; s.close(); }
 });

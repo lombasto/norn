@@ -12,7 +12,7 @@ import { mark, slowStep, loopReport } from './helpers/loopwatch.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { estTokens, TOKEN_METHOD, discover, sessionsOn, dailyCost, lint, instructionsView, formatInstructions, knownCommands } from '../engine/lib/instructions.mjs';
-import { renderTab, loadTab, NORN_GROUPS, TABS } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, NAV, TABS } from '../engine/dash/ui.mjs';
 import { guardRows, guardView } from '../engine/lib/guardview.mjs';
 import { guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
 import { TABS as SERVER_TABS, createDashboard } from '../engine/dash/server.mjs';
@@ -197,11 +197,10 @@ const VIEW = {
     parts: { worker: { run: 'RUN-640', method: 'request', total: 22269, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 9106 }, { key: 'skills', label: 'skills list', ours: true, tokens: 4251 }, { key: 'plugins', label: 'plugins (their skills)', ours: true, tokens: 4946 }] } } },
   suggest: [{ id: 'S-1', class: 'stale', path: 'C:/r/CLAUDE.md', file: 'CLAUDE.md', anchor: 'p12345678', line: 3, head: 'Old rule', tokens: 600, loads_per_day: 3, saved_per_day: 1800, why: 'older than 30 d', action: 'delete it', patch: '--- a/C:/r/CLAUDE.md\n+++ b/C:/r/CLAUDE.md\n@@ -3,2 +2,0 @@\n-Old rule\n-\n', owner_file: false }],
 };
-test('Context (was Instructions): in the Verdandi group next to Usage (META-TEND P1-VISUAL), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
+test('Context: in Health next to Usage (UX review 2), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
   assert.ok(TABS.some(([k, l]) => k === 'context' && l === 'Context'));   // META-UX-BUILD S4 (owner DIR-65)
   assert.ok(SERVER_TABS.includes('context'));
-  const ver = NORN_GROUPS.find(g => g[0] === 'verdandi')[3];
-  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'context', 'slop']);   // META-TEND P6: Guard (the open faults now = what is) after Instructions
+  assert.deepEqual(NAV.find(d => d[0] === 'health')[2], ['usage', 'slop', 'tests', 'context']);   // UX review 2: Health
   assert.ok(renderTab('context', { one: true }).includes('Choose one project'));
   const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...VIEW, sub, limit: 1000 }, {})).join('');
   assert.match(html, /id="panel-context"/);
@@ -263,13 +262,18 @@ let shotLib = null;
 try { shotLib = await import('../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch */ }
 const browser = shotLib?.findBrowser?.() ?? null;
 test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, rows (Per file) and hints (the checks) shown; a row opens the file', {
-  skip: !shotLib ? 'engine/lib/shot.mjs is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false, timeout: 120000 }, async () => {
+  skip: !shotLib ? 'engine/lib/shot.mjs is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false, timeout: 240000 }, async () => {   // the scan wait (<= 120 s) + the browser
   const { launchBrowser, killTree, killProfileProcs, removeProfile } = shotLib;
   const f = fx();
   w(path.join(f.repo, 'deep', 'a-very-long-folder-name-for-the-phone-width-test', 'another-long-folder-name-that-does-not-break', 'CLAUDE.md'), '# deep\n');
   const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
+  // the instruction-file scan runs in a worker (META-UX-BUILD S1): until it lands, Slop has no H- / T- rows and Per file no rows,
+  // and the page's own 20 s wait below raced it (red on a clean main, "the instruction-file scan is running"). Wait for the scan.
+  let l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json();
+  for (let i = 0; l.pending && i < 1200; i++) { await new Promise(r => setTimeout(r, 100)); l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json(); }
+  assert.equal(l.pending, false, `the instruction-file scan landed (${JSON.stringify(l.error ?? null)})`);
   const profile = mkTmp('meta-shot-');
   const child = launchBrowser({ browser, profile, size: [390, 844] });
   let ws;

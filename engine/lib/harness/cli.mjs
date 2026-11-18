@@ -3,8 +3,8 @@
 // {brief} {model} {effort} {turns} placeholders ("{mode}" = where the mode's args go; absent = appended), and NAMED modes
 // { access: write | read-only | no-tools, args }. A run asks for a mode by name, else by access (the first mode with it).
 // Output is plain text: no usage, no tool echo; the feed is the log + final text.
-// exit_after_s (optional): the run goes through the EXIT WATCH (engine/bin/exit-watch.mjs) - a CLI that finished (its NOTES gained
-// an end marker) but stays alive with no output for that long has its process tree ended (grok RUN-1616 sat idle 51 min after DONE).
+// exit_after_s (optional): the run goes through the EXIT WATCH (engine/bin/exit-watch.mjs) - a CLI that finished (it wrote its
+// result: norn done) but stays alive with no output for that long has its process tree ended (grok RUN-1616 sat idle 51 min after DONE).
 import { EMPTY, detectExe, HEADLESS_CORE, HEADLESS_MAIL, logFeed } from './common.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,13 +30,13 @@ function command(o) {
   });
   const args = x.args.includes('{mode}') ? x.args.flatMap(a => (a === '{mode}' ? mode.args.map(sub) : [sub(a)])) : [...x.args.map(sub), ...mode.args.map(sub)];
   const cmd = { exe: o.exe, stdin: x.brief === 'stdin' ? o.brief : null, stdout: 'final', parse: 'none', args };
-  // the exit watch needs the run's NOTES (a probe has none) and wraps the same stdio: stdin / final / log reach the CLI unchanged
-  if (x.exit_after_s !== undefined && o.notes) return { ...cmd, exe: process.execPath, args: [WATCH, '--after', String(x.exit_after_s), '--notes', o.notes, '--', o.exe, ...args] };
+  // the exit watch needs the run's result file (the supervisor's; a probe has none) and wraps the same stdio: stdin / final / log reach the CLI unchanged
+  if (x.exit_after_s !== undefined && o.result) return { ...cmd, exe: process.execPath, args: [WATCH, '--after', String(x.exit_after_s), '--result', o.result, '--', o.exe, ...args] };
   return cmd;
 }
 
 /** doctor --probe: the read-only command line, one turn */
-const probe = o => command({ ...o, readonly: true, mode: undefined, turns: 1, notes: undefined });   // no NOTES: never the exit watch
+const probe = o => command({ ...o, readonly: true, mode: undefined, turns: 1, result: undefined });   // no result file: never the exit watch
 
 // Live feed: plain output has no tool echo and no usage, so the feed is the text of the log and the final file, one event per line.
 const feed = (run, cursor, env) => logFeed([['log', run.data?.log], ['final', run.data?.final]], cursor, env);

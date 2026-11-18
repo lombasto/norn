@@ -3,8 +3,8 @@
 The procedure is the door skill ({{skill}}): read its headings first, then "FAST DOOR = THE DEFAULT", "0. Rules", "1. Stage A"
 and "1b". The skill wins over this brief wherever they differ. Project {{project}}. Norn: {{norn}}.
 Worktree {{door_worktree}} (CRLF checkout), branch {{door_branch}}. NOTES {{notes_dir}}/DOOR{{n}}-A-NOTES.md (durable; a `## NOW`
-block at the top); last line exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF` (door stages: no new step past ~140k, hand off
-at ~160k, commit finished work first).
+block at the top); end with `norn done` (or `norn done --outcome stopped --why "<why>"` / `norn done --outcome handoff --handoff-file F`;
+door stages: no new step past ~140k, hand off at ~160k, commit finished work first).
 
 1. Merge {{branches}} into {{door_branch}} in that order, preserving both sides (CHANGELOG EOL per the skill sec. 1.2; citation
    firings renumbered once, by script).
@@ -12,4 +12,4 @@ at ~160k, commit finished work first).
    unchanged); compare to the known-reds list, only NEW reds matter; one fix round, still red = STOPPED.
 3. The GPU lock and QUIET rules are unchanged (common-rules line 1): take the lock for any GPU work; QUIET only as the skill says.
 4. Push {{door_branch}}; record `git rev-parse HEAD^{tree}` in NOTES (stage B reuses these receipts when main's tree equals it).
-   `## DONE`: stage B (the install in {{main_checkout}}) starts on it. Never touch main in this stage.
+   `norn done`: stage B (the install in {{main_checkout}}) starts on it. Never touch main in this stage.

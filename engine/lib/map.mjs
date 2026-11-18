@@ -23,7 +23,7 @@ export function runWord(r) {
   if (r.state === 'lost') return ['lost', 'lost'];
   if (r.state === 'killed') return ['bad', 'killed'];
   const o = r.end?.outcome;
-  return { done: ['done', 'DONE'], stopped: ['stopped', 'STOPPED'], handoff: ['handoff', 'HANDOFF'], crash: ['bad', 'crash'] }[o] ?? ['no-marker', o ?? 'no-marker'];
+  return { done: ['done', 'DONE'], stopped: ['stopped', 'STOPPED'], handoff: ['handoff', 'HANDOFF'], crash: ['bad', 'crash'] }[o] ?? ['no-result', o ?? 'no-result'];
 }
 const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 
@@ -43,6 +43,7 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
     if (lane) (lanesOf[lane] ??= []).push(r);
   }
   const subsOf = Object.fromEntries((tree || []).map(n => [n.id, (n.children || []).filter(c => c.kind === 'subagent')]));
+  const hoBy = Object.fromEntries((tree || []).filter(n => n.handoff).map(n => [n.id, n.handoff]));   // the tree's live hand-off state (lanes.mjs handoffOf)
   const openQ = items.filter(i => i.kind === 'question' && i.state === 'open');
   const rank = l => (lanesOf[l.id.slice(2)]?.[0]?.state === 'running' ? 0 : l.state === 'parked' ? 1 : 2);
   // lanes with runs but no LANE record (launched ad hoc): shown while running or active in the last 24 h, all with `all`
@@ -63,13 +64,14 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
       : st0 === 'parked' ? ['parked', 'parked'] : lead?.state === 'running' ? ['running', 'running'] : st0 === 'active' ? ['idle', 'idle'] : ['idle', st0];
     const laneId = 'L:' + name;
     add({ id: laneId, type: 'lane', lane: name, label: name === CHECKIN ? 'controller' : name, sub: `${name === CHECKIN ? 'check-ins · ' : ''}${laneItem?.adhoc ? 'no LANE record · ' : ''}${list.length} run${list.length === 1 ? '' : 's'}`,
-      state: st0, cls, word, x: COL[0], y: top + BAND_PAD, w: W[0], h: H.lane, more: list.length - vis.length, expanded: more.has(name), capped: more.has(name) && list.length > MORE_CAP });
+      state: st0, cls, word, x: COL[0], y: top + BAND_PAD, w: W[0], h: H.lane, more: list.length - vis.length, expanded: more.has(name), capped: more.has(name) && list.length > MORE_CAP,
+      handoff: name === CHECKIN ? null : vis.map(r => hoBy[r.id]).find(Boolean) ?? null });   // every run of a hand-off chain carries its tip's state
     let ry = top + BAND_PAD;
     vis.forEach((r, i) => {
       const d = r.data || {}, [rc, rw] = runWord(r), big = i === 0;
       const crit = d.class === 'planning' ? critiqueOfNode(runs, r.id) : null;   // META-DOD 3: the plan's review (ui.mjs mapNode: its sub line)
       add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: runName(r) ?? r.id, sub: [r.id, d.executor, d.stage].filter(Boolean).join(' · '), critique: crit,
-        state: r.state, cls: rc, word: rw, x: COL[1], y: ry, w: W[1], h: big ? H.big : H.small, faded: !big, feed: r.id, executor: d.executor ?? null });
+        state: r.state, cls: rc, word: rw, x: COL[1], y: ry, w: W[1], h: big ? H.big : H.small, faded: !big, feed: r.id, executor: d.executor ?? null, handoff: hoBy[r.id] ?? null });
       edge(laneId, r.id, 'owns');
       const kids = [...(helpersOf[r.id] || []).map(h => { const [hc, hw] = runWord(h); return { id: h.id, type: 'helper', lane: name, label: runName(h) ?? h.id,
         sub: [h.id, h.data.executor, 'helper'].filter(Boolean).join(' · '), cls: hc, word: hw, feed: h.id, executor: h.data.executor ?? null }; }),

@@ -109,7 +109,7 @@ test('a hand-edited view: the record is still written, stderr warns, `rec views`
   fs.appendFileSync(qv, 'my note\n');
   const r = run(s, 'checkin', 'rec', 'add', 'question', '--lane', 'gen', '--title', 'B');
   assert.equal(r.code, 0); assert.equal(r.out, 'Q-2');
-  assert.match(r.err, /hand-edited view.*OWNER-QUESTIONS\.md.*import-edits.*revert/);
+  assert.match(r.err, /hand-edited view.*OWNER-QUESTIONS\.md.*NOT regenerated.*Inbox.*revert it/);
   assert.equal(run(s, 'checkin', 'rec', 'views').code, 1);
   fs.writeFileSync(qv, gen);
   assert.equal(run(s, 'checkin', 'rec', 'views').code, 0);

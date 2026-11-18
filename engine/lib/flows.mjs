@@ -179,7 +179,9 @@ export function renderFlow(f, given = {}, ctx = {}) {
     if (typeof bt === 'string') r.brief = fill(fs.readFileSync(s.brief_file, 'utf8'), v);
     else {
       const args = Object.fromEntries(Object.entries(bt.args).map(([k, x]) => [k, fill(x, v)]));
-      try { r.brief = BUILTINS[bt.builtin](ctx.project || { name: base.project || 'project' }, args); } catch (e) { throw new FlowError(`flow ${f.name}: step ${id}: ${bt.builtin}: ${e.message}`); }
+      // the flow's state dir is the project's for the builtin: a merge's worktree lives under the state its run records in (GAP-6)
+      const p = { ...(ctx.project || { name: base.project || 'project' }), ...(ctx.state ? { state: ctx.state } : {}) };
+      try { r.brief = BUILTINS[bt.builtin](p, args); } catch (e) { throw new FlowError(`flow ${f.name}: step ${id}: ${bt.builtin}: ${e.message}`); }
     }
     return r;
   });

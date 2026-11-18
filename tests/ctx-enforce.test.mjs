@@ -55,7 +55,7 @@ test('one hand-off wording: the chat turn and a run order share the head; the ch
   assert.equal(CHAT_PROMPT, HANDOFF_PROMPT);
   const c = ctxLimits({}, 'implementer'), head = HANDOFF_PROMPT.split(' After this turn')[0].replace('{ctx}', '120k').replace('{limit}', '110k');
   assert.ok(runOrder('handoff', 120000, c).startsWith(head), runOrder('handoff', 120000, c));
-  assert.match(runOrder('handoff', 120000, c), /## HANDOFF/);
+  assert.match(runOrder('handoff', 120000, c), /norn done --outcome handoff --handoff-file/);
   assert.match(runOrder('no_new_step', 95000, c), /no new step/i);
 });
 
@@ -108,7 +108,7 @@ test('the hook: past no_new_step one "no new step" order, at handoff_k the hand-
   assert.equal(no.status, 0); assert.equal(no.stdout.trim(), '', 'a run without a spec / transcript: the hook says nothing, never fails');
 });
 
-test('fake run: past the hard max the supervisor ends the run as HANDOFF (forced note in NOTES, ctx_forced on the end) and auto-resume takes it', async () => {
+test('fake run: past the hard max the supervisor ends the run as HANDOFF (its result + a forced HANDOFF.md, ctx_forced on the end) and auto-resume takes it', async () => {
   const t = mkTmp('meta-ctx-'), state = path.join(t, 'state', 'demo'), locks = path.join(t, 'state', 'locks'), wt = path.join(t, 'wt'), notes = path.join(t, 'NOTES.md');
   const projects = path.join(t, 'projects');
   for (const d of [state, locks, wt]) fs.mkdirSync(d, { recursive: true });
@@ -120,7 +120,8 @@ test('fake run: past the hard max the supervisor ends the run as HANDOFF (forced
   const end = await waitFor(() => { const it = loadState(state).items[r.run]; return settled(it) && it.history.find(h => h.ev === 'end'); });
   assert.equal(end.data.outcome, 'handoff');
   assert.deepEqual(end.data.ctx_forced, { ctx: 70000, hard_max_k: 60, role: 'implementer' });
-  assert.match(fs.readFileSync(notes, 'utf8'), /hard max \(60k\)[\s\S]*\n## HANDOFF\n$/);
+  assert.equal(end.data.outcome_source, 'result');
+  assert.match(fs.readFileSync(end.data.handoff, 'utf8'), /^# Forced hand-off[\s\S]*hard max \(60k\)/);
   const resumed = await waitFor(() => loadState(state).items[r.run].history.find(h => h.ev === 'resume'));
   assert.ok(resumed.data.next, JSON.stringify(resumed.data));
   const next = await waitFor(() => { const it = loadState(state).items[resumed.data.next]; return settled(it) && it; });

@@ -105,7 +105,7 @@ export function nudgeDue(state, { run, now = Date.now(), afterMin = NUDGE_AFTER_
 /** the resumed session's prompt: the mail itself, and how to go on */
 export const nudgePrompt = (m, afterMin = NUDGE_AFTER_MIN) => `NUDGE: an urgent mail was not acked within ${afterMin} min, so meta stopped your run and resumed `
   + `this same session for you to read it now.\n\n${formatMail({ ...m, text: bodyOf(m) })}\n\nAct on it and ack it (norn mail ack ${m.id}), then continue `
-  + 'your brief from where you were stopped: re-check the worktree HEAD + git status first (a tool call may have been cut off). Your NOTES end-marker rules are unchanged.';
+  + 'your brief from where you were stopped: re-check the worktree HEAD + git status first (a tool call may have been cut off). End with `norn done` as before.';
 
 /** the hook command line the launcher adds (claude runs hook commands in Git Bash / sh: $META_RUN_ID expands there; the CLI falls back to the env) */
 export const hookCommand = state => `"${fwd(process.execPath)}" "${fwd(META_BIN)}" mail check --inject --run $META_RUN_ID --state "${fwd(path.resolve(state))}"`;

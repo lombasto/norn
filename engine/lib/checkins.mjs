@@ -1,10 +1,10 @@
 // META-CHECKIN-DIET R1 (owner 11-13: "the check ins running should be configurable and optimizable / dynamic per task"): a check-in
 // thinks only when there is something to decide, sized to the wake.
 //   routine ends   - a run end the policy calls routine (policy.checkin.routine) is handled by code in the tick, never by a model:
-//                    merge_done = a MERGE run ended DONE (its NOTES marker) -> reviewed; worker_done_stage = a worker DONE with a
+//                    merge_done = a MERGE run ended DONE (its norn done result) -> reviewed; worker_done_stage = a worker DONE with a
 //                    pushed head on an auto-stage lane -> the standard staged merge (merge-brief --sha + a queued MERGE run; with a
 //                    fast merge-queue gate the queue batches it) and reviewed. Every action is a run review record by: launcher
-//                    with { routine, why }. STOPPED / HANDOFF / no-marker / an unpushed head / a question by the run: a model.
+//                    with { routine, why }. STOPPED / HANDOFF / no-result / an unpushed head / a question by the run: a model.
 //   debounce       - run ends within policy.checkin.debounce_min wake ONE tick (at the oldest new end + the window).
 //   lane levels    - full (today) | on-end (its running / stall / idle facts never wake: a long design run is not re-reviewed
 //                    while it runs) | none (merge-line-only lanes: none of its run facts wake; forced ticks still read STATUS).
@@ -46,7 +46,7 @@ export function routineOf(r, { cp, recEvs = [], mailEvs = [], pushed = pushedHea
   const d = r.data || {}, end = r.end || {};
   if (!isWork(d) || r.state !== 'exited' || r.review || end.outcome !== 'done') return null;
   if (askedBy(recEvs, mailEvs, r.id)) return null;
-  if (isMergeRun(d)) return cp.routine.includes('merge_done') ? { kind: 'merge_done', action: 'review', why: `MERGE ${r.id} (${d.lane}) ended DONE with its NOTES marker: nothing to decide` } : null;
+  if (isMergeRun(d)) return cp.routine.includes('merge_done') ? { kind: 'merge_done', action: 'review', why: `MERGE ${r.id} (${d.lane}) ended DONE (its norn done result): nothing to decide` } : null;
   if (!cp.routine.includes('worker_done_stage') || !laneMatch(cp.auto_stage, d.lane)) return null;
   if (!end.head || !end.branch || end.branch === 'main' || end.dirty?.files) return null;
   if (!pushed(d.worktree, end.branch, end.head)) return null;

@@ -4,10 +4,10 @@
   "vars": {
     "lane": { "doc": "the lane whose branch merges" },
     "branch": { "doc": "the lane branch (feat/...)" },
-    "worktree": { "doc": "the lane worktree" },
+    "worktree": { "doc": "the lane worktree (a rebase merge rebases there; the merge itself runs in its own merge worktree)" },
     "notes": { "doc": "the MERGE NOTES file (durable, outside every worktree)" },
     "ui": { "default": "", "doc": "non-empty = the branch changes the dash / UI (the merge takes shots per policy.merge.shots)" },
-    "sha": { "default": "", "doc": "a tested commit: the staged merge in the main checkout (norn merge-brief --sha)" },
+    "sha": { "default": "", "doc": "a tested commit: the staged merge of that commit (norn merge-brief --sha); every merge works in its own merge worktree" },
     "after": { "default": "", "doc": "after terms the merge waits for, e.g. run:RUN-n:done (empty = merge now)" }
   },
   "steps": [

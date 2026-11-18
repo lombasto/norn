@@ -1,5 +1,5 @@
 // META-MERGE-MARKER R1 (DEC-275 / DEC-285 / DEC-287): a MERGE run launched without --notes read the lane default NOTES while its
-// worker wrote `## DONE` into the file its merge brief names (merge-brief --notes) -> no-marker although the merge landed.
+// worker wrote `## DONE` into the file its merge brief names (merge-brief --notes) -> no-marker although the merge landed (the outcome is the run result now: gap #3).
 // The ONE home of a MERGE brief's notes path is the brief (its meta-merge marker). FAKE executor only, temp dirs only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +24,10 @@ function sandbox() {
   const d = { t, state: path.join(t, 'state', 'demo'), locks: path.join(t, 'state', 'locks'), main: path.join(t, 'main'), wt: path.join(t, 'wt'), x: path.join(t, 'reviews', 'P2-MERGE-NOTES.md') };
   for (const k of ['state', 'locks', 'main', 'wt']) fs.mkdirSync(d[k], { recursive: true });
   fs.mkdirSync(path.dirname(d.x), { recursive: true });
-  const P = { name: 'demo', root: fwd(d.main), meta: '/h/dev/sdd-codex', deliverables: { main: 'main' }, policy: {} };
+  // GAP-6: the main checkout is a git repo with a main branch - the MERGE run's own merge worktree is made from it under the state dir
+  const genv = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  for (const a of [['init', '-q', '-b', 'main'], ['commit', '-q', '--allow-empty', '-m', 'init']]) assert.equal(spawnSync('git', ['-C', d.main, ...a], { env: genv, windowsHide: true }).status, 0);
+  const P = { name: 'demo', root: fwd(d.main), meta: '/h/dev/sdd-codex', state: fwd(d.state), deliverables: { main: 'main' }, policy: {} };
   // the staged merge brief names X; the fake worker writes its NOTES there, as a live merge worker does (`writes:`)
   d.brief = path.join(t, 'merge.md');
   fs.writeFileSync(d.brief, renderMergeBrief(P, { lane: 'tend', branch: 'feat/tend', worktree: fwd(d.wt), notes: fwd(d.x), sha: 'abcdef1' }) + `mode: done\nwrites: ${fwd(d.x)}\n`);
@@ -38,14 +41,15 @@ test('merge-brief records its notes path in the meta-merge marker', () => {
   assert.equal(briefMarker(fs.readFileSync(d.brief, 'utf8')).notes, fwd(d.x));
 });
 
-test('norn run --stage MERGE without --notes: the run reads the notes file its brief names -> the worker\'s ## DONE is seen', async () => {
+test('norn run --stage MERGE without --notes: the run records the notes file its brief names (its log); its outcome is its result', async () => {
   const d = sandbox();
   const r = d.run();
   assert.equal(r.code, 0, r.err);
   const id = r.out.match(/RUN-\d+/)[0];
   await runEnded(d.state, id);
   assert.equal(fwd(d.item(id).data.notes), fwd(d.x), 'the run\'s notes = the brief\'s');
-  assert.equal(d.item(id).end.outcome, 'done');
+  assert.match(fs.readFileSync(d.x, 'utf8'), /work: done/, 'the worker logged there');
+  assert.equal(d.item(id).end.outcome, 'done'); assert.equal(d.item(id).end.outcome_source, 'result');
 });
 
 test('norn run --stage MERGE --notes Y with a brief naming X refuses (exit 2): one home for the path', async () => {

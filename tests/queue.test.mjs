@@ -32,8 +32,14 @@ function sandbox() {
   d.brief = (body, name = 'brief.md') => { const f = path.join(t, name); fs.writeFileSync(f, body); return f; };
   d.runs = () => Object.values(loadState(d.state).items).filter(i => i.kind === 'run');
   d.item = id => loadState(d.state).items[id];
-  d.opts = (o = {}) => ({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), notes: d.notes, hbMs: 150, staleMs: 3000,
-    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 1 }, tick: null, ...o });
+  // GAP-2: a queued run reads its budget FILE at fill (no copy is kept): each launch writes the budget it is given to a file of its own
+  let nb = 0;
+  d.opts = (o = {}) => {
+    const budget = o.budget ?? { max_claude_workers: 1 }, budget_file = o.budget_file ?? path.join(t, `budget-${++nb}.json`);
+    if (!o.budget_file) fs.writeFileSync(budget_file, JSON.stringify(budget));
+    return { state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), notes: d.notes, hbMs: 150, staleMs: 3000,
+      policy: { auto_resume_max: 0 }, tick: null, ...o, budget, budget_file };
+  };
   // ended AND its supervisor gone: the run's own end-of-run fill (under queue.lock) is done (FINDING L1)
   d.ended = id => waitFor(() => { const it = d.item(id); return settled(it) && it; });
   return d;
@@ -215,7 +221,7 @@ test('limit exit: outcome limit + reset; re-queued, held by the limit gate until
 });
 
 // ---------- dash ----------
-// META-PLAN R1: the queue moved from the Agents tab to the Plan tab (Up next)
+// META-PLAN R1: the queue moved from the Runs page to the Plan tab (Up next)
 test('dash Plan tab: queued runs are listed (position, not before), not in Agents, not tree roots', () => {
   const d = sandbox();
   queueRun(d.opts({ brief: d.brief('mode: done\n'), lane: 'qlane', notBefore: '2026-11-09T18:16:00.000Z' }));
@@ -223,7 +229,7 @@ test('dash Plan tab: queued runs are listed (position, not before), not in Agent
   assert.equal(agentsTree(runs, {}).length, 0);
   const queue = queueOf(runs);
   assert.equal(queue[0].not_before, '2026-11-09T18:16:00.000Z');
-  assert.ok(!/RUN-1|qlane/.test(renderTab('agents', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo' })));
+  assert.ok(!/RUN-1|qlane/.test(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo' })));
   const now = Date.parse('2026-11-09T12:00:00Z');
   const html = renderTab('plan', { parts: [buildPlan({ project: 'demo', runs, ready: readiness(d.state, { now, resources: () => ({ free_gb: 64, cpu_pct: 0 }) }), now })] }, { project: 'demo', now });
   assert.match(html, /Up next/);

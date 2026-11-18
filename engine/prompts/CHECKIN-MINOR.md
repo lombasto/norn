@@ -12,6 +12,7 @@ Budget: tiny. Read ONLY what is listed below: no rules file, no NOTES, no code, 
 A minor wake is time passing (a forced quiet tick), a run started by another or vanished, the weekly-guard band, the owner-event
 count. Everything else (ends, questions, directives, stalls, rulings, dispatch) wakes the full check-in by itself.
 - Digest 0 rows, HELD (skip): lanes the controller holds - act on none of them (a check-in write there exits 5).
+- Digest 0b row, EVERYTHING HELD: start the ledger line with `HELD <n> run(s) since <t>: <reason>; fix: <fix>`; act on nothing it holds.
 - Digest 1 rows: `META deliverables --due`; for each row it lists `META deliverables ask DLV-n` (it refuses a second ask).
 - Digest 2 rows: start nothing - the queue fill starts queued runs itself (caps, weekly guard, RATE_OK) and withdraws a row
   whose trigger is gone.

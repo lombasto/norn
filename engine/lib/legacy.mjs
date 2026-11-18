@@ -2,15 +2,17 @@
 // `norn migrate`, or adopted here for a launcher with no lane json, e.g. Codex) watched by ONE detached watcher (design 12, "a
 // one-time watcher (pid + start time)"): while the pid is alive with the same process start time (Windows reuses pids) it refreshes
 // the RUN heartbeat (Agents shows it, caps count it, the lost sweep spares it) and holds the worktree lock (one writer); at exit it
-// records `end` (outcome = NOTES grammar when exit 0, as the supervisor) and spawns `norn tick --reason exit`. It never auto-resumes:
+// records `end` (outcome = crash on a non-zero exit, else no-result: an old-launcher worker writes no `norn done` result, and its
+// NOTES are never read as an outcome - gap #3) and spawns `norn tick --reason exit`. It never auto-resumes:
 // the old worker-run.ps1 resume is switched off at the cut-over (old BUDGET.json) and a HANDOFF goes to the check-in (CHECKIN rule).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { record, loadState } from './records.mjs';
-import { parseOutcome, hbPath, acquireLock, refreshLock, releaseLock, renameRetry, HB_MS } from './runs.mjs';
+import { hbPath, acquireLock, refreshLock, releaseLock, renameRetry, HB_MS } from './runs.mjs';
 import { isMain } from './paths.mjs';
+import { NO_RESULT } from './result.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
@@ -26,6 +28,14 @@ const probeable = pid => {
   try { process.kill(pid, 0); } catch (e) { if (e.code !== 'EPERM') return false; }
   return true;
 };
+/** the pid runs: kill(pid, 0) answers AND (Linux) it is no zombie. An exited child whose parent has not reaped it yet - the parent
+ * blocked in Atomics.wait, so libuv never handled SIGCHLD - still answers kill(pid, 0): `norn run --wait` waited its whole 120 s net
+ * for every run on Linux (CI ubuntu: four OOTB tests at 121 s each, 2.5 s on Windows). /proc/<pid>/stat state Z = gone. */
+export function running(pid, { proc = '/proc' } = {}) {
+  if (!probeable(pid)) return false;
+  const st = read(path.join(proc, String(pid), 'stat'));
+  return !(st && /^Z/.test(st.slice(st.lastIndexOf(')') + 2)));
+}
 const startOf = (status, stdout, platform) => { const t = Date.parse((stdout || '').trim() + (platform === 'win32' ? '' : ' UTC')); return status === 0 && Number.isFinite(t) ? t : null; };
 // Linux (CI-RED-C1159BD R1): `ps -o lstart=` has whole seconds, so a process and the one it spawned 0.2 s later had the same start
 // time (a reused pid read as ours). /proc/<pid>/stat field 22 = starttime in clock ticks since boot (USER_HZ), + /proc/stat btime.
@@ -52,16 +62,13 @@ export function procStartAsync(pid, platform = process.platform) {
 // the same process: alive and created within 120 s of the recorded start (worker.ps1's pid-reuse rule)
 export const sameProcess = (pid, startedMs, probe = procStart) => { const t = probe(pid); return t !== null && Math.abs(t - startedMs) < 120e3; };
 
-/** Outcome of an ended legacy run: claude = lane json exit + NOTES grammar; codex = exit unknown, the final file's marker. */
+/** Outcome of an ended legacy run: claude = its lane json exit (0 = no-result, else crash); codex = exit unknown: no-result, or crash
+ *  without a final file. An old-launcher worker never writes a result, so none ends done / stopped / handoff (gap #3). */
 export function legacyOutcome(spec) {
-  if (spec.executor.startsWith('codex')) {
-    const fin = read(spec.final);
-    return fin === null ? { exit: null, outcome: 'crash', marker_line: null, error: 'no final file' } : { exit: null, ...parseOutcome(fin) };
-  }
+  if (spec.executor.startsWith('codex')) return read(spec.final) === null ? { exit: null, outcome: 'crash', error: 'no final file' } : { exit: null, outcome: NO_RESULT };
   const lane = spec.lane_file ? readJson(spec.lane_file) : null;
   const exit = Number.isInteger(lane?.exit) ? lane.exit : null;
-  const m = parseOutcome(read(spec.notes));
-  return exit === 0 ? { exit, ...m } : { exit, outcome: 'crash', marker_line: m.marker_line };
+  return { exit, outcome: exit === 0 ? NO_RESULT : 'crash' };
 }
 
 /**

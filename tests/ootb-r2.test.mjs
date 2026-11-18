@@ -114,7 +114,7 @@ test('N-5 an auth exit: the CLI line names the login command; Overview counts a 
     assert.ok((await get('/api/inbox')).items.some(i => i.type === 'login'), 'the inbox carries it too');
     const lane = (await get('/api/lanes')).lanes.find(l => l.name === 'tide');
     assert.match(lane.text, /auth/);
-    assert.doesNotMatch(lane.text, /no-marker/);
+    assert.doesNotMatch(lane.text, /no-result/);
     assert.match(lane.text, /claude auth login/);
   } finally { await app.close(); }
 });

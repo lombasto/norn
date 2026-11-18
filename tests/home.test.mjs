@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { homeEvents, renderThread, renderHome, renderBottomBar, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
-import { TABS, NORN_GROUPS, renderNav, renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { TABS, NAV, renderNav, renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { threadFile } from '../engine/lib/chat.mjs';
@@ -42,7 +42,7 @@ test('C2 homeEvents: the chat thread, check-in ledger lines, run starts / ends, 
   ];
   const runs = [
     { id: 'RUN-5', kind: 'run', created: T(1), state: 'exited', data: { kind: 'worker', lane: 'gen', stage: 'R1', executor: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-      history: [{ ev: 'start', ts: T(1) }, { ev: 'end', ts: T(9) }], end: { outcome: 'done', marker_line: `## DONE shots ${SHOT}` } },
+      history: [{ ev: 'start', ts: T(1) }, { ev: 'end', ts: T(9) }], end: { outcome: 'done', summary: `shots ${SHOT}` } },
     { id: 'RUN-6', kind: 'run', created: T(2), state: 'running', data: { kind: 'checkin', lane: null }, history: [{ ev: 'start', ts: T(2) }] },
     { id: 'RUN-7', kind: 'run', created: T(3), state: 'running', data: { kind: 'worker', role: 'helper', parent: 'RUN-5' }, history: [{ ev: 'start', ts: T(3) }] },
     { id: 'RUN-8', kind: 'run', created: T(4), state: 'exited', data: { kind: 'worker', lane: 'mq', stage: 'MERGE' }, history: [{ ev: 'start', ts: T(4) }, { ev: 'end', ts: T(5) }], end: { outcome: 'done' } },
@@ -103,7 +103,7 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   const text = html.replace(/<[^>]+>/g, '');
   assert.match(text, /Claude Code · opus · medium/); assert.match(text, /62k \/ 110k/);
   assert.match(html, /<span class="heff"> · medium<\/span>/); assert.match(html, /<span class="hlim"> \/ 110k<\/span>/, 'effort and the hand-off limit can drop on a phone');
-  assert.match(html, /data-act="home-filter" data-filter="needs"[^>]*>needs you <b>2<\/b>/);
+  assert.match(html, /data-act="home-filter" data-filter="needs"[^>]*>needs you <b id="home-needs">2<\/b>/);   // UX review 4: the Inbox's count (terms.mjs)
   assert.match(html, /data-act="home-filter" data-filter="all" aria-pressed="true"/);
   assert.match(html, /<textarea id="chat-text"[^>]*maxlength="8000"/); assert.match(html, /data-act="chat-send"/);
   assert.match(html, /data-rid="DEC-112"/); assert.match(html, /data-rid="DIR-15"/); assert.match(html, /RUN-411/);
@@ -112,13 +112,13 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   assert.match(renderTab('home', { one: true }, { project: 'all' }), /belongs to one project/);
 });
 
-test('C2 nav: Home is the first tab, alone in the Norn group (the thread); the phone bottom bar Talk / Inbox / Agents / Plan / More', async () => {
+test('C2 nav: Home is the first tab, alone in the Norn group (the thread); the phone bottom bar Home / Inbox / Runs / Plan / More (UX review 4: the same names as the top bar)', async () => {
   assert.deepEqual(TABS[0], ['home', 'Home']); assert.equal(SERVER_TABS[0], 'home');
-  assert.deepEqual(NORN_GROUPS[0], ['norn', 'Norn', 'the thread', ['home']]);
-  assert.match(renderNav('home', {}, 'norn'), /^<span class="ng ng-norn"[^]*id="tab-home"[^>]*aria-selected="true"/);
+  assert.deepEqual(NAV[0], ['home', 'Home', []]);
+  assert.match(renderNav('home', {}), /^<div class="dests"[^>]*><button role="tab" id="tab-home"[^>]*aria-selected="true"/);   // UX review 2: Home first in the bar
   const bar = renderBottomBar('home', { inbox: 2 });
-  assert.deepEqual([...bar.matchAll(/data-tab="(\w+)"/g)].map(m => m[1]), ['home', 'inbox', 'agents', 'plan']);
-  assert.match(bar, /data-act="more"/); assert.match(bar, /Talk/); assert.match(bar, /aria-label="2 need you">2</);
+  assert.deepEqual([...bar.matchAll(/data-tab="(\w+)"/g)].map(m => m[1]), ['home', 'inbox', 'runs', 'plan']);
+  assert.match(bar, /data-act="more"/); assert.match(bar, /Home/); assert.match(bar, /Runs/); assert.match(bar, /aria-label="2 need you">2</);
   assert.match(bar, /data-tab="home"[^>]*aria-current="page"/);
   const seen = [];
   const d = await loadTab('home', 'kestrel', async p => { seen.push(p); return p.startsWith('/api/home') ? { project: 'kestrel', events: [] } : {}; });
@@ -138,7 +138,7 @@ test('C2 /api/home on the fixture state: the thread file, runs, needs, the side 
     assert.equal(r.status, 200);
     const d = r.data, kinds = d.events.map(e => e.kind);
     assert.ok(kinds.includes('you') && kinds.includes('controller') && kinds.includes('question') && kinds.includes('run-end') && kinds.includes('checkin'), kinds.join());
-    assert.equal(d.needs_you, d.events.filter(e => e.cat === 'needs').length);
+    assert.equal(d.needs_you, d.events.filter(e => e.cat === 'needs' && e.kind !== 'approval').length); assert.equal(d.approvals, 0);   // UX review 4: the Inbox's count (terms.mjs needsYou); approvals beside it
     const un = d.events.find(e => e.kind === 'unreviewed' && e.id === 'RUN-1');
     assert.ok(un && Date.parse(un.ts) > 0, 'an unreviewed run sits in the thread at its end, not at the top');
     assert.equal(d.status.running, false); assert.equal(d.status.ctx, 62000); assert.equal(d.status.handoff_k, 110); assert.equal(d.status.executor, 'claude');

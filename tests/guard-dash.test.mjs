@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { advisory } from '../engine/lib/advisory.mjs';
-import { renderTab, renderNav, NORN_GROUPS } from '../engine/dash/ui.mjs';
+import { renderTab, renderNav, NAV } from '../engine/dash/ui.mjs';
 import { GUARD_SUBS, guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -47,7 +47,7 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
     assert.match(html, /data-act="orc-call"/);
     // a chip in place on the run that owns the block
     const ag = { ...(await f.get('/api/agents?project=kestrel')).data, top: [], guard: g };
-    assert.match(renderTab('agents', ag, { project: 'kestrel' }), /id="node-RUN-1"[^]*?Slop finding/);
+    assert.match(renderTab('runs', ag, { project: 'kestrel' }), /id="node-RUN-1"[^]*?Slop finding/);
     // a chip in place on the Settings class row a model advice is about
     const set = { ...(await f.get('/api/settings?project=kestrel')).data, guard: { rows: [{ id: 'M-1', type: 'models', cls: 'chores', severity: 'medium', why: 'Chores on a top model' }] } };
     assert.match(renderTab('settings', set, { project: 'kestrel' }), /id="grp-executors-routing-chores"[^>]*><div class="sl"><b>Chores<\/b> <button class="lnk gchip" data-go="usage" data-gojump="usage-advice"/);
@@ -55,10 +55,9 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
   } finally { await f.done(); }
 });
 
-test('the Guard sits in Verdandi beside Context and Usage; chips in place on Docs', () => {
-  const ver = NORN_GROUPS.find(g => g[0] === 'verdandi')[3];
-  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'context', 'slop']);
-  assert.match(renderNav('slop', {}, 'norn'), /id="tab-slop"[^>]*aria-selected="true"/);
+test('Slop sits in Health beside Usage, Tests and Context; chips in place on Docs', () => {
+  assert.deepEqual(NAV.find(d => d[0] === 'health')[2], ['usage', 'slop', 'tests', 'context']);
+  assert.match(renderNav('slop', {}), /id="tab-slop"[^>]*aria-selected="true"/);
   // META-UX-BUILD S3: the Docs list carries each file's finding count (the same scan findings the Guard lists)
   const docs = renderTab('docs', { files: 2, groups: [{ id: 'project', label: 'Project docs', n: 2, rows: [{ key: 'doc-0', name: 'Plan', path: 'P', exists: true, findings: 0 }, { key: 'doc-1', name: 'Spec', path: 'S', exists: true, findings: 1 }] }] }, {});
   assert.match(docs, /id="docf-doc-1"[^]*?Spec[^]*?<span class="gchip"[^>]*><span class="chip warn">1 finding<\/span>/);

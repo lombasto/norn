@@ -125,9 +125,9 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     const next = await until(`auto-resume of ${r1}`, () => Object.values(loadState(state).items).find(i => i.kind === 'run' && i.data.resume_of === r1), 30000);
     await runWait(next.id, `${next.id} exited`, () => run(next.id)?.state === 'exited');
     if (run(next.id).end?.outcome !== 'done') throw new SmokeError(`${next.id} outcome ${run(next.id).end?.outcome}, want done`);
-    const notes = fs.readFileSync(path.join(state, 'notes', 'smoke', 'NOTES.md'), 'utf8').trimEnd();
-    if (!notes.endsWith('## DONE')) throw new SmokeError('NOTES does not end with ## DONE');
-    ok('auto-resume', `${next.id} (resume_of ${r1}) -> done, NOTES ends "## DONE"`);
+    const hand = run(r1).end?.handoff;
+    if (!hand || !fs.existsSync(hand)) throw new SmokeError(`${r1} names no hand-off file (${hand})`);
+    ok('auto-resume', `${next.id} (resume_of ${r1}, its hand-off ${path.basename(hand)}) -> done`);
 
     // 6. second writer in the same worktree is refused (exit 3)
     const hold = path.join(tmp, 'brief-sleep.md'), wt = path.join(state, 'wt', 'hold');

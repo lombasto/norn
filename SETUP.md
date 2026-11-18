@@ -55,6 +55,15 @@ your OS, then stops with nothing written. Agents: show the human that line, run 
 setup again. Setup also puts the `norn` launcher in `~/.local/bin`; it never points it at a linked git worktree unless you pass `--force`. Until that dir is on PATH, keep typing
 `node engine/bin/norn.mjs`.
 
+**Billing.** Tell Norn how your Claude account is paid for, so it applies the right usage guard. On a plan (`pro`, `max-5x`,
+`max-20x`, `ultra`) the account has a weekly limit. The mode then also sets the worker cap, weekly stop and rate cap that fit the
+plan, and the weekly stop needs the calibration above. On API billing (`api`, pay per token) there is no weekly limit, so the
+weekly stop and the rate cap are off and no calibration is asked for. Set a daily cap in dollars instead: Norn starts no new
+Claude work once the Claude runs of the last 24 hours cost that much (each run's cost as the Claude CLI reports it). Run
+`norn billing` to see the mode in force, or set it with `norn billing max-20x` or `norn billing api --usd-per-day 50`. You can
+also set it in the dashboard (Settings > Billing). Runs already queued pick up the change. With no mode set, Norn treats the
+account as a plan.
+
 ## 2. Check the install
 
 This runs a fresh copy end to end in a temp dir (records, a fake run with hand-off and auto-resume, the scheduler files, the

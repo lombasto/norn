@@ -79,7 +79,7 @@ test('e2e loop: run -> queue --after -> fill -> run -> DONE -> DLV -> merge-brie
   const endB = await until(`${next} ended`, () => { const it = item(next); return it?.end && it; });
   assert.equal(endB.end.outcome, 'done');
   assert.equal(endB.data.lane, 'b');
-  assert.match(fs.readFileSync(notesB, 'utf8'), /## DONE\s*$/);
+  assert.match(fs.readFileSync(notesB, 'utf8'), /work: done\s*$/);
 
   // 4. both branches became deliverables; b's names its run and what it delivers (the brief heading)
   const dlvOf = br => Object.values(loadDeliverables(state)).find(x => x.data.branch === br);

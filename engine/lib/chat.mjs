@@ -198,6 +198,7 @@ const killTree = child => {
 
 // ---------- META-CONTROLLER C5 (SPEC sec. 4): the hand-off, so the conversation never dies of a full context ----------
 export const CONTEXT_DEFAULT = { ...POLICY_DEFAULTS.context.controller };   // 90 / 110 / 150k: no new step / hand-off / hard max
+const SETTLE_MS = 15000;   // quiet time after a turn's result before a still-owed message count is dropped (it was folded into that turn)
 const HANDOFF_MS = 10 * 60000;   // a hand-off turn that has not ended by then is cut: the forced hand-off takes over
 const TURNS_CARRIED = 10, TURN_CLIP = 2000;
 // the fixed hand-off turn ({ctx} / {limit} filled in): ONE copy with the run orders (ctxlimit.mjs, META-CTX-ENFORCE R1)
@@ -310,10 +311,11 @@ export function createChat(o) {
       system: rolePack(p), cwd: chatDir(p.state), addDirs: p.root ? [p.root] : [], rawShell: cfg.rawShell, profile: profileOf(p.policy, 'chat') });
     fs.mkdirSync(cmd.cwd, { recursive: true });
     const child = spawnFn(cmd.exe, cmd.args, { cwd: cmd.cwd, env: { ...chatEnv(o.env ?? process.env), ...(cmd.env || {}) }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    const me = { child, adapter, cfg, pending: 0, inited: false, why: null, idle: null, kill: null, buf: '', err: '', done: false, handoff: null };
+    const me = { child, adapter, cfg, pending: 0, inited: false, why: null, idle: null, kill: null, settle: null, since: null, doing: null, buf: '', err: '', done: false, handoff: null };
     proc = me;
     clearInterval(outbox); outbox = setInterval(drain, o.outboxMs ?? 500); outbox.unref?.();
     child.stdout.on('data', b => {
+      clearTimeout(me.settle);   // any output (thinking and progress lines too): the CLI is still working on a message
       me.buf += b.toString('utf8');
       let i;
       while ((i = me.buf.indexOf('\n')) >= 0) { const row = me.buf.slice(0, i); me.buf = me.buf.slice(i + 1); if (row.trim()) line(me, row); }
@@ -338,13 +340,23 @@ export function createChat(o) {
       if (kind === 'text' && me.handoff) { me.handoff.text.push(data.text); continue; }   // the hand-off goes to its file, not the thread
       if (kind === 'result' && data.text.length > RESULT_MAX) data.text = data.text.slice(0, RESULT_MAX) + ` ... [${data.text.length - RESULT_MAX} more characters]`;
       append(kind, data);
+      if (kind === 'tool') me.doing = `running ${String(data.name).replace(/^mcp__norn__/, '')}`;
+      else if (kind === 'text') me.doing = 'writing';
       if (kind === 'turn') {
         me.pending = Math.max(0, me.pending - 1);
+        if (!me.pending) me.since = null;
         if (me.handoff && !me.handoff.file) handoffTurnDone(me, data);
-        else if (!me.pending && rollAfter && !me.handoff) { rollAfter = false; rolling = 'settings'; stop('settings'); }   // R1: a pick made mid-turn applies from the next turn
-        else if (!me.pending && !me.handoff && !checkContext(me)) arm(me);
+        // a message written while a turn ran is often folded INTO that turn (one result for two sends): a count still owed after the
+        // CLI has gone quiet for SETTLE_MS is no turn at all - without this the next Settings roll (rollAfter) waited for it forever
+        else if (me.pending) { clearTimeout(me.settle); me.settle = setTimeout(() => { if (proc === me && !me.done && me.pending) { me.pending = 0; me.since = null; turnEnded(me); } }, o.settleMs ?? SETTLE_MS); me.settle.unref?.(); }
+        else turnEnded(me);
       }
     }
+  }
+  function turnEnded(me) {   // no turn running, none owed: a pick / Settings change waiting applies now, else the context check, else the idle clock
+    me.doing = null;
+    if (rollAfter && !me.handoff) { rollAfter = false; rolling = 'settings'; stop('settings'); }   // R1: a pick made mid-turn applies from the next turn
+    else if (!me.handoff && !checkContext(me)) arm(me);
   }
   // between turns: at handoff_k the hand-off turn, at hard_max_k the forced hand-off (SPEC sec. 4)
   function checkContext(me) {
@@ -414,7 +426,7 @@ export function createChat(o) {
   function finish(me, why, code, err) {
     if (me.done) return;
     me.done = true;
-    clearTimeout(me.idle); clearTimeout(me.kill);
+    clearTimeout(me.idle); clearTimeout(me.kill); clearTimeout(me.settle);
     if (proc === me) { proc = null; clearInterval(outbox); drain(); }
     append('stop', { why, code, ...(err ? { err } : {}) });
     if (me.handoff) return completeHandoff(me, why, code);
@@ -439,6 +451,7 @@ export function createChat(o) {
     if (ownerLine) append('owner', { text, ...stamp });
     if (fresh) append('start', { resume, pid: me.child.pid ?? null, model: cfg.model, effort: cfg.effort });
     clearTimeout(me.idle);
+    if (!me.pending) { me.since = Date.now(); me.doing = 'thinking'; }
     me.pending++;
     // C4: the NEWS block rides in front of the owner's text to the model only - the owner line (the verbatim guard's source) stays the owner's
     let news = '';
@@ -522,7 +535,7 @@ export function createChat(o) {
       const all = items(), c = chatCost(all, { perPct: cfg.perPct }), ctx = segCtx ?? (seg ? lastCtx(all, seg.n) : null);
       const tok = c.tokens >= 1e6 ? (c.tokens / 1e6).toFixed(2) + 'M' : (c.tokens / 1000).toFixed(1) + 'k';
       return say(name, `chat today: ${tok} tokens · ${c.turns} turn${c.turns === 1 ? '' : 's'}${Number.isFinite(c.weekly_pct) ? ` · ~${c.weekly_pct.toFixed(2)} % of the week (estimate)` : ''}`
-        + `${Number.isFinite(ctx) ? ` · this session's context ${kTok(ctx)} of the ${cfg.context.handoff_k}k hand-off` : ''}. Norn counts the chat per turn; workers and check-ins: the Agents tab and the Usage column.`);
+        + `${Number.isFinite(ctx) ? ` · this session's context ${kTok(ctx)} of the ${cfg.context.handoff_k}k hand-off` : ''}. Norn counts the chat per turn; workers and check-ins: the Runs page and the Usage column.`);
     }
     const list = chatCommands(items());
     return say(name, ['Norn chat commands (answered by Norn, no model turn):', ...Object.entries(NORN_COMMANDS).map(([k, w]) => `/${k} - ${w}`),
@@ -552,7 +565,8 @@ export function createChat(o) {
   function status() {
     const items = seg ? null : readThread(p.state).items, t = seg ? { seg } : threadState(items);
     const cfg = live(proc) ?? {}, ctx = segCtx ?? (t.seg ? lastCtx(items ?? readThread(p.state).items, t.seg.n) : null);
-    return { running: !!proc, busy: !!proc?.pending || !!rolling, segment: t.seg?.n ?? null, session_id: t.seg?.session_id ?? null, executor: cfg.executor, model: cfg.model,
+    // since / doing / queued: the header's live line (how long this turn has run, its last tool, the messages waiting in Norn)
+    return { running: !!proc, busy: !!proc?.pending || !!rolling, since: proc?.since ?? null, doing: proc?.doing ?? null, queued: outq.length, rolling: rolling ?? (rollAfter ? 'settings' : null), segment: t.seg?.n ?? null, session_id: t.seg?.session_id ?? null, executor: cfg.executor, model: cfg.model,
       effort: cfg.effort, raw_shell: cfg.rawShell, ctx, context: cfg.context, handing_off: rolling === 'handoff', pick: picked ?? null, defaults: cfg.defaults ?? null };
   }
   function subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }

@@ -21,15 +21,15 @@ You answer only the questions it cannot decide.
 
 Each agent role has three context limits: start no new step, hand off, and hard stop (90k, 110k and 150k tokens by default for
 most roles; set per role in Settings). Norn measures a run's context after every tool call and tells the agent when it
-crosses a limit. At the hand-off limit the agent writes its notes and ends with `## HANDOFF`; at the hard stop Norn ends the run
-itself. Either way Norn resumes the work in a fresh session that starts from the notes and the records, not from the old
-conversation. Queued steps start as soon as the steps they wait for land, so the work continues while you are away.
+crosses a limit. At the hand-off limit the agent writes its hand-off and ends with `norn done --outcome handoff`; at the hard stop Norn ends the
+run itself and writes the hand-off. Either way Norn resumes the work in a fresh session that starts from the hand-off and the
+records, not from the old conversation. Queued steps start as soon as the steps they wait for land, so the work continues while you are away.
 
 ### Fewer tokens spent
 
 An agent re-reads its whole context on every turn, including every instruction file it loads. Norn keeps both small:
 
-- **Context**: the hand-off above keeps each session short. The Context tab shows each role's context size, how many tokens each
+- **Context**: the hand-off above keeps each session short. The Context page shows each role's context size, how many tokens each
   loaded file costs per session, and whether that is growing.
 - **Markdown**: Norn checks the files your agents load on every turn (CLAUDE.md, AGENTS.md, MEMORY.md, rules) for text that costs
   tokens without helping: history lines in an always-loaded file, a MEMORY.md over 200 lines or 25 KB, a Codex
@@ -51,16 +51,17 @@ An agent re-reads its whole context on every turn, including every instruction f
 Before a lane's branch can merge, Norn checks its changes against main for leftovers: conflict markers, generated files out of
 date, stray logs, binaries over 1 MB, and a committed `.only` in a test that silently stops the rest of the suite. In JavaScript
 files it also finds empty catch blocks with no reason, unused variables and imports, import cycles and broken layer rules. The
-findings go back to the same agent as one resume, and the merge waits until each is fixed or waived. The Slop tab lists every open finding, from branches and from
-instruction files, grouped by the kind of fix. "Fix all" turns the selected findings into one fixer task that waits for your
-approval. SloppaChoppa, an orc, presents the findings; you can switch him off per project.
+findings go back to the same agent as one resume, and the merge waits until each is fixed or waived. The Slop page lists every open finding, from branches and from
+instruction files, grouped by the kind of fix; a finding from a branch opens its own row. "Fix all" sends the selected findings to
+a read-only fixer run. Its result card, in the Inbox and on Slop, shows every file and every hunk as a diff, with "Apply all n"
+and "Skip this file"; the check-in applies what you approve. SloppaChoppa, an orc, presents the findings; you can switch him off per project.
 
-![The Slop tab: SloppaChoppa and the open findings, grouped by the kind of fix](docs/img/slop.png)
+![The Slop page: SloppaChoppa, a fixer's result card and the open findings](docs/img/slop.png)
 
 ### Also
 
 - **Usage stays inside your plan.** Before any run starts, Norn checks the worker cap, an hourly rate cap and a weekly stop. The
-  Plan tab shows when the queued work would reach the limit.
+  Plan page shows when the queued work would reach the limit.
 - **Main stays green.** Each lane has its own git worktree and one writer. Finished work merges to main one branch at a time,
   through your test command.
 - **Decisions are on record.** Every question, decision and instruction is an append-only record. You can see why something
@@ -75,23 +76,24 @@ toward your usage.
 
 ## What you get
 
-The dashboard (`norn dash`):
+The dashboard (`norn dash`). Its bar is Home, Overview, Inbox, Work, Health, History and Settings; Work, Health and History each
+open a row of pages.
 
 - **Home**: a controller chat. It answers from the records and acts only through Norn's own commands; anything that needs your
   OK waits on an approval card. Check-ins, runs and questions appear in the same thread.
-- **Plan** (`norn plan`): queued steps in start order with time estimates, the chains of steps that wait on each other, what
+- **Plan** (Work, `norn plan`): queued steps in start order with time estimates, the chains of steps that wait on each other, what
   merges next, and the usage forecast up to the weekly reset.
 
-![The Plan tab: queued steps with start estimates, their chains and the usage forecast](docs/img/plan.png)
+![The Plan page: queued steps with start estimates, their chains and the usage forecast](docs/img/plan.png)
 
 - **Inbox**: the questions waiting for you, each with its options and a recommended answer.
-- **Slop**: every open finding, grouped by the kind of fix, with "Fix all" (see SloppaChoppa above).
-- **Docs**: a reader for the project's docs and every file that instructs an agent, with the findings next to the line.
-- **Context**: the context limits per role, the tokens per loaded file, and whether they are growing.
-- **Roadmap** (`norn road`): themes and items whose status comes from the runs and records, never typed by hand.
-- **The other tabs**: Overview (what needs you and what is running), Map and Lanes (every lane and its latest run), Agents
-  (running sessions with their tokens and context), Usage (usage against the limits, and which model suits which work), Tests
-  (which tests check real behaviour), Records and Ledger (every decision and check-in), and Settings.
+- **Slop** (Health): every open finding, grouped by the kind of fix, with "Fix all" and the fixer's result cards (see SloppaChoppa above).
+- **Docs** (History): a reader for the project's docs and every file that instructs an agent, with the findings next to the line.
+- **Context** (Health): the context limits per role, the tokens per loaded file, and whether they are growing.
+- **Roadmap** (Work, `norn road`): themes and items whose status comes from the runs and records, never typed by hand.
+- **The other pages**: Overview (what needs you and what is running), Lanes and Map (every lane and its latest run), Runs
+  (running and recent runs with their tokens and context), Usage (usage against the limits, and which model suits which work),
+  Tests (which tests check real behaviour), Records and Ledger (every decision and check-in), and Settings.
 
 Around the dashboard:
 
@@ -156,9 +158,9 @@ test, which runs on all three systems.
 ## How it works
 
 - **Lanes and runs.** A lane is one line of work with its own worktree and branch. `norn run --executor <name> --lane L --brief F`
-  starts an agent in it. Norn takes the lane's lock, checks the limits and records the run. A supervisor process then reads the
-  result from the last line of the run's notes: `## DONE`, `## STOPPED: <why>` or `## HANDOFF`. A hand-off resumes the work in a
-  fresh session. `--queue` and `--after` queue a run behind others, and `norn stop RUN-n` stops one. `norn executors --caps`
+  starts an agent in it. Norn takes the lane's lock, checks the limits and records the run. The agent ends with `norn done`, which writes the
+  run's own result: done, stopped (with why) or handoff (with its hand-off text); a run that writes none ends no-result. A
+  hand-off resumes the work in a fresh session that reads the hand-off. `--queue` and `--after` queue a run behind others, and `norn stop RUN-n` stops one. `norn executors --caps`
   lists the executors.
 - **Check-ins.** A scheduled `norn tick` runs one short agent turn after each event and on a timer. It reviews finished runs,
   queues merges, starts the next steps and asks you what only you can decide.
@@ -174,7 +176,7 @@ test, which runs on all three systems.
 Each part is set per project in Settings and is off by default.
 
 - **Ready**: `norn run` refuses (or warns about) a brief without the lines `Scope:` (the paths the run may change), `Tests:` (test
-  files or a command) and `Done:` (the end marker).
+  files or a command) and `Done:` (what done means).
 - **Done**: when a run says DONE, Norn checks that the tree is clean and the changes are inside Scope, then runs the Tests and the
   merge gate. A failure sends the run back once with the evidence; a second failure stops it.
 - **Scope guard**: while a Claude run works, it cannot edit files outside its worktree and Scope, force-push, push to main (merge
@@ -207,8 +209,6 @@ fresh copy end to end. CI runs the smoke test on Windows, Ubuntu and macOS (`.gi
   or from the scheduler).
 - **Directive**: a standing instruction from you that every check-in follows until you revoke it.
 - **Profile**: a starting set of limits and routing (`try-it`, `solo`, `heavy`); change any value later in Settings.
-- **Urd, Verdandi, Skuld, Wyrd**: the names of the dashboard's tab groups. Urd is what was (records, ledger, docs), Verdandi what
-  is (overview to slop), Skuld what shall be (plan, inbox, settings), and Wyrd all three at once (the roadmap).
 
 ## Beta feedback
 

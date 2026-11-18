@@ -81,7 +81,7 @@ test('ask (cold, fake): a helper RUN under the ENDED run (via ask, read-only, no
   const w = askWait({ state: d.state, run: a.run, dir: a.dir, maxS: 20, staleMs: 3000 });
   assert.equal(w.code, 0, w.lines.join('\n'));
   const txt = w.lines.join('\n');
-  assert.match(txt, new RegExp(`${a.run} exited done`)); assert.match(txt, /## DONE/); assert.ok(txt.includes(a.out.replace(/\\/g, '/')));
+  assert.match(txt, new RegExp(`${a.run} exited done`)); assert.match(txt, /work: done/); assert.ok(txt.includes(a.out.replace(/\\/g, '/')));
   assert.ok(w.lines.length <= 60);
   assert.equal(JSON.stringify(d.item(asked)), before);
   assert.equal(JSON.parse(fs.readFileSync(path.join(a.dir, 'ask.json'), 'utf8')).asked, asked);
@@ -123,7 +123,7 @@ test('norn ask CLI: blocks and prints the answer (exit 0, <= 60 lines); --max-s 
   const run = (...a) => spawnSync(process.execPath, [META, 'ask', ...a, '--state', d.state, '--locks', d.locks], { env, encoding: 'utf8' });
   const a = run(asked, '--executor', 'fake', '--q', 'why the X table?', '--max-s', '30');
   assert.equal(a.status, 0, a.stderr + a.stdout);
-  assert.match(a.stdout, /cold/); assert.match(a.stdout, /exited done/); assert.match(a.stdout, /## DONE/); assert.ok(a.stdout.trim().split('\n').length <= 60);
+  assert.match(a.stdout, /cold/); assert.match(a.stdout, /exited done/); assert.match(a.stdout, /work: done/); assert.ok(a.stdout.trim().split('\n').length <= 60);
   const qf = path.join(d.t, 'q.txt'); fs.writeFileSync(qf, 'mode: sleep\nms: 2500\n');
   const s = run(asked, '--executor', 'fake', '--q-file', qf, '--max-s', '0.2');
   assert.equal(s.status, 5, s.stderr + s.stdout);

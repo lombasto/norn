@@ -188,7 +188,7 @@ test('GET / serves the UI shell and injects the token (tab / panel ids: tests/ui
   const f = await fixture();
   try {
     const r = await fetch(f.url + '/'), html = await r.text(); assert.equal(r.status, 200);
-    assert.deepEqual(TABS, ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'context', 'slop', 'ledger', 'settings']);
+    assert.deepEqual(TABS, ['home', 'overview', 'inbox', 'work', 'lanes', 'runs', 'map', 'plan', 'roadmap', 'health', 'usage', 'slop', 'tests', 'context', 'history', 'records', 'ledger', 'docs', 'settings']);
     for (const id of ['tabs', 'main', 'project', 'theme']) assert.ok(html.includes(`id="${id}"`), id);
     assert.ok(html.includes(f.app.token)); assert.ok(!/api\/phone|qrSvg/.test(html));
   } finally { await f.done(); }

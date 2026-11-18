@@ -1,4 +1,4 @@
-// Runs (META-GENERAL-DESIGN D6-D9, 3.3 run row, 5): `norn run` launch half, worktree lock, heartbeats, outcome grammar,
+// Runs (META-GENERAL-DESIGN D6-D9, 3.3 run row, 5): `norn run` launch half, worktree lock, heartbeats,
 // usage parsers + executor command lines (re-exported from the harness adapters), lost sweep, stop / kill tree. The detached body is supervisor.mjs. Node built-ins only.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,6 +19,7 @@ import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
 import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
 import { limitRefusal, openLimits } from './limitgate.mjs';
 import { briefMarker } from './mergebrief.mjs';
+import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
@@ -28,7 +29,7 @@ import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
-import { pathKey } from './config.mjs';
+import { pathKey, metaRoot } from './config.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -45,18 +46,6 @@ export const EXECUTORS = BUILTIN;
 const CAP_LABEL = { max_claude_workers: 'claude', max_codex: 'codex', max_sol: 'codex-sol', max_astra: 'codex-astra' };
 const infoOf = o => executorInfo(o.executor, o.provider);
 const unknownExecutor = ex => new RunError(`unknown executor ${JSON.stringify(ex)} (${Object.keys(EXECUTORS).join(' | ')} | a configured typed executor name)`);
-
-// ---------- outcome grammar (D6): the last "## " line of NOTES ----------
-export function parseOutcome(text) {
-  if (text === null || text === undefined) return { outcome: 'no-marker', marker_line: null };
-  const heads = String(text).split(/\r?\n/).filter(l => l.startsWith('## '));
-  const last = heads.length ? heads.at(-1).replace(/\s+$/, '') : null;
-  if (last === '## DONE') return { outcome: 'done', marker_line: last };
-  if (last === '## HANDOFF') return { outcome: 'handoff', marker_line: last };
-  const m = last && last.match(/^## STOPPED: (\S.*)$/);
-  if (m) return { outcome: 'stopped', marker_line: last, why: m[1] };
-  return { outcome: 'no-marker', marker_line: last };
-}
 
 // ---------- usage parsers + executor command lines: the harness adapters (engine/lib/harness/<family>.mjs, H2) ----------
 export { parseClaudeFinal, CLAUDE_RO_NOPE } from './harness/claude.mjs';
@@ -155,32 +144,81 @@ export function acquireLock(locksDir, wt, { run, pid = process.pid, staleMs = ST
   throw new RunRefused(`worktree ${wt}: lock contended`, 3);
 }
 
-// META-MERGELOCK (DEC-103 / DEC-104: two MERGE runs in the main checkout at once - one had named only its lane worktree): the ONE
-// home of "which checkouts does run spec o write". Its own worktree; a MERGE stage (staged or rebase, per branch or mq batch, any
-// executor) also the main checkout - from the brief's meta-merge marker (`main`), else the project's (spec main_checkout). Every
-// lock holder (startRun, the supervisor's beat + exit, norn stop, the fill's wait) takes the list from here.
+// META-MERGELOCK (DEC-103 / DEC-104): the ONE home of "which checkouts does run spec o write". Its own worktree; a MERGE stage
+// works in its own merge worktree (GAP-6: mergeSpec made it the run's; never the owner's checkout) and a rebase brief also writes
+// the lane worktree it rebases in. Every lock holder (startRun, the supervisor's beat + exit, norn stop, the fill's wait) takes
+// the list from here.
 export function writeTrees(o) {
-  if (o.kind === 'audit' || o.critique) return [];   // META-TEND P5: a read-only audit writes no tree - it never holds the main checkout's lock; nor does a plan review (META-DOD 3)
+  if (o.kind === 'audit' || o.critique) return [];   // META-TEND P5: a read-only audit writes no tree; nor does a plan review (META-DOD 3)
   const own = o.worktree ? [o.worktree] : [];
   if (!isMergeStage(o.stage)) return own;
-  let m = null;
-  try { m = briefMarker(fs.readFileSync(o.brief, 'utf8')); } catch { /* no brief: the spec decides */ }
-  const main = m?.main || o.main_checkout;
-  return !main || own.some(w => normWt(w) === normWt(main)) ? own : [...own, main];
+  const m = markerOf(o);
+  return m?.mode === 'rebase' && m.worktree && !own.some(w => normWt(w) === normWt(m.worktree)) ? [...own, m.worktree] : own;
 }
+const markerOf = o => { try { return briefMarker(fs.readFileSync(o.brief, 'utf8')); } catch { return null; } };   // no brief: the spec decides
 // take the lock of every tree in order; one held = release the ones taken, refuse (exit 3). One handle over them all.
 function acquireTrees(locksDir, trees, opts) {
   const hs = [];
   try { for (const wt of trees) hs.push(acquireLock(locksDir, wt, opts)); } catch (e) { for (const h of hs) h.release(); throw e; }
-  return { file: hs[0]?.file ?? null, files: hs.map(h => h.file), refresh: extra => hs.every(h => h.refresh(extra)), release: () => { for (const h of hs) h.release(); } };
+  return handleOf(hs);
 }
+const handleOf = hs => ({ file: hs[0]?.file ?? null, files: hs.map(h => h.file), refresh: extra => hs.every(h => h.refresh(extra)), release: () => { for (const h of hs) h.release(); }, hs });
 /** the trees of spec o (writeTrees) whose lock is fresh and names another run: [{ tree, run, own }] */
 export function heldTrees(o, staleMs = STALE_MS) {
   if (!o.locksDir) return [];
   return writeTrees(o).map((tree, i) => ({ tree, own: i === 0, cur: readJson(lockPath(o.locksDir, tree)) }))
     .filter(({ cur }) => cur && !(Date.now() - Date.parse(cur.ts) > staleMs)).map(({ tree, own, cur }) => ({ tree, own, run: cur.run ?? 'a writer' }));
 }
-const heldWords = h => (h.own ? `worktree held by ${h.run}` : `main checkout ${fwd(h.tree)} held by ${h.run} (one merge at a time)`);
+const heldWords = h => (h.own ? `worktree held by ${h.run}` : `lane worktree ${fwd(h.tree)} held by ${h.run}`);
+
+// ---------- GAP-6: merges in their own merge worktrees - the merge slots (policy.merge.parallel) ----------
+// a MERGE run whose brief names a merge worktree (marker merge_wt) works there, whatever --worktree said: the spec's worktree is
+// it (the lock, the cwd, the scope guard), merge_wt + merge_repo say Norn makes it at the start and removes it at the end
+export function mergeSpec(o) {
+  if (!isMergeStage(o.stage) || !o.brief) return o;
+  const m = markerOf(o);
+  if (!m?.merge_wt || !m.repo) return o;
+  return { ...o, worktree: m.merge_wt, merge_wt: m.merge_wt, merge_repo: m.repo, merge_slots: Number.isInteger(m.slots) && m.slots > 0 ? m.slots : 1,
+    merge_main: m.main_branch || 'main', merge_remote: m.remote || 'origin' };
+}
+const isMergeWtSpec = o => !!o.merge_wt && !!o.merge_repo && normWt(o.worktree) === normWt(o.merge_wt);
+const slotFresh = (o, i, staleMs) => { const cur = readJson(lockPath(o.locksDir, slotKey(o.merge_repo, i))); return cur && !(Date.now() - Date.parse(cur.ts) > staleMs) ? cur : null; };
+/** a MERGE run with every slot of its repo taken: the words (a fill term / queue why), else null */
+export function slotsFull(o, staleMs = STALE_MS) {
+  if (!isMergeWtSpec(o) || !o.locksDir) return null;
+  const held = [];
+  for (let i = 0; i < o.merge_slots; i++) { const c = slotFresh(o, i, staleMs); if (!c) return null; held.push(c.run ?? 'a merge'); }
+  return `merge slots full: ${held.length} merge(s) running in ${fwd(o.merge_repo)} (${held.join(', ')}; policy.merge.parallel ${o.merge_slots})`;
+}
+// take the first free slot lock of the repo (refused exit 3 when all are held)
+function acquireSlot(o, opts) {
+  for (let i = 0; i < o.merge_slots; i++) { try { return acquireLock(o.locksDir, slotKey(o.merge_repo, i), opts); } catch (e) { if (!(e instanceof RunRefused)) throw e; } }
+  throw new RunRefused(slotsFull(o, opts.staleMs) || `merge slots full in ${fwd(o.merge_repo)}`, 3);
+}
+// the merge worktrees a run may still need: those of queued / running / claimed runs, and of a run that ended HANDOFF in the last
+// day (its resume goes on there). Every other one in <state>/mq is a leftover.
+export const MERGE_WT_KEEP_MS = 24 * 3600e3;
+export function mergeWtInUse(state, now = Date.now()) {
+  const keep = new Set(), last = new Map();
+  for (const r of runsOf(state)) {
+    if (r.kind !== 'run' || !r.data.worktree || !isMergeStage(r.data.stage)) continue;
+    const k = normWt(r.data.worktree);
+    if (['queued', 'running', 'claimed'].includes(r.state)) keep.add(k);
+    if (!last.has(k) || Number(r.id.slice(4)) > Number(last.get(k).id.slice(4))) last.set(k, r);
+  }
+  for (const [k, r] of last) if (r.end?.outcome === 'handoff' && now - Date.parse(r.updated || r.created) < MERGE_WT_KEEP_MS) keep.add(k);
+  return keep;
+}
+// at the start of a MERGE run: sweep the leftovers of the state dir, then make (or keep, on a resume) its own merge worktree
+function prepareMergeWt(o) {
+  try {
+    // a worktree whose lock is fresh belongs to a start in flight (its lock is taken before its record): kept too
+    const locked = mergeWorktrees(o.state).filter(wt => { const c = readJson(lockPath(o.locksDir, wt)); return c && !(Date.now() - Date.parse(c.ts) > (o.staleMs ?? STALE_MS)); }).map(normWt);
+    sweepMergeWorktrees({ state: o.state, repo: o.merge_repo, keep: new Set([...mergeWtInUse(o.state), ...locked, normWt(o.merge_wt)]) });
+  } catch { /* a sweep never blocks a start */ }
+  try { return ensureMergeWorktree({ repo: o.merge_repo, wt: o.merge_wt, main: o.merge_main, remote: o.merge_remote }); }
+  catch (e) { throw new RunError(`merge worktree ${fwd(o.merge_wt)}: ${String(e.stderr || e.message).trim().split(/\r?\n/)[0]}`, 1); }
+}
 
 // ---------- heartbeats + lost sweep ----------
 export const hbPath = (state, run) => path.join(state, 'hb', run + '.hb');
@@ -190,19 +228,80 @@ const hbAge = (state, it, now) => {
   const t = fs.existsSync(f) ? fs.statSync(f).mtimeMs : Date.parse(it.created);
   return { age: now - t, has: fs.existsSync(f) };
 };
-export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date() } = {}) {
+// META-CATCH S1 (a reboot left a run `running` for 3 h): the machine's boot time from the real clock (an injected `now` is a test's
+// clock, never the OS's); a run started before it cannot have survived it, whatever pid the heartbeat names (pids restart at boot)
+export const bootMs = () => Date.now() - os.uptime() * 1000;
+const BOOT_SLACK_MS = 60e3;   // record ts are whole seconds and uptime drifts: a run within a minute of the boot is judged by its heartbeat
+// a pid that names no process: certain death (ESRCH). A live pid may be a reused one: the heartbeat age still decides then
+export const pidGone = pid => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
+// the causes whose death is certain (the auto-resume policy relaunches them: relaunchLost); `stale` may be a stall, never relaunched
+export const DEAD_CAUSES = ['boot', 'gone', 'no-start'];
+export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone } = {}) {
   const lost = [];
-  const t = now().getTime();
+  const t = now().getTime(), bt = boot();
   for (const it of runsOf(state)) {
     if (it.state !== 'running' || it.data.kind === 'interactive') continue;
     const { age, has } = hbAge(state, it, t);
-    if (age <= staleMs) continue;
-    const why = has ? `heartbeat ${Math.round(age / 1000)} s old` : `no heartbeat for ${Math.round(age / 1000)} s`;
-    // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
     const hb = has ? readJson(hbPath(state, it.id)) : null;
-    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    let cause, why;
+    if (Date.parse(it.created) < bt - BOOT_SLACK_MS) { cause = 'boot'; why = `machine rebooted at ${new Date(bt).toISOString().slice(0, 19)}Z after the run started`; }
+    else if (hb && gone(hb.supervisor_pid)) { cause = 'gone'; why = `supervisor pid ${hb.supervisor_pid} gone without an end record`; }
+    else if (age <= staleMs) continue;
+    // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
+    else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
+    else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
+    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
   }
   return lost;
+}
+/** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, PAUSED, the weekly guard) for a run's spec -> { refused | null, count, max } */
+export function autoResumeRefusal(spec, state) {
+  const pol = spec.policy || {}, count = spec.resumes || 0, max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
+  const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}` : (spec.paused || []).some(f => fs.existsSync(f)) ? 'paused'
+    : usageRefusal(spec, state, { rate: false });   // the weekly guard (one home with the queue fill: usageguard.mjs)
+  return { refused: refused || null, count, max };
+}
+export const LOST_RESUME_MAX_AGE_MS = 24 * 3600e3;   // an older dead run is the check-in's (its worktree has moved on)
+/**
+ * META-CATCH S1: a work run the sweep recorded lost for a CERTAIN death (DEAD_CAUSES) goes through the auto-resume policy as a HANDOFF does:
+ * relaunched from its spec (a fresh agent, same brief; the resume prompt re-checks HEAD + git status) and reviewed by the launcher as
+ * routine, or its `resume` record says why not (the check-in rules it). Level-triggered from the records: whoever swept it. Once per run.
+ * Returns [{ id, cause, boot?, next?, refused? }].
+ */
+export function relaunchLost(state, { now = Date.now(), start = startRun } = {}) {
+  const out = [];
+  for (const it of runsOf(state)) {
+    if (it.state !== 'lost' || it.review || !DEAD_CAUSES.includes(it.lost?.cause) || it.history.some(h => h.ev === 'resume')) continue;
+    if (it.data.kind === 'checkin' || it.data.role === 'helper') continue;   // a check-in is the tick's own; a helper belongs to its parent
+    const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
+    if (!(now - lostAt <= LOST_RESUME_MAX_AGE_MS)) continue;
+    const spec = readJson(path.join(state, 'runs', it.id + '.spec.json'));
+    let { refused, count, max } = spec ? autoResumeRefusal(spec, state) : { refused: 'no spec file', count: 0, max: 0 };
+    let next = null;
+    if (!refused) {
+      for (const f of spec.lockFiles ?? (spec.lockFile ? [spec.lockFile] : [])) releaseLock(f, it.id);   // the dead supervisor's locks
+      try {
+        const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, resumeSid: _rs, nudge: _n, ...rest } = spec;
+        if (spec.nudge) delete rest.promptText;
+        ({ run: next } = start({ ...rest, resumes: count + 1, resumeOf: it.id }));
+      } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
+    }
+    const why = `${it.lost.cause}: ${it.lost.why}`;
+    try {
+      record(state, { kind: 'run', ev: 'resume', id: it.id, by: 'launcher', data: next ? { next, count: count + 1, max, why } : { refused, count, max, why } });
+      if (next) record(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
+    } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    out.push(drop({ id: it.id, cause: it.lost.cause, boot: it.lost.boot, next, refused }));
+  }
+  return out;
+}
+/** one owner notice per sweep pass that handled dead runs (relaunchLost rows) -> { title, body } | null */
+export function lostNotice(rows, project = '') {
+  if (!rows.length) return null;
+  const boot = rows.find(r => r.boot)?.boot, m = rows.filter(r => r.next).length;
+  const list = rows.map(r => r.next ? `${r.id} -> ${r.next}` : `${r.id} (not relaunched: ${r.refused})`).join(', ');
+  const head = boot ? `machine rebooted at ${boot.slice(0, 16).replace('T', ' ')}Z` : 'run supervisor gone';
+  return { title: `${project ? project + ': ' : ''}${head}`, body: `${head}: ${rows.length} run${rows.length === 1 ? '' : 's'} lost, ${m} relaunched (${list})` };
 }
 
 // running, non-interactive runs with a fresh heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
@@ -216,7 +315,7 @@ export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
 }
 // META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief
 // rebases + pushes in the lane worktree waits / is refused (exit 3) while that worktree holds a live writer lock or the lane has a
-// live run; a staged brief (norn merge-brief --sha) merges one tested commit in the main checkout and never touches it: no check.
+// live run; a staged brief (norn merge-brief --sha) merges one tested commit in its merge worktree and never touches it: no check.
 // A brief without the meta-merge marker (hand-written) is checked by its lane only. Returns the reason or null.
 export function mergeStageRefusal(o, staleMs = STALE_MS) {
   if (!isMergeStage(o.stage) || !o.brief) return null;
@@ -284,7 +383,8 @@ function launchable(o) {
   if (!info) throw unknownExecutor(o.executor);
   for (const [k, v] of [['state', o.state], ['locksDir', o.locksDir], ['brief', o.brief], ['worktree', o.worktree], ['lane', o.lane]]) if (!v) throw new RunError(`${k} is required`);
   if (!fs.existsSync(o.brief)) throw new RunError(`brief not found: ${o.brief}`);
-  if (!fs.existsSync(o.worktree)) throw new RunError(`worktree not found: ${o.worktree}`);
+  if (isMergeWtSpec(o)) { if (!fs.existsSync(o.merge_repo)) throw new RunError(`merge repo not found: ${o.merge_repo}`); }   // GAP-6: the start makes its merge worktree
+  else if (!fs.existsSync(o.worktree)) throw new RunError(`worktree not found: ${o.worktree}`);
   if (o.executor !== 'fake' && o.provider?.runner !== 'fake' && !o.exe) throw new RunError(`no ${o.executor} executable (machine.json)`);
   if (isApi(o.provider)) { const miss = providerEnv(o.provider, process.env).missing; if (miss) throw new RunError(`executor ${o.executor}: its key env var ${miss} is not set`); }
   return info;
@@ -370,7 +470,7 @@ const noCaller = ({ caller: _c, ...o }) => o;
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withFloor(withEpic(noCaller(o)));
+  o = mergeSpec(withFloor(withEpic(noCaller(o))));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
@@ -383,9 +483,11 @@ export function startRun(o) {
   }
   if (o.queue) {   // META-GT12: a full cap queues the run instead of refusing it (a held worktree still refuses: exit 3)
     const { queue: _q, ...rest } = o;
-    // META-MERGELOCK: a MERGE whose main checkout is held by another merge waits queued; the fill starts it when the lock frees
+    // a rebase MERGE whose lane worktree is held waits queued; the fill starts it when the lock frees
     const mh = heldTrees(rest, rest.staleMs ?? STALE_MS).find(h => !h.own);
     if (mh) return { ...queueRun(rest), queued: true, why: heldWords(mh) };
+    const sf = slotsFull(rest, rest.staleMs ?? STALE_MS);   // GAP-6: every merge slot of the repo taken: it waits queued
+    if (sf) return { ...queueRun(rest), queued: true, why: sf };
     // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
     const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
     if (refused) return { ...queueRun(rest), queued: true, why: refused };
@@ -405,9 +507,11 @@ export function startRun(o) {
   const mr = mergeStageRefusal(o, staleMs);
   if (mr) throw new RunRefused(mr, 3);
   if (o.lock === false && o.kind !== 'checkin') helperLockCheck(o);
-  const lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
+  let lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
   try {
+    if (isMergeWtSpec(o) && o.lock !== false) lock = handleOf([...lock.hs, acquireSlot(o, { run: 'pending', staleMs })]);   // GAP-6: one merge slot of the repo
     capCheck(o, staleMs);
+    if (isMergeWtSpec(o)) prepareMergeWt(o);   // GAP-6: its own merge worktree (kept on a resume), the leftovers swept
     const base = path.join(o.state, 'logs', `${o.lane}-${stamp()}-${crypto.randomBytes(3).toString('hex')}`);
     const log = base + '.log', final = base + (info.harness === 'codex' ? '.md' : '.json');
     // META-GTP-MAIL piece 3: a nudge resumes the SAME session (claude --resume <sid> keeps its id unless --fork-session)
@@ -463,6 +567,27 @@ function duplicateCheck(o) {
 
 // ---------- queue (META-GT12): a run waiting for a cap slot; filled FIFO per cap on every run exit and by norn status ----------
 export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.queue.json');
+// GAP-2 (queued runs kept stale settings): a queue spec is the launch spec of its queue time, but only what is genuinely the run's own
+// may stay frozen in it. Two kinds of key:
+//  - MACHINE-LEVEL, read LIVE at every fill walk and fill start: the whole machine budget (spec.budget_file = the local/budget.json
+//    `norn run` read: worker caps max_*, billing + the usage guard keys, the worker floor worker_min_*, the default models / efforts
+//    claude_model / *_effort, the typed executors' caps), and the project policy parts (launchpolicy.mjs resolveAtFill: memory, launch
+//    profile, model / effort / agent / class when not given on the command line, a typed executor's entry). The pause files and
+//    STATUS are paths derived from the state dir; their existence / content is read at each fill, so they never go stale.
+//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, epic, priority, labels, parent / via,
+//    the flags the dispatcher gave (refill.explicit: --model / --effort / --agent / --class), budget_min, the state / locks dirs.
+// Not refreshed (machine.json, rarely changed): exe, node_labels, git_ledger. The queue spec keeps NO copy of the budget: queueRun names
+// the file (the caller's budget_file, else this install's local/budget.json) and drops the object, so every fill reads the file. A file
+// that is gone = {} (as `norn run` reads it); one that does not parse holds the run this pass (a term), never a launch on a guess.
+export const machineBudgetFile = (env = process.env) => path.join(metaRoot(env), 'local', 'budget.json');
+/** the machine budget in force NOW for a queued spec (spec.budget_file); throws a RunError when the file does not parse */
+export function liveBudget(spec) {
+  const f = spec.budget_file;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (e.code === 'ENOENT') return {};
+    throw new RunError(`budget ${fwd(f)} unreadable (${e.message}): held until it parses`);
+  }
+}
 /**
  * Record a queued run (RUN event `queue`: the start fields + not_before, requeue_of) and keep its launch spec beside the run specs.
  * o: a startRun spec + notBefore? (ISO; the fill waits until then) + requeueOf? (the limit-exit run it repeats). Returns { run, position }.
@@ -470,14 +595,15 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
 export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withFloor(withEpic(noCaller(o)));
+  o = { ...o, budget_file: path.resolve(o.budget_file ?? machineBudgetFile()) };   // GAP-2: the fill reads this file, never a copy
+  o = mergeSpec(withFloor(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) }))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
   if (o.after?.length || o.inputs?.length) {
     try { checkRefs(o.state, o.after, o.inputs); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; }
   }
-  const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, ...spec } = o;
+  const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, budget: _b, ...spec } = o;
   const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore, warnings: [...floorNotice(o), ...fableNotice(o)].length ? [...floorNotice(o), ...fableNotice(o)] : undefined }) });
   if (o.epic && isNew(o)) joinEpic(o.state, o.epic, ev.id);
   const file = queueSpecPath(o.state, ev.id);
@@ -698,18 +824,21 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
       for (const c of a.conds) if (!c.met) row.terms.push(`after ${c.cond} unmet`);
     }
     if (q.not_before && Date.parse(q.not_before) > now) row.terms.push(`not_before ${q.not_before}`);
-    const spec = readJson(queueSpecPath(state, q.id));
+    let spec = readJson(queueSpecPath(state, q.id));
     if (!spec) { gone('queue spec missing'); continue; }
+    try { spec = { ...spec, budget: liveBudget(spec) }; } catch (e) { row.terms.push(e.message); continue; }   // GAP-2: caps, usage guard, floor of NOW
     const paused = (spec.paused || []).find(f => fs.existsSync(f));
     if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
     const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;
-    const usage = onAccount(info) ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)
+    row.account = onAccount(info);   // GAP-1 (holds.mjs): "every queued Claude run held" counts the rows the usage guard applies to
+    const usage = row.account ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)
     if (usage) row.terms.push(`usage: ${usage}`);
     const lim = limitRefusal(state, spec, { limits: (L ??= openLimits(state, { now })) });   // META-LIMIT-GATE: waits for the reset, holds no cap
     if (lim) row.terms.push(lim);
     const bc = caps.filter(k => blocked.has(k));
     if (bc.length) row.terms.push(`cap ${bc.join(', ')}: kept for ${[...new Set(bc.map(k => blocked.get(k)))].join(', ')} (fill order per cap)`);
-    for (const h of heldTrees(spec, staleMs)) row.terms.push(heldWords(h));   // META-MERGELOCK: a MERGE waits for the main checkout too
+    for (const h of heldTrees(spec, staleMs)) row.terms.push(heldWords(h));   // META-MERGELOCK: a rebase MERGE waits for its lane worktree too
+    { const sf = slotsFull(spec, staleMs); if (sf) row.terms.push(sf); }   // GAP-6: a MERGE waits for a merge slot
     const mr = mergeStageRefusal(spec, staleMs);   // META-GTP-MERGEQ piece 0: a rebase MERGE waits for its lane worktree
     if (mr) row.terms.push(mr);
     // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
@@ -814,7 +943,7 @@ function* stopSteps({ state, locksDir, run, by, why }) {
   yield ['kill', hb.pid];
   yield ['unlink', hbPath(state, run)];
   const it = runsOf(state).find(x => x.id === run);
-  // META-MERGELOCK: every lock the run took (its spec's lockFiles: a MERGE holds the main checkout's too), else its worktree's
+  // META-MERGELOCK: every lock the run took (its spec's lockFiles: a MERGE holds a merge slot too), else its worktree's
   const files = readJson(path.join(state, 'runs', run + '.spec.json'))?.lockFiles;
   if (files?.length) for (const lf of files) yield ['release', lf, run];
   else if (it?.data.worktree && locksDir) yield ['release', lockPath(locksDir, it.data.worktree), run];

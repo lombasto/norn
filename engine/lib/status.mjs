@@ -13,6 +13,7 @@ import { weekStart, nextReset, parseReset } from './cost.mjs';
 import { ciMain } from './ciwatch.mjs';
 import { fedCacheR } from './fed.mjs';
 import { limitLines } from './limitgate.mjs';
+import { isApi, billingLine } from './billing.mjs';
 
 const pad = n => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -150,12 +151,13 @@ export function buildStatus(o) {
   const winCr = measured ? crTotal(accountCacheR(o, winStart.getTime())) : 0;
   const hours = Math.max(0.1, (now - winStart) / 3600000);
   const rate = measured ? winCr / per / hours : null, cap = Number(B.usage_rate_cap_pct_per_h);
-  const over = measured && rate > cap;
-  const weekly = measured ? est.weekly : null;
-  if (!measured) L.push(`- usage not estimated: no usage calibration yet (Settings > Usage calibration, or norn calib --pct N once the week shows >= 10 %); rate cap ${cs(B.usage_rate_cap_pct_per_h)}`);
+  const api = isApi(B), over = !api && measured && rate > cap;   // API billing: no rate cap (billing.mjs)
+  const weekly = measured && !api ? est.weekly : null;
+  L.push(`- ${billingLine(B, o.state, { now: now.getTime(), stateRoot: o.stateRoot, projectsDir: o.projectsDir })}`);
+  if (api) { /* no weekly limit: no calibration asked for */ } else if (!measured) L.push(`- usage not estimated: no usage calibration yet (Settings > Usage calibration, or norn calib --pct N once the week shows >= 10 %); rate cap ${cs(B.usage_rate_cap_pct_per_h)}`);
   else L.push(`- trailing 2 h since ${utcMin(winStart)}: cache reads ${N(winCr / 1e6, 1)}M over ${N(hours, 1)} h = ${N(rate, 2)} %/h vs cap ${cs(B.usage_rate_cap_pct_per_h)} -> ${over ? 'OVER CAP -> no new Claude dispatch' : 'within cap'}`);
-  if (measured) L.push(`- since ${est.inWeek ? `calibration ${ps(B.calib_time_utc)}` : `week start ${utcMin(est.anchor)} (calibration ${ps(B.calib_time_utc)} predates it)`}: cache reads ${N(all.tr / 1e6, 1)}M (+ check-ins ${N(all.ck / 1e6, 1)}M) (+ nodes ${N(all.nodes / 1e6, 1)}M, as of the last fill's ledger import: one push of lag) = ${N(est.pct, 2)} %`);
-  if (measured) L.push(`- estimated weekly now ~${N(weekly, 1)} % (${est.inWeek ? `calib ${ps(B.calib_pct)} %` : 'new week: base 0 %'}); reset ${est.next ? utcMin(new Date(est.next)) : ps(B.reset)}`);
+  if (measured && !api) L.push(`- since ${est.inWeek ? `calibration ${ps(B.calib_time_utc)}` : `week start ${utcMin(est.anchor)} (calibration ${ps(B.calib_time_utc)} predates it)`}: cache reads ${N(all.tr / 1e6, 1)}M (+ check-ins ${N(all.ck / 1e6, 1)}M) (+ nodes ${N(all.nodes / 1e6, 1)}M, as of the last fill's ledger import: one push of lag) = ${N(est.pct, 2)} %`);
+  if (measured && !api) L.push(`- estimated weekly now ~${N(weekly, 1)} % (${est.inWeek ? `calib ${ps(B.calib_pct)} %` : 'new week: base 0 %'}); reset ${est.next ? utcMin(new Date(est.next)) : ps(B.reset)}`);
   L.push(`- dashboard chat cache reads included: ${N(all.chat / 1e6, 2)}M`);
   L.push(`RATE_OK=${over ? 0 : 1}`);
   return { text: L.join('\r\n') + '\r\n', rate, rateOk: over ? 0 : 1, weekly, alive, codex: cx.length };

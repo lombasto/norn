@@ -71,6 +71,16 @@ function repoFiles(root, names) {
   return out.sort();
 }
 
+/** the repo-relative files that can enforce a project's rule (its tests, the CI workflows): git ls-files of the repo; a monorepo
+ * project (p.subdir) = its own folder + the shared .github only - another project's test never counts as this project's enforcement */
+export function projectFiles(p) {
+  if (!p?.root) return [];
+  const sub = subdirOf(p);
+  const r = spawnSync('git', ['-C', p.root, 'ls-files', '--cached', '--others', '--exclude-standard', ...(sub ? ['--', sub, '.github'] : [])],
+    { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
+  return r.status === 0 ? r.stdout.split('\n').filter(Boolean) : [];
+}
+
 /** the last change of each file: the git commit time (one `git log` per repository), else the file's mtime (changed_by says which).
  * files [abs] -> Map key(file) -> { changed, changed_by } */
 function changedOf(files, git) {
@@ -459,8 +469,7 @@ export function instructionsView(p, { home, machine = null, now = Date.now(), da
   const memRow = rows.find(r => r.kind === 'memory');
   v.memory_map = memoryMap(rows, { opened: memRow ? memoryOpened(path.dirname(memRow.path), { now }) : new Map() });
   // META-TEND P3: the rule ledger (every must / never rule, its one home, its enforcement, when it last fired) + the repeat cards
-  const ls = p.root ? spawnSync('git', ['-C', p.root, 'ls-files', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }) : null;
-  v.rules = ruleLedger(rows, { project: p, items, hints, home: fwd(home || machine?.home || process.env.USERPROFILE || process.env.HOME || ''), files: ls?.status === 0 ? ls.stdout.split('\n').filter(Boolean) : [], remember, now });
+  v.rules = ruleLedger(rows, { project: p, items, hints, home: fwd(home || machine?.home || process.env.USERPROFILE || process.env.HOME || ''), files: projectFiles(p), remember, now });
   const rc = rowCounts(v.rules.rules);
   for (const r of v.rows) r.rules = rc.get(r.id) || { total: 0, prose: 0, repeated: 0, enforced: 0 };
   // META-TEND P5: check 20 (read evidence: opened / cited per file; never read + never cited = a prune advisory) + the audit runs

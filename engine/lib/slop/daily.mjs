@@ -11,6 +11,7 @@ import { loadRules } from './check.mjs';
 import { makeTool } from './tools.mjs';
 import { spawnOutside } from '../jobguard.mjs';
 import { slopOn } from '../policy.mjs';
+import { inDir } from '../monorepo.mjs';
 
 const num = n => n.toLocaleString('en-US');
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
@@ -40,15 +41,17 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0 } = {}) {
   return { markdown: L.join('\n') + '\n', line };
 }
 
-/** the daily run: build, write through the host, return { line, file } */
-export function dailyReport({ repo, state, env = process.env, now = Date.now() }) {
-  const day = today(now), loc = locReport(repo, { until: day }), sw = sweep(repo, { state, now });
+/** the daily run: build, write through the host, return { line, file }. own = { name, subdir } of a monorepo project: the lines of
+ * code and the K14 base are its folder's, the sweep its own branches and worktrees (repo stays the top level) */
+export function dailyReport({ repo, state, env = process.env, now = Date.now(), own = null }) {
+  const home = own ? inDir(repo, own.subdir) : repo;
+  const day = today(now), loc = locReport(home, { until: day }), sw = sweep(repo, { state, now, own });
   const holds = Object.entries(slopHolds(state)).map(([branch]) => ({ branch, blocks: openBlocks(state, branch, { now }) })).filter(h => h.blocks.length)
     .map(h => ({ branch: h.branch, open: h.blocks.length, rules: [...new Set(h.blocks.map(b => b.rule))].join(' ') }));
   const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length });
   const k14 = loadRules().find(r => r.id === 'K14');
   const baselines = {};
-  try { baselines.K14 = makeTool({ env })(k14, 'head', { dir: repo }); } catch (e) { baselines.K14 = null; fs.appendFileSync(path.join(slopDir(state), 'daily.log'), `${new Date(now).toISOString()} K14 base not recorded: ${e.message}\n`); }
+  try { baselines.K14 = makeTool({ env })(k14, 'head', { dir: home }); } catch (e) { baselines.K14 = null; fs.appendFileSync(path.join(slopDir(state), 'daily.log'), `${new Date(now).toISOString()} K14 base not recorded: ${e.message}\n`); }
   if (baselines.K14 === null) delete baselines.K14;
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
     empty: sw.empty.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };

@@ -55,7 +55,7 @@ export const GLYPHS = {
   bad: ['..ooooo..', '.oaaaaao.', 'oab.a.bao', 'oa.bab.ao', 'oaab.baao', 'oa.bab.ao', 'oab.a.bao', '.oaaaaao.', '..ooooo..'], // snarl
   done: ['.........', '.oo...oo.', 'oaao.oaao', 'oabaoabao', '.oaabaao.', '..oacao..', '.oao.oao.', 'oao...oao', 'oo.....oo'], // tied bow
   parked: ['.........', '..ooooo..', '.oaaaaao.', '.oaoaoao.', '.oaoaoao.', '.oaoaoao.', '.oaaaaao.', '..ooooo..', '.........'], // bead held on two pins
-  'no-marker': ['..ooooo..', '.oaaaaao.', '.oa...ao.', '.....oao.', '....oao..', '...oao...', '...ooo...', '...oao...', '...ooo...'], // loose end ?
+  'no-result': ['..ooooo..', '.oaaaaao.', '.oa...ao.', '.....oao.', '....oao..', '...oao...', '...ooo...', '...oao...', '...ooo...'], // loose end ?
   idle: ['.........', '...ooo...', '..oaaao..', '.oab.bao.', '.oa...ao.', '.oab.bao.', '..oaaao..', '...ooo...', '.........'], // hollow bead
   needs: ['...ooo...', '..oaaao..', '..oaaao..', '..oaaao..', '..oaaao..', '...oao...', '...ooo...', '...oao...', '...ooo...'], // "!" rune
   urd: ['oo.....oo', 'oao...oao', 'oao...oao', 'oao...oao', 'oaao.oaao', 'oabaoabao', 'oabbabbao', '.oaabaao.', '..ooooo..'], // U - what was
@@ -64,7 +64,7 @@ export const GLYPHS = {
 };
 export const RAMP = {
   running: ['thread', 'spark', 'gold'], handoff: ['aqua', 'wellglow', 'teal'], stopped: ['weird', 'frost', 'weird'], bad: ['rune', 'ember', 'blood'],
-  done: ['leaf', 'moss', 'spark'], parked: ['frost', 'mist', 'snow'], 'no-marker': ['frost', 'mist', 'snow'], idle: ['mist', 'dusk', 'frost'],
+  done: ['leaf', 'moss', 'spark'], parked: ['frost', 'mist', 'snow'], 'no-result': ['frost', 'mist', 'snow'], idle: ['mist', 'dusk', 'frost'],
   needs: ['ember', 'spark', 'rune'], urd: ['aqua', 'wellglow', 'teal'], verdandi: ['thread', 'spark', 'gold'], skuld: ['frost', 'snow', 'mist'],
 };
 // the glyph's pixels as [x, y, '#rrggbb'] (pure: the tests check every colour is a palette entry)

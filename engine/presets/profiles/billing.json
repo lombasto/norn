@@ -1,0 +1,31 @@
+{
+ "kind": "billing",
+ "default": "max-5x",
+ "modes": {
+  "pro": {
+   "order": 1, "type": "plan", "label": "Claude Pro",
+   "summary": "A Pro plan's weekly limit: one Claude worker, weekly stop at 80 %. Norn leaves room for your own sessions.",
+   "budget": { "max_claude_workers": 1, "weekly_stop_pct": 80, "usage_rate_cap_pct_per_h": 0.48, "desired_burn_pct_per_h": 0.4 }
+  },
+  "max-5x": {
+   "order": 2, "type": "plan", "label": "Claude Max (5x)",
+   "summary": "A Max 5x plan's weekly limit: two Claude workers, weekly stop at 90 %.",
+   "budget": { "max_claude_workers": 2, "weekly_stop_pct": 90, "usage_rate_cap_pct_per_h": 0.54, "desired_burn_pct_per_h": 0.45 }
+  },
+  "max-20x": {
+   "order": 3, "type": "plan", "label": "Claude Max (20x)",
+   "summary": "A Max 20x plan's weekly limit: three Claude workers, weekly stop at 95 %.",
+   "budget": { "max_claude_workers": 3, "weekly_stop_pct": 95, "usage_rate_cap_pct_per_h": 0.57, "desired_burn_pct_per_h": 0.5 }
+  },
+  "ultra": {
+   "order": 4, "type": "plan", "label": "Claude Ultra",
+   "summary": "An Ultra plan's weekly limit: four Claude workers, weekly stop at 95 %.",
+   "budget": { "max_claude_workers": 4, "weekly_stop_pct": 95, "usage_rate_cap_pct_per_h": 0.57, "desired_burn_pct_per_h": 0.5 }
+  },
+  "api": {
+   "order": 5, "type": "api", "label": "API billing (pay per token)",
+   "summary": "No weekly limit: the weekly guard and the hourly rate cap are off and no calibration is needed. Spend is the Claude CLI's cost of each run; set a daily cap in $ to stop new Claude work past it.",
+   "budget": {}
+  }
+ }
+}

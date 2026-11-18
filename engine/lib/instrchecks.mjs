@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { POLICY_MODELS } from './policy.mjs';
 import { advisory } from './advisory.mjs';
 import { realPath } from './config.mjs';
+import { subdirOf } from './monorepo.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const lc = p => (process.platform === 'win32' ? fwd(p).toLowerCase() : fwd(p));
@@ -203,7 +204,7 @@ export function staticChecks(rows, { project: p = {}, home = '', items = {}, har
   const renamed = rel => { renames ??= new Map(root ? (gitOut(root, ['log', '--diff-filter=R', '-M', '--name-status', '--format=']) || '').split('\n').map(l => l.split('\t')).filter(x => x.length === 3).map(x => [x[1], x[2]]) : []); return renames.get(rel); };
   const lanes = Object.values(items).filter(i => i.kind === 'lane' && ['done', 'archived'].includes(i.state)).map(i => String(i.data?.name || '')).filter(n => n.length >= 4 && /[-_\d]/.test(n));
   const policyModels = new Set([...POLICY_MODELS.filter(Boolean), ...Object.values(p.policy?.executors || {}).map(e => e?.model), ...Object.values(p.executors || {}).map(e => e?.model)].filter(Boolean).map(m => m.toLowerCase()));
-  const enforce = enforcementText(root, home);
+  const enforce = enforcementText(root, home, subdirOf(p));
   for (const r of hand.filter(x => x.kind !== 'memory-topic' && /\.(md|txt)$/i.test(x.path))) {
     const pl = proseLines(T(r)), every = always(r);
     let shout = 0, hist = [], never = [];
@@ -265,12 +266,13 @@ export function staticChecks(rows, { project: p = {}, home = '', items = {}, har
 }
 
 // what can enforce a "never" line: hook commands + deny rules (read, never shown), test file names, git hooks
-function enforcementText(root, home) {
+// a monorepo project (sub): its own tests/ folder too (the root's tests/ is the shared one); never another project's
+function enforcementText(root, home, sub = '') {
   const parts = [];
   for (const f of [root && path.join(root, '.claude', 'settings.json'), root && path.join(root, '.claude', 'settings.local.json'), home && path.join(home, '.claude', 'settings.json')].filter(Boolean)) {
     try { const j = JSON.parse(readText(f) || 'null'); parts.push(JSON.stringify(j?.hooks || {}), JSON.stringify(j?.permissions?.deny || [])); } catch { /* missing or unparsable settings: this file adds no enforcement, the next one is read */ }
   }
-  for (const d of [root && path.join(root, 'tests'), root && path.join(root, '.githooks'), root && path.join(root, '.git', 'hooks')].filter(Boolean)) { try { parts.push(fs.readdirSync(d).filter(n => !n.endsWith('.sample')).join(' ')); } catch { /* folder absent: it enforces nothing, move on to the next */ } }
+  for (const d of [root && path.join(root, 'tests'), root && sub && path.join(root, sub, 'tests'), root && path.join(root, '.githooks'), root && path.join(root, '.git', 'hooks')].filter(Boolean)) { try { parts.push(fs.readdirSync(d).filter(n => !n.endsWith('.sample')).join(' ')); } catch { /* folder absent: it enforces nothing, move on to the next */ } }
   return parts.join(' ').toLowerCase();
 }
 const enforced = (line, corpus) => /\b(?:hook|gate|deny|enforced|lint(?:ed)?)\b/i.test(line) || [...line.matchAll(/`([^`]{3,})`/g)].some(m => corpus.includes(m[1].toLowerCase()));

@@ -20,6 +20,7 @@ import { checkMail, sendMail, ackMail, formatMail, mailRole } from './mail.mjs';
 import { tierOf, promptTier, cliPlan, ownerSaid, emit, requestApproval, showRoots, insideRoots, ActError, APPROVAL_MS, CLI_ALLOWED, HOLD_MIN } from './chatact.mjs';
 import { readThread } from './chat.mjs';
 import { splitRepo, projectHome } from './monorepo.mjs';
+import { dupOf, dupMessage } from './dupdirs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
@@ -113,7 +114,7 @@ export const TOOLS = [
   { name: 'norn_answer', profiles: CTL, description: "Record the OWNER's answer to Q-n, in the owner's own words (verbatim).",
     schema: obj({ q: S.str('Q-n'), text: S.str('owner words verbatim'), choice: S.str('option key') }, ['q', 'text']), run: answer },
   { name: 'norn_directive', profiles: CTL, description: "Record an OWNER directive (owner's words verbatim), optionally scoped to lanes.",
-    schema: obj({ text: S.str('owner words verbatim'), scope: S.strs, expires: S.str('UTC time') }, ['text']), run: directive },
+    schema: obj({ text: S.str('owner words verbatim'), scope: S.strs, expires: S.str('UTC time'), new: S.bool }, ['text']), run: directive },
   { name: 'norn_question_add', profiles: CK, description: 'Ask the owner one question (options with cost, a recommendation); parks the lanes it blocks. owner_only = a taste / owner pick no check-in may rule.',
     schema: obj({ lane: S.str(), title: S.str(), body: S.str(), options: { type: 'array', items: obj({ key: S.str(), text: S.str(), cost: S.str() }, ['key', 'text']) },
       recommend: obj({ key: S.str(), why: S.str() }, ['key', 'why']), class: S.str('', { enum: ['i', 'ii', 'iii', 'iv', 'v'] }), blocks: S.strs, source: S.str(), owner_only: S.bool }, ['lane', 'title', 'options']), run: questionAdd },
@@ -250,7 +251,10 @@ function answer(a, ctx) {
 }
 function directive(a, ctx) {
   guard(ctx, a.text, 'norn_directive');
-  const e = write(ctx, { kind: 'directive', ev: 'create', data: { text: a.text, ...(a.scope ? { scope: a.scope } : {}), ...(a.expires ? { expires_utc: a.expires } : {}) } }, 'owner');
+  // gap #5: a restatement of an active directive is refused unless new: true (then it is kept out of the digest's duplicate rows)
+  const dup = dupOf(st(ctx).items, a.text);
+  if (dup && a.new !== true) throw new ToolError(dupMessage(dup, 'new: true'), 3);
+  const e = write(ctx, { kind: 'directive', ev: 'create', data: { text: a.text, ...(a.scope ? { scope: a.scope } : {}), ...(a.expires ? { expires_utc: a.expires } : {}), ...(dup ? { distinct_from: [dup.id] } : {}) } }, 'owner');
   return { text: e.id, data: { id: e.id } };
 }
 function questionAdd(a, ctx) {

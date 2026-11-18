@@ -132,7 +132,7 @@ test('the phone: the list, a tap opens the reader with Back (pushed), Back retur
     assert.ok(await pg.until(`!document.querySelector('.docsplit.picked') && ${shown('#docs-list')}`, 20000), 'Back: the list');
     await pg.ev('history.back()');
     assert.ok(await pg.until(`!!document.querySelector('.docsplit.picked #docs-head')`, 20000), 'browser Back: the file again');
-    await pg.go(`${f.url}/?project=kestrel&tab=instructions&sub=file`);   // META-UX-BUILD S4: an old link lands on Context, Per file
+    await pg.go(`${f.url}/?project=kestrel&tab=context&sub=file`);   // Context, Per file
     assert.ok(await pg.until(`!!document.querySelector('#ins-table [data-ins]:not([disabled])')`, 60000));
     await pg.ev(`document.querySelector('#ins-table [data-ins]:not([disabled])').click()`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'docs' && !!document.querySelector('.docsplit.picked #docs-head')`, 60000), 'a Context file link opens the Docs reader');

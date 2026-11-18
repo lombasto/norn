@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fillQueue } from '../engine/lib/runs.mjs';
+import { fillQueue, readiness } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { runEnded } from './helpers/wait.mjs';
@@ -68,5 +68,31 @@ test('at fill, an explicit --model / --effort / --class survives a policy change
   assert.equal(rec.model, 'm-flag'); assert.equal(rec.effort, 'xhigh'); assert.equal(rec.class, 'review');
   assert.equal(spec.memory, 'on'); assert.equal(spec.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, null, 'on deletes an inherited switch'); assert.equal(rec.memory, undefined);
   assert.deepEqual(rec.at_fill?.explicit, ['model', 'effort', 'class']);
+  await runEnded(d.state, id);
+});
+
+// GAP-2: the machine budget (local/budget.json: caps, the usage guard, the worker floor) is read at FILL time, not copied at queue time
+test('a queued run obeys the machine budget in force at fill: the worker cap, the usage guard, the worker floor', async () => {
+  const d = sandbox({}), bf = path.join(d.t, 'local', 'budget.json'), budget = b => fs.writeFileSync(bf, JSON.stringify(b));
+  budget({ max_claude_workers: 2 });
+  const q = d.cli(['--lane', 'work', '--after', `run:${d.gate}:done`, '--model', 'claude-sonnet-5-5', '--effort', 'low']);
+  assert.equal(q.code, 0, q.out); assert.match(q.out, /QUEUED (RUN-\d+)/);
+  const qid = q.out.match(/QUEUED (RUN-\d+)/)[1];
+  assert.equal(JSON.parse(fs.readFileSync(path.join(d.state, 'runs', qid + '.queue.json'), 'utf8')).budget_file, bf);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(d.state, 'runs', qid + '.queue.json'), 'utf8')).budget, undefined, 'no copy of the budget is kept');
+  d.open();
+  const fill = () => fillQueue(d.state, { resources: () => ({ free_gb: 64, cpu_pct: 0 }) });
+  const terms = () => readiness(d.state, { resources: () => ({ free_gb: 64, cpu_pct: 0 }) }).find(r => r.id === qid).terms.join('; ');
+  budget({ max_claude_workers: 0 });
+  assert.deepEqual(fill(), [], 'the cap lowered to 0 after queueing holds it');
+  assert.match(terms(), /budget max_claude_workers=0/);
+  budget({ max_claude_workers: 2, weekly_stop_pct: 95 });
+  assert.deepEqual(fill(), [], 'a weekly guard set after queueing holds it (no STATUS estimate = unknown, fail closed)');
+  assert.match(terms(), /usage: weekly unknown/);
+  budget({ max_claude_workers: 2, worker_min_model: 'claude-opus-5-5', worker_min_effort: 'high' });
+  const { id, rec, spec } = d.started();
+  assert.equal(rec.model, 'claude-opus-5-5', 'the floor set after queueing raises the run'); assert.equal(rec.effort, 'high');
+  assert.deepEqual(rec.floor, { model: ['claude-sonnet-5-5', 'claude-opus-5-5'], effort: ['low', 'high'] });
+  assert.deepEqual(spec.budget, { max_claude_workers: 2, worker_min_model: 'claude-opus-5-5', worker_min_effort: 'high' }, 'the run spec carries the budget it started under');
   await runEnded(d.state, id);
 });

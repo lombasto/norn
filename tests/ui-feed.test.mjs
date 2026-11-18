@@ -35,7 +35,7 @@ test('Agents rows of runs open the feed (data-feed); subagents and talk sessions
   const f = await fixture();
   try {
     const get = async p => (await f.get(p)).data;
-    const html = renderTab('agents', await loadTab('agents', 'kestrel', get), { project: 'kestrel' });
+    const html = renderTab('runs', await loadTab('runs', 'kestrel', get), { project: 'kestrel' });
     assert.match(html, /id="node-RUN-1"[^>]*data-feed="RUN-1"/); assert.match(html, /data-feed="RUN-2"/);
     assert.ok(!/data-feed="(?!RUN-)/.test(html), 'only runs');
   } finally { await f.done(); }

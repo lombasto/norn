@@ -123,7 +123,7 @@ test('lanes: no lane without a LANE record; archived only with all; exited / los
   const state = laneState();
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'phantom' } });
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen' } });
-  record(state, { kind: 'run', ev: 'end', id: 'RUN-2', by: 'launcher', data: { exit: 0, outcome: 'handoff', marker_line: '## HANDOFF' } });
+  record(state, { kind: 'run', ev: 'end', id: 'RUN-2', by: 'launcher', data: { exit: 0, outcome: 'handoff' } });
   record(state, { kind: 'run', ev: 'resume', id: 'RUN-2', by: 'launcher', data: { refused: 'cap 8/8', count: 8, max: 8 } });
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'idle' } });
   const st = loadState(state);
@@ -136,7 +136,7 @@ test('lanes: no lane without a LANE record; archived only with all; exited / los
   assert.equal(by.render, 'no runs');
   assert.ok(lanesView(st, { all: true }).some(l => l.name === 'gone'));
   assert.ok(!lanesView(st, { all: true }).some(l => l.name === 'phantom'));
-  for (const [outcome, extra, want] of [['done', {}, 'exited: DONE'], ['stopped', { why: 'red test' }, 'exited: STOPPED: red test'], ['no-marker', {}, 'exited: no-marker']]) {
+  for (const [outcome, extra, want] of [['done', {}, 'exited: DONE'], ['stopped', { why: 'red test' }, 'exited: STOPPED: red test'], ['no-result', {}, 'exited: no-result']]) {
     const s2 = laneState();
     record(s2, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen' } });
     record(s2, { kind: 'run', ev: 'end', id: 'RUN-1', by: 'launcher', data: { exit: 0, outcome, ...extra } });

@@ -14,7 +14,7 @@
   "output": "plain",
   "args": [
     "-p",
-    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; end with norn done (or norn done --outcome stopped --why <why> | --outcome handoff --handoff-file F): that is your outcome.",
     "-m",
     "{model}",
     "-o",

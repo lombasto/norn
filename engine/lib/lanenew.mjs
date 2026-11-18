@@ -80,7 +80,7 @@ export function* laneSteps(p, { name, task, by = 'owner', now } = {}) {
     directive = (yield ['record', p.state, { kind: 'directive', ev: 'create', by: owner, data: { text: taskText, scope: [name], via: by === 'dashboard' ? 'dashboard' : 'cli' } }, opts]).id;
     if (!(yield ['exists', at.brief])) {
       yield ['mkdir', path.dirname(at.brief)];
-      yield ['create', at.brief, `# ${name}\n\n${taskText}\n\nWork in your worktree on branch ${at.branch}. ${at.notes ? `Write your notes to ${fwd(at.notes)} and end` : 'End your notes'} with exactly one of: ## DONE / ## STOPPED: <why> / ## HANDOFF.\n`];
+      yield ['create', at.brief, `# ${name}\n\n${taskText}\n\nWork in your worktree on branch ${at.branch}. ${at.notes ? `Write your notes to ${fwd(at.notes)}. ` : ''}End with \`norn done\` (or \`norn done --outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).\n`];
       brief_created = true;
     }
   }

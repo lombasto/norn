@@ -1,12 +1,18 @@
 #!/usr/bin/env node
 // The FAKE executor (`norn run --executor fake`): stands in for a headless claude worker in tests and `norn smoke`.
-// The brief drives it, one "key: value" per line: mode (done | stopped | handoff | handoff-once | no-marker | crash | sleep | term | orphan),
-// say (a line on stderr = the run log), cache_read (the final's cache_read_input_tokens, default 20), ms (wait before finishing), read (files read at the end, logged in NOTES; one missing = STOPPED), until (file: finish once it exists - no clock; a test releases it), pids (file: {pid, grandchild} - sleep mode spawns a grandchild so a tree kill can be checked).
-// It appends a NOTES block ending in the mode's marker and prints a claude-like `--output-format json` result on stdout.
-// FAKE_RESULT=<file> (env): a read-only agent's answer - its text is the final `result` and no NOTES block is written (META-ADOPT A2: a canned draft).
+// The brief drives it, one "key: value" per line: mode (done | stopped | handoff | handoff-once | no-result | crash | sleep | term | orphan),
+// say (a line on stderr = the run log), cache_read (the final's cache_read_input_tokens, default 20), ms (wait before finishing), read (files read at the end, logged in NOTES; one missing = STOPPED), until (file: finish once it exists - no clock; a test releases it), pids (file: {pid, grandchild} - sleep mode spawns a grandchild so a tree kill can be checked), done_via (cli: end through the real `norn done` CLI, not result.mjs).
+// It appends a NOTES block (its free-form log), writes the run's result as `norn done` does (gap #3: done | stopped | handoff, with a
+// hand-off text; no-result / crash / term write none) and prints a claude-like `--output-format json` result on stdout.
+// FAKE_RESULT=<file> (env): a read-only agent's answer - its text is the final `result`, no NOTES block nor result is written (META-ADOPT A2: a canned draft).
 // FAKE_RO_RESULT=<file> (env): the same for a read-only launch only (--read-only; META-DOD 3: a plan review beside its writing plan run).
 import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+import { writeResult } from '../lib/result.mjs';
+
+const NORN = fileURLToPath(new URL('./norn.mjs', import.meta.url));
 
 const arg = n => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : undefined; };
 const brief = Object.fromEntries(fs.readFileSync(arg('brief'), 'utf8').split(/\r?\n/).map(l => l.match(/^(\w+):\s*(.*)$/)).filter(Boolean).map(m => [m[1], m[2].trim()]));
@@ -52,11 +58,19 @@ const finishRun = () => {
   const reads = (brief.read || '').split(',').map(x => x.trim()).filter(Boolean).map(r => { try { return `read ${r}: ${fs.readFileSync(r).length} bytes`; } catch (e) { return `read ${r}: FAILED ${e.code}`; } });
   if (reads.some(r => r.includes(': FAILED '))) mode = 'stopped';
   if (notes && reads.length) fs.appendFileSync(notes, reads.join('\n') + '\n');
-  const marker = { done: '## DONE', sleep: '## DONE', orphan: '## DONE', stopped: '## STOPPED: c - fixture says so', handoff: '## HANDOFF\nnext: the fake step', 'no-marker': '## fake notes\nno end marker' }[mode];
+  const end = { done: { outcome: 'done' }, sleep: { outcome: 'done' }, orphan: { outcome: 'done' }, stopped: { outcome: 'stopped', why: 'c - fixture says so' },
+    handoff: { outcome: 'handoff', handoff: 'next: the fake step' } }[mode];
   const resumed = resumeSid ? `resumed session ${resumeSid} prompt: ${resumePrompt}\n` : '';
   const cannedFile = process.env.FAKE_RESULT || (process.argv.includes('--read-only') ? process.env.FAKE_RO_RESULT : undefined);
-const canned = cannedFile ? fs.readFileSync(cannedFile, 'utf8') : null;
-  if (notes && marker && canned === null) fs.appendFileSync(notes, `## fake ${process.env.META_RUN_ID || ''} (resumes ${resumes})\n${resumed}work\n${marker}\n`);
+  const canned = cannedFile ? fs.readFileSync(cannedFile, 'utf8') : null;
+  if (notes && canned === null && mode !== 'crash') fs.appendFileSync(notes, `## fake ${process.env.META_RUN_ID || ''} (resumes ${resumes})\n${resumed}work: ${mode}\n`);
+  // the run's end, as a worker ends it: `norn done` (done_via: cli = through the real CLI)
+  if (end && canned === null && process.env.META_RESULT_DIR) {
+    if (brief.done_via === 'cli') {
+      const r = spawnSync(process.execPath, [NORN, 'done', '--outcome', end.outcome, ...(end.why ? ['--why', end.why] : []), ...(end.handoff ? ['--handoff', end.handoff] : [])], { encoding: 'utf8', windowsHide: true });
+      process.stderr.write(`fake: norn done exit ${r.status}: ${(r.stdout || r.stderr || '').trim()}\n`);
+    } else writeResult(process.env.META_RESULT_DIR, { run: process.env.META_RUN_ID, ...end });
+  }
   process.stdout.write(JSON.stringify({ type: 'result', is_error: mode === 'crash', result: canned ?? `fake ${mode}`, session_id: process.env.META_SESSION_ID || null,
     total_cost_usd: 0, usage: { input_tokens: 10, cache_read_input_tokens: Number(brief.cache_read ?? 20), cache_creation_input_tokens: 30, output_tokens: 5 } }));
   process.exitCode = mode === 'crash' ? 3 : mode === 'term' ? 143 : 0;   // term: an external SIGTERM's exit code (S5)

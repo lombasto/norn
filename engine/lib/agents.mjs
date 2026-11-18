@@ -1,9 +1,10 @@
-// Agents tab data (META-GENERAL-DESIGN 6, 12-S6): one root per RUN, children from the transcript. Transcripts and Codex rollouts
+// Runs page data (META-GENERAL-DESIGN 6, 12-S6): one root per RUN, children from the transcript. Transcripts and Codex rollouts
 // are tailed incrementally (byte offset cache; only complete appended lines are parsed). Unknown records are ignored (design 13).
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseCodexLog } from './runs.mjs';
 import { runName } from './names.mjs';
+import { handoffOf } from './lanes.mjs';
 import { findTranscript, findTranscriptA, usageCtx } from './harness/claude.mjs';
 import { ctxView } from './ctxlimit.mjs';
 import { critiqueOfNode } from './critique.mjs';
@@ -83,7 +84,7 @@ export function transcriptInfo(file, cache = new Map(), { now = Date.now() } = {
   const { c } = r;
   let cacheR = 0, burn30 = 0;
   for (const [t, cr, cc] of c.entries) { cacheR += cr; if (t >= now - BURN_MS) burn30 += cr + cc; }
-  return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, peak: c.peak, cacheR, burn30, bytesRead: r.bytesRead };
+  return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, peak: c.peak, cacheR, burn30, said: c.entries.length > 0, bytesRead: r.bytesRead };
 }
 
 const readJson = readJsonS;
@@ -119,16 +120,28 @@ export function codexInfo(file, cache = new Map()) {
   return r ? { total: r.c.total, last: r.c.last, window: r.c.window, ts: r.c.ts } : null;
 }
 
-// the file locations are the adapters' (harness-agnostic feed, LANE-MAP-DESIGN 2); re-exported for the Agents tab and its tests
+// the file locations are the adapters' (harness-agnostic feed, LANE-MAP-DESIGN 2); re-exported for the Runs page and its tests
 export { findTranscript } from './harness/claude.mjs';
 export { findRollout } from './harness/codex.mjs';
 
 const readText = f => { try { return readTextS(f); } catch { return null; } };
+/**
+ * handoffOf's talked(id) (lanes.mjs): has run r's session produced its first model event? Claude: an assistant call with usage in
+ * its transcript (the prompt line alone is not the session talking); Codex: a token_count event in its rollout; an executor with
+ * no session file (cli) has nothing to wait for: true. o: { projectsDir, codexDir, cache } (the tree's own tail cache).
+ */
+export function runTalked(r, o = {}) {
+  const d = r?.data || {}, end = r?.end || {}, exe = d.executor || '', cache = o.cache || new Map();
+  if (exe.startsWith('codex')) { const b = d.log ? parseCodexLog(readText(d.log)) : {}, f = findRollout(o.codexDir, end.codex_session ?? b.session_id); return !!(f && codexInfo(f, cache)?.ts); }
+  if (d.kind === 'cli') return true;
+  const f = end.transcript || d.transcript || findTranscript(o.projectsDir, d.session_id);
+  return !!(f && transcriptInfo(f, cache)?.said);
+}
 const ended = r => r.state !== 'running';
 const QUEUE_STATES = ['queued', 'filled', 'withdrawn'];
-// a queue entry is no session: the Agents tab lists the queued ones apart (META-GT12); ended runs stay RECENT_MS
+// a queue entry is no session: the Runs page lists the queued ones apart (META-GT12); ended runs stay RECENT_MS
 const shown = (r, now) => !QUEUE_STATES.includes(r.state) && !(ended(r) && now - Date.parse(r.updated) > RECENT_MS);
-/** The run ids the Agents tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
+/** The run ids the Runs tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
 export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(r => r.kind === 'run' && shown(r, now)).map(r => r.id));
 
 /**
@@ -159,7 +172,9 @@ export async function primeAgents(runs, o = {}) {
  */
 export function agentsTree(runs, o = {}) {
   const now = o.now ?? Date.now(), cache = o.cache || new Map();
-  const roots = [];
+  const roots = [], items = Object.fromEntries([...runs].map(x => [x.id, x]));
+  // the live hand-off state (lanes.mjs handoffOf): o.wrote(id) = the run's result says HANDOFF; talked from the same tail cache
+  const ho = { now, wrote: o.wrote, talked: id => runTalked(items[id], { ...o, cache }) };
   for (const r of [...runs].filter(x => x.kind === 'run').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)))) {
     if (!shown(r, now)) continue;
     const d = r.data || {}, end = r.end || {};
@@ -168,7 +183,8 @@ export function agentsTree(runs, o = {}) {
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
       dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log }) => ({ name, code, counts, log })) } : null,   // META-DOD 1
       started: r.created, age_min: Math.round((now - Date.parse(r.created)) / 60000), budget_min: d.budget_min ?? null,
-      ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [] };
+      ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [],
+      handoff: d.role === 'helper' ? null : handoffOf(r, items, ho) };
     const exe = d.executor || '';
     if (exe.startsWith('codex')) {
       const b = d.log ? parseCodexLog(readText(d.log)) : {};

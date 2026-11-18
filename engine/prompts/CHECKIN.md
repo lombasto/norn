@@ -18,18 +18,23 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   this pass: no dispatch, ruling, question, park, stop, re-queue or review there - Norn refuses a check-in write on a held lane with
   exit 5 (accept it, never work around it). To tell the holder something: `META mail send --to role:controller --subject S --body B`.
 
+- EVERYTHING HELD (digest row 0b): every queued run (or every queued Claude run) has waited on ONE machine-level hold - the usage
+  guard (weekly unknown / at the stop, RATE_OK=0, the API daily cap) or a PAUSED file - past policy.holds.notice_min. No check-in
+  clears it and none works around it: dispatch nothing it holds, do not re-report the other rows as the stall, and start the ledger
+  line with `HELD <n> run(s) since <t>: <reason>; fix: <fix>`. The owner has the Inbox item and one notice; the row leaves by itself.
+
 ## 2. For each run `META runs --unreviewed` lists (exited / lost / killed; any executor)
-- The run's outcome is already recorded; read its end block for the content: the NOTES section under the last `## ` marker
-  (the run's notes path) / the Codex final. Do not read code, diffs or logs.
-- `## DONE`: the stage is finished. Next stage = the next item in the lane's plan / brief "next" line.
-- `## STOPPED: ...`: rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
+- The run's outcome is already recorded (its `norn done` result: end.outcome, end.why, end.summary, end.handoff = its HANDOFF.md);
+  for the content read the run's notes (its log) / the Codex final. Do not read code, diffs or logs.
+- done: the stage is finished. Next stage = the next item in the lane's plan / brief "next" line.
+- stopped (end.why): rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
   record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`. If it is owner-only, record
   `META rec add question --lane L --title T --body-file F --option "a|..|cost" --recommend "<key>|<why>" --class <i-v> --blocks L`
   (the lane is parked by it). Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
-- `## HANDOFF`: the next stage is the HANDOFF's "exact next step" (resume brief = the same brief + "resume from HANDOFF").
+- handoff: the next stage is the hand-off's "exact next step" (end.handoff; resume brief = the same brief + "resume from <end.handoff>").
   The supervisor auto-resumes a clean HANDOFF itself up to the project's auto_resume_max; a HANDOFF listed here was refused or
   reached the max (its run history has the `resume` verdict).
-- crash / no-marker / lost with end `dirty` files or `external_term` (NORN-WATCH S5): never start the stage over. Resume brief =
+- crash / no-result / lost with end `dirty` files or `external_term` (NORN-WATCH S5): never start the stage over. Resume brief =
   the same brief + "resume from the worktree's uncommitted state" (the worker reads `git status` / `git diff` first and keeps
   what is there). A run that left `reap_error` or a `norn doctor` stray line: name it in the ledger.
 - Then: `META runs review RUN-n --refs <DEC/Q/RUN ids>`.
@@ -41,6 +46,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   `META rec not-an-answer DEC-m --q Q-n --why W`. Either one; the row leaves.
 - Every active DIR and open Q older than a newer OWNER record on the same subject (caps, a lane, an executor):
   `META rec supersede X --by Y --why "<its own words>"`.
+- Every digest row "possible duplicate directives: DIR-a ~ DIR-b" (the newer restates the older): fold them the same pass. When the
+  newer covers the older, `META rec supersede DIR-a --by DIR-b --why "restated by DIR-b"`; when the older holds something the newer
+  lacks, act on both as one and cite both ids. Never create (or ask for) a directive that restates an active one: name the active DIR.
 - An open Q marked STALE (> 24 h): confirm it still blocks, or withdraw it with `META rec withdraw Q-n --why W`.
 
 ## 2c. Deliverables (finished work followed to main and the install; state derived from git, never typed)
@@ -77,11 +85,29 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 ## 2f. Usage guard (digest row 8: GRD alarms - runaway vs its peers, over the hand-off line, tool spam; Norn never stops a run itself)
 - Rule each: `META guard rule GRD-n --action let-run|mail|stop --why W`. mail = `NORN mail send --to RUN-n` (hand off / stop reading
   whole logs); stop = mail `role:controller` (a kill is not yours). `META guard sources RUN-n` shows what fills its context.
+- A `stuck:RM-n` wake (policy.stuck: k stopped rounds in a row / n runs / d days without a merge; its last three stop reasons follow
+  the wake line): `norn run` refuses further rounds on that item. Do not relaunch it as before: write `META stuck brief RM-n --out F`
+  and start that review as stage APPROACH-REVIEW on another executor or model than the stuck rounds (or ask the owner).
 
 ## 2g. Plan reviews (digest sec. 11; per project policy.dod.critique = on)
 - A planning run ending DONE got one fresh read-only review (norn critique); its findings file sits beside the plan. A build
   naming that plan waits (after run:RUN-m:reviewed). Read the findings file first; then `META runs review RUN-m --refs <ids>` (the review run)
   releases the build, or withdraw / requeue the build to fix the plan. A review with 0 findings releases itself.
+
+## 2h. Upstream overlap (digest `overlap`; per project policy.overlap.enabled, default on)
+- A row = a RUNNING lane whose changed files overlap a remote branch or an open PR (someone else, maybe another Norn, builds on
+  the same files). Read the branch / PR (`git log origin/<ref>`, the PR link). Same work: mail the run to stop and record an
+  owner question (merge theirs, or keep ours). Neighbouring work: mail the run the files and the ref so it rebases onto it
+  before its merge. Unrelated (a shared file only): let it run. The row leaves when the lane stops or the overlap goes.
+
+## 2i. New work from the roadmap and the directives (a pass never ends "no queued work" while either has some)
+- Every digest row "Directives with no action" (sec. 5) and every roadmap item on horizon `now` (`META road list`) with a stage
+  that is `planned` and has no live or queued run is work to start, in the order an active directive gives (else the roadmap's order).
+  A stage that waits on the owner (a PR to open, a question) is not; name it in the ledger line instead.
+- For each, this pass: write the stage's brief from the item's note and stage line (sec. 3: Ready lines, stop rule, time budget),
+  and launch it with `--item RM-n` - started when a slot is free, else `--queue` (it waits its turn; queued work is never lost).
+  A directive that names no item gets one first (sec. 2e).
+- Ledger: `dispatched: <lane/stage> -> <executor>` or `queued: <lane/stage> (<why>)` for each; "none" only when both lists are empty.
 
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->
@@ -93,17 +119,22 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   route `auto` lanes to an open executor (Claude when Codex is closed, within the Claude rules below); a lane pinned to it parks.
 - Every Claude dispatch requires STATUS `RATE_OK=1` (except a MERGE stage: completion work from `merge-brief`, a short run - RATE_OK=0
   does not hold it; the weekly guard, alive < max_claude_workers and every cap still bind), alive < max_claude_workers and a
-  critical-path lane (unless the project section below opens a dispatch window). Every Codex dispatch requires total exec runs < max_codex AND runs of that model
+  critical-path lane (unless the project section below opens a dispatch window). The critical path = a lane in policy.critical_lanes,
+  a hand-off or crash resume, a CI-red fix lane, a merge stage, or the next stage of a horizon `now` roadmap item (sec. 2i).
+  Every Codex dispatch requires total exec runs < max_codex AND runs of that model
   < max_astra or max_sol. A zero cap disables that executor. Include runs launched earlier in THIS pass in all counts.
   If no permitted slot exists, dispatch nothing for that lane and say why in the ledger line.
 - Defaults from BUDGET: claude_model / claude_effort, codex_astra_effort, codex_sol_effort; `lanes[<lane>].effort` overrides.
   checkin_model / checkin_effort select the next check-in itself; they are not worker settings.
 - Write the next stage's brief to {{briefs_dir}}/task-<LANE>-<STAGE>-brief.md (lean, line-ranged reading, cites the rules,
-  stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF`) and its three Ready lines (DoR, policy.dod.ready):
-  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <the end marker>`. At the run end Norn
+  stop rule, time budget, the end: `norn done` / `--outcome stopped --why` / `--outcome handoff --handoff-file`) and its three Ready lines (DoR, policy.dod.ready):
+  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <what done means>`. At the run end Norn
   runs those Tests + the merge gate itself and checks the tree is clean and inside Scope: only that green record makes a DONE count.
-- Launch: `META run --lane <l> --stage <S> --round <n> --executor claude|codex-sol|codex-astra [--agent <a>] --model <m>
-  --effort <e> --brief <f> --budget-min <n> [--item RM-n]` (<a> = one of the agents installed here: {{agents}}; no other name - leave --agent out for the default) (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force; exit 6 = the brief lacks its Ready lines - add them, launch again). `--item RM-n`
+- Launch: `META run --lane <l> --stage <S> --round <n> --executor <x> [--agent <a>] --model <m>
+  --effort <e> --brief <f> --budget-min <n> [--item RM-n]`. Only these values exist - any other is refused (exit 2, naming the valid ones): <x> = {{executors}};
+  <m> per executor = {{models}}; <e> = {{efforts}}; <a> = one of the agents installed here: {{agents}} (no other name - leave --agent out for the default);
+  <l> = an existing lane or a new name of letters, digits, _ . -; <S> = the plan's stage name (letters, digits, _ . -); <n> = whole numbers; <f> = a brief you wrote;
+  --worktree / --notes (when given) inside the project's folders - leave them out for the lane's own. (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force; exit 6 = the brief lacks its Ready lines - add them, launch again). `--item RM-n`
   links the run to the roadmap item it builds (a new lane: `META rec add lane --name L --item RM-n`).
 - ONE writer per worktree is enforced by "norn run" (all executors, all projects); never bypass it.
 

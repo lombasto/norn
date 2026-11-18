@@ -164,10 +164,15 @@ export const readRunBrief = r => readText(r?.data?.brief);
 
 /** the tick (beside the merge queue): a detached `norn fix start DIR-n --queue` for each active fixall directive whose plan has a next
  *  batch and whose findings file exists; a start stamp (5 min) keeps two ticks from spawning twice before the queued run is recorded */
+// One fixer run per lane + stage (runs.mjs duplicateCheck): while any directive's fixer is queued / running, a start for another one is
+// refused - the tick spawned that doomed start every pass, each leaving an orphan <DIR>-<stamp>.brief.md (solve-shack DIR-11: 6 briefs
+// while DIR-8's RUN-32 waited in the queue). It waits for the lane instead and says so.
 export function tickFix(p, state, { metaCmd, spawnFn, items, now = Date.now() } = {}) {
   const out = [];
+  const holder = Object.values(items).find(i => i.kind === 'run' && i.data?.lane === FIX_LANE && i.data?.stage === 'fixer' && ['queued', 'claimed', 'running'].includes(i.state));
   for (const d of Object.values(items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall)) {
     if (!fs.existsSync(findingsFile(state, d.id)) || !fixPlan(d, items, { readBrief: readRunBrief }).next) continue;
+    if (holder) { out.push(`fix: ${d.id} waits: fixer ${holder.id} is ${holder.state} (one fixer run at a time)`); continue; }
     const stamp = path.join(fixerDir(state), `${d.id}.starting`);
     try { if (now - fs.statSync(stamp).mtimeMs < 5 * 60000) continue; } catch { /* no stamp */ }
     fs.writeFileSync(stamp, new Date(now).toISOString());

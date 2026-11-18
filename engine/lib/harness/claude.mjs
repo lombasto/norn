@@ -24,7 +24,7 @@ function command(o) {
     '-p', o.promptText || prompt(o), ...(o.agent && !ro ? ['--agent', o.agent] : []),
     ...tools, '--model', o.model, '--effort', o.effort, ...(o.resumeSid && !o.fork_of ? ['--resume', o.resumeSid] : ['--session-id', o.session_id]), ...(o.fork_of ? ['--resume', o.fork_of, '--fork-session'] : []),
     '--permission-mode', 'bypassPermissions', ...(remote ? ['--remote-control', `${o.project || 'norn'}-${o.lane}`] : []), '--output-format', 'json',
-    ...(o.headless ? ['--append-system-prompt', o.headless] : []), ...[o.worktree, ...(o.addDirs || []), ...(o.scope && o.notes ? [path.dirname(path.resolve(o.notes))] : [])].flatMap(d => ['--add-dir', d]),
+    ...(o.headless ? ['--append-system-prompt', o.headless] : []), ...[o.worktree, ...(o.addDirs || []), ...(o.scope && o.notes ? [path.dirname(path.resolve(o.notes))] : []), ...(o.scope && o.resultDir ? [o.resultDir] : [])].flatMap(d => ['--add-dir', d]),
     ...(o.mail_hook || o.scope ? ['--settings', JSON.stringify(runSettings(o))] : []),
     ...extra] };
 }

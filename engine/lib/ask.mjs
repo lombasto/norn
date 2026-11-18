@@ -59,7 +59,7 @@ export function askPlan({ it, project = null, nofork = {} }) {
 
 const contract = out => ['## Answer contract',
   `- At most ${MAX_LINES} lines. Cite file:line (or NOTES / transcript) for every claim; "UNKNOWN" beats a guess.`,
-  `- Your final message IS the answer (saved to ${out}); its last line is exactly \`## DONE\`.`];
+  `- Your final message IS the answer (saved to ${out}).`];
 
 /** The prompt a FORK of the asked session gets: it already remembers the run, so only the question and the rules. */
 export function forkPrompt({ q, asked, out }) {

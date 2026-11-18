@@ -113,7 +113,7 @@ test('loadParts(slop) reads /api/guard and asks for one batch when one is open',
   assert.deepEqual(asked, ['/api/guard?project=kestrel&part=fix&limit=40&batch=instr-c16%7Cdrafts']);
 });
 
-test('GET /api/guard?part=fix: batches with kinds; &batch= opens one; tab=guard lands on Slop on a phone with no sideways scroll', { timeout: 240000 }, async t => {
+test('GET /api/guard?part=fix: batches with kinds; &batch= opens one; tab=slop on a phone with no sideways scroll', { timeout: 240000 }, async t => {
   const f = await fixture();
   try {
     let s = (await f.get('/api/guard?project=kestrel&part=summary')).data;
@@ -129,7 +129,7 @@ test('GET /api/guard?part=fix: batches with kinds; &batch= opens one; tab=guard 
     const pg = await openPage([390, 844]);
     try {
       await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-      await pg.go(`${f.url}/?project=kestrel&tab=guard`);
+      await pg.go(`${f.url}/?project=kestrel&tab=slop`);
       assert.ok(await pg.until(`document.querySelector('#slop-sub[data-sub=fix]') && !document.querySelector('#slop-sub-loading') && document.querySelector('#slop-ready, #slop-drafts, #slop-call, #slop-count')`, 60000), 'an old Guard link lands on Slop');
       assert.match(await pg.ev('location.search'), /[?&]tab=slop/);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on a phone');

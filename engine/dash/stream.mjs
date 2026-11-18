@@ -65,10 +65,17 @@ export function createStreams({ pollMs = 1000, pulseMs = 15000, deriveMs = 60000
       }
     }
   }
+  // one poll or join catch-up at a time per hub (h.busy = the promise of the one running). A poll takes its client list, then
+  // awaits the files; a tab resuming inside those awaits read the not-yet-advanced cursor and was not in the list: the append
+  // reached it by neither path (CI 43999056272). A join waits for the running poll and holds the next one off while it catches up.
+  async function exclusive(h, fn) {
+    while (h.busy) await h.busy;
+    let done; h.busy = new Promise(r => { done = r; });
+    try { return await fn(); } finally { h.busy = null; done(); }
+  }
   async function tick(h) {
-    if (h.busy) return;   // one poll at a time per hub: a slow one is skipped over, never queued
-    h.busy = true;
-    try { await poll(h); } catch { /* the next poll retries */ } finally { h.busy = false; }
+    if (h.busy) return;   // a slow poll is skipped over, never queued
+    try { await exclusive(h, () => poll(h)); } catch { /* the next poll retries */ }
   }
   async function poll(h) {
     const all = [...h.clients];
@@ -127,6 +134,13 @@ export function createStreams({ pollMs = 1000, pulseMs = 15000, deriveMs = 60000
     h.clients.add(c);
     if (res.destroyed) { leave(h, c); return true; }   // the tab went away while the hub opened
     res.on('close', () => leave(h, c));
+    await exclusive(h, () => greet(h, c, sources, cursor));
+    if (!h.timer) { h.timer = setInterval(() => tick(h), pollMs); h.timer.unref?.(); }
+    return true;
+  }
+  // the new tab's first events: flags, then (a resume) the lines between its cursor and the hub's, then hello with the hub's cursor
+  async function greet(h, c, sources, cursor) {
+    const { res } = c;
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write('retry: 3000\n\n');
     for (const s of sources) write(res, 'state', JSON.parse(h.flags.get(s.project)));
@@ -147,8 +161,6 @@ export function createStreams({ pollMs = 1000, pulseMs = 15000, deriveMs = 60000
         write(res, 'hello', { at: new Date().toISOString() }, encodeCursor({ ...hub }));
       }
     } else write(res, 'hello', { at: new Date().toISOString() }, encodeCursor({ ...h.cursor }));
-    if (!h.timer) { h.timer = setInterval(() => tick(h), pollMs); h.timer.unref?.(); }
-    return true;
   }
   const close = () => { for (const h of [...hubs.values()]) { for (const c of h.clients) { try { c.res.end(); } catch { /* gone */ } } stop(h); } };
   return { join, close, hubs: () => hubs.size, clients: () => clients };

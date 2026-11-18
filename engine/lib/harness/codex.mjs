@@ -20,7 +20,8 @@ function providerArgs(o) {
 
 /** o: { exe, brief, model, effort, final, writable_roots, readonly | mode, mcp, provider? (an openai-compatible entry) } */
 function command(o) {
-  const mode = modeOf(o, 'codex', caps), roots = o.writable_roots || [];
+  // gap #3: the run's result directory is writable in the sandbox (`norn done` writes the outcome there)
+  const mode = modeOf(o, 'codex', caps), roots = [...(o.writable_roots || []), ...(o.resultDir ? [String(o.resultDir).split('\\').join('/')] : [])];
   const sandbox = mode === 'read-only' ? ['-s', 'read-only'] : ['-s', 'workspace-write',
     ...(roots.length ? ['-c', `sandbox_workspace_write.writable_roots=[${roots.map(r => `'${r}'`).join(',')}]`] : []),
     '-c', 'sandbox_workspace_write.network_access=true'];

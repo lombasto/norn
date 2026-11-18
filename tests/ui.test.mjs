@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, loadTab, renderTab, renderNav, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, NAV, destOf, loadTab, renderTab, renderNav, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
 import { ledgerInline } from '../engine/dash/ledger.mjs';
 
@@ -20,8 +20,46 @@ const clean = (html, where) => {
 test('the UI tab list is the server tab list (Overview ... Ledger, Settings)', () => {
   assert.deepEqual(TABS.map(t => t[0]), SERVER_TABS);
   const nav = renderNav('inbox', { inbox: 3 });
-  for (const [k] of TABS) assert.ok(nav.includes(`id="tab-${k}"`), k);
   assert.match(nav, /id="tab-inbox"[^>]*aria-selected="true"/); assert.match(nav, /3 need you/);
+});
+
+test('UX review 2: the bar is at most 7 plain destinations (Home, Overview, Inbox first); Work / Health / History are pages of their own; every page sits in one destination and is one tap from it; no redirect table', () => {
+  assert.ok(NAV.length <= 7, `${NAV.length} destinations`);
+  assert.deepEqual(NAV.slice(0, 3).map(d => d[0]), ['home', 'overview', 'inbox']);
+  for (const [, label] of NAV) assert.ok(!/Verdandi|Urd|Skuld|Wyrd|Norn/.test(label), `plain name: ${label}`);
+  const pages = NAV.flatMap(([g, , ids]) => [g, ...ids]);
+  assert.deepEqual([...pages].sort(), [...SERVER_TABS].sort(), 'each page once: a destination or under one');
+  const top = html => html.match(/<div class="dests"[^>]*>([^]*?)<\/div>/)[1];
+  for (const [k] of TABS) {
+    const nav = renderNav(k), d = destOf(k);
+    assert.equal((top(nav).match(/<button /g) || []).length, NAV.length, `${k}: one top button per destination`);
+    assert.match(nav, new RegExp(`id="tab-${k}" data-tab="${k}" aria-selected="true"`), `${k}: its own button, selected`);
+    assert.match(top(nav), new RegExp(`id="tab-${d[0]}" data-tab="${d[0]}" aria-selected="true"`), `${k}: its destination selected`);
+    if (d[2].length) for (const p of d[2]) assert.match(nav, new RegExp(`<div class="pages" id="pages-${d[0]}"[^]*id="tab-${p}" data-tab="${p}"`), `${k}: ${p} on the row`);
+    else assert.ok(!nav.includes('class="pages"'), `${k}: no second row`);
+    // from any other page: its destination is on the bar and opens its own page, whose row holds this page
+    assert.ok(renderNav(k === 'inbox' ? 'home' : 'inbox').includes(`id="tab-${d[0]}" data-tab="${d[0]}"`), `${k} reachable`);
+  }
+  const html = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
+  assert.ok(!/OLD_TAB|tabOf|DEST_TAB/.test(html), 'no alias table: a URL names the page it shows');
+  // the Inbox badge is the needs-you count, on the Inbox button
+  assert.match(renderNav('home', { inbox: 4 }), /id="tab-inbox"[^>]*>Inbox<span class="count" aria-label="4 need you">4<\/span>/);
+});
+
+test('UX review 2: Work, Health and History render their own page - one card per page under them, what it shows and what needs a look now', () => {
+  const ov = { needs: [{ type: 'parked' }, { type: 'unreviewed' }, { type: 'unreviewed' }], running: { lanes: [{}], claude: { n: 1, cap: 2 }, codex: { n: 0, cap: 1 } },
+    burn: { usage: { weeklyUsed: 96, weeklyStopPct: 95, guard: 'STOP', rateOK: false } } };
+  const w = renderTab('work', { overview: ov, queue: [{}, {}] }, {});
+  for (const k of ['lanes', 'runs', 'map', 'plan', 'roadmap']) assert.match(w, new RegExp(`id="hub-${k}"><h2><button class="lnk" data-tab="${k}">`), k);
+  assert.match(w, /1 parked/); assert.match(w, /2 unreviewed/); assert.match(w, /2 queued/); assert.match(w, /1 Claude · 0 Codex running/);
+  const h = renderTab('health', { overview: ov, slop: { total: 5, new: 2 } }, {});
+  for (const k of ['usage', 'slop', 'tests', 'context']) assert.match(h, new RegExp(`id="hub-${k}"`), k);
+  assert.match(h, /guard tripped/); assert.match(h, /over the hourly cap/); assert.match(h, /5 open findings/); assert.match(h, /2 new/);
+  assert.match(renderTab('health', { overview: ov, slop: null }, {}), /id="hub-slop"/, 'all projects: no Slop count, the card stays');
+  const r = renderTab('history', { records: { directives: [{ state: 'active' }, { state: 'revoked' }], decisions: [{}, {}, {}] } }, {});
+  for (const k of ['records', 'ledger', 'docs']) assert.match(r, new RegExp(`id="hub-${k}"`), k);
+  assert.match(r, /1 active directive/); assert.match(r, /3 decisions/);
+  assert.match(renderTab('history', { one: true }, { project: 'all' }), /belongs to one project/);
 });
 
 test('every tab renders with fixture state: ids from records / runs / transcripts, no undefined / NaN', async () => {
@@ -34,7 +72,7 @@ test('every tab renders with fixture state: ids from records / runs / transcript
     has('overview', 'id="needs"', 'id="running"', 'id="burn"', 'Q-1', 'L:gen', 'RUN-1', 'render', 'RUN-2', '96.0 %', 'of 95 % guard', 'DEC-1', 'p30');
     has('inbox', 'id="q-Q-1"', 'Choose (a) - recommended', 'Choose (b)', 'RUN-1', 'L:gen', 'STOPPED');
     has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'parked by Q-1', 'exited: STOPPED: red test', 'codex-sol', 'RUN-2');
-    has('agents', 'id="node-RUN-1"', 'id="node-RUN-2"', 'kestrel-implementer', '65k', 'gpt-5.4', '60,559');
+    has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'kestrel-implementer', '65k', 'gpt-5.4', '60,559');
     has('records', 'id="rec-DEC-1"', 'id="rec-DIR-1"', 'keep going', 'in-force', 'active');
     has('docs', 'id="docf-doc-0"', 'id="docf-doc-1"', 'Plan', 'missing', 'Project docs');   // META-UX-BUILD S3: the list; the file is its own part (docs.test)
     // LEDGER-UX R1: /api/ledger serves 100 lines by default (the fixture has 30), one row per entry
@@ -45,7 +83,7 @@ test('every tab renders with fixture state: ids from records / runs / transcript
     assert.match(rowOf('max_claude_workers'), /class="tag"[^>]*>machine</, 'machine key tagged machine');
     assert.match(rowOf('policy.critical_lanes'), /class="tag"[^>]*>project</, 'policy key tagged project');
     // one accent colour = "needs you": only Overview (needs card) and Inbox use the accent button
-    for (const t of ['lanes', 'agents', 'records', 'docs', 'ledger', 'settings']) assert.ok(!out[t].includes('class="primary"'), `${t}: no accent button`);
+    for (const t of ['lanes', 'runs', 'records', 'docs', 'ledger', 'settings']) assert.ok(!out[t].includes('class="primary"'), `${t}: no accent button`);
     assert.ok(!/claude claude-|\b0\.0M\b/.test(out.agents), 'executor not repeated in the model; small token counts in k');
     // numbers carry units
     assert.match(out.overview, /\d k ctx|\d+k ctx/); assert.match(out.overview, /%\/h/); assert.match(out.overview, /min/);
@@ -129,10 +167,10 @@ const rmIds = h => [...h.matchAll(/class="rmi[^"]*" id="rm-(RM-\d+)"/g)].map(m =
 const pressed = h => [...h.matchAll(/data-rm-scope="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 const views = h => [...h.matchAll(/data-rm-view="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 
-test('roadmap tab: Wyrd frame after Skuld (Norn look), a flat Roadmap tab after Map (classic); one-project tab; the view switch Tree / Board, Tree the default', () => {
-  assert.deepEqual(TABS.map(t => t[0]).slice(5, 7), ['map', 'roadmap']);   // META-CONTROLLER C2: Home is tab 0
-  assert.match(renderNav('roadmap', {}, 'norn'), /ng-skuld[^]*<span class="ng ng-wyrd"[^]*>Wyrd<[^]*>all three<[^]*id="tab-roadmap"[^>]*aria-selected="true"/);
-  assert.match(renderNav('map', {}), /id="tab-map"[^]*id="tab-roadmap"[^]*id="tab-records"/);
+test('roadmap tab: in Work after Map and Plan (UX review 2, both looks); one-project tab; the view switch Tree / Board, Tree the default', () => {
+  assert.deepEqual(NAV.find(d => d[0] === 'work')[2].slice(-3), ['map', 'plan', 'roadmap']);
+  assert.match(renderNav('roadmap', {}), /id="tab-work"[^>]*aria-selected="true"[^]*id="pages-work"[^]*id="tab-map"[^]*id="tab-plan"[^]*id="tab-roadmap"[^>]*aria-selected="true"/);
+  assert.match(renderNav('map', {}), /id="tab-map"[^]*id="tab-roadmap"/);
   assert.deepEqual(RM_VIEWS.map(v => v[0]), ['tree', 'board']);
   const h = rmRender(); clean(h, 'roadmap');
   assert.ok(h.includes('id="panel-roadmap"')); assert.deepEqual(views(h), ['tree:true', 'board:false'], 'the switch, Tree pressed by default');
@@ -247,4 +285,14 @@ test('roadmap view in the URL hash: #board, #board-past, #board-rm-RM-3; the tre
     ['#board-rm-RM-3', '#rm-RM-3', '#board-future', '#past']);
   assert.deepEqual([parseRmHash('#board'), parseRmHash('#board-past'), parseRmHash('#board-rm-RM-3'), parseRmHash('#tree'), parseRmHash('#tree-future'), parseRmHash('#board-bogus')],
     [{ view: 'board' }, { view: 'board', scope: 'past' }, { view: 'board', item: 'RM-3' }, { view: 'tree' }, { view: 'tree', scope: 'future' }, {}]);
+});
+
+test('roadmap row: a stuck item shows the stuck chip (since + why + the review it waits for) and "n runs, d days, k stopped in a row" (META-CATCH S1)', () => {
+  const tr = rmTree(), it = tr.themes[0].children.find(i => i.id === 'RM-3');
+  it.stuck = { runs: 9, days: 4, stopped_row: 3, flag: { ts: rd(2), why: ['3 stopped in a row'] } };
+  const h = renderTab('roadmap', tr, { project: 'p', look: 'norn', rm: {}, now: Date.parse(RNOW) }), r3 = h.slice(h.indexOf('id="rm-RM-3"'), h.indexOf('id="rm-RM-4"'));
+  assert.match(r3, /<span class="chip bad" title="stuck since 2030-01-08T12:00Z: 3 stopped in a row - further rounds wait for an approach review">stuck<\/span>/);
+  assert.match(r3, /9 runs, 4 days, 3 stopped in a row/);
+  const r2 = h.slice(h.indexOf('id="rm-RM-2"'), h.indexOf('id="rm-RM-3"'));
+  assert.doesNotMatch(r2, />stuck</); assert.doesNotMatch(r2, /stopped in a row/);
 });
