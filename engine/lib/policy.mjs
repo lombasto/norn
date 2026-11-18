@@ -94,6 +94,11 @@ export function starterPolicy(found=['claude'],caps={}){
 const int=(min,max)=>({type:'int',min,max}),num=(min,max)=>({type:'num',min,max}),en=options=>({type:'enum',options}),bool={type:'bool'};
 const S=(group,key,label,kind,help,recommended,cost,readers,extra={})=>({group,key,label,...kind,help,recommended,cost,readers,...extra});
 const CHECKIN='CHECKIN.md (check-in prompt, generated line policy:checkin)';
+// RM-26 the check-in floor: a check-in decides and delegates on its own, so it needs a competent model and effort (owner 2026-11-18).
+// Fixed here, beside the worker floor rows below; not a setting. Unlike the worker floor it never refuses or raises (floor.mjs: a
+// check-in keeps its own model): the settings review flags a checkin_model / checkin_effort below it (checkinBelowFloor).
+export const CHECKIN_FLOOR={model:'claude-opus-5-5',effort:'medium'};
+const CHECKIN_FLOOR_TEXT=`the check-in floor (${CHECKIN_FLOOR.model}, effort ${CHECKIN_FLOOR.effort})`;
 export const SETTINGS=[
   S('agents','max_claude_workers','Max Claude workers',int(0,12),'Claude worker lanes the check-in may keep alive at once.','8 overnight, 2-3 by day','Each worker burns weekly usage in parallel; more = faster stages, faster to the guard.',['worker.ps1 (refuses past the cap)',CHECKIN]),
   S('agents','policy.dispatch_window.max','Overnight Claude slot max',int(0,12),'Workers allowed during the overnight slot window.','8','Same as above, only inside the overnight window.',[CHECKIN]),
@@ -162,11 +167,11 @@ export const SETTINGS=[
   S('cadence','policy.checkin.merge_model','Staged-merge run model',en(MODELS),'Model of the MERGE run a routine worker_done_stage queues.','claude-sonnet-5-5','Opus costs ~5x Sonnet per merge run.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_effort','Staged-merge run effort',en(EFFORTS),'Effort of that MERGE run.','medium','Higher effort per merge multiplies with merges.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_agent','Staged-merge run agent',{type:'text',pattern:'^[A-Za-z0-9._-]{0,60}$'},'Agent of that MERGE run (blank = none).','the project runner agent','—',['norn tick (engine/lib/checkins.mjs)']),
-  S('cadence','checkin_model','Check-in model',en(MODELS),'Model of the scheduled check-in and the Talk controller.','claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_model','Check-in model',en(MODELS),`Model of the scheduled check-in and the Talk controller. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
   // CHECKIN-V2 piece 2 (GT-3 ruling): a MINOR wake (gate.mjs wakeClass) runs this model / effort on the reduced prompt CHECKIN-MINOR.md
   S('cadence','checkin_minor_model','Minor check-in model',en(['',...MODELS]),'Model of a MINOR check-in (a forced quiet tick, a run start by another, the guard band): the reduced prompt engine/prompts/CHECKIN-MINOR.md; it escalates with MAJOR NEEDED. Empty = every tick is the full check-in.','claude-sonnet-5-5','Opus on minor ticks costs ~5x Sonnet for ticks that mostly act on nothing.',['norn tick (engine/lib/tick.mjs)']),
   S('cadence','checkin_minor_effort','Minor check-in effort',en(EFFORTS),'Effort of a MINOR check-in.','medium','Higher effort per minor tick multiplies with their count.',['norn tick (engine/lib/tick.mjs)']),
-  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),'Effort of the check-in.','medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),`Effort of the check-in. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
   // META-CHECKIN-GATE: norn tick wakes the LLM check-in only on a material change (engine/lib/gate.mjs); a slow forced check-in stays
   S('cadence','checkin_gate','Check-in gate (wake on change only)',bool,'A tick (scheduled or run exit) starts the LLM check-in only when the material state changed since the last one: run starts / ends / kills / stalls, owner records, questions, ready lanes, guard band, quiet flag / pause. No change = a logged skip.','on','Off = every tick is one Opus check-in (~0.9M cache-read tokens each), about half of them with nothing to do.',['norn tick (engine/lib/gate.mjs)']),
   S('cadence','checkin_max_quiet_min','Forced check-in after (min quiet)',int(15,1440),'With the gate on, a check-in still runs once the last real one is older than this, change or not.','60','Lower = more no-change check-ins (one Opus turn each); higher = slower reaction to what the gate does not see (time-only rules).',['norn tick (engine/lib/gate.mjs)']),
@@ -395,6 +400,11 @@ export function belowFloor(m){const f=floorOf(m);if(!f)return [];const v=withDef
   model('policy.checkin.merge_model',p.checkin.merge_model);effort('policy.checkin.merge_effort',p.checkin.merge_effort,p.checkin.merge_model);
   for(const [k,e] of Object.entries(p.executors)){model(`policy.executors.${k}.model`,e.model);effort(`policy.executors.${k}.effort`,e.effort,e.model,e.executor);}
   effort('policy.critical_effort',p.critical_effort);effort('policy.iteration.escalation_effort',p.iteration.escalation_effort);
+  return out;}
+/** the check-in settings of merged view `m` below CHECKIN_FLOOR: [{ key, kind, value, to, text }] (the effort only on a Claude model) */
+export function checkinBelowFloor(m){const v=withDefaults(m),out=[],text=`below ${CHECKIN_FLOOR_TEXT}: a check-in decides and delegates on its own`;
+  if(modelBelow(v.checkin_model,CHECKIN_FLOOR.model))out.push({key:'checkin_model',kind:'model',value:v.checkin_model,to:CHECKIN_FLOOR.model,text});
+  if(claudeRank(v.checkin_model)&&effortBelow(v.checkin_effort,CHECKIN_FLOOR.effort))out.push({key:'checkin_effort',kind:'effort',value:v.checkin_effort,to:CHECKIN_FLOOR.effort,text});
   return out;}
 /**
  * The changes of a Settings save with the floor's raises added: every worker setting the save leaves below the floor in force after it
