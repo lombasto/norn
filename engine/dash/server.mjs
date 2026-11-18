@@ -18,7 +18,7 @@ import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
@@ -306,12 +306,13 @@ export function createDashboard(o) {
     const own = new Set([...Object.entries(d.data.values ?? {}).filter(([k, v]) => differs(k, v)).map(([k]) => k), ...(d.data.own ?? [])]);
     return { kind: 'profile', name: prof.name, label: prof.label, cost: d.data.cost ?? 'balanced', at: d.created, own: own.size };
   }
-  /** Review changes: each change in plain words (the setting's label, from -> to) + flags: a recorded ruling names the key, a retired executor */
+  /** Review changes: each change in plain words (the setting's label, from -> to) + flags: a recorded ruling names the key, a retired
+   *  executor, a check-in model / effort below the check-in floor (policy CHECKIN_FLOOR: a warning, the save is not refused) */
   function reviewSettings(p, changes, version) {
     const s = settingsState(p);
     if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
     const fc = floorChanges(s.view, changes, exExtra(p)), asked = changes; changes = fc.changes;   // the worker floor raises the settings it leaves below it
-    const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget);
+    const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget), lowCheckin = checkinBelowFloor(updated);
     const rulings = Object.values(st(p).items).filter(i => (i.kind === 'directive' && i.state === 'active') || (i.kind === 'decision' && i.state !== 'overruled' && !capsRec(i)));
     const words = v => (v === null || v === undefined ? 'unset' : Array.isArray(v) ? v.join(', ') || '(none)' : String(v));
     const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -327,6 +328,7 @@ export function createDashboard(o) {
       const capX = retired.find(x => capOfExecutor(x) === k);
       if (capX && to > 0) flags.push(`re-enables retired ${capX} (${k} is 0)`);
       if (!Object.hasOwn(asked, k)) flags.push('raised to the worker minimum');
+      for (const r of lowCheckin) if (r.key === k) flags.push(`${r.value} is ${r.text}`);
       const label = row?.label ?? k;
       return { key: k, label, from, to, text: `${label}: ${words(from)} -> ${words(to)}`, flags };
     });
