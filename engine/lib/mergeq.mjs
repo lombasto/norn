@@ -11,7 +11,8 @@ import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
-import { acquireLock, laneWriter, killTree } from './runs.mjs';
+import { acquireLock, laneWriter, killTree, liveRuns } from './runs.mjs';
+import { isMergeStage } from './usageguard.mjs';
 import { renderBatchBrief, suiteMode, briefMarker } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { openBlocks } from './slop/host.mjs';
@@ -140,8 +141,10 @@ export function ensureScratch(cfg, git = makeGit()) {
  * A conflict (main moved under the rehearsal) = `git merge --abort` + the existing resolve path (norn deliverables resolve).
  * Returns { id, action: updated | skip | conflict | failed, why, sha? }.
  */
-export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acquireLock, staleMs } = {}) {
+export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acquireLock, staleMs, merging = () => null } = {}) {
   const R = cfg.remote, B = row.branch, res = (action, why, x = {}) => ({ id: row.id, branch: B, action, why, ...x });
+  const m = merging(row);
+  if (m) return res('skip', `lane ${row.lane ?? B} has a live MERGE run ${m}: no update under its tested merge (merge-land judges the branch as tested)`);
   if (row.red) return res('skip', `red in the merge queue at ${row.red.slice(0, 7)}: its fix stage merges main itself`);
   if (!row.behind) return res('skip', 'current with main');
   if (row.rehearsal && !row.rehearsal.clean) return res('skip', `${rehearsalWord(row)}: the resolve path (norn deliverables resolve ${row.id})`);
@@ -197,10 +200,16 @@ export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acqu
   } finally { lock.release(); }
 }
 
+/** the live MERGE run testing a row's branch (its lane's, or one whose merge brief names the branch / lane), or null */
+export function mergingRun(stateDir, row) {
+  const here = path.resolve(stateDir), mark = r => { try { return briefMarker(fs.readFileSync(r.data.brief, 'utf8')); } catch { return null; } };
+  return liveRuns(stateDir).find(r => r.state_dir === here && isMergeStage(r.data.stage)
+    && ((row.lane && r.data.lane === row.lane) || (m => m && (m.branch === row.branch || (row.lane && m.lane === row.lane)))(mark(r))))?.id ?? null;
+}
 /** one update pass over the queue (score order): autoUpdate per row; the rows of a fresh view. Returns [{ id, branch, action, why }] */
 export function updatePass({ stateDir, project = {}, locksDir, git = makeGit(), now = Date.now(), acquire } = {}) {
   const { rows, cfg } = mergeQueue({ stateDir, project, now, git });
-  return rows.map(r => autoUpdate(r, { cfg, locksDir: locksDir || path.join(path.dirname(path.resolve(stateDir)), 'locks'), git, ...(acquire ? { acquire } : {}) }));
+  return rows.map(r => autoUpdate(r, { cfg, locksDir: locksDir || path.join(path.dirname(path.resolve(stateDir)), 'locks'), git, ...(acquire ? { acquire } : {}), merging: row => mergingRun(stateDir, row) }));
 }
 
 // ---------- 3. batch + bisect (Bors; Gas Town batch.go:11-33 batch max, 202-210 + 485-490 retry once then bisect; engineer.go:74-86,

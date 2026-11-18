@@ -122,14 +122,33 @@ test('merge-land refuses a branch it cannot stand behind: not pushed, not in the
   fs.writeFileSync(path.join(wt, 'base.txt'), 'dirty\n');
   assert.match(run(['feat/a'])[0].why, /has uncommitted changes/);
   assert.equal(fg.creates().length, 0, 'no refusal opened a PR');
-  // the lane branch moved on after the tested merge: the PR still opens, and says how far past the merge its head is
+  // the lane branch moved on after the tested merge: a lane commit the merge never tested is refused, and the words say which
   g(wt, 'checkout', '--', 'base.txt');
-  g(f.repo, 'checkout', '-q', 'feat/a'); commit(f.repo, 'a2.txt', 'a2\n', 'feat/a more'); g(f.repo, 'push', '-q', 'origin', 'feat/a'); g(f.repo, 'checkout', '-q', 'main');
+  g(f.repo, 'checkout', '-q', 'feat/a'); const a2 = commit(f.repo, 'a2.txt', 'a2\n', 'feat/a more'); g(f.repo, 'push', '-q', 'origin', 'feat/a'); g(f.repo, 'checkout', '-q', 'main');
   const r = run(['feat/a'])[0];
-  assert.equal(r.status, 'opened'); assert.equal(r.ahead, 1);
-  assert.match(r.why, /the branch is 1 commit\(s\) past the tested merge/);
+  assert.equal(r.status, 'refused');
+  assert.equal(r.why, `feat/a has 1 commit(s) the tested merge ${g(wt, 'rev-parse', 'HEAD').slice(0, 7)} does not hold (${a2.slice(0, 7)}): test them in a new MERGE run`);
+  assert.equal(fg.creates().length, 0);
   assert.match(prLine({ branch: 'feat/x', status: 'refused', why: 'w' }), /^NOT OPENED feat\/x: w$/);
   assert.deepEqual(['https://github.com/o/r.git', 'git@github.com:o/r.git', 'https://github.com/o/r/', '/srv/git/r.git'].map(ghSlug), ['o/r', 'o/r', 'o/r', null]);
+});
+
+// solve-shack RUN-128: the MERGE stage tested its merge; during its suite the merge queue merged main into the lane branch and pushed;
+// merge-land then judged the moved tip (a merge base on main) and said the tested merge held none of the branch's commits - false
+test('merge-land after the merge queue moved the branch (main into branch): the tested merge still holds every lane commit -> the PR opens', () => {
+  const f = fixture(), wt = path.join(path.dirname(f.repo), 'mq', 'merge-a');
+  g(f.repo, 'checkout', '-q', 'feat/a'); commit(f.repo, 'a1.txt', 'a1\n', 'feat/a second'); g(f.repo, 'push', '-q', 'origin', 'feat/a'); g(f.repo, 'checkout', '-q', 'main');
+  commit(f.repo, 'm1.txt', 'm1\n', 'main moves'); g(f.repo, 'push', '-q', 'origin', 'main');
+  const head = merged(f, wt, 'feat/a');   // the tested merge: main + feat/a as of now
+  commit(f.repo, 'm2.txt', 'm2\n', 'main moves again'); g(f.repo, 'push', '-q', 'origin', 'main');
+  // the mergeq update: main into the lane branch, first parent the lane tip (mergeq.mjs autoUpdate), pushed
+  const up = path.join(path.dirname(f.repo), 'upd');
+  g(f.repo, 'worktree', 'add', '-q', '--detach', up, 'origin/feat/a');
+  g(up, 'merge', '-q', '--no-ff', '-m', 'merge: main into feat/a (mergeq update DLV-12)', 'main'); g(up, 'push', '-q', 'origin', 'HEAD:refs/heads/feat/a');
+  const fg = fakeGh(), r = openPrs({ repo: f.repo, wt, branches: ['feat/a'], git: ghGit(), gh: fg.gh })[0];
+  assert.equal(r.status, 'opened', r.why);
+  assert.equal(g(wt, 'rev-parse', 'HEAD'), head);
+  assert.match(r.why, /^feat\/a -> o\/r main; the branch is past the tested merge by main updates only/);
 });
 
 test('norn merge-land: one line per branch, exit 3 when a branch has no PR, 2 without --branch; the project settings are used', () => {
