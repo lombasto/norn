@@ -23,6 +23,7 @@ import { settingsView, applySettings, generatedLines, rewriteMarked, withDefault
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
+import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
@@ -370,6 +371,7 @@ export function createDashboard(o) {
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
   // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
   // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
+  const RESOLVED_MAX = 20;   // INBOX-REPLIES: the Resolved view's newest answered / applied Qs per project
   const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
@@ -391,7 +393,9 @@ export function createDashboard(o) {
       out.push({ type: 'login', id: 'login-' + h.harness, project: p.name, harness: h.harness, cls: h.cls, command: h.command, runs: h.runs, line: h.line, created: h.since,
         title: h.title });   // META-AUTH-VENDOR: a vendor hold names the incident and says no login is needed
     const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));   // META-Q-RECONCILE R1: the hint "already answered in DEC-m"
+    // INBOX-REPLIES: + the source the options came from, the thread (owner messages, controller replies, revisions), the ruling to confirm
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
+      origin: q.data.origin ?? null, thread: threadOf(q), waiting: unanswered(q).length, proposal: rulingOf(q),
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
     // RM-28 S1: a finished planner run = ONE decision card (its summary, plan, a Queue now / Later / Drop per open stage)
     await primeProposals(s.items);
@@ -404,6 +408,9 @@ export function createDashboard(o) {
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
     for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
+    // INBOX-REPLIES: the Resolved view - answered / applied Qs, newest first, each with its thread kept (for information: never a need)
+    for (const q of items.filter(i => i.kind === 'question' && ['answered', 'applied'].includes(i.state)).sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, RESOLVED_MAX))
+      out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
     // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in
     for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) { const q = l.park?.q ? s.items[l.park.q] : null;
       out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
@@ -1378,6 +1385,14 @@ data: ${JSON.stringify(l)}
     throw fail(404, 'Not found');
   }
 
+  // INBOX-REPLIES: start the check-in that replies in a Q's thread now; a running one (or a pause) leaves it to the next tick
+  async function replyNow(p) {
+    if (pausedFiles(p).some(existsS)) return 'paused';
+    if (lockFresh(p) || checkinStarting) return 'next';
+    checkinStarting = true;
+    try { await platform.tick(p); return 'started'; } catch { return 'next'; } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }
+  }
+
   async function post(route, data) {
     if (route === '/api/project/new' || route.startsWith('/api/adopt/')) return adoptPost(route, data);
     const p = projectOf(data);
@@ -1388,11 +1403,24 @@ data: ${JSON.stringify(l)}
         if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
         return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { from: data.from } });
       }
+      const id = String(data.id), q = st(p).items[id];
+      if (data.ruling !== undefined) {   // INBOX-REPLIES: the owner's one tap on the ruling the controller proposed from their words
+        const P = rulingOf(q);
+        if (!P || P.seq !== data.ruling) throw fail(409, `${id} has no such proposed ruling any more (a newer message or reply). Reload.`);
+        return rec(p, { kind: 'question', ev: 'answer', id, by: 'dashboard', data: { text: `Rule: ${P.key ? `(${P.key}) ` : ''}${P.text} - yes`, via: 'dashboard', ruling: P.seq, ...(P.key ? { choice: P.key } : {}) } });
+      }
       const text = str(data.text, 'Answer', 4000);
       if (data.choice !== undefined && typeof data.choice !== 'string') throw fail(400, 'choice must be a string');
-      const r = await rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { text, via: 'dashboard', ...(data.choice ? { choice: data.choice } : {}) } });
-      try { await platform.tick(p); } catch { /* the scheduled tick applies it then */ }   // item 8 (MAIL-9 d): an answer starts a tick at once
-      return r;
+      // INBOX-REPLIES: typed words are a message to the controller, not a ruling - unless they are a bare option key ("b", "(b)").
+      // The message goes in the Q's thread (it stays open) and a check-in starts at once to reply, so the owner does not wait a tick.
+      const choice = data.choice || (q?.kind === 'question' ? pickOf(text, q.data.options) : null);
+      if (choice) {
+        const r = await rec(p, { kind: 'question', ev: 'answer', id, by: 'dashboard', data: { text, via: 'dashboard', choice } });
+        try { await platform.tick(p); } catch { /* the scheduled tick applies it then */ }   // item 8 (MAIL-9 d): an answer starts a tick at once
+        return r;
+      }
+      const r = await rec(p, { kind: 'question', ev: 'say', id, by: 'dashboard', data: { text, via: 'dashboard' } });
+      return { ...r, said: true, reply: await replyNow(p) };
     }
     if (route === '/api/first-task') {   // META-OOTB F-1: the owner's first task = a directive + lane `first` + its worktree / branch / brief
       const text = str(data.text, 'Task', 4000);

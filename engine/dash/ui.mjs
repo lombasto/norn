@@ -437,7 +437,7 @@ const proseCx = (d, ctx, project, key) => ({ ...(d.prose?.[project] || {}), proj
 // an option = a small card: its key, its text, its cost; the recommended one is marked and carries its why
 function optCard(o, rk, q, px) {
   const k = o.key ?? o.k, rec = k === rk, cost = o.cost ?? o.c;
-  return `<div class="opt${rec ? ' rec' : ''}" data-key="${esc(k)}"><div class="ohead"><b class="okey">${esc(k)}</b>${rec ? ` ${chip('needs', 'recommended')}` : ''}</div>${renderProse(o.text ?? o.t, px)}
+  return `<div class="opt${rec ? ' rec' : ''}" data-key="${esc(k)}"><div class="ohead"><b class="okey">${esc(k)}</b>${rec ? ` ${chip('needs', `recommended${recFrom(q.recommend) ? ` · ${recFrom(q.recommend)}` : ''}`)}` : ''}${o.added_by ? ` <span class="small mute qadded">added by ${esc(o.added_by)}</span>` : ''}</div>${renderProse(o.text ?? o.t, px)}
     ${cost ? `<div class="ocost"><span class="olab">cost</span>${renderProse(cost, px)}</div>` : ''}${rec && q.recommend.why ? `<div class="owhy"><span class="olab">why</span>${renderProse(q.recommend.why, px)}</div>` : ''}</div>`;
 }
 
@@ -466,19 +466,46 @@ export function decisionsSection(items, ctx) {
   return `<section id="inbox-decisions" class="decisions"><h2>Decisions <span class="mute small">${plural(ps.length, 'proposal')} · ${plural(stages, 'open stage')} · each stage is ruled on its own: Queue now, Later or Drop</span></h2>${idx}${ps.map(i => proposalCard(i, ctx)).join('')}</section>`;
 }
 
+// INBOX-REPLIES: a question's thread - the owner's messages, the controller's replies (each options revision shown), the ruling it
+// proposed from the owner's words (one tap confirms it). (6b) where the options came from and whose recommendation it is.
+const recFrom = r => (!r?.from ? '' : r.from === 'source' ? 'plan default' : r.from === 'checkin' || r.from === 'controller' ? "the controller's own" : `${r.from}'s own`);
+const optsHead = q => `<div class="small mute qsrc" id="qsrc-${esc(q.id)}">${plural((q.options || []).length, 'option')}${q.origin ? ` · from <button class="lnk" data-ins="${esc(`path:${q.origin.file}`)}"${q.origin.line ? ` data-line="${esc(q.origin.line)}"` : ''} title="${esc(q.origin.file)}">${esc(`${String(q.origin.file).split(/[\\/]/).pop()}#${q.origin.section}`)}</button>` : ''}</div>`;
+const tmsg = (x, q, now) => {
+  const who = x.ev === 'reply' ? esc(x.who === 'checkin' ? 'controller (check-in)' : x.who) : 'you';
+  const body = x.ev === 'answer' ? `answered${x.choice ? ` <b>(${esc(x.choice)})</b>` : ''}${x.ruling ? ' - confirmed the ruling' : ''}: ${esc(x.text)}` : x.ev === 'reopen' ? 'reopened' : esc(x.text);
+  const rev = x.options ? `<div class="small qrev">revised the options: ${x.options.map(o => `<b>(${esc(o.key)})</b> ${esc(o.text)}`).join(' · ')}</div>` : '';
+  const prop = x.propose ? `<div class="small qprop">Rule: ${x.propose.key ? `<b>(${esc(x.propose.key)})</b> ` : ''}${esc(x.propose.text)}?</div>` : '';
+  return `<li class="qmsg ${x.ev === 'reply' ? 'ctl' : 'own'}" id="qm-${esc(q.id)}-${esc(x.seq)}"><span class="small mute">${who} · ${esc(fmtTime(x.ts, now))}</span><div>${body}</div>${rev}${prop}</li>`;
+};
+function qThread(q, now) {
+  const t = q.thread || [], P = q.proposal;
+  if (!t.length) return '';
+  const wait = q.waiting ? `<li class="small mute qwait">${chip('run', 'replying')} the controller answers here (a check-in started when you sent it, or the next one)</li>` : '';
+  const conf = P ? `<div class="card needs qconfirm" id="qconfirm-${esc(q.id)}"><span>Rule: ${P.key ? `<b>(${esc(P.key)})</b> ` : ''}${esc(P.text)}?</span> <button class="primary" data-act="rule" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-ruling="${esc(P.seq)}">Yes, rule it</button></div>` : '';
+  return `<ol class="qthread" id="qt-${esc(q.id)}">${t.map(x => tmsg(x, q, now)).join('')}${wait}</ol>${conf}`;
+}
+// the Resolved view: answered / applied questions, newest first, each with its thread
+function resolvedView(rs, ctx) {
+  if (!rs.length) return '';
+  const one = r => `<article class="q" id="qr-${esc(r.id)}"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${chip(r.state, `${r.id} ${r.state}`)}<b>${esc(r.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, r.project)}${esc(r.lane ?? '-')} · ${fmtTime(r.updated, ctx.now)}</span></div>
+    ${r.origin || r.options.length ? optsHead(r) : ''}${r.answer ? `<p class="small" style="margin:6px 0">${r.answer.choice ? `<b>(${esc(r.answer.choice)})</b> ` : ''}${esc(r.answer.text ?? '')}</p>` : ''}${(r.thread || []).some(x => x.ev !== 'answer') ? qThread({ ...r, waiting: 0, proposal: null }, ctx.now) : ''}</article>`;
+  return `<details class="tablecard" id="inbox-resolved" style="margin-bottom:12px"><summary><b>Resolved</b> <span class="mute small">${int(rs.length)} answered or applied, newest first · the thread is kept</span></summary>${rs.map(one).join('')}</details>`;
+}
+
 function inbox(d, ctx) {
   const items = d.items || [];
   const qs = items.filter(i => i.type === 'question').map(q => {
     const rk = q.recommend ? q.recommend.key ?? q.recommend.k : null, opts = q.options || [], px = proseCx(d, ctx, q.project);
     return `<article class="q openq" id="q-${esc(q.id)}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${chip('open', q.id + ' open')}<b style="font-size:15px;min-width:0;overflow-wrap:anywhere">${esc(q.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, q.project)}${esc(q.lane ?? '-')} · ${fmtMin(minsSince(q.created, ctx.now))} ago${q.class ? ` · class ${esc(q.class)}` : ''}</span></div>
     ${q.body ? `<div class="qbody">${renderProse(q.body, proseCx(d, ctx, q.project, `${q.project}:${q.id}`))}</div>` : ''}
-    ${opts.length ? `<div class="opts">${opts.map(o => optCard(o, rk, q, px)).join('')}</div>` : ''}
-    ${rk && !opts.some(o => (o.key ?? o.k) === rk) ? `<div class="small owhy"><b>Recommendation (${esc(rk)}):</b> ${renderProse(q.recommend.why ?? '', px)}</div>` : ''}
+    ${opts.length ? `${optsHead(q)}<div class="opts">${opts.map(o => optCard(o, rk, q, px)).join('')}</div>` : ''}
+    ${rk && !opts.some(o => (o.key ?? o.k) === rk) ? `<div class="small owhy"><b>Recommendation (${esc(rk)}${recFrom(q.recommend) ? `, ${esc(recFrom(q.recommend))}` : ''}):</b> ${renderProse(q.recommend.why ?? '', px)}</div>` : ''}
+    ${qThread(q, ctx.now)}
     ${q.answered_by ? `<div class="card needs" style="margin:8px 0;padding:8px 10px"><span class="small">Possibly answered in <b class="mono">${esc(q.answered_by.id)}</b>${q.answered_by.words ? `: <q>${esc(q.answered_by.words)}</q>` : ` (${esc(q.answered_by.why ?? '')})`}</span>
       ${q.answered_by.words ? `<button class="primary" style="margin-left:8px" data-act="answer-from" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-from="${esc(q.answered_by.id)}">Yes - already answered in ${esc(q.answered_by.id)}</button>` : ''}</div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${opts.map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">Choose (${esc(k)})${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
-    <input type="search" id="ans-${esc(q.id)}" placeholder="or answer in your words ..." style="flex:1;min-width:220px"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
-    <div class="small mute" style="margin-top:6px">Writes <span class="mono">answer ${esc(q.id)}</span> (by dashboard). The next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}.</div></article>`;
+    <input type="search" id="ans-${esc(q.id)}" placeholder="or write to the controller (a doubt, a question) ..." style="flex:1;min-width:0"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
+    <div class="small mute" style="margin-top:6px">A Choose button answers <span class="mono">${esc(q.id)}</span>; the next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}. Words you type go to the controller, who replies here: ${esc(q.id)} stays open until you pick an option or confirm a ruling (a bare key such as <span class="mono">b</span> picks it).</div></article>`;
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
   const props = decisionsSection(items, ctx);
   const aud = items.filter(i => i.type === 'audit');
@@ -498,9 +525,10 @@ function inbox(d, ctx) {
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  const nNeeds = needsYou(items), nInfo = items.length - nNeeds;   // UX review 4: the one needs-you count (terms.mjs)
+  const rsv = items.filter(i => i.type === 'resolved'), nNeeds = needsYou(items), nInfo = items.length - nNeeds - rsv.length;   // UX review 4: the one needs-you count (terms.mjs)
   return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice; cards already asked for)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${props}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
-   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
+   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>
+    ${resolvedView(rsv, ctx)}`;
 }
 
 // item 8 (MAIL-9 a): an answered question in plain words wherever it shows - the owner's part is done, a check-in applies it
