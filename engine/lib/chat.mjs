@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { adapterFor, capsOf, harnessOf } from './harness/index.mjs';
-import { drain as drainOutbox, decide as decideApproval, approvalsDir, readVerdict, readRequest } from './chatact.mjs';
+import { drain as drainOutbox, decide as decideApproval, approvalsDir, readVerdict, readRequest, chatDir, threadFile } from './chatact.mjs';
 import { readEvents, recordsFile, fold, loadState, heldLanes, holdWho, hhmm } from './records.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { HANDOFF_PROMPT, ctxLevel } from './ctxlimit.mjs';
@@ -33,9 +33,6 @@ const CHAT_PROMPT = path.join(HERE, '..', 'prompts', 'CHAT.md');
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
 export const IDLE_MS = 15 * 60000;   // SPEC: stopped after 15 idle minutes (C5: the default of Settings chat_idle_min, read live)
 const RESULT_MAX = 4000;             // a tool result is shown, not archived: the thread keeps its first 4000 characters
-
-export const chatDir = state => path.join(state, 'chat');
-export const threadFile = state => path.join(chatDir(state), 'thread.jsonl');
 
 // META-DASH-ASYNC R1 (option a): a thread line is appended on fs.promises through one in-process queue per thread file (the order and
 // the line numbers stay those of append()). The queue is the list of the appended lines in order (q.done = the last one on disk); a

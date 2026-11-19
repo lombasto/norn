@@ -1,0 +1,53 @@
+{
+  "id": "K4",
+  "level": "BLOCK",
+  "kind": "exports",
+  "title": "a new export nobody uses",
+  "how": "each new exported declaration of a touched file under roots that its own file does not use: referenced by whole word nowhere else under search -> BLOCK; only by tests -> tests_level. A name loaded by path (a CLI entry, an HTML page) goes in entry",
+  "roots": [
+    "engine/"
+  ],
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ],
+  "search": [
+    "engine",
+    "tests"
+  ],
+  "tests": [
+    "tests/**"
+  ],
+  "tests_level": "WARN",
+  "entry": [],
+  "fixture": {
+    "hit": {
+      "base": {
+        "engine/lib/a.mjs": "export const a = 1;\n",
+        "engine/lib/b.mjs": "import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"
+      },
+      "head": {
+        "engine/lib/a.mjs": "export const a = 1;\nexport const lonely = () => 2;\n",
+        "engine/lib/b.mjs": "import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "engine/dash/index.html": "<p>x</p>\n"
+      },
+      "head": {
+        "engine/dash/look.mjs": "export function initLook() { return 1; }\n",
+        "engine/dash/index.html": "<script type=\"module\">import { initLook } from './look.mjs'; initLook();</script>\n",
+        "engine/lib/m.mjs": "export const seed = 2;\nexport const grow = n => n * seed;\n",
+        "tests/m.test.mjs": "import { grow } from '../engine/lib/m.mjs';\ngrow(1);\n",
+        "engine/lib/k.mjs": "export const kay = 1;\n",
+        "engine/lib/use.mjs": "import * as k from './k.mjs';\nprocess.stdout.write(String(k.kay));\n",
+        "engine/lib/index.mjs": "export * from './k.mjs';\n"
+      }
+    }
+  }
+}

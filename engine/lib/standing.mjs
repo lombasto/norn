@@ -15,7 +15,7 @@ import { findRollout, parseCodexLog } from './harness/codex.mjs';
 import { HEADLESS_CORE } from './harness/common.mjs';
 import { harnessOf } from './harness/index.mjs';
 import { loadState } from './records.mjs';
-import { threadFile } from './chat.mjs';
+import { threadFile } from './chatact.mjs';
 import { profileOf, PROFILE_ROLES } from './launchpolicy.mjs';
 // the launch profiles / memory switch live in launchpolicy.mjs (no import cycle with runs.mjs: META-QUEUE-SPEC R1)
 

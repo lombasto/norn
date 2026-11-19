@@ -10,7 +10,7 @@ import { homeEvents, renderThread, renderHome, renderBottomBar, imagePaths, file
 import { TABS, NAV, renderNav, renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
-import { threadFile } from '../engine/lib/chat.mjs';
+import { threadFile } from '../engine/lib/chatact.mjs';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 

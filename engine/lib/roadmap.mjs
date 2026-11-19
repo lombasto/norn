@@ -11,7 +11,9 @@ import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
 import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
-import { lookWords } from './look.mjs';
+
+// the `road show` line of a look item, or null (here, not in look.mjs: look reads roadmap links, so roadmap may not import look - K10)
+const lookWords = n => (n.proof ? `proof: ${n.proof}; views ${(n.views || []).join(', ') || '-'}; verdict: ${n.verdict ? `${n.verdict.verdict} by ${n.verdict.by} ${n.verdict.ts} ${n.verdict.image}` : 'none'}` : null);
 
 export class RoadmapError extends Error {}
 

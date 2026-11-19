@@ -145,7 +145,8 @@ test('norn merge-land: one line per branch, exit 3 when a branch has no PR, 2 wi
   assert.equal(u.code, 2);
   assert.match(u.err, /--project, --worktree and --branch are required/);
   // openProjectPrs: base and remote from project deliverables
-  const fg = fakeGh(), P = { name: 'mwt', root: fwd(f.repo), state: null, deliverables: { main: 'main' }, policy: {} };
+  // a state folder: the merge-land door stores its slop check of the branch head there (RM-44 D1)
+  const fg = fakeGh(), P = { name: 'mwt', root: fwd(f.repo), state: fwd(path.join(path.dirname(f.repo), 'state', 'mwt')), deliverables: { main: 'main' }, policy: {} };
   const rs = openProjectPrs(P, { wt, branches: ['feat/a'], git: ghGit(), gh: fg.gh });
   assert.equal(rs[0].status, 'opened', JSON.stringify(rs));
   assert.equal(fg.creates()[0][fg.creates()[0].indexOf('--base') + 1], 'main');

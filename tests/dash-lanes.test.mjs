@@ -41,6 +41,21 @@ test('the browser: a refused Archive keeps its reason on the row through a live 
   } finally { await pg.close(); await f.done(); }
 });
 
+// owner 2026-11-18: the Lanes row's Log opened /log (the supervisor's plain-text tail, a line with a file path) in a new browser
+// tab. The row's Feed opens the run in the same live feed drawer a Runs row opens, on this page.
+test('the browser: a lane row\'s Feed opens its run in the live feed drawer on the page (no new tab, no /log link)', { skip: skipWhy, timeout: 180000 }, async () => {
+  const f = await fixture(), pg = await openPage();
+  try {
+    await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('[data-act=lane-feed]')`, 90000), 'a lane row has Feed');
+    assert.equal(await pg.ev(`document.querySelectorAll('#main a[href^="/log"]').length`), 0, 'no /log link left on the page');
+    const run = await pg.ev(`document.querySelector('[data-act=lane-feed]').dataset.run`);
+    await pg.ev(`document.querySelector('[data-act=lane-feed]').click()`);
+    assert.ok(await pg.until(`!document.querySelector('#feed').hidden && document.querySelector('#feed-head')?.textContent.includes('${run}')`, 30000), `the drawer shows ${run}`);
+    assert.equal(await pg.ev(`document.body.dataset.tab`), 'lanes', 'still on the Lanes page');
+  } finally { await pg.close(); await f.done(); }
+});
+
 test('lanesView: running, needs you, queued, done, archived; ended and Old from oldDays; sortLanes is newest first in a group', () => {
   const s = mkTmp('rm19-lanes-');
   for (const n of ['run', 'stop', 'idle', 'fin', 'gone', 'parkd']) record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: n } });

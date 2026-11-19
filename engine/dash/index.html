@@ -163,6 +163,8 @@ tr:last-child td{border-bottom:0}
 .filters{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
 input[type=search]{background:var(--panel);width:260px}
 tr.old{opacity:.55}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}.lane-state{margin:3px 0;white-space:normal;overflow-wrap:anywhere}.state-why{color:var(--ink)}.lane-show{display:flex;gap:6px;flex-wrap:wrap}
+.lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
+.rowacts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 .banner{background:var(--warn-bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:13px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 #error{display:none;background:var(--bad-bg);color:var(--bad);padding:8px 20px;font-size:13px}
@@ -592,7 +594,7 @@ async function render(force = false, why = []) {
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
     paintNav();
-    if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
+    if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => $('#tabs').querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
     step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });
     // Settings: a stream re-render never wipes edits, search or scroll - re-render only on a new version (and never over unsaved edits)
@@ -938,6 +940,7 @@ document.addEventListener('click', e => {
   if (d.act === 'chat-default') { act(async () => { await pickNow(); await post('/api/chat/default', { project: S.project }); }); return; }
   if (d.act === 'open-setting') { S.pickOpen = false; S.tab = 'settings'; S.setQ = d.setting; S.jump = 'set-' + d.setting; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=settings&setq=${encodeURIComponent(d.setting)}`); render(); return; }
   if (d.act === 'chat-send') { chatSend(); return; }
+  if (d.act === 'lane-feed') { openFeed(d.project || p, d.run); return; }   // a Lanes row's Feed: the same drawer a Runs row opens
   // C3: an approval card's tap and a done card's Undo - straight to the records as the owner, no model in between
   if (d.act === 'approve') { act(() => post('/api/chat/approve', { project: p, id: d.id, verdict: d.verdict })); return; }
   if (d.act === 'undo' && confirm('Undo this?')) { act(() => post('/api/chat/undo', { project: p, line: Number(d.line) })); return; }

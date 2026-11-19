@@ -13,8 +13,10 @@ import { loadState } from './records.mjs';
 import { realPath } from './config.mjs';
 
 export const APPROVAL_MS = 30 * 60000;   // SPEC sec. 3 tier 2: waits 30 min, then denies and pings you
-export const outboxDir = state => path.join(state, 'chat', 'outbox');
-export const approvalsDir = state => path.join(state, 'chat', 'approvals');
+export const chatDir = state => path.join(state, 'chat');
+export const threadFile = state => path.join(chatDir(state), 'thread.jsonl');
+export const outboxDir = state => path.join(chatDir(state), 'outbox');
+export const approvalsDir = state => path.join(chatDir(state), 'approvals');
 export class ActError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 
 // ---------- tiers ----------
