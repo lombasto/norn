@@ -56,7 +56,7 @@ test('an open PR holds the deliverable not merged even when git sees the work on
   g(s.repo, 'merge', '-q', '--no-ff', '-m', 'merge b', 'fix/b');   // the work is on local main (a test merge, a hand merge): not the PR
   let r = s.row();
   assert.equal(r.state, 'done', 'the PR is open: not merged');
-  assert.deepEqual(r.pr, { url: URL, number: 7, state: 'open', merged_at: null });
+  assert.deepEqual(r.pr, { url: URL, number: 7, state: 'open', merged_at: null, since: at(-2).toISOString().replace('.000Z', 'Z'), stuck: false });
   assert.equal(r.due, false, 'the open PR is the ask: no merge / park question');
   assert.match(formatDeliverable(r), /fix\/b +PR #7 open \| +clean \| docs b$/);
   assert.equal(prVerdict(s.item()), 'held');

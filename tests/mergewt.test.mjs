@@ -15,6 +15,7 @@ import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { holdWords } from '../engine/lib/plan.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { loadDeliverables } from '../engine/lib/deliverables.mjs';
+import { prOf } from '../engine/lib/prverdict.mjs';
 import { main as nornMain } from '../engine/bin/norn.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
@@ -108,6 +109,11 @@ test('merge-land opens one PR per lane branch of the tested merge, records it on
   assert.match(prLine(again[0]), /^PR ALREADY OPEN https:\/\/github\.com\/o\/r\/pull\/41: /);
   assert.equal(fg.creates().length, 2);
   assert.equal(loadDeliverables(state)[da].history.filter(h => h.ev === 'pr').length, 1);
+  // RM-7 S3: the tick saw #41 closed; the owner reopened it on GitHub and merge-land runs again: the same PR is followed afresh
+  record(state, { kind: 'deliverable', ev: 'pr-state', id: da, by: 'launcher', data: { url: 'https://github.com/o/r/pull/41', number: 41, state: 'closed', merged_at: null } }, { views: false });
+  assert.deepEqual(openPrs({ repo: f.repo, wt, branches: ['feat/a'], stateDir: state, git: ghGit(), gh: fg.gh }).map(r => r.status), ['open']);
+  assert.equal(loadDeliverables(state)[da].history.filter(h => h.ev === 'pr').length, 2);
+  assert.equal(prOf(loadDeliverables(state)[da]).state, 'open');
 });
 
 test('merge-land refuses a branch it cannot stand behind: not pushed, not in the tested merge, a dirty or mid-merge worktree, no GitHub remote, gh failing', () => {
