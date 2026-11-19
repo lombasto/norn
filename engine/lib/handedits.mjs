@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { hashKey, lastFiles } from './views.mjs';
+import { hhmm } from './authguard.mjs';
 
 // the hash files of every guarded writer (views.mjs, roadmap.mjs, cv.mjs); their keys are the absolute paths Norn wrote
 export const HASH_FILES = ['hashes.json', 'queue-hashes.json', 'roadmap-hashes.json', 'cv-hashes.json'];
@@ -42,7 +43,6 @@ export async function handEdits(stateDir) {
   }
   return out;
 }
-const hhmm = t => (t ? String(t).slice(11, 16) + 'Z' : '?');
 const wtOf = w => /[\\/]wt[\\/]/.test(w.engine || '');   // an engine run from a lane worktree (state/<project>/wt/<lane>)
 const byWhom = w => `${w.role || 'norn'}${w.run ? ' ' + w.run : ''}, pid ${w.pid}${w.branch ? `, engine on ${w.branch}` : ''}${wtOf(w) ? ` in ${w.engine}` : ''}`;
 /** what Norn knows about one changed file, in plain words: { verdict, recommend ('takeback' | null), why (the recommendation's reason),

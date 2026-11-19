@@ -310,8 +310,8 @@ function needItem(i, ctx) {
   if (i.type === 'login') return loginRow(i, ctx);
   if (i.type === 'hold') return holdRow(i, ctx);
   if (i.type === 'handedit') return editRow(i, ctx);
-  if (i.type === 'parked' && i.ruled) return `<div class="item">${chip('answered', i.id)}<div><b>lane ${esc(i.id.slice(2))}: waiting - your ruling is being applied</b><div class="small mute">${projTag(ctx, i.project)}${esc(rulingWords(i.ruled, ctx))}</div></div></div>`;
-  if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.id.slice(2))} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
+  if (i.type === 'parked' && i.ruled) return `<div class="item">${chip('answered', i.id)}<div><b>lane ${esc(i.lane)}: waiting - your ruling is being applied</b><div class="small mute">${projTag(ctx, i.project)}${esc(rulingWords(i.ruled, ctx))}</div></div></div>`;
+  if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.lane)} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
   const [cls] = stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state);
   return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${aname(i.name)} unreviewed - no review event yet</div></div></div>`;
 }
@@ -522,8 +522,8 @@ function inbox(d, ctx) {
     + (d.deliverables ? `<div style="margin-bottom:12px">${deliverablesCard(d.deliverables, ctx)}</div>` : '');
   const row = (i, st, what) => `<tr id="in-${esc(i.id)}"><td class="id">${esc(i.id)}</td><td>${st}</td><td>${projTag(ctx, i.project)}${what}</td></tr>`;
   const other = [
-    ...items.filter(i => i.type === 'parked').map(i => i.ruled ? row(i, chip('answered'), `lane <b>${esc(i.id.slice(2))}</b> waiting: your ruling is being applied<div class="small mute">${esc(rulingWords(i.ruled, ctx))}</div>`)
-      : row(i, chip('parked'), `lane <b>${esc(i.id.slice(2))}</b> ${i.q ? `parked by ${renderProse(i.q, { ...proseCx(d, ctx, i.project), inline: true })}` : renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}`)),
+    ...items.filter(i => i.type === 'parked').map(i => i.ruled ? row(i, chip('answered'), `lane <b>${esc(i.lane)}</b> waiting: your ruling is being applied<div class="small mute">${esc(rulingWords(i.ruled, ctx))}</div>`)
+      : row(i, chip('parked'), `lane <b>${esc(i.lane)}</b> ${i.q ? `parked by ${renderProse(i.q, { ...proseCx(d, ctx, i.project), inline: true })}` : renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}`)),
     ...items.filter(i => i.type === 'unreviewed').map(i => row(i, chip(stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state)[0], String(i.outcome ?? i.state).toUpperCase()),
       `<b>${esc(i.lane ?? '-')}</b> ${renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}<div class="small mute">${aname(i.name)} unreviewed: ended with no review event</div>`)),
     ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${renderProse(i.title, proseCx(d, ctx, i.project))}<div class="small mute">${esc(rulingWords({ q: i.id, choice: i.answer?.choice, text: i.answer?.text, at: i.updated }, ctx))}</div>`)),

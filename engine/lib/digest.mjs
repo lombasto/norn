@@ -5,7 +5,7 @@
 // ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green),
 // overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
 // lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk).
-import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
+import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho, homeOf, laneName } from './records.mjs';
 import { deliverablesView, deliverableConfig } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
 import { makeEval, condText } from './after.mjs';
@@ -218,8 +218,8 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   if (ov.length) sections.overlap = ov;
   // lane norn-lifecycle item 5: no lane sits - each idle / stopped lane is the check-in's to act on this pass (CHECKIN.md 2j); a worktree a
   // tick archive kept (dirty or not on main) stays a row while it exists. Only while any.
-  const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy) }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
-    ...atRisk(items), ...offMain(stateDir, items, now)];
+  const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy), home: homeOf(stateDir)?.id ?? null }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
+    ...atRisk(stateDir, items), ...offMain(stateDir, items, now)];
   if (ln.length) sections.lanes = ln;
   // RM-46 S2b: the multi-home work claims - queued runs a claim holds ("held by <home>"), drift / fenced / taken-over events, stale
   // claims of other homes (the owner may take them over); only while any is there
@@ -232,12 +232,12 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
 // item 9 (lanepaths.mjs tickPaths): a lane whose finished work is red on its path to main - at risk, or off main past OFF_MAIN_H with no
 // merge step - is a row (rule off-main) until it reaches a PR
 const offMain = (stateDir, items, now) => { const h = laneHooks(stateDir);
-  return items.filter(l => l.kind === 'lane' && ['active', 'done'].includes(l.state)).flatMap(l => { const x = h.path(l.id.slice(2), now);
+  return items.filter(l => l.kind === 'lane' && ['active', 'done'].includes(l.state)).flatMap(l => { const x = h.path(laneName(l.id, stateDir), now);
     return x?.red ? [{ id: l.id, lane: x.lane, rule: 'off-main', run: x.run, why: `${x.text} - stage its merge (or say why not)` }] : []; }); };
 // an archived lane whose archive kept its worktree (lifecycle.mjs dropWorktree: uncommitted changes / commits not on main), while it exists
-const atRisk = items => items.filter(l => l.kind === 'lane' && l.state === 'archived').flatMap(l => {
+const atRisk = (stateDir, items) => items.filter(l => l.kind === 'lane' && l.state === 'archived').flatMap(l => {
   const a = l.history.findLast(h => h.ev === 'archive')?.data?.at_risk, wt = a ? a.slice(0, a.lastIndexOf(': ')) : null;
-  return wt && fs.existsSync(wt) ? [{ id: l.id, lane: l.id.slice(2), rule: 'at-risk', run: null, why: `work at risk: ${a} - commit / merge it or remove the worktree by hand` }] : [];
+  return wt && fs.existsSync(wt) ? [{ id: l.id, lane: laneName(l.id, stateDir), rule: 'at-risk', run: null, why: `work at risk: ${a} - commit / merge it or remove the worktree by hand` }] : [];
 });
 // RM-46 S2b: <state>/sync/claim-holds.json (runs.mjs claimDoor) for runs still queued + <state>/sync/claims-digest.json (tick.mjs claimsPass)
 function claimRows(stateDir, items) {

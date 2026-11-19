@@ -672,8 +672,8 @@ export const hhmm = t => new Date(Date.parse(t)).toISOString().slice(11, 16) + '
 export const holdMessage = h => `${h.id} is held by ${holdWho(h)} until ${hhmm(h.until)}${h.why ? ` (${h.why})` : ''} - a check-in skips a held lane `
   + '(exit 5) and leaves it to the holder; to reach the holder: norn mail send --to role:controller';
 // the lane an event writes on: the LANE itself, the record's lane field, or the target record's
-function laneOfEvent(e, st) {
-  if (e.kind === 'lane') return e.id ? String(e.id).slice(2) : e.data?.name ?? null;
+function laneOfEvent(e, st, home) {
+  if (e.kind === 'lane') return e.id ? laneNameIn(e.id, home) : e.data?.name ?? null;
   if (e.kind === 'mail' || e.kind === 'item') return null;
   return e.data?.lane ?? (e.id ? st.items[e.id]?.data?.lane : null) ?? null;
 }
@@ -726,7 +726,7 @@ function archiveGuard(stateDir, lane, ev = {}) {
   if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
     const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;
     if (!(pth.tip && dir && fs.existsSync(dir) && isAncestor(dir, pth.tip, 'main')))
-      fail(`L:${lane} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
+      fail(`${laneId(lane, stateDir)} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
   }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
@@ -905,7 +905,7 @@ function recordCtx(stateDir, evIn, opts) {
     const push = e => {
       if (e.by === 'checkin') {
         // the clock is read only for a lane that was ever claimed (a caller's clock may count its calls: the golden views)
-        const ln = laneOfEvent(e, st), l = ln ? laneItems()[laneIdIn(ln, ids.home?.id)] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
+        const ln = laneOfEvent(e, st, ids.home?.id), l = ln ? laneItems()[laneIdIn(ln, ids.home?.id)] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
         if (h) throw new RecordError(holdMessage(h), HELD_EXIT);
       }
       const c = check(st, e, ids);
@@ -923,7 +923,7 @@ function recordCtx(stateDir, evIn, opts) {
       for (const k of ['parent', 'after']) if (k in d) d[k] = ref$(d[k]);
       ev = { ...ev, id: ref$(ev.id), data: d };
     }
-    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, String(ev.id || '').slice(2), ev);
+    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, laneName(ev.id || '', stateDir), ev);
     if (kind === 'waiver' && ev.ev === 'create' && ev.by === 'checkin') waiverGuard(stateDir, ev.data || {});
     if (kind === 'deliverable' && ev.ev === 'park' && ev.by !== 'migration') inputGuard(stateDir, ev.id);
     if (kind === 'mail') mailGuard(stateDir, ev, run, st);

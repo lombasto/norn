@@ -41,7 +41,7 @@ test('the dashboard: an answer starts a tick at once; the parked lane leaves the
   try {
     const before = (await f.get('/api/inbox?project=kestrel')).data;
     const row = before.items.find(i => i.type === 'parked' && i.id === 'L:gen');
-    assert.ok(row && !row.ruled, 'parked on an open Q: needs you');
+    assert.ok(row && !row.ruled, 'parked on an open Q: needs you'); assert.equal(row.lane, 'gen', 'the lane name (records.mjs laneName), for the Inbox');
     const t0 = f.counts.ticks;
     const r = await f.post('/api/answer', { project: 'kestrel', id: 'Q-1', choice: 'b', text: 'go' });
     assert.equal(r.status, 200, JSON.stringify(r.data));
