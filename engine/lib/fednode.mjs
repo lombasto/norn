@@ -2,7 +2,8 @@
 // fetch the ledger remote, take the first OFFERED run (the home walk's FED-OFFERS.json on machine/<home>) whose labels this node serves and
 // that no claim holds, claim it (fed.mjs CAS), run it in the node's OWN state dir (<state_root>/<project>, node.json { id } -> RUN-<id>-n),
 // heartbeat the claim while it runs, mark the claim done (next = the node run, its outcome + head), commit + push the node's ledger branch
-// machine/<host>. Branches go to origin as the run's own brief says (the agent pushes, as at home).
+// machine/<host>. Branches go to origin as the run's own brief says (the agent pushes, as at home). The run's dwarf comes from the node's
+// own crew (<state_root>/crew, crew.mjs: the crew sits beside the state dir), never the home's: DWARVES.md 1.3, "Balin @ node".
 // Lease: heartbeat every fed.heartbeat_s (default 300 s), lease_s default 3 heartbeats. A node FENCES itself (records its run lost, kills its
 // tree) when its claim is gone (the home expired it) or no heartbeat was confirmed for 2 periods - before the home can expire it - so a
 // returned run never runs twice (Kleppmann, "How to do distributed locking", 2016: a lease holder must stop before its lease ends).

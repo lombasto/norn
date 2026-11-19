@@ -2,7 +2,6 @@
 // records.jsonl holds question / decision / directive / lane; runs.jsonl holds run (D3). Node built-ins only.
 import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { agentName } from './names.mjs';
 import path from 'node:path';
 import { readText, readTextA, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
@@ -230,19 +229,20 @@ export async function readEventsAsync(file) {
 }
 
 // ---------- fold (pure) ----------
-export function fold(events) {
+// kinds: the state machines to fold by (crew.mjs folds its own store's dwarf events with this fold)
+export function fold(events, kinds = KINDS) {
   const evs = [...events].sort((a, b) => a.seq - b.seq);
   const items = {};
   const next = {};
   let seq = 0;
   for (const e of evs) {
     seq = Math.max(seq, e.seq);
-    const def = KINDS[e.kind]?.events[e.ev];
+    const def = kinds[e.kind]?.events[e.ev];
     if (!def) continue;
     const h = { seq: e.seq, ts: e.ts, ev: e.ev, by: e.by, run: e.run ?? null, ...(e.via ? { via: e.via } : {}), data: e.data ?? {} };
     if (def.from === null) {
       items[e.id] = { id: e.id, kind: e.kind, state: def.to, by: e.by, run: e.run ?? null, created: e.ts, updated: e.ts, data: e.data ?? {}, history: [h] };
-      if (e.kind !== 'lane') next[e.kind] = Math.max(next[e.kind] || 0, idNum(e.id));
+      if (e.kind !== 'lane' && kinds[e.kind].prefix) next[e.kind] = Math.max(next[e.kind] || 0, idNum(e.id));   // a dwarf's id is its name: no counter
       continue;
     }
     const it = items[e.id];
@@ -627,7 +627,6 @@ function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
     if (kind === 'run' && ev === 'review' && target.review) fail(`${id} is already reviewed`);
   }
   if (kind !== 'lane' || def.from !== null) validateData(kind, ev, data, target, st, by);
-  if (kind === 'run' && (ev === 'start' || ev === 'queue')) data = { ...data, name: agentName(id) };   // META-UX-R1 C: stable name, fixed at launch
   return { id, kind, ev, by, data };
 }
 

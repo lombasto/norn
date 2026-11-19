@@ -13,6 +13,7 @@ import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { mergeQueue } from './mergeq.mjs';
 import { loadRoadmap } from './roadmap.mjs';
+import { lanePins } from './crew.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -65,7 +66,7 @@ export function makeLabeler({ project = null, runs = [], roadmap = [], lanes = [
     return hit?.title ? String(hit.title).split(':')[0].trim() : null;
   };
   return d => {
-    if (!d?.lane) return d?.name || d?.id || 'a run';
+    if (!d?.lane) return d?.id || 'a run';
     const raw = strip(d.lane), segs = raw.split(/[-_]+/).filter(Boolean);
     let base = titles.get(d.lane) ?? rmTitle(d.lane), acr = [];
     if (!base) {
@@ -84,7 +85,7 @@ export function makeLabeler({ project = null, runs = [], roadmap = [], lanes = [
     return [base, stage, acr.length ? `(${acr.join(' ')})` : ''].filter(Boolean).join(' ');
   };
 }
-/** a run in plain words without context: lane + stage ("Adopt A2"), else its name, else its id */
+/** a run in plain words without context: lane + stage ("Adopt A2"), else its id */
 export const labelOf = d => makeLabeler({})(d);
 
 // ---------- estimates: this project's own history, one sample per run family ----------
@@ -171,6 +172,8 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
+  if ((m = t.match(/^dwarf: (.+) is busy on (RUN-\d+)$/))) return `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`;   // DWARVES 1.3 rule 1
+  if (t.startsWith('crew store ')) return 'held: the crew store is unreadable';
   if (t.startsWith('resources:')) return 'held: CPU / memory gate';
   if (t.startsWith('withdraw:')) return 'withdrawn: a condition can no longer be met';
   if (t.startsWith('needs a ruling: ')) return `needs a ruling (the check-in repairs it): ${t.slice(16)}`;   // META-AUTONOMY R1
@@ -220,13 +223,13 @@ const LIVE = ['queued', 'running', 'claimed'];
  *   merges: { rows (mergeQueue order), error? }, roadmap: [{ id, title, links }], lanes: [{ name, title }], now, zone })
  *   -> { upnext, chains, landing, forecast, method, zone }
  */
-export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
+export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, roadmap = [], lanes = [], pins = {}, now = Date.now(), zone = zoneName() } = {}) {
   runs = runs.filter(r => r.kind === 'run');
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
   const label = makeLabeler({ project, runs, roadmap, lanes });
   const ctx = { runs, now, label }, words = t => holdWords(t, ctx);
-  const queued = queueOf(runs);
+  const queued = queueOf(runs, pins);
   const at = ms => ({ at: new Date(ms).toISOString(), word: `~${dayClock(ms, now)}` });
 
   // a queued run's status from its walk row
@@ -313,7 +316,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     const r = map[q.id], row = rowOf.get(q.id), e = est(r.data), s = startOf(q.id);
     const holds = row ? (row.ready ? ['ready to start'] : row.terms.map(words)) : ['not checked yet'];
     const holdAt = row && !row.ready ? row.terms.map(t => { const m = String(t).match(/^not_before (\S+)$/); return m && Number.isFinite(Date.parse(m[1])) ? new Date(Date.parse(m[1])).toISOString() : null; }) : holds.map(() => null);
-    return { id: q.id, name: q.name, label: label({ ...r.data, id: q.id }), position: q.position, lane: q.lane, stage: q.stage, executor: q.executor,
+    return { id: q.id, dwarf: q.dwarf, label: label({ ...r.data, id: q.id }), position: q.position, lane: q.lane, stage: q.stage, executor: q.executor,
       priority: q.priority, status: qStatus(q.id), holds, holdAt, estimate: e,
       start: s === null ? { at: null, word: 'no estimate', why: why.get(`s${q.id}`) ?? null } : s <= now ? { at: new Date(now).toISOString(), word: 'now' } : at(s) };
   });
@@ -468,7 +471,7 @@ export function loadPlan({ state, project = null, budget = {}, now = Date.now(),
   if (project) { try { merges = mergeQueue({ stateDir: state, project, now, ...(git ? { git } : {}) }); } catch (e) { merges = { rows: [], error: String(e.message).slice(0, 300) }; } }
   let roadmap = [];
   try { roadmap = Object.values(loadRoadmap(state).items).filter(i => i.state !== 'dropped').map(i => ({ id: i.id, title: i.title, links: i.links })); } catch { /* none */ }
-  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, roadmap, lanes, now });
+  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, roadmap, lanes, pins: lanePins(state), now });
 }
 
 // ---------- text (norn plan, norn_plan) ----------
