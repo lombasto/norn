@@ -6,7 +6,9 @@
 //              done = a commit whose subject names it (its words, "item N" or the mail id), a NOTES line that says it is done, or a
 //              passing test file named like it; doing = the files edited in the last STALE_MIN minutes are named like it
 //   pace       elapsed (every session of the lane's stage) vs the brief's time budget and vs the median of similar ended runs (the
-//              lane's own first, else the same agent's); stalled = no commit, edit or test change for stall_min minutes
+//              lane's own first, else the same agent's); stalled = no commit, edit or test change for stall_min minutes AND no test
+//              running now (testRunning: an open test call in the transcript, else a live test process under the run's pid); a run in
+//              one long test reads "running a test for 17 min, limit 25 min", not stalled
 //   why slow   the share of the last hour in test runs, the same test re-run k times, the machine's CPU, hand-offs, mails that added scope
 //   alarms     guard.mjs's runaway / over-handoff / tool-spam flags as what they mean, their numbers and what the owner can do
 // Lane feed-activity (RM-36, engine/dash/activity.mjs) folds the same transcript for the feed drawer's activity view; when both are on
@@ -89,7 +91,7 @@ export function onWork(c, j) {
   if (ts) { if (!c.first || ts < c.first) c.first = ts; if (!c.last || ts > c.last) c.last = ts; }
   if (!m || !Array.isArray(m.content)) return;
   if (j.type === 'assistant') {
-    for (const b of m.content) if (b?.type === 'tool_use' && b.id) c.open[b.id] = { name: String(b.name ?? 'tool'), ts, cmd: b.input?.command ?? null, file: b.input?.file_path ?? b.input?.notebook_path ?? null };
+    for (const b of m.content) if (b?.type === 'tool_use' && b.id) c.open[b.id] = { name: String(b.name ?? 'tool'), ts, cmd: b.input?.command ?? null, to: b.input?.timeout ?? null, file: b.input?.file_path ?? b.input?.notebook_path ?? null };
     return;
   }
   if (j.type !== 'user') return;
@@ -234,7 +236,7 @@ export function alarmWords(g, { test_share = null, ctx = null, moving = false } 
  * runs = loadState().items; brief / notes = their text | null; mails = the lane's mail records; work = the transcript fold; guard = the
  * run's guard chips; cpu = the machine's CPU busy % now | null; ctx = the run's context now (tokens) | null.
  */
-export function runProgress(run, { runs = {}, brief = null, notes = null, mails = [], work = workInit(), guard = [], cpu = null, ctx = null, now = Date.now(), stall_min = STALE_MIN } = {}) {
+export function runProgress(run, { runs = {}, brief = null, notes = null, mails = [], work = workInit(), guard = [], cpu = null, ctx = null, procs = null, pid = null, now = Date.now(), stall_min = STALE_MIN } = {}) {
   const sess = sessionsOf(run, runs), first = sess[0] ?? run, live = run.state === 'running';
   const plan = briefPlan(brief), added = mails.filter(m => Date.parse(m.created) >= Date.parse(first.created)).sort((a, b) => num(a.id) - num(b.id));
   const end = live ? now : Date.parse(endOf(run) ?? '') || now;
@@ -246,12 +248,14 @@ export function runProgress(run, { runs = {}, brief = null, notes = null, mails 
   // pace: every session of the stage counts; the budget is the brief's (else the run's own)
   const elapsed = sess.reduce((s, x) => s + ((x.id === run.id ? end : Date.parse(endOf(x) ?? '') || end) - Date.parse(x.created)), 0) / 60000;
   const budget = plan.budget_min ?? run.data?.budget_min ?? null, est = estimate(run, runs), moved = lastMove(work);
-  const still = live && mins(now - Date.parse(moved ?? run.created)) >= stall_min ? mins(now - Date.parse(moved ?? run.created)) : null;
+  const quiet = live && mins(now - Date.parse(moved ?? run.created)) >= stall_min ? mins(now - Date.parse(moved ?? run.created)) : null;
+  // a run in one long test is not stalled: the test is its activity (a test past its limit reads as such, warn)
+  const testing = quiet !== null ? testRunning(work, { procs, pid, now }) : null, still = testing ? null : quiet;
   const over = (budget && elapsed > budget) || (est && elapsed > est.min * 1.5);
-  const state = still !== null ? 'stalled' : over ? 'slow' : 'on track';
+  const state = still !== null ? 'stalled' : testing ? 'testing' : over ? 'slow' : 'on track';
   const handoffs = sess.filter(x => x.id !== run.id && x.end?.outcome === 'handoff').length;
-  const pace = { state, elapsed_min: Math.round(elapsed), budget_min: budget, sessions: sess.length, handoffs, estimate: est, last_move: moved, still_min: still,
-    words: [state === 'stalled' ? `stalled: no commit, edit or test change for ${fmtMin(still)}` : state,
+  const pace = { state, elapsed_min: Math.round(elapsed), budget_min: budget, sessions: sess.length, handoffs, estimate: est, last_move: moved, still_min: still, test: testing,
+    words: [state === 'stalled' ? `stalled: no commit, edit or test change for ${fmtMin(still)}` : testing ? `${testWords(testing)}${testing.limit_min && testing.min > testing.limit_min ? ' - past its limit' : ''}` : state,
       `${fmtMin(elapsed)}${budget ? ` of a ${fmtMin(budget)} budget` : ''}`, sess.length > 1 ? `session ${sess.length} (${handoffs} hand-off${handoffs === 1 ? '' : 's'})` : null,
       est ? `similar work took ${fmtMin(est.min)} (median of ${est.n}, ${est.from})` : null].filter(Boolean).join(' · ') };
   // why slow: the last hour (or the run, if shorter) of this session
@@ -266,10 +270,34 @@ export function runProgress(run, { runs = {}, brief = null, notes = null, mails 
     added.length ? `${added.length} mail${added.length === 1 ? '' : 's'} added scope (${added.map(m => m.id).join(', ')})` : null].filter(Boolean);
   const slow = { test_share: ts, repeats: rn >= 3 ? { key: rk, n: rn } : null, cpu: Number.isFinite(cpu) ? Math.round(cpu) : null, reasons: why,
     line: why.length ? `${state === 'on track' ? 'time goes to' : state}: ${why.join('; ')}` : null };
-  const moving = !!moved && Date.parse(moved) >= now - stall_min * 60000;
+  const moving = !!testing || (!!moved && Date.parse(moved) >= now - stall_min * 60000);
   const alarms = guard.map(g => ({ id: g.id, state: g.state, ...alarmWords(g, { test_share: ts, ctx, moving }) }));
   return { run: run.id, line, items, done, total: items.length, now: doing ? { verb: doing.verb, item: which?.n ?? null } : null, pace, slow, alarms, done_when: plan.done };
 }
+
+// ---------- a test running now ----------
+const TIMEOUT_RE = /(?:^|[\s;&|("'])timeout(?:\.exe)?\s+(?:-\S+\s+)*(\d+(?:\.\d+)?)([smh]?)(?=\s|$)/i;
+const limitOf = (cmd, toMs) => { const m = String(cmd ?? '').match(TIMEOUT_RE); if (m) return Number(m[1]) * ({ m: 60, h: 3600 }[m[2].toLowerCase()] ?? 1) / 60;
+  return Number.isFinite(toMs) && toMs > 0 ? toMs / 60000 : null; };
+const whatOf = cmd => testFiles(cmd).join(' ') || String(cmd ?? '').replace(/^cd\s+\S+\s*(?:&&|;)\s*/, '').slice(0, 80);
+/**
+ * testRunning(work, { procs, pid, now }) -> { min, limit_min, what, from: 'call' | 'process' } | null: the test the run is running now.
+ * 'call' = an open shell call whose command is a test (the transcript has no result for it yet); its limit = the command's
+ * `timeout <s>` arg, else the tool call's own timeout. 'process' = a live process under the run's pid (procs = listProcs' rows) whose
+ * command line is a test (a test started in the background); its limit = a `timeout` on it or on one of its ancestors.
+ */
+export function testRunning(work = workInit(), { procs = null, pid = null, now = Date.now() } = {}) {
+  const open = Object.values(work.open ?? {}).filter(x => x.ts && (x.name === 'Bash' || x.name === 'PowerShell') && TEST_RE.test(String(x.cmd ?? '')))
+    .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))[0];
+  if (open) return { min: mins(now - Date.parse(open.ts)), limit_min: limitOf(open.cmd, open.to), what: whatOf(open.cmd), from: 'call' };
+  if (!Array.isArray(procs) || !Number.isInteger(pid)) return null;
+  const by = new Map(procs.map(p => [p.pid, p])), under = p => { for (let q = p, i = 0; q && i < 64; q = by.get(q.ppid), i++) if (q.pid === pid) return true; return false; };
+  const t = procs.filter(p => p.pid !== pid && TEST_RE.test(String(p.cmd ?? '')) && under(p)).sort((a, b) => (a.created ?? now) - (b.created ?? now))[0];
+  if (!t) return null;
+  let lim = null; for (let q = t, i = 0; q && q.pid !== pid && lim === null && i < 64; q = by.get(q.ppid), i++) lim = limitOf(q.cmd, null);
+  return { min: Number.isFinite(t.created) ? mins(now - t.created) : null, limit_min: lim, what: whatOf(t.cmd), from: 'process' };
+}
+export const testWords = t => `running a test for ${fmtMin(t.min)}${t.limit_min ? `, limit ${fmtMin(t.limit_min)}` : ''}${t.what ? ` (${t.what})` : ''}`;
 
 /** the folds of a stage's sessions (oldest first) as one: a commit of session 1 still counts in session 2; the open calls are the last's */
 export const mergeWork = ws => ws.filter(Boolean).reduce((a, w) => ({ open: w.open, calls: [...a.calls, ...w.calls], commits: [...a.commits, ...w.commits.filter(c => !a.commits.some(x => x.sha === c.sha))],

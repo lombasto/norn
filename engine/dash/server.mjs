@@ -34,6 +34,7 @@ import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/life
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
+import { listProcsAsync } from '../lib/strays.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
@@ -481,6 +482,11 @@ export function createDashboard(o) {
     cpuPrev = t;
     return cpuPct;
   };
+  // a run that reads "stalled" may be in one long background test: its live child processes say so (progress.mjs testRunning). The
+  // listing costs seconds on Windows, so it is never awaited: a stalled run starts a refresh (at most every 30 s) and the next read
+  // of the dash uses it (null at first, like the CPU sample)
+  let procsAt = 0, procsNow = null, procsBusy = false;
+  const procsSample = () => { if (!procsBusy && Date.now() - procsAt >= 30000) { procsBusy = true; listProcsAsync().then(ps => { procsNow = ps; procsAt = Date.now(); procsBusy = false; }); } return procsNow; };
   const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
   const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
   /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
@@ -495,8 +501,14 @@ export function createDashboard(o) {
     const gc = guardChips(p.state), cpu = cpuNow(), out = new Map();
     for (const r of rs) {
       const work = mergeWork(sess.get(r.id).map(x => files.has(x.id) ? cache.get(PKEY + files.get(x.id)) : null));
-      out.set(r.id, runProgress(r, { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
-        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] }));
+      const o = { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
+        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] };
+      let g = runProgress(r, o);
+      if (g.pace.state === 'stalled') {   // the run's pid (its heartbeat) + the process sample: a background test is activity
+        const procs = procsSample(), pid = procs ? await fs.promises.readFile(hbPath(p.state, r.id), 'utf8').then(t => JSON.parse(t).pid, () => null) : null;
+        if (procs && Number.isInteger(pid)) g = runProgress(r, { ...o, procs, pid });
+      }
+      out.set(r.id, g);
     }
     return out;
   }

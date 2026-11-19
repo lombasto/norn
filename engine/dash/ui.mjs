@@ -576,8 +576,8 @@ export const laneKind = l => { const t = l.lane_type, o = l.output; if (!t && !o
   const out = !o ? '' : o.href ? `<a class="lane-out" href="${esc(o.href)}" target="_blank" rel="noopener">${esc(o.text)}</a>` : `<span class="lane-out">${esc(o.text)}</span>`;
   return `<div class="lane-kind small"><span class="chip ${t?.type ? 'idle' : 'warn'}" title="${esc(`type from ${t?.signal ?? '-'}`)}">${esc(t?.type ?? 'no type')}</span>${t?.now ? ` ${chip('running', t.now)}` : ''} ${out}</div>`; };
 // RM-39: a run's progress against its brief (progress.mjs runProgress) - ONE short line on a row: the pace as a chip ("on track" /
-// "slow" / "stalled") and "2 of 5 items done, testing item 3"; its title = why slow
-const PACE_CLS = { 'on track': 'ok', slow: 'warn', stalled: 'bad' };
+// "slow" / "stalled" / "testing": one long test running, not stalled) and "2 of 5 items done, testing item 3"; its title = why slow
+const PACE_CLS = { 'on track': 'ok', testing: 'ok', slow: 'warn', stalled: 'bad' };
 export const progLine = g => !g ? '' : `<div class="prog small" title="${esc(g.slow?.line ?? g.pace?.words ?? '')}">${chip(PACE_CLS[g.pace?.state] ?? 'idle', g.pace?.state ?? '-')} ${esc(g.line)}</div>`;
 const ITEM_MARK = { done: '✓', doing: '…', todo: '·' };
 /** the detail: the checklist with its evidence, the pace, why slow, the alarms in words and the owner's moves */
