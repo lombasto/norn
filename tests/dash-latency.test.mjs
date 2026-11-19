@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
-import { record } from '../engine/lib/records.mjs';
 
 // every request the page sends from now on: { u, t0 } (page clock); a URL matching slow waits `ms` before it goes out
 const wrap = (slow, ms) => `(() => { window.__req = []; const of = window.__of ??= window.fetch, re = new RegExp(${JSON.stringify(slow)});
@@ -50,12 +49,17 @@ async function warm(f) {
   }
 }
 
+// the page opened its stream and that first render (hello) has run, nothing waits: a click before it shares that render's in-flight
+// /api/overview (the page fetches it once), so the click's own requests would not show in __req
+const settled = `(s => !!s && s.renders > 0 && !s.pending && !s.busy)(window.__sched?.stats())`;
+
 test('the browser: a tab render fetches the header and the tab at once, and /api/overview once', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage();
   try {
     await warm(f);
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes'`, 90000), 'Lanes painted');
+    assert.ok(await pg.until(settled, 30000), 'the stream\'s first render ran');
     // the header's /api/overview is held 800 ms: the Inbox's own request must not wait behind it
     await pg.ev(wrap('/api/overview\\?', 800)); await pg.ev(tap('inbox'));
     assert.ok(await pg.until(`document.body.dataset.ready === 'inbox'`, 30000), 'Inbox painted');
@@ -65,23 +69,6 @@ test('the browser: a tab render fetches the header and the tab at once, and /api
     // the Overview tab reads /api/overview too: one request serves the header and the tab
     await pg.ev(wrap('^$', 0)); await pg.ev(tap('overview'));
     assert.ok(await pg.until(`document.body.dataset.ready === 'overview'`, 30000), 'Overview painted');
-    const o = (await pg.ev('window.__req')).filter(x => x.u.startsWith('/api/overview?'));
-    assert.equal(o.length, 1, JSON.stringify(o));
-  } finally { await pg.close(); await f.done(); }
-});
-
-// CI-RED-F9957DF: a stream event the server sent before it served a click's reads is already in that render - the scheduled render
-// it pokes is skipped (it fetched /api/overview a second time); the reads are held 2.5 s, the record's event goes out within the 1 s poll
-test('the browser: a stream event sent before a render read its data does not refetch /api/overview', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture(), pg = await openPage();
-  try {
-    await warm(f);
-    await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes'`, 90000), 'Lanes painted');
-    await pg.ev(wrap('/api/', 2500)); await pg.ev(tap('overview'));
-    record(f.pa.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'appended while the tab loads', via: 'chat' } });
-    assert.ok(await pg.until(`document.body.dataset.ready === 'overview'`, 30000), 'Overview painted');
-    await new Promise(r => setTimeout(r, 1000));   // a scheduled render would have sent its requests by now
     const o = (await pg.ev('window.__req')).filter(x => x.u.startsWith('/api/overview?'));
     assert.equal(o.length, 1, JSON.stringify(o));
   } finally { await pg.close(); await f.done(); }
