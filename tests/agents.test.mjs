@@ -129,17 +129,18 @@ test('lanes: no lane without a LANE record; archived only with all; exited / los
   const st = loadState(state);
   const v = lanesView(st, { now: Date.now(), hbAge: id => (id === 'RUN-3' ? 10 * 60000 : 0) });
   assert.deepEqual(v.map(l => l.name).sort(), ['gen', 'idle', 'parkd', 'render']);
-  const by = Object.fromEntries(v.map(l => [l.name, l.text]));
-  assert.equal(by.gen, 'waiting: auto-resume refused (cap 8/8)');
-  assert.equal(by.idle, 'lost');
-  assert.equal(by.parkd, 'parked by Q-7');
-  assert.equal(by.render, 'no runs');
+  const by = Object.fromEntries(v.map(l => [l.name, `${l.status.state}: ${l.status.why}`]));   // RM-21 S1: laneState
+  assert.equal(by.gen, 'stopped: handed off; the auto-resume was refused (cap 8/8)');
+  assert.equal(by.idle, 'stopped: not responding, no heartbeat for 10 min');
+  assert.equal(by.parkd, 'parked: Q-7 needs your answer');
+  assert.equal(by.render, 'idle: no run yet');
   assert.ok(lanesView(st, { all: true }).some(l => l.name === 'gone'));
   assert.ok(!lanesView(st, { all: true }).some(l => l.name === 'phantom'));
-  for (const [outcome, extra, want] of [['done', {}, 'exited: DONE'], ['stopped', { why: 'red test' }, 'exited: STOPPED: red test'], ['no-result', {}, 'exited: no-result']]) {
+  for (const [outcome, extra, want] of [['done', {}, 'idle: RUN-1 done; nothing follows'], ['stopped', { why: 'red test' }, 'stopped: red test'], ['no-result', {}, 'stopped: RUN-1 ended with no result']]) {
     const s2 = laneState();
     record(s2, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen' } });
     record(s2, { kind: 'run', ev: 'end', id: 'RUN-1', by: 'launcher', data: { exit: 0, outcome, ...extra } });
-    assert.equal(lanesView(loadState(s2)).find(l => l.name === 'gen').text, want);
+    const st2 = lanesView(loadState(s2)).find(l => l.name === 'gen').status;
+    assert.equal(`${st2.state}: ${st2.why}`, want);
   }
 });

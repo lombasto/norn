@@ -93,7 +93,7 @@ test('every tab renders with fixture state: ids from records / runs / transcript
     const has = (tab, ...ids) => { for (const id of ids) assert.ok(out[tab].includes(id), `${tab} shows ${id}`); };
     has('overview', 'id="needs"', 'id="running"', 'id="burn"', 'Q-1', 'L:gen', 'RUN-1', 'render', 'RUN-2', '96.0 %', 'of 95 % guard', 'DEC-1', 'p30');
     has('inbox', 'id="q-Q-1"', 'Choose (a) - recommended', 'Choose (b)', 'RUN-1', 'L:gen', 'STOPPED');
-    has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'parked by Q-1', 'exited: STOPPED: red test', 'codex-sol', 'RUN-2');
+    has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'Q-1 needs your answer', '>stopped</span> <span class="state-why">red test', 'codex-sol', 'RUN-2');
     has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'kestrel-implementer', '65k', 'gpt-5.4', '60,559');
     has('records', 'id="rec-DEC-1"', 'id="rec-DIR-1"', 'keep going', 'in-force', 'active');
     has('docs', 'id="docf-doc-0"', 'id="docf-doc-1"', 'Plan', 'missing', 'Project docs');   // META-UX-BUILD S3: the list; the file is its own part (docs.test)

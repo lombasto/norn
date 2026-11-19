@@ -8,6 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { lanesView, sortLanes } from '../engine/lib/lanes.mjs';
+import { queueRun } from '../engine/lib/runs.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
@@ -83,6 +84,26 @@ test('the browser: the filter chips survive a live re-render and a reload (the U
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && document.querySelector('[data-show=old]')?.getAttribute('aria-pressed') === 'true'`, 90000), 'Old is still on after a reload');
     await pg.ev(`document.querySelector('[data-act=lane-show][data-show=active]').click()`);
     assert.ok(await pg.until(`document.querySelector('[data-show=active]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-seabed')`, 30000), 'Active off hides the active lanes');
+  } finally { await pg.close(); await f.done(); }
+});
+
+test('the browser (RM-21 S1): a queued lane shows its one reason under its name at 390 px, live from the stream; no "queued", no sideways scroll', { skip: skipWhy, timeout: 240000 }, async () => {
+  const f = await fixture({ dash: { planTtlMs: 300, deliverablesTtlMs: 1000, streamPulseMs: 300 } }), pg = await openPage([390, 844]);
+  try {
+    await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+    await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-seabed .lane-state')`, 90000), 'Lanes shows seabed with its state');
+    assert.match(await pg.ev(`document.querySelector('#lane-seabed .lane-state').textContent`), /^stopped red test$/, 'a stopped lane: its why, not "exited: STOPPED"');
+    // a queue record written after the load: the cap is 0, so the fill walk (the plan child) says it waits for a Claude slot
+    const t = mkTmp('rm21-q-'), budget_file = path.join(t, 'budget.json'), wt = path.join(t, 'wt'), brief = path.join(t, 'b.md');
+    fs.mkdirSync(wt); fs.writeFileSync(budget_file, JSON.stringify({ max_claude_workers: 0 })); fs.writeFileSync(brief, 'mode: done\n');
+    queueRun({ state: f.pa.state, locksDir: path.join(t, 'locks'), executor: 'fake', lane: 'seabed', worktree: wt, notes: path.join(t, 'NOTES.md'), brief, budget_file, policy: { auto_resume_max: 0 }, tick: null });
+    assert.ok(await pg.until(`/Waiting for a free Claude slot \\(\\d+ \\/ 0\\)/.test(document.querySelector('#lane-seabed .lane-state')?.textContent ?? '')`, 90000), 'the row\'s reason changes with no reload');
+    assert.match(await pg.ev(`document.querySelector('#lane-seabed .lane-state .chip').textContent`), /^waiting$/);
+    assert.doesNotMatch(await pg.ev(`document.querySelector('#lane-seabed').textContent`), /queued/, 'the word "queued" left the row');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Lanes at 390 px');
+    const box = JSON.parse(await pg.ev(`JSON.stringify(document.querySelector('#lane-seabed .state-why').getBoundingClientRect())`));
+    assert.ok(box.left >= 0 && box.right <= 390 && box.width > 0, `the reason is inside the viewport width: ${JSON.stringify(box)}`);
   } finally { await pg.close(); await f.done(); }
 });
 

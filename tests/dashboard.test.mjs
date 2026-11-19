@@ -73,8 +73,8 @@ test('each tab has a data endpoint from records / runs / transcripts', async () 
   try {
     const lanes = (await f.get('/api/lanes')).data.lanes, by = Object.fromEntries(lanes.map(l => [l.name, l]));
     assert.deepEqual(Object.keys(by).sort(), ['gen', 'render', 'seabed'], 'only LANE records');
-    assert.equal(by.render.executor, 'codex-sol'); assert.match(by.render.text, /^running codex-sol .*\/ budget 90$/);
-    assert.equal(by.gen.text, 'parked by Q-1'); assert.equal(by.seabed.text, 'exited: STOPPED: red test');
+    assert.equal(by.render.executor, 'codex-sol'); assert.equal(by.render.status.state, 'running'); assert.match(by.render.status.why, /^codex-sol .*\/ budget 90$/);
+    assert.deepEqual(by.gen.status, { state: 'parked', why: 'Q-1 needs your answer: choose a relief model' }); assert.deepEqual(by.seabed.status, { state: 'stopped', why: 'red test' });
     const inbox = (await f.get('/api/inbox')).data.items;
     // META-TEND P4: + one model-advice card - the engine default planning effort (xhigh) is above the vendor's start (high)
     assert.deepEqual(inbox.map(i => i.type === 'advice' ? `advice ${i.cls} ${i.check}` : `${i.type} ${i.id}`).sort(), ['advice planning effort-above-start', 'parked L:gen', 'question Q-1', 'unreviewed RUN-1']);

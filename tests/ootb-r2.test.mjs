@@ -113,9 +113,9 @@ test('N-5 an auth exit: the CLI line names the login command; Overview counts a 
     assert.deepEqual(row.runs, ['RUN-2'], 'the re-queued run is the one held');
     assert.ok((await get('/api/inbox')).items.some(i => i.type === 'login'), 'the inbox carries it too');
     const lane = (await get('/api/lanes')).lanes.find(l => l.name === 'tide');
-    assert.match(lane.text, /auth/);
-    assert.doesNotMatch(lane.text, /no-result/);
-    assert.match(lane.text, /claude auth login/);
+    assert.equal(lane.status.state, 'waiting');   // RM-21 S1: laneState - the re-queued run waits for the login
+    assert.doesNotMatch(lane.status.why, /no-result|no result/);
+    assert.match(lane.status.why, /claude auth login/);
   } finally { await app.close(); }
 });
 
