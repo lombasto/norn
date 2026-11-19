@@ -1698,8 +1698,8 @@ data: ${JSON.stringify(l)}
         }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
-          const vs = pick(url, { all: true }).map(deliverablesOf);
-          return send(200, { rows: vs.flatMap(v => v.rows), pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
+          const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);
+          return send(200, { rows: vs.flatMap(v => v.rows), backlog: backlogOf(ps), pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
         }
         if (route === '/api/records') return send(200, records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));

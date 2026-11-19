@@ -19,6 +19,7 @@ import path from 'node:path';
 import { loadState, record, readEvents, recordsFile, fold, idNum as runNum } from './records.mjs';
 import { makeEval } from './after.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
+import { mergeLatch } from './dlvmerge.mjs';
 import { readJsonS } from './fsnap.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
@@ -80,7 +81,17 @@ export const laneRulesFile = state => path.join(state, 'lane-rules.json');
 export function laneHooks(state) {
   const c = readJsonS(laneRulesFile(state)), ps = readJsonS(lanePathsFile(state))?.paths || {};
   const has = k => (l, r) => !!r.landed || !!c?.[k]?.includes(l);
-  return { landed: has('landed'), merged: has('merged'), path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
+  // OVERVIEW-TRUTH (5): a lane whose work is on main is shipped (the Lanes page takes it off the active list): every deliverable of it
+  // merged (the latched merge: a merged PR, git, the content check, the owner's ruling), its path to main merged, or a landed ruling
+  const dl = (() => { try { return Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable' && d.state !== 'superseded'); } catch { return []; } })();
+  const shipped = (l, ...runs) => {
+    const mine = dl.filter(d => d.data?.lane === l), m = mine.map(d => [d, mergeLatch(d)?.merged]);
+    if (mine.length && m.every(([, x]) => x)) return m.map(([d, x]) => `${d.id} ${x.data?.pr ? `PR #${x.data.pr}` : x.data?.how === 'ruling' ? 'ruled merged' : 'on main'}`).join(', ');
+    if (ps[l]?.state === 'merged') return `${ps[l].branch ?? 'its branch'} on main`;
+    const r = runs.find(x => x?.landed);
+    return r ? `landed: ${r.landed.why ?? 'ruled landed'}` : null;
+  };
+  return { landed: has('landed'), merged: has('merged'), shipped, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
 }
 
 /** the gate probe: a lane finding the check-in must act on (idle / stopped, from the facts the gate folded at that time) = `lanes:<rule>:L:x`, a MAJOR wake once */

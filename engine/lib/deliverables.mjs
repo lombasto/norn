@@ -10,6 +10,8 @@ import { makeGit } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv } from './dlvmerge.mjs';
+import { whyNotMerged } from './dlvwhy.mjs';
+import { queueOf } from './runs.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
@@ -79,7 +81,8 @@ function writeCache(stateDir, cache, before) {
  * One row per deliverable. opts: { stateDir, project, now (ms), git (makeGit()), questions (records items, default loaded) }
  * Row: id, record_state open|parked, state done|merged|installed|unknown (cannot tell), state_word, subject (the tip's), merged_how pr|git|equivalent|ruling,
  * merge_commit, merged_at, merge_pr, merge_latched, unknown_why, ruling (the open Q-n asking the owner), target, at_target, repo, branch, lane, run, delivers, tip,
- * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due.
+ * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due,
+ * why_not (OVERVIEW-TRUTH 2, dlvwhy.mjs whyNotMerged: a DONE row's reason it is not merged, { kind, text, warn, run?, url? }) | null.
  */
 export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null } = {}) {
   const t0 = Date.now();
@@ -127,7 +130,9 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     };
   });
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
-  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r) }));
+  const st = (() => { try { return loadState(stateDir); } catch { return { items: {} }; } })(), queue = queueOf(Object.values(st.items));
+  const readNotes = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r), why_not: whyNotMerged(r, { items: st.items, queue, readNotes }) }));
   scanner.finish();
   writeCache(stateDir, cache, before);
   rows.sort((a, b) => b.days - a.days);
@@ -273,22 +278,22 @@ export function onRunDone(stateDir, runId, { now, git = makeGit() } = {}) {
 // MERGE-FIRST (4): the merge backlog = the finished work not on its way to main yet - DONE, not merged, open (not parked, not
 // superseded) and no PR opened. The Lanes, Plan and Overview pages show it; over policy.merge.backlog_max the digest tells the check-in
 // to land work before it starts new lanes (digest row 0c).
-/** -> { n, oldest_h, ids, max, over (n > max), text ("merge backlog: 4, oldest 13h": the one line every page shows) }; max = backlogMax(policy) */
+/** -> { n, oldest_h, ids, max, over (n > max), text ("done, not merged: 4 (oldest 13h)": the one count every page shows) }; max = backlogMax(policy) */
 export function mergeBacklog(rows = [], { now = Date.now(), max = POLICY_DEFAULTS.merge.backlog_max } = {}) {
   const b = rows.filter(r => r.state === 'done' && r.record_state === 'open' && !r.superseded && !r.pr);
   const oldest = Math.min(...b.map(r => Date.parse(r.done_utc)).filter(Number.isFinite));
   const oldest_h = Number.isFinite(oldest) ? +Math.max(0, (now - oldest) / 3600e3).toFixed(1) : null;
   return { n: b.length, oldest_h, ids: b.map(r => r.id), max, over: b.length > max,
-    text: `merge backlog: ${b.length}${b.length && oldest_h !== null ? `, oldest ${oldest_h < 1 ? '<1' : Math.round(oldest_h)}h` : ''}` };
+    text: `done, not merged: ${b.length}${b.length && oldest_h !== null ? ` (oldest ${oldest_h < 1 ? '<1' : Math.round(oldest_h)}h)` : ''}` };
 }
 export const backlogMax = policy => policy?.merge?.backlog_max ?? POLICY_DEFAULTS.merge.backlog_max;
 export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean'
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
-// one listing line: id, state, age, behind main, native, branch, its PR, how it merged / why Norn cannot tell, park / question, merge
-// rehearsal, what it delivers
+// one listing line: id, state, age, behind main, native, branch, its PR, how it merged / why Norn cannot tell, why it is not merged,
+// park / question, merge rehearsal, what it delivers
 export function formatDeliverable(r) {
   const how = r.state === 'unknown' ? `${r.state_word}${r.ruling ? ` (ruling ${r.ruling})` : ''}` : r.merged_how === 'equivalent' || r.merged_how === 'ruling' ? `merged (${r.merged_how})` : '';
-  const flag = [how, r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : ''].filter(Boolean).join(' | ');
+  const flag = [how, r.why_not?.text, r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : ''].filter(Boolean).join(' | ');
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
     pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');

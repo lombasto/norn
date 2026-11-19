@@ -68,6 +68,8 @@ export function stateOf(text) {
   if (t.startsWith('killed')) return ['bad', 'killed'];
   if (t.startsWith('waiting')) return ['warn', 'waiting'];
   if (t === 'no runs') return ['idle', 'no runs'];
+  if (t.startsWith('shipped')) return ['done', 'shipped'];   // OVERVIEW-TRUTH (5): the lane's work is on main
+  if (t.startsWith('withdrawn')) return ['idle', 'withdrawn'];
   return ['idle', t || '-'];
 }
 const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
@@ -421,7 +423,7 @@ function overview(d, ctx) {
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}${r.kind === 'decision' ? decMark(r) : ''}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}${backlogLine(o.backlog)}<div class="glance">
+  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
@@ -592,9 +594,9 @@ export function laneCard(c, label) {
     ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
     <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
 }
-// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
+// MERGE-FIRST (4): "done, not merged: N (oldest Xh)" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
 // policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
-export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
+export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">done, not merged: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
@@ -1009,18 +1011,27 @@ const dlvChip = r => r.record_state === 'parked'
 const onMain = r => r.state === 'merged' || r.state === 'installed';
 // DLV-MERGED-TRUTH: why Norn cannot tell, and the one Inbox ruling that settles it
 const dlvWhy = r => r.state === 'unknown' ? `<div class="small mute">${esc(r.unknown_why ?? '')}${r.ruling ? ` · ruling <a href="#" data-rid="${esc(r.ruling)}">${esc(r.ruling)}</a> in the Inbox` : ' · the next check-in asks you'}</div>` : '';
+// OVERVIEW-TRUTH (2): why a DONE row is not merged (deliverablesView why_not, dlvwhy.mjs), in words with its link: the run opens in the
+// live feed drawer, the PR on GitHub; 'no merge queued' and a stopped merge are warn chips
+const whyLink = (w, r) => w.url ? ` <a href="${esc(w.url)}" target="_blank" rel="noopener">open</a>`
+  : w.run ? ` <span class="link" role="button" tabindex="0" data-feed="${esc(w.run)}" data-project="${esc(r.project)}" title="Open ${esc(w.run)} in the live feed">${esc(w.run)}</span>` : '';
+export const dlvWhyNot = r => (!r.why_not ? '' : `<div class="small dlvwhy" data-why="${esc(r.why_not.kind)}">${r.why_not.warn ? chip('warn', r.why_not.text) : `<span class="mute">${esc(r.why_not.text)}</span>`}${whyLink(r.why_not, r)}</div>`);
 const dlvNative = r => (r.native === true ? chip('bad', 'native') : r.native === false ? '<span class="small mute">no</span>' : '<span class="small mute">?</span>');
 export function deliverablesCard(dl, ctx = {}) {
   const rows = (dl?.rows || []).filter(r => !r.at_target).sort((a, b) => (b.days ?? 0) - (a.days ?? 0));
   const body = rows.map(r => `<tr id="dlv-${esc(r.id)}"><td><b>${projTag(ctx, r.project)}${esc(r.branch)}</b><div class="small mute"><span class="id">${esc(r.id)}</span> ${esc(r.lane ?? '')}</div></td>
-    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}</td>
+    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}${dlvWhyNot(r)}</td>
     <td class="mono">${fin(r.days) ? r.days.toFixed(1) + ' d' : '-'}</td>
     <td class="mono">${fin(r.behind) ? r.behind + ' behind' : onMain(r) ? 'on main' : '-'}</td>
     <td>${dlvNative(r)}</td>
     <td>${dlvChip(r)}${r.due ? ' ' + chip('open', 'question due') : r.asked ? ` <span class="small mute">asked ${esc(r.asked)}</span>` : ''}</td>
     <td><button data-dlv="${esc(r.id)}" data-project="${esc(r.project)}">Open</button></td></tr>`).join('');
+  // OVERVIEW-TRUTH (3): the heading's count is mergeBacklog's (deliverables.mjs, server backlogOf) - the one count Lanes and Plan show too
+  const b = dl?.backlog, k = n => rows.filter(n).length, pr = k(r => r.state === 'done' && r.pr), mi = k(r => r.state === 'merged');
+  const head = b && !b.pending ? `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute small">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}` : '';
   if (dl?.pending && !rows.length) return `<section class="card" id="deliverables"><h2>Done, not installed <b>-</b></h2><div class="small mute">reading git and the install receipts ... (the next refresh shows them)</div></section>`;
-  return `<section class="card" id="deliverables"><h2>Done, not installed <b>${rows.length}</b> <span class="mute small">oldest first · state from git + the last install receipt</span></h2>
+  return `<section class="card" id="deliverables"><h2>Done, not installed <b>${rows.length}</b> <span class="mute small">this project's deliverables not at their target, oldest first · state from git, the PR and the last install receipt</span></h2>
+   ${head || pr || mi ? `<p class="small" id="dlv-counts">${head}${pr ? ` <span class="mute">· ${int(pr)} with a PR open</span>` : ''}${mi ? ` <span class="mute">· ${int(mi)} merged, not installed</span>` : ''}</p>` : ''}
    ${dl?.error ? `<div class="small" style="color:var(--bad)">${esc(dl.error)}</div>` : ''}
    ${rows.length ? `<table><thead><tr><th>branch</th><th>delivers</th><th>done</th><th>vs main</th><th>native</th><th>state</th><th></th></tr></thead><tbody>${body}</tbody></table>`
     : `<div class="item">${art(ctx, 'empty-all-delivered', 'empty')}${chip('ok', 'all clear')}<span>Nothing done-not-installed</span></div>`}</section>`;
@@ -1041,7 +1052,7 @@ export function renderDeliverable(r, ctx = {}) {
    ${r.state === 'unknown' ? kv('merged?', `${chip('needs', 'cannot tell')} ${dlvWhy(r)}`) : ''}
    ${r.rehearsal ? kv('merge rehearsal', r.rehearsal.clean ? chip('ok', 'clean') : `${chip('bad', 'conflict')}<div class="mono small">${r.rehearsal.files.map(esc).join('<br>')}</div>`) : ''}
    ${kv('park', r.park ? `${chip('parked', `parked ${Math.floor(r.park.days)} d`)} ${esc(r.park.why)} <span class="small mute">by ${esc(r.park.by ?? '-')}${r.park.expired ? ' · expired: back on the list' : ''}</span>` : '<span class="mute">not parked</span>')}
-   ${kv('question', r.asked ? `<a href="#" data-rid="${esc(r.asked)}">${esc(r.asked)}</a> (one per deliverable)` : r.due ? chip('open', 'question due: the next check-in asks') : '<span class="mute">none</span>')}</div>
+   ${r.why_not ? kv('not merged', dlvWhyNot(r)) : ''}${kv('question', r.asked ? `<a href="#" data-rid="${esc(r.asked)}">${esc(r.asked)}</a> (one per deliverable)` : r.due ? chip('open', 'question due: the next check-in asks') : '<span class="mute">none</span>')}</div>
    <h3 style="margin:14px 0 4px">Move it</h3><div class="mono small" style="white-space:pre-wrap">norn deliverables park ${esc(r.id)} --why "&lt;the owner's reason&gt;"
 norn deliverables unpark ${esc(r.id)}
 norn deliverables ask ${esc(r.id)}      (the check-in: one question per deliverable)${r.resolve ? `
