@@ -1,35 +1,80 @@
-// Truthful lanes (META-GENERAL-DESIGN 5, 12-S6): the lane list is LANE records only (no folder scan); a lane's state text is its
-// latest RUN on that lane, any executor. Pure over a loadState() fold; heartbeat age comes from the caller.
+// Truthful lanes (META-GENERAL-DESIGN 5, 12-S6): the lane list is LANE records only (no folder scan); a lane's state (laneState, RM-21 S1)
+// comes from its runs, any executor, the fill walk's row of its queued run and its deliverables. Pure over a loadState() fold;
+// heartbeat age, the walk rows and the deliverable rows come from the caller.
 import { STALE_MS } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
+import { isMergeStage } from './usageguard.mjs';
+import { firstReason } from './waitwords.mjs';
 
 const runNum = id => Number(String(id).slice(4));
 
-function runText(r, { now, hbAge, staleMs, items = {} }) {
-  const d = r.data || {}, end = r.end || {};
-  // OOTB-R2 N-5: a queued run is queued (it has no end), and one re-queued after an auth exit says it waits for the login
-  if (r.state === 'queued' || r.state === 'claimed') {
-    const prev = items[d.requeue_of];
-    if (prev?.end?.outcome === 'auth' && prev.end.auth_class === 'vendor') return `queued: held for a vendor outage (${prev.id} exited: auth) - resumes by itself, no login needed`;
-    return prev?.end?.outcome === 'auth' ? `queued: held for login (${prev.id} exited: auth) - run ${loginCommand(d.executor)}` : r.state;
+// ---------- RM-21 S1 (CAPACITY-UX 4.4): a lane has one of six states, each with one reason (`why`), and every page reads it ----------
+//   running   a worker is alive now (fresh heartbeat)            why: executor model effort, minutes, budget
+//   waiting   its next run is queued, or its finished work waits to merge   why: the first reason of the fill walk row (waitwords.mjs)
+//   parked    the lane waits for the owner                       why: the question's id AND text
+//   stopped   the last run ended without finishing and nothing is queued; includes a run with no heartbeat (not responding)
+//   shipped   no run is running or queued, and the lane's newest work run (or a later run) carries a `landed` record, or the lane's
+//             newest deliverable is merged
+//   idle      nothing ran, or the last run is done and nothing follows
+export const LANE_STATES = ['running', 'waiting', 'parked', 'stopped', 'shipped', 'idle'];
+const LIVE = ['running', 'queued', 'claimed'];
+const minsAgo = (ms, now) => Math.max(0, Math.round((now - ms) / 60000));
+const isLanded = r => (r.history || []).some(h => h.ev === 'landed');
+const dlvNum = d => Number(String(d.id).slice(4)) || 0;
+
+/**
+ * laneState(lane: the LANE fold item, run: its latest run (or null), ctx) -> { state, why }.
+ * ctx: { items (the fold's items), runs (the lane's runs, newest first; default: run alone), now, hbAge (runId, run) -> ms, staleMs,
+ *   walk (Map run id -> its fill walk row, runs.readiness), deliverables (the lane's deliverable rows), talked / wrote (handoffOf's hooks),
+ *   label (run id -> name, the reason's words) }
+ */
+export function laneState(lane, run, { items = {}, runs = run ? [run] : [], now = Date.now(), hbAge = null, staleMs = STALE_MS, walk = new Map(), deliverables = [], talked, wrote,
+  label = id => (items[id] ? runName(items[id]) ?? id : id) } = {}) {
+  const S = (state, why) => ({ state, why });
+  if (lane?.state === 'parked') {
+    const park = [...lane.history].reverse().find(h => h.ev === 'park')?.data || {}, q = park.q ? items[park.q] : null;
+    return S('parked', park.q ? `${park.q} needs your answer${q?.data?.title ? `: ${q.data.title}` : ''}` : park.why || 'parked by the controller');
   }
-  if (r.state === 'running') {
-    if (hbAge && hbAge(r.id, r) > staleMs) return 'lost';
-    const min = Math.max(0, Math.round((now - Date.parse(r.created)) / 60000));
-    const who = [d.executor, d.model, d.effort].filter(Boolean).join(' ');
-    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '');
+  const live = runs.find(r => r.state === 'running');
+  if (live) {
+    const age = hbAge ? hbAge(live.id, live) : 0;
+    if (age > staleMs) return S('stopped', Number.isFinite(age) ? `not responding, no heartbeat for ${minsAgo(now - age, now)} min` : 'not responding, no heartbeat');
+    const d = live.data || {}, who = [d.executor, d.model, d.effort].filter(Boolean).join(' ');
+    return S('running', `${who} for ${minsAgo(Date.parse(live.created), now)} min` + (d.budget_min ? ` / budget ${d.budget_min}` : ''));
   }
-  if (r.state === 'lost') return 'lost';
-  if (r.state === 'killed') return 'killed' + (r.kill?.why ? `: ${r.kill.why}` : '');
-  if (r.resume?.refused) return `waiting: auto-resume refused (${r.resume.refused})`;
+  const queued = [...runs].reverse().find(r => r.state === 'queued' || r.state === 'claimed');
+  if (queued) {
+    const why = firstReason(walk.get(queued.id), { label, now });
+    if (why) return S('waiting', why.text + (why.more ? ` (+ ${why.more} more)` : ''));
+    // no walk row yet (the walk runs in a child process): the one reason the records hold - a re-queue after a login exit
+    const prev = items[queued.data?.requeue_of];
+    if (prev?.end?.outcome === 'auth') return S('waiting', prev.end.auth_class === 'vendor' ? `held for a vendor outage (${prev.id} exited: auth); resumes by itself, no login needed`
+      : `held for login (${prev.id} exited: auth); run ${loginCommand(queued.data.executor)}`);
+    return S('waiting', `${queued.state === 'claimed' ? 'claimed by another machine' : 'in the queue'}; the fill has not checked it yet`);
+  }
+  if (!run) return S('idle', 'no run yet');
+  const ho = handoffOf(run, items, { talked, wrote, now });
+  if (ho?.phase === 'pending') return S('waiting', ho.text);
+  // shipped: the newest work run (not a MERGE) or a later run carries `landed`, or the newest deliverable is merged
+  const work = runs.findIndex(r => !isMergeStage(r.data?.stage)), landed = runs.slice(0, work < 0 ? runs.length : work + 1).find(isLanded);
+  const dlv = deliverables.filter(x => !x.superseded).sort((a, b) => dlvNum(b) - dlvNum(a))[0] ?? null;
+  if (landed) return S('shipped', `${landed.id} landed on main${landed.history.findLast(h => h.ev === 'landed')?.data?.why ? ` (${landed.history.findLast(h => h.ev === 'landed').data.why})` : ''}`);
+  if (dlv && dlv.state !== 'done') return S('shipped', `${dlv.id} is on main${dlv.pr?.number ? ` (PR #${dlv.pr.number})` : ''}`);
+  const d = run.data || {}, end = run.end || {};
+  if (run.state === 'lost') return S('stopped', `not responding${run.lost?.why ? `: ${run.lost.why}` : ''}`);
+  if (run.state === 'killed') return S('stopped', `killed${run.kill?.why ? `: ${run.kill.why}` : ''}`);
+  if (run.state === 'withdrawn') return S('stopped', `withdrawn${run.withdraw?.why ? `: ${run.withdraw.why}` : ''}`);
+  if (run.resume?.refused) return S('stopped', `handed off; the auto-resume was refused (${run.resume.refused})`);
   const o = end.outcome;
-  if (o === 'done') return 'exited: DONE';
-  if (o === 'stopped') return `exited: STOPPED: ${end.why ?? ''}`.trimEnd();
-  if (o === 'handoff') return 'exited: HANDOFF' + (r.resume?.next ? ` -> ${r.resume.next}` : '');
-  if (o === 'crash') return `exited: crash (exit ${end.exit ?? '?'})`;
-  if (o === 'auth') return end.auth_class === 'vendor' ? 'exited: auth - a vendor outage (no login needed)' : `exited: auth - run ${loginCommand(d.executor)}`;
-  return `exited: ${o ?? 'no-result'}`;
+  if (o === 'done') return dlv?.state === 'done' ? S('waiting', `finished; ${dlv.id} waits to merge`) : S('idle', `${run.id} done; nothing follows`);
+  if (o === 'stopped') return S('stopped', end.why || `${run.id} stopped without a why`);
+  if (o === 'handoff') return run.resume?.next ? S('idle', `handed off to ${run.resume.next}`) : S('stopped', 'handed off; no resume follows');
+  if (o === 'nudged') return S('stopped', 'stopped by a nudge');
+  if (o === 'crash') return S('stopped', `crashed (exit ${end.exit ?? '?'})`);
+  if (o === 'limit') return S('stopped', `out of quota${end.reset ? ` until ${end.reset}` : ''}`);
+  if (o === 'auth') return S('stopped', end.auth_class === 'vendor' ? 'a vendor outage (no login needed)' : `login down - run ${loginCommand(d.executor)}`);
+  return S('stopped', `${run.id} ended with no result${end.why ? `: ${end.why}` : ''}`);
 }
 
 // ---------- the live hand-off state (one home: every page reads the `handoff` field this builds, never its own guess) ----------
@@ -55,7 +100,7 @@ const handoffResume = (r, items) => { const p = items[r?.data?.resume_of], d = r
   return !!p && p.end?.outcome === 'handoff' && (p.resume?.next ?? r.id) === r.id && !d.slop_of && !d.dod_of && !d.nudge; };
 // text = the full words; short = the same for a map node / label (no room for the full line)
 export const handoffWords = (h, short = false) => (!h ? null : h.phase === 'resumed' ? (short ? `resumed (session ${h.session})` : `resumed after hand-off (session ${h.session})`)
-  : `${short ? 'hand-off:' : 'hand-off in progress -'} session ${h.session} ${h.step === 'closing' ? (short ? 'next' : 'next (the last session is closing)') : h.step === 'queued' ? 'queued' : 'starting'}`);
+  : `${short ? 'hand-off:' : 'hand-off in progress -'} session ${h.session} ${h.step === 'closing' ? (short ? 'next' : 'next (the last session is closing)') : h.step === 'queued' ? 'waiting' : 'starting'}`);   // RM-21 S1: a queued run reads waiting
 /** r (a fold run) -> { phase: pending | resumed, step, session, run (the tip), from (the run that handed off), text, short } | null; see above */
 export function handoffOf(r, items, { talked = () => true, wrote = () => false, now = Date.now(), waitMs = HANDOFF_WAIT_MS } = {}) {
   if (!r || r.kind !== 'run') return null;
@@ -71,39 +116,37 @@ export function handoffOf(r, items, { talked = () => true, wrote = () => false, 
   return talked(tip.id) ? out('resumed', null, sessionOf(tip), from) : out('pending', 'starting', sessionOf(tip), from);
 }
 
-// RM-19 S1: the Lanes page shows what is live first - running, then needs you (parked, stopped, lost, a hand-off with no resume ...),
-// then queued, then done, then archived; newest first in each group (row.at). Done = the lane record is done or the latest run
-// exited DONE; an old done lane (ended over oldDays ago) is faded and reads stopped.
+// RM-19 S1: the Lanes page shows what is live first - running, then needs you (parked, stopped), then queued (waiting), then done
+// (shipped, idle after a DONE run, finished work waiting to merge), then archived; newest first in each group (row.at). The group
+// follows the lane's state (laneState); an old done lane (ended over oldDays ago) is faded.
 export const LANE_GROUPS = ['running', 'needs', 'queued', 'done', 'archived'];
-function laneGroup(l, r) {
+function laneGroup(l, status, r) {
   if (l.state === 'archived') return 'archived';
-  if (l.state === 'parked') return 'needs';   // parked = waiting on the owner, whatever its last run said
-  if (r?.state === 'running') return 'running';
-  if (r?.state === 'queued' || r?.state === 'claimed' || (!r && l.state === 'active')) return 'queued';
-  if (l.state === 'done' || (r?.state === 'exited' && r.end?.outcome === 'done')) return 'done';
-  return 'needs';
+  const doneRun = r?.state === 'exited' && r.end?.outcome === 'done';
+  return { running: 'running', parked: 'needs', stopped: 'needs', shipped: 'done',
+    waiting: doneRun ? 'done' : 'queued', idle: l.state === 'done' || doneRun ? 'done' : r ? 'needs' : 'queued' }[status.state];
 }
 export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group) - LANE_GROUPS.indexOf(b.group) || String(b.at ?? '').localeCompare(String(a.at ?? '')));
 
 /**
  * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
- * executor, text, handoff, group, created, ended, at, old }.
+ * executor, status (laneState: { state, why }), handoff, group, created, ended, at, old }.
  * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs, oldDays (policy.done_lanes.old_days),
- *   talked / wrote (handoffOf's hooks: the row's `handoff`) }
+ *   talked / wrote (handoffOf's hooks: the row's `handoff`), walk (Map run id -> fill walk row), deliverables (deliverable rows, any lane) }
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote } = {}) {
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote, walk = new Map(), deliverables = [] } = {}) {
   const items = Object.values(st.items);
-  const latest = {};
-  for (const r of items) if (r.kind === 'run' && r.data?.lane && (!latest[r.data.lane] || runNum(r.id) > runNum(latest[r.data.lane].id))) latest[r.data.lane] = r;
+  const runsOf = {};
+  for (const r of items) if (r.kind === 'run' && r.data?.lane) (runsOf[r.data.lane] ??= []).push(r);
+  for (const rs of Object.values(runsOf)) rs.sort((a, b) => runNum(b.id) - runNum(a.id));
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
-    const name = l.id.slice(2), r = latest[name];
-    const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
-    const text = park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
-      : r ? runText(r, { now, hbAge, staleMs, items: st.items }) : 'no runs';
-    const group = laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
+    const name = l.id.slice(2), runs = runsOf[name] || [], r = runs[0];
+    const park = l.state === 'parked';
+    const status = laneState(l, r ?? null, { items: st.items, runs, now, hbAge, staleMs, walk, deliverables: deliverables.filter(d => d.lane === name), talked, wrote });
+    const group = laneGroup(l, status, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
-    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
+    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, status,
       handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old };
   }));
 }

@@ -4,6 +4,7 @@
 // check-in band ("controller"), then lanes running > parked > idle. Pure; the browser only draws it (inline SVG, ui.mjs).
 import { runName } from './names.mjs';
 import { critiqueOfNode } from './critique.mjs';
+import { laneState } from './lanes.mjs';
 
 export const RECENT_RUNS = 3;   // Q-B2 (controller 2026-11-08): last 3 runs per lane, the rest behind "more"
 export const MORE_CAP = 30;     // an expanded lane shows its latest 30 runs (the check-in band has ~1000)
@@ -17,13 +18,15 @@ const EDGE_WORD = { owns: 'owns (lane -> run)', resumes: 'resumes (HANDOFF -> ne
   dispatched: 'dispatched (check-in started it)', reviewed: 'reviewed (check-in reviewed it)', asks: 'asks (open question parks the lane)' };
 export const EDGE_KINDS = Object.keys(EDGE_WORD);
 
-/** run -> [chip class, word] (status = text + colour, design sec. 7) */
+/** run -> [chip class, word] (status = text + colour, design sec. 7); a queued run waits (RM-21 S1: its reason is on its lane) */
 export function runWord(r) {
   if (r.state === 'running') return ['running', 'running'];
+  if (r.state === 'queued' || r.state === 'claimed') return ['waiting', 'waiting'];
+  if (r.state === 'withdrawn') return ['idle', 'withdrawn'];
   if (r.state === 'lost') return ['lost', 'lost'];
   if (r.state === 'killed') return ['bad', 'killed'];
   const o = r.end?.outcome;
-  return { done: ['done', 'DONE'], stopped: ['stopped', 'STOPPED'], handoff: ['handoff', 'HANDOFF'], crash: ['bad', 'crash'] }[o] ?? ['no-result', o ?? 'no-result'];
+  return { done: ['done', 'DONE'], stopped: ['stopped', 'STOPPED'], handoff: ['handoff', 'HANDOFF'], crash: ['bad', 'crash'] }[o] ?? ['no-result', o ?? 'no result'];
 }
 const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 
@@ -32,8 +35,10 @@ const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slic
  * -> { nodes [{ id, type, lane, label, sub, cls, word, x, y, w, h, faded?, feed?, more?, needs? }], edges [{ from, to, kind, word, dashed? }],
  *      bands [{ lane, y, h, deliverables }], width, height }
  * o.deliverables: deliverablesView rows (DELIVERABLES-SPEC 3); a lane band carries the rows of its lane, oldest first.
+ * RM-21 S1: a lane node's cls and word are its state (lanes.mjs laneState), its `why` the one reason; o.walk (Map run id -> fill walk
+ * row) and o.hbAge feed it as on the Lanes page.
  */
-export function mapGraph(st, { all = false, more = new Set(), tree = [], now = Date.now(), deliverables = [] } = {}) {
+export function mapGraph(st, { all = false, more = new Set(), tree = [], now = Date.now(), deliverables = [], walk = new Map(), hbAge = null } = {}) {
   const items = Object.values(st.items), runs = items.filter(i => i.kind === 'run').sort((a, b) => num(b.id) - num(a.id));
   const lanesOf = {}, helpersOf = {};
   for (const r of runs) {
@@ -60,11 +65,11 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
   const band = (name, laneItem) => {
     const list = lanesOf[name] || [], vis = list.slice(0, more.has(name) ? MORE_CAP : RECENT_RUNS), top = y;
     const st0 = laneItem?.state ?? 'active', lead = list[0];
-    const [cls, word] = name === CHECKIN ? (lead?.state === 'running' ? ['running', 'running'] : ['idle', 'controller'])
-      : st0 === 'parked' ? ['parked', 'parked'] : lead?.state === 'running' ? ['running', 'running'] : st0 === 'active' ? ['idle', 'idle'] : ['idle', st0];
+    const status = name === CHECKIN ? null : laneState(laneItem, lead ?? null, { items: st.items, runs: list, now, hbAge, walk, deliverables: deliverables.filter(d => d.lane === name) });
+    const [cls, word] = status ? [status.state, status.state] : lead?.state === 'running' ? ['running', 'running'] : ['idle', 'controller'];
     const laneId = 'L:' + name;
     add({ id: laneId, type: 'lane', lane: name, label: name === CHECKIN ? 'controller' : name, sub: `${name === CHECKIN ? 'check-ins · ' : ''}${laneItem?.adhoc ? 'no LANE record · ' : ''}${list.length} run${list.length === 1 ? '' : 's'}`,
-      state: st0, cls, word, x: COL[0], y: top + BAND_PAD, w: W[0], h: H.lane, more: list.length - vis.length, expanded: more.has(name), capped: more.has(name) && list.length > MORE_CAP,
+      state: st0, cls, word, ...(status ? { why: status.why } : {}), x: COL[0], y: top + BAND_PAD, w: W[0], h: H.lane, more: list.length - vis.length, expanded: more.has(name), capped: more.has(name) && list.length > MORE_CAP,
       handoff: name === CHECKIN ? null : vis.map(r => hoBy[r.id]).find(Boolean) ?? null });   // every run of a hand-off chain carries its tip's state
     let ry = top + BAND_PAD;
     vis.forEach((r, i) => {
