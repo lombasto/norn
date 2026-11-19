@@ -194,9 +194,10 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // NORN-WATCH S5 evidence: an exit no `norn stop` explains, the worktree's uncommitted state, the branch + head it ended on
   if ((code === 143 || signal === 'SIGTERM') && !killedByMeta()) data.external_term = true;
   if (spec.worktree && spec.role !== 'helper') Object.assign(data, gitEvidence(spec.worktree));
-  if (job) { const r = reapJob(job, process.pid); if (r.error) data.reap_error = r.error; else data.reaped = r.killed.length; }
+  // proc-hygiene: the end names what it killed (reaped_procs: pid + image name, at most 50) - leftover watchers are evidence
+  if (job) { const r = reapJob(job, process.pid); if (r.error) data.reap_error = r.error; else { data.reaped = r.killed.length; if (r.procs.length) data.reaped_procs = r.procs.slice(0, 50); } }
   else if (guard && process.platform !== 'win32' && childPid) { const r = reapGroup(childPid); if (r.error) data.reap_error = r.error; else data.reaped = r.killed.length; }
-  if (data.reaped) logLine(`reaped ${data.reaped} process(es) left in the run's tree`);
+  if (data.reaped) logLine(`reaped ${data.reaped} process(es) left in the run's tree${data.reaped_procs ? ': ' + data.reaped_procs.map(p => `${p.name} ${p.pid}`).join(', ') : ''}`);
   // usage fields of the end record, by the adapter that parses this output (claude json final / codex log; cli plain: none)
   if (cmd && ADAPTERS[cmd.parse]) Object.assign(data, ADAPTERS[cmd.parse].endData({ final: spec.final, log: spec.log }));
   // META-GTP-FED-2 piece 2: a node run (claim_of) carries its usage for the home guard (fed.mjs nodeUsage; 0 for non-Claude)

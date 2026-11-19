@@ -64,7 +64,7 @@ import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -2548,6 +2548,7 @@ const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'a
 function mailCmd(argv, env, out, err) {
   const [sub, ...rest] = argv;
   const inject = sub === 'check' && rest.includes('--inject');
+  if (inject) hookWatchdog();   // proc-hygiene: the hook ends in bounded time (mail.mjs)
   try {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {

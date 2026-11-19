@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { readEvents, recordsFile, fold, record } from './records.mjs';
 import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
@@ -34,7 +35,7 @@ export const isMergeRun = d => isMergeStage(d?.stage) || /(^|[-_])merge$|^mq$/i.
 /** a ref is on the remote: the worktree's remote-tracking branch is at (or past) the head - local refs only, no fetch */
 export function pushedHead(wt, branch, head, git = 'git') {
   if (!wt || !branch || !head) return false;
-  const r = spawnSync(git, ['merge-base', '--is-ancestor', head, `refs/remotes/origin/${branch}`], { cwd: wt, encoding: 'utf8', timeout: 10000, windowsHide: true });
+  const r = boundedSync(git, ['merge-base', '--is-ancestor', head, `refs/remotes/origin/${branch}`], { cwd: wt, timeout: 10000 });   // proc-hygiene: tree-killing timeout
   return r.status === 0 && !r.error;
 }
 // the run itself asked something: a question it created, or a mail it sent to the check-in

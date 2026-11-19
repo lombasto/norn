@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { mergeConfig } from './mergeq.mjs';
 import { loadDeliverables, sameRepo } from './deliverables.mjs';
@@ -23,7 +23,7 @@ export const LAND_EXIT = { opened: 0, refused: 3 };
 
 /** gh run synchronously: (args) -> { code, out, err } (tests inject a fake: no network) */
 export const makeGh = () => args => {
-  const r = spawnSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  const r = boundedSync('gh', args, { timeout: 180000 });   // proc-hygiene: gh starts git; the timeout kills the tree
   return { code: r.error ? -1 : r.status, out: r.stdout || '', err: r.error ? r.error.message : r.stderr || '' };
 };
 /** owner/name of a GitHub remote URL (https or ssh), else null */

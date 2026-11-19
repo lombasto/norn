@@ -80,13 +80,14 @@ export async function holdJob(pid, { exe, name = `meta-run-${pid}-${Date.now()}`
   });
 }
 
-/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off afterwards. Returns { killed: [pids] } or { error } */
+/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off afterwards. Returns { killed: [pids], procs: [{ pid, name }] } or { error } */
 export function reapJob(job, keep = process.pid) {
   if (!job?.name) return { error: job?.error || 'no job' };
   const r = spawnSync(job.exe, ['reap', job.name, String(keep)], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
-  const m = /^reaped (\d+) ?([\d,]*)/m.exec(r.stdout || '');
+  const m = /^reaped (\d+) ?(\S*)/m.exec(r.stdout || '');
   try { job.proc?.stdin?.end(); } catch { /* gone */ }
-  return m ? { killed: m[2] ? m[2].split(',').map(Number) : [] } : { error: String(r.stdout || r.error?.message || `exit ${r.status}`).trim().slice(0, 200) };
+  const procs = m?.[2] ? m[2].split(',').map(t => { const [pid, name] = t.split(':'); return { pid: Number(pid), name: name || '?' }; }) : [];
+  return m ? { killed: procs.map(p => p.pid), procs } : { error: String(r.stdout || r.error?.message || `exit ${r.status}`).trim().slice(0, 200) };
 }
 
 // MSVCRT command-line quoting of one argument (CommandLineToArgvW rules)
@@ -101,13 +102,41 @@ export function winQuote(a) {
   return out + '\\'.repeat(bs * 2) + '"';
 }
 
-/** start exe + args OUTSIDE the caller's job (detached, no window). Returns { pid, breakaway } or null when it cannot (the caller
- * then spawns as before). */
-export function spawnOutside(exePath, args, { cwd = process.cwd(), exe = jobguardExe() } = {}) {
+/** start exe + args OUTSIDE the caller's job (detached, no window). `job` (the run's job, META_JOB) allows breakaway for this one
+ * start only (jobguard.cs). Returns { pid, breakaway } or null when it cannot (the caller then spawns as before). */
+export function spawnOutside(exePath, args, { cwd = process.cwd(), exe = jobguardExe(), job = process.env.META_JOB } = {}) {
   if (!exe) return null;
-  const r = spawnSync(exe, ['spawn', cwd, [exePath, ...args].map(winQuote).join(' ')], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+  const r = spawnSync(exe, ['spawn', job || '-', cwd,[exePath, ...args].map(winQuote).join(' ')], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
   const m = /^pid (\d+) (breakaway|inside)/m.exec(r.stdout || '');
   return m ? { pid: Number(m[1]), breakaway: m[2] === 'breakaway' } : null;
+}
+
+// proc-hygiene (B, C; census 2026-11-19): the 33 git.exe and 7 powershell.exe found orphaned had never run - one thread, SUSPENDED,
+// no CPU: their parent (a node of Norn, gh, Git's cmd\git.exe launcher) was killed between CreateProcess and the resume (a taskkill
+// /T, a spawnSync timeout, a reap). No timeout on the direct child reaches them; a job does. boundedSync runs the child under
+// `jobguard run`, whose own job holds every descendant from birth and dies at the timeout, at the child's exit, or with the helper.
+let jgExe;
+const PATHEXT = ['.exe', '.com'];
+// the program's full path from PATH (CreateProcess would search the cwd first: a worktree's git.exe must never run); else as given
+function resolveExe(file, env = process.env) {
+  if (/[\\/]/.test(file)) return file;
+  const p = env.PATH ?? env.Path ?? Object.entries(env).find(([k]) => k.toUpperCase() === 'PATH')?.[1] ?? '';
+  const names = path.extname(file) ? [file] : PATHEXT.map(e => file + e);
+  for (const d of p.split(';').filter(Boolean)) for (const n of names) { const f = path.join(d.replace(/"/g, ''), n); if (fs.existsSync(f)) return f; }
+  return file;
+}
+/** spawnSync's shape ({ status, signal, stdout, stderr, error }) with a timeout that kills the child's whole tree (Windows: jobguard
+ * run; POSIX or no helper: spawnSync's own timeout, direct child only). opts: timeout (ms, required), cwd, env, input, encoding, maxBuffer */
+export function boundedSync(file, args, { timeout, cwd, env, input, encoding = 'utf8', maxBuffer = 64 << 20, exe } = {}) {
+  if (!(timeout > 0)) throw new Error('boundedSync needs a timeout');
+  const base = { cwd, env, encoding, maxBuffer, windowsHide: true, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], ...(input === undefined ? {} : { input }) };
+  if (exe === undefined) exe = process.platform === 'win32' ? (jgExe ??= jobguardExe() || '') : '';
+  if (!exe) return spawnSync(file, args, { ...base, timeout });
+  const r = spawnSync(exe, ['run', String(timeout), cwd || '-', [resolveExe(file, env), ...args].map(winQuote).join(' ')], { ...base, timeout: timeout + 10000 });
+  const e = String(r.stderr || '');
+  if (r.status === 124 && /^jobguard-timeout/m.test(e)) return { ...r, status: null, signal: 'SIGTERM', error: Object.assign(new Error(`spawnSync ${file} ETIMEDOUT`), { code: 'ETIMEDOUT' }) };
+  if (r.status === 127 && /^jobguard-err/m.test(e)) return { ...r, status: null, error: Object.assign(new Error(`spawnSync ${file} ENOENT (${e.trim()})`), { code: 'ENOENT' }) };
+  return r;
 }
 
 /** the hold process's exit (its stdin ended by reapJob, or the held process gone), at most ms: a supervisor awaits it before its

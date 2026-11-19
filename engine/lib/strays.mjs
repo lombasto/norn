@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { loadState } from './records.mjs';
 
 export const STRAY_HOURS = 6;
@@ -17,7 +18,8 @@ export function listProcs({ platform = process.platform } = {}) {
   try {
     if (platform === 'win32') {
       const ps = "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = $_.ProcessId; q = $_.ParentProcessId; n = $_.Name; c = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null }; l = $_.CommandLine } } | ConvertTo-Json -Compress";
-      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 << 20 });
+      // proc-hygiene: a tree-killing timeout (7 of these were found orphaned, suspended at birth: their caller was killed mid-spawn)
+      const r = boundedSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 30000, maxBuffer: 64 << 20 });
       if (r.status !== 0) return [];
       return [].concat(JSON.parse(r.stdout || '[]')).map(x => ({ pid: x.p, ppid: x.q, name: x.n || '', created: x.c ? Date.parse(x.c) : null, cmd: x.l || '' }));
     }
