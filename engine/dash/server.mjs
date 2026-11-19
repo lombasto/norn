@@ -42,7 +42,7 @@ import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptClose
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
-import { dwarfOf, doerOf, lanePins } from '../lib/crew.mjs';
+import { dwarfOf, doerOf, lanePinsAsync } from '../lib/crew.mjs';
 import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
 import { handEdits, takeBack, keepEdit } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
@@ -1438,7 +1438,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
         if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
         if (route === '/api/lanes') return send(200, { lanes: lanesWithSpend(pick(url, { all: true })) });
-        if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p)), lanePins(p.state)).map(q => ({ ...q, project: p.name }))) }); }
+        if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: (await Promise.all(ps.map(async p => queueOf(runsOf(st(p)), await lanePinsAsync(p.state)).map(q => ({ ...q, project: p.name }))))).flat() }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
           const vs = pick(url, { all: true }).map(deliverablesOf);

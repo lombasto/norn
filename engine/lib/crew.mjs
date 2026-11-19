@@ -4,7 +4,7 @@
 // happens at the start of a worker run (runs.mjs), under this lock, so two launches never take one dwarf. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fold, readEvents, withLock } from './records.mjs';
+import { fold, readEvents, readEventsAsync, withLock } from './records.mjs';
 
 export class CrewError extends Error {
   constructor(message, code = 2) { super(message); this.code = code; }
@@ -165,8 +165,13 @@ export function withCrew(state, fn, { now = () => new Date() } = {}) {
 
 /** the pins of one project: { lane: { id, name } } (the queue rows of a pinned lane say who takes them); an unreadable store = none */
 export function lanePins(state) {
-  let st;
-  try { st = crewState(readCrew(state)); } catch { return {}; }
+  try { return pinsOf(crewState(readCrew(state)), state); } catch { return {}; }
+}
+/** lanePins on fs.promises (the dash server's request paths never block the event loop on a read) */
+export async function lanePinsAsync(state) {
+  try { return pinsOf(crewState(await readEventsAsync(crewFile(state))), state); } catch { return {}; }
+}
+function pinsOf(st, state) {
   const out = {}, pre = projectOf(state) + '/';
   for (const d of Object.values(st.dwarves)) if (d.state === 'active') for (const l of d.pins) if (l.startsWith(pre)) out[l.slice(pre.length)] = { id: d.id, name: d.name };
   return out;

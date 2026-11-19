@@ -52,9 +52,9 @@ export async function fixture(extra = {}) {
   fs.writeFileSync(log, Array.from({ length: 230 }, (_, i) => `line ${i + 1}`).join('\n'));
   const clog = path.join(S, 'logs', 'render.log');
   fs.writeFileSync(clog, ['OpenAI Codex', '--------', 'model: gpt-5.4', 'reasoning effort: high', `session id: ${CSID}`, '--------'].join('\n'));
-  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'seabed', log, session_id: SID } });
+  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'seabed', dwarf: 'thorin', log, session_id: SID } });
   record(S, { kind: 'run', ev: 'end', id: 'RUN-1', by: 'launcher', data: { exit: 0, outcome: 'stopped', why: 'red test' } });
-  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'codex', executor: 'codex-sol', lane: 'render', log: clog, budget_min: 90 } });
+  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'codex', executor: 'codex-sol', lane: 'render', dwarf: 'oin', log: clog, budget_min: 90 } });
   fs.mkdirSync(path.join(S, 'hb'), { recursive: true }); fs.writeFileSync(path.join(S, 'hb', 'RUN-2.hb'), '{}');
   fs.writeFileSync(path.join(S, 'STATUS.md'), '- since CALIB x: 0.1 % over 1 h = 0.10 %/h vs cap 0.43 -> ok\n- estimated weekly now ~60.0 %\nRATE_OK=1\n');
   record(pb.state, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'other project question', lane: 'x' } });
