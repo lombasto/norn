@@ -788,7 +788,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
         started.push(...fillPass(state, at, res, authProbe));
         onPass?.();
       } while (flagged());
-      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
+      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
     } finally { release(); }
     if (!flagged()) return started;
   }

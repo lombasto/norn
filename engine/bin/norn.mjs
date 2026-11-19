@@ -1510,7 +1510,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       return 0;
     }
     if (cmd === 'views') {
-      const v = writeViews(state, loadState(state), vpaths), qv = writeQueueView(state, vpaths, { ready: readiness(state) });
+      const v = writeViews(state, loadState(state), vpaths, { role: 'norn rec views' }), qv = writeQueueView(state, vpaths, { ready: readiness(state), role: 'norn rec views' });
       for (const k of ['written', 'unchanged', 'refused']) v[k].push(...qv[k]);
       // META-GTP-CV piece 2: CV.md with the other views (the CV of this state; a hand edit refused like every view): views.cv, else beside
       // the project.json views (one copy, S9), else <state>/views

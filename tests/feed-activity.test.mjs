@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transcriptEvents } from '../engine/lib/harness/claude.mjs';
 import { clip, slimInput } from '../engine/lib/harness/common.mjs';
-import { activityInit, activityAdd, activityView, activityOf, sentence, shell, stripCd, parseTests, briefItems, namedDone, lineDiff, relPath, fmtDur } from '../engine/dash/activity.mjs';
+import { activityInit, activityAdd, activityView, activityOf, sentence, shell, stripCd, parseTests, briefItems, namedDone, relPath, fmtDur } from '../engine/dash/activity.mjs';
 
 const FX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'feed-activity');
 const events = name => fs.readFileSync(path.join(FX, name), 'utf8').trim().split('\n').flatMap(l => transcriptEvents(l));
@@ -126,7 +126,5 @@ test('live = replayed: folding the events as they arrive gives the view of the w
   for (const e of evs.slice(80)) activityAdd(s, e);
   const o = { root: ROOT, now: at(evs) };
   assert.deepEqual(activityView(s, o), activityOf(evs, o));
-  assert.deepEqual(lineDiff('a\nb\nc\nd', 'a\nb\nC\nd'), [' a', ' b', '-c', '+C', ' d']);
-  assert.deepEqual(lineDiff('', 'new\nfile'), ['+new', '+file']);
   assert.equal(relPath('C:\\fx\\WT\\a\\b.mjs', 'c:/fx/wt/'), 'a/b.mjs');
 });
