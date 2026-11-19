@@ -26,7 +26,7 @@ test('add question -> Q-1 on stdout, envelope written, questions view generated'
   const e = JSON.parse(fs.readFileSync(path.join(s, 'records.jsonl'), 'utf8'));
   assert.equal(e.by, 'checkin'); assert.equal(e.run, null);
   assert.deepEqual(e.data.options, [{ key: 'a', text: 'carve', cost: '1 round' }, { key: 'b', text: 'fill', cost: '' }]);
-  assert.deepEqual(e.data.recommend, { key: 'a', why: 'keeps relief' });
+  assert.deepEqual(e.data.recommend, { key: 'a', why: 'keeps relief', from: 'checkin' });   // a recommendation names its source: the writer
   assert.deepEqual(e.data.blocks, ['gen']); assert.equal(e.data.body, 'Seed 7: 3 sinks.\n');
   assert.match(fs.readFileSync(path.join(s, 'views', 'OWNER-QUESTIONS.md'), 'utf8'), /### Q-1 · Carve or fill\?/);
 });
@@ -119,7 +119,7 @@ test('a hand-edited view: the record is still written, stderr warns, `rec views`
 test('rec with --project / META_PROJECT writes the project.json views (one copy), not <state>/views (S9)', () => {
   const root = tmp();
   const pj = path.join(root, 'p.json');
-  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 'pv', title: 'pv', root: '${meta}',
+  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 'pv', title: 'pv', root: '${norn}',
     views: { questions: '${state}/out/Q.md', directives: '${state}/out/DIR.md', decisions: '${state}/out/DEC.md' } }));
   const env = { ...process.env, META_ROOT: root, META_PROJECT: pj, META_ROLE: 'owner' };
   delete env.META_STATE; delete env.META_RUN_ID;
@@ -138,7 +138,7 @@ test('rec with --project / META_PROJECT writes the project.json views (one copy)
 test('rec --project P --state D: --state wins (one rule with run / stop / delegate / deliverables); the project views stay its own state', () => {
   const root = tmp();
   const pj = path.join(root, 'p.json');
-  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 'pv', title: 'pv', root: '${meta}', views: { directives: '${state}/out/DIR.md' } }));
+  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 'pv', title: 'pv', root: '${norn}', views: { directives: '${state}/out/DIR.md' } }));
   const env = { ...process.env, META_ROOT: root, META_ROLE: 'owner' };
   delete env.META_STATE; delete env.META_RUN_ID; delete env.META_PROJECT;
   const other = path.join(root, 'state', 'other');

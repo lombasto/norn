@@ -84,6 +84,6 @@ export const prLine = r => r.status === 'refused' ? `NOT OPENED ${r.branch}: ${r
 /** openPrs with a project's settings (project.json deliverables) and its slop door (on unless the project's switch is off) */
 export function openProjectPrs(p, { wt, branches, run, git, gh } = {}) {
   const cfg = mergeConfig(p);
-  const door = slopOn(p.policy) ? (branch, tip) => doorWhy(doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, main: cfg.main, remote: cfg.remote })) : null;
+  const door = slopOn(p.policy) ? (branch, tip) => doorWhy(doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, projectDir: p.project_dir, main: cfg.main, remote: cfg.remote })) : null;
   return openPrs({ repo: cfg.repo, wt, branches, main: cfg.main, remote: cfg.remote, stateDir: p.state || null, run, door, ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
 }

@@ -6,12 +6,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { POLICY_DEFAULTS, withDefaults, merged } from './policy.mjs';
-import { loadProject } from './config.mjs';
+import { loadProject, compatTarget } from './config.mjs';
 import { usageCtx, findTranscript } from './harness/claude.mjs';
 
 export { usageCtx };
 export const CTX_ROLES = Object.keys(POLICY_DEFAULTS.context);
-const kTok = n => `${Math.round(n / 1000)}k`;
+export const kTok = n => `${Math.round(n / 1000)}k`;
 
 /** the policy.context row of a run (its start data or launch spec): check-ins their own row, the chat the controller's, else by agent name */
 export function ctxRole(d = {}) {
@@ -55,9 +55,10 @@ export function transcriptCtx(file) {
   } finally { fs.closeSync(fd); }
 }
 
-/** the CURRENT context policy of a launch spec: its project.json (spec.ctx_from) read now; none = the defaults */
+/** the CURRENT context policy of a launch spec: its project.json (spec.ctx_from) read now; none (no ctx_from, or no such file) = the
+ *  defaults. A launch with no project file (a check-in, a test) still starts and records its marks (RUN-188); a broken file still throws */
 export function specPolicy(spec) {
-  if (!spec?.ctx_from) return {};
+  if (!spec?.ctx_from || !fs.existsSync(compatTarget(spec.ctx_from))) return {};
   return loadProject(spec.ctx_from).policy || {};
 }
 
@@ -104,6 +105,7 @@ export function ctxOrder(state, run) {
   const f = sentFile(state, run), sent = readJson(f)?.sent || [];
   if (sent.includes(order)) return null;
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, JSON.stringify({ sent: [...sent, order], ctx, at: new Date().toISOString() }));
+  const { role: _r, ...marks } = c;   // WORK-SIZING S1: the marks this order went out under (the live policy may change after it)
+  fs.writeFileSync(f, JSON.stringify({ sent: [...sent, order], marks, ctx, at: new Date().toISOString() }));
   return { text: runOrder(order, ctx, c), level: order, ctx, limits: c };
 }

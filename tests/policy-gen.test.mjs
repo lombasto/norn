@@ -18,12 +18,14 @@ const fwd = p => p.replace(/\\/g, '/');
 function sandbox({ register = true } = {}) {
   const t = mkTmp('meta-polgen-');
   const home = fwd(path.join(t, 'hx')), meta = `${home}/dev/sdd-codex`, cfg = fwd(path.join(t, 'cfg'));
-  fs.cpSync(path.join(REPO, 'tests', 'fixtures', 'projects', 'demo'), `${meta}/projects/demo`, { recursive: true, filter: s => !/[\\/]state([\\/]|$)/.test(s) });
+  // the fixture's own state/ stays out, tested relative to the fixture: every Norn worktree itself sits under <root>/state/...
+  const src = path.join(REPO, 'tests', 'fixtures', 'projects', 'demo');
+  fs.cpSync(src, `${meta}/projects/demo`, { recursive: true, filter: s => !/^state([\\/]|$)/.test(path.relative(src, s)) });
   fs.mkdirSync(cfg, { recursive: true }); fs.mkdirSync(`${meta}/local`, { recursive: true });
   const pf = `${meta}/projects/demo/project.json`;
   fs.writeFileSync(`${meta}/local/machine.json`, JSON.stringify({ schema: 1, home, claude: { exe: 'claude', config_dir: cfg, projects_dir: `${home}/.claude/projects` },
     codex: null, node: process.execPath, scheduler: { kind: 'windows-task', name: 't', interval_min: 15 }, dash: { port: 0, bind: '127.0.0.1' },
-    projects: register ? [{ name: 'demo', config: '${meta}/projects/demo/project.json' }] : [] }, null, 1));
+    projects: register ? [{ name: 'demo', config: '${norn}/projects/demo/project.json' }] : [] }, null, 1));
   fs.writeFileSync(`${meta}/local/budget.json`, '{}\n');
   const machine = loadMachine(`${meta}/local/machine.json`, { meta });
   const p = loadProject(pf, { home, meta });

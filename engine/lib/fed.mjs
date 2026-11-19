@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { withLock, fold } from './records.mjs';
+import { rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, claimsLock } from './claimsref.mjs';
 
 export class FedError extends Error {}
 
@@ -35,96 +36,19 @@ export const unserved = (labels = [], served = [osLabel()]) => labels.filter(l =
 export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace(/[^a-z0-9._-]/g, '-');
 
 // ---------- piece 2: the claim protocol over the ledger repo ----------
-// Branch `claims` of the ledger remote holds one file per claimed run: <home host>/<project>/<RUN-n>.json. A machine claims by committing
-// that file on the claims tip it fetched and pushing WITHOUT force: git's receive-pack updates the ref only from the old value the push
-// was built on (non-fast-forward = rejected; a concurrent update = a failed ref lock) - a compare-and-swap on the branch. A rejected push
+// Branch `claims` of the ledger remote holds one file per claimed run: runs/<home host>/<project>/<RUN-n>.json (RM-46 C6: the branch is
+// shared with the work claims, claims.mjs). A machine claims by a CAS commit of that file (claimsref.mjs). A rejected push
 // is a LOST RACE: never retried in the pass (the kill criterion: a retry would hide a non-CAS). After a rejected push the machine fetches
 // and reads the claim once - its own nonce there = the push did land (an ambiguous network end), anything else = lost.
 // A node claim carries a lease: heartbeat_at + lease_s (heartbeat = a CAS update of its own file); the home removes an expired claim by
 // the same CAS and records it (run `release`). States: claimed | running (a node) | home (the home's own claim: no lease) | done.
 // fed endpoint f = { dir: this machine's ledger repo (bare), remote: the ledger remote, host: this machine's name }.
-export const claimKey = (home, project, run) => `${home}/${project}/${run}.json`;
-export const CLAIMS = 'refs/heads/claims';
-const FED_CLAIMS = 'refs/fed/claims';
+export const claimKey = (home, project, run) => `runs/${home}/${project}/${run}.json`;
+// the claims branch next to the machine branches, one fetch (refs/fed/machine/*: the import below)
+const fetchFed = f => fetchRefs(f, ['+refs/heads/machine/*:refs/fed/machine/*']);
+/** fn under the claims lock of f's repo (claims.mjs takes it too: one lock for fed's and the work claims) */
+export const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
 
-function fgit(f, args, { input, ok = [0], index } = {}) {
-  const env = { ...process.env, GIT_DIR: f.dir, GIT_TERMINAL_PROMPT: '0', GIT_AUTHOR_NAME: 'norn-fed', GIT_AUTHOR_EMAIL: `fed@${f.host}`,
-    GIT_COMMITTER_NAME: 'norn-fed', GIT_COMMITTER_EMAIL: `fed@${f.host}` };
-  for (const k of ['GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[k];
-  if (index) env.GIT_INDEX_FILE = index;
-  const r = spawnSync('git', args, { env, input, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) throw new FedError(`git ${args[0]}: ${r.error.message}`);
-  if (!ok.includes(r.status)) throw new FedError(`git ${args[0]} failed (${r.status}): ${(r.stderr || '').trim().split('\n').pop()}`);
-  return { out: r.stdout, status: r.status, err: r.stderr };
-}
-/** the machine's own repo exists (a bare repo; the ledger's when the ledger is on) */
-export function initFed(f) {
-  if (fs.existsSync(path.join(f.dir, 'HEAD'))) return;
-  fs.mkdirSync(f.dir, { recursive: true });
-  const r = spawnSync('git', ['init', '-q', '--bare', f.dir], { encoding: 'utf8', windowsHide: true });
-  if (r.status !== 0) throw new FedError(`git init failed: ${(r.stderr || '').trim()}`);
-}
-/** every branch of the remote into refs/fed/* (claims + machine/<host> of every machine); one fetch */
-export function fetchFed(f) {
-  initFed(f);
-  fgit(f, ['fetch', '-q', '--prune', '--no-tags', f.remote, '+refs/heads/*:refs/fed/*']);
-}
-const tipOf = f => fgit(f, ['rev-parse', '-q', '--verify', `${FED_CLAIMS}^{commit}`], { ok: [0, 1] }).out.trim() || null;
-// "<sha> <type> <size>\n<content>\n" records of one `git cat-file --batch` (sizes are bytes: parse the Buffer). heads: { sha, body }
-// per object (an input line may name a revision; the header carries the sha it resolved to)
-function catBatch(f, shas, { heads = false } = {}) {
-  if (!shas.length) return [];
-  const env = { ...process.env, GIT_DIR: f.dir };
-  const r = spawnSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  if (r.status !== 0) throw new FedError(`git cat-file failed: ${String(r.stderr).trim()}`);
-  const buf = r.stdout, out = [];
-  let i = 0;
-  for (let n = 0; n < shas.length; n++) {
-    const nl = buf.indexOf(10, i), head = buf.subarray(i, nl).toString('utf8').split(' ');
-    if (head[1] === 'missing') { out.push(null); i = nl + 1; continue; }
-    const size = Number(head[2]);
-    const body = buf.subarray(nl + 1, nl + 1 + size).toString('utf8');
-    out.push(heads ? { sha: head[0], body } : body);
-    i = nl + 1 + size + 1;
-  }
-  return out;
-}
-// ENGINE-GIT (DEC-88): the listing names the ref and the one cat-file --batch resolves the tip with the bodies (2 spawns, was 3:
-// rev-parse + ls-tree + cat-file). refs/fed/claims moves only under the fed lock (fetchFed, casClaims), so both see one tip.
-// A failed ls-tree is a missing ref (no claims yet) only when rev-parse agrees; anything else throws as before.
-/** { tip, claims: { key: claim } } at the fetched claims tip (no fetch) */
-export function readClaims(f) {
-  const ls = fgit(f, ['ls-tree', '-r', '-z', `${FED_CLAIMS}^{commit}`], { ok: [0, 128] });
-  if (ls.status !== 0) {
-    if (!tipOf(f)) return { tip: null, claims: {} };
-    throw new FedError(`git ls-tree failed (${ls.status}): ${(ls.err || '').trim().split('\n').pop()}`);
-  }
-  const ents = ls.out.split('\0').filter(Boolean).map(l => { const [meta, key] = l.split('\t'); return { sha: meta.split(' ')[2], key }; });
-  const [head, ...bodies] = catBatch(f, [`${FED_CLAIMS}^{commit}`, ...ents.map(e => e.sha)], { heads: true }), claims = {};
-  if (!head) throw new FedError(`${FED_CLAIMS} vanished between ls-tree and cat-file`);
-  const tip = head.sha;
-  ents.forEach((e, i) => { try { claims[e.key] = JSON.parse(bodies[i] ? bodies[i].body : null); } catch { claims[e.key] = { corrupt: true }; } });
-  return { tip, claims };
-}
-/** commit `edits` ({ key: claim | null (remove) }) on `tip` and push it to claims without force: { ok, sha } | { rejected: why } */
-function casClaims(f, tip, edits, msg, { beforePush } = {}) {
-  const index = path.join(os.tmpdir(), `fed-${process.pid}-${crypto.randomBytes(4).toString('hex')}.index`);
-  try {
-    fgit(f, tip ? ['read-tree', tip] : ['read-tree', '--empty'], { index });
-    const lines = Object.entries(edits).map(([key, c]) => (c === null ? `0 ${'0'.repeat(40)}\t${key}`   // mode 0 = remove (no work tree needed)
-      : `100644 ${fgit(f, ['hash-object', '-w', '--stdin'], { input: JSON.stringify(c, null, 1) + '\n' }).out.trim()}\t${key}`));
-    fgit(f, ['update-index', '--add', '--remove', '-z', '--index-info'], { index, input: lines.join('\0') + '\0' });
-    const tree = fgit(f, ['write-tree'], { index }).out.trim();
-    const sha = fgit(f, ['commit-tree', tree, ...(tip ? ['-p', tip] : []), '-m', msg]).out.trim();
-    beforePush?.();
-    const r = fgit(f, ['push', '-q', '--porcelain', f.remote, `${sha}:${CLAIMS}`], { ok: [0, 1] });
-    if (r.status !== 0) return { rejected: (r.out.split('\n').find(l => l.startsWith('!')) || r.err || 'rejected').trim() };
-    fgit(f, ['update-ref', FED_CLAIMS, sha]);
-    return { ok: true, sha };
-  } finally { try { fs.unlinkSync(index); } catch { /* none */ } }
-}
-// one fed operation at a time per machine repo (two projects' fills share the ledger repo; refs/fed/* would race)
-const under = (f, fn) => { initFed(f); return withLock(path.join(f.dir, 'fed.lock'), fn, { staleMs: 120000, timeoutMs: 60000 }); };
 
 /**
  * claimRun(f, { home, project, run, labels, lease_s, state, now }) -> { won, key, claim } | { lost, by (null = the tip moved: next pass), why }.

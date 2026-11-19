@@ -1,0 +1,19 @@
+{
+  "K17": {
+    "level": "WARN"
+  },
+  "K24": {
+    "enabled": false
+  },
+  "K12": {
+    "params": {
+      "exclude": [
+        "**/vendor/**",
+        "gen/**"
+      ]
+    }
+  },
+  "K22": {
+    "shadow": true
+  }
+}

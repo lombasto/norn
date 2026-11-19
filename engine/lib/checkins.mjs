@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readEvents, recordsFile, fold, record } from './records.mjs';
+import { readEvents, recordsFile, fold, record, homeOf, roleAddrIn } from './records.mjs';
 import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
 import { isMergeStage } from './usageguard.mjs';
@@ -38,14 +38,14 @@ export function pushedHead(wt, branch, head, git = 'git') {
   return r.status === 0 && !r.error;
 }
 // the run itself asked something: a question it created, or a mail it sent to the check-in
-const askedBy = (recEvs, mailEvs, id) => recEvs.some(e => e.run === id && e.kind === 'question' && e.ev === 'create')
-  || mailEvs.some(e => e.run === id && e.ev === 'send' && e.data?.to === 'role:checkin');
+const askedBy = (recEvs, mailEvs, id, home) => recEvs.some(e => e.run === id && e.kind === 'question' && e.ev === 'create')
+  || mailEvs.some(e => e.run === id && e.ev === 'send' && e.data?.to === roleAddrIn('checkin', home));
 
-/** a routine end -> { kind, action: review | stage, why, ... } or null (a model decides). ctx: { cp, recEvs, mailEvs, pushed(wt, branch, head) } */
-export function routineOf(r, { cp, recEvs = [], mailEvs = [], pushed = pushedHead }) {
+/** a routine end -> { kind, action: review | stage, why, ... } or null (a model decides). ctx: { cp, recEvs, mailEvs, pushed(wt, branch, head), home } */
+export function routineOf(r, { cp, recEvs = [], mailEvs = [], pushed = pushedHead, home = null }) {
   const d = r.data || {}, end = r.end || {};
   if (!isWork(d) || r.state !== 'exited' || r.review || end.outcome !== 'done') return null;
-  if (askedBy(recEvs, mailEvs, r.id)) return null;
+  if (askedBy(recEvs, mailEvs, r.id, home)) return null;
   if (isMergeRun(d)) return cp.routine.includes('merge_done') ? { kind: 'merge_done', action: 'review', why: `MERGE ${r.id} (${d.lane}) ended DONE (its norn done result): nothing to decide` } : null;
   if (!cp.routine.includes('worker_done_stage') || !laneMatch(cp.auto_stage, d.lane)) return null;
   if (!end.head || !end.branch || end.branch === 'main' || end.dirty?.files) return null;
@@ -66,7 +66,7 @@ export function stageArgs(p, r, rt, cp) {
     ...(cp.merge_agent ? ['--agent', cp.merge_agent] : []), '--model', cp.merge_model, '--effort', cp.merge_effort, '--as', 'launcher'];
   return { brief, run, out };
 }
-const metaCli = metaCmd => args => { const r = spawnSync(process.execPath, [metaCmd, ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true }); return { code: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}`.trim() }; };
+export const metaCli = metaCmd => args => { const r = spawnSync(process.execPath, [metaCmd, ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true }); return { code: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}`.trim() }; };
 
 /**
  * The tick's code pass over unreviewed ends: every routine one is handled and recorded (run review by: launcher, data { refs, routine,
@@ -80,7 +80,7 @@ export function handleRoutineEnds(state, p, o = {}) {
   const cli = o.cli || (o.metaCmd ? metaCli(o.metaCmd) : null), out = [];
   for (const r of Object.values(fold(runEvs).items)) {
     if (r.kind !== 'run') continue;
-    const rt = routineOf(r, { cp, recEvs, mailEvs, pushed: o.pushed || pushedHead });
+    const rt = routineOf(r, { cp, recEvs, mailEvs, pushed: o.pushed || pushedHead, home: homeOf(state)?.id });
     if (!rt) continue;
     const data = { refs: [r.id], routine: rt.kind, why: rt.why };
     if (rt.action === 'stage') {
@@ -89,7 +89,7 @@ export function handleRoutineEnds(state, p, o = {}) {
         if (!cli || !p.file) { out.push({ id: r.id, kind: rt.kind, ok: false, note: 'no meta CLI / project file to stage with' }); continue; }
         const a = stageArgs(p, r, rt, cp), b = cli(a.brief);
         if (b.code !== 0) { out.push({ id: r.id, kind: rt.kind, ok: false, note: `merge-brief exit ${b.code}: ${b.out.slice(0, 160)}` }); continue; }
-        const q = cli(a.run), m = q.out.match(/RUN-\d+/);
+        const q = cli(a.run), m = q.out.match(/RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+/);
         if (q.code !== 0 || !m) { out.push({ id: r.id, kind: rt.kind, ok: false, note: `norn run --queue exit ${q.code}: ${q.out.slice(0, 160)}` }); continue; }
         Object.assign(data, { queued: m[0], brief: a.out });
       }
@@ -117,7 +117,7 @@ export function debounceOf(gate, { runEvs, minutes, now = Date.now(), minor = []
 }
 
 // ---------- measure ----------
-const TICK_RE = /check-in (RUN-\d+) \S+ (\S+) (\S+) supervisor pid \d+ \(gate: (?:(minor|major) )?(.*)\)\s*$/;
+const TICK_RE = /check-in (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) \S+ (\S+) (\S+) supervisor pid \d+ \(gate: (?:(minor|major) )?(.*)\)\s*$/;
 /** tick.log -> Map run -> { model, effort, cls, why } */
 export function tickWakes(state) {
   const m = new Map();

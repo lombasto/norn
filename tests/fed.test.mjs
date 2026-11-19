@@ -11,7 +11,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startRun, queueRun, fillQueue, readiness } from '../engine/lib/runs.mjs';
 import { loadState, record, kindOfId } from '../engine/lib/records.mjs';
-import { parseLabels, osLabel, servedLabels, claimRun, claimKey, updateClaim, releaseClaim, pushLedger, nodeUsage, fetchClaims, readClaims } from '../engine/lib/fed.mjs';
+import { claimRun, claimKey, updateClaim, releaseClaim, pushLedger } from '../engine/lib/fed.mjs';
 import { mapPath } from '../engine/lib/fednode.mjs';
 import { ledgerConfig, commitLedger } from '../engine/lib/ledger.mjs';
 import { digest } from '../engine/lib/digest.mjs';
@@ -114,6 +114,8 @@ test('claims: a claim is one commit of one file on `claims`; a second claimer fi
   assert.equal(b.lost, true);
   assert.equal(b.by, 'nodea');
   assert.deepEqual(g.tipClaims(), [claimKey('home', 'demo', 'RUN-1')]);
+  assert.ok(g.tipClaims()[0].startsWith('runs/'), 'RM-46 C6: fed keys live under runs/ of the shared claims branch');
+  assert.equal(gitIn(g.ep('nodea').dir, 'rev-parse', 'refs/sync/claims'), gitIn(g.remote, 'rev-parse', 'refs/heads/claims'), 'the fetched claims ref is refs/sync/claims');
   const c = g.claimAt(a.key);
   assert.equal(c.node, 'nodea');
   assert.equal(c.state, 'claimed');

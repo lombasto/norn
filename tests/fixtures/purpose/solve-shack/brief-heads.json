@@ -1,0 +1,9 @@
+{
+ "task-run-efficiency-S1-brief.md": "# task run-efficiency S1 - \"Was this run well run?\": load balance, core use and cost from solve.out, on the Results tab",
+ "task-run-efficiency-S1-resume-brief.md": "# task run-efficiency S1 - \"Was this run well run?\": load balance, core use and cost from solve.out, on the Results tab",
+ "task-RUN-EFFICIENCY-MERGE-brief.md": "# task MERGE run-efficiency - merge norn/solve-shack/run-efficiency at 78cdddb into main (STAGED merge in its own merge worktree, written by `norn merge-brief --sha`)",
+ "task-RUN-EFFICIENCY-MERGE2-brief.md": "# task MERGE run-efficiency - merge norn/solve-shack/run-efficiency at 8f46161 into main (STAGED merge in its own merge worktree, written by `norn merge-brief --sha`)",
+ "task-queue-watchdog-PLAN-brief.md": "# task queue-watchdog PLAN - DIR-26 (RM-34): queue watchdog that requeues a job waiting too long for nodes",
+ "task-queue-watchdog-S1-brief.md": "# task queue-watchdog S1 - pure core and characterisation (DIR-26, RM-34)",
+ "task-QUEUE-WATCHDOG-MERGE-brief.md": "# task MERGE queue-watchdog - merge norn/solve-shack/queue-watchdog at 8abe325 into main (STAGED merge in its own merge worktree, written by `norn merge-brief --sha`)"
+}

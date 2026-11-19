@@ -17,6 +17,7 @@ import { spawnOutside } from './jobguard.mjs';
 import { findingLine } from './slop/host.mjs';
 import { doorCheck, storedCheck } from './slop/door.mjs';
 import { rulesHash } from './slop/check.mjs';
+import { projectSlop } from './slop/runend.mjs';
 import { slopOn } from './policy.mjs';
 import { subdirOf, inDir, gateText } from './monorepo.mjs';
 import { loadRoadmap } from './roadmap.mjs';
@@ -63,7 +64,7 @@ function retriesOf(runs, stateDir, row, since) {
  *   held: [{ id, branch, why }] (META-CATCH S2: a look item's row without its picture proof or a newer pass verdict stays out) }
  */
 export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = makeGit(), view = null } = {}) {
-  const cfg = mergeConfig(project), slop = slopOn(project.policy), hash = slop ? rulesHash() : null;
+  const cfg = mergeConfig(project), slop = slopOn(project.policy), hash = slop ? rulesHash(projectSlop({ projectDir: project.project_dir }).rules) : null;
   const v = view || deliverablesView({ stateDir, project, now, git });
   const epics = (() => { try { return loadEpics(stateDir); } catch { return {}; } })();
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
@@ -99,7 +100,7 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
 }
 
 // the BLOCK findings of a row's stored check at its tip with this rule set (a waiver applied), or null: not checked yet
-const storedSlop = (stateDir, r, hash) => { const c = r.tip ? storedCheck(stateDir, { branch: r.branch, head: r.tip, hash }) : null; return c ? c.findings.filter(f => f.level === 'BLOCK').length : null; };
+const storedSlop = (stateDir, r, hash) => { const c = r.tip ? storedCheck(stateDir, { branch: r.branch, head: r.tip, hash }) : null; return c ? c.findings.filter(f => f.level === 'BLOCK' && !f.shadow).length : null; };
 
 /** one `norn mergeq` line: id, score, priority / epic, gate kind, rehearsal, behind, target, branch, what it delivers */
 export function formatMq(r) {
@@ -345,8 +346,8 @@ function fixAsk(stateDir, rec, res, { cfg, git }) {
 
 // RM-44 D7: the batch's merged result checked against its base at the door - a cycle, an unused name or a second copy of a helper
 // can exist only in the combination of clean branches. -> the open BLOCK findings (a waiver applied) of mq/batch-<n> at merge_tip
-export function batchSlop(stateDir, rec, { repo, tool } = {}) {
-  return doorCheck({ state: stateDir, repo, branch: `mq/batch-${rec.n}`, head: rec.merge_tip, base: rec.base, ...(tool ? { tool } : {}) }).open;
+export function batchSlop(stateDir, rec, { repo, tool, projectDir = null } = {}) {
+  return doorCheck({ state: stateDir, repo, branch: `mq/batch-${rec.n}`, head: rec.merge_tip, base: rec.base, projectDir, ...(tool ? { tool } : {}) }).open;
 }
 
 // a green prefix of k members -> the ONE MERGE stage brief for main (piece 4: an integration branch is pushed instead)
@@ -364,7 +365,7 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
     if (p.code !== 0) rec.why = `push ${cfg.remote} ${rec.into} refused (it moved since the batch was built): rebuilt next pass`;
     return;
   }
-  const held = slopOn(project.policy) ? batchSlop(stateDir, rec, { repo: cfg.repo }) : [];
+  const held = slopOn(project.policy) ? batchSlop(stateDir, rec, { repo: cfg.repo, projectDir: project.project_dir }) : [];
   if (held.length) { rec.status = 'slop'; rec.slop = held.map(findingLine); return; }   // no MERGE brief: the combination is held
   rec.notes = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-NOTES.md`));
   rec.brief = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-brief.md`));
@@ -448,7 +449,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       if (!pick.length) return { ...out, why: 'no batchable row (clean, fast-gated, slop-checked clean, not red at its sha)' };
       const key = ms => ms.map(m => `${m.id}@${m.sha}`).sort().join(' ');
       // D7: the same members on the same base whose merged result slop held: not rebuilt (nor re-gated) while the hold stands
-      if (last?.status === 'slop' && key(pick) === key(last.members) && intoSha(cfg, last.into, git) === last.base && batchSlop(stateDir, last, { repo: cfg.repo }).length)
+      if (last?.status === 'slop' && key(pick) === key(last.members) && intoSha(cfg, last.into, git) === last.base && batchSlop(stateDir, last, { repo: cfg.repo, projectDir: project.project_dir }).length)
         return { ...out, why: `batch-${last.n}'s merged result is held by slop (${last.slop.length} BLOCK): not rebuilt - fix a member or waive each finding (norn rec add waiver)` };
       if (redBase && !pick.some(p => fixers.includes(p.id)) && key(pick) === key(redBase.members)) {
         const files = [...new Set(mainRedsOf(redBase).map(t => t.file))];

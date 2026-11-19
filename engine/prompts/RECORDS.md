@@ -14,10 +14,27 @@ Every rule home (CHECKIN, DECISION-RULES, agent files, skills, ASK) points here 
 `seq` monotonic per file (under the lock), `by` = role (owner | controller | checkin | launcher | dashboard | migration), `run` = the
 writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of events by id in seq order (pure function, tested).
 
+## 3.2a Id formats: solo, fed node, synced home
+- Solo state dir (no `home.json`, no `node.json`): ids `Q-n`, `RUN-n`, ...; the next number is 1 + the highest of the kind. Lanes
+  `L:<name>` on branch `norn/<name>` (a monorepo project: `norn/<project>/<name>`). Mail addresses `RUN-n`, `lane:<name>`,
+  `role:checkin`, `role:controller`.
+- Fed node (`<state>/node.json {id}`): new ids `<P><id>-n` (`RUN-wsl-3`), numbered as solo; lanes and branches as solo.
+- Synced home (`<state>/home.json {id, bare_home}`, written by the cut; id `[a-z][a-z0-9]{0,7}`): new ids `<P><home>-n`
+  (`RM-b-30`, `Q-b2-3`). The next number is 1 + the highest id with the own prefix; the bare home (`bare_home` = its id) also counts
+  its bare legacy ids, so `RM-47` and `RM-a-47` never both exist. Lanes `L:<home>/<name>` on branch `norn/<home>/<name>`
+  (monorepo `norn/<home>/<project>/<name>`). A lane name typed as `x` is this home's; another home's is typed `b/x`.
+  Mail addresses `RUN-b-12`, `lane:b/x`, `role:checkin@b`; a home's own check-in reads `role:checkin@<home>`.
+- Every id field, link (`run:RUN-b-12`, `lane:b/x`) and mail `to` accepts both forms; a run of another home is not in this state
+  dir, so mail to it is not checked for existence here.
+
 ## 3.3 Kinds and fields (`data` of `create`; later events carry their own small `data`)
-- question `Q-n`: title (<= 120 chars), lane, body (numbers, 2-3 examples), options [{key, text, cost}], recommend {key, why},
-  class (delegation i-v), blocks [lanes parked by it], source (NOTES path:line or final.md), owner_only (true = no check-in
-  rules it). answer: {choice, text verbatim, via dashboard|chat, mapped_from (the shared owner text of an --each reply), from (DEC-m
+- question `Q-n`: title (<= 120 chars), lane, body (numbers, 2-3 examples), options [{key, text, cost, added_by}] (every real
+  alternative, 3-4 where they exist; never trimmed to two, never padded), recommend {key, why, from (source = the plan default | the
+  writer)}, class (delegation i-v), blocks [lanes parked by it], source (NOTES path:line or final.md), origin {file, section, line}
+  (the plan / notes / brief section the options were copied from verbatim: `--from-source`; an option the writer adds carries
+  added_by), owner_only (true = no check-in rules it). say (owner): {text, via} = the owner's typed message in the Q's thread - NOT
+  an answer, the Q stays open. reply (controller, checkin): {text, options (a revised list, replaces the old; shown in the thread),
+  recommend, propose {key?, text} (a ruling from the owner's words; the owner's one tap = an answer with ruling = this seq)}. answer: {choice, text verbatim, via dashboard|chat, mapped_from (the shared owner text of an --each reply), from (DEC-m
   whose owner words it copies), relayed_by (controller | checkin relaying them)}.
   apply: {refs [DEC-n, RUN-n]}. supersede: {by: id, why}.
 - decision `DEC-n`: lane, question, options, choice, why, cost, source (citation), answers (Q-n, if an owner answer), owner_words
@@ -35,7 +52,7 @@ writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of eve
 ## 3.4 State machines + who may move them
 | kind | states (initial first) | transitions -> allowed roles |
 |---|---|---|
-| question | open, answered, applied, superseded, withdrawn | create: controller, checkin. answer: owner only (dashboard button, or the interactive controller relaying the owner's words verbatim with via=chat, or a controller / check-in copying the owner words a decision recorded: from DEC-m, relayed_by). apply (answered -> applied): controller, checkin, citing refs. supersede (open/answered -> superseded): controller, checkin, citing an OWNER record (DIR / answered Q / owner DEC) or a newer Q. withdraw: controller, checkin (asker no longer needs it). reopen: owner. |
+| question | open, answered, applied, superseded, withdrawn | create: controller, checkin. answer: owner only (dashboard button, or the interactive controller relaying the owner's words verbatim with via=chat, or a controller / check-in copying the owner words a decision recorded: from DEC-m, relayed_by). apply (answered -> applied): controller, checkin, citing refs. supersede (open/answered -> superseded): controller, checkin, citing an OWNER record (DIR / answered Q / owner DEC) or a newer Q. withdraw: controller, checkin (asker no longer needs it). reopen: owner. say (open, no state change): owner. reply (open, no state change): controller, checkin. |
 | decision | in-force, overruled, superseded | create: controller, checkin, owner. overrule: owner (creates a rework note for the lane). supersede: controller / checkin only by a newer DEC; an owner DEC only by an owner record (rule iv). |
 | directive | active, done, superseded, revoked | create: owner (dashboard, talk reply `DIRECTIVE:` line, or chat via=chat). done (one-shot executed): controller, checkin with refs. supersede: controller / checkin ONLY citing a newer owner DIR/answer; owner any time. revoke: owner (dashboard delete). |
 | lane | active, parked, done, archived | create / park / unpark / done: controller, checkin. archive / unarchive: owner, controller. Parked is set by the Q that blocks it and cleared by its apply. claim {until, holder, why} / release (a hold, flag only): controller, owner - while held, a check-in write on the lane exits 5 (`norn lane claim / release`). |
@@ -45,7 +62,9 @@ Not security (any local process can write the file - same as today); it is consi
 
 ## 3.5 CLI (the agents' only interface; `norn` = `node <norn install>/engine/bin/norn.mjs`, on PATH after setup)
 ```
-norn rec add question --lane gen --title "..." --body-file f.md --option "a|...|cost" --option "b|..." --recommend "a|why" --class ii --blocks gen
+norn rec add question --lane gen --title "..." --body-file f.md --option "a|...|cost" --option "b|..." --option "c|..." --recommend "a|why" --class ii --blocks gen   (the body: a lead sentence, then bullets; ids bare, backticks only for code - CHECKIN.md step 2)
+norn rec add question --lane gen --title "..." --from-source "<plan.md>#<section>"   (every alternative the section lists, verbatim + its source)
+norn rec reply Q-n --text "..." [--option "a|..."]... [--propose "a|<the ruling in the owner's words>"]   (the controller in a Q's thread)
 norn rec add decision --lane relief --question "..." --choice "..." --why "..." --cost "..." --source "Tarboton 1997" [--answers Q-3] [--notify]
 norn rec add decision ... --answers Q-n --owner-words "<owner words>"   (an owner pick: decision + answer + apply, one call; exit 3 = an owner
   pick on a lane with an open Q named neither by --answers nor --not-an-answer)

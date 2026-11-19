@@ -10,9 +10,11 @@ import { isAncestor, refTip } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
+import { checkinBelow } from './floor.mjs';
 
-// worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it
-export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker'];
+// worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
+// tick archiving a lane by its rules - only the lane archive allows it
+export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker', 'tick'];
 const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
 const CK = ['controller', 'checkin'];
 const MAILERS = ['worker', ...CK];
@@ -31,6 +33,12 @@ export const KINDS = {
     supersede: { from: ['open', 'answered'], to: 'superseded', roles: CK },
     withdraw: { from: ['open'], to: 'withdrawn', roles: CK },
     reopen: { from: ['answered', 'applied', 'superseded', 'withdrawn'], to: 'open', roles: OWNER },
+    // INBOX-REPLIES: the thread on an open Q. say = the owner's typed message ({ text, via }): a message to the controller, never a
+    // ruling - the Q stays open. reply = the controller's / check-in's answer in the thread ({ text, options?, recommend?, propose? }):
+    // options revises the list (shown in the thread), propose { key?, text } = a ruling from the owner's words the owner confirms with
+    // one tap (an answer naming the reply's seq in `ruling`). Only an answer closes the Q (qthread.mjs reads the thread).
+    say: { from: ['open'], to: null, roles: OWNER },
+    reply: { from: ['open'], to: null, roles: CK },
   } },
   decision: { prefix: 'DEC-', file: 'records', events: {
     create: { from: null, to: 'in-force', roles: [...CK, ...OWNER] },
@@ -50,7 +58,8 @@ export const KINDS = {
     park: { from: ['active'], to: 'parked', roles: CK },
     unpark: { from: ['parked'], to: 'active', roles: CK },
     done: { from: ['active', 'parked'], to: 'done', roles: CK },
-    archive: { from: ['active', 'parked', 'done'], to: 'archived', roles: [...OWNER, 'controller'] },
+    // lifecycle.mjs: the check-in archives an idle / stopped lane (CHECKIN.md 2j); the tick its orphan / landed / merged-and-old ones
+    archive: { from: ['active', 'parked', 'done'], to: 'archived', roles: [...OWNER, ...CK, 'tick'] },
     unarchive: { from: ['archived'], to: 'active', roles: [...OWNER, 'controller'] },
     // META-CONTROLLER C4 (SPEC sec. 2): a hold (a lease) - { until ISO, holder?, why?, via? }; a later claim extends it, release ends it,
     // the clock ends it at `until`. While held, a check-in write on the lane is refused with exit 5 (HELD_EXIT). Never a check-in's.
@@ -85,6 +94,8 @@ export const KINDS = {
     hold: { from: ['queued'], to: null, roles: ['launcher'] },
     // META-AUTONOMY R1: a ruling 'its work counts as merged on main' (git cannot see it): { why, sha? } - after.mjs honours it
     landed: { from: ['exited', 'filled', 'lost', 'killed', 'withdrawn'], to: null, roles: [...OWNER, ...CK] },
+    // RM-37: the owner's safe pause of a running work run ({ mail: MAIL-n, why? }): the urgent order went out; its HANDOFF end is paused (pause.mjs)
+    pause: { from: ['running'], to: null, roles: [...OWNER, 'controller'] },
     // META-CHECKIN-GUARDS R1: a guard refused a move of this (running) run ({ guard: busy | owner-only, why, lane, stage?, answers? })
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
@@ -115,7 +126,7 @@ export const KINDS = {
   // one wins, the other is refused - the state machine, never a reader-side dedupe. nudge = the supervisor's one claim of an
   // urgent unacked mail (it resumes the run with the mail as its prompt). Owner asks stay Q records.
   mail: { prefix: 'MAIL-', file: 'mail', events: {
-    create: { from: null, to: 'queued', roles: MAILERS },
+    create: { from: null, to: 'queued', roles: [...MAILERS, ...OWNER] },   // RM-37: the owner's pause order (pause.mjs)
     deliver: { from: ['queued'], to: 'delivered', roles: ['launcher', ...MAILERS] },
     nudge: { from: ['queued', 'delivered'], to: 'delivered', roles: ['launcher'] },
     ack: { from: ['queued', 'delivered'], to: 'acked', roles: MAILERS },
@@ -158,16 +169,19 @@ export const KINDS = {
     close: { from: ['open', 'ruled'], to: 'closed', roles: ['launcher', ...CK, ...OWNER] },
   } },
   // META-SLOP-A (SPEC 3.4.2): a slop finding waived - { rule, scope (a fingerprint or a path glob), why, until? } in its own file
-  // (waivers.jsonl). The owner or the controller; a check-in never waives. Past `until` it no longer counts (derived, no event).
+  // (waivers.jsonl). The owner or the controller; a check-in only on the owner's word: { q: an answered Q } (waiverGuard - RUN-61 / RUN-68
+  // left Q-1 "waive" unapplied for an hour, mailing the controller). Past `until` it no longer counts (derived, no event).
   waiver: { prefix: 'WVR-', file: 'waivers', events: {
-    create: { from: null, to: 'active', roles: [...OWNER, 'controller'] },
+    create: { from: null, to: 'active', roles: [...OWNER, ...CK] },
     revoke: { from: ['active'], to: 'revoked', roles: [...OWNER, 'controller'] },
   } },
 };
 // META-ROADMAP S1: a roadmap link is a kind:id term (the --after grammar); existence is checked by roadmap.mjs checkLinks
 const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
+// RM-46 S1a: a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
+const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
 export const ITEM_LINK_RE = new RegExp(`^(?:dir:${NID('DIR')}|dec:${NID('DEC')}|q:${NID('Q')}|run:${NID('RUN')}|dlv:${NID('DLV')}|ep:${NID('EP')}`
-  + '|lane:[A-Za-z0-9][A-Za-z0-9_.-]*|branch:[A-Za-z0-9][A-Za-z0-9._/-]*|sha:[0-9a-f]{7,40}|doc:\\S.*)$');
+  + `|lane:${LANE_REF}|branch:[A-Za-z0-9][A-Za-z0-9._/-]*|sha:[0-9a-f]{7,40}|doc:\\S.*)$`);
 export const HORIZONS = ['now', 'next', 'later'];
 // the current parent of an item record (create.parent, then the last move that set one)
 export const itemParent = it => { const m = [...it.history].reverse().find(h => h.ev === 'move' && 'parent' in h.data); return m ? m.data.parent : it.data.parent ?? null; };
@@ -187,14 +201,18 @@ const itemLook = it => {
 };
 const itemProof = it => itemLook(it).proof, itemViews = it => itemLook(it).views;
 export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in a body_file
-export const MAIL_TO_RE = /^(RUN-\d+|lane:[A-Za-z0-9][A-Za-z0-9_.-]*|role:(checkin|controller))$/;
+// RM-46 S1a: RUN-n / RUN-<home>-n, lane:<lane> (lane:<home>/<name>), role:<r> / role:<r>@<home>
+export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
+export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
-export const EPIC_MEMBER_RE = /^(RUN|DLV)-\d+$/;
+export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
 const createEv = kind => CREATE_EV[kind] || 'create';
 
+/** a --kind value: a kind name, or its record prefix (DIR = directive, as in DIR-7); unknown values come back as given */
+export const kindNamed = k => Object.keys(KINDS).find(n => KINDS[n].prefix.replace(/[-:]$/, '') === k) ?? k;
 export const kindOfId = id => {
   if (typeof id !== 'string') return null;
   if (id.startsWith('L:')) return 'lane';
@@ -202,15 +220,43 @@ export const kindOfId = id => {
   for (const [k, d] of Object.entries(KINDS)) if (k !== 'lane' && new RegExp('^' + d.prefix + '(?:[a-z][a-z0-9]{0,15}-)?\\d+$').test(id)) return k;
   return null;
 };
-const idNum = id => Number(String(id).replace(/^\D+-/, ''));
+export const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // F8: the trailing number (a home id may hold digits: Q-b2-12)
+const idHome = id => String(id).match(/^[A-Z]+-([a-z][a-z0-9]{0,15})-\d+$/)?.[1] ?? null;
 
 export const recordsFile = (stateDir, kind = 'question') => path.join(stateDir, (KINDS[kind]?.file || 'records') + '.jsonl');
 
-// META-GTP-FED piece 3: <state>/node.json { id } = a node's own state dir (norn node run writes it): its new ids carry the id
-export function nodePrefix(stateDir) {
+const idFile = (stateDir, file, re) => {
   let j;
-  try { j = JSON.parse(readText(path.join(stateDir, 'node.json'))); } catch { return null; }   // snapshot-aware (recordAsync primes it)
-  return typeof j?.id === 'string' && /^[a-z][a-z0-9]{0,15}$/.test(j.id) ? j.id : null;
+  try { j = JSON.parse(readText(path.join(stateDir, file))); } catch { return null; }   // snapshot-aware (recordAsync primes it)
+  return typeof j?.id === 'string' && re.test(j.id) ? j : null;
+};
+// RM-46 S1a: <state>/home.json { id, bare_home } = a synced project's state dir (the cut writes it): new ids <P><id>-n, lanes
+// L:<id>/<name>, branches norn/<id>/... No home.json = a solo dir: everything as before (a setting, not a fallback).
+export function homeOf(stateDir) {
+  const j = idFile(stateDir, 'home.json', /^[a-z][a-z0-9]{0,7}$/);
+  return j ? { id: j.id, bare_home: typeof j.bare_home === 'string' ? j.bare_home : null } : null;
+}
+// The prefix of a state dir's new ids: its home id, else (META-GTP-FED piece 3) the id of <state>/node.json { id }, a fed node's
+// own state dir (norn node run writes it), else none
+export const idPrefix = stateDir => homeOf(stateDir)?.id ?? idFile(stateDir, 'node.json', /^[a-z][a-z0-9]{0,15}$/)?.id ?? null;
+// A lane as typed (x = this home's lane, b/x = home b's) -> its id / mail address; In = the home id given (saves the read in a loop)
+const laneRef = (name, h) => (h && !String(name).includes('/') ? `${h}/${name}` : String(name));
+export const laneIdIn = (name, h) => 'L:' + laneRef(name, h);
+export const laneId = (name, stateDir) => laneIdIn(name, homeOf(stateDir)?.id);
+export const laneAddrIn = (name, h) => 'lane:' + laneRef(name, h);
+/** a lane id -> the name as typed in this state dir (this home's lanes bare, another home's b/x) */
+export const laneNameIn = (id, h) => { const n = String(id).replace(/^L:/, ''); return h && n.startsWith(h + '/') ? n.slice(h.length + 1) : n; };
+export const laneName = (id, stateDir) => laneNameIn(id, homeOf(stateDir)?.id);
+// a role's mail address: role:checkin, or role:checkin@a in a home
+export const roleAddrIn = (role, h) => `role:${role}${h ? '@' + h : ''}`;
+export const roleAddr = (role, stateDir) => roleAddrIn(role, homeOf(stateDir)?.id);
+// The next number of a kind: a home counts its own prefix (the bare home also its bare ids), so RM-47 and RM-a-47 never both
+// exist; a solo dir or a fed node: 1 + the max over every id of the kind, as before
+function nextNum(st, kind, home) {
+  if (!home) return (st.next[kind] || 0) + 1;
+  let n = 0;
+  for (const i of Object.values(st.items)) if (i.kind === kind) { const h = idHome(i.id); if (h === home.id || (h === null && home.bare_home === home.id)) n = Math.max(n, idNum(i.id) || 0); }
+  return n + 1;
 }
 
 // ---------- read ----------
@@ -254,6 +300,11 @@ export function fold(events) {
     if (to) it.state = to;
     it.updated = e.ts;
     it[e.ev] = e.data ?? {};
+    // INBOX-REPLIES: a reply that revises the options replaces the list (the create event keeps the first one; the thread shows each)
+    if (e.kind === 'question' && e.ev === 'reply' && Array.isArray(e.data?.options)) {
+      const keys = e.data.options.map(o => o.key), r = e.data.recommend ?? (keys.includes(it.data.recommend?.key) ? it.data.recommend : undefined);
+      it.data = { ...Object.fromEntries(Object.entries(it.data).filter(([k]) => k !== 'recommend')), options: e.data.options, ...(r ? { recommend: r } : {}) };
+    } else if (e.kind === 'question' && e.ev === 'reply' && e.data?.recommend) it.data = { ...it.data, recommend: e.data.recommend };
     if (e.ev === 'supersede' && e.data?.by) it.superseded_by = e.data.by;
     if (e.ev === 'rewire' && Array.isArray(e.data?.after)) it.data = { ...it.data, after: e.data.after };   // META-AUTONOMY R1
     it.history.push(h);
@@ -329,11 +380,11 @@ export const authorOf = it => (it.by === 'migration' && it.data?.legacy_by) || i
 const isOwnerRecord = it => it && (it.kind === 'directive' || (it.kind === 'question' && ['answered', 'applied'].includes(it.state))
   || (it.kind === 'decision' && OWNER.includes(authorOf(it))));
 
-function validateData(kind, ev, d, target, st, by) {
+function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'waiver') {
     if (ev === 'create') {
       str(d.rule, 'rule'); if (!/^[A-Z]+\d+$/.test(d.rule)) fail('rule must be a slop rule id (K2, T1, ...)');
-      str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false });
+      str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false }); str(d.q, 'q', { req: false });
       if (d.until !== undefined && !Number.isFinite(Date.parse(d.until))) fail(`until must be an ISO time (got ${JSON.stringify(d.until)})`);
     }
     return;
@@ -345,15 +396,46 @@ function validateData(kind, ev, d, target, st, by) {
   }
   if (kind === 'confirm') { str(d.file, 'file'); str(d.anchor, 'anchor'); if (!/^p[0-9a-f]{8}$/.test(d.anchor)) fail('anchor must be p<8 hex> (meta instructions suggest / the tab name it)'); str(d.why, 'why', { req: false }); }
   if (kind === 'question') {
+    // an option: { key, text, cost?, added_by? } - added_by = the writer that added it to a question built from a source (origin)
+    const opts = (v, name) => {
+      list(v, name);
+      for (const o of v || []) { if (!o || typeof o.key !== 'string' || !o.key) fail('option key is required'); str(o.text, 'option text'); str(o.added_by, 'option added_by', { req: false, max: 60 }); }
+      if (new Set((v || []).map(o => o.key)).size !== (v || []).length) fail(`${name}: each option key once`);
+    };
+    const rec = (r, keys) => {
+      if (r === undefined) return;
+      if (typeof r?.key !== 'string' || !keys.includes(r.key)) fail('recommend.key must be one of the option keys');
+      str(r.from, 'recommend.from', { req: false, max: 60 });   // whose recommendation: source (the plan's default) | the writer
+    };
     if (ev === 'create') {
       str(d.title, 'title', { max: 120 }); str(d.lane, 'lane'); str(d.body, 'body', { req: false });
-      list(d.options, 'options'); for (const o of d.options || []) { if (!o || typeof o.key !== 'string' || !o.key) fail('option key is required'); str(o.text, 'option text'); }
-      if (d.recommend !== undefined && (typeof d.recommend?.key !== 'string' || !(d.options || []).some(o => o.key === d.recommend.key))) fail('recommend.key must be one of the option keys');
+      opts(d.options, 'options'); rec(d.recommend, (d.options || []).map(o => o.key));
       oneOf(d.class, 'class', ['i', 'ii', 'iii', 'iv', 'v'], false); list(d.blocks, 'blocks');
       if (d.owner_only !== undefined && typeof d.owner_only !== 'boolean') fail('owner_only must be true or false');   // NORN-WATCH S3
+      if (d.origin !== undefined) {   // INBOX-REPLIES: the plan / notes / brief section the options were copied from
+        if (!d.origin || typeof d.origin !== 'object') fail('origin must be { file, section, line? }');
+        str(d.origin.file, 'origin.file', { max: 400 }); str(d.origin.section, 'origin.section', { max: 200 });
+        if (d.origin.line !== undefined && !(Number.isInteger(d.origin.line) && d.origin.line > 0)) fail('origin.line must be a line number');
+      }
+    }
+    if (ev === 'say') { str(d.text, 'text', { max: 4000 }); via(d.via, ['dashboard', 'chat']); }
+    if (ev === 'reply') {
+      str(d.text, 'text', { max: 4000 });
+      if (d.options !== undefined) { opts(d.options, 'options'); if (!d.options.length) fail('options: a revision keeps at least one option'); }
+      const keys = (d.options ?? target.data.options ?? []).map(o => o.key);
+      rec(d.recommend, keys);
+      if (d.propose !== undefined) {
+        str(d.propose?.text, 'propose.text', { max: 600 });
+        if (d.propose.key !== undefined && !keys.includes(d.propose.key)) fail(`propose.key must be one of ${keys.join(' | ') || '(no options)'}`);
+      }
     }
     if (ev === 'answer') {
       str(d.text, 'text'); via(d.via, ['dashboard', 'chat']); str(d.mapped_from, 'mapped_from', { req: false });
+      if (d.ruling !== undefined) {   // INBOX-REPLIES: the owner's one tap on a proposed ruling (the reply's seq)
+        const r = target.history.find(h => h.seq === d.ruling && h.ev === 'reply' && h.data.propose);
+        if (!r) fail(`ruling ${d.ruling} is not a proposed ruling in ${target.id}'s thread`);
+        if ((r.data.propose.key ?? undefined) !== (d.choice || undefined)) fail(`ruling ${d.ruling} proposes ${r.data.propose.key ?? 'no option'}: the answer carries the same choice`);
+      }
       if (d.from !== undefined) {   // META-Q-RECONCILE R1: the owner's words taken from a decision on the Q's lane
         const dec = st.items[d.from];
         if (!dec || dec.kind !== 'decision') fail(`from ${d.from} is not a decision`);
@@ -432,7 +514,7 @@ function validateData(kind, ev, d, target, st, by) {
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
-      if (/^DLV-\d+$/.test(d.by)) {
+      if (new RegExp(`^${NID('DLV')}$`).test(d.by)) {
         if (d.by === target.id) fail(`${target.id} cannot supersede itself`);
         if (!st.items[d.by]) fail(`supersede cites ${d.by}, which does not exist`);
       } else if (!/^[0-9a-f]{7,40}$/.test(d.by)) fail(`supersede --by must be a DLV-n or a commit sha (7-40 hex), got ${JSON.stringify(d.by)}`);
@@ -447,7 +529,7 @@ function validateData(kind, ev, d, target, st, by) {
   if (kind === 'mail') {
     if (ev === 'create') {
       str(d.subject, 'subject', { max: 120 }); str(d.from, 'from'); str(d.to, 'to');
-      if (!MAIL_TO_RE.test(d.to)) fail(`to must be RUN-n | lane:<name> | role:checkin | role:controller (got ${JSON.stringify(d.to)})`);
+      if (!MAIL_TO_RE.test(d.to)) fail(`to must be RUN-n | lane:<name> | role:checkin | role:controller, each with an optional home (RUN-b-n, lane:b/x, role:checkin@b) (got ${JSON.stringify(d.to)})`);
       if ((d.body === undefined) === (d.body_file === undefined)) fail('give exactly one of body (<= 2 KB) or body_file');
       if (d.body !== undefined) {
         str(d.body, 'body');
@@ -455,7 +537,7 @@ function validateData(kind, ev, d, target, st, by) {
         if (n > MAIL_BODY_MAX) fail(`body is ${n} bytes: at most 2 KB (${MAIL_BODY_MAX}) - put a longer message in a body_file`);
       } else str(d.body_file, 'body_file', { max: 400 });
       if (d.urgent !== undefined && typeof d.urgent !== 'boolean') fail('urgent must be true or false');
-      if (by !== 'worker' && by !== 'migration' && d.from !== `role:${by}`) fail(`from must be role:${by} (a ${by} sends as itself)`);
+      if (by !== 'worker' && by !== 'migration' && d.from !== roleAddrIn(by, home?.id)) fail(`from must be ${roleAddrIn(by, home?.id)} (a ${by} sends as itself)`);
     }
     if (ev === 'deliver') { str(d.run, 'run', { req: false }); oneOf(d.via, 'via', MAIL_VIA); }   // no run = the controller's session (role:controller)
     if (ev === 'nudge') { if (target.nudge) fail(`${target.id} is already nudged (${target.nudge.run})`); str(d.run, 'run'); }
@@ -463,7 +545,7 @@ function validateData(kind, ev, d, target, st, by) {
   if (kind === 'item') validateItem(ev, d, target, st, by);
   if (kind === 'proposal') validateProposal(ev, d, target, st);
   if (kind === 'run') {
-    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !/^EP-\d+$/.test(d.epic)) fail('epic must be an EP-n id'); }
+    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !new RegExp(`^${NID('EP')}$`).test(d.epic)) fail('epic must be an EP-n id'); }
     if (ev === 'start' || ev === 'queue') oneOf(d.kind, 'kind', ['worker', 'codex', 'cli', 'checkin', 'talk', 'interactive', 'fake', 'provider', 'audit']);
     if ((ev === 'start' || ev === 'queue') && d.after !== undefined && !(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string'))))
       fail('after must be a list of {kind, id, state}');
@@ -580,18 +662,18 @@ export function holdOf(lane, now = Date.now()) {
   if (!lane || lane.kind !== 'lane') return null;
   const h = [...lane.history].reverse().find(x => x.ev === 'claim' || x.ev === 'release');
   if (h?.ev !== 'claim' || !(Date.parse(h.data.until) > now)) return null;
-  return { id: lane.id, lane: lane.id.slice(2), holder: h.data.holder ?? holderOf(h.by, h.data.via), until: h.data.until, why: h.data.why ?? null, by: h.by,
+  return { id: lane.id, lane: lane.data.name ?? lane.id.slice(2), holder: h.data.holder ?? holderOf(h.by, h.data.via), until: h.data.until, why: h.data.why ?? null, by: h.by,
     via: h.data.via ?? null, ts: h.ts, run: h.run ?? null };
 }
 /** every live hold among the items, by lane name */
 export const heldLanes = (items, now = Date.now()) => Object.values(items).map(i => holdOf(i, now)).filter(Boolean).sort((a, b) => a.lane.localeCompare(b.lane));
 export const holdWho = h => (h.holder === 'chat' ? 'the controller chat' : h.holder === 'controller' ? `the controller${h.via ? ` (${h.via})` : ''}` : h.holder === 'owner' ? 'the owner' : h.holder);
 export const hhmm = t => new Date(Date.parse(t)).toISOString().slice(11, 16) + 'Z';
-export const holdMessage = h => `L:${h.lane} is held by ${holdWho(h)} until ${hhmm(h.until)}${h.why ? ` (${h.why})` : ''} - a check-in skips a held lane `
+export const holdMessage = h => `${h.id} is held by ${holdWho(h)} until ${hhmm(h.until)}${h.why ? ` (${h.why})` : ''} - a check-in skips a held lane `
   + '(exit 5) and leaves it to the holder; to reach the holder: norn mail send --to role:controller';
 // the lane an event writes on: the LANE itself, the record's lane field, or the target record's
-function laneOfEvent(e, st) {
-  if (e.kind === 'lane') return e.id ? String(e.id).slice(2) : e.data?.name ?? null;
+function laneOfEvent(e, st, home) {
+  if (e.kind === 'lane') return e.id ? laneNameIn(e.id, home) : e.data?.name ?? null;
   if (e.kind === 'mail' || e.kind === 'item') return null;
   return e.data?.lane ?? (e.id ? st.items[e.id]?.data?.lane : null) ?? null;
 }
@@ -607,7 +689,7 @@ function firstWriter(kind, target) {
 }
 
 // Check one event against the state; returns the full envelope (without seq / ts).
-function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
+function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } = {}) {
   const k = KINDS[kind];
   if (!k) fail(`unknown kind ${JSON.stringify(kind)} (question | decision | directive | lane | run | mail)`);
   const def = k.events[ev];
@@ -618,10 +700,10 @@ function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
   let target = null;
   if (def.from === null) {
     if (kind === 'lane') {
-      validateData(kind, ev, data, null, st, by);
-      id = 'L:' + data.name;
+      validateData(kind, ev, data, null, st, by, home);
+      id = laneIdIn(data.name, home?.id);
       if (st.items[id]) fail(`${id} already exists`);
-    } else id = k.prefix + (pfx ? pfx + '-' : '') + ((st.next[kind] || 0) + 1);
+    } else id = k.prefix + (pfx ? pfx + '-' : '') + nextNum(st, kind, home);
   } else {
     if (kindOfId(id) !== kind) fail(`${JSON.stringify(id)} is not a ${kind} id`);
     target = st.items[id];
@@ -629,7 +711,7 @@ function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
     if (!def.from.includes(target.state)) fail(`${id} is ${target.state}; ${ev} needs ${def.from.join(' | ')}${firstWriter(kind, target)}`);
     if (kind === 'run' && ev === 'review' && target.review) fail(`${id} is already reviewed`);
   }
-  if (kind !== 'lane' || def.from !== null) validateData(kind, ev, data, target, st, by);
+  if (kind !== 'lane' || def.from !== null) validateData(kind, ev, data, target, st, by, home);
   if (kind === 'run' && (ev === 'start' || ev === 'queue')) data = { ...data, name: agentName(id) };   // META-UX-R1 C: stable name, fixed at launch
   return { id, kind, ev, by, data };
 }
@@ -638,25 +720,40 @@ const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
-function archiveGuard(stateDir, lane) {
+function archiveGuard(stateDir, lane, ev = {}) {
+  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
+  const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
+  if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
+    const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;
+    if (!(pth.tip && dir && fs.existsSync(dir) && isAncestor(dir, pth.tip, 'main')))
+      fail(`${laneId(lane, stateDir)} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
+  }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
     const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
     if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
-    fail(`L:${lane} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
+    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
+}
+// item 8 (lane norn-lifecycle): a check-in writes a waiver only as the owner's ruling it applies - data.q names a question the owner
+// answered (answered / applied); its own judgement never waives
+function waiverGuard(stateDir, d) {
+  if (!d.q) fail('a check-in waives only on the owner answer: pass --q Q-n (the answered question that says to waive)');
+  const q = loadState(stateDir).items[d.q];
+  if (!q || q.kind !== 'question') fail(`${d.q} is not a question`);
+  if (!['answered', 'applied'].includes(q.state)) fail(`${d.q} is ${q.state}, not answered: a check-in waives only what the owner ruled`);
 }
 // META-GTP-MAIL piece 1: the cross-file rules of mail (the runs + epics logs are read here, under the mail log's lock).
 // A run's mailbox = its id, the runs it continues (resume / queue fill / re-queue / fallback chain), lane:<its lane>, and
-// role:checkin for a check-in run.
+// role:checkin for a check-in run; in home h (RM-46 S1a) lane:h/<lane> and role:checkin@h.
 const CHAIN = ['resume_of', 'from_queue', 'requeue_of', 'fallback_of'];
-export function mailboxOf(runs, id) {
+export function mailboxOf(runs, id, home = null) {
   const box = new Set();
   const me = runs[id];
   if (!me) return box;
   for (let r = me, n = 0; r && !box.has(r.id) && n < 1000; n++) { box.add(r.id); r = CHAIN.map(k => runs[r.data[k]]).find(Boolean); }
-  if (me.data.lane) box.add(`lane:${me.data.lane}`);
-  if (me.data.kind === 'checkin') box.add('role:checkin');
+  if (me.data.lane) box.add(laneAddrIn(me.data.lane, home));
+  if (me.data.kind === 'checkin') box.add(roleAddrIn('checkin', home));
   return box;
 }
 // the epics run `id` belongs to: members (create + add - remove, as epics.mjs epicMembers) or the run's own epic field
@@ -672,9 +769,12 @@ function epicsOf(stateDir, runs, id) {
   }
   return out;
 }
+// a run of this state dir: solo RUN-n; a home its own RUN-<home>-n (the bare home also RUN-n). Another home's run is not in this
+// state (RM-46 S1a: its existence is not checked here)
+const ownRun = (id, home) => RUN_ID_RE.test(id || '') && (home ? [home.id, home.bare_home === home.id ? null : home.id].includes(idHome(id)) : /^RUN-\d+$/.test(id));
 function mailGuard(stateDir, e, run, st) {
   if (e.by === 'migration') return;
-  const d = e.data || {};
+  const d = e.data || {}, home = homeOf(stateDir), checkin = roleAddrIn('checkin', home?.id), controller = roleAddrIn('controller', home?.id);
   const runs = fold(readEvents(recordsFile(stateDir, 'run'))).items;
   const needRun = () => {
     if (!run) fail(`a run ${e.ev === 'create' ? 'sends' : 'reads'} mail as itself: META_RUN_ID is not set`);
@@ -682,20 +782,30 @@ function mailGuard(stateDir, e, run, st) {
     return runs[run];
   };
   if (e.ev === 'create') {
-    if (/^RUN-\d+$/.test(d.to || '') && !runs[d.to]) fail(`to ${d.to} does not exist`);
+    if (ownRun(d.to, home) && !runs[d.to]) fail(`to ${d.to} does not exist`);
     if (e.by !== 'worker') return;
     const me = needRun();
     if (d.from !== run) fail(`from must be ${run} (a run sends as itself)`);
     const peers = () => { const mine = epicsOf(stateDir, runs, run); return mine.size > 0 && [...epicsOf(stateDir, runs, d.to)].some(x => mine.has(x)); };
-    const ok = d.to !== run && (d.to === 'role:checkin' || d.to === 'role:controller' || d.to === me.data.parent || (/^RUN-\d+$/.test(d.to) && peers()));
-    if (!ok) fail(`${run} may not mail ${d.to}: a run mails its parent, role:checkin, role:controller or runs of its own epic`);
+    const ok = d.to !== run && (d.to === checkin || d.to === controller || d.to === me.data.parent || (ownRun(d.to, home) && peers()));
+    if (!ok) fail(`${run} may not mail ${d.to}: a run mails its parent, ${checkin}, ${controller} or runs of its own epic`);
   }
   if ((e.ev === 'deliver' || e.ev === 'ack') && e.by === 'worker') {
     needRun();
     if (e.ev === 'deliver' && d.run !== run) fail(`a run takes delivery for itself: run must be ${run} (got ${d.run})`);
     const m = st.items[e.id];
-    if (m?.kind === 'mail' && !mailboxOf(runs, run).has(m.data.to)) fail(`${e.id} is not addressed to ${run} (to ${m.data.to})`);
+    if (m?.kind === 'mail' && !mailboxOf(runs, run, home?.id).has(m.data.to)) fail(`${e.id} is not addressed to ${run} (to ${m.data.to})`);
   }
+}
+// RM-26: a decision a check-in run writes carries the model / effort that run started with (its runs.jsonl start) and whether they
+// were below the check-in floor (floor.mjs checkinBelow) when it was made: made_under { model, effort, below_floor }. Only this stamps
+// it (a caller's own made_under is dropped); no run, or a run start with no model, = no stamp.
+function madeUnder(stateDir, d, by, run) {
+  const { made_under: _, ...rest } = d;
+  const r = by === 'checkin' && run ? fold(readEvents(recordsFile(stateDir, 'run'))).items[run] : null;
+  if (!r?.data?.model) return rest;
+  const model = r.data.model, effort = r.data.effort ?? null;
+  return { ...rest, made_under: { model, effort, below_floor: checkinBelow({ model, effort }).length > 0 } };
 }
 // NORN-WATCH S4: a deliverable a queued run takes as an input (queue field `inputs`) cannot be parked under it
 function inputGuard(stateDir, id) {
@@ -740,7 +850,7 @@ export const writeOrigin = new AsyncLocalStorage();
 export function record(stateDir, evIn, opts = {}) {
   const c = recordCtx(stateDir, evIn, opts);
   fs.mkdirSync(stateDir, { recursive: true });
-  c.setPfx(nodePrefix(stateDir));
+  c.setIds(stateDir);
   try {
     return withLock(c.lock, () => {
       const r = c.plan();
@@ -759,12 +869,12 @@ export async function recordAsync(stateDir, evIn, opts = {}) {
   await fp.mkdir(stateDir, { recursive: true });
   try {
     return await withLockAsync(c.lock, () => snap.run(newSnap(), async () => {
-      await prime({ files: [c.file, recordsFile(stateDir, 'lane'), path.join(stateDir, 'node.json')] });
-      c.setPfx(nodePrefix(stateDir));
+      await prime({ files: [c.file, recordsFile(stateDir, 'lane'), path.join(stateDir, 'home.json'), path.join(stateDir, 'node.json')] });
+      c.setIds(stateDir);
       const r = c.plan();
       const fh = await fp.open(c.file, 'a');
       try { await fh.write(r.text); await fh.sync(); } finally { await fh.close(); }
-      if (r.views) { const v = await writeViewsAsync(stateDir, r.st, opts.views || {}); if (opts.onViews) opts.onViews(v); }
+      if (r.views) { const v = await writeViewsAsync(stateDir, r.st, opts.views || {}, { role: 'dashboard' }); if (opts.onViews) opts.onViews(v); }
       return r.out;
     }));
   } catch (e) { if (e instanceof RecordError && e.refusal) noteRefusal(stateDir, e.message, e.refusal); throw e; }
@@ -781,9 +891,9 @@ function recordCtx(stateDir, evIn, opts) {
   const lock = file.replace(/\.jsonl$/, '.lock');
   const now = opts.now || (() => new Date());
   const run = opts.run !== undefined ? opts.run : (process.env.META_RUN_ID && launchedHere(stateDir, process.env) ? process.env.META_RUN_ID : null);
-  let pfx = null;
+  let ids = {};
   const via = writeOrigin.getStore()?.via ?? null;   // C6: a remote device's write (the dashboard sets it per request)
-  return { file, lock, setPfx: v => { pfx = v; }, plan };
+  return { file, lock, setIds: s => { ids = { pfx: idPrefix(s), home: homeOf(s) }; }, plan };
   /** the checked batch (no write): its jsonl text, the folded state after it, whether the views follow, the caller's result */
   function plan() {
     const base = readEvents(file);
@@ -795,10 +905,10 @@ function recordCtx(stateDir, evIn, opts) {
     const push = e => {
       if (e.by === 'checkin') {
         // the clock is read only for a lane that was ever claimed (a caller's clock may count its calls: the golden views)
-        const ln = laneOfEvent(e, st), l = ln ? laneItems()['L:' + ln] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
+        const ln = laneOfEvent(e, st, ids.home?.id), l = ln ? laneItems()[laneIdIn(ln, ids.home?.id)] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
         if (h) throw new RecordError(holdMessage(h), HELD_EXIT);
       }
-      const c = check(st, e, pfx);
+      const c = check(st, e, ids);
       const env = { v: 1, seq: st.seq + 1, ts: isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, by: c.by, run, ...(via ? { via } : {}), data: c.data };
       batch.push(env);
       st = fold([...base, ...batch]);
@@ -813,7 +923,8 @@ function recordCtx(stateDir, evIn, opts) {
       for (const k of ['parent', 'after']) if (k in d) d[k] = ref$(d[k]);
       ev = { ...ev, id: ref$(ev.id), data: d };
     }
-    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, String(ev.id || '').slice(2));
+    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, laneName(ev.id || '', stateDir), ev);
+    if (kind === 'waiver' && ev.ev === 'create' && ev.by === 'checkin') waiverGuard(stateDir, ev.data || {});
     if (kind === 'deliverable' && ev.ev === 'park' && ev.by !== 'migration') inputGuard(stateDir, ev.id);
     if (kind === 'mail') mailGuard(stateDir, ev, run, st);
     // META-Q-RECONCILE R1: an owner pick in a decision closes the Q it answers in the same step, or the write is refused
@@ -827,6 +938,7 @@ function recordCtx(stateDir, evIn, opts) {
       if (g) throw new RecordError(`${g.id} is open on lane ${d.lane} - pass --answers ${g.id} or --not-an-answer`, 3);
       if (d.answers && st.items[d.answers]?.state === 'open' && carriesOwnerPick(d) && !d.owner_words)
         fail(`${d.answers} is open: --answers with an owner pick needs --owner-words "<the owner's words, verbatim>" (they answer it in the same step)`);
+      ev = { ...ev, data: madeUnder(stateDir, d, caller, run) };
     }
     if (kind === 'question' && ev.ev === 'answer' && ev.data?.from !== undefined && caller !== 'migration') ev = answerFrom(st, ev);
     const primary = push(ev);
@@ -854,7 +966,7 @@ function recordCtx(stateDir, evIn, opts) {
     // Lane parking follows the blocking question (3.4: "Parked is set by the Q that blocks it and cleared by its apply").
     if (kind === 'question' && ev.ev === 'create') {
       for (const name of primary.data.blocks || []) {
-        const l = st.items['L:' + name];
+        const l = st.items[laneIdIn(name, ids.home?.id)];
         if (l && l.state === 'active') push({ kind: 'lane', ev: 'park', id: l.id, by: ev.by, data: { why: `blocked by ${primary.id}: ${primary.data.title}`, q: primary.id } });
       }
     }

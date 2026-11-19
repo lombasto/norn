@@ -108,7 +108,7 @@ const lastEv = (it, evs) => [...it.history].reverse().find(h => evs.includes(h.e
 
 /**
  * One row per deliverable. opts: { stateDir, project, now (ms), git (makeGit()), questions (records items, default loaded) }
- * Row: id, record_state open|parked, state done|merged|installed, target, at_target, repo, branch, lane, run, delivers, tip,
+ * Row: id, record_state open|parked, state done|merged|installed, target, at_target, repo, branch, lane, run, delivers, subject (the tip's), tip,
  * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due.
  */
 export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null } = {}) {
@@ -150,7 +150,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const resolve = state !== 'done' || superseded ? null : rehearsal && !rehearsal.clean ? { why: `conflict: ${rehearsal.files.join(', ')}` }
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
     return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
-      delivers: d.delivers ?? g.subject ?? '', tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
+      delivers: d.delivers ?? g.subject ?? '', subject: g.subject ?? null, tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
       native: g.native, native_files: g.native_files, pr, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}) };
     };
   });
@@ -334,7 +334,7 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
     { key: 'park', text: `park it with the owner's reason: \`norn deliverables park ${id} --why "<reason>"\`; it comes back after ${cfg.park_days} d`, cost: 'stays unmerged' },
   ];
   const data = { title, lane: row.lane ?? row.branch.split('/').pop(), body, options,
-    recommend: { key: 'merge', why: `finished work belongs on main (rule 9: the proper option first); it is ${row.behind ?? '?'} commits behind and drifting` },
+    recommend: { key: 'merge', why: `finished work belongs on main (rule 9: the proper option first); it is ${row.behind ?? '?'} commits behind and drifting`, from: by },
     class: 'iii', blocks: [], source: `deliverable ${id}`, deliverable: id };
   const e = record(stateDir, { kind: 'question', ev: 'create', by, data }, { views: project.views || {}, ...(now ? { now } : {}) });
   return { id: e.id };

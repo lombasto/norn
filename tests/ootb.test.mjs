@@ -102,7 +102,7 @@ test('F-15: norn dash from a script (no TTY) serves, prints the URL and says it 
   fs.writeFileSync(path.join(root, 'local', 'machine.json'), JSON.stringify({ schema: 1, home: fwd(root), node: fwd(process.execPath),
     claude: { exe: fwd(process.execPath), config_dir: fwd(path.join(root, 'cfg')), projects_dir: fwd(path.join(root, 'cfg', 'projects')) }, codex: null, git: { exe: fwd(process.execPath) },
     scheduler: { kind: 'cron', name: 'x', interval_min: 15 }, dash: { port: 8737, bind: '127.0.0.1' },
-    projects: [{ name: 'example', config: '${meta}/projects/example/project.json' }] }));
+    projects: [{ name: 'example', config: '${norn}/projects/example/project.json' }] }));
   const c = spawn(process.execPath, [META, 'dash', '--port', '0'], { env: { ...process.env, META_ROOT: root }, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     const text = await new Promise((resolve, reject) => {

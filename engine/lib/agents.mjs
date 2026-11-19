@@ -11,7 +11,11 @@ import { critiqueOfNode } from './critique.mjs';
 import { findRollout, findRolloutA } from './harness/codex.mjs';
 import { statS, statA, readdirS, readdirA, readJsonS, readText as readTextS, readTextA } from './fsnap.mjs';
 
-const RECENT_MS = 2 * 3600000;   // ended runs stay in the tree for 2 h
+// the Runs page's window (owner 2026-11-19): ended runs stay in the tree for 2 h by default; the page widens it to 12 h, 24 h or
+// since local midnight so last night's runs can be checked. windowMs(key, now) = the window in ms (null: not a window key)
+export const RUN_WINDOWS = ['2h', '12h', '24h', 'today'];
+export const windowMs = (key, now = Date.now()) => key === 'today' ? now - new Date(now).setHours(0, 0, 0, 0) : { '2h': 2, '12h': 12, '24h': 24 }[key] * 3600000 || null;
+const RECENT_MS = windowMs('2h');
 const BURN_MS = 30 * 60000;      // "burning" window (design 6)
 
 // tail(file, cache, onRecord): parse the complete lines appended since the cached offset; returns { c, bytesRead }
@@ -138,9 +142,11 @@ export function runTalked(r, o = {}) {
   return !!(f && transcriptInfo(f, cache)?.said);
 }
 const ended = r => r.state !== 'running';
-const QUEUE_STATES = ['queued', 'filled', 'withdrawn'];
-// a queue entry is no session: the Runs page lists the queued ones apart (META-GT12); ended runs stay RECENT_MS
-const shown = (r, now) => !QUEUE_STATES.includes(r.state) && !(ended(r) && now - Date.parse(r.updated) > RECENT_MS);
+/** when run r ended: the ts of its last end / lost / kill event (a later review or resume verdict is no end); null while running */
+export const endedAt = r => ended(r) ? [...(r.history || [])].reverse().find(h => h.ev === 'end' || h.ev === 'lost' || h.ev === 'kill')?.ts ?? null : null;
+const QUEUE_STATES = ['queued', 'claimed', 'filled', 'withdrawn'];   // claimed: a node runs it under its own id
+// a queue entry is no session: the Runs page lists the queued ones apart (META-GT12); ended runs stay `win` ms (RECENT_MS)
+const shown = (r, now, win = RECENT_MS) => !QUEUE_STATES.includes(r.state) && !(ended(r) && now - Date.parse(endedAt(r)) > win);
 /** The run ids the Runs tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
 export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(r => r.kind === 'run' && shown(r, now)).map(r => r.id));
 
@@ -163,11 +169,12 @@ export async function primeAgents(runs, o = {}) {
       await Promise.all(names.flatMap(n => [readTextA(path.join(dir, n.replace(/\.jsonl$/, '.meta.json'))).catch(() => null), tailA(path.join(dir, n), cache, tInit, onTranscript)]));
     }
   };
-  await Promise.all([...runs].filter(x => x.kind === 'run' && shown(x, now)).map(one));
+  await Promise.all([...runs].filter(x => x.kind === 'run' && shown(x, now, o.window)).map(one));
 }
 /**
- * Agents tree (design 6): one root per RUN (running, or ended < 2 h ago) + one root per talk session.
- * o: { projectsDir, codexDir, cache (Map, kept by the server), now, policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
+ * Agents tree (design 6): one root per RUN (running, or ended within o.window ms, default 2 h) + one root per talk session.
+ * o: { projectsDir, codexDir, cache (Map, kept by the server), now, window, policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
+ * Times: started = the start event, ended = endedAt (null while running), ran_min = start to end (start to now while running).
  * META-CTX-ENFORCE R1: ctx = the run's CURRENT context (its last request), ctx_peak beside it, ctx_limit / ctx_hard = its role's policy lines.
  */
 export function agentsTree(runs, o = {}) {
@@ -176,13 +183,13 @@ export function agentsTree(runs, o = {}) {
   // the live hand-off state (lanes.mjs handoffOf): o.wrote(id) = the run's result says HANDOFF; talked from the same tail cache
   const ho = { now, wrote: o.wrote, talked: id => runTalked(items[id], { ...o, cache }) };
   for (const r of [...runs].filter(x => x.kind === 'run').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)))) {
-    if (!shown(r, now)) continue;
+    if (!shown(r, now, o.window)) continue;
     const d = r.data || {}, end = r.end || {};
     const node = { id: r.id, name: runName(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
       model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null,
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
       dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log }) => ({ name, code, counts, log })) } : null,   // META-DOD 1
-      started: r.created, age_min: Math.round((now - Date.parse(r.created)) / 60000), budget_min: d.budget_min ?? null,
+      started: r.created, ended: endedAt(r), ran_min: Math.max(0, Math.round(((ended(r) ? Date.parse(endedAt(r)) : now) - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null,
       ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [],
       handoff: d.role === 'helper' ? null : handoffOf(r, items, ho) };
     const exe = d.executor || '';

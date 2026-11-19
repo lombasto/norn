@@ -1,0 +1,127 @@
+{
+  "id": "K19",
+  "level": "WARN",
+  "kind": "ast",
+  "tool": "eslint",
+  "title": "a new catch that drops the error and returns a default",
+  "how": "a catch whose body is one return, one continue or one assignment and does not read the error; passes when its comment says what failed and what happens next (K2's reason test and deny list)",
+  "explain": {
+    "what": "A new catch block drops the error and only returns a default, continues or sets a value.",
+    "why": "The caller cannot tell a real result from a failure. The fault shows up later, far from its cause.",
+    "fix": "Use the error: log it, rethrow it, or return it. If dropping it is right, write a comment that says what failed and what happens next."
+  },
+  "note": "2026-11-18: WARN for one week of its own numbers, then BLOCK - the level change is a record (RM-45), not a timer",
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ],
+  "reason": [
+    "ignore",
+    "ignored",
+    "ok",
+    "okay",
+    "best effort",
+    "nothing",
+    "noop",
+    "no-op",
+    "empty",
+    "todo",
+    "fine",
+    "whatever",
+    "swallow"
+  ],
+  "selectors": [
+    {
+      "selector": "CatchClause[body.body.length=1]:matches([body.body.0.type='ReturnStatement'], [body.body.0.type='ContinueStatement'], [body.body.0.expression.type='AssignmentExpression']):not(:has(BlockStatement Identifier[name=/^(?:e|err|error|ex)$/]))",
+      "message": "catch drops the error and goes on with a default: say in a comment what failed and what happens next, or let it throw"
+    }
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "export const read = f => { try { return f(); } catch { return null; } };\nexport function all(fs) { for (const f of fs) { try { f(); } catch (e) { continue; } } }\nexport let v = 0;\nexport const set = f => { try { v = f(); } catch { v = -1; } };\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "src/a.mjs",
+            "messages": [
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "K19: catch drops the error and goes on with a default: say in a comment what failed and what happens next, or let it throw",
+                "line": 1,
+                "column": 48,
+                "endLine": 1,
+                "endColumn": 70
+              },
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "K19: catch drops the error and goes on with a default: say in a comment what failed and what happens next, or let it throw",
+                "line": 2,
+                "column": 62,
+                "endLine": 2,
+                "endColumn": 85
+              },
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "K19: catch drops the error and goes on with a default: say in a comment what failed and what happens next, or let it throw",
+                "line": 4,
+                "column": 44,
+                "endLine": 4,
+                "endColumn": 61
+              }
+            ]
+          }
+        ],
+        "base": [
+          {
+            "filePath": "src/a.mjs",
+            "messages": []
+          }
+        ]
+      }
+    },
+    "miss": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "export const r1 = f => { try { return f(); } catch (e) { if (e.code !== 'ENOENT') throw e; return null; } };\nexport const r2 = f => { try { return f(); } catch { return null; } }; // gone: the file was removed meanwhile, the caller makes a new one\nexport const r3 = f => { try { return f(); } catch (err) { return { error: err.message }; } };\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "src/a.mjs",
+            "messages": [
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "K19: catch drops the error and goes on with a default: say in a comment what failed and what happens next, or let it throw",
+                "line": 2,
+                "column": 46,
+                "endLine": 2,
+                "endColumn": 68
+              }
+            ]
+          }
+        ],
+        "base": [
+          {
+            "filePath": "src/a.mjs",
+            "messages": []
+          }
+        ]
+      }
+    }
+  }
+}

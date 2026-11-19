@@ -110,6 +110,16 @@ test('jobguard hold: ends when the held process exits even while its stdin stays
     held.kill();   // the held process ends; the hold's stdin is still open here
     assert.equal(await Promise.race([gone.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]), true, 'the hold exited with the held process');
   } finally { try { hold.kill(); } catch { /* gone */ } try { held.kill(); } catch { /* gone */ } }
+  // CI 44343850063 (queue: a stop right after the start): the supervisor died while its hold started. A hold given a pid that is gone
+  // (or reused by a later process) refuses with "err" and exits, its stdin still open here - it never waits on a stranger
+  const dead = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
+  await new Promise(r => dead.once('exit', r));
+  const late = spawn(exe, ['hold', String(dead.pid), `meta-test-${dead.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  try {
+    let out = ''; late.stdout.on('data', d => { out += d; });
+    const code = await Promise.race([new Promise(r => late.once('exit', r)), new Promise(r => setTimeout(() => r('alive'), 20000))]);
+    assert.equal(code, 1, `the hold of a gone pid exits 1 (${out.trim()})`); assert.match(out, /^err /m);
+  } finally { late.kill(); }   // a no-op (false) once it has exited
   const p = spawn(process.execPath, ['-e', 'process.stdin.resume(); process.stdin.on("end", () => setTimeout(() => process.exit(0), 200))'], { stdio: ['pipe', 'ignore', 'ignore'] });
   await new Promise(r => p.once('spawn', r));
   assert.equal(await holdGone({ proc: p }), true, 'holdGone ends its stdin and resolves at its exit');
