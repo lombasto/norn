@@ -205,7 +205,7 @@ export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in 
 export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
 export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
-export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
+export const PRIORITIES = ['P0', 'P1', 'P2', 'P3', 'P4'];   // Gas Town's 0-4 (bd create); P2 = the default
 export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
