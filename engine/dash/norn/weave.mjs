@@ -3,6 +3,7 @@
 import { THREE } from './stage.mjs';
 import { P } from './pixel.mjs';
 import { knotCands } from './live.mjs';
+import { hoChip } from '../widgets.mjs';   // the live hand-off chip (lanes.mjs handoffOf) on stake and knot labels
 export { weave } from './live.mjs';
 
 export const ST = { running: 'thread', handoff: 'aqua', stopped: 'weird', bad: 'rune', done: 'leaf', 'no-result': 'frost', idle: 'mist' };
@@ -29,10 +30,10 @@ export function labelSet(W, pos, stakePos, { stakeCands = () => [[6, 0, 'left']]
   const out = [];
   for (const l of W.lanes) {
     const word = WORD[l.cls] || l.cls, q = l.questions ? ` · <b class="nd">${l.questions} needs you</b>` : '';
-    out.push({ id: l.node.id, pos: stakePos(l), html: `${esc(l.name)}<small>${esc(word)}${q}</small>`, cls: `lane st-${l.cls}${l.live ? ' live' : ''}`,
+    out.push({ id: l.node.id, pos: stakePos(l), html: `${esc(l.name)}<small>${esc(word)}${q}</small>${hoChip(l.node.handoff, null, { short: true })}`, cls: `lane st-${l.cls}${l.live ? ' live' : ''}`,
       prio: l.live ? 2 : l.questions ? 3 : 6, cands: stakeCands(l) });
-    for (const k of l.knots) if (k.cls === 'running' || (!k.faded && LOUD.has(k.cls)))
-      out.push({ id: k.id, pos: pos(k.id), html: `${esc(k.label)}<small>${esc(k.id)}</small>`, cls: k.cls === 'running' ? 'live' : '', prio: k.cls === 'running' ? 1 : 4, cands: knotCands(knotDx) });
+    for (const k of l.knots) if (k.cls === 'running' || k.handoff || (!k.faded && LOUD.has(k.cls)))
+      out.push({ id: k.id, pos: pos(k.id), html: `${esc(k.label)}<small>${esc(k.id)}</small>${hoChip(k.handoff, k.id, { short: true })}`, cls: k.cls === 'running' ? 'live' : '', prio: k.cls === 'running' ? 1 : 4, cands: knotCands(knotDx) });
   }
   for (const k of W.checkins) out.push({ id: k.id, pos: pos(k.id), html: `${esc(k.label)}<small>${esc(k.id)} · check-in</small>`, prio: k.faded ? 5 : 3, cands: knotCands(knotDx) });
   return out;

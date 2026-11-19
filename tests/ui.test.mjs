@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, NAV, destOf, loadTab, renderTab, renderNav, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, NAV, destOf, loadTab, renderTab, renderNav, healthStates, worstState, navTone, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
 import { ledgerInline } from '../engine/dash/ledger.mjs';
 
@@ -35,8 +35,8 @@ test('UX review 2: the bar is at most 7 plain destinations (Home, Overview, Inbo
     assert.equal((top(nav).match(/<button /g) || []).length, NAV.length, `${k}: one top button per destination`);
     assert.match(nav, new RegExp(`id="tab-${k}" data-tab="${k}" aria-selected="true"`), `${k}: its own button, selected`);
     assert.match(top(nav), new RegExp(`id="tab-${d[0]}" data-tab="${d[0]}" aria-selected="true"`), `${k}: its destination selected`);
-    if (d[2].length) for (const p of d[2]) assert.match(nav, new RegExp(`<div class="pages" id="pages-${d[0]}"[^]*id="tab-${p}" data-tab="${p}"`), `${k}: ${p} on the row`);
-    else assert.ok(!nav.includes('class="pages"'), `${k}: no second row`);
+    if (d[2].length) for (const p of d[2]) assert.match(nav, new RegExp(`<div class="pages[^"]*" id="pages-${d[0]}"[^]*id="tab-${p}" data-tab="${p}"`), `${k}: ${p} on the row`);
+    else assert.ok(!nav.includes('class="pages'), `${k}: no second row`);
     // from any other page: its destination is on the bar and opens its own page, whose row holds this page
     assert.ok(renderNav(k === 'inbox' ? 'home' : 'inbox').includes(`id="tab-${d[0]}" data-tab="${d[0]}"`), `${k} reachable`);
   }
@@ -44,6 +44,28 @@ test('UX review 2: the bar is at most 7 plain destinations (Home, Overview, Inbo
   assert.ok(!/OLD_TAB|tabOf|DEST_TAB/.test(html), 'no alias table: a URL names the page it shows');
   // the Inbox badge is the needs-you count, on the Inbox button
   assert.match(renderNav('home', { inbox: 4 }), /id="tab-inbox"[^>]*>Inbox<span class="count" aria-label="4 need you">4<\/span>/);
+});
+
+test('RM-18 S1: the nav colours by destination - History Urd, Work Verdandi (Plan, Roadmap Skuld), Inbox Skuld, Health its worst state, Home / Overview / Settings neutral', () => {
+  const tone = (html, id) => html.match(new RegExp(`id="tab-${id}"[^>]*?(?: class="tone-(\\w+)")?>`))[1] ?? '';
+  const nav = renderNav('roadmap', {});
+  assert.deepEqual(['home', 'overview', 'inbox', 'work', 'health', 'history', 'settings'].map(k => tone(nav, k)), ['', '', 'skuld', 'verd', '', 'urd', '']);
+  assert.deepEqual(['lanes', 'runs', 'map', 'plan', 'roadmap'].map(k => tone(nav, k)), ['verd', 'verd', 'verd', 'skuld', 'skuld'], 'Plan and Roadmap are what shall be');
+  assert.match(nav, /<div class="pages tone-verd" id="pages-work"/, "the open destination's row carries its colour");
+  assert.match(renderNav('docs', {}), /<div class="pages tone-urd" id="pages-history"/);
+  // Health: each page its own state, the destination the worst; unknown = neutral
+  assert.deepEqual(healthStates({}), { usage: null, slop: null, tests: null, context: null });
+  const h = healthStates({ usage: { guard: 'ok' }, rows: [{ type: 'tests', severity: 'low' }, { type: 'memory', severity: 'medium' }] });
+  assert.deepEqual(h, { usage: 'ok', slop: 'ok', tests: 'ok', context: 'warn' });
+  assert.equal(worstState(h), 'warn'); assert.equal(worstState({ a: 'ok', b: 'bad', c: 'warn' }), 'bad'); assert.equal(worstState({ a: null }), null);
+  assert.equal(healthStates({ usage: { guard: 'ok', rateOK: false } }).usage, 'bad'); assert.equal(healthStates({ usage: { guard: 'STOP' } }).usage, 'bad');
+  assert.equal(healthStates({ usage: { guard: 'ok', billing: { type: 'api' } } }).usage, null, 'API billing: no weekly guard to colour');
+  assert.equal(healthStates({ rows: [{ type: 'code', severity: 'high' }] }).slop, 'warn');
+  const hn = renderNav('usage', {}, h);
+  assert.equal(tone(hn, 'health'), 'warn'); assert.equal(tone(hn, 'usage'), 'ok'); assert.equal(tone(hn, 'context'), 'warn');
+  assert.match(hn, /<div class="pages tone-warn" id="pages-health"/);
+  assert.equal(navTone('tests', { usage: 'bad' }), '', 'a Health page with no known state stays neutral');
+  assert.equal(tone(renderNav('home', {}, { usage: 'bad' }), 'health'), 'bad');
 });
 
 test('UX review 2: Work, Health and History render their own page - one card per page under them, what it shows and what needs a look now', () => {
@@ -285,4 +307,14 @@ test('roadmap view in the URL hash: #board, #board-past, #board-rm-RM-3; the tre
     ['#board-rm-RM-3', '#rm-RM-3', '#board-future', '#past']);
   assert.deepEqual([parseRmHash('#board'), parseRmHash('#board-past'), parseRmHash('#board-rm-RM-3'), parseRmHash('#tree'), parseRmHash('#tree-future'), parseRmHash('#board-bogus')],
     [{ view: 'board' }, { view: 'board', scope: 'past' }, { view: 'board', item: 'RM-3' }, { view: 'tree' }, { view: 'tree', scope: 'future' }, {}]);
+});
+
+test('roadmap row: a stuck item shows the stuck chip (since + why + the review it waits for) and "n runs, d days, k stopped in a row" (META-CATCH S1)', () => {
+  const tr = rmTree(), it = tr.themes[0].children.find(i => i.id === 'RM-3');
+  it.stuck = { runs: 9, days: 4, stopped_row: 3, flag: { ts: rd(2), why: ['3 stopped in a row'] } };
+  const h = renderTab('roadmap', tr, { project: 'p', look: 'norn', rm: {}, now: Date.parse(RNOW) }), r3 = h.slice(h.indexOf('id="rm-RM-3"'), h.indexOf('id="rm-RM-4"'));
+  assert.match(r3, /<span class="chip bad" title="stuck since 2030-01-08T12:00Z: 3 stopped in a row - further rounds wait for an approach review">stuck<\/span>/);
+  assert.match(r3, /9 runs, 4 days, 3 stopped in a row/);
+  const r2 = h.slice(h.indexOf('id="rm-RM-2"'), h.indexOf('id="rm-RM-3"'));
+  assert.doesNotMatch(r2, />stuck</); assert.doesNotMatch(r2, /stopped in a row/);
 });

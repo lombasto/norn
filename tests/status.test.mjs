@@ -116,6 +116,10 @@ test('CHECKIN rendering: generic prompt + project extra, every placeholder fille
   // kestrel's CHECKIN-kestrel.md content: norn-projects tests/owner-config.test.mjs (META-ONBOARD S6)
   const gen = fs.readFileSync(path.join(HERE, '..', 'engine', 'prompts', 'CHECKIN.md'), 'utf8');
   for (const s of ['OVERNIGHT', 'Fable', 'kestrel', 'worker.ps1', 'codex-impl.sh', 'OWNER-QUESTIONS.md']) assert.ok(!gen.includes(s), `generic CHECKIN.md mentions ${s}`);
+  // a pass with every lane done must still start the roadmap's `now` stages and the directives with no action (it said "no queued work")
+  assert.match(txt, /^## 2i\. New work from the roadmap and the directives/m);
+  assert.match(txt, /Directives with no action/); assert.match(txt, /horizon `now`/); assert.match(txt, /--queue/);
+  assert.match(txt, /The critical path = .*policy\.critical_lanes/);
 });
 
 test('tick: PAUSED exits first; dry tick launches the check-in as RUN kind checkin (FAKE claude); second tick sees it running', async () => {

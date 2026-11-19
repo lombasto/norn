@@ -12,6 +12,16 @@ export function bars(rows, { fmt = String, max, id = '' } = {}) {
     <div class="bar ${esc(r.cls ?? '')}"><i style="width:${w(r.value, m)}%"></i></div>${r.note ? `<div class="small mute wbnote">${r.note}</div>` : ''}</li>`).join('')}</ol>`;
 }
 
+/**
+ * the live hand-off state (lanes.mjs handoffOf, the `handoff` field every payload carries): ONE chip on every page - a pulsing dot
+ * (.pulse, index.html: still under prefers-reduced-motion) + the server's words; amber while pending, blue once the next session talks.
+ * self = the run the chip sits on: a chain's other run (the tip) is named after the words. short = the server's short words (a map label).
+ */
+export function hoChip(h, self = null, { short = false } = {}) {
+  if (!h?.text) return '';
+  return `<span class="ho ${h.phase === 'resumed' ? 'resumed' : 'pending'}" role="status"${short ? ` title="${esc(h.text)}"` : ''}><span class="pulse" aria-hidden="true"></span><span>${esc(short ? h.short ?? h.text : h.text)}${h.run && self && h.run !== self ? ` <span class="id">${esc(h.run)}</span>` : ''}</span></span>`;
+}
+
 /** one value against a max -> a single bar, an optional tick at `mark` (a p90, a hand-off line); no data = a dash */
 export function meter(v, max, mark, cls = '') {
   if (!fin(v) || !fin(max) || max <= 0) return '<span class="mute">-</span>';

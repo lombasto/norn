@@ -4,7 +4,7 @@
 // assistant text + usage, result. Each session's messages live in <cwd>/fake-sessions/<id>.json, so a new process with --resume
 // keeps the conversation; --session-id of an existing session is refused (as claude: "already in use").
 // The reply: "heard <text> (turn <n>; first: <the session's first message>)". Messages starting "!": scripted behaviour -
-// "!crash" exits 3 mid-turn, "!slow <ms>" answers after ms; C5: "!ctx <n>" sets the context size, "!no-handoff" kills the hand-off turn. stdin end = exit 0 (C0 finding 3).
+// "!crash" exits 3 mid-turn, "!slow <ms>" answers after ms, "!fold" gets no turn (a message folded into the one running); C5: "!ctx <n>" sets the context size, "!no-handoff" kills the hand-off turn. stdin end = exit 0 (C0 finding 3).
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -32,6 +32,7 @@ let spent = 0;
 async function turn(line) {
   let text;
   try { text = JSON.parse(line).message.content.map(c => c.text ?? '').join(''); } catch { return; }
+  if (text === '!fold') return;   // as claude does with a message written mid-turn: folded into the running turn - no turn of its own, no output
   out({ type: 'system', subtype: 'init', session_id: sid, model, permissionMode: 'default', mcp_servers: [], slash_commands: SLASH });
   if (text === '!crash') process.exit(3);
   const slow = text.match(/^!slow (\d+)$/);

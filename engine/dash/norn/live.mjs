@@ -32,7 +32,7 @@ export function weave(g) {
   return { lanes, ctl, checkins };
 }
 // what the scene is built from: a rebuild happens only when this changes (a refetch with the same picture costs nothing)
-export const sceneSig = (map, extra = '') => JSON.stringify([extra, (map?.nodes || []).map(n => [n.id, n.type, n.lane, n.label, n.cls, n.faded ? 1 : 0, n.more || 0]),
+export const sceneSig = (map, extra = '') => JSON.stringify([extra, (map?.nodes || []).map(n => [n.id, n.type, n.lane, n.label, n.cls, n.faded ? 1 : 0, n.more || 0, n.handoff?.text ?? '']),
   (map?.edges || []).map(e => [e.from, e.to, e.kind])]);
 
 // ---------- stream records -> events {f, id, type, to?} (raw; resolved against the scene at draw time, so a run whose knot

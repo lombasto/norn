@@ -228,19 +228,80 @@ const hbAge = (state, it, now) => {
   const t = fs.existsSync(f) ? fs.statSync(f).mtimeMs : Date.parse(it.created);
   return { age: now - t, has: fs.existsSync(f) };
 };
-export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date() } = {}) {
+// META-CATCH S1 (a reboot left a run `running` for 3 h): the machine's boot time from the real clock (an injected `now` is a test's
+// clock, never the OS's); a run started before it cannot have survived it, whatever pid the heartbeat names (pids restart at boot)
+export const bootMs = () => Date.now() - os.uptime() * 1000;
+const BOOT_SLACK_MS = 60e3;   // record ts are whole seconds and uptime drifts: a run within a minute of the boot is judged by its heartbeat
+// a pid that names no process: certain death (ESRCH). A live pid may be a reused one: the heartbeat age still decides then
+export const pidGone = pid => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
+// the causes whose death is certain (the auto-resume policy relaunches them: relaunchLost); `stale` may be a stall, never relaunched
+export const DEAD_CAUSES = ['boot', 'gone', 'no-start'];
+export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone } = {}) {
   const lost = [];
-  const t = now().getTime();
+  const t = now().getTime(), bt = boot();
   for (const it of runsOf(state)) {
     if (it.state !== 'running' || it.data.kind === 'interactive') continue;
     const { age, has } = hbAge(state, it, t);
-    if (age <= staleMs) continue;
-    const why = has ? `heartbeat ${Math.round(age / 1000)} s old` : `no heartbeat for ${Math.round(age / 1000)} s`;
-    // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
     const hb = has ? readJson(hbPath(state, it.id)) : null;
-    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    let cause, why;
+    if (Date.parse(it.created) < bt - BOOT_SLACK_MS) { cause = 'boot'; why = `machine rebooted at ${new Date(bt).toISOString().slice(0, 19)}Z after the run started`; }
+    else if (hb && gone(hb.supervisor_pid)) { cause = 'gone'; why = `supervisor pid ${hb.supervisor_pid} gone without an end record`; }
+    else if (age <= staleMs) continue;
+    // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
+    else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
+    else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
+    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
   }
   return lost;
+}
+/** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, PAUSED, the weekly guard) for a run's spec -> { refused | null, count, max } */
+export function autoResumeRefusal(spec, state) {
+  const pol = spec.policy || {}, count = spec.resumes || 0, max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
+  const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}` : (spec.paused || []).some(f => fs.existsSync(f)) ? 'paused'
+    : usageRefusal(spec, state, { rate: false });   // the weekly guard (one home with the queue fill: usageguard.mjs)
+  return { refused: refused || null, count, max };
+}
+export const LOST_RESUME_MAX_AGE_MS = 24 * 3600e3;   // an older dead run is the check-in's (its worktree has moved on)
+/**
+ * META-CATCH S1: a work run the sweep recorded lost for a CERTAIN death (DEAD_CAUSES) goes through the auto-resume policy as a HANDOFF does:
+ * relaunched from its spec (a fresh agent, same brief; the resume prompt re-checks HEAD + git status) and reviewed by the launcher as
+ * routine, or its `resume` record says why not (the check-in rules it). Level-triggered from the records: whoever swept it. Once per run.
+ * Returns [{ id, cause, boot?, next?, refused? }].
+ */
+export function relaunchLost(state, { now = Date.now(), start = startRun } = {}) {
+  const out = [];
+  for (const it of runsOf(state)) {
+    if (it.state !== 'lost' || it.review || !DEAD_CAUSES.includes(it.lost?.cause) || it.history.some(h => h.ev === 'resume')) continue;
+    if (it.data.kind === 'checkin' || it.data.role === 'helper') continue;   // a check-in is the tick's own; a helper belongs to its parent
+    const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
+    if (!(now - lostAt <= LOST_RESUME_MAX_AGE_MS)) continue;
+    const spec = readJson(path.join(state, 'runs', it.id + '.spec.json'));
+    let { refused, count, max } = spec ? autoResumeRefusal(spec, state) : { refused: 'no spec file', count: 0, max: 0 };
+    let next = null;
+    if (!refused) {
+      for (const f of spec.lockFiles ?? (spec.lockFile ? [spec.lockFile] : [])) releaseLock(f, it.id);   // the dead supervisor's locks
+      try {
+        const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, resumeSid: _rs, nudge: _n, ...rest } = spec;
+        if (spec.nudge) delete rest.promptText;
+        ({ run: next } = start({ ...rest, resumes: count + 1, resumeOf: it.id }));
+      } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
+    }
+    const why = `${it.lost.cause}: ${it.lost.why}`;
+    try {
+      record(state, { kind: 'run', ev: 'resume', id: it.id, by: 'launcher', data: next ? { next, count: count + 1, max, why } : { refused, count, max, why } });
+      if (next) record(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
+    } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    out.push(drop({ id: it.id, cause: it.lost.cause, boot: it.lost.boot, next, refused }));
+  }
+  return out;
+}
+/** one owner notice per sweep pass that handled dead runs (relaunchLost rows) -> { title, body } | null */
+export function lostNotice(rows, project = '') {
+  if (!rows.length) return null;
+  const boot = rows.find(r => r.boot)?.boot, m = rows.filter(r => r.next).length;
+  const list = rows.map(r => r.next ? `${r.id} -> ${r.next}` : `${r.id} (not relaunched: ${r.refused})`).join(', ');
+  const head = boot ? `machine rebooted at ${boot.slice(0, 16).replace('T', ' ')}Z` : 'run supervisor gone';
+  return { title: `${project ? project + ': ' : ''}${head}`, body: `${head}: ${rows.length} run${rows.length === 1 ? '' : 's'} lost, ${m} relaunched (${list})` };
 }
 
 // running, non-interactive runs with a fresh heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)

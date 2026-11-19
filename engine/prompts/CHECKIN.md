@@ -85,6 +85,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 ## 2f. Usage guard (digest row 8: GRD alarms - runaway vs its peers, over the hand-off line, tool spam; Norn never stops a run itself)
 - Rule each: `META guard rule GRD-n --action let-run|mail|stop --why W`. mail = `NORN mail send --to RUN-n` (hand off / stop reading
   whole logs); stop = mail `role:controller` (a kill is not yours). `META guard sources RUN-n` shows what fills its context.
+- A `stuck:RM-n` wake (policy.stuck: k stopped rounds in a row / n runs / d days without a merge; its last three stop reasons follow
+  the wake line): `norn run` refuses further rounds on that item. Do not relaunch it as before: write `META stuck brief RM-n --out F`
+  and start that review as stage APPROACH-REVIEW on another executor or model than the stuck rounds (or ask the owner).
 
 ## 2g. Plan reviews (digest sec. 11; per project policy.dod.critique = on)
 - A planning run ending DONE got one fresh read-only review (norn critique); its findings file sits beside the plan. A build
@@ -97,6 +100,15 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   owner question (merge theirs, or keep ours). Neighbouring work: mail the run the files and the ref so it rebases onto it
   before its merge. Unrelated (a shared file only): let it run. The row leaves when the lane stops or the overlap goes.
 
+## 2i. New work from the roadmap and the directives (a pass never ends "no queued work" while either has some)
+- Every digest row "Directives with no action" (sec. 5) and every roadmap item on horizon `now` (`META road list`) with a stage
+  that is `planned` and has no live or queued run is work to start, in the order an active directive gives (else the roadmap's order).
+  A stage that waits on the owner (a PR to open, a question) is not; name it in the ledger line instead.
+- For each, this pass: write the stage's brief from the item's note and stage line (sec. 3: Ready lines, stop rule, time budget),
+  and launch it with `--item RM-n` - started when a slot is free, else `--queue` (it waits its turn; queued work is never lost).
+  A directive that names no item gets one first (sec. 2e).
+- Ledger: `dispatched: <lane/stage> -> <executor>` or `queued: <lane/stage> (<why>)` for each; "none" only when both lists are empty.
+
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->
 - First apply BUDGET `lanes[<lane>]` (missing = `{executor: auto}`). `paused` = NEVER dispatch that lane;
@@ -107,7 +119,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   route `auto` lanes to an open executor (Claude when Codex is closed, within the Claude rules below); a lane pinned to it parks.
 - Every Claude dispatch requires STATUS `RATE_OK=1` (except a MERGE stage: completion work from `merge-brief`, a short run - RATE_OK=0
   does not hold it; the weekly guard, alive < max_claude_workers and every cap still bind), alive < max_claude_workers and a
-  critical-path lane (unless the project section below opens a dispatch window). Every Codex dispatch requires total exec runs < max_codex AND runs of that model
+  critical-path lane (unless the project section below opens a dispatch window). The critical path = a lane in policy.critical_lanes,
+  a hand-off or crash resume, a CI-red fix lane, a merge stage, or the next stage of a horizon `now` roadmap item (sec. 2i).
+  Every Codex dispatch requires total exec runs < max_codex AND runs of that model
   < max_astra or max_sol. A zero cap disables that executor. Include runs launched earlier in THIS pass in all counts.
   If no permitted slot exists, dispatch nothing for that lane and say why in the ledger line.
 - Defaults from BUDGET: claude_model / claude_effort, codex_astra_effort, codex_sol_effort; `lanes[<lane>].effort` overrides.

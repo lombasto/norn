@@ -13,7 +13,7 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree } from './runs.mjs';
+import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
@@ -64,6 +64,18 @@ let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // 
 const probeDelay = Number(process.env.META_TEST_PROBE_DELAY_MS) || 0;   // test knob: a slow probe (the CI runner's slow spawns)
 let supStarted = null;
 const supStartedP = new Promise(r => setTimeout(r, probeDelay)).then(() => procStartAsync(process.pid)).then(t => { supStarted = t; beat(); return t; });
+// META-CATCH S1: between ticks (15 min apart) a live supervisor sweeps its state for dead siblings once per SIBLING_SWEEP_MS - one
+// sweeper per window (the stamp's mtime), the first beat only plants the stamp - so a dead run is recorded lost within minutes
+const SIBLING_SWEEP_MS = 3 * 60e3, sweepStamp = path.join(path.resolve(state), 'hb', '.sweep');
+function siblingSweep() {
+  try {
+    let age; try { age = Date.now() - fs.statSync(sweepStamp).mtimeMs; } catch { fs.writeFileSync(sweepStamp, iso()); return; }
+    if (age < SIBLING_SWEEP_MS) return;
+    fs.writeFileSync(sweepStamp, iso());
+    const lost = sweepLost(state, { staleMs: spec.staleMs, by: 'launcher' }).filter(id => id !== run);
+    if (lost.length) logLine(`sibling sweep: ${lost.join(', ')} lost`);
+  } catch { /* next window */ }
+}
 const beat = () => {
   try {
     const f = hbPath(state, run), t = `${f}.${process.pid}.tmp`;
@@ -71,6 +83,7 @@ const beat = () => {
     fs.renameSync(t, f);
   } catch { /* next beat */ }
   for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
+  siblingSweep();
 };
 beat();
 const timer = setInterval(beat, spec.hbMs);
@@ -170,7 +183,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // the result counts unless the outcome is the exit's (a forced hand-off's result is Norn's own: its HANDOFF.md feeds the resume)
   const fromResult = !!byResult && (!byExit || !!ctxForced);
   const outcomeSource = fromResult ? 'result' : byExit ? 'exit' : 'none';
-  const data = { exit: Number.isInteger(code) ? code : null, outcome, outcome_source: outcomeSource, ...(fromResult ? { result: fwdPath(RESULT_DIR), ...(byResult.summary ? { summary: byResult.summary } : {}), ...(byResult.handoff ? { handoff: fwdPath(byResult.handoff) } : {}) } : {}), pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
+  const data = { exit: Number.isInteger(code) ? code : null, outcome, outcome_source: outcomeSource, ...(fromResult ? { result: fwdPath(RESULT_DIR), ...(byResult.summary ? { summary: byResult.summary } : {}), ...(byResult.handoff ? { handoff: fwdPath(byResult.handoff) } : {}), ...(byResult.look ? { look: byResult.look } : {}) } : {}), pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
   if (outcome === 'stopped') data.why = byResult?.why;
@@ -331,14 +344,7 @@ function fallback(why) {
 }
 
 function autoResume(handoff) {
-  const pol = spec.policy || {};
-  const count = spec.resumes || 0;
-  const max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
-  let refused = null;
-  if (pol.auto_resume_handoff === false) refused = 'auto-resume off';
-  else if (count >= max) refused = `cap ${count}/${max}`;
-  else if ((spec.paused || []).some(f => fs.existsSync(f))) refused = 'paused';
-  else refused = usageRefusal(spec, state, { rate: false });   // the weekly guard (one home with the queue fill: usageguard.mjs)
+  let { refused, count, max } = autoResumeRefusal(spec, state);   // one home with the lost relaunch (runs.mjs)
   let next = null, spawned = null;
   if (!refused) {
     try {

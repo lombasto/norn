@@ -6,7 +6,7 @@ import { renderMarkdown } from './docs.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord, hoChip } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
@@ -74,14 +74,6 @@ const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose o
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-// Norn vocabulary (META-VISUAL-B S3, VISUAL-A2 CONCEPTS): the Norn look's Overview hero carries the three Norns' lore lines (and Wyrd,
-// all three). The bar is NAV in both looks (UX review 2).
-export const NORN_LORE = {
-  verdandi: 'Verdandi - what is: the threads being spun at the Well of Urd right now.',
-  urd: 'Urd - what was: every knot tied stays tied; the record cannot be unwoven.',
-  skuld: 'Skuld - what shall be: the loose ends, the questions, the cloth not yet hung.',
-  wyrd: 'Wyrd - all three: one thread from what was through what is to what shall be.',
-};
 // UX review 2: the bar is 7 destinations with plain names (both looks). Home, Overview, Inbox and Settings are one page each; Work,
 // Health and History are pages of their own (a hub: one card per page under it, with what needs a look) and, while one of them or one of
 // its pages is open, a second row lists its pages. Label, tab id and URL (?tab=<id>) are the same word for every page.
@@ -98,10 +90,32 @@ export const NAV = [
 /** the destination a page sits in ([id, label, pages]): itself or the one whose pages hold it; null for the setup page */
 export const destOf = tab => NAV.find(([g, , ids]) => g === tab || ids.includes(tab)) ?? null;
 const countBadge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
-export function renderNav(tab, counts = {}) {
+// RM-18 S1: a Norn colour on the nav as a meaning. History = Urd (was), Work = Verdandi (is) but its Plan and Roadmap = Skuld (shall be),
+// Inbox = Skuld; Health = its worst state; Home, Overview, Settings neutral. CSS: norn.css .tone-* (both looks).
+export const DEST_NORN = { history: 'urd', work: 'verd', inbox: 'skuld' };
+export const PAGE_NORN = { plan: 'skuld', roadmap: 'skuld' };
+const RANK = { ok: 0, warn: 1, bad: 2 };
+/** the worst of { page: 'ok'|'warn'|'bad'|null } states; null when none is known */
+export const worstState = st => Object.values(st || {}).filter(v => v in RANK).reduce((w, v) => (w === null || RANK[v] > RANK[w] ? v : w), null);
+/** the Health pages' states from what the header holds: usage = the overview's burn.usage (guard STOP or over the hourly cap = bad,
+ *  guard ok = ok), slop / tests / context = the Guard rows of their types (a warn-level row = warn, else ok); null = not known */
+export function healthStates({ usage = null, rows = null } = {}) {
+  const u = !usage || usage.billing?.type === 'api' ? null : usage.guard === 'STOP' || usage.rateOK === false ? 'bad' : usage.guard === 'ok' ? 'ok' : null;
+  const of = types => (rows ? (rows.some(r => types.includes(r.type) && (r.severity === 'high' || r.severity === 'medium')) ? 'warn' : 'ok') : null);
+  return { usage: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
+}
+/** a page's tone: its Norn colour, a Health state, or '' (neutral) */
+export function navTone(id, health = {}) {
+  const d = destOf(id)?.[0];
+  if (d === 'health') return (id === 'health' ? worstState(health) : health[id]) ?? '';   // a page whose state is not known yet: neutral
+  return PAGE_NORN[id] ?? DEST_NORN[d] ?? '';
+}
+const toneCls = t => (t ? ` class="tone-${t}"` : '');
+export function renderNav(tab, counts = {}, health = {}) {
   const label = Object.fromEntries(TABS), cur = destOf(tab);
-  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
-  const pages = cur && cur[2].length ? `<div class="pages" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}">${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
+  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}${toneCls(navTone(g, health))}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
+  const pt = cur ? navTone(cur[0], health) : '';
+  const pages = cur && cur[2].length ? `<div class="pages${pt ? ' tone-' + pt : ''}" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}"${toneCls(navTone(k, health))}>${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
   return `<div class="dests" role="tablist" aria-label="Sections">${top}</div>${pages}`;
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
@@ -143,7 +157,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
     return { overview, agents, records, ledger, deliverables };
   }
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
-  if (tab === 'lanes') return { ...(await get(`/api/lanes?${q}${ctx.allLanes ? '&all=1' : ''}`)), allLanes: !!ctx.allLanes };
+  if (tab === 'lanes') return get(`/api/lanes?${q}`);
   if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
   // UX review 2: the three destination pages - what needs a look under each, from the endpoints the pages already use
   if (tab === 'work') { const [overview, a] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`)]); return { overview, queue: a.queue || [] }; }
@@ -249,7 +263,10 @@ function tests(d, ctx) {
   const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1), adv = d.advisories;
   const advCard = adv ? `<div class="tablecard" id="tests-adv"><h3>Last merge check <span class="mute small">${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · advisory, never a merge block</span></h3>
     ${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>` : '';
-  return testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx);
+  // a pytest (or any non node:test) project: say which parts can fill, instead of a page of "not measured yet" and a command that refuses
+  const why = d.suite === false ? `<div class="banner" id="tests-scope">This project's tests are not a node:test suite (tests/*.test.mjs), so only <b>Over time</b> fills here: test cases and lines per day from git, refreshed once a day by the tick. Per-test time, the slowest tests, the merge check and lean tests read node:test suites only.</div>`
+    : !g.length && !h.length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Over time</b> from git once a day; per-test time comes from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
+  return why + (d.suite === false ? testsOver(h, g, last, gl) : testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx));
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
@@ -260,7 +277,10 @@ const holdRow = (i, ctx) => `<div class="item" id="hold-${esc(i.project)}">${chi
   <div class="small">Fix: ${esc(i.fix)}${i.command ? ` <span class="mono">${esc(i.command)}</span>` : ''}${i.clears ? ` <span class="mute">- or it clears ${esc(i.clears)}</span>` : ''}</div></div>
   <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.setting ? `<button class="primary" data-tab="settings" title="${esc(i.setting)}">Open Settings</button>` : ''}${i.resume ? `<button class="primary" data-act="hold-resume" data-project="${esc(i.project)}">Resume</button>` : ''}</div></div>`;
 // GAP-8 (lib/handedits.mjs): a generated file edited by hand is no longer regenerated - take it back (a .bak keeps the hand text) or keep it
-const editRow = (i, ctx) => `<div class="item" id="${esc(i.id)}">${chip('warn', 'hand edit')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}<span class="mono">${esc(i.file)}</span>${i.created ? ` · edited ${fmtMin(minsSince(i.created, ctx.now))} ago` : ''}</div></div>
+// the words say what Norn saw and what each button does; a file that still carries Norn's GENERATED header was not written by a person
+const editRow = (i, ctx) => `<div class="item" id="${esc(i.id)}">${chip('warn', 'changed outside Norn')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}<span class="mono">${esc(i.file)}</span>${i.created ? ` · changed ${fmtMin(minsSince(i.created, ctx.now))} ago` : ''}</div>
+  <div class="small">Norn writes this file itself, and its text no longer matches what Norn last wrote, so Norn leaves it alone rather than overwrite someone's edit.${i.generated ? ' It still carries Norn\'s GENERATED header, so it was most likely not edited by a person: take it back.' : ''}</div>
+  <div class="small mute"><b>Let Norn take it back</b>: the current text is saved beside it as .bak and Norn updates the file again. <b>Keep my version</b>: Norn never updates this file again, until you take it back.</div></div>
   <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
 // META-TEND P4: one model-advice card - what, why (the measured numbers), the vendor source and the day it was read (stale = past the
 // re-read date), the proposed Settings change and one tap: apply it, or keep the setting. Both write a decision record; nothing is automatic.
@@ -334,6 +354,18 @@ function apiBurn(b) {
      <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
      <span class="mute small">guard</span><div class="small mute">none weekly: API billing has no weekly limit${cap === null ? '. Set a daily cap in Settings (API daily cap) to stop spend past it' : ''}</div></div>`;
 }
+// RM-18 S2: the Overview strip in place of the hero (both looks): three real links, one per Norn in its time colour (norn.css .ostrip),
+// each opening its destination - Urd History, Verdandi Work, Skuld Inbox (DEST_NORN)
+export function overviewStrip(s, ctx = {}) {
+  if (!s) return '';
+  const q = ctx.project ? `?project=${encodeURIComponent(ctx.project)}&tab=` : '?tab=';
+  const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
+  const ll = s.last_landed, ck = s.checkin || {};
+  const next = ctx.paused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
+  return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
+    + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
+    + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
+}
 function overview(d, ctx) {
   const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
   const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
@@ -346,7 +378,7 @@ function overview(d, ctx) {
     const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
     const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
     const ctxCell = ctxMeter(n, { codexNote: true });
-    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div></td>
+    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
       <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
       <td class="mono run-burn">${burnCell(l)}</td></tr>`;
   }).join('') || `<tr><td colspan="5" class="mute">${art(ctx, 'empty-no-runs', 'empty')}No lane is running.</td></tr>`;
@@ -362,9 +394,8 @@ function overview(d, ctx) {
   const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
-  const hero = ctx.look === 'norn' && ctx.art ? `<div class="hero">${art(ctx, 'hero-night', 'hero-n')}${art(ctx, 'hero-day', 'hero-d')}<div class="lore">${Object.values(NORN_LORE).map(l => `<p>${esc(l)}</p>`).join('')}</div></div>` : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${hero}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
+  return `${overviewStrip(o.strip, { ...ctx, paused: o.paused })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
@@ -422,18 +453,32 @@ const overlapChips = os => !(os || []).length ? '' : `<div class="lane-overlap">
   const files = o.files || [], tip = esc([...(o.kind === 'pr' ? [`${o.ref}: ${o.title ?? ''}`] : []), ...files, ...(o.n > files.length ? [`+${o.n - files.length} more`] : [])].join('\n'));
   return o.kind === 'pr' && /^https:\/\//.test(o.url || '') ? `<a class="chip warn" href="${esc(o.url)}" target="_blank" rel="noopener" title="${tip}">${esc(overlapWords(o))}</a>`
     : `<span class="chip warn" title="${tip}">${esc(overlapWords(o))}</span>`; }).join(' ')}</div>`;
+// RM-19 S1: the Lanes filter chips (index.html keeps the pick in S.laneShow and the URL as &lanes=active,done); a row's chip from its
+// lanesView group: Active = running + needs you + queued, Done recently / Old = done younger / older than policy.done_lanes.old_days
+export const LANE_SHOW = [['active', 'Active'], ['done', 'Done recently'], ['old', 'Old'], ['archived', 'Archived']];
+export const LANE_SHOW_DEFAULT = ['active', 'done'];
+export const laneShowOf = l => l.group === 'archived' ? 'archived' : l.group === 'done' ? (l.old ? 'old' : 'done') : 'active';
+export const laneKey = (project, lane) => `${project}:${lane}`;
+export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
-  const usd = (d.lanes || []).some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
+  const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), refused = ctx.laneRefused ?? {}, undo = ctx.laneUndo;
+  const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => laneShowOf(l) === k).length;
+  const usd = all.some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
   const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
-  const rows = (d.lanes || []).map(l => {
+  // a done lane says how long ago it ended; an old one reads stopped (its row is faded)
+  const nowText = l => l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`;
+  const rows = all.filter(l => show.has(laneShowOf(l))).map(l => {
     const [cls, word] = stateOf(l.text), log = l.run ? `<a href="/log?run=${encodeURIComponent(l.run)}&project=${encodeURIComponent(l.project)}" target="_blank"><button>Log</button></a>` : '';
     const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
-    return `<tr id="lane-${esc(l.name)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(l.text)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
-  }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">No LANE records.</td></tr>`;
+    const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
+    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
+      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
+  }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
+  const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
   return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
-   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><label class="small"><input type="checkbox" data-act="lanes-all"${d.allLanes ? ' checked' : ''}> show done / archived</label></div>
+   ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
+   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span></div>
    <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -480,7 +525,7 @@ function runs(d, ctx) {
     const feed = /^RUN-\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
     return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
      <div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
-     <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div></div>`;
+     <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
   };
   // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it
   const refusedRows = n => (n.refused || []).map(x => `<div class="node lvl1 refusedrow" data-p="p-${esc(n.id)}"><div class="small" style="grid-column:1/-1">${chip('refused', `refused: ${x.words}`)} ${esc([x.lane, x.stage ?? x.answers].filter(Boolean).join(' '))} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div></div>`).join('');
@@ -695,15 +740,18 @@ function edgePath(a, b, kind) {
 }
 function mapNode(n, project) {
   if (n.critique) n = { ...n, sub: `${n.id} · ${critiqueWord(n.critique)[1]}` };   // META-DOD 3: a plan run shows its review
+  // the live hand-off state (lanes.mjs handoffOf): its words take the sub line, a pulsing dot sits before them
+  const ho = n.handoff?.text ? `<circle class="pulse ho-${n.handoff.phase === 'resumed' ? 'resumed' : 'pending'}" cx="18" cy="${n.h - (n.h < 46 ? 11 : 16)}" r="4"/>` : '';
+  if (ho) n = { ...n, sub: n.handoff.short ?? n.handoff.text, hoX: 26, hoTip: n.handoff.text };
   const small = n.h < 46, feed = n.feed ? ` data-feed="${esc(n.feed)}" data-project="${esc(project)}" role="button" tabindex="0"` : '';
-  const tip = [n.label, n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
+  const tip = [n.label, n.hoTip ?? n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
   const more = n.type === 'lane' && (n.more > 0 || n.expanded)
     ? `<text class="more" x="12" y="${n.h + 14}" data-act="map-more" data-lane="${esc(n.lane)}">${n.expanded ? `${n.capped ? 'latest 30 · ' : ''}show last 3` : `+${n.more} more`}</text>` : '';
   const room = Math.max(6, Math.floor((n.w - 30 - String(n.word ?? '').length * 7) / 7.6)); // label chars beside the state word
   return `<g class="mn t-${n.type} c-${esc(n.cls)}${n.faded ? ' faded' : ''}${n.needs ? ' needs' : ''}" id="mn-${esc(n.id)}" transform="translate(${n.x} ${n.y})"${feed}><title>${esc(tip)}</title>
     <rect class="box" width="${n.w}" height="${n.h}" rx="8"/><rect class="st" width="5" height="${n.h}" rx="2"/>
     <text class="nl" x="14" y="${small ? 16 : 22}">${esc(cut(n.label, Math.min(room, small ? 22 : 24)))}</text><text class="nw" x="${n.w - 10}" y="${small ? 16 : 22}" text-anchor="end">${esc(n.word)}</text>
-    <text class="ns" x="14" y="${n.h - (small ? 8 : 12)}">${esc(cut(n.sub, 40))}</text>${more}</g>`;
+    ${ho}<text class="ns${ho ? ' ho-w' : ''}" x="${n.hoX ?? 14}" y="${n.h - (small ? 8 : 12)}">${esc(cut(n.sub, 40))}</text>${more}</g>`;
 }
 // ---------- Map in the Norn look (META-VISUAL-B S2): the Well (default) or the Tapestry (the dense view) - a three.js stage the
 // page mounts into #map-host (norn/mapview.mjs), live from the state stream. This is only its frame: view switch, archived-lanes
@@ -799,7 +847,7 @@ export function renderFeedHead(h, now = Date.now()) {
   const [cls, word] = stateOf(st);
   const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
   const c = h.commit;
-  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>
+  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
    <div class="fh-ex">${exChip(h.executor, h.model, h.effort)}${h.role === 'helper' ? ' <span class="tag">helper</span>' : ''}</div>
    <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? meter(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
    <span class="mute">context</span><span>${fin(h.ctx) ? ctxMeter(h) : kTok(h.ctx)}${fin(h.ctx_window) ? ` <span class="small mute">(window ${kTok(h.ctx_window)})</span>` : ''}</span>
@@ -1599,12 +1647,12 @@ function rmTime(i, win) {
   const label = spans.length ? `${spans.length} run${spans.length === 1 ? '' : 's'} since ${rmDay(spans[0].from)}` : i.phase === 'future' ? `${i.status}, no dates yet` : 'no runs';
   return `<div class="rmtl${spans.length ? '' : ' empty'}" role="img" aria-label="${esc('time line: ' + label)}" title="${esc(label)}"><i class="rmtrack"></i>${parts.join('')}<i class="rmnow"></i></div>`;
 }
-const rmHead = (i, ctx, par, compact) => `<div class="rmh">${rmChip(i)}${par}<b class="rmt">${esc(i.title)}</b><span class="id">${esc(i.id)}</span>${i.horizon ? `<span class="tg tg-hz">${esc(i.horizon)}</span>` : ''}${rmLive(i, ctx)}${(i.flags?.drift || []).length ? '<span class="chip bad">drift</span>' : ''}${compact ? '' : rmProg(i)}${rmEditBtn(i)}</div>`;
+const rmHead = (i, ctx, par, compact) => `<div class="rmh">${rmChip(i)}${par}<b class="rmt">${esc(i.title)}</b><span class="id">${esc(i.id)}</span>${i.horizon ? `<span class="tg tg-hz">${esc(i.horizon)}</span>` : ''}${rmLive(i, ctx)}${(i.flags?.drift || []).length ? '<span class="chip bad">drift</span>' : ''}${i.stuck?.flag ? `<span class="chip bad" title="${esc('stuck since ' + i.stuck.flag.ts.slice(0, 16) + 'Z: ' + i.stuck.flag.why.join(', ') + ' - further rounds wait for an approach review')}">stuck</span>` : ''}${compact ? '' : rmProg(i)}${rmEditBtn(i)}</div>`;
 function rmRow(i, ctx, win, compact) {
   const f = ctx.rm || {}, hit = f.item === i.id ? ' hit' : '';
   const par = i.depth ? `<span class="rmpar mute small" title="nested item">${'&#8250; '.repeat(i.depth)}</span>` : '';
   const head = rmHead(i, ctx, par, compact);
-  const why = `<span class="mute">${esc(i.why)}${compact && i.last ? ' · ' + rmAgo(i.last, ctx.now) : ''}${i.flags?.idle != null ? ` · idle ${i.flags.idle} d` : ''}</span>`;
+  const why = `<span class="mute">${esc(i.why)}${compact && i.last ? ' · ' + rmAgo(i.last, ctx.now) : ''}${i.flags?.idle != null ? ` · idle ${i.flags.idle} d` : ''}${i.stuck?.runs ? ` · ${i.stuck.runs} runs, ${i.stuck.days} days, ${i.stuck.stopped_row} stopped in a row` : ''}</span>`;   // META-CATCH S1 (stuck.mjs)
   const body = compact ? `<div class="rmw small">${why} ${rmLinks(i, ctx)}</div>`
     : `<div class="rmw small">${why} ${rmLinks(i, ctx)}</div>${rmStages(i)}${(i.flags?.drift || []).length || (i.flags?.gone || []).length ? `<div class="rmdrift">${i.flags.drift.map(d => `<div>Drift: ${esc(d)}</div>`).join('')}${(i.flags.gone || []).map(g => `<div>Link gone: ${esc(g)}</div>`).join('')}</div>` : ''}`;
   return `<div class="rmi${compact ? ' c' : ''} ph-${esc(i.phase)}${hit}" id="rm-${esc(i.id)}" data-rm-row>${head}${rmTime(i, win)}${body}</div>`;   // desktop: the time line in its own column; phone: under the title

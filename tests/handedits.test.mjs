@@ -48,9 +48,11 @@ test('dashboard: the hand edit is a needs-you item; POST /api/handedit keeps it 
     const items = async () => (await f.get('/api/inbox?project=kestrel')).data.items.filter(i => i.type === 'handedit');
     let e = await items();
     assert.equal(e.length, 1);
-    assert.match(e[0].title, /^DIRECTIVES\.md was edited by hand: Norn no longer regenerates it/);
+    assert.match(e[0].title, /^DIRECTIVES\.md changed outside Norn: Norn has stopped updating it/);
+    assert.equal(e[0].generated, true, 'the hand line went under the GENERATED header');
     const html = renderTab('inbox', { items: e }, { project: 'kestrel', now: Date.now() });
     assert.match(html, /Let Norn take it back/); assert.match(html, /Keep my version/); assert.match(html, /data-act="handedit"/);
+    assert.match(html, /Norn never updates this file again/, 'the row says what Keep does'); assert.match(html, /most likely not edited by a person/);
     assert.ok((await f.get('/api/overview?project=kestrel')).data.needs.some(i => i.type === 'handedit'), 'it counts as needs-you');
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: e[0].file, choice: 'keep' }, { 'x-dash-token': 'wrong' })).status, 403, 'the page token, as every POST');
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: e[0].file, choice: 'keep' }, { origin: 'http://evil.example' })).status, 403, 'a cross-origin POST is refused');
@@ -68,4 +70,20 @@ test('dashboard: the hand edit is a needs-you item; POST /api/handedit keeps it 
     assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /hand line/);
     assert.deepEqual(await items(), []);
   } finally { await f.done(); }
+});
+
+test('one file named c:\\... by one writer and C:\\... by another is one key: neither refuses the other as a hand edit (the false notice and the frozen views)', { skip: process.platform !== 'win32' && 'drive letters are Windows only' }, async () => {
+  const state = path.join(mkTmp('meta-handedit-case-'), 'state', 'demo');
+  fs.mkdirSync(state, { recursive: true });
+  const lower = s => s[0].toLowerCase() + s.slice(1), upper = s => s[0].toUpperCase() + s.slice(1);
+  record(state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'first', via: 'chat' } });
+  writeViews(lower(state), loadState(state));
+  record(state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'second', via: 'chat' } });
+  const r = writeViews(upper(state), loadState(state));
+  assert.deepEqual(r.refused, [], "the other writer's text is Norn's own");
+  assert.match(fs.readFileSync(path.join(state, 'views', VIEW_FILES.directives), 'utf8'), /second/, 'and the view is current');
+  record(state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'third', via: 'chat' } });
+  assert.deepEqual(writeViews(lower(state), loadState(state)).refused, [], 'and back again');
+  assert.deepEqual(await handEdits(lower(state)), [], 'no notice');
+  assert.equal(Object.keys(JSON.parse(fs.readFileSync(path.join(state, 'views', 'hashes.json'), 'utf8'))).length, 3, 'one key per view');
 });

@@ -32,19 +32,78 @@ function runText(r, { now, hbAge, staleMs, items = {} }) {
   return `exited: ${o ?? 'no-result'}`;
 }
 
+// ---------- the live hand-off state (one home: every page reads the `handoff` field this builds, never its own guess) ----------
+// A worker at its context limit writes its result HANDOFF (`norn done`) and stops; its executor may still be finishing (a background
+// command it started keeps the process alive), then the supervisor records the end and auto-resumes: a NEW run on the same lane and
+// brief (data.resume_of = the run that handed off, data.resumes + 1 = its session number), which starts, then talks. Through all of
+// that the old run's last message ("I stopped this run with a hand-off ...") is the newest thing on screen. Walk from any run of the
+// chain to its tip (the newest run along resume.next, as after.mjs follows a HANDOFF), then:
+//   pending, step 'closing'  the tip is running and its own result (written since its start) says HANDOFF: the session handed off and
+//                            its executor is exiting; session n+1 comes next
+//   pending, step 'ending'   the tip exited HANDOFF and the supervisor has no resume verdict yet (at most waitMs after the end: a
+//                            supervisor that died there never decides, and the lane then reads plain "exited: HANDOFF")
+//   pending, step 'queued'   the tip is the hand-off resume and waits in the queue (queued / claimed)
+//   pending, step 'starting' the tip is the hand-off resume, running, and its session has said nothing yet (talked(id) false)
+//   resumed                  the tip is the hand-off resume, running, and its session has talked: the run goes on
+//   null                     anything else: no hand-off, the resume was refused (the lane says "waiting: auto-resume refused"),
+//                            or the chain ended (its tip's own state says how)
+// talked(id) = the run's session produced its first model event (agents.mjs runTalked); wrote(id) = its result.json says handoff,
+// written since its start. A 'closing' run whose resume is later refused (cap, pause, weekly guard) drops to null at its end.
+const HANDOFF_WAIT_MS = 2 * 60000;
+const sessionOf = r => (Number(r?.data?.resumes) || 0) + 1;
+const handoffResume = (r, items) => { const p = items[r?.data?.resume_of], d = r?.data || {};
+  return !!p && p.end?.outcome === 'handoff' && (p.resume?.next ?? r.id) === r.id && !d.slop_of && !d.dod_of && !d.nudge; };
+// text = the full words; short = the same for a map node / label (no room for the full line)
+export const handoffWords = (h, short = false) => (!h ? null : h.phase === 'resumed' ? (short ? `resumed (session ${h.session})` : `resumed after hand-off (session ${h.session})`)
+  : `${short ? 'hand-off:' : 'hand-off in progress -'} session ${h.session} ${h.step === 'closing' ? (short ? 'next' : 'next (the last session is closing)') : h.step === 'queued' ? 'queued' : 'starting'}`);
+/** r (a fold run) -> { phase: pending | resumed, step, session, run (the tip), from (the run that handed off), text, short } | null; see above */
+export function handoffOf(r, items, { talked = () => true, wrote = () => false, now = Date.now(), waitMs = HANDOFF_WAIT_MS } = {}) {
+  if (!r || r.kind !== 'run') return null;
+  let tip = r;
+  for (const seen = new Set([r.id]); tip.end?.outcome === 'handoff' && items[tip.resume?.next] && !seen.has(tip.resume.next);) { tip = items[tip.resume.next]; seen.add(tip.id); }
+  const out = (phase, step, session, from) => { const h = { phase, step, session, run: tip.id, from }; return { ...h, text: handoffWords(h), short: handoffWords(h, true) }; };
+  if (tip.state === 'running' && wrote(tip.id)) return out('pending', 'closing', sessionOf(tip) + 1, tip.id);
+  if (tip.state === 'exited' && tip.end?.outcome === 'handoff' && !tip.resume && now - Date.parse(tip.updated) <= waitMs) return out('pending', 'ending', sessionOf(tip) + 1, tip.id);
+  if (!handoffResume(tip, items)) return null;
+  const from = tip.data.resume_of;
+  if (['queued', 'claimed'].includes(tip.state)) return out('pending', 'queued', sessionOf(tip), from);
+  if (tip.state !== 'running') return null;
+  return talked(tip.id) ? out('resumed', null, sessionOf(tip), from) : out('pending', 'starting', sessionOf(tip), from);
+}
+
+// RM-19 S1: the Lanes page shows what is live first - running, then needs you (parked, stopped, lost, a hand-off with no resume ...),
+// then queued, then done, then archived; newest first in each group (row.at). Done = the lane record is done or the latest run
+// exited DONE; an old done lane (ended over oldDays ago) is faded and reads stopped.
+export const LANE_GROUPS = ['running', 'needs', 'queued', 'done', 'archived'];
+function laneGroup(l, r) {
+  if (l.state === 'archived') return 'archived';
+  if (l.state === 'parked') return 'needs';   // parked = waiting on the owner, whatever its last run said
+  if (r?.state === 'running') return 'running';
+  if (r?.state === 'queued' || r?.state === 'claimed' || (!r && l.state === 'active')) return 'queued';
+  if (l.state === 'done' || (r?.state === 'exited' && r.end?.outcome === 'done')) return 'done';
+  return 'needs';
+}
+export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group) - LANE_GROUPS.indexOf(b.group) || String(b.at ?? '').localeCompare(String(a.at ?? '')));
+
 /**
- * Lanes view: LANE records active | parked (all states with all). Each row: { name, id, state, data, run, executor, text }.
- * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs }
+ * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
+ * executor, text, handoff, group, created, ended, at, old }.
+ * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs, oldDays (policy.done_lanes.old_days),
+ *   talked / wrote (handoffOf's hooks: the row's `handoff`) }
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS } = {}) {
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote } = {}) {
   const items = Object.values(st.items);
   const latest = {};
   for (const r of items) if (r.kind === 'run' && r.data?.lane && (!latest[r.data.lane] || runNum(r.id) > runNum(latest[r.data.lane].id))) latest[r.data.lane] = r;
-  return items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
+  return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
     const name = l.id.slice(2), r = latest[name];
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
     const text = park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
       : r ? runText(r, { now, hbAge, staleMs, items: st.items }) : 'no runs';
-    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text };
-  });
+    const group = laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
+    const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
+    const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
+    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
+      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old };
+  }));
 }

@@ -78,6 +78,7 @@
 :root.norn .mn.faded .box { stroke: var(--line); } :root.norn .mn.faded text { fill: var(--mute); }
 :root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
 :root.norn .fxfile.fxoff .fxdiff, :root.norn .fxmisfit+.fxdiff { opacity: 1; color: var(--dim); }
+:root.norn tr.old { opacity: 1; color: var(--dim); }
 :root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now { border-radius: 0; }
 
 /* the woven rule under section headings */
@@ -103,7 +104,7 @@
 :root.norn .views button[aria-pressed=true] { color: var(--gold); }
 @media (max-width: 640px) { :root.norn .norn-map { height: 70vh; min-height: 300px; } :root.norn .map-hud { display: none; } }
 /* Norn vocabulary (META-VISUAL-B S3): the tab bar grouped under the three Norns (display labels; ids unchanged), the wordmark
-   header, the hero (night / day by ground) with the three lore lines, the empty-state art. Classic keeps its flat bar + h1. */
+   header, the empty-state art (the Overview strip of the three Norns: RM-18 S2, below). Classic keeps its flat bar + h1. */
 :root.classic header .h1-norn, :root.norn header .h1-classic { display: none; }
 :root.norn header h1 { display: flex; align-items: center; margin: 0; }
 /* the bar (UX review 2, was META-NAV R2's Norn frames): the 7 plain destinations, then the open destination's pages; the active one
@@ -118,12 +119,6 @@
 :root.norn nav button[aria-selected=true] { background: var(--g); color: var(--ninv); border-bottom: calc(2 * var(--px)) solid var(--g); }
 :root.norn nav button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
 :root.norn nav button[aria-selected=true]:focus-visible { outline-color: var(--ninv); }
-:root.norn .hero { display: flex; align-items: center; gap: calc(8 * var(--px)); margin-bottom: 12px; }
-:root.norn .hero .art { flex: none; }
-:root.norn[data-ground=dark] .hero .hero-d, :root.norn[data-ground=light] .hero .hero-n { display: none; }
-:root.norn .hero .lore p { margin: 0 0 6px; font-style: italic; color: var(--mute); }
-:root.norn .art.empty { flex: none; margin-right: 10px; vertical-align: middle; }
-@media (max-width: 1100px) { :root.norn .hero { display: none; } }
 
 
 /* ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17). The ONE section of this sheet that also styles
@@ -131,6 +126,23 @@
    running / mute), Norn: one Norn colour each (past = Urd, present = Verdandi, future = Skuld). Palette lock holds: var() only. ---------- */
 :root { --rm-past: var(--ok); --rm-now: var(--run); --rm-fut: var(--mute); --rm-inv: var(--panel); }
 :root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
+/* RM-18 S1: the nav in the same colours, both looks (ui.mjs navTone): Urd / Verdandi / Skuld = the three time colours, Health = its
+   worst state. A thin underline in the colour; the open one filled in it with the inverse ink (each fill >= 4.5:1 on --rm-inv, AA, both
+   looks, both grounds); the open destination's pages row carries its colour on its top rule. Neutral buttons keep the plain bar. */
+.tone-urd { --t: var(--rm-past); } .tone-verd { --t: var(--rm-now); } .tone-skuld { --t: var(--rm-fut); }
+.tone-ok { --t: var(--ok); } .tone-warn { --t: var(--warn); } .tone-bad { --t: var(--bad); }
+:root nav button[class*=tone-] { --g: var(--t); border-bottom-color: var(--t); }
+:root nav button[class*=tone-][aria-selected=true] { background: var(--t); color: var(--rm-inv); border-bottom-color: var(--t); }
+:root nav .pages[class*=tone-] { border-top-color: var(--t); }
+/* RM-18 S2: the Overview strip (ui.mjs overviewStrip), both looks: three links in a row, each ruled in its Norn colour; hover / focus
+   fill it in the colour with the inverse ink (the nav's AA pair). Stacks on a phone: no sideways scroll at 390 px. */
+.ostrip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.ostrip .np { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-left: 4px solid var(--t); color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+.ostrip .np b { color: var(--t); } .ostrip .np span { font-size: 12px; color: var(--mute); }
+.ostrip .np:hover, .ostrip .np:focus-visible { background: var(--t); color: var(--rm-inv); }
+.ostrip .np:hover b, .ostrip .np:hover span, .ostrip .np:focus-visible b, .ostrip .np:focus-visible span { color: var(--rm-inv); }
+.ostrip .np:focus-visible { outline: 2px solid var(--t); outline-offset: 2px; }
+@media (max-width: 700px) { .ostrip { grid-template-columns: minmax(0, 1fr); } }
 .rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rmtop .chip { border: 0; cursor: pointer; }
 /* the scope switch: three toggle buttons, the pressed one filled in its time colour */
@@ -283,3 +295,15 @@
 /* META-TEND P1-VISUAL: the stack widget and the file map square on the pixel grid (the series --k1..--k9 sit in the ground blocks above) */
 :root.norn .insbar, :root.norn .insdot, :root.norn .stkdot, :root.norn .fmblk { border-radius: 0; }
 :root.norn .fmblk { color: var(--panel); }
+
+/* the live dots - the hand-off chip (widgets.mjs hoChip, .pulse) and the chat header's busy dot (index.html .chat-live::before) - and
+   their one pulse, the animation both looks share, so it lives here under .motion (index.html holds none): the classic dot breathes
+   (scale only: no opacity, no colour); the Norn dot is square on the pixel grid and blinks on and off in two steps.
+   No .motion (QUIET, reduced motion, hidden tab) = a still dot beside the same words. */
+:root.motion .pulse, :root.motion .chat-live::before { animation: ho-pulse 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes ho-pulse { 50% { transform: scale(0.45); } }
+:root.norn .ho, :root.norn .chat-live::before { border-radius: 0; }
+:root.norn .pulse { border-radius: 0; width: calc(4 * var(--px)); height: calc(4 * var(--px)); }
+:root.norn.motion .pulse, :root.norn.motion .chat-live::before { animation: norn-blink 1.2s steps(1, end) infinite; }
+@keyframes norn-blink { 50% { visibility: hidden; } }
+:root.norn .lbl .ho { margin: 0 0 0 4px; padding: 0 4px; font-size: 11px; }

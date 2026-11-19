@@ -19,7 +19,6 @@ function placeholder(name, g) {
     dot(x, dark ? P.night : P.vellum, 0, 0, a.w, a.h);
     for (let i = 0; i < a.w; i++) { dot(x, (i >> 1) % 2 ? P.teal : (dark ? P.thread : P.gold), i, 0); dot(x, (i >> 1) % 2 ? P.teal : (dark ? P.thread : P.gold), i, a.h - 1); }
     for (let j = 0; j < a.h; j++) { dot(x, P.teal, 0, j); dot(x, P.teal, a.w - 1, j); }
-    if (ph.scene) { dot(x, dark ? P['well-deep'] : P.linen, 1, Math.round(a.h * 0.7), a.w - 2, a.h - 2 - Math.round(a.h * 0.7)); dot(x, dark ? P.well : P.teal, Math.round(a.w * 0.35), Math.round(a.h * 0.72), Math.round(a.w * 0.3), 2); }
   }
   const box = Math.min(a.w, a.h, ph.word ? a.h : Math.max(9, Math.floor(Math.min(a.w, a.h) * 0.6)));
   const g9 = glyphCanvas(ph.glyph, g, box, box);

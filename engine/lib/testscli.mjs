@@ -6,11 +6,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readJsonS, readText } from './fsnap.mjs';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { gitHistory, summarize, mergeCheck, leanGate, leafNames, mutationMatrix, addTrial, neverFailing, duplicates, slowest } from './testlean.mjs';
 import { crossings } from './advisory.mjs';
-import { subdirOf, inDir } from './monorepo.mjs';
+import { subdirOf, inDir, projectHome } from './monorepo.mjs';
 
 export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore]    '
   + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer)';
@@ -18,6 +18,10 @@ const FLAGS = { measure: ['no-coverage!'], history: ['points'], check: ['base'],
 const CI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ci-suite.mjs');
 const fwd = s => s.split('\\').join('/');
 const TEST_GLOB = /^tests\/[^/]+\.test\.mjs$/;
+/** does the folder hold a node:test suite (tests/*.test.mjs)? measure / check / lean / gate read only those; a pytest project (Solve Shack)
+ * gets the git history and says so, rather than a check that always answers "no test file changed" */
+export const nodeSuite = dir => { try { return fs.readdirSync(path.join(dir, 'tests')).some(x => x.endsWith('.test.mjs')); } catch { return false; } };
+const NOT_NODE = repo => `this project has no node:test suite (tests/*.test.mjs in ${repo}): per-test timing, the merge check and lean tests read node:test only - nothing checked`;
 
 function parse(verb, argv) {
   const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = {};
@@ -62,6 +66,10 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
   const sha = () => git(repo, ['rev-parse', '--short=12', 'HEAD']);
   const print = (v, text) => (f.json ? out(JSON.stringify(v, null, 1)) : text.forEach(l => out(l)));
 
+  if (verb !== 'history' && !nodeSuite(repo)) {
+    if (verb === 'check') { print({ list: [], suite: false }, [`tests check: ${NOT_NODE(repo)}`]); return 0; }   // advisory: a merge goes on
+    err(`error: tests ${verb}: ${NOT_NODE(repo)}`); return 2;
+  }
   if (verb === 'measure') {
     const { measure, status } = runMeasure(repo, [], { coverage: !f['no-coverage'], log: path.join(dir, 'measure.log') });
     if (!measure) { err(`error: the suite wrote no measure (exit ${status}; log ${fwd(path.join(dir, 'measure.log'))})`); return 1; }
@@ -146,10 +154,26 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
 const readLines = f => { try { return (readText(f) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
 /** META-DASH-ASYNC R1: the files testsView reads, for the dash to prime on fs.promises */
 export const testsFiles = state => ['mutation.json', 'history.jsonl', 'git-history.json', 'candidates.json', 'advisories.json', 'waves.jsonl'].map(f => path.join(state, 'tests', f));
-/** the Tests tab of one project: everything <state>/tests holds, small files only; a missing file = null / [] (not measured yet) */
-export function testsView(state) {
+/** the tick's hook: `norn tests history` (git only, cheap) detached once a day, so the Tests tab's charts fill without anyone running it
+ * (not while one started in the last 30 min). -> the tick-log words | null */
+export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
+  if (!p?.file) return null;
+  const at = readJson(path.join(state, 'tests', 'git-history.json'))?.at, day = d => new Date(d).toISOString().slice(0, 10);
+  if (at && day(at) === day(now)) return null;
+  const mark = path.join(state, 'tests', 'history.started');
+  try { if (now - fs.statSync(mark).mtimeMs < 30 * 60e3) return null; } catch { /* never started: start it now */ }
+  fs.mkdirSync(path.dirname(mark), { recursive: true }); fs.writeFileSync(mark, String(now));
+  const args = [metaCmd, 'tests', 'history', '--project', p.file, '--state', state];
+  let r = spawnFn ? spawnFn(process.execPath, args) : null;
+  if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
+  return `tests history: started pid ${r?.pid ?? '?'}`;
+}
+/** the Tests tab of one project: everything <state>/tests holds, small files only; a missing file = null / [] (not measured yet).
+ * suite: does the project folder hold a node:test suite (false = the page says which parts can fill; the dash finds it with suiteOf, off the sync path) */
+export const suiteOf = project => project?.root ? fs.promises.readdir(path.join(projectHome(project), 'tests')).then(xs => xs.some(x => x.endsWith('.test.mjs')), () => false) : Promise.resolve(null);
+export function testsView(state, suite = null) {
   const dir = path.join(state, 'tests'), mx = readJson(path.join(dir, 'mutation.json'));
-  return { history: readLines(path.join(dir, 'history.jsonl')), git: readJson(path.join(dir, 'git-history.json')), lean: readJson(path.join(dir, 'candidates.json')),
+  return { suite, history: readLines(path.join(dir, 'history.jsonl')), git: readJson(path.join(dir, 'git-history.json')), lean: readJson(path.join(dir, 'candidates.json')),
     mutation: mx ? { files: mx.files, trials: mx.trials } : null, advisories: readJson(path.join(dir, 'advisories.json')), waves: readLines(path.join(dir, 'waves.jsonl')),
     commands: { measure: 'norn tests measure', history: 'norn tests history', lean: 'norn tests lean' } };
 }

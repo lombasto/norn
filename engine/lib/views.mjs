@@ -101,6 +101,9 @@ export function renderQueue(st, { evalAfter = null, ready = null } = {}) {
 
 const RENDER = { questions: renderQuestions, decisions: renderDecisions, directives: renderDirectives, queue: renderQueue };
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
+/** the key of a file in a hash file (the drive letter upper-cased): one launcher passes `c:\...` where another passes `C:\...` - two keys
+ * for one file made each writer refuse the other's text as a "hand edit" (views frozen, a false Inbox notice) */
+export const hashKey = f => { const p = path.resolve(f); return /^[a-z]:/.test(p) ? p[0].toUpperCase() + p.slice(1) : p; };
 
 /** Write the views; paths default to <stateDir>/views/<VIEW_FILES>. Returns { written, unchanged, refused } (absolute paths).
  * NORN-WATCH S4: the queue view is written only by writeQueueView (fillQueue, under state/queue.lock, and `meta views`), with its own
@@ -119,14 +122,14 @@ export function writeViews(stateDir, st, paths = {}, { only = null, ready = null
     const text = render(queue ? loadState(stateDir) : st, { evalAfter, ready });
     if (fs.existsSync(p)) {
       const cur = fs.readFileSync(p, 'utf8');
-      if (cur === text) { hashes[p] = sha(text); res.unchanged.push(p); continue; }
-      if (hashes[p] !== sha(cur)) { res.refused.push(p); continue; }
+      if (cur === text) { hashes[hashKey(p)] = sha(text); res.unchanged.push(p); continue; }
+      if (hashes[hashKey(p)] !== sha(cur)) { res.refused.push(p); continue; }
     }
     fs.mkdirSync(path.dirname(p), { recursive: true });
     const tmp = `${p}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, text);
     fs.renameSync(tmp, p);
-    hashes[p] = sha(text);
+    hashes[hashKey(p)] = sha(text);
     res.written.push(p);
   }
   const tmp = `${hashFile}.${process.pid}.tmp`;
@@ -152,14 +155,14 @@ export async function writeViewsAsync(stateDir, st, paths = {}, { only = null, r
     const text = render(queue ? loadState(stateDir) : st, { evalAfter, ready });
     const cur = await readOr(p);
     if (cur !== null) {
-      if (cur === text) { hashes[p] = sha(text); res.unchanged.push(p); continue; }
-      if (hashes[p] !== sha(cur)) { res.refused.push(p); continue; }
+      if (cur === text) { hashes[hashKey(p)] = sha(text); res.unchanged.push(p); continue; }
+      if (hashes[hashKey(p)] !== sha(cur)) { res.refused.push(p); continue; }
     }
     await fp.mkdir(path.dirname(p), { recursive: true });
     const tmp = `${p}.${process.pid}.tmp`;
     await fp.writeFile(tmp, text);
     await fp.rename(tmp, p);
-    hashes[p] = sha(text);
+    hashes[hashKey(p)] = sha(text);
     res.written.push(p);
   }
   const tmp = `${hashFile}.${process.pid}.tmp`;
@@ -176,7 +179,7 @@ export function writeGuarded(hashFile, file, text) {
   if (fs.existsSync(p)) {
     const cur = fs.readFileSync(p, 'utf8');
     if (cur === text) res = 'unchanged';
-    else if (hashes[p] !== sha(cur)) return 'refused';
+    else if (hashes[hashKey(p)] !== sha(cur)) return 'refused';
   }
   if (res === 'written') {
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -184,8 +187,8 @@ export function writeGuarded(hashFile, file, text) {
     fs.writeFileSync(tmp, text);
     fs.renameSync(tmp, p);
   }
-  if (hashes[p] !== sha(text)) {
-    hashes[p] = sha(text);
+  if (hashes[hashKey(p)] !== sha(text)) {
+    hashes[hashKey(p)] = sha(text);
     fs.mkdirSync(path.dirname(hashFile), { recursive: true });
     const tmp = `${hashFile}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(hashes, null, 1) + '\n');
@@ -203,7 +206,7 @@ export async function writeGuardedAsync(hashFile, file, text) {
   const cur = await readOr(p);
   if (cur !== null) {
     if (cur === text) res = 'unchanged';
-    else if (hashes[p] !== sha(cur)) return 'refused';
+    else if (hashes[hashKey(p)] !== sha(cur)) return 'refused';
   }
   if (res === 'written') {
     await fp.mkdir(path.dirname(p), { recursive: true });
@@ -211,8 +214,8 @@ export async function writeGuardedAsync(hashFile, file, text) {
     await fp.writeFile(tmp, text);
     await fp.rename(tmp, p);
   }
-  if (hashes[p] !== sha(text)) {
-    hashes[p] = sha(text);
+  if (hashes[hashKey(p)] !== sha(text)) {
+    hashes[hashKey(p)] = sha(text);
     await fp.mkdir(path.dirname(hashFile), { recursive: true });
     const tmp = `${hashFile}.${process.pid}.tmp`;
     await fp.writeFile(tmp, JSON.stringify(hashes, null, 1) + '\n');

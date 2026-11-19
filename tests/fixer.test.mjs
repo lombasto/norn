@@ -170,8 +170,11 @@ test('norn fix start routes the fixer by the PROJECT policy (Settings, as the da
 test('norn fix start: another directive\'s fixer queued = refused before its brief is written (no orphan brief)', () => {
   const root = tmp('fixer-held-'), state = path.join(root, 'state'), repo = path.join(root, 'repo'), fwd = s => s.split(path.sep).join('/');
   fs.mkdirSync(repo, { recursive: true });
-  const pf = path.join(root, 'kestrel.json');
+  const pf = path.join(root, 'kestrel.json'), bf = path.join(root, 'budget.json');
   fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'K', root: fwd(repo), policy: { lanes: {}, executors: { docs: { executor: 'fake', model: 'm', effort: 'low' } } } }));
+  // a full worker cap holds the first fixer queued: --queue starts at once when no gate is shut, and the unpinned resource sample
+  // (free RAM / CPU) was that gate - shut on a busy runner (QUEUED), open on an idle one (STARTED, CI-RED-F8E2980 windows)
+  fs.writeFileSync(bf, JSON.stringify({ max_claude_workers: 0 }));
   const e = [], o = [], run = argv => main(argv, { META_ROOT: root, META_ROLE: 'owner', META_NO_TICK: '1' }, s => o.push(s), s => e.push(s));
   const dirs = ['I-1', 'I-2'].map(f => {
     const dec = record(state, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall', question: 'Fix all', choice: 'send', why: 'tap', findings: [f] } });
@@ -180,11 +183,11 @@ test('norn fix start: another directive\'s fixer queued = refused before its bri
     fs.writeFileSync(findingsFile(state, dir.id), JSON.stringify({ rows: [{ id: f, key: 'k', path: 'CLAUDE.md', line: 2, why: 'w', action: 'a' }] }));
     return dir.id;
   });
-  assert.equal(run(['fix', 'start', dirs[0], '--queue', '--project', pf, '--state', state]), 0, e.join(' '));
+  assert.equal(run(['fix', 'start', dirs[0], '--queue', '--project', pf, '--state', state, '--budget', bf]), 0, e.join(' '));
   assert.match(o.join('\n'), /QUEUED RUN-\d+ fixer of/);
   const briefs = () => fs.readdirSync(path.join(state, 'fixer')).filter(f => f.endsWith('.brief.md'));
   assert.equal(briefs().length, 1);
-  assert.equal(run(['fix', 'start', dirs[1], '--queue', '--project', pf, '--state', state]), 2);
+  assert.equal(run(['fix', 'start', dirs[1], '--queue', '--project', pf, '--state', state, '--budget', bf]), 2);
   assert.match(e.join('\n'), new RegExp(`${dirs[1]}: fixer RUN-\\d+ is queued \\(one fixer run at a time\\)`));
   assert.equal(briefs().length, 1, 'the refused start wrote no brief');
 });

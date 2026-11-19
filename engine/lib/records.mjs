@@ -62,8 +62,9 @@ export const KINDS = {
     end: { from: ['running'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
     kill: { from: ['running'], to: 'killed', roles: [...OWNER, 'controller'] },
-    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5)
-    resume: { from: ['exited'], to: null, roles: ['launcher'] },
+    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5); META-CATCH S1: the
+    // same verdict on a run lost for a certain death (runs.mjs relaunchLost)
+    resume: { from: ['exited', 'lost'], to: null, roles: ['launcher'] },
     // META-CHECKIN-DIET R1: the launcher reviews a ROUTINE end itself ({ refs, routine, why[, queued, brief] }: checkins.mjs)
     review: { from: ['exited', 'lost', 'killed'], to: null, roles: ['checkin', 'controller', 'launcher'] },
     // META-GT12 queue: a run waiting for a cap slot (all start fields + not_before); filled by the launcher ({ next: RUN-m }) or withdrawn
@@ -130,6 +131,7 @@ export const KINDS = {
     unlink: { from: ['open'], to: null, roles: [...CK, ...OWNER, 'launcher'] },
     drop: { from: ['open'], to: 'dropped', roles: [...CK, ...OWNER] },
     reopen: { from: ['dropped'], to: 'open', roles: [...OWNER, 'controller'] },
+    verdict: { from: ['open'], to: null, roles: [...CK, ...OWNER] },   // META-CATCH S2: a look verdict (pass | fail + image) on a look item
   } },
   // META-ADOPT A1 (meta-adopt SPEC sec. 4): a draft setup ADP-n of a project (adopt.jsonl); bulk (facts, drafts) in files beside it
   // (state/adopt/ADP-n/), events carry path + sha256. One open per project. A check-in may create and draft, never decide or apply.
@@ -177,6 +179,13 @@ export const itemLinks = it => {
   }
   return l;
 };
+// META-CATCH S2: an item's proof form and views from its edits (proof none clears the views, as roadmap.mjs folds it)
+const itemLook = it => {
+  let proof = null, views = [];
+  for (const h of it.history) if (h.ev === 'edit') { if ('views' in h.data) views = h.data.views || []; if ('proof' in h.data) { proof = h.data.proof ?? null; if (!proof) views = []; } }
+  return { proof, views };
+};
+const itemProof = it => itemLook(it).proof, itemViews = it => itemLook(it).views;
 export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in a body_file
 export const MAIL_TO_RE = /^(RUN-\d+|lane:[A-Za-z0-9][A-Za-z0-9_.-]*|role:(checkin|controller))$/;
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
@@ -370,6 +379,7 @@ function validateData(kind, ev, d, target, st, by) {
       str(d.owner_words, 'owner_words', { req: false, max: 4000 });   // META-Q-RECONCILE R1
       if (d.not_an_answer !== undefined && d.not_an_answer !== true) fail('not_an_answer must be true');
       if (d.not_an_answer && d.answers) fail('--answers and --not-an-answer exclude each other');
+      if (d.approach_review !== undefined && !/^RM-\S+$/.test(d.approach_review)) fail('approach_review must name a roadmap item (RM-n)');   // META-CATCH S1 (stuck.mjs)
     }
     if (ev === 'notanswer') {
       if (kindOfId(d.q) !== 'question' || st.items[d.q]?.kind !== 'question') fail(`q must name an existing Q-n (got ${JSON.stringify(d.q)})`);
@@ -509,12 +519,21 @@ function validateItem(ev, d, target, st, by) {
     place(d.kind, d.parent, d.after, null);
   }
   if (ev === 'edit') {
-    if (!['title', 'note', 'horizon', 'stages', 'caveat'].some(k => k in d)) fail('edit needs one of title, note, horizon, stages, caveat');
+    if (!['title', 'note', 'horizon', 'stages', 'caveat', 'proof', 'views'].some(k => k in d)) fail('edit needs one of title, note, horizon, stages, caveat, proof, views');
     if ('title' in d) str(d.title, 'title', { max: 200 });
     if ('note' in d) str(d.note, 'note', { max: 4000, req: false });
     if ('horizon' in d && d.horizon !== null) oneOf(d.horizon, 'horizon', HORIZONS);
     if ('stages' in d) { list(d.stages, 'stages'); for (const x of d.stages || []) str(x, 'stage', { max: 120 }); }
     if ('caveat' in d && d.caveat !== null) str(d.caveat, 'caveat', { max: 300 });
+    // META-CATCH S2: the proof form (look | null) and the views a look item is judged at; a look item names at least one view
+    if ('proof' in d && d.proof !== null) oneOf(d.proof, 'proof', ['look']);
+    if ('views' in d) { list(d.views, 'views'); for (const x of d.views || []) str(x, 'view', { max: 80 }); }
+    const proof = 'proof' in d ? d.proof : itemProof(target), views = 'views' in d ? d.views : itemViews(target);
+    if (proof === 'look' && !(views || []).length) fail('a look item names its views (--views "a,b")');
+  }
+  if (ev === 'verdict') {
+    oneOf(d.verdict, 'verdict', ['pass', 'fail']); str(d.image, 'image', { max: 600 });
+    if (itemProof(target) !== 'look') fail(`${target.id} is not a look item (norn road edit ${target.id} --proof look --views ..)`);
   }
   if (ev === 'move') {
     if (!('parent' in d) && !('after' in d)) fail('move needs a parent and / or after');

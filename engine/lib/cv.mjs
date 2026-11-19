@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { usageOfRun, costRollup } from './cost.mjs';
 import { loadState } from './records.mjs';
 import { loadDeliverables, deliverablesView, deliverableConfig } from './deliverables.mjs';
+import { hashKey } from './views.mjs';
 import { makeGit } from './dlvgit.mjs';
 
 const DAY = 86400000;
@@ -210,12 +211,12 @@ export function writeCvView(stateDir, text, file = null) {
   if (fs.existsSync(p)) {
     const cur = fs.readFileSync(p, 'utf8');
     if (cur === text) { res.unchanged.push(p); return res; }
-    if (hashes[p] !== sha(cur)) { res.refused.push(p); return res; }
+    if (hashes[hashKey(p)] !== sha(cur)) { res.refused.push(p); return res; }
   }
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, text); fs.renameSync(tmp, p);
-  hashes[p] = sha(text);
+  hashes[hashKey(p)] = sha(text);
   fs.writeFileSync(`${hf}.${process.pid}.tmp`, JSON.stringify(hashes, null, 1) + '\n'); fs.renameSync(`${hf}.${process.pid}.tmp`, hf);
   res.written.push(p);
   return res;

@@ -192,4 +192,31 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   assert.match(renderNav('tests', {}), /id="tab-health"[^>]*aria-selected="true"[^]*id="pages-health"[^]*data-tab="usage"[^]*data-tab="tests"/, 'beside Usage under Health (UX review 2)');
   const empty = renderTab('tests', { history: [], git: null, lean: null, mutation: null, advisories: null, waves: [], commands: { measure: 'norn tests measure', history: 'norn tests history' } }, {});
   assert.match(empty, /not measured yet/); assert.match(empty, /norn tests history/);
+  assert.match(empty, /id="tests-scope"[^>]*>Nothing measured yet\. The tick fills/, 'an empty page says why and what fills it');
+  const py = renderTab('tests', { suite: false, history: [], git: { points: [{ day: '2026-11-17', tests: 566, test_lines: 14848, code_lines: 39556 }] }, waves: [], commands: { measure: 'norn tests measure' } }, {});
+  assert.match(py, /not a node:test suite/); assert.match(py, /id="tests-time"/, 'the git charts still fill');
+  assert.doesNotMatch(py, /id="tests-head"|norn tests measure/, 'no command that would refuse');
+});
+
+// a pytest project (Solve Shack): check answers that it read nothing (it said "no test file changed" on every merge); measure refuses in words;
+// the tick starts `norn tests history` once a day so the charts fill
+test('a project without tests/*.test.mjs: check says so (exit 0), measure refuses (exit 2), history still works; tickTests once a day', async () => {
+  const st = mkTmp('meta-tl-py-'), repo = path.join(path.dirname(path.dirname(st)), 'repo');
+  const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '..');
+  const norn = (...a) => spawnSync(process.execPath, [path.join(REPO, 'engine', 'bin', 'norn.mjs'), 'tests', ...a, '--state', st, '--repo', repo], { encoding: 'utf8', cwd: repo });
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'test_x.py'), 'def test_x():\n    assert 1\n');
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('add', '-A'); g('commit', '-q', '-m', 'base');
+  let r = norn('check', '--base', 'HEAD');
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /no node:test suite .*nothing checked/);
+  r = norn('measure'); assert.equal(r.status, 2); assert.match(r.stderr, /no node:test suite/);
+  r = norn('history'); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /day\(s\) of history/);
+  const { tickTests } = await import('../engine/lib/testscli.mjs');
+  const calls = [], spawnFn = (exe, args) => (calls.push(args), { pid: 1 });
+  const st2 = mkTmp('meta-tl-tick-');
+  assert.match(tickTests({ file: 'p.json', root: repo }, st2, { metaCmd: 'norn.mjs', spawnFn }), /tests history: started pid 1/);
+  assert.equal(tickTests({ file: 'p.json', root: repo }, st2, { metaCmd: 'norn.mjs', spawnFn }), null, 'not twice within 30 min');
+  assert.deepEqual(calls[0].slice(1, 3), ['tests', 'history']);
+  assert.equal(tickTests({ file: 'p.json', root: repo }, st, { metaCmd: 'norn.mjs', spawnFn }), null, 'history written today: nothing to start');
 });

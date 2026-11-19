@@ -63,6 +63,23 @@ test('R1 /model and /effort: a pick line, the next turn runs with it (same sessi
   } finally { await chat.close(); }
 });
 
+test('a message folded into a running turn (one result for two sends) does not stall the chat: a Settings change still restarts it and the next message is answered', async () => {
+  let shell = 'off';
+  const p = proj(), chat = fakeChat(p, { config: () => ({ rawShell: shell }), settleMs: 300 });
+  try {
+    let t = turnEnd(chat); chat.send('!slow 400'); chat.send('!fold');
+    assert.equal(chat.status().busy, true); assert.ok(Number.isFinite(chat.status().since), 'the state line has its clock');
+    await t;
+    shell = 'on';   // the owner turns on raw shell while Norn still counts the folded message as owed
+    const r = chat.send('go on');
+    assert.equal(r.queued, true, 'held in Norn until the restart'); assert.equal(chat.status().queued, 1);
+    const end = await next(chat, l => l.kind === 'turn');
+    assert.ok(end.ok);
+    assert.match(lines(p).filter(l => l.kind === 'text').at(-1).text, /^heard go on/);
+    assert.equal(lines(p).filter(l => l.kind === 'stop' && l.why === 'settings').length, 1, 'restarted once for the new setting');
+  } finally { await chat.close(); }
+});
+
 test('R1 /clear = a new segment (fresh session, the records stay); /compact = the Norn hand-off; /cost and /help answer from Norn without a model turn', async () => {
   const p = proj(), chat = fakeChat(p);
   try {

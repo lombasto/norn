@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startRun, liveRuns, stopOrphans, fillQueue, readiness, STALE_MS } from './runs.mjs';
+import { startRun, liveRuns, stopOrphans, fillQueue, readiness, sweepLost, relaunchLost, lostNotice, STALE_MS } from './runs.mjs';
 import { trackHold, holdNoticeDue, noticeMin } from './holds.mjs';
 import { writeStatus } from './status.mjs';
 import { tryDigest } from './digest.mjs';
@@ -27,12 +27,15 @@ import { tickFix } from './fixer.mjs';
 import { closeLandedQuestions } from './deliverables.mjs';
 import { syncPrStates } from './prstate.mjs';
 import { tickSlop } from './slop/daily.mjs';
+import { tickTests } from './testscli.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
 import { projectOverlap } from './overlap.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
 import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
+import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
+import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');
@@ -109,7 +112,7 @@ export function gateProbes(p, machine = {}) {
   const m = p?.checkin?.stall_idle_min;
   return [watchProbe(p, machine), idleProbe({ minutes: Number.isInteger(m) ? m : STALL_IDLE_MIN, projectsDir: machine?.claude?.projects_dir }),
     p?.merge?.gate?.fast && p.state ? mqProbe(p.state) : null, p?.ci?.repo && p.state ? ciProbe(p) : null,
-    p?.state ? guardProbe(p.state) : null].filter(Boolean);   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
+    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null].filter(Boolean);   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
 }
 
 // NORN-WATCH S2: a project's checkin.max_quiet_min overrides the machine's checkin_max_quiet_min for that project (additive)
@@ -135,7 +138,9 @@ export function tick(o) {
   try {
     const g = {};
     r = tickPass(o, g);
-    if (g.raised?.length) r = { ...r, guard: g.raised, guard_push: g.push };   // META-GUARD R1: the caller sends them (class usage)
+    if (g.raised?.length) r = { ...r, guard: g.raised, guard_push: g.push };
+    if (g.lost) r = { ...r, lost_notice: g.lost };
+    if (g.stuck) r = { ...r, stuck_notices: g.stuck };   // META-CATCH S1: one notice per new stuck flag (the caller sends them, class alert)   // META-CATCH S1: one notice per sweep that handled dead runs (the caller sends it, class alert)   // META-GUARD R1: the caller sends them (class usage)
     // META-AUTH: the one owner notice of a login outage (authguard.mjs; the caller sends it: meta tick -> meta notify, class alert)
     try {   // META-AUTH-VENDOR: a vendor-class notice counts the runs it holds
       const held = h => loginHolds(o.project.state, Object.values(fold(readEvents(recordsFile(o.project.state, 'run'))).items),
@@ -172,6 +177,14 @@ function tickPass(o, g = {}) {
   const held = takeLock(lockF, `pid ${process.pid} start ${new Date().toISOString()} reason ${o.reason || '-'}`);
   if (held) return { code: 0, msg: `${tag}: ${held}` };
   try {
+    // META-CATCH S1: dead runs by code, no model - recorded lost at once (machine boot after the start / supervisor gone / never
+    // started), then the HANDOFF auto-resume policy relaunches them (runs.mjs relaunchLost); before the orphan stop, so their helpers go too
+    try {
+      sweepLost(state, { staleMs, by: 'status' });
+      const rl = relaunchLost(state, o.now ? { now: o.now().getTime() } : {});
+      for (const x of rl) tickLog(state, `${tag}: lost ${x.id} (${x.cause}) -> ${x.next ? 'relaunched ' + x.next : 'not relaunched: ' + x.refused}`);
+      g.lost = lostNotice(rl, p.name);
+    } catch (e) { tickLog(state, `${tag}: dead runs: ${e.message}`); }
     stopOrphans(state);   // helpers of a lost / ended parent (metadelegate sec. 2)
     // META-GUARD R1: the usage watch before the status - a new GRD alarm is in this tick's digest and wakes the check-in (gate probe); never fails the tick
     try { const w = guardWatch(state, p, { projectsDir: o.machine?.claude?.projects_dir }); g.raised = w.raised; g.push = guardPolicy(p.policy).push; } catch (e) { tickLog(state, `${tag}: guard: ${e.message}`); }
@@ -183,6 +196,8 @@ function tickPass(o, g = {}) {
     if (o.fix !== false && (!o.dry || o.spawnFix)) { try { for (const m of tickFix(p, state, { metaCmd: META_CMD, items: loadState(state).items, spawnFn: o.spawnFix ?? ((exe, args) => spawnDetached(exe, args, p.root)) })) tickLog(state, `${tag}: ${m}`); } catch (e) { tickLog(state, `${tag}: fix: ${e.message}`); } }
     // META-SLOP-A: the daily slop report on the same schedule - a detached `norn slop daily` once a day (a dry tick only with o.spawnSlop)
     if (o.slop !== false && (!o.dry || o.spawnSlop)) { try { const s = tickSlop(p, state, { metaCmd: META_CMD, spawnFn: o.spawnSlop }); if (s) tickLog(state, `${tag}: ${s}`); } catch (e) { tickLog(state, `${tag}: slop daily: ${e.message}`); } }
+    // the Tests tab's charts: a detached `norn tests history` (git only) once a day (a dry tick only with o.spawnTests)
+    if (o.tests !== false && (!o.dry || o.spawnTests)) { try { const t = tickTests(p, state, { metaCmd: META_CMD, spawnFn: o.spawnTests }); if (t) tickLog(state, `${tag}: ${t}`); } catch (e) { tickLog(state, `${tag}: tests history: ${e.message}`); } }
     const running = liveRuns(state, { staleMs }).find(r => r.state_dir === path.resolve(state) && r.data.kind === 'checkin');
     if (running) return { code: 0, msg: `${tag}: check-in ${running.id} running - exit` };
     const B = projectBudget(p, o.budget || {}), machine = o.machine || {}, cp = checkinPolicy(p.policy), nowMs = o.now ? o.now().getTime() : Date.now();
@@ -195,6 +210,9 @@ function tickPass(o, g = {}) {
     if (!o.dry) try { for (const x of syncPrStates(state, o.gh ? { gh: o.gh } : {})) tickLog(state, `${tag}: ${x.id} PR ${x.url} ${x.error ? 'not read - ' + x.error : x.state}`); } catch (e) { tickLog(state, `${tag}: PR states: ${e.message}`); }
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
+    // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag
+    try { const tr = Object.keys(loadRoadmap(state).items).length ? buildTree({ stateDir: state, project: p }) : null; const sw = stuckSweep(state, tr ? itemsOf(tr) : [], { project: p.name }); if (sw.notices.length) g.stuck = sw.notices; }
+    catch (e) { tickLog(state, `${tag}: stuck sweep failed: ${e.message}`); }
     const start = new Date().toISOString();
     const s = writeStatus({ state, project: p.name, providers: providersOf(p), budget: B, projectsDir: machine.claude?.projects_dir, usageJson: machine.usage || {},
       cacheFile: path.join(state, 'usage-cache.json'), paused, staleMs, ci: p.ci, digest: tryDigest(state, p) });
@@ -221,7 +239,7 @@ function tickPass(o, g = {}) {
     }
     // CHECKIN-V2 piece 2 (GT-3 ruling): a MINOR wake runs the reduced prompt on checkin_minor_model / _effort ('' = the full tick)
     const minorModel = B.checkin_minor_model ?? MACHINE_DEFAULTS.checkin_minor_model, minor = gate.cls === 'minor' && !!minorModel;
-    const ck = renderCheckin(p, { budgetFile: o.budgetFile, budget: B, statusFile: s.out, template: minor ? CHECKIN_MINOR_PROMPT : CHECKIN_PROMPT, wake: gate.why,
+    const ck = renderCheckin(p, { budgetFile: o.budgetFile, budget: B, statusFile: s.out, template: minor ? CHECKIN_MINOR_PROMPT : CHECKIN_PROMPT, wake: gate.why + stuckWake(state, gate.why),
       cv: checkinCv(p, { budget: B, projectsDir: machine.claude?.projects_dir }) });
     if (paused.some(f => fs.existsSync(f))) { notePaused(state); return { code: 0, msg: `${tag}: PAUSED - exit` }; }
     const cx = checkinExecutor({ B, machine, p, minor, dry: o.dry });   // H2 Setting + the H7 trial (piece 4)
