@@ -32,9 +32,9 @@ test('the browser: an Inbox answer keeps its text, focus and caret across a live
     await pg.ev('document.querySelector("#tab-overview").click()'); await pg.until('document.body.dataset.ready === "overview"');
     await pg.ev('document.querySelector("#tab-inbox").click()'); await pg.until('document.body.dataset.ready === "inbox"');
     assert.equal(await pg.until(`document.querySelector(${JSON.stringify(box)})?.value`), 'take the cheap model first', 'the draft outlives a tab switch');
-    // Send: the answer is written, the question leaves, and its draft is gone
+    // Send: typed words are a message in the Q's thread (INBOX-REPLIES: the Q stays open), and the box's draft is gone
     await pg.ev('document.querySelector("[data-act=answer-text][data-id=\'Q-1\']").click()');
-    assert.ok(await pg.until(`!document.querySelector(${JSON.stringify(box)})`, 30000), 'the answered question leaves the Inbox');
+    assert.ok(await pg.until(`document.querySelector(${JSON.stringify(box)})?.value === '' && /take the cheap model first/.test(document.querySelector('#qt-Q-1')?.textContent ?? '')`, 30000), 'the message shows in the thread and the draft is dropped');
     // a second page: the Records search box (no id: keyed by its data-filter)
     await pg.ev('document.querySelector("#tab-history").click()'); await pg.until('!!document.querySelector("#tab-records")');
     await pg.ev('document.querySelector("#tab-records").click()'); await pg.until('document.body.dataset.ready === "records"');
