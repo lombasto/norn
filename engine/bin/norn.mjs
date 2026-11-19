@@ -59,7 +59,7 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, ghPrViewer } from '../lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -1232,8 +1232,7 @@ function deliverablesCmd(argv, env, out, err) {
     if (more.length) throw new RunError(`unexpected ${more[0]}`);
     const by = flags.as || env.META_ROLE;
     if (!sub) {
-      // lane-outputs item 6: the --json listing (the dashboard's child) asks GitHub for each PR's state (cached; a merged one never again)
-      const v = deliverablesView({ stateDir: state, project, ...(flags.json ? { ghPr: ghPrViewer(makeGh()) } : {}) });
+      const v = deliverablesView({ stateDir: state, project });
       // --resolve (META-DLV-R2): the rows a check-in may dispatch a resolve run for - flagged, not native, open, none live
       const rows = v.rows.filter(r => flags.all || (flags.resolve ? r.resolve && r.native !== true && r.record_state === 'open' && !liveResolve(state, r.id) : flags.due ? r.due : !r.at_target));
       if (flags.json) { out(JSON.stringify({ rows, install: v.install, git: v.git }, null, 1)); return 0; }
