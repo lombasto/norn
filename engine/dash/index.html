@@ -177,7 +177,7 @@ tr:last-child td{border-bottom:0}
 .decisions{margin-bottom:12px}.decisions>h2{margin:4px 0 8px}.pindex{display:flex;flex-wrap:wrap;gap:4px 14px;margin-bottom:10px;overflow-wrap:anywhere}
 .pstages{list-style:none;margin:8px 0;padding:0}.pstage{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line)}.pstage>div:first-child{flex:1 1 260px;min-width:0}.pacts{display:flex;gap:6px;flex-wrap:wrap}
 .tree{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 0}
-.node{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) 230px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
+.node{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) 230px 80px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
 .node.head{border-top:0;color:var(--mute);font-size:12px;font-weight:600}
 .node .name{display:flex;gap:6px;align-items:center;min-width:0}
 .node .name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node .lanecol{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -382,7 +382,7 @@ mark.dv-w{color:var(--on-accent);border-radius:2px}.dv-del mark.dv-w{background:
 .pl-step{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}.pl-sep{margin:0 2px}.pl-meta{flex-basis:100%;margin-top:4px}
 .pl-empty{padding:10px 14px;margin:0}.pl-fc{padding:10px 14px}.pl-fc .kv>span>.bar{display:inline-block;width:160px;vertical-align:middle;margin-right:6px}
 @media (max-width:700px){.pl-row{grid-template-columns:32px 1fr auto}.pl-est,.pl-start{grid-column:2}.pl-holds{grid-column:2 / -1}.pl-step{white-space:normal}}
-@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}.node{grid-template-columns:1fr 64px 120px}.node>:nth-child(3),.node>:nth-child(5),.node>:nth-child(6),.node>:nth-child(8){display:none}.node>.lanecol{grid-column:1/-1;order:1;padding-left:28px}.node.head>.lanecol{display:none}.node>.lanecol:empty{display:none}.node>.horow{order:2}}
+@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}.node{grid-template-columns:1fr 64px 120px}.node>:nth-child(3),.node>:nth-child(5),.node>:nth-child(6),.node>:nth-child(7),.node>:nth-child(9){display:none}.node>.lanecol{grid-column:1/-1;order:1;padding-left:28px}.node.head>.lanecol{display:none}.node>.lanecol:empty{display:none}.node>.horow{order:2}}
 /* phone width (PHONE-HEADER, both looks): the header wraps and the project select shrinks; the tab bar and wide tables scroll inside
    themselves, setting rows stack - the page itself never scrolls sideways */
 @media (max-width:700px){header{flex-wrap:wrap;gap:8px;padding:8px 10px}header select{min-width:0;max-width:100%}nav{overflow-x:auto;padding:0 8px}nav>button{flex:none}
@@ -526,7 +526,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, renderActivity, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '/activity.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal, pauseMenu } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal, pauseMenu, runsViewOf, runsViewQs } from '/ui.mjs';
 import { hoChip } from '/widgets.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
@@ -544,7 +544,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -661,11 +661,11 @@ async function partsFetch(tab, d) {
   } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
-const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = q.get('tab');
   if (!TABS.some(x => x[0] === t) || q.get('project') !== S.project) return;
-  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); render();
+  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -675,7 +675,7 @@ async function render(force = false, why = []) {
     // overtook (a click while a slow fetch was out) never paints
     const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
     const tab = S.project ? S.tab : 'adopt';
-    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
+    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     want.catch(() => {});   // a header failure is reported first; the tab's own failure is awaited below
     step('render:header'); await header(g); guardHeader();
     if (seq !== S.renderSeq) return;
@@ -715,12 +715,14 @@ function adoptForm() {   // META-ADOPT A3: the setup page's typed answers / path
   return v;
 }
 // the Lanes page re-paints from its last data (a chip, an archive tap); any other state = a fresh render
+// the Runs page re-paints from its last data on a chip or a lane keystroke; a new window refetches (the server cuts the tree)
+function runsRepaint() { history.replaceState(null, '', tabUrl()); if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); else render(); }
 function lanesRepaint() { if (S.tab === 'lanes' && S.last && S.lastTab === 'lanes') { paintMain(S.last); applyFilters(); } else render(); }
 function paintMain(d) {
-  const a = document.activeElement, fx = a?.matches?.('[data-rmf="q"]') ? [a.selectionStart, a.selectionEnd] : null;
+  const a = document.activeElement, fxSel = ['[data-rmf="q"]', '[data-runs-lane]'].find(k => a?.matches?.(k)), fx = fxSel ? [a.selectionStart, a.selectionEnd] : null;
   const home = S.tab === 'home' ? homeKeep() : null;
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
   if (home) homeRestore(home);
   if (form) {
     for (const x of document.querySelectorAll('#main [data-answer], #main [data-adopt]')) { const k = x.dataset.answer ? 'a:' + x.dataset.answer : 'p:' + x.dataset.adopt; if (form[k] !== undefined && form[k] !== '') x.value = form[k]; }
@@ -728,7 +730,7 @@ function paintMain(d) {
     S.adoptForm = form;
     if (focus) document.querySelector('#main ' + focus)?.focus();
   }
-  if (fx) { const q = document.querySelector('[data-rmf="q"]'); if (q) { q.focus(); q.setSelectionRange(...fx); } }
+  if (fx) { const q = document.querySelector(fxSel); if (q) { q.focus(); q.setSelectionRange(...fx); } }   // a filter box keeps its focus and caret
   if (S.tab === 'roadmap') document.documentElement.style.setProperty('--rm-top', ($('header')?.offsetHeight || 0) + 'px');   // S2b: the board's heads stick under the header
   if (S.tab === 'roadmap' && S.rmJump && S.rm.item) { S.rmJump = false; document.getElementById('rm-' + S.rm.item)?.scrollIntoView({ block: 'center' }); }
 }
@@ -909,6 +911,7 @@ function openStream() {
   es.onerror = () => { if (stream !== es) return; S.live = false; const st = $('#status'); if (st) st.innerHTML = st.innerHTML.replace(/live$/, 'reconnecting ...'); };
 }
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
+  if (e.target.matches('[data-runs-lane]')) { S.runsView.lane = e.target.value; runsRepaint(); }
   if (e.target.matches('[data-set-search]')) { S.setQ = e.target.value; setFilter(); } if (e.target.matches('[data-key]')) dirty(); });
 document.addEventListener('change', e => {
   if (e.target.matches('[data-set-billing]')) { const o = e.target.selectedOptions[0]; $('#set-billing-note').textContent = o ? o.title : ''; }
@@ -1205,6 +1208,8 @@ document.addEventListener('click', e => {
       e => { S.archiving.delete(k); S.laneRefused[k] = e.message; lanesRepaint(); }); return; }
   if (d.act === 'lane-undo') { S.laneUndo = null; act(() => post('/api/lane/archive', { project: p, lane: d.lane, unarchive: true })); return; }
   if (d.act === 'lane-type') { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
+  if (d.act === 'runs-show') { const s = S.runsView[d.group]; if (s.has(d.show)) s.delete(d.show); else s.add(d.show); runsRepaint(); return; }
+  if (d.act === 'runs-window') { S.runsView.window = d.window; history.replaceState(null, '', tabUrl()); render(); return; }
   if (d.act === 'lane-show') { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'revoke' && confirm(`Revoke ${d.id}?`)) act(() => post('/api/directive/revoke', { project: p, id: d.id }));
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
