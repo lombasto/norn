@@ -1,0 +1,35 @@
+{
+  "id": "T2",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "a new test skip with no condition",
+  "how": "in test code: describe / it / test / suite .skip( , or skip: true / skip: 'a reason' (a literal, not a condition)",
+  "files": [
+    "tests/**"
+  ],
+  "in": [
+    "code"
+  ],
+  "patterns": [
+    "\\b(?:describe|it|test|suite)\\.skip\\s*\\(",
+    "\\bskip\\s*:\\s*(?:true\\b|['\"`])"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "tests/a.test.mjs": "import test from 'node:test';\n"
+      },
+      "head": {
+        "tests/a.test.mjs": "import test from 'node:test';\ntest.skip('x', () => {});\ntest('y', { skip: 'flaky' }, () => {});\ntest('z', { skip: true }, () => {});\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "tests/a.test.mjs": "import test from 'node:test';\n"
+      },
+      "head": {
+        "tests/a.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\n// test.skip( is not used here\nconst doc = 'skip: true';\n"
+      }
+    }
+  }
+}

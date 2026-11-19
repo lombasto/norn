@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { ADAPTERS, harnessOf } from './harness/index.mjs';
 import { genStates, frontmatter } from './setup.mjs';
 import { loadState } from './records.mjs';
-import { threadFile } from './chat.mjs';
+import { threadFile } from './chatact.mjs';
 import { standingRuns, standingSummary } from './standing.mjs';
 import { profileOf, PROFILE_ROLES } from './launchpolicy.mjs';
 import { checkinDays } from './checkins.mjs';

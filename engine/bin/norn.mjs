@@ -75,7 +75,8 @@ import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
-import { openBlocks, findingLine } from '../lib/slop/host.mjs';
+import { findingLine } from '../lib/slop/host.mjs';
+import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
@@ -443,7 +444,7 @@ function runSpec(flags, env, { project, state, locks }) {
     policy: { auto_resume_handoff: cadence.auto_resume_handoff, auto_resume_max: cadence.auto_resume_max, trigger_on_exit: cadence.trigger_on_exit,
       fill: { ...FILL_DEFAULTS, ...(project?.policy?.fill || {}) },   // META-GTP-DAG piece 5: the resource gate of the fill
       mail: { nudge_after_min: project?.policy?.mail?.nudge_after_min ?? POLICY_DEFAULTS.mail.nudge_after_min },   // META-GTP-MAIL piece 3
-      slop: { enabled: slopOn(project?.policy) } },   // META-BETA-PREP (DIR-52): the run-end slop check obeys the project's one switch
+      slop: { enabled: slopOn(project?.policy), project_dir: project?.project_dir } },   // META-BETA-PREP (DIR-52): the one switch; RM-45: the run end checks with the project's own rules
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
     budget, budget_file: path.resolve(bf),   // GAP-2: the fill reads the budget of NOW from here (runs.mjs liveBudget); budget = the copy for a resume
@@ -957,10 +958,15 @@ function mergeBriefCmd(argv, env, out, err) {
       const w = laneWriter({ state: p.state, locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), lane: f.lane, worktree: f.worktree });
       if (w) { out(`REFUSED: merge-brief ${f.lane}: ${w} - the brief would rebase under it; pass --sha <READY sha> (a staged merge in its merge worktree)`); return 3; }
     }
-    // META-SLOP-A: open BLOCK findings of the branch's last slop check hold its merge until fixed (a clean check) or waived;
-    // META-BETA-PREP: no hold while the project's SloppaChoppa switch is off (the recorded hold binds again when it is on)
-    const held = slopOn(p.policy) ? openBlocks(p.state, f.branch) : [];
-    if (held.length) { out(`REFUSED: merge-brief ${f.branch}: ${held.length} open slop BLOCK finding(s) - fix them (norn slop check in its worktree) or waive each (norn rec add waiver):`); for (const b of held) out('  ' + findingLine(b)); return 3; }
+    // RM-44 D1: the door - the stored slop check of the head it merges (the --sha, else the branch's tip), run now when none fits;
+    // open BLOCK findings hold the merge until fixed or waived. META-BETA-PREP: no door while the project's SloppaChoppa switch is off
+    if (slopOn(p.policy)) {
+      const repo = f.worktree || p.root;
+      let d;
+      try { d = doorCheck({ state: p.state, repo, branch: f.branch, head: f.sha || `refs/heads/${f.branch}`, projectDir: p.project_dir }); }
+      catch (e) { out(`REFUSED: merge-brief ${f.branch}: the slop check could not run (${e.message.split(/\r?\n/)[0]})`); return 3; }
+      if (d.open.length) { out(`REFUSED: merge-brief ${f.branch}: ${doorWhy(d).split(': ')[0]}:`); for (const b of d.open) out('  ' + findingLine(b)); return 3; }
+    }
     const txt = renderMergeBrief(p, { lane: f.lane, branch: f.branch, worktree: f.worktree, notes: f.notes, ui: !!f.ui, ...(f.sha ? { sha: f.sha } : {}) });
     fs.mkdirSync(path.dirname(path.resolve(f.out)), { recursive: true });
     fs.writeFileSync(f.out, txt);

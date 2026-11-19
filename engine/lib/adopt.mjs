@@ -16,6 +16,7 @@ import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 import { normSubdir, subdirOf } from './monorepo.mjs';
 import { floorOf } from './floor.mjs';
+import { lineAt } from './slop/scan.mjs';
 
 export class AdoptError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 // META-DASH-ASYNC R1 (option a): the review's writes (decide / close / rule / apply) are yielded effects (lib/steps.mjs): the CLI and the
@@ -29,7 +30,6 @@ const sh = (cwd, args) => {
   return r.status === 0 ? r.stdout.replace(/\r\n/g, '\n').trimEnd() : null;
 };
 export const slugOf = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-const lineAt = (text, i) => text.slice(0, i).split('\n').length;
 
 export const AGENT_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', '.cursorrules', '.windsurfrules', '.clinerules', '.github/copilot-instructions.md', 'CONVENTIONS.md'];
 const PLAN_RE = /^(?:docs\/)?(?:ROADMAP|TODO|BACKLOG|PLAN|MILESTONES)[^/]*\.(?:md|txt)$|^TODO$/i;

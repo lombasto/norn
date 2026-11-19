@@ -1,17 +1,16 @@
 // META-SLOP-A (REVIEW-FABLE 3.4): the daily report - trends per area (raw counts, the absolute change beside every %), lines of
 // code, the git sweep list - written once a day on the existing schedule (the tick starts `norn slop daily` detached) and ONE line
-// for the check-in digest. No badge, no tab (slice B). Also records the K14 base side: `norn gen --check` as it stands on main.
+// for the check-in digest. No badge, no tab (slice B). A start that wrote no report by the next tick is a digest row (audit D4).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { locReport, CLASSES, APART } from './loc.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
 import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers } from './host.mjs';
-import { loadRules } from './check.mjs';
-import { makeTool } from './tools.mjs';
 import { spawnOutside } from '../jobguard.mjs';
 import { slopOn } from '../policy.mjs';
 import { inDir } from '../monorepo.mjs';
+import { readText } from '../fsnap.mjs';
 
 const num = n => n.toLocaleString('en-US');
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
@@ -42,29 +41,33 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0 } = {}) {
 }
 
 /** the daily run: build, write through the host, return { line, file }. own = { name, subdir } of a monorepo project: the lines of
- * code and the K14 base are its folder's, the sweep its own branches and worktrees (repo stays the top level) */
-export function dailyReport({ repo, state, env = process.env, now = Date.now(), own = null }) {
+ * code are its folder's, the sweep its own branches and worktrees (repo stays the top level) */
+export function dailyReport({ repo, state, now = Date.now(), own = null }) {
   const home = own ? inDir(repo, own.subdir) : repo;
   const day = today(now), loc = locReport(home, { until: day }), sw = sweep(repo, { state, now, own });
   const holds = Object.entries(slopHolds(state)).map(([branch]) => ({ branch, blocks: openBlocks(state, branch, { now }) })).filter(h => h.blocks.length)
     .map(h => ({ branch: h.branch, open: h.blocks.length, rules: [...new Set(h.blocks.map(b => b.rule))].join(' ') }));
   const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length });
-  const k14 = loadRules().find(r => r.id === 'K14');
-  const baselines = {};
-  try { baselines.K14 = makeTool({ env })(k14, 'head', { dir: home }); } catch (e) { baselines.K14 = null; fs.appendFileSync(path.join(slopDir(state), 'daily.log'), `${new Date(now).toISOString()} K14 base not recorded: ${e.message}\n`); }
-  if (baselines.K14 === null) delete baselines.K14;
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
-    empty: sw.empty.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };
-  return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point, baselines }) };
+    empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };
+  return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point }) };
 }
+
+// daily.missed { since, n }: the starts since `since` that wrote no report (a report written after `since` ends the run of misses)
+const missedFile = state => path.join(slopDir(state), 'daily.missed');
+const missedOf = state => { const t = readText(missedFile(state)); return t ? JSON.parse(t) : null; };
+const writeMissed = (state, m) => fs.writeFileSync(missedFile(state), JSON.stringify(m));
 
 /** the tick's hook: start `norn slop daily` detached once a day (not while one started in the last 30 min). -> the tick-log words | null */
 export function tickSlop(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
   if (!p?.file || !slopOn(p.policy) || p.policy?.slop?.daily === false) return null;   // META-BETA-PREP: the one switch off = no report
   if (slopReport(state)?.day === today(now)) return null;
   const mark = path.join(slopDir(state), 'daily.started');
-  try { if (now - fs.statSync(mark).mtimeMs < 30 * 60e3) return null; } catch { /* never started: start it now */ }
+  const last = Number(readText(mark));
+  if (last && now - last < 30 * 60e3) return null;
   fs.mkdirSync(slopDir(state), { recursive: true });
+  // the last start wrote no report since: it died (stdio is ignored) - counted for the digest row, never silent (audit D4)
+  if (last && !(Date.parse(slopReport(state)?.at) >= last)) { const m0 = missedOf(state), m = m0 && !(Date.parse(slopReport(state)?.at) > Date.parse(m0.since)) ? m0 : null; writeMissed(state, { since: m?.since ?? new Date(last).toISOString(), n: (m?.n ?? 0) + 1 }); }
   fs.writeFileSync(mark, String(now));
   const args = [metaCmd, 'slop', 'daily', '--project', p.file, '--state', state];
   let r = spawnFn ? spawnFn(process.execPath, args) : (env => (env.META_JOB ? spawnOutside(process.execPath, args, { cwd: p.root }) : null))(process.env);
@@ -76,6 +79,7 @@ export function tickSlop(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) 
 export function digestRow(state, now = Date.now()) {
   const rep = slopReport(state);
   const held = Object.keys(slopHolds(state)).filter(b => openBlocks(state, b, { now }).length);
-  if (!rep && !held.length) return null;
-  return { id: 'slop', line: `${rep ? rep.line : 'slop: no daily report yet'}${held.length ? `; HELD by slop: ${held.join(', ')} (norn slop check / a waiver)` : ''}` };
+  const m = missedOf(state), dead = m && !(Date.parse(rep?.at) > Date.parse(m.since)) ? `; slop daily: ${m.n} start(s) since ${m.since} wrote no report (norn slop daily by hand shows why)` : '';
+  if (!rep && !held.length && !dead) return null;
+  return { id: 'slop', line: `${rep ? rep.line : 'slop: no daily report yet'}${dead}${held.length ? `; HELD by slop: ${held.join(', ')} (norn slop check / a waiver)` : ''}` };
 }

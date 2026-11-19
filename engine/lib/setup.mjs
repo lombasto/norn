@@ -199,13 +199,14 @@ export function genStates(p, machine, { meta = p.meta } = {}) {
 export function genCheck(p, machine, { meta, out }) {
   const man = readManifest(meta), { items, problems } = plan(p, machine);
   for (const it of items) {
-    const { target } = it, st = targetState(it, man);
-    if (st === 'missing') problems.push(`${target}: missing (run norn gen)`);
+    // a problem names its source: the slop gate's K14 counts it only when a branch's diff touches that source (audit D3)
+    const { target } = it, st = targetState(it, man), src = ` [source ${fwd(it.source)}]`;
+    if (st === 'missing') problems.push(`${target}: missing (run norn gen)${src}`);
     else if (st === 'adoptable') out(`note ${target}: not in the manifest yet, same bytes (norn gen adopts it)`);
-    else if (st === 'unmanaged') problems.push(`${target} exists and is not managed by meta (norn gen will not overwrite it)`);
+    else if (st === 'unmanaged') problems.push(`${target} exists and is not managed by meta (norn gen will not overwrite it)${src}`);
     else if (st === 'same') out(`note ${target}: edited to the same bytes as generated (norn gen re-records it, writes nothing)`);
-    else if (st === 'drift') problems.push(`${target}: drift (edited after generation; never overwritten)`);
-    else if (st === 'stale') problems.push(`${target}: stale (sources changed since generation; run norn gen)`);
+    else if (st === 'drift') problems.push(`${target}: drift (edited after generation; never overwritten)${src}`);
+    else if (st === 'stale') problems.push(`${target}: stale (sources changed since generation; run norn gen)${src}`);
   }
   const planned = new Set(items.map(i => i.target));
   for (const e of man.entries) if (owners(e).includes(p.name) && !planned.has(e.target)) problems.push(`${e.target}: orphan (no source of ${p.name} generates it any more)`);

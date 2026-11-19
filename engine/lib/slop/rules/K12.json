@@ -1,0 +1,39 @@
+{
+  "id": "K12",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "new commented-out code",
+  "how": "a // comment line that is a statement (a declaration, return / await / throw, an import or export, an if / for / while opening, a call or an assignment ending in ;, a lone })",
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ],
+  "in": [
+    "comment"
+  ],
+  "patterns": [
+    "(?<=^|\\n)[ \\t]*//[ \\t]*(?:(?:const|let|var)[ \\t]+[\\w$]+[ \\t]*=.*;|(?:return|await|throw)\\b.*;|import\\b.*\\bfrom[ \\t]+['\"]|export[ \\t]+(?:const|let|function|default)\\b.*[;{]|(?:if|for|while)[ \\t]*\\(.*\\)[ \\t]*\\{|[\\w$.]+\\([^)]*\\);|[\\w$.\\[\\]]+[ \\t]*=[ \\t]*[^=\\s].*;|\\}[ \\t]*(?:else[ \\t]*\\{)?)[ \\t]*(?=\\r?\\n|$)"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "export const a = 1;\n// const b = a + 1;\n// if (a) {\n//   go(a);\n// }\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// a is one: the tests read it\n// see go(a) in b.mjs for the caller; it returns null when the file is gone\nexport const t = '// const x = 1;';\nexport const a = 1; // set once\n"
+      }
+    }
+  }
+}
