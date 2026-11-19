@@ -590,6 +590,14 @@ export function oldSchedProblems({ machine, meta, io = schedIo }) {
   const o = { name, interval_min: sc.interval_min, node: machine.node, meta: fwd(meta), home: machine.home };
   return oldTasks(a, o, io).map(n => `scheduler: old task '${n}' of this install is still installed - run: norn sched install (moves it to '${name}')`);
 }
+// proc-hygiene (8): an installed Windows task still on the PowerShell action opens an empty Terminal window for every tick (and
+// closing it kills the tick) - a warning with the one command that rewrites it to the hidden wscript action
+export function windowedSchedLines({ machine, meta, io = schedIo }) {
+  let a; try { a = schedAdapter(machine.scheduler.kind); } catch { return []; }
+  if (!a.windowed) return [];
+  const sc = machine.scheduler, o = { name: sc.name, interval_min: sc.interval_min, node: machine.node, meta: fwd(meta), home: machine.home };
+  return a.windowed(o, io) ? [`scheduler: task '${sc.name}' still starts the tick through powershell.exe, which opens an empty Terminal window each tick - run: norn sched install`] : [];
+}
 
 export function doctor({ env = process.env, out }) {
   const meta = metaRoot(env), problems = [];
@@ -672,6 +680,7 @@ export function doctor({ env = process.env, out }) {
   // NORN-WATCH S5: what ended runs left running (a warning, not a problem: it names them, the owner / Norn stops them)
   const procs = listProcs();
   if (states.length) { const f = runFacts(states); for (const s of strays(procs, f)) out('warn ' + strayLine(s)); }
+  if (m.scheduler?.name) for (const l of windowedSchedLines({ machine: m, meta })) out('warn ' + l);
   // META-AUTH-VENDOR: an open auth episode (per state home): a login one is a problem (log in), a vendor one a note (no login needed)
   for (const s of [...new Map(states.map(x => [path.dirname(path.resolve(x)), x])).values()])
     for (const l of authDoctorLines(s)) (l.level === 'bad' ? bad : x => out(`note ${x}`))(l.text);
