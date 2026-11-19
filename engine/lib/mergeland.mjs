@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { makeGit } from './dlvgit.mjs';
 import { makeGh } from './prstate.mjs';
+import { prOf } from './prverdict.mjs';
 import { mergeConfig } from './mergeq.mjs';
 import { loadDeliverables, sameRepo } from './deliverables.mjs';
 import { record } from './records.mjs';
@@ -63,7 +64,8 @@ export function openPrs(o) {
       pr = { url, number: Number(url.split('/').pop()) };
       status = 'opened';
     }
-    if (dlv && stateDir && dlv.state !== 'superseded' && dlv.history.findLast?.(h => h.ev === 'pr')?.data?.url !== pr.url)
+    // a new PR, or the same one open again after Norn saw it closed (reopened on GitHub, RM-7 S3), starts a new `pr` record
+    if (dlv && stateDir && ['open', 'parked'].includes(dlv.state) && (p => !p || p.url !== pr.url || p.state !== 'open')(prOf(dlv)))
       record(stateDir, { kind: 'deliverable', ev: 'pr', id: dlv.id, by: 'launcher', data: { url: pr.url, number: pr.number, repo: slug, head: branch, base: main, merge: head, ...(run ? { run } : {}) } }, { views: false });
     return res(status, `${branch} -> ${slug} ${main}${ahead ? `; the branch is ${ahead} commit(s) past the tested merge` : ''}`, { url: pr.url, number: pr.number, ahead, dlv: dlv?.id ?? null });
   });

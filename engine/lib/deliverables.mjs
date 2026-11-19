@@ -1,7 +1,8 @@
 // Deliverables (the Norn project's design/DELIVERABLES-SPEC.md): follow every lane's finished work to main and to an install.
 // Records: kind `deliverable` (DLV-n) in deliverables.jsonl (records.mjs). State DONE -> MERGED -> INSTALLED is derived here from
 // git (dlvgit.mjs) and the newest install receipt (project.json `deliverables.receipts`), never typed by hand; a branch with a PR is
-// MERGED when GitHub reported the PR merged (prverdict.mjs, RM-7 S2), never before.
+// MERGED when GitHub reported the PR merged (prverdict.mjs, RM-7 S2), never before. RM-7 S3: a PR closed unmerged, or open past
+// policy.pr.stuck_h, makes the deliverable due for ONE owner question (reopen / re-run merge-land, park, or drop), asked by the tick.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile, loadState, record } from './records.mjs';
@@ -14,6 +15,9 @@ export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', '
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
   target: 'install', ask_after_h: 24, park_days: 7, resolve_behind: 100 };
 const DAY = 864e5;
+/** RM-7 S3: the hours a deliverable's PR may stay open before it is stuck: project policy.pr.stuck_h (a Settings row), else PR_STUCK_H; 0 = off */
+export const PR_STUCK_H = 72;
+export const prStuckH = pol => { const n = Number(pol?.pr?.stuck_h); return Number.isFinite(n) && n >= 0 ? n : PR_STUCK_H; };
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 export const sameRepo = (a, b) => pathKey(a) === pathKey(b);   // the same repo in any spelling (8.3 short name, link, case)
 
@@ -115,7 +119,7 @@ const lastEv = (it, evs) => [...it.history].reverse().find(h => evs.includes(h.e
  */
 export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null } = {}) {
   const t0 = Date.now();
-  const cfg = deliverableConfig(project);
+  const cfg = deliverableConfig(project), stuckH = prStuckH(project.policy);
   const items = Object.values(loadDeliverables(stateDir));
   const cache = readCache(stateDir), before = JSON.stringify(cache);
   const install = lastInstall(cfg);
@@ -138,24 +142,31 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const parkEv = it.state === 'parked' ? lastEv(it, ['park']) : null;
     // META-GTP-MERGEQ piece 0: superseded = terminal (the work landed another way): at its target, never due / resolved / rehearsed
     const supEv = it.state === 'superseded' ? lastEv(it, ['supersede']) : null;
-    const pr = (p => p && { url: p.url, number: p.number, state: p.state, merged_at: p.merged_at })(prOf(it));   // the PR norn merge-land opened, as GitHub last said
+    const dropEv = it.state === 'dropped' ? lastEv(it, ['drop']) : null;   // RM-7 S3: terminal too (the owner does not want it on main)
+    // the PR norn merge-land opened, as GitHub last said; stuck (RM-7 S3) = still open past policy.pr.stuck_h since merge-land recorded it
+    const pr = (p => p && { url: p.url, number: p.number, state: p.state, merged_at: p.merged_at, since: p.at,
+      stuck: p.state === 'open' && stuckH > 0 && now - Date.parse(p.at) > stuckH * 3600e3 })(prOf(it));
     const superseded = supEv ? { by: supEv.data.by, why: supEv.data.why, at: supEv.ts } : null;
+    const dropped = dropEv ? { why: dropEv.data.why, by: dropEv.by, at: dropEv.ts } : null;
+    const ended = superseded || dropped;
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
-    const since = Date.parse((lastEv(it, ['park', 'unpark']) || it.history[0]).ts);
+    const since = Date.parse((lastEv(it, ['park', 'unpark', 'pr']) || it.history[0]).ts);   // RM-7 S3: a new PR (merge-land) starts a new ask cycle
     const asked = qs.filter(q => q.data?.deliverable === it.id && Date.parse(q.created) >= since).sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0]?.id ?? null;
     const days = +((now - Date.parse(doneUtc)) / DAY).toFixed(1);
-    const due = !superseded && state === 'done' && pr?.state !== 'open' && now - Date.parse(doneUtc) > cfg.ask_after_h * 3600e3 && (!park || park.expired) && !asked;
+    // a PR not merged is the ask while it is open and young; closed unmerged or stuck open asks at once (RM-7 S3), whatever ask_after_h says
+    const prHeld = pr && pr.state !== 'merged';
+    const due = !ended && state === 'done' && (prHeld ? pr.state === 'closed' || pr.stuck : now - Date.parse(doneUtc) > cfg.ask_after_h * 3600e3) && (!park || park.expired) && !asked;
     // META-DLV-R2: the merge rehearsal of a DONE tip onto main, and the resolve flag (conflict, or more than resolve_behind behind)
-    const rehearses = !superseded && state === 'done' && sc.s && g.tip;
+    const rehearses = !ended && state === 'done' && sc.s && g.tip;
     if (rehearses) sc.want.push(g.tip);
     return () => {   // the rehearsals of every row first, batched per repo (ENGINE-GIT, DEC-88: one merge-tree per repo)
     const rehearsal = rehearses ? sc.s.rehearse(g.tip) : null;
-    const resolve = state !== 'done' || superseded ? null : rehearsal && !rehearsal.clean ? { why: `conflict: ${rehearsal.files.join(', ')}` }
+    const resolve = state !== 'done' || ended ? null : rehearsal && !rehearsal.clean ? { why: `conflict: ${rehearsal.files.join(', ')}` }
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
-    return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
+    return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!ended, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
       delivers: d.delivers ?? g.subject ?? '', tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
-      native: g.native, native_files: g.native_files, pr, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}) };
+      native: g.native, native_files: g.native_files, pr, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}), ...(dropped ? { dropped } : {}) };
     };
   });
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
@@ -306,15 +317,16 @@ export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
 // one listing line: id, state, age, behind main, native, branch, its PR, park / question, merge rehearsal, what it delivers
 export function formatDeliverable(r) {
-  const flag = r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : '';
+  const flag = r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.dropped ? `dropped: ${r.dropped.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : '';
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
-    pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} ${r.pr.state} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
+    pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} ${r.pr.state}${r.pr.stuck ? ' (stuck)' : ''} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
 }
 
 /**
  * The check-in's question for a due deliverable (DELIVERABLES-SPEC 4): ONE per deliverable per park cycle, never one per tick.
- * Refuses (returns { refused }) when the deliverable is merged, already asked since its last park / unpark, or parked and quiet.
+ * Refuses (returns { refused }) when the deliverable is merged, already asked since its last park / unpark / PR, or parked and quiet.
+ * RM-7 S3: with a PR closed unmerged or stuck open the question is "reopen, park or drop?" (prQuestion); a young open PR is the ask itself.
  * opts: { project, by (checkin | controller), now (() => Date, the record clock), nowMs (view clock), git }
  */
 export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now, nowMs, git } = {}) {
@@ -323,8 +335,14 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
   if (!row) return { refused: `${id} does not exist` };
   if (row.state !== 'done') return { refused: `${id} is ${row.state}: nothing to ask` };
   if (row.superseded) return { refused: `${id} is superseded by ${row.superseded.by}: nothing to ask` };
+  if (row.dropped) return { refused: `${id} is dropped (${row.dropped.why}): nothing to ask` };
+  if (row.pr?.state === 'open' && !row.pr.stuck) return { refused: `${id} PR #${row.pr.number ?? '?'} is open: it waits for the owner on GitHub (${row.pr.url})` };
   if (row.asked) return { refused: `${id} already asked ${row.asked} (one question per deliverable; a park resurfaces after ${cfg.park_days} d)` };
   if (row.park && !row.park.expired) return { refused: `${id} is parked (${row.park.why}); it comes back after ${cfg.park_days} d` };
+  if (row.pr && row.pr.state !== 'merged') {
+    const e = record(stateDir, { kind: 'question', ev: 'create', by, data: prQuestion(row, cfg, nowMs ?? (now ? now().getTime() : Date.now())) }, { views: project.views || {}, ...(now ? { now } : {}) });
+    return { id: e.id };
+  }
   const days = Math.floor(row.days);
   let title = `${id} ${row.branch}: done ${days} d, not on main - merge, batch or park?`;
   if (title.length > 120) title = title.slice(0, 119) + '~';
@@ -344,6 +362,38 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
   return { id: e.id };
 }
 
+// RM-7 S3: the question on a PR closed unmerged or stuck open - reopen / re-run merge-land, park, or drop (the question's data)
+function prQuestion(row, cfg, nowMs) {
+  const { id } = row, pr = row.pr, n = `PR #${pr.number ?? '?'}`;
+  const what = pr.state === 'closed' ? `${n} closed without a merge` : `${n} open ${Math.floor((nowMs - Date.parse(pr.since)) / 3600e3)} h`;
+  let title = `${id} ${row.branch}: ${what} - reopen, park or drop?`;
+  if (title.length > 120) title = title.slice(0, 119) + '~';
+  const body = [`${id}: ${row.delivers}`, `repo ${row.repo}, branch ${row.branch} at ${String(row.tip).slice(0, 9)}, lane ${row.lane ?? '-'}, DONE run ${row.run ?? '-'} (${row.done_utc})`,
+    `${what}: ${pr.url}`, pr.state === 'closed' ? 'Norn does not merge it while its PR is closed: the row is out of the merge queue.' : 'The PR waits for a review or a merge on GitHub; Norn never merges it.',
+    `${row.behind ?? '?'} commits behind main, ${row.ahead ?? '?'} ahead; target ${row.target}.`].join('\n');
+  const rerun = `\`norn merge-land --branch ${row.branch}\` from a merge worktree`;
+  const options = [
+    { key: 'reopen', text: pr.state === 'closed' ? `reopen ${n} on GitHub, or let the controller re-run ${rerun} (a new PR); either way the controller re-runs merge-land so Norn follows the open PR again`
+      : `keep it: review and merge ${n} on GitHub, or let the controller re-run ${rerun} to bring it up to date`, cost: 'a review on GitHub' },
+    { key: 'park', text: `park it with the owner's reason: \`norn deliverables park ${id} --why "<reason>"\`; it comes back after ${cfg.park_days} d`, cost: 'stays unmerged' },
+    { key: 'drop', text: `drop it, the work is not wanted on main: \`norn deliverables drop ${id} --why "<reason>"\`; never asked or merged again`, cost: 'the work is given up' },
+  ];
+  return { title, lane: row.lane ?? row.branch.split('/').pop(), body, options,
+    recommend: { key: 'reopen', why: `finished work belongs on main (rule 9: the proper option first); ${what}` },
+    class: 'iii', blocks: [], source: `deliverable ${id}`, deliverable: id };
+}
+
+/**
+ * RM-7 S3: the tick's ask - each deliverable whose PR is closed unmerged or stuck open (policy.pr.stuck_h) and is due gets ONE
+ * question through askDeliverable (the next tick finds it asked). Returns [{ id, q } | { id, refused }] (written unless dry).
+ */
+export function askPrQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
+  const ms = nowMs ?? (now ? now().getTime() : Date.now());
+  const rows = deliverablesView({ stateDir, project, now: ms, ...(git ? { git } : {}) }).rows.filter(r => r.due && r.pr && r.pr.state !== 'merged');
+  if (dry) return rows.map(r => ({ id: r.id, q: null }));
+  return rows.map(r => { const a = askDeliverable(stateDir, r.id, { project, now, nowMs: ms, ...(git ? { git } : {}) }); return a.refused ? { id: r.id, refused: a.refused } : { id: r.id, q: a.id }; });
+}
+
 /**
  * A "merge, batch or park?" question goes stale once its deliverable reaches its target (merged / installed / superseded): the
  * tick withdraws it, so the owner's Inbox never asks about work that already landed. Returns [{ q, dlv, why }] (written unless dry).
@@ -357,7 +407,7 @@ export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, 
   for (const q of open) {
     const r = rows.get(q.data.deliverable);
     if (!r?.at_target) continue;
-    const why = `${r.id} ${r.branch} is ${r.superseded ? `superseded by ${r.superseded.by}` : r.state}: nothing left to ask (closed by the tick)`;
+    const why = `${r.id} ${r.branch} is ${r.superseded ? `superseded by ${r.superseded.by}` : r.dropped ? 'dropped' : r.state}: nothing left to ask (closed by the tick)`;
     if (!dry) record(stateDir, { kind: 'question', ev: 'withdraw', id: q.id, by: 'checkin', data: { why } }, { views: project.views || {}, ...(now ? { now } : {}) });
     out.push({ q: q.id, dlv: r.id, why });
   }
@@ -395,6 +445,7 @@ export function resolveDeliverable(stateDir, id, { project = {}, nowMs = Date.no
   if (!row) return { refused: `${id} does not exist` };
   if (row.state !== 'done') return { refused: `${id} is ${row.state}: nothing to resolve` };
   if (row.superseded) return { refused: `${id} is superseded by ${row.superseded.by}: nothing to resolve` };
+  if (row.dropped) return { refused: `${id} is dropped (${row.dropped.why}): nothing to resolve` };
   if (row.native) return { refused: `${id} ${row.branch} is native-touching (${row.native_files.join(', ')}): its rebase / resolve is controller / door work (the door flow), not a resolve run` };
   if (!row.resolve) return { refused: `${id} ${row.branch}: nothing to resolve (merge rehearsal ${rehearsalWord(row) || 'unknown'}, ${row.behind ?? '?'} behind, limit ${cfg.resolve_behind})` };
   if (row.branch_exists === false) return { refused: `${id} ${row.branch}: the branch is gone (only its recorded tip is left)` };

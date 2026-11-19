@@ -24,7 +24,7 @@ import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
 import { tickFix } from './fixer.mjs';
-import { closeLandedQuestions } from './deliverables.mjs';
+import { closeLandedQuestions, askPrQuestions } from './deliverables.mjs';
 import { syncPrStates } from './prstate.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { tickTests } from './testscli.mjs';
@@ -208,6 +208,8 @@ function tickPass(o, g = {}) {
     if (o.overlap !== false && !o.dry) projectOverlap(p);
     // RM-7 S2: each open PR of a deliverable is read once (gh pr view): merged on GitHub = the deliverable is merged (never fails the tick)
     if (!o.dry) try { for (const x of syncPrStates(state, o.gh ? { gh: o.gh } : {})) tickLog(state, `${tag}: ${x.id} PR ${x.url} ${x.error ? 'not read - ' + x.error : x.state}`); } catch (e) { tickLog(state, `${tag}: PR states: ${e.message}`); }
+    // RM-7 S3: a PR closed unmerged or open past policy.pr.stuck_h asks the owner ONCE: reopen / re-run merge-land, park or drop (never fails the tick)
+    if (!o.dry) try { for (const x of askPrQuestions(state, { project: p })) tickLog(state, `${tag}: ${x.id} PR ${x.q ? 'question ' + x.q : 'not asked - ' + x.refused}`); } catch (e) { tickLog(state, `${tag}: PR questions: ${e.message}`); }
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
     // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag

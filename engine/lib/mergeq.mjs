@@ -58,6 +58,7 @@ function retriesOf(runs, stateDir, row, since) {
 /**
  * The queue: every DONE-not-merged deliverable that is open (not parked, not superseded) and whose branch exists, in score order.
  * RM-7 S2: a row whose PR is open waits for the owner to merge it on GitHub, not for another merge: it is in `awaiting`, not in rows.
+ * RM-7 S3: a row whose PR was closed unmerged is in `held` until the owner answers (a new PR from merge-land, a park or a drop).
  * Returns { rows: [{ ...view row, score, priority, epic, epic_hours, dlv_hours, retries, gate, word (rehearsal), into (target branch) }], awaiting: [view row], cfg,
  *   held: [{ id, branch, why }] (META-CATCH S2: a look item's row without its picture proof or a newer pass verdict stays out) }
  */
@@ -73,6 +74,8 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
   for (const r of v.rows) {
     if (r.state !== 'done' || r.record_state !== 'open' || r.superseded || r.branch_exists === false) continue;
     if (r.pr?.state === 'open') { awaiting.push(r); continue; }
+    // RM-7 S3: a PR closed unmerged is the owner's call (reopen / park / drop, asked by the tick), never a merge retry
+    if (r.pr?.state === 'closed') { held.push({ id: r.id, branch: r.branch, why: `PR #${r.pr.number ?? '?'} closed without a merge: ${r.asked ? `asked ${r.asked}` : 'the owner is asked'} (reopen, park or drop)` }); continue; }
     // META-CATCH S2: the entry check of a look item's row - a proven DONE (an image newer than its start) and a pass verdict newer than the head
     const lk = looks.length ? rowLookItems(looks, r) : [];
     if (lk.length) {
