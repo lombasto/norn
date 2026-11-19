@@ -289,10 +289,11 @@ export function settingsFor(extra={}){const pv=extra.providers||[],ex=executorsO
     :s.key.startsWith('policy.fallbacks.')?{...s,options:fb}:s);
   const at=base.map(s=>s.group).lastIndexOf('agents')+1;
   return [...base.slice(0,at),...capRows(pv,extra.caps),...shareRows(extra.projects),...base.slice(at),...rankRows(pv,extra)];}
-// fair-slots item 8: one reserve + one ceiling row per registered project (extra.projects: their names) - machine budget project_workers
+// fair-slots item 8: one reserve + one ceiling row per registered project (extra.projects: their names) - machine budget project_workers;
+// nullable: null = unset (reserve 0, ceiling = the machine cap), so an Undo can take a key back to unset
 const shareRows=(ps=[])=>ps.flatMap(p=>[
-  S('agents',`${SHARE_KEY}.${p}.${RESERVE}`,`${p}: reserved Claude workers`,int(0,12),`Claude worker slots kept free for ${p} while it has queued work; lent to the other projects while it has none. The reserves of all projects fit inside Max Claude workers.`,'0','A reserved slot can sit idle for a moment while the project queues its next run.',['the queue fill (runs.mjs)']),
-  S('agents',`${SHARE_KEY}.${p}.${CEILING}`,`${p}: most Claude workers`,int(0,12),`The most Claude workers ${p} may run at once; unset = Max Claude workers.`,'unset','A low ceiling leaves slots free for the other projects even when they are idle.',['the queue fill (runs.mjs)','norn run (exit 4 past it)'])]);
+  S('agents',`${SHARE_KEY}.${p}.${RESERVE}`,`${p}: reserved Claude workers`,int(0,12),`Claude worker slots kept free for ${p} while it has queued work; lent to the other projects while it has none. The reserves of all projects fit inside Max Claude workers.`,'0','A reserved slot can sit idle for a moment while the project queues its next run.',['the queue fill (runs.mjs)'],{nullable:true}),
+  S('agents',`${SHARE_KEY}.${p}.${CEILING}`,`${p}: most Claude workers`,int(0,12),`The most Claude workers ${p} may run at once; unset = Max Claude workers.`,'unset','A low ceiling leaves slots free for the other projects even when they are idle.',['the queue fill (runs.mjs)','norn run (exit 4 past it)'],{nullable:true})]);
 // metaexec X1: one cap row per configured typed executor = the machine budget key norn run enforces (max_<name>; unset = the
 // entry's cap, else 1 - extra.caps)
 const capOf=(caps,n)=>caps?.[n]??PROVIDER_CAP_DEFAULT;
@@ -352,10 +353,11 @@ export function settingsView(b,extra={}){const f=withDefaults(b),pv=extra.provid
     const opts=m?{options:s.options.filter(o=>o===value||allowedClasses(f.policy,o,pv).includes(m[1]))}
       :wk?{options:s.options.filter(o=>o===value||!(wk==='model'?modelBelow(o,fl.model):effortBelow(o,fl.effort)))}:{};
     const dv=dflt[s.key],modified=dv!==undefined&&value!==undefined&&JSON.stringify(dv)!==JSON.stringify(value);
-    return {...s,...opts,scope,value,section:sectionOf(s),default:dv,modified,basic:BASIC_KEYS.includes(s.key),
+    return {...s,...opts,scope,value,section:sectionOf(s),default:dv,modified,basic:BASIC_KEYS.includes(s.key)||s.key.startsWith(SHARE_KEY+'.'),   // fair-slots 8a: every project's share on the Basic screen
     home:scope==='file'?(extra.quietFile??'(rules file)'):scope==='project'?'project.json '+s.key:'machine budget.json '+s.key};});}
 
 function check(s,v){
+  if(v===null&&s.nullable)return;   // a share row back to unset (the Capacity Undo restores a key the save had added)
   if(s.readonly&&s.type!=='int')throw fail(`${s.key} is read-only`);
   if(s.type==='int'||s.type==='num'){if(typeof v!=='number'||!Number.isFinite(v)||(s.type==='int'&&!Number.isInteger(v))||v<s.min||v>s.max)throw fail(`${s.key} must be ${s.type==='int'?'an integer':'a number'} ${s.min}-${s.max}`);}
   else if(s.type==='bool'){if(typeof v!=='boolean')throw fail(`${s.key} must be true or false`);}

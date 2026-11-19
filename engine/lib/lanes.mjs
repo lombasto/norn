@@ -1,10 +1,25 @@
 // Truthful lanes (META-GENERAL-DESIGN 5, 12-S6): the lane list is LANE records only (no folder scan); a lane's state text is its
 // latest RUN on that lane, any executor. Pure over a loadState() fold; heartbeat age comes from the caller.
-import { STALE_MS } from './runs.mjs';
+import { STALE_MS, queueOf, DEFAULT_PRIORITY } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
+import { isMergeStage } from './usageguard.mjs';
 
 const runNum = id => Number(String(id).slice(4));
+
+// fair-slots item 2: where a lane's finished work is on its way to main (the Lanes table and the Plan say the same words). awaiting-merge
+// = its last build run exited DONE and its MERGE run waits in the queue; awaiting-pr = merge-land opened the PR (the deliverable's `pr`
+// event, while the branch is not on main yet) and no run of the lane is live: the owner approves it.
+export const LAND_WORDS = { 'awaiting-merge': 'done - awaiting merge', 'awaiting-pr': 'awaiting PR approval' };
+const doneRun = r => r?.state === 'exited' && r.end?.outcome === 'done';
+/** r = the lane's latest run, build = its latest non-MERGE run, pr = its open PR or null -> 'awaiting-merge' | 'awaiting-pr' | null */
+export function landState(r, build, pr) {
+  if (!r) return null;
+  if (isMergeStage(r.data?.stage) && ['queued', 'claimed'].includes(r.state)) return doneRun(build) ? 'awaiting-merge' : null;
+  return pr && doneRun(r) ? 'awaiting-pr' : null;
+}
+// fair-slots item 3: the priority of a queued or running run (data.priority; none = the fill's default P2, said so)
+export const priorityOf = r => ['queued', 'claimed', 'running'].includes(r?.state) ? (r.data?.priority ? { p: r.data.priority, dflt: false } : { p: DEFAULT_PRIORITY, dflt: true }) : null;
 
 function runText(r, { now, hbAge, staleMs, items = {} }) {
   const d = r.data || {}, end = r.end || {};
@@ -75,9 +90,9 @@ export function handoffOf(r, items, { talked = () => true, wrote = () => false, 
 // then queued, then done, then archived; newest first in each group (row.at). Done = the lane record is done or the latest run
 // exited DONE; an old done lane (ended over oldDays ago) is faded and reads stopped.
 export const LANE_GROUPS = ['running', 'needs', 'queued', 'done', 'archived'];
-function laneGroup(l, r) {
+function laneGroup(l, r, land) {
   if (l.state === 'archived') return 'archived';
-  if (l.state === 'parked') return 'needs';   // parked = waiting on the owner, whatever its last run said
+  if (l.state === 'parked' || land === 'awaiting-pr') return 'needs';   // parked / a PR to approve = waiting on the owner, whatever its last run said
   if (r?.state === 'running') return 'running';
   if (r?.state === 'queued' || r?.state === 'claimed' || (!r && l.state === 'active')) return 'queued';
   if (l.state === 'done' || (r?.state === 'exited' && r.end?.outcome === 'done')) return 'done';
@@ -87,23 +102,29 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
 
 /**
  * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
- * executor, text, handoff, group, created, ended, at, old }.
+ * executor, text, handoff, group, created, ended, at, old, land, pr, priority, position }: land = landState ('awaiting-merge' |
+ * 'awaiting-pr' | null), pr = the lane's open PR ({ url, number }), priority = priorityOf the latest run, position = its place in
+ * the fill order (queueOf) while it is queued.
  * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs, oldDays (policy.done_lanes.old_days),
- *   talked / wrote (handoffOf's hooks: the row's `handoff`) }
+ *   talked / wrote (handoffOf's hooks: the row's `handoff`), prs ({ lane: { url, number } }: the PRs merge-land opened, not merged yet) }
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote } = {}) {
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote, prs = {} } = {}) {
   const items = Object.values(st.items);
-  const latest = {};
-  for (const r of items) if (r.kind === 'run' && r.data?.lane && (!latest[r.data.lane] || runNum(r.id) > runNum(latest[r.data.lane].id))) latest[r.data.lane] = r;
+  const latest = {}, build = {}, newer = (m, k, r) => { if (!m[k] || runNum(r.id) > runNum(m[k].id)) m[k] = r; };
+  for (const r of items) if (r.kind === 'run' && r.data?.lane) { newer(latest, r.data.lane, r); if (!isMergeStage(r.data.stage)) newer(build, r.data.lane, r); }
+  const pos = Object.fromEntries(queueOf(items).map(q => [q.id, q.position]));
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
-    const name = l.id.slice(2), r = latest[name];
+    const name = l.id.slice(2), r = latest[name], pr = prs[name] ?? null, land = l.state === 'parked' ? null : landState(r, build[name], pr);
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
+    const rt = r ? runText(r, { now, hbAge, staleMs, items: st.items }) : 'no runs';
     const text = park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
-      : r ? runText(r, { now, hbAge, staleMs, items: st.items }) : 'no runs';
-    const group = laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
+      : land === 'awaiting-merge' ? `${LAND_WORDS[land]}${rt.startsWith('queued: ') ? ` - ${rt.slice(8)}` : ''}`
+      : land === 'awaiting-pr' ? `${LAND_WORDS[land]}: PR #${pr.number ?? '?'}` : rt;
+    const group = laneGroup(l, r, land), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
     return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
-      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old };
+      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old,
+      land, pr: land === 'awaiting-pr' ? pr : null, priority: priorityOf(r), position: pos[r?.id] ?? null };
   }));
 }

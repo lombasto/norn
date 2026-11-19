@@ -112,6 +112,27 @@ test('landing next: merging now, then the merge queue in its order, plain-words 
   assert.deepEqual(red.landing.map(l => l.word), ['blocked: CI red on main', 'blocked: CI red on main']);
 });
 
+// fair-slots item 2: finished work on its way to main reads 'done - awaiting merge' (build DONE, its MERGE queued) and 'awaiting PR
+// approval' (merge-land opened the PR: the merge queue row's pr), the same words as the Lanes table - never plain 'queued'
+test('landing next + up next + chains: done - awaiting merge; awaiting PR approval once merge-land opened the PR', () => {
+  const runs = [run(1, 'exited', { lane: 'adopt', stage: 'A1' }, { end: { outcome: 'done' } }), run(2, 'queued', { lane: 'adopt', stage: 'MERGE' }),
+    run(3, 'exited', { lane: 'cv' }, { end: { outcome: 'done' } }), run(4, 'exited', { lane: 'cv', stage: 'MERGE' }, { end: { outcome: 'done' } }),
+    run(5, 'queued', { lane: 'adopt', stage: 'A2' }, { created: T(-5) })];
+  runs[4].data.after = [after('RUN-1')];
+  const merges = { rows: [{ id: 'DLV-7', lane: 'cv', branch: 'feat/cv', word: 'clean', pr: { url: 'https://github.com/o/r/pull/9', number: 9 } }, { id: 'DLV-3', lane: 'adopt', branch: 'feat/adopt', word: 'clean' }] };
+  const p = buildPlan({ runs: runs.slice(0, 4), ready: [{ id: 'RUN-2', ready: true, terms: [] }], merges, now: NOW, status: STATUS('0.62') });
+  assert.deepEqual(p.landing.map(l => [l.id, l.land, l.word]), [['DLV-7', 'awaiting-pr', 'awaiting PR approval (PR #9)'], ['DLV-3', 'awaiting-merge', 'starts next']]);
+  assert.equal(p.landing[0].pr.number, 9);
+  assert.equal(p.upnext.find(u => u.id === 'RUN-2').land, 'awaiting-merge');
+  const red = buildPlan({ runs: runs.slice(0, 4), ready: [], merges, now: NOW, status: STATUS('0.62').replace('CI main: success', 'CI main: failure') });
+  assert.equal(red.landing[0].word, 'awaiting PR approval (PR #9)', 'a PR to approve is not blocked by CI red on main: it waits for the owner');
+  const c = buildPlan({ runs: [...runs.slice(0, 2), runs[4]], ready: [], merges, now: NOW }).chains[0];
+  assert.equal(c.steps.find(s => s.id === 'RUN-1').word, 'done', 'the lane\'s latest run is A2 (queued), not its MERGE: no awaiting merge');
+  const a2done = run(5, 'exited', { lane: 'adopt', stage: 'A2', after: [after('RUN-1')] }, { end: { outcome: 'done' } });
+  const c2 = buildPlan({ runs: [runs[0], a2done, run(6, 'queued', { lane: 'adopt', stage: 'MERGE' })], ready: [], merges, now: NOW }).chains[0];
+  assert.equal(c2.steps.find(s => s.id === 'RUN-1').word, 'done - awaiting merge');
+});
+
 test('forecast arithmetic: rate vs cap, weekly vs the stop, "lasts to the reset" or the stop time, queued cost vs headroom', () => {
   const f = forecastOf({ status: STATUS('0.62'), budget: { weekly_stop_pct: 95 }, now: NOW, queuedCost: { pct: 2, n: 2, of: 3 } });
   assert.equal(f.rate, 0.62); assert.equal(f.cap, 1.5); assert.equal(f.weekly, 35.9); assert.equal(f.stop, 95);

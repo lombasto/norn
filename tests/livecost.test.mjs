@@ -131,7 +131,7 @@ test('the dash in API mode: Running shows each running run\'s $ so far, Lanes ea
     assert.match(html, new RegExp(`id="run-${id}"[\\s\\S]*?class="mono run-burn">~\\$0\\.14<`));
     assert.match(html, /id="burn-api-parts"[^>]*>\$0\.00 from 0 Claude runs ended in the last 24 h · \$0\.14 running \(1 run, estimate\) · \$0\.40 dashboard chats/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.match(html, />\$ to date<\/th>/);
+    assert.match(html, /title="[^"]*every run of the lane[^"]*">\$ to date, all runs<\/th>/, 'the header says it sums every run of the lane (fair-slots item 2)');
     assert.match(html, /id="lane-gen"[\s\S]*?class="mono lane-usd">~\$0\.14</);
     assert.match(html, /id="lane-render"[\s\S]*?class="mono lane-usd"><span class="mute">-</, 'a lane with no Claude spend');
     html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel' });

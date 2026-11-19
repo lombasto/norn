@@ -97,6 +97,8 @@ main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .chip.handoff,.chip.answered,.chip.parked,.chip.warn{background:var(--warn-bg);color:var(--warn)}
 .chip.stopped,.chip.lost,.chip.no-result,.chip.bad,.chip.overruled{background:var(--bad-bg);color:var(--bad)}
 .chip.superseded,.chip.archived,.chip.revoked,.chip.withdrawn,.chip.idle{background:var(--soft);color:var(--mute)}
+/* fair-slots item 3: a lane run's priority + fill position (ui.mjs prioChip) in the run state cell; the default P2 is faded */
+.lane-rs{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.chip.prio{font-family:ui-monospace,Consolas,monospace;box-shadow:inset 0 0 0 1px var(--line)}.chip.prio.dflt{opacity:.6;font-style:italic}
 /* the live hand-off state (lanes.mjs handoffOf; widgets.mjs hoChip): amber while the next session is on its way, blue once it talks. It
    wraps (never widens a phone row). .pulse = the shared pulsing dot (HTML span or SVG circle); it moves only under the motion policy
    (norn.css, :root.motion: not QUIET, not reduced motion, tab visible) - this sheet holds no animation */
@@ -135,6 +137,8 @@ tr:last-child td{border-bottom:0}
 @media (max-width:700px){#ins-audit-runs th:nth-child(2),#ins-audit-runs td:nth-child(2),#ins-audit-runs th:nth-child(6),#ins-audit-runs td:nth-child(6){display:none}#ins-audit-runs th:first-child{width:22%}#ins-audit-runs th,#ins-audit-runs td{white-space:normal;font-size:12px}#ins-audit-runs .chip{white-space:nowrap}#ins-audit-runs th:nth-child(3){width:20%}}
 /* META-TEND (REPORT s.5.3): the shared widgets - bars (ranked list), columns (over time), stack (parts of one bar) - and the Tests tab */
 .wboard{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:0 12px 12px}.wbcol{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0;max-height:640px;overflow:auto}.wbcol h4{margin:0 0 6px;font-size:13px;text-transform:capitalize}.wbcard{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin:0 0 6px;overflow-wrap:anywhere}.wbtext{font-size:13px;margin-bottom:2px}.wb-prose{border-top:3px solid var(--warn)}.wb-repeated{border-top:3px solid var(--bad)}.wb-enforced{border-top:3px solid var(--ok)}.wb-retired{border-top:3px solid var(--mute)}.inspara.focus{outline:2px solid var(--accent);outline-offset:2px}@media (max-width:720px){.wboard{grid-template-columns:minmax(0,1fr)}.wbcol{max-height:420px}}
+.wcaprows{list-style:none;margin:4px 0 0;padding:0}.wcaprows li{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;padding:2px 0}.wcapn{min-width:7em;overflow-wrap:anywhere}
+.wslots{display:inline-flex;flex-wrap:wrap;gap:2px}.wslots i{width:10px;height:10px;border-radius:2px;background:var(--soft);box-shadow:inset 0 0 0 1px var(--line)}.wslots i.use{background:var(--run)}.wslots i.res{box-shadow:inset 0 0 0 2px var(--run)}.wslots i.off{opacity:.35}
 .wbars{list-style:none;margin:0;padding:0}.wbars li{margin:6px 0}.wbl{display:flex;gap:8px;justify-content:space-between;align-items:baseline}.wbn{overflow-wrap:anywhere;min-width:0}.wbnote{margin-top:2px}
 .wcols{margin:4px 0}.wplot{display:flex;gap:4px;align-items:stretch;min-width:0}.wplot>.wcolrow,.wplot>svg{flex:1;min-width:0}.wyax{display:flex;flex-direction:column;justify-content:space-between;text-align:right;line-height:1;flex:none;max-width:30%;overflow-wrap:anywhere}.wtitle{margin:2px 0}.wcolrow{display:flex;align-items:flex-end;gap:2px;height:72px;border-bottom:1px solid var(--mute)}.wcol{flex:1;min-width:2px;background:var(--run);border-radius:2px 2px 0 0;min-height:1px}.wcolax{display:flex;justify-content:space-between;gap:6px}
 /* META-TEND P5: the lines widget (REPORT 5.3 view 1) on the --k series; the per-file strip (view 4): paragraphs by age + read / cite marks */
@@ -1040,8 +1044,9 @@ document.addEventListener('click', e => {
       const flagged = r.lines.filter(l => l.flags.length).length;
       box.innerHTML = `<div class="card" id="settings-review" style="margin-top:10px">${S.setProfile ? `<p class="small">From the profile <b>${esc(S.setProfile.name)}</b> (${esc(S.setProfile.cost)}); Save records the pick.</p>` : ''}<ul class="small">${r.lines.map(l => `<li>${l.flags.length ? '<span class="chip warn">check</span> ' : ''}${esc(l.text)}${l.flags.map(x => `<div class="mute">${esc(x)}</div>`).join('')}</li>`).join('')}</ul>${flagged ? `<p class="small"><b>${flagged} change${flagged === 1 ? '' : 's'} to check</b> before you Save.</p>` : ''}</div><button class="primary" id="settings-save" style="margin-top:8px">Save</button>`;
       $('#settings-save').onclick = () => act(async () => { await post('/api/settings', { project: p, version: d.version, changes, ...(S.setProfile ? { profile: S.setProfile } : {}) }); S.setDirty = 0; S.setVersion = null; S.setProfile = null; });
-    }, e => err(e.message));
+    }, e => { box.innerHTML = `<p class="small lane-refused" id="settings-refused" role="alert">Not saved: ${esc(e.message)}</p>`; err(e.message); });   // fair-slots 8a: e.g. the reserves overflow the cap, named
   }
+  if (d.act === 'cap-undo') act(() => post('/api/settings/capacity-undo', { project: p, id: d.id }));   // fair-slots 8d: the before-values, through the save path
 });
 $('#pause').onclick = () => act(() => post('/api/pause', { project: S.project, paused: !S.paused }));
 $('#tick').onclick = () => act(() => post('/api/checkin', { project: S.project }));
