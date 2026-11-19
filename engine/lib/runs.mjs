@@ -1067,7 +1067,8 @@ function* stopSteps({ state, locksDir, run, by, why }) {
   // META-AUTONOMY R1: the check-in withdraws a QUEUED run (with its ruling as --why); a kill stays owner / controller
   if (by === 'checkin' && cur && cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: a check-in withdraws only a QUEUED run - a kill stays owner / controller`, 3);
   if (by === 'checkin' && !why) throw new RunError('a check-in withdraw needs --why (its ruling, e.g. DEC-n)');
-  if (cur?.state === 'queued') return yield ['record', state, { kind: 'run', ev: 'withdraw', id: run, by, data: drop({ why }) }];
+  // OVERVIEW-TRUTH (6a): a withdraw always carries a why - none given = the caller and the command, so the record says who dropped it
+  if (cur?.state === 'queued') return yield ['record', state, { kind: 'run', ev: 'withdraw', id: run, by, data: { why: why || `no reason given: ${by} ran norn stop ${run}` } }];
   const hb = readJson(hbPath(state, run)) || {};
   const ev = yield ['record', state, { kind: 'run', ev: 'kill', id: run, by, data: drop({ why, pid: hb.pid, supervisor_pid: hb.supervisor_pid }) }];
   yield ['kill', hb.supervisor_pid];

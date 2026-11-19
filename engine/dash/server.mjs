@@ -78,6 +78,7 @@ import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles, suiteOf } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
 import { usageWeek } from '../lib/usageweek.mjs';
+import { runCounts, countsLine } from '../lib/runcount.mjs';
 import { classCost } from '../lib/classcost.mjs';
 import { advise, decidedKeys, writeAdviceCache, loadAdviceDataAsync } from '../lib/advice.mjs';
 import { replayReportFile } from '../lib/eval/report.mjs';
@@ -1694,7 +1695,10 @@ data: ${JSON.stringify(l)}
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
-          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win)))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+          // OVERVIEW-TRUTH (6): the window's runs counted by the one rule (runcount.mjs): bookkeeping apart, hand-off chains as one piece
+          const inWin = ps.flatMap(p => runsOf(st(p)).filter(r => ['queued', 'claimed', 'running'].includes(r.state) || Date.now() - Date.parse(r.updated) <= win));
+          const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
+          return send(200, { window: w, counts, tree: (await Promise.all(ps.map(p => agents(p, win)))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
         }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {

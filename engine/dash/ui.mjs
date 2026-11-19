@@ -748,7 +748,8 @@ function runs(d, ctx) {
     <span>Sources: RUN records + transcript <span class="mono">&lt;session&gt;.jsonl</span>, <span class="mono">subagents/agent-*.meta.json</span>, Codex log banner / rollout.</span></div>
    ${filters}
    <div class="tree"><div class="node head">${RUNS_HEAD.map(([h, t, c]) => `<div${c ? ` class="${c}"` : ''}${t ? ` title="${esc(t)}"` : ''}>${esc(h)}</div>`).join('')}</div>${rows}</div>
-   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>`;
+   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>
+   ${d.counts ? `<p class="small" id="runs-counts">${esc(d.counts.scope)}: ${esc(d.counts.text)}</p>` : ''}`;
 }
 // ---------- META-TEND P6: the Guard (REPORT s.5.0-5.1) - every open advisory across types, a query that owns no data ----------
 // Chips in place: guardOn(guard, pick) = the rows of one owning thing; guardChip = ONE chip shape on every tab (severity colour, the
@@ -1758,6 +1759,7 @@ function weekCard(w) {
     || '<tr><td colspan="11" class="mute">No runs in the window.</td></tr>';
   const top = (w.top || []).map(t => `<li><span class="id">${esc(t.id)}</span> <b>${esc(t.lane)}</b> ${esc(t.stage)} ${chip(t.outcome === 'done' ? 'done' : t.state === 'running' ? 'running' : 'idle', t.outcome ?? t.state)} <span class="mono">${pcA(t.pct)}</span> · ${mTok(t.cache_read)} cache read <span class="small mute">- ${esc(t.why)}</span></li>`).join('');
   return `<div class="tablecard" id="usage-week"><h3>Where the tokens went <span class="mute small">${w.window === 'week' ? 'since the weekly reset' : 'last 7 days'} · ${plural(w.totals.runs, 'run')} · ${fin(w.totals.pct) ? pcA(w.totals.pct) + ' of your weekly Claude limit' : '% of your weekly Claude limit not known'} · ${w.totals.merged} merged into main · the four token types are counted apart, never added up</span></h3>
+   ${w.counts ? `<p class="small" id="usage-counts" style="padding:0 12px">${esc(w.counts.text)}</p>` : ''}
    <table><thead><tr><th>lane</th><th>stage</th><th>runs</th><th>input</th><th>cache write</th><th>cache read</th><th>output</th><th>~% of week</th><th>how the runs ended</th><th>merged</th><th>tokens per merged branch</th></tr></thead><tbody>${body}</tbody></table>
    <h3 style="margin-top:10px">Top 5 spenders <span class="mute small">the runs that used the most; why = turns x average context size (every turn re-reads the whole context)</span></h3><ol id="usage-top" class="small">${top || '<li class="mute">none</li>'}</ol></div>`;
 }

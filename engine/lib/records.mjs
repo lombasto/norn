@@ -569,7 +569,8 @@ function validateData(kind, ev, d, target, st, by, home = null) {
     if (ev === 'fill') str(d.next, 'next');
     if (ev === 'claim') str(d.node, 'node');
     if (ev === 'release') str(d.why, 'why');
-    if (ev === 'withdraw' && by === 'checkin') str(d.why, 'why');   // META-AUTONOMY R1: a check-in withdraw names its ruling
+    // META-AUTONOMY R1 + OVERVIEW-TRUTH (6a): every withdraw names its reason (21 queue entries were dropped with none recorded)
+    if (ev === 'withdraw') str(d.why, 'why');
     if (ev === 'rewire') { str(d.why, 'why'); if (!(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string')))) fail('after must be a list of {kind, id, state}'); }
     if (ev === 'hold' && !d.cleared) str(d.why, 'why');
     if (ev === 'landed') { str(d.why, 'why'); str(d.sha, 'sha', { req: false }); }
