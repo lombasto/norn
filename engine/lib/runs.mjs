@@ -31,7 +31,7 @@ import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
-import { claimWork, renewWork, workKey, readSync, updateSync } from './claims.mjs';
+import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
 import { ClaimsError } from './claimsref.mjs';
 import { parseReady } from './ready.mjs';
 import { syncPolicy } from './policy.mjs';
@@ -489,7 +489,7 @@ const noCaller = ({ caller: _c, ...o }) => o;
 // Every dispatch path (norn run, the fill, check-in stage runs, relaunchLost, resumes) passes startRun, so claimDoor is the one hook:
 // after the cheap local refusals, before the worktree lock. Only a synced project (home.json) with a ledger remote claims, and only a
 // lane run that writes. Exempt: check-ins, helpers (the parent's claim covers them), audits, talks, plan reviews, read-only runs, and
-// MERGE stages (the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
+// MERGE stages (leaderDoor: the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
 // and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
 export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
 const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
@@ -525,8 +525,16 @@ export function workOf(o, home, project) {
 }
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
+/** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else RunRefused 3 */
+function leaderDoor(o) {
+  const f = homeOf(o.state) ? fedOf(o.git_ledger) : null;
+  if (!f) return;
+  const why = leaderWhy(o.state, f, { project: path.basename(path.resolve(o.state)), now: o.now ?? Date.now(), pol: syncPolicy(specPolicy({ ctx_from: policySource(o) })) });
+  if (why) throw new RunRefused(`MERGE: ${why} - this home only opens PRs`, 3);
+}
 /** the claim of launch o: null (exempt / not synced) | { key, n } (won) - throws RunRefused 3 (item / branch) or ClaimHeld (wait queued) */
 export function claimDoor(o) {
+  if (o.stage === 'MERGE') leaderDoor(o);
   if (claimExempt(o)) return null;
   const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
   if (!f) return null;
