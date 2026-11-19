@@ -1,15 +1,18 @@
 // RM-46 S2a (SPEC 3.6, 4.4, 5): multi-home work claims on the shared `claims` branch (CAS core: claimsref.mjs). One JSON file per entry:
 // homes/<id>.json (a home's registration; ids are unique), projects/<p>.json (its bare home), work/<p>/<home>/<lane>.json (a lane that
-// writes), allow/<p>/<h~lane>+<h~lane>.json (an owner's pass for one pair). claimWork is the core S2b wires into startRun; renew, fence,
-// stale and take over are S2b's. Two claims of different homes overlap by item, branch or scope (ready.mjs globsIntersect): item and
+// writes), allow/<p>/<h~lane>+<h~lane>.json (an owner's pass for one pair). claimWork is the core startRun calls (S2b: runs.mjs claimDoor);
+// S2b adds renew (renewWork), the observer's stale clock (observeClaims / isStale) and the owner's take over (takeWork); the home's own
+// bookkeeping (its claims, the n it saw per foreign claim, the runs a claim holds, the digest rows) lives in <state>/sync/*.json. Two claims of different homes overlap by item, branch or scope (ready.mjs globsIntersect): item and
 // branch refuse, scope queues. Own claims never block own dispatch. Every CAS round re-reads and re-checks overlap: a rejected push is
 // never retried blind (fed's rule F5), and a rejected-looking push that landed is found by nonce + n.
+import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import { ClaimsError, fetchRefs, readClaims, casClaims } from './claimsref.mjs';
 import { under } from './fed.mjs';
 import { globsIntersect } from './ready.mjs';
+import { syncPolicy } from './policy.mjs';
 
-export const LEASE_S = 3600;
 const ROUNDS = 3, TOUCHED_MAX = 500;
 const HOME = /^[a-z][a-z0-9]{0,7}$/, NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, LANE = /^([a-z][a-z0-9]{0,7})\/([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 const want = (re, v, what) => { if (!re.test(String(v ?? ''))) throw new ClaimsError(`${what} ${JSON.stringify(v)}: not a valid ${what}`); return v; };
@@ -100,7 +103,7 @@ export function claimWork(f, me0, o = {}) {
         const at = new Date(now).toISOString(), mine = d.mine?.kind === 'work' ? d.mine : null;
         const claim = { v: 1, kind: 'work', project: me.project, home: me.home, lane: me.lane, branch: me.branch ?? null, items: me.items, scope: me.scope,
           touched: me.touched, run: me.run ?? null, nonce: mine?.nonce || crypto.randomUUID(), n: (mine?.n || 0) + 1, claimed_at: mine?.claimed_at || at,
-          renewed_at: at, lease_s: o.lease_s ?? mine?.lease_s ?? LEASE_S };
+          renewed_at: at, lease_s: o.lease_s ?? mine?.lease_s ?? syncPolicy().lease_s };
         return { edits: { [key]: claim }, msg: `claim ${me.home}/${me.lane} (${me.project}) n=${claim.n}`, ok: { won: true, key, n: claim.n, claim },
           landed: c => c[key]?.nonce === claim.nonce && c[key]?.n === claim.n };
       }, o);
@@ -123,15 +126,85 @@ export function allowPair(f, { project, a, b, by = 'owner', why = '', now = Date
   if (pair[0].split('/')[0] === pair[1].split('/')[0]) throw new ClaimsError(`allow ${a} ${b}: one home's claims never block each other`);
   return createOnce(f, key, { v: 1, kind: 'allow', pair, by, at: new Date(now).toISOString(), why }, `allow ${pair.join(' ')} by ${by}`, o);
 }
+// a work claim's removal = its file + the allow files that name it (one commit: release, take over)
+function dropEdits(claims, project, home, lane) {
+  const ref = `${home}~${lane}`, pre = `allow/${project}/`, edits = { [workKey(project, home, lane)]: null };
+  for (const k of Object.keys(claims)) if (k.startsWith(pre) && k.slice(pre.length, -'.json'.length).split('+').includes(ref)) edits[k] = null;
+  return edits;
+}
 /** CAS-delete a home's own work claim and the allow files that name it: { ok } | { gone } (no such claim) */
 export function releaseWork(f, { project, home, lane }, o = {}) {
-  const key = workKey(project, home, lane), ref = `${home}~${lane}`, pre = `allow/${project}/`;
+  const key = workKey(project, home, lane);
   return under(f, () => rounds(f, claims => {
     if (!claims[key]) return { gone: true, key };
-    const edits = { [key]: null };
-    for (const k of Object.keys(claims)) if (k.startsWith(pre) && k.slice(pre.length, -'.json'.length).split('+').includes(ref)) edits[k] = null;
+    const edits = dropEdits(claims, project, home, lane);
     return { edits, msg: `release ${home}/${lane} (${project})`, ok: { ok: true, key, removed: Object.keys(edits) }, landed: c => !c[key] };
   }, o));
 }
+
+// ---------- S2b (SPEC 4.5): renew, the observer's stale clock, take over ----------
+/**
+ * renewWork(f, own = { key: { nonce, run?, touched? } }, o = { now }) -> { ok, renewed: { key: n }, gone: [keys], drift: [{ key, hit, why }] }
+ * | { offline, why } | { queued, busy, why }. ONE CAS commit bumps n (+ renewed_at, run, touched) of every own claim still ours; a file that
+ * is gone or carries another nonce was taken over (gone). New overlap found through touched is drift: a digest row, never a refusal.
+ */
+export function renewWork(f, own, o = {}) {
+  const keys = Object.keys(own), at = new Date(o.now ?? Date.now()).toISOString();
+  if (!keys.length) return { ok: true, renewed: {}, gone: [], drift: [] };
+  try {
+    return under(f, () => rounds(f, claims => {
+      const gone = keys.filter(k => claims[k]?.kind !== 'work' || claims[k].nonce !== own[k].nonce), edits = {}, drift = [];
+      for (const k of keys.filter(x => !gone.includes(x))) {
+        const c = claims[k], next = { ...c, n: c.n + 1, renewed_at: at, run: own[k].run ?? c.run, touched: own[k].touched ? capTouched(own[k].touched) : c.touched };
+        const before = new Set(hitsOf(c, claims).map(h => h.key));
+        for (const h of hitsOf(next, claims)) if (!before.has(h.key)) drift.push({ key: k, hit: h, why: `scope drift: ${c.home}/${c.lane} now changes files ${h.home}/${h.lane} claims (${h.what.join(' ')})` });
+        edits[k] = next;
+      }
+      const renewed = Object.fromEntries(Object.entries(edits).map(([k, c]) => [k, c.n])), res = { ok: true, renewed, gone, drift };
+      if (!Object.keys(edits).length) return res;
+      return { edits, msg: `renew ${Object.values(edits).map(c => `${c.home}/${c.lane} n=${c.n}`).join(' ')}`, ok: res,
+        landed: c => Object.entries(renewed).every(([k, n]) => c[k]?.nonce === own[k].nonce && c[k]?.n === n) };
+    }, o));
+  } catch (e) { if (netErr(e)) return { offline: true, why: UNREACHABLE }; throw e; }
+}
+/** the observer's clock (SPEC 4.5): { key: { n, first_seen_ms } } of every other home's work claim - a new n restarts its timer, a gone file leaves */
+export function observeClaims(claims, seen = {}, { home, now = Date.now() }) {
+  const out = {};
+  for (const [k, c] of Object.entries(claims)) if (c?.kind === 'work' && c.home !== home) out[k] = seen[k]?.n === c.n ? seen[k] : { n: c.n, first_seen_ms: now };
+  return out;
+}
+const staleAfterS = (c, pol) => (c.lease_s ?? pol.lease_s) + pol.stale_grace_s;
+/** stale = its n unchanged for lease_s + stale_grace_s on THIS home's clock since it first saw that n (clock offset cancels out) */
+export const isStale = (seen, c, now, pol = syncPolicy()) => !!seen && !!c && seen.n === c.n && now - seen.first_seen_ms >= staleAfterS(c, pol) * 1000;
+/** the owner takes over another home's STALE work claim: { ok, key, claim } | { gone } | { notStale, why } (CAS delete + its allow files) */
+export function takeWork(f, { project, home, lane, seen = {}, now = Date.now(), pol = syncPolicy(), by = 'owner' }, o = {}) {
+  const key = workKey(project, home, lane);
+  return under(f, () => rounds(f, claims => {
+    const c = claims[key];
+    if (!c) return { gone: true, key };
+    if (!isStale(seen[key], c, now, pol)) {
+      const forS = seen[key]?.n === c.n ? Math.floor((now - seen[key].first_seen_ms) / 1000) : 0;
+      return { notStale: true, key, why: `${home}/${lane} is not stale: n=${c.n} unchanged for ${forS} s on this home's clock (stale after ${staleAfterS(c, pol)} s)` };
+    }
+    return { edits: dropEdits(claims, project, home, lane), msg: `take over ${home}/${lane} (${project}) by ${by}: stale at n=${c.n}`, ok: { ok: true, key, claim: c }, landed: x => !x[key] };
+  }, o));
+}
+/** the claims as last fetched (no network; {} before the first fetch) */
+export const localClaims = f => { try { return readClaims(f).claims; } catch { return {}; } };
+
+// ---------- the home's own bookkeeping: <state>/sync/<file> (local, never published) ----------
+// own: { key: { project, home, lane, nonce, n, confirmed_ms } } (confirmed_ms = this clock when a claim / renew push landed: the fence);
+// seen: the observer's clock; holds: { RUN-n: { why, home, lane, kind } } (queued runs a claim holds); rows: { rows: [digest rows] }
+export const SYNC_FILES = { own: 'claims-own.json', seen: 'claims-seen.json', holds: 'claim-holds.json', rows: 'claims-digest.json' };
+const syncPath = (state, name) => path.join(state, 'sync', SYNC_FILES[name]);
+export const readSync = (state, name) => { try { return JSON.parse(fs.readFileSync(syncPath(state, name), 'utf8')) || {}; } catch { return {}; } };
+export function writeSync(state, name, v) {
+  const p = syncPath(state, name), tmp = `${p}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`;
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify(v, null, 1));
+  fs.renameSync(tmp, p);
+}
+/** read-modify-write of one sync file -> the new value */
+export const updateSync = (state, name, fn) => { const v = fn(readSync(state, name)); writeSync(state, name, v); return v; };
 /** fetch + read every entry of the claims branch: { key: entry } */
 export const listClaims = f => under(f, () => { fetchRefs(f); return readClaims(f).claims; });

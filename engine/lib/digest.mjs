@@ -25,6 +25,7 @@ import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
 import { laneRules, lanePolicy, ciFixPlan, laneHooks } from './lifecycle.mjs';
+import { readSync } from './claims.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -220,6 +221,10 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy) }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
     ...atRisk(items), ...offMain(stateDir, items, now)];
   if (ln.length) sections.lanes = ln;
+  // RM-46 S2b: the multi-home work claims - queued runs a claim holds ("held by <home>"), drift / fenced / taken-over events, stale
+  // claims of other homes (the owner may take them over); only while any is there
+  const cl = claimRows(stateDir, st.items);
+  if (cl.length) sections.claims = cl;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
@@ -234,6 +239,13 @@ const atRisk = items => items.filter(l => l.kind === 'lane' && l.state === 'arch
   const a = l.history.findLast(h => h.ev === 'archive')?.data?.at_risk, wt = a ? a.slice(0, a.lastIndexOf(': ')) : null;
   return wt && fs.existsSync(wt) ? [{ id: l.id, lane: l.id.slice(2), rule: 'at-risk', run: null, why: `work at risk: ${a} - commit / merge it or remove the worktree by hand` }] : [];
 });
+// RM-46 S2b: <state>/sync/claim-holds.json (runs.mjs claimDoor) for runs still queued + <state>/sync/claims-digest.json (tick.mjs claimsPass)
+function claimRows(stateDir, items) {
+  const holds = Object.entries(readSync(stateDir, 'holds')).filter(([id]) => items[id]?.state === 'queued')
+    .map(([id, h]) => ({ id, kind: 'held', lane: items[id].data.lane ?? null, home: h.home, why: h.home ? `held by ${h.home}: ${h.why}` : `held: ${h.why}` }));
+  const r = readSync(stateDir, 'rows');
+  return [...holds, ...(r.events || []).map(e => ({ id: e.id, kind: e.kind, at: e.at, why: e.why })), ...(r.stale || [])];
+}
 
 // git unreadable: every open deliverable record counts as done (listing too much beats dropping work)
 function fallbackDlv(stateDir) {

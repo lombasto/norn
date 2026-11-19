@@ -832,7 +832,7 @@ export async function recordAsync(stateDir, evIn, opts = {}) {
       const r = c.plan();
       const fh = await fp.open(c.file, 'a');
       try { await fh.write(r.text); await fh.sync(); } finally { await fh.close(); }
-      if (r.views) { const v = await writeViewsAsync(stateDir, r.st, opts.views || {}); if (opts.onViews) opts.onViews(v); }
+      if (r.views) { const v = await writeViewsAsync(stateDir, r.st, opts.views || {}, { role: 'dashboard' }); if (opts.onViews) opts.onViews(v); }
       return r.out;
     }));
   } catch (e) { if (e instanceof RecordError && e.refusal) noteRefusal(stateDir, e.message, e.refusal); throw e; }

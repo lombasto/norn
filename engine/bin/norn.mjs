@@ -44,7 +44,7 @@ import { running } from '../lib/legacy.mjs';
 import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
-import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
+import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn, syncPolicy } from '../lib/policy.mjs';
 import { CLASS_LABELS } from '../lib/workclass.mjs';
 import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
@@ -71,7 +71,7 @@ import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
 import { ClaimsError } from '../lib/claimsref.mjs';
-import { listClaims, allowPair, releaseWork } from '../lib/claims.mjs';
+import { listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
@@ -1381,7 +1381,7 @@ Plumbing:
   norn harness                     install the Norn tools into an agent CLI
   norn mcp                         the stdio MCP server
   norn node                        one federation pull-agent job
-  norn claim                       the multi-home work claims (list, allow a pair, release)
+  norn claim                       the multi-home work claims (list, allow a pair, release, take over a stale one)
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
   norn hook                        the Claude Code session hook
   norn scope                       the PreToolUse hook: what a run may touch
@@ -1507,7 +1507,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       return 0;
     }
     if (cmd === 'views') {
-      const v = writeViews(state, loadState(state), vpaths), qv = writeQueueView(state, vpaths, { ready: readiness(state) });
+      const v = writeViews(state, loadState(state), vpaths, { role: 'norn rec views' }), qv = writeQueueView(state, vpaths, { ready: readiness(state), role: 'norn rec views' });
       for (const k of ['written', 'unchanged', 'refused']) v[k].push(...qv[k]);
       // META-GTP-CV piece 2: CV.md with the other views (the CV of this state; a hand edit refused like every view): views.cv, else beside
       // the project.json views (one copy, S9), else <state>/views
@@ -2785,19 +2785,19 @@ function nodeCmd(argv, env, out, err) {
     .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof FedError || e instanceof ClaimsError ? 2 : 1; });
 }
 
-// ---------- RM-46 S2a: norn claim list | allow | release (the claims branch of the ledger remote; take over is S2b's) ----------
-const CLAIM_USAGE = "norn claim list [--project P] | allow <home>/<lane> <home>/<lane> --project P [--why W] | release <lane> --project P  [--machine F]    (work claims on the ledger remote's claims branch: list every entry, let two homes' claims overlap (owner), CAS-delete this home's own claim with its allow files; the home id is the project's home.json)";
+// ---------- RM-46 S2a / S2b: norn claim list | allow | release | take (the claims branch of the ledger remote) ----------
+const CLAIM_USAGE = "norn claim list [--project P] | allow <home>/<lane> <home>/<lane> --project P [--why W] | release <lane> --project P | take <home>/<lane> --project P  [--machine F]    (work claims on the ledger remote's claims branch: list every entry, let two homes' claims overlap (owner), CAS-delete this home's own claim with its allow files, take over another home's STALE claim (owner; stale = its n unchanged for lease_s + policy.sync.stale_grace_s on this home's clock); the home id is the project's home.json)";
 function claimCmd(argv, env, out, err) {
   const [sub, ...rest] = argv, f = {}, pos = [];
   const usage = msg => { err('error: ' + msg); err('usage: ' + CLAIM_USAGE); return 2; };
-  if (!['list', 'allow', 'release'].includes(sub)) return usage(sub ? `unknown claim subcommand ${sub}` : 'missing subcommand');
+  if (!['list', 'allow', 'release', 'take'].includes(sub)) return usage(sub ? `unknown claim subcommand ${sub}` : 'missing subcommand');
   for (let i = 0; i < rest.length; i++) {
     const k = { '--project': 'project', '--why': 'why', '--machine': 'machine' }[rest[i]];
     if (!k) { if (rest[i].startsWith('--')) return usage(`unexpected ${rest[i]}`); pos.push(rest[i]); continue; }
     if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
     f[k] = rest[++i];
   }
-  if (pos.length !== { list: 0, allow: 2, release: 1 }[sub]) return usage(`claim ${sub}: wrong number of arguments`);
+  if (pos.length !== { list: 0, allow: 2, release: 1, take: 1 }[sub]) return usage(`claim ${sub}: wrong number of arguments`);
   if (sub !== 'list' && !f.project) return usage(`claim ${sub} needs --project`);
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
@@ -2814,8 +2814,22 @@ function claimCmd(argv, env, out, err) {
       out(r.exists ? `already allowed: ${r.key}` : `allowed: ${r.key}`);
       return 0;
     }
-    const home = homeOf(path.join(cfg.state_root, f.project))?.id;
+    const state = path.join(cfg.state_root, f.project), home = homeOf(state)?.id;
     if (!home) { err(`error: project ${f.project} is not synced (no home.json in its state dir)`); return 1; }
+    if (sub === 'take') {   // S2b (SPEC 4.5): only a stale claim; the observer's clock (claims-seen.json) is this home's, brought up to the fetched tip first
+      const m = /^([a-z][a-z0-9]{0,7})\/(.+)$/.exec(pos[0]);
+      if (!m) return usage(`claim take ${pos[0]}: want <home>/<lane>`);
+      if (m[1] === home) { err(`error: ${pos[0]} is this home's own claim - norn claim release ${m[2]} --project ${f.project}`); return 1; }
+      const now = Date.now(), seen = updateSync(state, 'seen', cur => observeClaims(listClaims(fe), cur, { home, now }));
+      const r = takeWork(fe, { project: f.project, home: m[1], lane: m[2], seen, now, pol: syncPolicy(), by: 'owner' });
+      if (r.gone) { out(`no claim ${r.key}`); return 0; }
+      if (r.notStale) { err('error: ' + r.why); return 3; }
+      if (r.busy) { err('error: ' + r.why); return 1; }
+      const rows = readSync(state, 'rows');
+      writeSync(state, 'rows', { ...rows, events: [...(rows.events || []), { kind: 'taken', id: r.key, why: `${pos[0]} taken over by the owner on ${home} (stale at n=${r.claim.n})`, ms: now, at: new Date(now).toISOString() }] });
+      out(`taken over: ${r.key} (stale at n=${r.claim.n}); ${m[1]} stops its run at its next renew`);
+      return 0;
+    }
     const r = releaseWork(fe, { project: f.project, home, lane: pos[0] });
     if (r.gone) { out(`no claim ${r.key}`); return 0; }
     if (r.busy) { err('error: ' + r.why); return 1; }

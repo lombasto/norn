@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { makeEval, evalAll, readyWords } from './after.mjs';
 import { loadState, idNum as num } from './records.mjs';
 
@@ -99,132 +100,152 @@ export function renderQueue(st, { evalAfter = null, ready = null } = {}) {
 }
 
 const RENDER = { questions: renderQuestions, decisions: renderDecisions, directives: renderDirectives, queue: renderQueue };
-const sha = s => crypto.createHash('sha256').update(s).digest('hex');
+export const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 /** the key of a file in a hash file (the drive letter upper-cased): one launcher passes `c:\...` where another passes `C:\...` - two keys
  * for one file made each writer refuse the other's text as a "hand edit" (views frozen, a false Inbox notice) */
 export const hashKey = f => { const p = path.resolve(f); return /^[a-z]:/.test(p) ? p[0].toUpperCase() + p.slice(1) : p; };
 
-/** Write the views; paths default to <stateDir>/views/<VIEW_FILES>. Returns { written, unchanged, refused } (absolute paths).
- * NORN-WATCH S4: the queue view is written only by writeQueueView (fillQueue, under state/queue.lock, and `meta views`), with its own
- * hash file: record() and the fill never race on one hashes.json (a lost hash would refuse a view as a "hand edit"). */
-export function writeViews(stateDir, st, paths = {}, { only = null, ready = null } = {}) {
-  const queue = only?.length === 1 && only[0] === 'queue';
-  const vdir = path.join(stateDir, 'views');
-  fs.mkdirSync(vdir, { recursive: true });
-  const hashFile = path.join(vdir, queue ? 'queue-hashes.json' : 'hashes.json');
-  const hashes = fs.existsSync(hashFile) ? JSON.parse(fs.readFileSync(hashFile, 'utf8')) : {};
-  const res = { written: [], unchanged: [], refused: [] };
-  const evalAfter = makeEval(stateDir);   // lazy: reads records only when a queued run has after: conditions
-  for (const [name, render] of Object.entries(RENDER)) {
-    if (only ? !only.includes(name) : name === 'queue') continue;
-    const p = path.resolve(paths[name] || path.join(queue ? stateDir : vdir, VIEW_FILES[name]));   // the queue view sits beside DIGEST.md
-    const text = render(queue ? loadState(stateDir) : st, { evalAfter, ready });
-    if (fs.existsSync(p)) {
-      const cur = fs.readFileSync(p, 'utf8');
-      if (cur === text) { hashes[hashKey(p)] = sha(text); res.unchanged.push(p); continue; }
-      if (hashes[hashKey(p)] !== sha(cur)) { res.refused.push(p); continue; }
+// ---------- RM-35: the one guarded write path (every generated file: views, queue, roadmap, CV) ----------
+// The false "changed outside Norn" notice (solve-shack META-QUEUE.md, 2026-11-18): each writer read the hash file, wrote the view and
+// wrote the WHOLE hash map back, unlocked. Two writers at once (the fill, `norn views`, the dashboard, a lane worktree's engine) lost
+// each other's hash, and on Windows the hash file's rename failed with EPERM while another writer renamed over it - after the view had
+// landed, so the hash stayed behind the file (the fill swallows a view error). Now: one lock per hash file around read-check-write-record,
+// the hashes re-read under it (only this write's keys change), renames retried through EPERM / EBUSY / EACCES, the file read back before
+// its hash is recorded, and each write leaves a record (views/last/: the text + who wrote it) that the notice diffs and names.
+const TRANSIENT = ['EPERM', 'EBUSY', 'EACCES'];
+export const LOCK_STALE_MS = 30e3, LOCK_WAIT_MS = 60e3, RETRY_MS = 10e3, LAST_KEEP = 20;
+const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const ENGINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+let branchMemo;
+/** the branch (or commit) of the engine copy this process runs - a lane worktree's engine names its lane branch */
+const engineBranch = () => branchMemo !== undefined ? branchMemo : (branchMemo = (() => {
+  try { let g = path.join(ENGINE, '.git'); if (fs.statSync(g).isFile()) g = path.resolve(ENGINE, fs.readFileSync(g, 'utf8').replace(/^gitdir:\s*/, '').trim());
+    const h = fs.readFileSync(path.join(g, 'HEAD'), 'utf8').trim(); return h.startsWith('ref:') ? h.replace(/^ref:\s*(refs\/heads\/)?/, '') : h.slice(0, 9); } catch { return null; }
+})());
+const argRole = () => [path.basename(process.argv[1] || 'node').replace(/\.m?js$/, ''), ...process.argv.slice(2).filter(a => !a.startsWith('-')).slice(0, 2)].join(' ').slice(0, 40);
+/** who is writing: { at, pid, role (fill / dashboard / record / cli ...; default the command line), run, engine, branch } */
+export const writerOf = role => ({ at: new Date().toISOString(), pid: process.pid, role: role || argRole(), run: process.env.META_RUN_ID || null, engine: ENGINE, branch: engineBranch() });
+/** the record files of one guarded file: <views>/last/<name>.<8 hex of its key>.txt (the last text Norn wrote) + .json (its writes) */
+export const lastFiles = (hashFile, file) => { const k = hashKey(file), b = path.join(path.dirname(hashFile), 'last', `${path.basename(k)}.${sha(k).slice(0, 8)}`); return { text: b + '.txt', log: b + '.json' }; };
+
+// The steps, written once as a generator of io ops; runSync / runAsync carry them out (the CLI's fs vs the dash server's fs.promises).
+// items: [{ file, text: string | () => string }] - a function renders under the lock, so the text that lands last is the newest state.
+function* guardSteps(hashFile, items, role) {
+  const token = yield ['lock', hashFile];
+  try {
+    const raw = yield ['read', hashFile], hashes = raw === null ? {} : JSON.parse(raw), res = { written: [], unchanged: [], refused: [] };
+    let dirty = false;
+    for (const it of items) {
+      const p = path.resolve(it.file), k = hashKey(p), text = typeof it.text === 'function' ? it.text() : it.text, cur = yield ['read', p];
+      if (cur !== null && cur !== text && hashes[k] !== sha(cur)) { res.refused.push(p); continue; }
+      if (cur !== text) {
+        yield ['write', p, text];
+        if ((yield ['read', p]) !== text) throw Object.assign(new Error(`${p}: written, but reads back other text (another writer?) - its hash is not recorded`), { code: 'EVIEWWRITE' });
+      }
+      (cur === text ? res.unchanged : res.written).push(p);
+      const lf = lastFiles(hashFile, p), logRaw = yield ['read', lf.log], log = logRaw ? JSON.parse(logRaw) : { file: k, writes: [] };
+      if (log.writes.at(-1)?.sha !== sha(text) || (yield ['read', lf.text]) === null) {   // the record first: a failed hash write still shows Norn wrote this text
+        yield ['write', lf.text, text];
+        log.writes = [...log.writes, { sha: sha(text), ...writerOf(role) }].slice(-LAST_KEEP);
+        yield ['write', lf.log, JSON.stringify(log, null, 1) + '\n'];
+      }
+      if (hashes[k] !== sha(text)) { hashes[k] = sha(text); dirty = true; }
     }
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    const tmp = `${p}.${process.pid}.tmp`;
+    if (dirty || raw === null) yield ['write', hashFile, JSON.stringify(hashes, null, 1) + '\n'];
+    return res;
+  } finally { yield ['unlock', hashFile, token]; }
+}
+const lockBody = token => JSON.stringify({ pid: process.pid, token, ts: new Date().toISOString() });
+/** stale = its ts (else mtime) older than LOCK_STALE_MS: a writer killed mid-write never blocks the next one for long */
+const isStale = (raw, mtimeMs) => { let ts; try { ts = Date.parse(JSON.parse(raw).ts); } catch { ts = mtimeMs; } return !(Date.now() - ts < LOCK_STALE_MS); };
+const lockErr = (f, what) => Object.assign(new Error(`${f}.lock: ${what} for ${LOCK_WAIT_MS} ms`), { code: 'EVIEWLOCK' });
+const SYNC = {
+  read: f => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
+  write: (f, text) => {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tmp = `${f}.${process.pid}.tmp`, t0 = Date.now();
     fs.writeFileSync(tmp, text);
-    fs.renameSync(tmp, p);
-    hashes[hashKey(p)] = sha(text);
-    res.written.push(p);
+    for (;;) { try { return fs.renameSync(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { try { fs.unlinkSync(tmp); } catch { /* the tmp could not be removed: the rename's error, thrown next, is the one that matters */ } throw e; } sleepSync(15); } }
+  },
+  lock: hf => {
+    const lf = hf + '.lock', token = crypto.randomBytes(6).toString('hex'), t0 = Date.now();
+    fs.mkdirSync(path.dirname(lf), { recursive: true });
+    for (;;) {
+      try { fs.writeFileSync(lf, lockBody(token), { flag: 'wx' }); return token; } catch (e) { if (!['EEXIST', ...TRANSIENT].includes(e.code)) throw e; }
+      try { if (isStale(fs.readFileSync(lf, 'utf8'), fs.statSync(lf).mtimeMs)) fs.unlinkSync(lf); } catch { /* released / being written meanwhile */ }
+      if (Date.now() - t0 > LOCK_WAIT_MS) throw lockErr(hf, 'not acquired');
+      sleepSync(10);
+    }
+  },
+  unlock: (hf, token) => { try { if (JSON.parse(fs.readFileSync(hf + '.lock', 'utf8')).token === token) fs.unlinkSync(hf + '.lock'); } catch { /* broken as stale: a successor's */ } },
+};
+const fp = fs.promises, sleep = ms => new Promise(r => setTimeout(r, ms));
+const ASYNC = {
+  read: async f => { try { return await fp.readFile(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
+  write: async (f, text) => {
+    await fp.mkdir(path.dirname(f), { recursive: true });
+    const tmp = `${f}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`, t0 = Date.now();   // + random: two requests of one dash process
+    await fp.writeFile(tmp, text);
+    for (;;) { try { return await fp.rename(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { await fp.unlink(tmp).catch(() => { /* the tmp could not be removed: the rename's error, thrown next, is the one that matters */ }); throw e; } await sleep(15); } }
+  },
+  lock: async hf => {
+    const lf = hf + '.lock', token = crypto.randomBytes(6).toString('hex'), t0 = Date.now();
+    await fp.mkdir(path.dirname(lf), { recursive: true });
+    for (;;) {
+      try { await fp.writeFile(lf, lockBody(token), { flag: 'wx' }); return token; } catch (e) { if (!['EEXIST', ...TRANSIENT].includes(e.code)) throw e; }
+      try { if (isStale(await fp.readFile(lf, 'utf8'), (await fp.stat(lf)).mtimeMs)) await fp.unlink(lf); } catch { /* released meanwhile */ }
+      if (Date.now() - t0 > LOCK_WAIT_MS) throw lockErr(hf, 'not acquired');
+      await sleep(10);
+    }
+  },
+  unlock: async (hf, token) => { try { if (JSON.parse(await fp.readFile(hf + '.lock', 'utf8')).token === token) await fp.unlink(hf + '.lock'); } catch { /* a successor's */ } },
+};
+function runSync(g, io = SYNC) {   // io: the ops table (fs vs fs.promises)
+  let step = g.next();
+  for (;;) {
+    if (step.done) return step.value;
+    let v, err = null;
+    try { v = io[step.value[0]](...step.value.slice(1)); } catch (e) { err = e; }
+    step = err ? g.throw(err) : g.next(v);
   }
-  const tmp = `${hashFile}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(hashes, null, 1) + '\n');
-  fs.renameSync(tmp, hashFile);
-  return res;
+}
+async function runAsync(g, io = ASYNC) {
+  let step = g.next();
+  for (;;) {
+    if (step.done) return step.value;
+    let v, err = null;
+    try { v = await io[step.value[0]](...step.value.slice(1)); } catch (e) { err = e; }
+    step = err ? g.throw(err) : g.next(v);
+  }
 }
 
+const viewItems = (stateDir, st, paths, only, ready) => {
+  const queue = only?.length === 1 && only[0] === 'queue', vdir = path.join(stateDir, 'views'), evalAfter = makeEval(stateDir);   // lazy: reads records only when a queued run has after: conditions
+  const items = Object.entries(RENDER).filter(([name]) => (only ? only.includes(name) : name !== 'queue'))
+    .map(([name, render]) => ({ file: path.resolve(paths[name] || path.join(queue ? stateDir : vdir, VIEW_FILES[name])),   // the queue view sits beside DIGEST.md
+      text: () => render(queue ? loadState(stateDir) : st, { evalAfter, ready }) }));
+  return { hashFile: path.join(vdir, queue ? 'queue-hashes.json' : 'hashes.json'), items };
+};
+/** Write the views; paths default to <stateDir>/views/<VIEW_FILES>. Returns { written, unchanged, refused } (absolute paths).
+ * NORN-WATCH S4: the queue view is written only by writeQueueView (fillQueue and `norn rec views`), with its own hash file. */
+export function writeViews(stateDir, st, paths = {}, { only = null, ready = null, role = null } = {}) {
+  const v = viewItems(stateDir, st, paths, only, ready);
+  return runSync(guardSteps(v.hashFile, v.items, role));
+}
 /** META-DASH-ASYNC R1 (option a): writeViews on fs.promises - the dash server's write path (a sync write blocks the event loop the
  * page and its streams run on). The same views, hashes and hand-edit guard as writeViews; the CLI keeps the sync form. */
-export async function writeViewsAsync(stateDir, st, paths = {}, { only = null, ready = null } = {}) {
-  const fp = fs.promises, queue = only?.length === 1 && only[0] === 'queue';
-  const vdir = path.join(stateDir, 'views');
-  await fp.mkdir(vdir, { recursive: true });
-  const hashFile = path.join(vdir, queue ? 'queue-hashes.json' : 'hashes.json');
-  const readOr = async f => { try { return await fp.readFile(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
-  const ht = await readOr(hashFile), hashes = ht === null ? {} : JSON.parse(ht);
-  const res = { written: [], unchanged: [], refused: [] };
-  const evalAfter = makeEval(stateDir);
-  for (const [name, render] of Object.entries(RENDER)) {
-    if (only ? !only.includes(name) : name === 'queue') continue;
-    const p = path.resolve(paths[name] || path.join(queue ? stateDir : vdir, VIEW_FILES[name]));
-    const text = render(queue ? loadState(stateDir) : st, { evalAfter, ready });
-    const cur = await readOr(p);
-    if (cur !== null) {
-      if (cur === text) { hashes[hashKey(p)] = sha(text); res.unchanged.push(p); continue; }
-      if (hashes[hashKey(p)] !== sha(cur)) { res.refused.push(p); continue; }
-    }
-    await fp.mkdir(path.dirname(p), { recursive: true });
-    const tmp = `${p}.${process.pid}.tmp`;
-    await fp.writeFile(tmp, text);
-    await fp.rename(tmp, p);
-    hashes[hashKey(p)] = sha(text);
-    res.written.push(p);
-  }
-  const tmp = `${hashFile}.${process.pid}.tmp`;
-  await fp.writeFile(tmp, JSON.stringify(hashes, null, 1) + '\n');
-  await fp.rename(tmp, hashFile);
-  return res;
+export async function writeViewsAsync(stateDir, st, paths = {}, { only = null, ready = null, role = null } = {}) {
+  const v = viewItems(stateDir, st, paths, only, ready);
+  return runAsync(guardSteps(v.hashFile, v.items, role));
 }
-
 /** META-ROADMAP S1: (re)write ONE generated file under the same hand-edit guard, its hashes in their own file -> written | unchanged | refused */
-export function writeGuarded(hashFile, file, text) {
-  const p = path.resolve(file);
-  const hashes = fs.existsSync(hashFile) ? JSON.parse(fs.readFileSync(hashFile, 'utf8')) : {};
-  let res = 'written';
-  if (fs.existsSync(p)) {
-    const cur = fs.readFileSync(p, 'utf8');
-    if (cur === text) res = 'unchanged';
-    else if (hashes[hashKey(p)] !== sha(cur)) return 'refused';
-  }
-  if (res === 'written') {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    const tmp = `${p}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, text);
-    fs.renameSync(tmp, p);
-  }
-  if (hashes[hashKey(p)] !== sha(text)) {
-    hashes[hashKey(p)] = sha(text);
-    fs.mkdirSync(path.dirname(hashFile), { recursive: true });
-    const tmp = `${hashFile}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(hashes, null, 1) + '\n');
-    fs.renameSync(tmp, hashFile);
-  }
-  return res;
-}
-
+const one = r => (r.refused.length ? 'refused' : r.written.length ? 'written' : 'unchanged');
+export const writeGuarded = (hashFile, file, text, { role = null } = {}) => one(runSync(guardSteps(hashFile, [{ file, text }], role)));
 /** META-DASH-ASYNC R1 (option a): writeGuarded on fs.promises for the dash server (the same guard and hashes); the CLI keeps the sync form */
-export async function writeGuardedAsync(hashFile, file, text) {
-  const fp = fs.promises, p = path.resolve(file);
-  const readOr = async f => { try { return await fp.readFile(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
-  const ht = await readOr(hashFile), hashes = ht === null ? {} : JSON.parse(ht);
-  let res = 'written';
-  const cur = await readOr(p);
-  if (cur !== null) {
-    if (cur === text) res = 'unchanged';
-    else if (hashes[hashKey(p)] !== sha(cur)) return 'refused';
-  }
-  if (res === 'written') {
-    await fp.mkdir(path.dirname(p), { recursive: true });
-    const tmp = `${p}.${process.pid}.tmp`;
-    await fp.writeFile(tmp, text);
-    await fp.rename(tmp, p);
-  }
-  if (hashes[hashKey(p)] !== sha(text)) {
-    hashes[hashKey(p)] = sha(text);
-    await fp.mkdir(path.dirname(hashFile), { recursive: true });
-    const tmp = `${hashFile}.${process.pid}.tmp`;
-    await fp.writeFile(tmp, JSON.stringify(hashes, null, 1) + '\n');
-    await fp.rename(tmp, hashFile);
-  }
-  return res;
-}
+export const writeGuardedAsync = async (hashFile, file, text, { role = null } = {}) => one(await runAsync(guardSteps(hashFile, [{ file, text }], role)));
 
 /** NORN-WATCH S4: (re)write <stateDir>/META-QUEUE.md (or paths.queue) from the records; refuses a hand edit like every view. */
-export const writeQueueView = (stateDir, paths = {}, { ready = null } = {}) => writeViews(stateDir, null, paths, { only: ['queue'], ready });
+export const writeQueueView = (stateDir, paths = {}, { ready = null, role = null } = {}) => writeViews(stateDir, null, paths, { only: ['queue'], ready, role });
 
 // NORN-WATCH S1: the resume digest (digest.mjs) as markdown - `norn digest`, STATUS.md's `## Digest` block, <state>/DIGEST.md.
 // level = `##` (DIGEST.md) or `###` (inside STATUS.md); rows carry their ids so a resumed session can act on each.
