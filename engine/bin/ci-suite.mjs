@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // META-GTP-CI 1: run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt (GT-PARITY-PLAN 2.11).
-// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--measure OUT [--coverage]] [--cpu-prof DIR] [glob ...]
-//   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, "tests/*.test.mjs"). META-TEND TESTS: --measure writes OUT (JSON): per file its wall ms and
+// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--gate-wait MIN] [--measure OUT [--coverage]] [--cpu-prof DIR] [glob ...]
+//   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, GATE_WAIT_MIN, "tests/*.test.mjs"). META-TEND TESTS: --measure writes OUT (JSON): per file its wall ms and
 //   per test its ms; --coverage adds Node's built-in line coverage of engine/ per test file (engine/lib/testlean.mjs reads it).
 // The suite is one `node --test` per matched file, N at a time, plus a reporter that writes the reds; smoke.test.mjs
 // then runs alone (DEC-78). CI and the merge lanes call this script: it is the one home of the suite command.
@@ -15,6 +15,8 @@ import { parseKnown, judge, suiteEnv } from '../lib/cisuite.mjs';
 import { procsNaming } from '../lib/testprocs.mjs';
 import { killTree } from '../lib/runs.mjs';
 import { measureFile } from '../lib/testlean.mjs';
+import { acquireGate, GATE_WAIT_MIN } from '../lib/gatelock.mjs';
+import { holdJob } from '../lib/jobguard.mjs';
 
 const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const REPORTER = pathToFileURL(path.join(LIB, 'ci-reporter.mjs')).href, MEASURER = pathToFileURL(path.join(LIB, 'measure-reporter.mjs')).href;
@@ -23,9 +25,10 @@ const argv = process.argv.slice(2), globs = [];
 // CI-HANG-B7F6833: the per-file wall cap - a file that has not exited by then is a hang: its process tree is killed, its output so
 // far printed and the suite fails naming it (a watchdog that turns a hang into a named red, well under the CI job's 60 min)
 const FILE_CAP_S = 600;
-let known = 'tests/KNOWN-REDS.txt', conc = '3', measure = null, coverage = false, capS = FILE_CAP_S, cpuProf = null;
+let known = 'tests/KNOWN-REDS.txt', conc = '3', measure = null, coverage = false, capS = FILE_CAP_S, cpuProf = null, gateWait = GATE_WAIT_MIN;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--known') known = argv[++i];
+  else if (argv[i] === '--gate-wait') gateWait = Number(argv[++i]);
   else if (argv[i] === '--measure') measure = argv[++i];
   else if (argv[i] === '--coverage') coverage = true;
   else if (argv[i] === '--concurrency') conc = argv[++i];
@@ -36,6 +39,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!globs.length) globs.push('tests/*.test.mjs');
 if (!(capS > 0)) { console.error('ci-suite: --file-cap needs a number of seconds > 0'); process.exit(2); }
+if (!(gateWait >= 0)) { console.error('ci-suite: --gate-wait needs a number of minutes >= 0'); process.exit(2); }
 if (coverage && !measure) { console.error('ci-suite: --coverage needs --measure OUT'); process.exit(2); }
 
 let list;
@@ -46,9 +50,21 @@ const SERIAL = new Set(['smoke.test.mjs']);
 const files = [...new Set(globs.flatMap(g => fs.globSync(fwd(g))).map(fwd))].sort();
 if (!files.length) { console.error(`ci-suite: no test file matches ${globs.join(' ')}`); process.exit(2); }
 const parFiles = files.filter(f => !SERIAL.has(path.basename(f))), serFiles = files.filter(f => SERIAL.has(path.basename(f)));
-// a ci-suite started from inside a test must run its files (no NODE_TEST_CONTEXT), and a calling run's identity stays out (suiteEnv)
-const childEnv = suiteEnv(process.env);
+// fair-slots 5a: one heavy gate per machine (gatelock.mjs) - a second full suite waits for the first, then runs (never fails on it)
+const gate = await acquireGate({ what: `ci-suite ${globs.join(' ')}`, waitMs: gateWait * 60e3, say: l => console.log(`ci-suite: ${l}`) });
+if (!gate.held) console.log(`ci-suite: no machine gate lock taken (${gate.why})`);
+// a ci-suite started from inside a test must run its files (no NODE_TEST_CONTEXT), and a calling run's identity stays out (suiteEnv);
+// a project gate its files start runs under this suite's gate lock (META_GATE_HELD)
+const childEnv = { ...suiteEnv(process.env), ...gate.env };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
+// fair-slots 5b / 6b: nothing a test file starts outlives the suite. Windows: the suite holds itself in a Job Object (jobguard.mjs,
+// KILL_ON_JOB_CLOSE) before the first file, so every process born below it - detached supervisors, headless Edge, orphans whose parent
+// already exited - dies when the suite ends however it ends (exit, crash, a hard kill of this process: its hold sees the exit). Any
+// platform: an exit before the files are done (a throw, SIGINT / SIGTERM / SIGHUP) kills every process naming the suite's temp dir.
+let filesDone = false;
+process.on('exit', () => { if (!filesDone) for (const p of procsNaming([tmp])) killTree(p.pid); });
+for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(s, () => { console.error(`ci-suite: ${s}: stopping, the test processes are killed`); process.exit(130); });
+if (process.platform === 'win32') { const j = await holdJob(process.pid, { name: `meta-ci-suite-${process.pid}-${Date.now()}` }); if (j.error) console.log(`ci-suite: no job object (${j.error}): a hard kill of the suite leaves its test processes`); }
 // META-TEST-PROCS (DEC-219, SPEC 9.6 PR-14; Jest's --detectOpenHandles, made a hard check): each test file runs as its own
 // `node --test` with its own temp dir (TEMP / TMP / TMPDIR), so every temp state it makes - and every process it starts there -
 // names that dir. When the file is done, a process whose command line still names it is that file's leak: the file fails, naming
@@ -103,6 +119,7 @@ const phase = async (name, c, files) => {
 const runs = [];
 if (parFiles.length) runs.push(await phase('parallel', conc, parFiles));
 if (serFiles.length) runs.push(await phase('serial', '1', serFiles));
+filesDone = true;   // every file ended and its leftovers were swept (runFile)
 if (measure) {
   fs.writeFileSync(measure, JSON.stringify({ at: new Date().toISOString(), concurrency: Number(conc), coverage,
     suite_ms: runs.reduce((n, r) => n + r.ms, 0), files: runs.flatMap(r => r.measured).sort((a, b) => a.file.localeCompare(b.file)) }));

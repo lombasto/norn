@@ -23,7 +23,8 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
-import { procStartAsync } from './legacy.mjs';
+import { procStartAsync, running } from './legacy.mjs';
+import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
@@ -140,6 +141,36 @@ if (cmd) {
   } catch (e) { finish(null, null, String(e.message)); }
 }
 
+// fair-slots 6a: a supervisor started under a test (META_TEST_OWNER, derelict.mjs) exits once that test process is gone - a test file
+// killed at ci-suite's cap runs no teardown, and its detached supervisors polled for days - and EVERY supervisor exits once its run's
+// state is deleted (its spec file goes with it; on Windows a deleted state dir keeps the folders an open log holds). No end record, no
+// queue fill: the executor's tree is killed and the process leaves. Owner pid each beat; its start time every OWNER_PROBE_MS (pid reuse).
+const owner = testOwner(process.env), specFile = path.resolve(process.argv[2]);
+let ownerStart, ownerProbeAt = Date.now(), ownerProbing = false, leaving = false;
+function derelictWhy() {
+  if (!fs.existsSync(specFile)) return `its state is deleted (${fwdPath(specFile)} is gone)`;
+  if (!owner) return null;
+  if (!ownerProbing && Date.now() - ownerProbeAt >= OWNER_PROBE_MS) {
+    ownerProbing = true; ownerProbeAt = Date.now();
+    procStartAsync(owner.pid).then(t => { if (t !== null) ownerStart = t; ownerProbing = false; });   // null = a failed probe too: the pid check decides
+  }
+  return ownerGoneWhy(owner, { alive: running(owner.pid), start: ownerStart });
+}
+async function leave(why) {
+  if (leaving) return;
+  leaving = true; finished = true;   // the executor's exit now runs no finish()
+  for (const t of [timer, nudgeTimer, ctxTimer, watchTimer]) if (t) clearInterval(t);
+  if (capTimer) clearTimeout(capTimer);
+  logLine(`supervisor exits: ${why}; the executor's tree is killed`);
+  // the job / process group holds the whole tree; a tree kill (taskkill /T: seconds on a loaded box) only where neither did it
+  const r = job ? reapJob(job, process.pid) : guard && process.platform !== 'win32' && childPid ? reapGroup(childPid) : null;
+  if ((!r || r.error) && childPid) killTree(childPid);
+  for (const lf of lockFiles) releaseLock(lf, run);
+  await holdGone(job);
+  process.exit(0);
+}
+const watchTimer = setInterval(() => { const why = derelictWhy(); if (why) leave(why); }, spec.hbMs);
+
 async function finish(code, signal, error) {
   if (finished) return;
   finished = true;
@@ -215,7 +246,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {
     const hb = setInterval(beat, spec.hbMs);
-    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run }); }
+    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks') }); }
     catch (e) { data.dod = { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
     finally { clearInterval(hb); }
     logLine(`dod: Done ${data.dod.ok ? 'green' : 'RED: ' + data.dod.why}${data.dod.tests.length ? ' (' + data.dod.tests.map(testLine).join('; ') + ')' : ''}`);
