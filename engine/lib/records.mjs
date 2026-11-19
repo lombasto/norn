@@ -33,6 +33,12 @@ export const KINDS = {
     supersede: { from: ['open', 'answered'], to: 'superseded', roles: CK },
     withdraw: { from: ['open'], to: 'withdrawn', roles: CK },
     reopen: { from: ['answered', 'applied', 'superseded', 'withdrawn'], to: 'open', roles: OWNER },
+    // INBOX-REPLIES: the thread on an open Q. say = the owner's typed message ({ text, via }): a message to the controller, never a
+    // ruling - the Q stays open. reply = the controller's / check-in's answer in the thread ({ text, options?, recommend?, propose? }):
+    // options revises the list (shown in the thread), propose { key?, text } = a ruling from the owner's words the owner confirms with
+    // one tap (an answer naming the reply's seq in `ruling`). Only an answer closes the Q (qthread.mjs reads the thread).
+    say: { from: ['open'], to: null, roles: OWNER },
+    reply: { from: ['open'], to: null, roles: CK },
   } },
   decision: { prefix: 'DEC-', file: 'records', events: {
     create: { from: null, to: 'in-force', roles: [...CK, ...OWNER] },
@@ -294,6 +300,11 @@ export function fold(events) {
     if (to) it.state = to;
     it.updated = e.ts;
     it[e.ev] = e.data ?? {};
+    // INBOX-REPLIES: a reply that revises the options replaces the list (the create event keeps the first one; the thread shows each)
+    if (e.kind === 'question' && e.ev === 'reply' && Array.isArray(e.data?.options)) {
+      const keys = e.data.options.map(o => o.key), r = e.data.recommend ?? (keys.includes(it.data.recommend?.key) ? it.data.recommend : undefined);
+      it.data = { ...Object.fromEntries(Object.entries(it.data).filter(([k]) => k !== 'recommend')), options: e.data.options, ...(r ? { recommend: r } : {}) };
+    } else if (e.kind === 'question' && e.ev === 'reply' && e.data?.recommend) it.data = { ...it.data, recommend: e.data.recommend };
     if (e.ev === 'supersede' && e.data?.by) it.superseded_by = e.data.by;
     if (e.ev === 'rewire' && Array.isArray(e.data?.after)) it.data = { ...it.data, after: e.data.after };   // META-AUTONOMY R1
     it.history.push(h);
@@ -385,15 +396,46 @@ function validateData(kind, ev, d, target, st, by, home = null) {
   }
   if (kind === 'confirm') { str(d.file, 'file'); str(d.anchor, 'anchor'); if (!/^p[0-9a-f]{8}$/.test(d.anchor)) fail('anchor must be p<8 hex> (meta instructions suggest / the tab name it)'); str(d.why, 'why', { req: false }); }
   if (kind === 'question') {
+    // an option: { key, text, cost?, added_by? } - added_by = the writer that added it to a question built from a source (origin)
+    const opts = (v, name) => {
+      list(v, name);
+      for (const o of v || []) { if (!o || typeof o.key !== 'string' || !o.key) fail('option key is required'); str(o.text, 'option text'); str(o.added_by, 'option added_by', { req: false, max: 60 }); }
+      if (new Set((v || []).map(o => o.key)).size !== (v || []).length) fail(`${name}: each option key once`);
+    };
+    const rec = (r, keys) => {
+      if (r === undefined) return;
+      if (typeof r?.key !== 'string' || !keys.includes(r.key)) fail('recommend.key must be one of the option keys');
+      str(r.from, 'recommend.from', { req: false, max: 60 });   // whose recommendation: source (the plan's default) | the writer
+    };
     if (ev === 'create') {
       str(d.title, 'title', { max: 120 }); str(d.lane, 'lane'); str(d.body, 'body', { req: false });
-      list(d.options, 'options'); for (const o of d.options || []) { if (!o || typeof o.key !== 'string' || !o.key) fail('option key is required'); str(o.text, 'option text'); }
-      if (d.recommend !== undefined && (typeof d.recommend?.key !== 'string' || !(d.options || []).some(o => o.key === d.recommend.key))) fail('recommend.key must be one of the option keys');
+      opts(d.options, 'options'); rec(d.recommend, (d.options || []).map(o => o.key));
       oneOf(d.class, 'class', ['i', 'ii', 'iii', 'iv', 'v'], false); list(d.blocks, 'blocks');
       if (d.owner_only !== undefined && typeof d.owner_only !== 'boolean') fail('owner_only must be true or false');   // NORN-WATCH S3
+      if (d.origin !== undefined) {   // INBOX-REPLIES: the plan / notes / brief section the options were copied from
+        if (!d.origin || typeof d.origin !== 'object') fail('origin must be { file, section, line? }');
+        str(d.origin.file, 'origin.file', { max: 400 }); str(d.origin.section, 'origin.section', { max: 200 });
+        if (d.origin.line !== undefined && !(Number.isInteger(d.origin.line) && d.origin.line > 0)) fail('origin.line must be a line number');
+      }
+    }
+    if (ev === 'say') { str(d.text, 'text', { max: 4000 }); via(d.via, ['dashboard', 'chat']); }
+    if (ev === 'reply') {
+      str(d.text, 'text', { max: 4000 });
+      if (d.options !== undefined) { opts(d.options, 'options'); if (!d.options.length) fail('options: a revision keeps at least one option'); }
+      const keys = (d.options ?? target.data.options ?? []).map(o => o.key);
+      rec(d.recommend, keys);
+      if (d.propose !== undefined) {
+        str(d.propose?.text, 'propose.text', { max: 600 });
+        if (d.propose.key !== undefined && !keys.includes(d.propose.key)) fail(`propose.key must be one of ${keys.join(' | ') || '(no options)'}`);
+      }
     }
     if (ev === 'answer') {
       str(d.text, 'text'); via(d.via, ['dashboard', 'chat']); str(d.mapped_from, 'mapped_from', { req: false });
+      if (d.ruling !== undefined) {   // INBOX-REPLIES: the owner's one tap on a proposed ruling (the reply's seq)
+        const r = target.history.find(h => h.seq === d.ruling && h.ev === 'reply' && h.data.propose);
+        if (!r) fail(`ruling ${d.ruling} is not a proposed ruling in ${target.id}'s thread`);
+        if ((r.data.propose.key ?? undefined) !== (d.choice || undefined)) fail(`ruling ${d.ruling} proposes ${r.data.propose.key ?? 'no option'}: the answer carries the same choice`);
+      }
       if (d.from !== undefined) {   // META-Q-RECONCILE R1: the owner's words taken from a decision on the Q's lane
         const dec = st.items[d.from];
         if (!dec || dec.kind !== 'decision') fail(`from ${d.from} is not a decision`);
