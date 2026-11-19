@@ -197,6 +197,8 @@ input[type=search]{background:var(--panel);width:260px}
 .lhov:hover>.lcard,.lhov:focus-within>.lcard{display:block}.lhov.shut>.lcard{display:none}.lcard>div{margin-top:3px}.prog-items{margin:4px 0;padding-left:18px}.prog-items li{overflow-wrap:anywhere}.prog-done>span:first-child{color:var(--ok)}.prog-alarm{margin-top:4px;border-left:3px solid var(--line);padding-left:6px}
 @media (max-width:700px){.lcard{position:fixed;left:0;right:0;top:auto;bottom:0;width:auto;max-height:60vh;border-radius:12px 12px 0 0}}
 .lane-kind{margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;max-width:46ch}.lane-out{color:var(--mute);overflow-wrap:anywhere}.lane-types{border-left:1px solid var(--line);padding-left:8px}
+.brtab .brname{overflow-wrap:anywhere;min-width:180px}.brtab .brwhy{white-space:normal;max-width:260px}.brtab .brpath{overflow-wrap:anywhere}.brfilters{flex-wrap:wrap}.brfilters select{max-width:100%}
+@media (max-width:700px){.brtab thead{display:none}.brtab tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 10px;padding:8px 10px;border-bottom:1px solid var(--line)}.brtab td{border:0;padding:0;min-width:0;overflow-wrap:anywhere;white-space:normal}.brtab .brname{grid-column:1/-1;min-width:0}.brtab td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--mute)}.brtab .brname::before{display:none}.brtab .brwhy{max-width:none}.brtab td:last-child{grid-column:1/-1}}
 tr.old{opacity:.55}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}.lane-show{display:flex;gap:6px;flex-wrap:wrap}
 .lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
 .rowacts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
@@ -547,7 +549,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, br: { states: new Set(), where: 'all', lane: '' }, brUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -748,7 +750,7 @@ function paintMain(d) {
   const home = S.tab === 'home' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, br: S.br, brUndo: S.brUndo });
   draftsRestore(keep);
   if (home) homeRestore(home);
   if (lcard) document.getElementById(lcard)?.querySelector('.lhov > :first-child')?.focus();
@@ -811,7 +813,7 @@ function pickDirty() {
 }
 const pickNow = () => post('/api/chat/pick', { project: S.project, model: $('#pick-model').value, effort: $('#pick-effort').value });
 document.addEventListener('input', e => { if (e.target.id === 'chat-text') slashShow(); });
-document.addEventListener('change', e => { if (e.target.id === 'pick-model' || e.target.id === 'pick-effort') pickDirty(); });
+document.addEventListener('change', e => { if (e.target.id === 'pick-model' || e.target.id === 'pick-effort') pickDirty(); if (e.target.matches?.('select[data-br=lane]')) { S.br.lane = e.target.value; lanesRepaint(); } });
 document.addEventListener('focusin', e => { if (e.target.id === 'chat-text') slashShow(); });
 document.addEventListener('focusout', e => { if (e.target.id === 'chat-text') setTimeout(() => { if (!document.activeElement?.closest?.('#slash-menu')) { const m = $('#slash-menu'); if (m) m.hidden = true; } }, 150); });
 document.addEventListener('toggle', e => { if (e.target.classList?.contains('hpick')) S.pickOpen = e.target.open; }, true);
@@ -1243,6 +1245,17 @@ document.addEventListener('click', e => {
   if (d.act === 'lane-type') { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'runs-show') { const s = S.runsView[d.group]; if (s.has(d.show)) s.delete(d.show); else s.add(d.show); runsRepaint(); return; }
   if (d.act === 'runs-window') { S.runsView.window = d.window; history.replaceState(null, '', tabUrl()); render(); return; }
+  // the Lanes page's Branches / Worktrees sub-views: filters repaint in place; a row action answers with its Undo (S.brUndo, the
+  // Archive bar's pattern); Scan now starts the detached refresh the tick would start
+  if (d.act === 'br-state') { const s = S.br.states; if (!s.size) for (const k of (S.last?.states || [])) s.add(k); if (s.has(d.state)) s.delete(d.state); else s.add(d.state); if (s.size === (S.last?.states || []).length) s.clear(); lanesRepaint(); return; }
+  if (d.act === 'br-where') { S.br.where = d.where; lanesRepaint(); return; }
+  if (d.act === 'br-scan') { act(async () => { await post('/api/branches/refresh', { project: p }); S.brUndo = null; err(''); }); return; }
+  if (d.act === 'br-delete' || d.act === 'br-rmwt' || d.act === 'br-adopt') {
+    const verb = d.act.slice(3), what = verb === 'rmwt' ? d.path : d.branch;
+    act(async () => { const r = await post('/api/branches/act', { project: p, act: verb, ...(verb === 'rmwt' ? { path: d.path } : { branch: d.branch }) });
+      S.brUndo = { project: p, verb, undo: r.undo, text: verb === 'delete' ? `Deleted ${what}.` : verb === 'rmwt' ? `Removed the worktree ${what}.` : `Adopted ${what} into lane ${r.lane}.` }; });
+    return; }
+  if (d.act === 'br-undo') { const u = S.brUndo; S.brUndo = null; if (u) act(() => (u.verb === 'adopt' ? post('/api/lane/archive', { project: u.project, lane: u.undo.lane }) : post('/api/branches/act', { project: u.project, act: 'undo', undo: u.undo }))); return; }
   if (d.act === 'lane-show') { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'revoke' && confirm(`Revoke ${d.id}?`)) act(() => post('/api/directive/revoke', { project: p, id: d.id }));
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
