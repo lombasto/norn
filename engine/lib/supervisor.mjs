@@ -27,6 +27,7 @@ import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
+import { makeTool } from './slop/tools.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
@@ -372,7 +373,10 @@ function autoResume(handoff) {
 function slopEnd() {
   if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
   let c;
-  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
+  // stage F: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
+  let brief = null;
+  try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
+  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
   if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
   const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
   logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
