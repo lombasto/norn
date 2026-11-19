@@ -6,7 +6,7 @@ import { agentName } from './names.mjs';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
-import { dlvMerged } from './deliverables.mjs';
+import { dlvMerged } from './dlvmerge.mjs';
 import { isAncestor } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
@@ -101,7 +101,7 @@ export const KINDS = {
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
   // DELIVERABLES-SPEC 1: a lane's / DONE run's branch followed to main and the install. Its own file (deliverables.jsonl), so
-  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived (deliverables.mjs dlvMerged); a MERGED answer is
+  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived (dlvmerge.mjs dlvMerged); a MERGED answer is
   // latched by a `merged` event (DLV-MERGED-TRUTH), so a deleted branch or a rebased landing never turns it back into DONE.
   deliverable: { prefix: 'DLV-', file: 'deliverables', events: {
     create: { from: null, to: 'open', roles: ['launcher', ...CK] },
@@ -815,7 +815,7 @@ function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } 
 const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
-// reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (deliverables.mjs dlvMerged).
+// reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
 function archiveGuard(stateDir, lane, ev = {}) {
   // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];

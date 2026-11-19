@@ -4,7 +4,7 @@
 import { loadState, fold, readEvents, recordsFile } from './records.mjs';
 import fs from 'node:fs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
-import { dlvMerged } from './deliverables.mjs';
+import { dlvMerged } from './dlvmerge.mjs';
 
 // kind -> { prefix, default state, allowed states }
 export const AFTER_KINDS = {
@@ -89,7 +89,7 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
     if (c.kind === 'dlv') {
       const d = dlvs()[c.id];
       if (!d) return { met: false, gone: `${c.id} does not exist` };
-      return { met: d.state === 'superseded' || dlvMerged(d, { git }).merged, gone: null };   // DLV-MERGED-TRUTH: the one rule (deliverables.mjs)
+      return { met: d.state === 'superseded' || dlvMerged(d, { git }).merged, gone: null };   // DLV-MERGED-TRUTH: the one rule (dlvmerge.mjs)
     }
     const all = recs(), it = all[c.id];
     if (!it) return { met: false, gone: `${c.id} does not exist` };
