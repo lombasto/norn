@@ -69,6 +69,9 @@ and the project's `project.json` and regenerates the marked policy lines (`<!-- 
 ## API (GET, `?project=<name>`; overview / inbox / lanes / agents also take `all`)
 `/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents`, `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`,
 `/log?run=RUN-n` (last 200 lines of that run's log), `/api/feed?run=RUN-n` (SSE live feed of one run), `/api/stream` (SSE state stream: record appends, flag flips, heartbeat pulse, derived changes - the page re-renders from it).
+`/api/timing`: the server's own timings - requests slower than 1 s and event-loop stalls over 250 ms (with the requests that ran in
+the stall), the last 100 of each; also appended to `local/dash-timing.jsonl`. Every answer carries `Server-Timing` (`app` = ms in
+the server, `prime` = the snapshot read of a GET), shown in the browser's network panel.
 
 ## Look
 Norn (default; `engine/dash/norn/`: pixel kit, 9-slice panels, palette lock to `palette.hex`, integer art scale, state tokens and art behind one asset map `norn/assets.mjs`, drop-in folder `norn/art/`) or classic: the header Look button, `?look=classic`, remembered per browser.

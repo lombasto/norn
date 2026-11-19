@@ -254,3 +254,23 @@ test('roadmap endpoint: the derived tree from roadmap records; cached while noth
     assert.deepEqual([e.themes, e.counts.items], [[], 0], 'a project with no roadmap: an empty tree, not an error');
   } finally { await f.done(); }
 });
+
+// dash-latency: a run / lane / directive append (runs.jsonl, records.jsonl churn while workers run) never makes the Roadmap wait on
+// `norn road show` (3 s idle, 4-13 s with workers): the last tree at once, one rebuild behind it, the new tree on a later fetch
+test('roadmap endpoint: a non-roadmap record append serves the last tree at once and rebuilds behind it', async () => {
+  const f = await fixture();
+  try {
+    const S = f.pa.state;
+    record(S, { kind: 'item', ev: 'create', by: 'controller', data: { title: 'Core', kind: 'theme' } }, { views: false });
+    const a = (await f.get('/api/roadmap?project=kestrel')).data;
+    await new Promise(r => setTimeout(r, 5));   // a rebuild's `generated` is a later ms
+    record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen' } });
+    record(S, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'churn', via: 'chat' } });
+    const t0 = performance.now(), b = (await f.get('/api/roadmap?project=kestrel')).data, ms = performance.now() - t0;
+    assert.equal(b.generated, a.generated, 'the last tree, not a fresh build awaited');
+    assert.ok(ms < 500, `served from the cache in ${Math.round(ms)} ms`);
+    let c = b;
+    for (let i = 0; i < 300 && c.generated === a.generated; i++) { await new Promise(r => setTimeout(r, 100)); c = (await f.get('/api/roadmap?project=kestrel')).data; }
+    assert.notEqual(c.generated, a.generated, 'rebuilt behind the served tree');
+  } finally { await f.done(); }
+});

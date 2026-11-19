@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr } from '../lib/records.mjs';
+import { record, loadState, kindOfId, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -69,6 +69,8 @@ import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
+import { ClaimsError } from '../lib/claimsref.mjs';
+import { listClaims, allowPair, releaseWork } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
@@ -1369,6 +1371,7 @@ Plumbing:
   norn harness                     install the Norn tools into an agent CLI
   norn mcp                         the stdio MCP server
   norn node                        one federation pull-agent job
+  norn claim                       the multi-home work claims (list, allow a pair, release)
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
   norn hook                        the Claude Code session hook
   norn scope                       the PreToolUse hook: what a run may touch
@@ -1377,7 +1380,7 @@ function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
+    node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
@@ -1431,6 +1434,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'merge-land') return mergeLandCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
@@ -2615,7 +2619,46 @@ function nodeCmd(argv, env, out, err) {
   const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
   try { labels = parseLabels(f.labels); machine = loadMachine(mf, { meta: root }); } catch (e) { return usage(e.message); }
   return nodeRun({ machine, machineFile: mf, metaRoot: root, home: f.home, labels, out })
-    .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof FedError ? 2 : 1; });
+    .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof FedError || e instanceof ClaimsError ? 2 : 1; });
+}
+
+// ---------- RM-46 S2a: norn claim list | allow | release (the claims branch of the ledger remote; take over is S2b's) ----------
+const CLAIM_USAGE = "norn claim list [--project P] | allow <home>/<lane> <home>/<lane> --project P [--why W] | release <lane> --project P  [--machine F]    (work claims on the ledger remote's claims branch: list every entry, let two homes' claims overlap (owner), CAS-delete this home's own claim with its allow files; the home id is the project's home.json)";
+function claimCmd(argv, env, out, err) {
+  const [sub, ...rest] = argv, f = {}, pos = [];
+  const usage = msg => { err('error: ' + msg); err('usage: ' + CLAIM_USAGE); return 2; };
+  if (!['list', 'allow', 'release'].includes(sub)) return usage(sub ? `unknown claim subcommand ${sub}` : 'missing subcommand');
+  for (let i = 0; i < rest.length; i++) {
+    const k = { '--project': 'project', '--why': 'why', '--machine': 'machine' }[rest[i]];
+    if (!k) { if (rest[i].startsWith('--')) return usage(`unexpected ${rest[i]}`); pos.push(rest[i]); continue; }
+    if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
+    f[k] = rest[++i];
+  }
+  if (pos.length !== { list: 0, allow: 2, release: 1 }[sub]) return usage(`claim ${sub}: wrong number of arguments`);
+  if (sub !== 'list' && !f.project) return usage(`claim ${sub} needs --project`);
+  try {
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf }), fe = fedOf(cfg);
+    if (!fe) { err('error: claims need the ledger with a remote (machine.json ledger.remote)'); return 1; }
+    if (sub === 'list') {
+      const rows = Object.entries(listClaims(fe)).filter(([k]) => !f.project || k.split('/').includes(f.project)).sort(([a], [b]) => a.localeCompare(b));
+      for (const [k, c] of rows) out(c?.kind === 'work' ? `${k}  n=${c.n} run=${c.run ?? '-'} renewed ${c.renewed_at}  items ${(c.items || []).join(',') || '-'}  scope ${(c.scope || []).join(' ')}` : k);
+      if (!rows.length) out('no claims');
+      return 0;
+    }
+    if (sub === 'allow') {
+      const r = allowPair(fe, { project: f.project, a: pos[0], b: pos[1], why: f.why || '' });
+      out(r.exists ? `already allowed: ${r.key}` : `allowed: ${r.key}`);
+      return 0;
+    }
+    const home = homeOf(path.join(cfg.state_root, f.project))?.id;
+    if (!home) { err(`error: project ${f.project} is not synced (no home.json in its state dir)`); return 1; }
+    const r = releaseWork(fe, { project: f.project, home, lane: pos[0] });
+    if (r.gone) { out(`no claim ${r.key}`); return 0; }
+    if (r.busy) { err('error: ' + r.why); return 1; }
+    out(`released: ${r.removed.join(' ')}`);
+    return 0;
+  } catch (e) { if (e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------

@@ -33,7 +33,7 @@ const ROUTES = ['/', '/ui.mjs', '/norn/assets.json', '/api/projects', '/api/over
   '/api/map?project=kestrel', '/api/deliverables?project=kestrel', '/api/records?project=kestrel', '/api/roadmap?project=kestrel',
   '/api/usage', '/api/plan', '/api/docs?project=kestrel', '/api/instructions?project=kestrel', '/api/guard?project=kestrel',
   '/api/tests?project=kestrel', '/api/ledger?project=kestrel', '/api/settings?project=kestrel', '/api/sessions',
-  '/api/home?project=kestrel', '/api/adopt?project=kestrel', '/api/adopt/repos'];
+  '/api/home?project=kestrel', '/api/adopt?project=kestrel', '/api/adopt/repos', '/api/timing'];
 
 test('no warmed GET route makes a sync fs call', async () => {
   const f = await fixture();

@@ -503,12 +503,12 @@ $('#look').onclick = () => setLook(look() === 'norn' ? 'classic' : 'norn');
 theme(theme0);
 $('#theme').onclick = () => { theme(modes[(modes.indexOf($('#theme').textContent.slice(7)) + 1) % 3]); if (NM) render(); };
 
-async function header() {
+async function header(g = get) {
   if (!S.project) {   // META-ADOPT A3: zero projects - the page is Add a project; nothing to pause or check in
     S.needs = 0; S.usage = null; document.title = pageTitle(0, 'no project yet', look());
     $('#status').textContent = 'no project yet'; $('#pause').disabled = $('#tick').disabled = true; return null;
   }
-  const ov = await get(`/api/overview?project=${encodeURIComponent(S.project)}`);
+  const ov = await g(`/api/overview?project=${encodeURIComponent(S.project)}`);
   S.needs = needsCount(ov); S.usage = ov.burn?.usage ?? null; S.paused = ov.paused; S.at = Date.now();
   document.title = pageTitle(S.needs, S.project, look());
   $('#status').innerHTML = `status ${fmtTime(ov.now)} · check-ins <b>${ov.paused ? 'paused' : 'on'}</b>${ov.checkin_locked ? ' · tick running' : ''} · ${S.live ? 'live' : 'reconnecting ...'}${REMOTE ? ` · remote: ${esc(REMOTE.name)}` : ''}`;
@@ -589,14 +589,23 @@ addEventListener('popstate', () => {
 async function render(force = false, why = []) {
   try {
     if (threadOnly(why, S.tab) && $('#thread')) { await paintThread(); return; }   // META-HOME-POLISH R1: a chat line repaints the thread only
-    step('render:header'); await header(); guardHeader();
+    // dash-latency: the header and the tab load at once (they were a waterfall: the header's /api/overview, then the tab's), and one
+    // render fetches a URL once (the Overview, Runs, Work and Health tabs read the header's /api/overview); a render a newer one
+    // overtook (a click while a slow fetch was out) never paints
+    const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
+    const tab = S.project ? S.tab : 'adopt';
+    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
+    want.catch(() => {});   // a header failure is reported first; the tab's own failure is awaited below
+    step('render:header'); await header(g); guardHeader();
+    if (seq !== S.renderSeq) return;
     document.body.dataset.tab = S.tab; $('#bbar').innerHTML = S.project ? renderBottomBar(S.tab, { inbox: S.needs }) : '';
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
     paintNav();
     if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => $('#tabs').querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
-    if (!S.project) S.tab = 'adopt';
-    step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });
+    S.tab = tab;
+    step('render:loadTab ' + S.tab); const d = await want;
+    if (seq !== S.renderSeq) return;
     // Settings: a stream re-render never wipes edits, search or scroll - re-render only on a new version (and never over unsaved edits)
     if (S.tab === 'settings' && !force && $('#main .settings')) {
       if (d.version === S.setVersion) { err(''); return; }
