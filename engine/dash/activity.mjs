@@ -221,13 +221,3 @@ export function activityView(s, o = {}) {
 
 /** Events -> the view in one call (a replay; the tests). */
 export const activityOf = (events, o) => activityView((events || []).reduce(activityAdd, activityInit()), o);
-
-/** Old -> new as diff lines (common head / tail lines kept as up to 2 context lines): [' ' | '-' | '+' + line]. */
-export function lineDiff(a, b) {
-  const x = String(a ?? '').split('\n'), y = String(b ?? '').split('\n');
-  if (!a) return y.map(l => '+' + l);
-  let i = 0; while (i < x.length && i < y.length && x[i] === y[i]) i++;
-  let j = 0; while (j < x.length - i && j < y.length - i && x[x.length - 1 - j] === y[y.length - 1 - j]) j++;
-  return [...x.slice(Math.max(0, i - 2), i).map(l => ' ' + l), ...x.slice(i, x.length - j).map(l => '-' + l), ...y.slice(i, y.length - j).map(l => '+' + l),
-    ...x.slice(x.length - j, x.length - j + 2).map(l => ' ' + l)];
-}
