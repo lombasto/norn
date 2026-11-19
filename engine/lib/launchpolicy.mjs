@@ -21,10 +21,30 @@ export const PROFILE_DEFAULTS = {
   lean: { mcp: 'norn', user_setup: false, dynamic_prompt: false, disallowed_tools: LEAN_DROP_TOOLS },
 };
 export const PROFILE_ROLES = ['worker', 'merge', 'checkin', 'chat'];
-/** the launch profile of a role under a project's policy: { name, ...switches } ("full" = today's launch) */
+// proc-hygiene (4, census 2026-11-19: 8 ansys-mechanical-mcp + ~32 python + agentmemory for 6 workers that never use them): a worker
+// or merge loads no MCP server of the owner's own setup unless the project or lane names it (mcpServersOf). A profile that sets mcp
+// itself ('all' included) wins; a check-in or the chat keeps the profile's default.
+const STRICT_MCP_ROLES = ['worker', 'merge'];
+/** the launch profile of a role under a project's policy: { name, ...switches } ("full" = today's launch, strict MCP for workers) */
 export function profileOf(policy, role) {
   const L = policy?.launch || {}, name = L.roles?.[role] ?? L.default ?? 'full';
-  return { name, ...(PROFILE_DEFAULTS[name] || {}), ...(L.profiles?.[name] || {}) };
+  return { name, ...(STRICT_MCP_ROLES.includes(role) ? { mcp: 'none' } : {}), ...(PROFILE_DEFAULTS[name] || {}), ...(L.profiles?.[name] || {}) };
+}
+const laneGlob = g => new RegExp('^' + String(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+/** the MCP servers a lane's run may load, by name: policy.launch.mcp_servers (every lane) + launch.lane_mcp_servers { <lane glob>: [names] } */
+export function mcpServersOf(policy, lane) {
+  const L = policy?.launch || {};
+  const byLane = Object.entries(L.lane_mcp_servers || {}).filter(([g]) => lane != null && laneGlob(g).test(String(lane))).flatMap(([, v]) => v);
+  return [...new Set([...(L.mcp_servers || []), ...byLane].map(String))];
+}
+/** each named server's definition from the owner's Claude config (<config dir>/.claude.json or the one beside it, then the worktree's
+ *  .mcp.json) -> { found: { name: def }, missing: [names] } */
+export function mcpDefs(names, { claudeDir, worktree } = {}) {
+  const read = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8'))?.mcpServers || {}; } catch { return {}; } };
+  const pools = [claudeDir && path.join(claudeDir, '.claude.json'), claudeDir && path.join(path.dirname(claudeDir), '.claude.json'), worktree && path.join(worktree, '.mcp.json')].filter(Boolean).map(read);
+  const found = {}, missing = [];
+  for (const n of names) { const d = pools.find(p => p[n])?.[n]; if (d) found[n] = d; else missing.push(n); }
+  return { found, missing };
 }
 // META-PRACTICE-P1 (Q1 = yes, DIR-49): the auto-memory folder per role, a launch key apart from the profile (the profile stays
 // byte-same). Default per REPORT sec. 5.5: workers + merges off (their rules live in versioned files; Claude Code does the same for its
@@ -96,8 +116,11 @@ export function launchParts({ project, budget = {}, executor, lane, explicit = {
   const prov = isTyped(xc) ? xc : undefined;
   if (prov) DEF.push(prov.model, prov.effort || 'medium');
   const role = roleOfSpec({ lane }), agent = explicit.agent || xc.agent, memory = memoryOf(project?.policy, role);
+  let profile = profileOf(project?.policy, role);
+  const names = profile.mcp === 'all' ? [] : mcpServersOf(project?.policy, lane);   // proc-hygiene (4): the named servers ride strict
+  if (names.length) { const { found, missing } = mcpDefs(names, { claudeDir, worktree }); profile = { ...profile, mcp_servers: found, ...(missing.length ? { mcp_missing: missing } : {}) }; }
   return {
-    profile: inlineAgent(profileOf(project?.policy, role), agent, { claudeDir, worktree }),   // META-STANDING-CONTEXT R1: policy.launch (full = today's launch)
+    profile: inlineAgent(profile, agent, { claudeDir, worktree }),   // META-STANDING-CONTEXT R1: policy.launch (full = today's launch)
     memory, env: memoryEnv(xc.env, memory),   // META-PRACTICE-P1: auto memory per role
     agent, model: explicit.model || xc.model || DEF[0], effort: explicit.effort || xc.effort || DEF[1], cls: explicit.class,
     workPolicy: { executors: pol.executors, critical_lanes: pol.critical_lanes }, provider: prov,
