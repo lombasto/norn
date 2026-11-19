@@ -27,6 +27,7 @@ import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
+import { laneDriver, laneBriefFiles } from '../lib/purpose.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
@@ -395,8 +396,17 @@ export function createDashboard(o) {
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
   const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
+  // RM-34: each Lanes row's driver (purpose.mjs: the objective + where it is written); the briefs it reads are primed by primeBriefs
+  const briefsDirOf = p => path.resolve(p.briefs_dir || path.join(p.state, 'briefs'));
+  const briefHead = f => (readText(f) ?? '').split(/\r?\n/).find(l => /^#/.test(l)) ?? null;
+  const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items;
+    return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(l.id.slice(2), items, briefsDirOf(p))) }); }));
+  function withDriver(p, rows) {
+    const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name };
+    return rows.map(l => ({ ...l, driver: laneDriver(l.name, o) }));
+  }
   function lanesWithSpend(ps) {
-    const rows = sortLanes(ps.flatMap(p => lanes(p, true)));   // RM-19 S1: every row, one order across projects; the page filters
+    const rows = sortLanes(ps.flatMap(p => withDriver(p, lanes(p, true))));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
@@ -687,6 +697,13 @@ export function createDashboard(o) {
   // one file - a scan row (its paragraphs with ages + its findings and rule advisories) or a project doc (its paragraphs, findings by
   // path). A project doc the scan also lists opens as that scan file.
   const fwdLow = s => String(s ?? '').replace(/\\/g, '/').toLowerCase();
+  // RM-34: two more Docs keys (purpose.mjs writes them): brief:<file> = a file of the project's briefs_dir, doc:<path> = a file under the
+  // project root (a roadmap item's doc: link). Anything that leaves those folders is no key (null: the plain lookup then 404s).
+  function docKeyPath(p, key) {
+    const b = String(key).match(/^brief:([^\\/]+)$/), d = String(key).match(/^doc:(.+)$/);
+    const inside = (dir, f) => { const r = path.relative(dir, f); return !!r && !r.startsWith('..') && !path.isAbsolute(r) ? f : null; };
+    return b ? inside(briefsDirOf(p), path.join(briefsDirOf(p), b[1])) : d && p.root ? inside(path.resolve(p.root), path.resolve(p.root, d[1])) : null;
+  }
   function docsAt(p, url) {
     const c = insCache(p), name = url.searchParams.get('part'), lim = Number(url.searchParams.get('limit'));
     if (name === null) return { project: p.name, ...docsListOf({ v: c.v, docs: docsList(p), limit: Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP }),
@@ -708,6 +725,9 @@ export function createDashboard(o) {
   }
   function docFile(p, c, key) {
     if (key.startsWith('path:')) return pathDoc(p, key);
+    const kp = docKeyPath(p, key);   // RM-34: a lane's brief / its item's doc (the Lanes page's source links)
+    if (kp) { const text = readText(kp), at = fwdLow(kp); if (text === null) throw fail(404, 'No such file');
+      return { key, name: path.basename(kp), path: kp, text, lines: text.split(/\r?\n/).length, paras: paragraphs(text, null), findings: (c.v?.findings || []).filter(x => fwdLow(x.path) === at) }; }
     const m = key.match(/^doc-(\d+)$/), d = m ? docsList(p)[Number(m[1])] : null;
     if (m && !d?.exists) throw fail(404, 'No such doc');
     const row = (c.v?.rows || []).find(r => r.exists && (d ? fwdLow(r.path) === fwdLow(d.path) : r.id === key));
@@ -1493,7 +1513,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
         if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
-        if (route === '/api/lanes') return send(200, { lanes: lanesWithSpend(pick(url, { all: true })) });
+        if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); return send(200, { lanes: lanesWithSpend(ps) }); }
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
@@ -1504,7 +1524,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));
         if (route === '/api/usage') return send(200, usageView(pick(url, { all: true }), url));
         if (route === '/api/plan') return send(200, { parts: pick(url, { all: true }).map(planOf) });
-        if (route === '/api/docs') return send(200, docsAt(one(url), url));   // META-UX-BUILD S3
+        if (route === '/api/docs') { const p = one(url), kp = docKeyPath(p, url.searchParams.get('file') ?? ''); if (kp) await prime({ files: [kp] }); return send(200, docsAt(p, url)); }   // META-UX-BUILD S3
         if (route === '/api/instructions') return send(200, insOf(one(url), url));
         if (route === '/api/guard') return send(200, await guardAt(one(url), url));   // META-TEND P6
         if (route === '/api/tests') { const p = one(url); await prime({ files: testsFiles(p.state) }); return send(200, { project: p.name, ...testsView(p.state, await suiteOf(p)) }); }   // META-TEND TESTS

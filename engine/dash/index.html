@@ -152,16 +152,17 @@ tr:last-child td{border-bottom:0}
 .q{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
 .q.openq{box-shadow:inset 3px 0 0 var(--accent)}
 .tree{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 0}
-.node{display:grid;grid-template-columns:minmax(300px,1.6fr) 230px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
+.node{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) 230px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
 .node.head{border-top:0;color:var(--mute);font-size:12px;font-weight:600}
 .node .name{display:flex;gap:6px;align-items:center;min-width:0}
-.node .name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node .lanecol{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .node .name .dod{flex-shrink:0;white-space:nowrap}@media (max-width:700px){.node .name:has(.dod){flex-wrap:wrap;row-gap:2px}}.dodev{margin-top:2px}
 .lvl1{padding-left:34px}.lvl2{padding-left:58px}
 .caret{width:14px;color:var(--mute);cursor:pointer;user-select:none}
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 12px}
 .filters{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
 input[type=search]{background:var(--panel);width:260px}
+.lane-why{margin-top:3px;font-size:12.5px;max-width:46ch}.lane-why summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;list-style:none}.lane-why summary::-webkit-details-marker{display:none}.lane-why[open] summary{white-space:normal}.lane-why ul{margin:4px 0 0;padding-left:16px;font-weight:400}.lane-srcs{display:flex;flex-wrap:wrap;gap:2px 8px;max-width:46ch}.lane-src{font-size:12px}button.lnk.lane-src{background:none;border:0;padding:0;color:var(--accent);cursor:pointer}@media (max-width:700px){.lane-why,.lane-srcs{max-width:62vw}}
 tr.old{opacity:.55}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}.lane-show{display:flex;gap:6px;flex-wrap:wrap}
 .lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
 .rowacts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
@@ -328,7 +329,7 @@ svg.map .dlv.due rect{stroke:var(--accent);stroke-width:2}
 .pl-step{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}.pl-sep{margin:0 2px}.pl-meta{flex-basis:100%;margin-top:4px}
 .pl-empty{padding:10px 14px;margin:0}.pl-fc{padding:10px 14px}.pl-fc .kv>span>.bar{display:inline-block;width:160px;vertical-align:middle;margin-right:6px}
 @media (max-width:700px){.pl-row{grid-template-columns:32px 1fr auto}.pl-est,.pl-start{grid-column:2}.pl-holds{grid-column:2 / -1}.pl-step{white-space:normal}}
-@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}.node{grid-template-columns:1fr 64px 120px}.node>:nth-child(2),.node>:nth-child(4),.node>:nth-child(5),.node>:nth-child(7){display:none}}
+@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}.node{grid-template-columns:1fr 64px 120px}.node>:nth-child(3),.node>:nth-child(5),.node>:nth-child(6),.node>:nth-child(8){display:none}.node>.lanecol{grid-column:1/-1;order:1;padding-left:28px}.node.head>.lanecol{display:none}.node>.lanecol:empty{display:none}.node>.horow{order:2}}
 /* phone width (PHONE-HEADER, both looks): the header wraps and the project select shrinks; the tab bar and wide tables scroll inside
    themselves, setting rows stack - the page itself never scrolls sideways */
 @media (max-width:700px){header{flex-wrap:wrap;gap:8px;padding:8px 10px}header select{min-width:0;max-width:100%}nav{overflow-x:auto;padding:0 8px}nav>button{flex:none}
