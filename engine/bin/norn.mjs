@@ -1382,12 +1382,8 @@ Plumbing:
   norn harness                     install the Norn tools into an agent CLI
   norn mcp                         the stdio MCP server
   norn node                        one federation pull-agent job
-<<<<<<< HEAD
   norn claim                       the multi-home work claims (list, allow a pair, release, take over a stale one)
-=======
-  norn claim                       the multi-home work claims (list, allow a pair, release)
   norn sync                        the multi-home sync (status, publish home/<id>, fetch the other homes' copies)
->>>>>>> 64db2f39 (feat(sync): norn sync status|publish|fetch; publish at the tick ledger step and the run end (RM-46 S1c))
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
   norn hook                        the Claude Code session hook
   norn scope                       the PreToolUse hook: what a run may touch
@@ -1395,13 +1391,8 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-<<<<<<< HEAD
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
-=======
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
->>>>>>> 64db2f39 (feat(sync): norn sync status|publish|fetch; publish at the tick ledger step and the run end (RM-46 S1c))
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
