@@ -386,6 +386,14 @@ function capFull(o, staleMs, extra = []) {   // extra: run data that would start
   return null;
 }
 function capCheck(o, staleMs) { const full = capFull(o, staleMs); if (full) throw new RunRefused(full, 4); }
+// fair-slots item 8: a direct start obeys its project's ceiling and the reserves of the projects with queued work (exit 4); the
+// waited-longest order is the fill's (a direct start already queues behind same-or-higher priority runs: queuedAhead)
+function shareCheck(o, staleMs) {
+  if (o.kind === 'checkin' || o.role === 'helper' || !(infoOf(o)?.caps || []).includes('max_claude_workers')) return;
+  const me = path.basename(path.resolve(o.state));
+  const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me), waiting: slotWaiters(o.state, { resources: o.resources || sampleResources }), mine: -Infinity });
+  if (sv) throw new RunRefused(sv, 4);
+}
 
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
 const stamp = () => new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
@@ -496,6 +504,27 @@ export function busyDoor(o) {
   noteRefusal(o.state, why, { guard: 'busy', lane: o.lane ?? null, stage: o.stage ?? null });
   throw new RunRefused(why, BUSY_EXIT);
 }
+// fair-slots item 4 (11-19 14:53Z: norn run --queue --priority P1 started RUN-251 at once while the older P1 runs RUN-244 / RUN-247 stayed
+// queued, held for CPU > fill.max_cpu_pct): a run that would start now first reads every project's queue (their dry walks, fair: false).
+// A queued run on a cap it uses, of the same or a higher priority, that is ready or waits only for capacity (a cap, resources) goes
+// first: the new run joins the queue in fill order (--queue) or is refused like a full cap (exit 4). Returns those runs, oldest first.
+export function queuedAhead(o) {
+  const caps = infoOf(o)?.caps || [], mine = PRIORITIES.indexOf(PRIORITIES.includes(o.priority) ? o.priority : DEFAULT_PRIORITY);
+  if (!caps.length || o.kind === 'checkin' || o.role === 'helper') return [];
+  const states = projectStates(o.state).filter(s => runsOf(s).some(r => r.kind === 'run' && r.state === 'queued'));
+  const out = [];
+  for (const s of states) {
+    let rows;
+    try { rows = walkQueue(s, { act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
+    for (const r of rows) {
+      const rc = EXECUTORS[r.executor]?.caps ?? [];
+      if (!rc.some(k => caps.includes(k)) || PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
+      if (r.ready || (r.terms.length && r.terms.every(x => CAPACITY_TERM.test(x)))) out.push({ id: r.id, project: path.basename(s), priority: r.priority ?? DEFAULT_PRIORITY, position: r.position });
+    }
+  }
+  return out;
+}
+const aheadWords = a => `${a.length} queued run(s) of the same or a higher priority go first: ${a.slice(0, 3).map(x => `${x.project} ${x.id} ${x.priority} #${x.position}`).join(', ')}${a.length > 3 ? ', ...' : ''}`;
 // the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
 const noCaller = ({ caller: _c, ...o }) => o;
 export function startRun(o) {
@@ -519,6 +548,7 @@ export function startRun(o) {
     if (mh) return { ...queueRun(rest), queued: true, why: heldWords(mh) };
     const sf = slotsFull(rest, rest.staleMs ?? STALE_MS);   // GAP-6: every merge slot of the repo taken: it waits queued
     if (sf) return { ...queueRun(rest), queued: true, why: sf };
+    { const a = queuedAhead(rest); if (a.length) return { ...queueRun(rest), queued: true, why: aheadWords(a) }; }   // fair-slots item 4
     // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
     const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
     if (refused) return { ...queueRun(rest), queued: true, why: refused };
@@ -527,6 +557,7 @@ export function startRun(o) {
   // META-LIMIT-GATE: an executor out of quota dies in seconds (RUN-562) - refused like a full cap (exit 4), naming its reset and an open
   // executor; a queued run was gated by the fill's walk (its clock), so a fill start is not checked twice
   if (!o.fromQueue) { const lr = limitRefusal(o.state, o, { now: o.now }); if (lr) throw new RunRefused(lr, 4); }
+  if (!o.fromQueue && !o.claim_of) { const a = queuedAhead(o); if (a.length) throw new RunRefused(`${aheadWords(a)} (norn run --queue joins the queue)`, 4); }   // fair-slots item 4
   if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {   // META-AUTH: while the login is down a launch dies in 0.1 s - it waits queued
     const a = authGate(o);
     if (a) return { ...queueRun(o), queued: true, why: a };
@@ -542,6 +573,7 @@ export function startRun(o) {
   try {
     if (isMergeWtSpec(o) && o.lock !== false) lock = handleOf([...lock.hs, acquireSlot(o, { run: 'pending', staleMs })]);   // GAP-6: one merge slot of the repo
     capCheck(o, staleMs);
+    if (!o.fromQueue) shareCheck(o, staleMs);
     if (isMergeWtSpec(o)) prepareMergeWt(o);   // GAP-6: its own merge worktree (kept on a resume), the leftovers swept
     const base = path.join(o.state, 'logs', `${o.lane}-${stamp()}-${crypto.randomBytes(3).toString('hex')}`);
     const log = base + '.log', final = base + (info.harness === 'codex' ? '.md' : '.json');
@@ -726,6 +758,22 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
     if (!flagged()) return started;
   }
 }
+/**
+ * fair-slots item 1: fill every project's queue on this machine, not only `state`'s - the worker caps are machine-wide, so a slot one
+ * project's run frees belongs to whichever project the walk's share rule picks (slotVerdict). Each project fills under its own queue
+ * lock; another project's fill error is logged in the result (never the caller's). Returns fillQueue's rows + project.
+ */
+export function fillAll(state, o = {}) {
+  const here = path.resolve(state), out = [];
+  for (const s of projectStates(state)) {
+    const project = path.basename(s);
+    if (s === here) { out.push(...fillQueue(s, o).map(f => ({ ...f, project }))); continue; }
+    try { out.push(...fillQueue(s, o).map(f => ({ ...f, project }))); } catch (e) { out.push({ project, error: e.message }); }
+  }
+  return out;
+}
+/** one line per fillAll row (the CLI, the tick, the supervisor log) */
+export const fillWords = (f, own) => (f.error ? `queue ${f.project}: fill failed: ${f.error}` : `queue: ${f.project && f.project !== own ? f.project + ' ' : ''}${f.queued} -> STARTED ${f.next}`);
 // META-QUEUE-SPEC R1: a queued run launches with the policy of NOW (launchpolicy.mjs); the start record names what was resolved (at_fill).
 // A project.json that no longer loads keeps the run queued (refused, exit 3), never a launch on the old spec.
 function atFill(spec) {
@@ -838,10 +886,40 @@ const resourceGate = (spec, sample) => { if (!spec.policy?.fill) return null; co
 /** readiness(state, { now }) -> the dry walk's rows in fill order: { id, name, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
 export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null });
 
-function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth } = {}) {
+// fair-slots items 1 + 8: the Claude pool is machine-wide, so a slot one project frees is offered to every project (fillAll), and before
+// a queued run takes one the walk asks share.mjs slotVerdict: the project's ceiling, the reserves of the projects that wait, then the
+// project that has waited longest. The other projects' waiting runs come from their own dry walks (fair: false, no recursion): a row
+// that is ready or waits only for capacity (cap, resources) is waiting for a slot.
+const CAPACITY_TERM = /^(cap[: ]|resources: )/;
+const lastStart = runs => Math.max(0, ...runs.filter(r => r.kind === 'run' && r.history?.[0]?.ev === 'start' && onClaudeCap(r.data)).map(r => Date.parse(r.created) || 0));
+const slotWaiting = r => r.account && (r.ready || (r.terms.length > 0 && r.terms.every(x => CAPACITY_TERM.test(x))));
+/** { project: { n, since } } of the projects beside `state` that have queued Claude runs waiting only for a slot */
+export function slotWaiters(state, o = {}) {
+  const out = {}, here = path.resolve(state);
+  for (const s of projectStates(state)) {
+    if (s === here) continue;
+    let rows;
+    try { rows = walkQueue(s, { ...o, act: null, fair: false }); } catch { continue; }
+    const runs = runsOf(s), at = new Map(runs.map(r => [r.id, Date.parse(r.created) || 0])), w = rows.filter(slotWaiting);
+    if (w.length) out[path.basename(s)] = { n: w.length, since: Math.max(Math.min(...w.map(r => at.get(r.id) ?? 0)), lastStart(runs)) };
+  }
+  return out;
+}
+const claudeLive = (state, staleMs, pending, me) => {
+  const live = {};
+  for (const r of liveRuns(state, { staleMs })) if (onClaudeCap(r.data)) { const p = path.basename(r.state_dir); live[p] = (live[p] ?? 0) + 1; }
+  for (const d of pending) if (onClaudeCap(d)) live[me] = (live[me] ?? 0) + 1;
+  return live;
+};
+function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
-  let E = null, R, L;
+  let E = null, R, L, W = null, mine = Infinity, last = null;
   const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
+  const me = path.basename(path.resolve(state));
+  const shareGate = (spec, q, staleMs) => {   // null = this row may take a Claude slot
+    mine = Math.min(mine, Math.max(Date.parse(q.queued) || 0, (last ??= lastStart(runsOf(state)))));
+    return slotVerdict({ budget: spec.budget, project: me, live: claudeLive(state, staleMs, pending, me), waiting: fair ? (W ??= slotWaiters(state, { now, resources: res, authProbe })) : {}, mine });
+  };
   for (const q of queueOf(runsOf(state))) {
     const row = { id: q.id, name: q.name, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
     rows.push(row);
@@ -881,6 +959,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     if (row.terms.length) continue;   // the terms above wait without holding a cap for younger runs
     const full = capFull(spec, staleMs, pending);
     if (full) { row.terms.push(`cap: ${full}`); for (const k of caps) blocked.set(k, q.id); continue; }
+    { const sv = caps.includes('max_claude_workers') && spec.kind !== 'checkin' ? shareGate(spec, q, staleMs) : null; if (sv) { row.terms.push(sv); for (const k of caps) blocked.set(k, q.id); continue; } }
     const rr = resourceGate(spec, res);   // piece 5: machine pressure is global, so it holds no cap for later rows
     if (rr) { row.terms.push(rr); continue; }
     // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)

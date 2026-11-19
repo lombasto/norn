@@ -13,7 +13,7 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
+import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillAll, fillWords, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
@@ -231,7 +231,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
       try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
       for (const lf of lockFiles) releaseLock(lf, run);
       dropMergeWt(outcome);
-      try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
+      try { for (const f of fillAll(state)) logLine(fillWords(f, path.basename(state))); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
     }
     await holdGone(job); process.exit(0);
   }
@@ -257,7 +257,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   else if (outcome === 'done' || data.dod?.ok === false) resumed = fixEnd(slopOpen, data.dod);
   if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
   if (!resumed) dropMergeWt(outcome);
-  try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
+  try { for (const f of fillAll(state)) logLine(fillWords(f, path.basename(state))); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
   if (!resumed && spec.tick && spec.policy?.trigger_on_exit !== false) {
     // CI-RED-319CAF8: born inside this run's job, the tick died with this exit whenever the supervisor had spawned a console child
     // before holdJob (the jobguard compile in a fresh TEMP - every ci-suite file's first run): it breaks away like a queue-filled run
