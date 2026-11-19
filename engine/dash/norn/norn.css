@@ -79,7 +79,7 @@
 :root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
 :root.norn .fxfile.fxoff .fxdiff, :root.norn .fxmisfit+.fxdiff { opacity: 1; color: var(--dim); }
 :root.norn tr.old { opacity: 1; color: var(--dim); }
-:root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now { border-radius: 0; }
+:root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now, :root.norn .fa-now { border-radius: 0; }
 
 /* the woven rule under section headings */
 :root.norn .card h2 { padding-bottom: calc(4 * var(--px)); background: var(--rule) repeat-x left bottom / calc(96 * var(--px)) calc(3 * var(--px)); }

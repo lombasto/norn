@@ -5,6 +5,11 @@
 //                            supervisor ended or died) and exit: the handle closes, and while KILL_ON_JOB_CLOSE is still set the job
 //                            kills everything in it. The process wait: the hold ends with its supervisor however the pipe behaves
 //                            (a hold seen alive after its supervisor = ci-suite LEAK RED, CI 44141688462 / 43996467416).
+//                            CI 44343850063 (queue, a stop right after the start): the supervisor died while its hold started.
+//                            Then stdin EOF and the process exit come at once, and two threads in Environment.Exit can hang the
+//                            CLR shutdown; and the pid may already name another process (Windows reuses pids). So the hold ends
+//                            by TerminateProcess on itself (no CLR shutdown, safe from both threads), and refuses ("err") a <pid>
+//                            that has exited or was created after the hold itself (not its supervisor: a reused pid).
 //   reap <name> <keep-pid>   kill every process of the job but <keep-pid>, then clear KILL_ON_JOB_CLOSE (what the supervisor starts
 //                            after its end - tick, auto-resume - lives on); prints "reaped <n> <pid,pid>".
 //   spawn <cwd> <cmdline>    start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
@@ -31,9 +36,11 @@ static class JobGuard {
   [DllImport("kernel32", SetLastError = true)] static extern bool TerminateProcess(IntPtr p, uint code);
   [DllImport("kernel32", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
   [DllImport("kernel32", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+  [DllImport("kernel32", SetLastError = true)] static extern bool GetProcessTimes(IntPtr p, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inh, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PI pi);
   const uint KILL_ON_CLOSE = 0x2000, BREAKAWAY_OK = 0x800;
-  const int EXTENDED = 9, PID_LIST = 3, JOB_ALL = 0x1F001F, SET_QUOTA = 0x0100, TERMINATE = 0x0001, SYNCHRONIZE = 0x00100000;
+  const int EXTENDED = 9, PID_LIST = 3, JOB_ALL = 0x1F001F, SET_QUOTA = 0x0100, TERMINATE = 0x0001, SYNCHRONIZE = 0x00100000, QUERY_LIMITED = 0x1000;
 
   static void Limits(IntPtr job, uint flags) {
     var e = new EXT(); e.Basic.LimitFlags = flags;
@@ -54,15 +61,23 @@ static class JobGuard {
     IntPtr job = CreateJobObject(IntPtr.Zero, name);
     if (job == IntPtr.Zero) throw new Win32Exception();
     Limits(job, KILL_ON_CLOSE | BREAKAWAY_OK);
-    IntPtr p = OpenProcess(SET_QUOTA | TERMINATE | SYNCHRONIZE, false, pid);
-    if (p == IntPtr.Zero || !AssignProcessToJobObject(job, p)) throw new Win32Exception();
+    IntPtr p = OpenProcess(SET_QUOTA | TERMINATE | SYNCHRONIZE | QUERY_LIMITED, false, pid);
+    if (p == IntPtr.Zero) throw new Win32Exception();
+    long born, self, x, k, u;
+    if (!GetProcessTimes(p, out born, out x, out k, out u) || !GetProcessTimes(GetCurrentProcess(), out self, out x, out k, out u)) throw new Win32Exception();
+    if (born > self) throw new Exception("pid " + pid + " was created after this hold: not its supervisor (a reused pid)");
+    if (WaitForSingleObject(p, 0) == 0) throw new Exception("pid " + pid + " has exited");
+    if (!AssignProcessToJobObject(job, p)) throw new Win32Exception();
     Console.Out.WriteLine("ok"); Console.Out.Flush();
-    var reader = new System.Threading.Thread(() => { while (Console.In.ReadLine() != null) { } Environment.Exit(0); });
+    var reader = new System.Threading.Thread(() => { while (Console.In.ReadLine() != null) { } End(); });
     reader.IsBackground = true; reader.Start();
     WaitForSingleObject(p, 0xFFFFFFFF);   // the held process exited
-    Environment.Exit(0);   // EOF or the held process gone: the handles close with this process (Exit: the reader thread may sit in a read)
+    End();
     return 0;
   }
+  // EOF or the held process gone: the kernel closes the job handle with this process. No Environment.Exit: two threads in it at once
+  // (EOF and the exit together, a supervisor that died) can hang the CLR shutdown, and the reader thread may sit in a read.
+  static void End() { TerminateProcess(GetCurrentProcess(), 0); }
 
   static int Reap(string name, int keep) {
     IntPtr job = OpenJobObject(JOB_ALL, false, name);

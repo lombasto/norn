@@ -13,6 +13,7 @@ import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
+import { lineDiff, fmtDur } from './activity.mjs';
 export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'],
   ['work', 'Work'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['map', 'Map'], ['plan', 'Plan'], ['roadmap', 'Roadmap'],
   ['health', 'Health'], ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'],
@@ -860,9 +861,42 @@ export function renderFeedHead(h, now = Date.now()) {
 }
 const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };
 const FEED_KINDS = ['tool', 'text', 'step', 'marker', 'error'];
+// RM-36: an Edit / Write line opens to its diff (old -> new; a Write: its content as added lines)
+const editDiff = i => (i && (typeof i.new_string === 'string' || typeof i.content === 'string')
+  ? fxDiff(lineDiff(i.old_string ?? '', i.new_string ?? i.content ?? '').join('\n')) : '');
 export function renderFeedEvent(e) {
-  const k = FEED_KINDS.includes(e.kind) ? e.kind : 'text';
-  return `<div class="fl k-${k}"${k === 'tool' && e.id ? ` data-tid="${esc(e.id)}"` : ''}><span class="ts">${hms(e.ts)}</span><span class="fk">${esc(k === 'tool' ? e.name ?? 'tool' : k)}</span><span class="fs">${esc(e.summary)}</span><span class="dur"></span></div>`;
+  const k = FEED_KINDS.includes(e.kind) ? e.kind : 'text', diff = k === 'tool' && (e.name === 'Edit' || e.name === 'Write') ? editDiff(e.input) : '';
+  const tid = k === 'tool' && e.id ? ` data-tid="${esc(e.id)}"` : '', line = `<span class="ts">${hms(e.ts)}</span><span class="fk">${esc(k === 'tool' ? e.name ?? 'tool' : k)}</span><span class="fs">${esc(e.summary)}</span><span class="dur"></span>`;
+  return diff ? `<details class="fl fl-x k-${k}"${tid}><summary>${line}</summary>${diff}</details>` : `<div class="fl k-${k}"${tid}>${line}</div>`;
+}
+
+// RM-36: the activity view (activity.mjs activityView) - Now (the open call as a sentence, how long, the worker's latest words),
+// Plan, Files (Read / Edited / Created; a file opens in the Docs reader, an edited one shows its edits), Commands (duration,
+// outcome, test counts), Commits. A component: the feed drawer paints it, a lane's page can embed it. <details data-k> keep their
+// open state across repaints (the page restores them by key).
+const CMD_CHIP = { ok: ['ok', 'ok'], error: ['bad', 'failed'], background: ['idle', 'background'] };
+const testWords = t => `${int(t.pass ?? 0)} pass, ${int(t.fail)} fail${t.failed?.length ? ` - ${t.failed[0]}${t.failed.length > 1 ? ` (+${t.failed.length - 1})` : ''}` : ''}`;
+export function renderActivity(v, o = {}) {
+  const n = v.now, sec = (k, open, head, body) => `<details class="fa-sec" data-k="${k}"${open ? ' open' : ''}><summary>${head}</summary>${body}</details>`;
+  const now = `<section class="fa-now" id="fa-now">${n ? `<div><b>Now</b> <span class="fa-sent">${esc(n.text)}</span>${n.since && !o.ended ? ` <span class="mute" id="fa-dur" data-since="${esc(n.since)}">${esc(fmtDur(n.secs))}</span>` : ''}${n.more > 0 ? ` <span class="small mute">+${int(n.more)} more running</span>` : ''}</div>` : '<div class="mute">nothing yet</div>'}
+    ${v.words?.text ? `<div class="fa-words small" title="its latest own words, ${esc(hms(v.words.ts))} UTC">${esc(v.words.text)}</div>` : ''}</section>`;
+  const p = v.plan, pdone = p.items.filter(i => i.state === 'done').length;
+  const plan = p.items.length ? sec('plan', true, `<b>Plan</b> <span class="small mute">${int(pdone)} of ${int(p.items.length)} done · ${p.source === 'todos' ? 'its todo list' : "the brief's items (done = named in its NOTES or a commit)"}</span>`,
+    `<ol class="fa-plan small">${p.items.map(i => `<li class="fa-p-${i.state}">${chip(i.state === 'done' ? 'ok' : i.state === 'current' ? 'run' : 'idle', i.state)} ${esc(i.text)}</li>`).join('')}</ol>`) : '';
+  const f = v.files, nf = f.read.length + f.edited.length + f.created.length;
+  const fileRow = r => `<li><button class="ghost fa-file" data-act="feed-doc" data-path="${esc(r.path)}" title="${esc(r.path)}">${esc(r.rel)}</button>
+    <span class="small mute">${[r.reads ? plural(r.reads, 'read') : '', r.edits ? plural(r.edits, 'edit') : '', r.writes ? plural(r.writes, 'write') : ''].filter(Boolean).join(' · ')} · ${esc(hms(r.last))}</span>
+    ${r.diffs.length ? `<details class="fa-diff" data-k="d:${esc(r.path)}"><summary class="small">${r.group === 'created' ? 'content' : plural(r.diffs.length, 'edit')}</summary>${r.diffs.map(d => `<div class="small mute">${esc(hms(d.ts))}${d.all ? ' · every match' : ''}${d.lines ? ` · ${int(d.lines)} lines` : ''}</div>${editDiff(d.write ? { content: d.new } : { old_string: d.old, new_string: d.new })}`).join('')}</details>` : ''}</li>`;
+  const grp = (k, label, rows) => (rows.length ? `<h4 class="small" id="fa-g-${k}">${label} <span class="mute">${int(rows.length)}</span></h4><ul class="fa-files">${rows.slice(0, 60).map(fileRow).join('')}</ul>${rows.length > 60 ? `<p class="small mute">+${int(rows.length - 60)} more</p>` : ''}` : '');
+  const files = sec('files', true, `<b>Files</b> <span class="small mute">${int(nf)} touched this run · tap one to open it in Docs</span>`,
+    nf ? grp('edited', 'Edited', f.edited) + grp('created', 'Created', f.created) + grp('read', 'Read', f.read) : '<p class="small mute">none yet</p>');
+  const tests = v.cmds.filter(c => c.tests), cmdRow = c => { const [cls, word] = CMD_CHIP[c.outcome] ?? ['idle', c.outcome];
+    return `<li class="fa-cmd">${chip(cls, word)}${c.tests ? ` ${chip(c.tests.fail ? 'bad' : 'ok', testWords(c.tests))}` : ''} <code class="fa-c">${esc(c.cmd)}</code> <span class="small mute">${esc(hms(c.ts))}${fin(c.secs) ? ` · ${esc(fmtDur(c.secs))}` : ''}</span></li>`; };
+  const cmds = sec('cmds', false, `<b>Commands and tests</b> <span class="small mute">${int(v.cmds.length)} commands · ${int(tests.length)} test runs${tests[0] ? ` · last: ${esc(testWords(tests[0].tests))}` : ''}</span>`,
+    v.cmds.length ? `<ul class="fa-cmds">${v.cmds.slice(0, 40).map(cmdRow).join('')}</ul>${v.cmds.length > 40 ? `<p class="small mute">+${int(v.cmds.length - 40)} older</p>` : ''}` : '<p class="small mute">none yet</p>');
+  const commits = sec('commits', true, `<b>Commits</b> <span class="small mute">${int(v.commits.length)} this run</span>`,
+    v.commits.length ? `<ul class="fa-commits small">${v.commits.map(c => `<li>${c.sha ? `<span class="mono">${esc(c.sha)}</span> ` : ''}${esc(c.subject)} <span class="mute">${esc(hms(c.ts))}</span></li>`).join('')}</ul>` : '<p class="small mute">none yet</p>');
+  return `<div class="fa" id="fa">${now}${plan}${files}${cmds}${commits}</div>`;
 }
 
 function history(r, ctx) {
@@ -1197,8 +1231,10 @@ function insMemory(m) {
 const docFind = x => `<div class="insfind">${chip(SEV_CHIP[x.severity] ?? 'idle', x.severity ?? 'note')} <span class="mute">${x.check ? `C${esc(x.check)} ` : ''}${x.line ? `L${esc(x.line)}` : 'whole file'}${x.surface ? ` · ${esc(x.surface)}` : ''}</span> ${esc(x.why)}${x.fix?.action ? `<div class="small mute">fix: ${esc(x.fix.action)}</div>` : ''}</div>`;
 const docAside = xs => (xs?.length ? `<aside class="docfind">${xs.map(docFind).join('')}</aside>` : '');
 const ageBadge = p => ((p.age_days !== null && p.age_days !== undefined) || p.changed || p.stated ?`<span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> ` : '');
+// a JSON file, or a source file a run touched (f.code: its language, RM-36), is one code block; the fence outruns any ``` inside it
 function docReader(f, ctx, d = {}) {
-  const json = /\.json$/i.test(f.path), text = f.text ?? '', src = json ? '```json\n' + text + '\n```' : text, lines = text.split(/\r?\n/);
+  const lang = /\.json$/i.test(f.path) ? 'json' : f.code ?? null, text = f.text ?? '', lines = text.split(/\r?\n/);
+  const fence = lang ? '`'.repeat([...text.matchAll(/`{3,}/g)].reduce((n, m) => Math.max(n, m[0].length + 1), 3)) : '', src = lang ? `${fence}${lang}\n${text}\n${fence}` : text, json = !!lang;
   const findings = f.findings || [], L = d.line, foc = (a, b) => (L && a <= L && L <= b ? ' focus" data-focus="1' : '');
   let body, whole, toc = [];
   if (d.src) {   // Source: every line numbered, its findings beside it

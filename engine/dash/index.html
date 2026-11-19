@@ -310,6 +310,15 @@ svg.map .dlv.due rect{stroke:var(--accent);stroke-width:2}
 .fl .ts,.fl .dur{color:var(--mute)}.fl .fk{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fl .fs{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fl.k-tool .fk{color:var(--run)}.fl.k-text .fk{color:var(--mute)}.fl.k-text .fs{white-space:normal}.fl.k-step .fk,.fl.k-step .fs{color:var(--codex)}
 .fl.k-marker{background:var(--ok-bg)}.fl.k-marker .fk,.fl.k-marker .fs{color:var(--ok)}.fl.k-error .fk,.fl.k-error .fs{color:var(--bad)}
+/* RM-36: the activity view (ui.mjs renderActivity) on top of the drawer; the raw event list below it behind a toggle (closed on a phone) */
+#feed-act{flex:1 1 55%;min-height:0;overflow:auto}#feed-act:empty{display:none}.drawer .flist{flex:1 1 45%;min-height:0}.flist[hidden]{display:none}
+.fa-now{padding:6px 10px;border-radius:6px;background:var(--soft)}.fa-sent{font-weight:600;overflow-wrap:anywhere}.fa-words{margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:7.5em;overflow:auto}
+.fa-sec{margin-top:6px;min-width:0}.fa-sec>summary{cursor:pointer;padding:3px 0}.fa-sec h4{margin:6px 0 2px}.fa-plan{margin:4px 0;padding-left:22px}.fa-plan li{margin:2px 0}.fa-p-done{color:var(--mute)}
+.fa-files,.fa-cmds,.fa-commits{list-style:none;margin:2px 0 6px;padding:0}.fa-files li,.fa-cmds li,.fa-commits li{padding:2px 0;border-top:1px solid var(--soft);overflow-wrap:anywhere;min-width:0}
+.fa-file{padding:0 4px;min-height:0;text-align:left;overflow-wrap:anywhere;font-family:ui-monospace,Menlo,Consolas,monospace}.fa-c{white-space:pre-wrap;overflow-wrap:anywhere}
+.fa-diff .fxdiff,.fl-x .fxdiff{max-height:320px;overflow:auto;margin:4px 0}.fl.fl-x{display:block;padding:0}.fl-x>summary{display:grid;grid-template-columns:62px 100px minmax(0,1fr) auto;gap:8px;padding:2px 10px;cursor:pointer;list-style:none}.fl-x>summary::-webkit-details-marker{display:none}.fl-x>.fxdiff{margin:2px 10px 6px}
+#feed-raw-bar{display:flex;align-items:center;gap:8px}
+@media (max-width:700px){.fl,.fl-x>summary{grid-template-columns:56px minmax(0,72px) minmax(0,1fr) auto;gap:6px}}
 .node[data-feed]{cursor:pointer}.node[data-feed]:hover{background:var(--soft)}.node.sel{background:var(--soft);box-shadow:inset 3px 0 0 var(--run)}
 /* META-PLAN R1: the Plan tab (scoped .plan / .pl-*) */
 .plan .pl-sec{margin-bottom:14px}.pl-proj{font-size:15px;margin:18px 0 8px}
@@ -433,6 +442,8 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
   <div id="feed-head"></div>
   <div id="feed-now" class="small"></div>
   <div id="feed-status" class="small mute"></div>
+  <div id="feed-act" aria-label="What the worker is doing"></div>
+  <div id="feed-raw-bar" class="small"><button class="ghost" id="feed-raw-tog" aria-expanded="true" aria-controls="feed-list">All events</button><span class="mute" id="feed-raw-n"></span></div>
   <div id="feed-list" class="flist mono" aria-live="polite"></div>
 </aside>
 <aside id="dlv" class="drawer" hidden aria-label="Deliverable">
@@ -446,7 +457,8 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, renderActivity, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { activityInit, activityAdd, activityView, fmtDur } from '/activity.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey } from '/ui.mjs';
 import { hoChip } from '/widgets.mjs';
@@ -562,7 +574,7 @@ function popUp() {
 // META-UX-BUILD S3: a file (an Instructions file link, a doc) opens in the Docs reader at its line
 function goTo(g) {
   document.body.classList.remove('more'); S.tab = g.tab; S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
-  const file = g.ins ? g.ins : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
+  const file = g.ins ? g.ins : g.path ? `path:${g.path}` : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
   if (file) { S.tab = 'docs'; S.doc = file; S.docLine = Number(g.line) || null; S.docScroll = !!S.docLine; }
   if (g.jump) S.jump = g.jump;
   history.pushState(null, '', tabUrl()); render();
@@ -830,12 +842,31 @@ document.addEventListener('change', e => {
   if (e.target.matches('[data-act="map-all"]')) { S.mapAll = e.target.checked; render(); }
 });
 // ---- live feed drawer: one EventSource per open drawer (the server keeps one tailer per run, at most 4 feeds) ----
-const F = { es: null, run: null, project: null, tools: new Map() };
+// RM-36: F.act = the activity fold of every event of the run (a fresh drawer asks full=1: the whole run, not the last 256 KB),
+// painted at most every 300 ms; the Now duration ticks each second; <details data-k> keep their open state across paints
+const F = { es: null, run: null, project: null, tools: new Map(), act: null, actT: null, tick: null, keep: new Map(), n: 0, scroll: false };
+const narrow = () => matchMedia('(max-width:700px)').matches;
+function paintAct() {
+  F.actT = null; if (!F.act || !F.run) return;
+  const h = F.head || {}, box = $('#feed-act'), ended = !!F.ended || (h.state && h.state !== 'running');
+  box.querySelectorAll('details[data-k]').forEach(d => F.keep.set(d.dataset.k, d.open));
+  const v = activityView(F.act, { now: Date.now(), root: h.worktree ?? null, brief: h.brief_items, notesDone: h.notes_done, ended });
+  box.innerHTML = renderActivity(v, { ended });
+  box.querySelectorAll('details[data-k]').forEach(d => { if (F.keep.has(d.dataset.k)) d.open = F.keep.get(d.dataset.k); });
+  $('#feed-raw-n').textContent = `${F.n} events`;
+}
+const actSoon = () => { if (!F.actT) F.actT = setTimeout(paintAct, 300); };
+// the Now clock: one text node a second while the drawer is open - it reads nothing (no refetch; the feed itself is pushed)
+function tickDur() { const d = $('#fa-dur'); if (d) d.textContent = fmtDur((Date.now() - Date.parse(d.dataset.since)) / 1000); F.tick = setTimeout(tickDur, 1000); }
+function rawShow(on) { $('#feed-list').hidden = !on; $('#feed-raw-tog').setAttribute('aria-expanded', String(on)); $('#feed-raw-tog').textContent = on ? 'Hide all events' : 'All events'; }
+$('#feed-raw-tog').onclick = () => rawShow($('#feed-list').hidden);
 function markFeed() { document.querySelectorAll('[data-feed].sel').forEach(x => x.classList.remove('sel'));
   if (F.run) document.querySelectorAll(`[data-feed="${CSS.escape(F.run)}"]`).forEach(x => x.classList.add('sel')); }
-function closeFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); $('#feed').hidden = true; markFeed(); NM?.map.select(null); }
+function closeFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearTimeout(F.tick); F.tick = null;
+  $('#feed').hidden = true; markFeed(); NM?.map.select(null); }
 function addEv(e) {
   const list = $('#feed-list');
+  if (F.act) { activityAdd(F.act, e); F.n++; actSoon(); }
   if (e.done) {
     const t = F.tools.get(e.id);
     if (t) { const s = (Date.parse(e.ts) - Date.parse(t.ts)) / 1000; t.el.querySelector('.dur').textContent = Number.isFinite(s) ? `(${s < 10 ? s.toFixed(1) : Math.round(s)} s)` : '';
@@ -844,16 +875,16 @@ function addEv(e) {
   } else {
     list.insertAdjacentHTML('beforeend', renderFeedEvent(e));
     if (e.kind === 'tool' && e.id) F.tools.set(e.id, { ts: e.ts, el: list.lastElementChild });
-    if ((e.kind === 'step' || e.kind === 'text') && !F.hoNow) $('#feed-now').innerHTML = `<b>now</b> ${esc(e.summary)}`;
   }
   while (list.childElementCount > 600) list.firstElementChild.remove();
   if (F.tools.size > 400) F.tools.delete(F.tools.keys().next().value);
-  if ($('#feed-follow').checked) list.scrollTop = list.scrollHeight;
+  // a whole-run replay sends thousands of events at once: one scroll per 50 ms, not one layout per event
+  if ($('#feed-follow').checked && !F.scroll) { F.scroll = true; setTimeout(() => { F.scroll = false; list.scrollTop = list.scrollHeight; }, 50); }
 }
 // the live hand-off state (head.handoff, lanes.mjs handoffOf): while the next session is on its way, or once the chain went on in
 // another run, the "now" line is the hand-off, not this session's last words ("I stopped this run with a hand-off ..." read as stopped)
 function feedHead(h) {
-  F.head = h; $('#feed-head').innerHTML = renderFeedHead(h);
+  F.head = h; $('#feed-head').innerHTML = renderFeedHead(h); actSoon();
   const ho = h.handoff, now = ho && (ho.phase === 'pending' || ho.run !== h.run) ? hoChip(ho, h.run) : '';
   if (now !== (F.hoNow || '')) { F.hoNow = now; if (now) $('#feed-now').innerHTML = `<b>now</b> ${now}`; }
 }
@@ -871,14 +902,14 @@ function feedEnded(project, run, tries = 0) {
     es.onerror = () => { es.close(); feedEnded(project, run, tries + 1); }; }, 3000);
 }
 function openFeed(project, run) {
-  closeFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; markFeed();
-  $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = '';
-  $('#feed-status').textContent = 'connecting ...';
-  const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}`);
+  closeFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear(); markFeed();
+  $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = ''; $('#feed-act').innerHTML = '';
+  $('#feed-status').textContent = 'connecting ...'; rawShow(!narrow()); F.tick = setTimeout(tickDur, 1000);   // a phone: the activity view is the first screen
+  const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}&full=1`);
   es.onopen = () => { $('#feed-status').textContent = 'live · the server polls the run files every 2 s'; };
   es.addEventListener('head', m => feedHead(JSON.parse(m.data)));
   es.addEventListener('ev', m => addEv(JSON.parse(m.data)));
-  es.addEventListener('end', () => { es.close(); feedEnded(project, run); });
+  es.addEventListener('end', () => { es.close(); F.ended = true; actSoon(); feedEnded(project, run); });
   es.onerror = () => { if (F.es !== es) return; $('#feed-status').textContent = es.readyState === EventSource.CLOSED ? 'feed refused or gone (at most 4 live feeds: close one)' : 'reconnecting ...'; };
 }
 $('#feed-close').onclick = closeFeed;
@@ -951,6 +982,7 @@ document.addEventListener('click', e => {
   if (d.act === 'open-setting') { S.pickOpen = false; S.tab = 'settings'; S.setQ = d.setting; S.jump = 'set-' + d.setting; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=settings&setq=${encodeURIComponent(d.setting)}`); render(); return; }
   if (d.act === 'chat-send') { chatSend(); return; }
   if (d.act === 'lane-feed') { openFeed(d.project || p, d.run); return; }   // a Lanes row's Feed: the same drawer a Runs row opens
+  if (d.act === 'feed-doc') { if (narrow()) closeFeed(); if (F.project && F.project !== S.project) { S.project = F.project; $('#project').value = S.project; openStream(); } goTo({ tab: 'docs', path: d.path }); return; }   // RM-36: a file the run touched opens in the Docs reader
   // C3: an approval card's tap and a done card's Undo - straight to the records as the owner, no model in between
   if (d.act === 'approve') { act(() => post('/api/chat/approve', { project: p, id: d.id, verdict: d.verdict })); return; }
   if (d.act === 'undo' && confirm('Undo this?')) { act(() => post('/api/chat/undo', { project: p, line: Number(d.line) })); return; }

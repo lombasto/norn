@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseKnown, judge, suiteEnv } from '../engine/lib/cisuite.mjs';
+import { parseKnown, judge, suiteEnv, pickTests, importsOf } from '../engine/lib/cisuite.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { findBrowser } from '../engine/lib/shot.mjs';
 
@@ -172,4 +172,58 @@ test('ci-suite: each file prints "start <file>"; a file past --file-cap is kille
   assert.doesNotMatch(r.stdout, /HANG RED: tests\/fixtures\/ci-suite-hang\/ok\.test\.mjs/);
   const bad = spawnSync(process.execPath, [CI, '--file-cap', '0', 'tests/fixtures/ci-suite-hang/ok.test.mjs'], { cwd: REPO, encoding: 'utf8' });
   assert.equal(bad.status, 2); assert.match(bad.stderr, /--file-cap/);
+});
+
+// ---------- META-PR-FAST (RM-29): the fast PR job runs the test files a change touches ----------
+test('pickTests: a changed test, a test named after a changed module, a fixture folder and a direct importer are picked; one level only', () => {
+  const src = {
+    'tests/mergeq.test.mjs': '', 'tests/mergeq-batch.test.mjs': '', 'tests/merger.test.mjs': '',
+    'tests/a.test.mjs': "import { x } from '../engine/lib/x.mjs';\nimport y from \"../engine/lib/y.mjs\";",
+    'tests/b.test.mjs': "const m = await import('../engine/lib/x.mjs');",
+    'tests/c.test.mjs': "import { h } from './helpers/h.mjs'; // names engine/lib/x.mjs and runs.mjs in text only",
+    'tests/d.test.mjs': "const FX = 'tests/fixtures/ci-suite';",
+    'tests/e.test.mjs': '',
+  };
+  const read = f => src[f] ?? null, tests = Object.keys(src);
+  assert.deepEqual(pickTests(['engine/lib/x.mjs'], tests, read), { run: ['tests/a.test.mjs', 'tests/b.test.mjs'], left: [] });
+  assert.deepEqual(pickTests(['engine/lib/mergeq.mjs'], tests, read).run, ['tests/mergeq-batch.test.mjs', 'tests/mergeq.test.mjs'], 'stem: name or name-*');
+  assert.deepEqual(pickTests(['tests/helpers/h.mjs'], tests, read).run, ['tests/c.test.mjs'], 'a changed helper picks its importers');
+  assert.deepEqual(pickTests(['tests/fixtures/ci-suite/fx.test.mjs'], tests, read).run, ['tests/d.test.mjs']);
+  assert.deepEqual(pickTests(['tests\\e.test.mjs', 'README.md', 'docs/x.md', 'engine/dash/index.html'], tests, read).run, ['tests/e.test.mjs']);
+  assert.deepEqual(pickTests(['engine/lib/runs.mjs'], tests, read).run, [], 'a name in the text is no import');
+  assert.deepEqual(importsOf('tests/sub/z.test.mjs', "import a from '../../engine/lib/a.mjs'; import './b.mjs'; import fs from 'node:fs';"),
+    ['engine/lib/a.mjs', 'tests/sub/b.mjs']);
+});
+
+test('pickTests max: the close picks always run; importers run most-changed-imports first, the rest is left (named)', () => {
+  const src = { 'tests/x.test.mjs': '', 'tests/i1.test.mjs': "import '../engine/lib/x.mjs';", 'tests/i2.test.mjs': "import '../engine/lib/x.mjs'; import '../engine/lib/y.mjs';",
+    'tests/i3.test.mjs': "import '../engine/lib/y.mjs';" };
+  const p = pickTests(['engine/lib/x.mjs', 'engine/lib/y.mjs'], Object.keys(src), f => src[f], 1);
+  assert.deepEqual(p, { run: ['tests/i2.test.mjs', 'tests/x.test.mjs'], left: ['tests/i1.test.mjs', 'tests/i3.test.mjs'] });
+  assert.deepEqual(pickTests(['engine/lib/x.mjs'], Object.keys(src), f => src[f], 0), { run: ['tests/x.test.mjs'], left: ['tests/i1.test.mjs', 'tests/i2.test.mjs'] });
+});
+
+test('ci-suite --changed BASE: runs only the picked files of BASE...HEAD; nothing picked -> exit 0 without a run; usage errors exit 2', () => {
+  const t = mkTmp('meta-ci-changed-'), g = (...a) => spawnSync('git', ['-C', t, ...a], { encoding: 'utf8' });
+  const w = (f, s) => { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.writeFileSync(path.join(t, f), s); };
+  const ok = name => `import test from 'node:test';\ntest('${name}', () => {});\n`;
+  w('engine/lib/x.mjs', 'export const x = 1;\n'); w('engine/lib/y.mjs', 'export const y = 1;\n'); w('known.txt', '');
+  w('tests/a.test.mjs', `import { x } from '../engine/lib/x.mjs';\n${ok('a')}`); w('tests/y.test.mjs', ok('y')); w('tests/z.test.mjs', ok('z'));
+  g('init', '-q', '-b', 'main'); g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base');
+  const run = (...a) => spawnSync(process.execPath, [CI, '--known', 'known.txt', ...a], { cwd: t, encoding: 'utf8' });
+  const none = run('--changed', 'main');
+  assert.equal(none.status, 0, none.stdout + none.stderr); assert.match(none.stdout, /0 file\(s\) changed since main: 0 test file\(s\) picked/);
+  assert.doesNotMatch(none.stdout, /phase/);
+  g('switch', '-q', '-c', 'pr'); w('engine/lib/x.mjs', 'export const x = 2;\n'); w('engine/lib/y.mjs', 'export const y = 2;\n'); w('README.md', 'x\n');
+  g('add', '-A'); g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'pr');
+  const r = run('--changed', 'main');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /3 file\(s\) changed since main: 2 test file\(s\) picked/);
+  assert.deepEqual([...r.stdout.matchAll(/ci-suite: start (\S+)/g)].map(m => m[1]).sort(), ['tests/a.test.mjs', 'tests/y.test.mjs']);
+  const capped = run('--changed', 'main', '--max', '0');
+  assert.deepEqual([...capped.stdout.matchAll(/ci-suite: start (\S+)/g)].map(m => m[1]), ['tests/y.test.mjs']);
+  assert.match(capped.stdout, /1 more import a changed file, left to the full suite after the merge: tests\/a\.test\.mjs/);
+  for (const [a, re] of [[['--max', '3'], /--max needs --changed/], [['--changed'], /--changed needs a base ref/], [['--changed', 'nope'], /git diff nope\.\.\.HEAD failed/]]) {
+    const b = run(...a); assert.equal(b.status, 2, b.stdout + b.stderr); assert.match(b.stderr, re);
+  }
 });

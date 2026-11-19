@@ -11,9 +11,10 @@ import { resultPath } from '../lib/result.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { createSessions } from './sessions.mjs';
 import { createFeeds, decodeCursor } from './feed.mjs';
+import { briefItems, namedDone } from './activity.mjs';
 import { createStreams } from './stream.mjs';
 import { createChat, readThread, threadFlushed, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
-import { ActError, showRoots, outboxDir, threadFile } from '../lib/chatact.mjs';
+import { ActError, showRoots, insideRoots, outboxDir, threadFile } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
@@ -693,7 +694,20 @@ export function createDashboard(o) {
     if (name !== 'file') throw fail(400, `unknown part ${name} (file, or none for the list)`);
     return { doc: docFile(p, c, String(url.searchParams.get('file') ?? '')) };   // the page merges it as d.doc (d.file = its key)
   }
+  // RM-36: a file a run touched (the feed's activity view) opens in the reader by its path - inside the roots GET /api/file allows
+  // (the project root, its state, its runs' worktrees and NOTES folders); a source file is shown as one code block
+  function pathDoc(p, key) {
+    const raw = key.slice(5);
+    if (!path.isAbsolute(raw) || /^[\\/]{2}/.test(raw)) throw fail(400, 'path must be an absolute local path');
+    const real = insideRoots(showRoots(p.state, p), raw);
+    if (!real) throw fail(403, 'Outside the allowed roots (the project root, its state, its runs\' worktrees and NOTES folders)');
+    const text = read(real, null);
+    if (text === null) throw fail(404, 'File not found');
+    const md = /\.(?:md|markdown|txt)$/i.test(real);
+    return { key, name: path.basename(real), path: real.split('\\').join('/'), text, lines: text.split(/\r?\n/).length, paras: null, findings: [], ...(md ? {} : { code: path.extname(real).slice(1).toLowerCase() || 'text' }) };
+  }
   function docFile(p, c, key) {
+    if (key.startsWith('path:')) return pathDoc(p, key);
     const m = key.match(/^doc-(\d+)$/), d = m ? docsList(p)[Number(m[1])] : null;
     if (m && !d?.exists) throw fail(404, 'No such doc');
     const row = (c.v?.rows || []).find(r => r.exists && (d ? fwdLow(r.path) === fwdLow(d.path) : r.id === key));
@@ -804,7 +818,8 @@ export function createDashboard(o) {
     const inSnap = fn => snap.run(newSnap(), fn);
     const policy = () => withDefaults(settingsState(p).view).policy;   // META-CTX-ENFORCE R1: the run role's lines, read live
     return {
-      poll: cur => inSnap(async () => withRefusals(adapter.feed(await now(), cur, env), p.state, id, cur)),   // META-DOD 2: + the run's scope refusals
+      // META-DOD 2: + the run's scope refusals; RM-36: full = a drawer's first poll reads the whole run (the activity view: every file it touched)
+      poll: (cur, full) => inSnap(async () => withRefusals(adapter.feed(await now(), cur, full ? { ...env, backlog: Infinity } : env), p.state, id, cur)),
       ended: () => inSnap(async () => (await now())?.state !== 'running'),
       head: ({ ctx, peak, window }) => inSnap(async () => {
         const [r] = await Promise.all([now(), readA(p.file), o.budgetFile ? readA(o.budgetFile, '{}') : null]);
@@ -812,9 +827,14 @@ export function createDashboard(o) {
         return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
           elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
-          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard }) => ({ ctx_limit, ctx_hard }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r) };
+          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard }) => ({ ctx_limit, ctx_hard }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r), worktree: d.worktree ?? null, ...(await briefPlanOf(d)) };
       }),
     };
+  }
+  // RM-36: the activity view's plan without a todo list - the brief's numbered items, and the ones the run's NOTES name as done
+  async function briefPlanOf(d) {
+    const [brief, notes] = await Promise.all([d.brief ? readA(d.brief) : '', d.notes ? readA(d.notes) : '']), items = briefItems(brief);
+    return { brief_items: items, notes_done: items.length ? namedDone(items, notes, { doneWord: true }) : [] };
   }
   async function openFeed(req, res, url) {
     const p = one(url), id = url.searchParams.get('run') ?? '', r = stCached(p).items[id];
@@ -822,7 +842,7 @@ export function createDashboard(o) {
     const fam = harnessOf(r.data.executor, (p.executors || {})[r.data.executor]), adapter = fam ? ADAPTERS[fam] : null;
     if (!adapter?.feed) throw fail(404, `No live feed for executor ${r.data.executor}`);
     const from = decodeCursor(req.headers['last-event-id'] ?? url.searchParams.get('from') ?? '');
-    if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from))) throw fail(429, `Too many live feeds: close one first (max ${o.feedMax ?? 4})`);
+    if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from, { full: url.searchParams.get('full') === '1' }))) throw fail(429, `Too many live feeds: close one first (max ${o.feedMax ?? 4})`);
   }
 
   // ---------- state stream (META-VISUAL-B S1, the #4 push channel): record appends + flags, replaces the 15 s refetch ----------
@@ -1460,7 +1480,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only

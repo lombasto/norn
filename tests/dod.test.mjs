@@ -100,10 +100,10 @@ test('doneCheck: a docs-only branch (the CI paths-ignore) skips the gate, its Te
   assert.equal(c.gate_skipped, undefined);
 });
 
-test('DOCS_ONLY is the paths-ignore of .github/workflows/ci.yml (push and pull_request)', () => {
+test('DOCS_ONLY is the paths-ignore of .github/workflows/ci.yml (push to main)', () => {
   const yml = fs.readFileSync(path.join(import.meta.dirname, '..', '.github', 'workflows', 'ci.yml'), 'utf8');
   const lists = [...yml.matchAll(/paths-ignore:\n((?:\s+- .+\n)+)/g)].map(m => [...m[1].matchAll(/- '([^']+)'/g)].map(x => x[1]));
-  assert.equal(lists.length, 2);
+  assert.equal(lists.length, 1);
   for (const l of lists) assert.deepEqual(l, DOCS_ONLY);
 });
 
