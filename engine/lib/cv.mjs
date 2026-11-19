@@ -3,13 +3,11 @@
 // check-in routes on; persona names add nothing (a name is per run, never a routing choice). Derived only: the run records,
 // the deliverables (merged via git) and cost.mjs (usageOfRun + costRollup's calibration); no new records, no second accounting
 // path - the window's runs and plan % must equal costRollup's for the same window (`check`).
-import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { usageOfRun, costRollup } from './cost.mjs';
 import { loadState } from './records.mjs';
 import { loadDeliverables, deliverablesView, deliverableConfig } from './deliverables.mjs';
-import { hashKey } from './views.mjs';
+import { writeGuarded } from './views.mjs';
 import { makeGit } from './dlvgit.mjs';
 
 const DAY = 86400000;
@@ -200,26 +198,11 @@ export function cvPart(project = {}, { state = project.state, git = makeGit(), d
   return { project: project.name || path.basename(path.resolve(state)), items, dlvs: facts, executors: project.executors || {} };
 }
 
-const sha = s => crypto.createHash('sha256').update(s).digest('hex');
-/** Write <stateDir>/views/CV.md (or file) like every view: a hand edit (text whose hash is not the last written) is refused.
- * Own hash file (views/cv-hashes.json): never races record()'s hashes.json. -> { written | unchanged | refused: [paths] } */
+/** Write <stateDir>/views/CV.md (or file) like every view (views.mjs writeGuarded: the hash-file lock, the recent renders, the hand-edit
+ * refusal). Own hash file (views/cv-hashes.json). -> { written | unchanged | refused: [paths] } */
 export function writeCvView(stateDir, text, file = null) {
-  const vdir = path.join(stateDir, 'views'), p = path.resolve(file || path.join(vdir, CV_FILE)), hf = path.join(vdir, 'cv-hashes.json');
-  fs.mkdirSync(vdir, { recursive: true });
-  const hashes = fs.existsSync(hf) ? JSON.parse(fs.readFileSync(hf, 'utf8')) : {};
-  const res = { written: [], unchanged: [], refused: [] };
-  if (fs.existsSync(p)) {
-    const cur = fs.readFileSync(p, 'utf8');
-    if (cur === text) { res.unchanged.push(p); return res; }
-    if (hashes[hashKey(p)] !== sha(cur)) { res.refused.push(p); return res; }
-  }
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  const tmp = `${p}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, text); fs.renameSync(tmp, p);
-  hashes[hashKey(p)] = sha(text);
-  fs.writeFileSync(`${hf}.${process.pid}.tmp`, JSON.stringify(hashes, null, 1) + '\n'); fs.renameSync(`${hf}.${process.pid}.tmp`, hf);
-  res.written.push(p);
-  return res;
+  const p = path.resolve(file || path.join(stateDir, 'views', CV_FILE));
+  return { written: [], unchanged: [], refused: [], [writeGuarded(path.join(stateDir, 'views', 'cv-hashes.json'), p, text)]: [p] };
 }
 
 /** The check-in pack's CV table of one project (7 d; no deliverables, so no git on the tick path); '' when no run started in 7 d or on error. */
