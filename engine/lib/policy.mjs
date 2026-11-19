@@ -69,7 +69,9 @@ export const POLICY_DEFAULTS={
   // META-CATCH S1 (stuck.mjs): an item past one threshold since its last merge is STUCK - a MAJOR wake, one notice, further rounds refused until an approach review; 0 = that threshold off
   stuck:{stopped_rounds:3,runs_without_merge:8,days_without_merge:3},
   // META-CATCH S2 (look.mjs): a look item's brief needs a Look: line from this round on and in every brief of these stages (first word, any case)
-  look:{stages:['MERGE','INSTALL'],min_round:2}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
+  look:{stages:['MERGE','INSTALL'],min_round:2},
+  // RM-46 S2b (multi-home SPEC 4.5): the work-claim lease - renew past renew_s, the holder fences its run past fence_s unconfirmed, an observer calls a claim stale after lease_s + stale_grace_s unchanged (claims.mjs)
+  sync:{lease_s:3600,renew_s:600,fence_s:3000,stale_grace_s:300}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
 
 // META-OOTB F-2 + FOLLOWUP R1: the routing `project new` writes, derived in ONE place from the executors setup found AND the caps in
 // force (local/budget.json; an unset cap = no limit). A Codex executor is allowed only when the Codex total and its own cap
@@ -346,6 +348,8 @@ function merge(d,v){if(d===null||typeof d!=='object'||Array.isArray(d))return v=
 const foldSlop=pol=>{const s=pol?.slop;if(!s||typeof s!=='object'||!('run_end' in s))return pol;const {run_end,...rest}=s;return {...pol,slop:{enabled:run_end!==false,...rest}};};
 export const slopOn=pol=>foldSlop(pol)?.slop?.enabled!==false;
 export function withDefaults(b){return {...MACHINE_DEFAULTS,...b,policy:merge(POLICY_DEFAULTS,foldSlop(b.policy))};}
+/** RM-46 S2b: policy.sync with its defaults (the lease numbers live here, never in claims.mjs) */
+export const syncPolicy=pol=>withDefaults({policy:pol||{}}).policy.sync;
 
 export function settingsView(b,extra={}){const f=withDefaults(b),pv=extra.providers||[];
   // the machinery default = the value the same key takes with no budget / policy entry (UI marker only; never written)
