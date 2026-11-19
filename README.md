@@ -144,7 +144,7 @@ Windows, Linux and macOS.
 ```
 node engine/bin/norn.mjs init <your repo>   # set up Norn and add your repo; you approve each part
 node engine/bin/norn.mjs run --executor fake --lane <first lane> --brief <its brief> --project <name> --wait   # a free rehearsal; init prints this line
-node engine/bin/norn.mjs dash               # open the dashboard and start the first lane
+node engine/bin/norn.mjs dash --background  # start the dashboard (no window), open http://127.0.0.1:8737, start the first lane
 ```
 
 `init` checks your tools and adds your repository as a project. It asks which limits profile to start with (`try-it` by default,

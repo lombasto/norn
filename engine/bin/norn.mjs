@@ -760,11 +760,12 @@ function s5Cmd(argv, env, out, err) {
 }
 
 // ---------- S8: norn dash / norn smoke (long-running: they return undefined and set process.exitCode themselves) ----------
-const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
+const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash --background    (the live dashboard of this install, started detached with no window unless it already answers; the way to start it from a shell)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
 // OOTB F-15: a browser tab only for a human at a terminal, or when asked; a script / agent gets the URL alone. --no-open always wins.
 export const dashOpens = (open, tty) => (open === null ? !!tty : open);
 function dashCmd(argv, env, out, err) {
   if (argv[0] === 'restart') return dashRestartCmd(argv.slice(1), env, out, err);
+  if (argv[0] === '--background') return dashRestartCmd(argv.slice(1), env, out, err, { keep: true });
   const o = { projects: [], open: null, port: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -826,15 +827,17 @@ function remoteCmd(argv, env, out, err) {
   try { machine = loadMachine(mf, { meta: root }); } catch (e) { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; }
   return sub === 'setup' ? remoteSetup({ machineFile: mf, machine, ...o, env, out }) : remoteOff({ machineFile: mf, machine, apply: o.apply, env, out });
 }
-function dashRestartCmd(argv, env, out, err) {
+// keep = `norn dash --background`: the recorded dashboard answering stays; else it starts as restart starts it (detached, hidden)
+function dashRestartCmd(argv, env, out, err, { keep = false } = {}) {
   if (argv.length) { err('error: unexpected ' + argv[0]); err(DASH_USAGE); return 2; }
   const root = metaRoot(env), mf = path.join(root, 'local', 'machine.json');
   if (!fs.existsSync(mf)) { err('error: no machine.json: run norn setup'); return 1; }
   let machine;
   try { machine = loadMachine(mf, { meta: root }); } catch (e) { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; }
   const port = machine.dash?.port ?? 8737, bind = machine.dash?.bind || '127.0.0.1';
-  dashRestart({ root, port, bind, env }).then(r => {
-    out(`dash restarted: pid ${r.pid} on ${r.url}${r.stopped ? ` (stopped pid ${r.stopped})` : ' (no recorded dashboard was running)'}`);
+  dashRestart({ root, port, bind, env, keep }).then(r => {
+    out(r.running ? `dash running: pid ${r.pid} on ${r.url} (already up; norn dash restart restarts it)`
+      : `dash ${keep ? 'started in the background' : 'restarted'}: pid ${r.pid} on ${r.url}${r.stopped ? ` (stopped pid ${r.stopped})` : keep ? '' : ' (no recorded dashboard was running)'}`);
     process.exitCode = 0;
   }, e => { err('error: ' + (e instanceof DashError ? e.message : e.stack)); process.exitCode = 1; });
   return undefined;

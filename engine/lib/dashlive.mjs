@@ -60,11 +60,13 @@ const answers = url => fetch(url, { signal: AbortSignal.timeout(2000) }).then(r 
 const until = async (f, ms) => { const end = Date.now() + ms; for (;;) { if (await f()) return true; if (Date.now() > end) return false; await new Promise(r => setTimeout(r, 150)); } };
 
 /**
- * o: { root, port, bind, env, procs (listProcs), holder (portHolder), timeoutMs }. Resolves { pid, url, stopped (old pid | null) };
- * throws DashError (the port taken by another process, the new dashboard not answering).
+ * o: { root, port, bind, env, procs (listProcs), holder (portHolder), timeoutMs, keep }. Resolves { pid, url, stopped (old pid | null),
+ * running (keep: the recorded dashboard answered, nothing started) }; throws DashError (the port taken by another process, the new
+ * dashboard not answering). keep = `norn dash --background` (proc-hygiene 7): a dashboard started from a shell opens no console window.
  */
-export async function dashRestart({ root, port, bind = '127.0.0.1', env = process.env, procs = listProcs, holder = portHolder, timeoutMs = 30000 }) {
+export async function dashRestart({ root, port, bind = '127.0.0.1', env = process.env, procs = listProcs, holder = portHolder, timeoutMs = 30000, keep = false }) {
   const rec = readDash(root);
+  if (keep && rec && pidAlive(rec.pid) && rec.port === port && await answers(`http://${bind}:${port}/`)) return { pid: rec.pid, url: `http://${bind}:${port}/`, stopped: null, running: true };
   let stopped = null;
   if (rec && pidAlive(rec.pid)) {
     const list = procs();
