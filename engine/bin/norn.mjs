@@ -84,12 +84,14 @@ import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
+import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll, pausedHandoffs } from '../lib/pause.mjs';
+import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
   'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
   'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
-  'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO]    (owner / controller: a slop finding that may stay)',
+  'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO] [--q Q-n]    (owner / controller: a slop finding that may stay; a check-in only with --q, the answered Q whose ruling is the waiver)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
   apply: 'norn rec apply Q-n --refs DEC-n,RUN-n',
@@ -113,7 +115,7 @@ const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
   'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
   'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
-  'add waiver': ['rule', 'scope', 'why', 'until'],
+  'add waiver': ['rule', 'scope', 'why', 'until', 'q'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
@@ -451,7 +453,7 @@ function runSpec(flags, env, { project, state, locks }) {
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
     budget, budget_file: path.resolve(bf),   // GAP-2: the fill reads the budget of NOW from here (runs.mjs liveBudget); budget = the copy for a resume
-    paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
+    paused: pauseFiles(state), statusFile: path.join(state, 'STATUS.md'),
     ledger: project?.ledger, projectsDir: machine?.claude?.projects_dir, ...(ledgerConfig(machine, { metaRoot: root, machineFile: mf }) ? { git_ledger: ledgerConfig(machine, { metaRoot: root, machineFile: mf }) } : {}),
     tick: flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'tick', '--reason', 'exit', ...(project ? ['--project', project.file] : []), '--state', state],
     // GAP-12: a lane start refreshes the overlap check (detached, by the supervisor); no project / policy off / no tick (tests) = none
@@ -681,6 +683,9 @@ function s5Cmd(argv, env, out, err) {
         // GAP-1: ONE notice per hold of all queued work (holds.mjs: hold.json notified) - the owner must act, so class alert
         if (r.hold_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.hold_notice.title, body: r.hold_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: hold notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (hold) failed: ${e.message}`)));
+        // RM-37: ONE notice per run asked to pause that reached no clean point within policy.pause.clean_min (pause.mjs), class alert
+        if (r.pause_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.pause_notice.title, body: r.pause_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: pause notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (pause) failed: ${e.message}`)));
         // META-CATCH S1: ONE notice per sweep that handled dead runs ("machine rebooted at T: n runs lost, m relaunched"), class alert
         if (r.lost_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.lost_notice.title, body: r.lost_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: lost-runs notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (lost runs) failed: ${e.message}`)));
@@ -1324,6 +1329,8 @@ Every day:
   norn tick                        one controller pass now (what the scheduler runs)
   norn run                         start a worker run in a lane worktree
   norn stop                        stop a run (a queued run is withdrawn)
+  norn pause                       pause check-ins / hold the queue / pause everything; pause a run safely (it hands off)
+  norn resume                      resume a paused hand-off (at the front), or --all: release the pause
   norn requeue                     re-queue a queued run with new conditions (its dependants follow)
   norn rec                         questions, decisions, directives, lanes: the records
   norn digest                      what needs attention now (read-only)
@@ -1382,7 +1389,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1442,6 +1449,8 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'pause') return pauseCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'resume') return pauseCmd(argv.slice(1), env, out, err, { resume: true });
   if (argv[0] === 'adopt') return adoptCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'init') return initCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'flow') return flowCmd(argv.slice(1), env, out, err);
@@ -1998,6 +2007,63 @@ function epicCmd(argv, env, out, err) {
 
 // ---------- META-ROADMAP S1: norn road (roadmap records in roadmap.jsonl; status is derived, never typed; engine/lib/roadmap.mjs) ----------
 // ---------- META-CATCH S1: norn stuck (stuck.mjs) ----------
+// RM-37 (pause.mjs): `norn pause` - the pause modes, the safe pause of running runs, pause half; `norn resume` - a paused hand-off, or all
+const PAUSE_USAGE = `norn pause [--mode checkins|queue|all [--why W]] | RUN-n... [--why W] | --half [--n N]    [--as owner|controller] [--project F | --state D]
+       (no argument: the pause in force, the runs asked to pause, the paused hand-offs; --half prints the pick and the command that confirms it)`;
+const RESUME_USAGE = 'norn resume RUN-n [--priority P0..P4] | --all    [--as owner|controller] [--project F | --state D]    (RUN-n: a paused hand-off, queued at the front; --all: the pause released, every paused hand-off queued, merges first)';
+function pauseCmd(argv, env, out, err, { resume = false } = {}) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if ((resume ? ['all'] : ['half']).includes(k)) { flags[k] = true; continue; }
+      if (!['project', 'state', 'why', 'as', ...(resume ? ['priority'] : ['mode', 'n'])].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    const { project, state } = where(flags, env), by = flags.as || env.META_ROLE || 'owner';
+    if (resume) {
+      if (flags.all) {
+        const r = resumeAll(state, { by });
+        out(r.cleared ? `RELEASED ${r.cleared.label}` : 'no pause of this project to release');
+        if (r.still) out(`still paused: ${r.still.label} (${r.still.file}) - the machine-level file; delete it to release every project`);
+        for (const x of r.resumed) out(x.next ? `RESUME ${x.run} queued as ${x.next}` : `${x.run}: ${x.error}`);
+        for (const q of r.started) out(`queue: ${q.queued} -> STARTED ${q.next}`);
+        return 0;
+      }
+      if (pos.length !== 1) throw new RunError('resume needs one RUN id, or --all');
+      const r = resumeRun(state, { run: pos[0], by, priority: flags.priority || 'P0' });
+      out(`RESUME ${r.run} queued as ${r.next} (${flags.priority || 'P0'})`);
+      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);
+      return 0;
+    }
+    if (flags.half) {
+      if (pos.length || flags.mode) throw new RunError('--half takes no RUN id and no --mode');
+      const n = flags.n === undefined ? undefined : Number(flags.n);
+      if (n !== undefined && !(Number.isInteger(n) && n >= 0)) throw new RunError('--n must be a whole number');
+      const pk = pickHalf(state, { n, nearEnd: nearEndMin(project?.policy) });
+      out(pk.line);
+      if (pk.pick.length) out(`confirm: norn pause ${pk.pick.map(r => r.id).join(' ')} --why "pause half"`);
+      return 0;
+    }
+    if (pos.length) {
+      if (flags.mode) throw new RunError('pause a run or set a mode, not both');
+      let bad = 0;
+      for (const x of pauseRuns(state, pos, { by, why: flags.why })) { if (x.error) { bad++; err(`error: ${x.error}`); } else out(`PAUSE ${x.run}: order ${x.mail} sent (urgent) - it commits, hands off and ends at its next clean point`); }
+      return bad ? 2 : 0;
+    }
+    if (flags.mode) { const p = setPause(state, { mode: flags.mode, by, why: flags.why }); out(`PAUSED: ${p.label} - ${PAUSE_MODES[p.mode].says}`); return 0; }
+    const p = readPause(pauseFiles(state)), items = Object.values(loadState(state).items).filter(i => i.kind === 'run');
+    out(p ? `pause: ${p.label}${p.by ? ` by ${p.by}` : ''}${p.at ? ` since ${p.at}` : ''}${p.why ? ` (${p.why})` : ''} [${p.file}] - ${PAUSE_MODES[p.mode].says}` : 'pause: none');
+    for (const r of items.filter(i => i.state === 'running' && i.pause)) out(`asked to pause: ${r.id} (${r.data.lane}) - ${r.pause.mail}`);
+    for (const r of pausedHandoffs(state)) out(`paused hand-off: ${r.id} (${r.data.lane}) - resume it: norn resume ${r.id}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof PauseError || e instanceof RunError || e instanceof RunRefused || e instanceof RecordError) { err(`error: ${e.message}`); return Number.isInteger(e.code) ? e.code : 2; }
+    throw e;
+  }
+}
 const STUCK_USAGE = 'norn stuck [--json] (the open flags) | brief RM-n [--out F] (the generated approach-review brief) | --replay [RM-n] (when each threshold would have fired, from this state)    [--project F | --state D]';
 function stuckCmd(argv, env, out, err) {
   try {

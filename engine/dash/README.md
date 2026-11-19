@@ -53,7 +53,9 @@ The dashboard says these words and only these; a count of the same thing comes f
   are counted beside it by name ("+ n to approve").
 - **Finding**: one open problem a check reports (instruction files, memory, rules, docs, tests, models, code checks). The **Slop** page
   lists every open finding; "slop" names the page, never a count. A **new finding** is one at warn level (medium or high) first seen
-  since the last baseline - the Slop count, SloppaChoppa's line and his badge all say "new finding".
+  since the last baseline - the Slop count, SloppaChoppa's line and his badge all say "new finding". A code finding explains
+  itself (RM-27): under its row, what was found, why the rule exists, what to do, and the waiver path (`norn rec add waiver`). The text
+  is the rule's `explain` in `engine/lib/slop/rules/<id>.json`, the same text `norn slop check` prints; a rule without it does not load.
 - **Hunk**: one proposed edit to one file, shown as a diff (a fixer result or an audit card). A finding can need several hunks; Apply
   counts hunks, the Slop counts count findings.
 - **Directive / Decision / Question** (`DIR-n` / `DEC-n` / `Q-n`): the record kinds; the Records page lists the first two.

@@ -215,7 +215,7 @@ function left(s, ctx) {
   const u = s.usage || {}, pct = fin(u.used) ? u.used : null;
   const usage = `<div class="hbar"><i style="width:${pct === null ? 0 : Math.min(100, pct)}%"></i>${fin(u.stop) ? `<b style="left:${Math.min(100, u.stop)}%"></b>` : ''}</div>
     <div class="small mute">${pct === null ? 'usage not estimated' : `${Math.round(pct)} % of the weekly guard${fin(u.stop) ? ` (stops at ${u.stop} %)` : ''}`}</div>`;
-  const next = s.paused ? 'check-ins are paused' : `on the next event, or every ${fin(s.interval_min) ? s.interval_min : '?'} min`;
+  const next = s.checkins_paused ? 'check-ins are paused' : `on the next event, or every ${fin(s.interval_min) ? s.interval_min : '?'} min`;
   // META-LIMIT-GATE: an executor family out of quota (norn run refuses it, the fill holds it until the reset)
   const quota = (s.limits || []).length ? sh('Out of quota', s.limits.map(l => `<div class="small">${esc(l)}</div>`).join('')) : '';
   return `<aside class="home-l">${sh('Now', now)}${sh('Held by this chat', '<div class="mute small">no lane held</div>')}${sh('Usage this week', usage)}${quota}${sh('Next check-in', `<div class="small">${esc(next)}</div>`)}</aside>`;

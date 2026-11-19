@@ -66,7 +66,7 @@ export function stageArgs(p, r, rt, cp) {
     ...(cp.merge_agent ? ['--agent', cp.merge_agent] : []), '--model', cp.merge_model, '--effort', cp.merge_effort, '--as', 'launcher'];
   return { brief, run, out };
 }
-const metaCli = metaCmd => args => { const r = spawnSync(process.execPath, [metaCmd, ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true }); return { code: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}`.trim() }; };
+export const metaCli = metaCmd => args => { const r = spawnSync(process.execPath, [metaCmd, ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true }); return { code: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}`.trim() }; };
 
 /**
  * The tick's code pass over unreviewed ends: every routine one is handled and recorded (run review by: launcher, data { refs, routine,

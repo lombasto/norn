@@ -14,6 +14,7 @@ import { ciMain } from './ciwatch.mjs';
 import { fedCacheR } from './fed.mjs';
 import { limitLines } from './limitgate.mjs';
 import { isApi, billingLine } from './billing.mjs';
+import { readPause, PAUSE_MODES, pauseFiles } from './pausemode.mjs';
 
 const pad = n => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -23,7 +24,6 @@ const localMd = d => `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHo
 const N = (x, d) => Number(x).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const ps = v => (v === undefined || v === null ? '' : String(v));   // PowerShell renders $null as ''
 const cs = capText;   // a cap: unset = no limit, said so (META-OOTB F-3: never an empty cap)
-const bool = b => (b ? 'True' : 'False');
 
 function lastMarker(notes) {
   if (!notes || !fs.existsSync(notes)) return '(no NOTES)';
@@ -74,7 +74,7 @@ export function weeklyEstimate(o, now = new Date(), { transcripts = true } = {})
  */
 export function buildStatus(o) {
   const B = o.budget || {}, now = o.now || new Date(), staleMs = o.staleMs ?? STALE_MS;
-  const paused = o.paused || [path.join(path.dirname(path.resolve(o.state)), 'PAUSED'), path.join(o.state, 'PAUSED')];
+  const paused = o.paused || pauseFiles(o.state);
   const lastTickF = path.join(o.state, 'last-tick.txt');
   const lastCk = fs.existsSync(lastTickF) ? new Date(fs.readFileSync(lastTickF, 'utf8').trim()) : new Date(now.getTime() - 12 * 3600000);
   sweepLost(o.state, { staleMs, by: 'status' });
@@ -86,7 +86,8 @@ export function buildStatus(o) {
   L.push('## Steering (BUDGET; future dispatch only)');
   L.push(`- caps: max_claude_workers=${cs(B.max_claude_workers)}; max_codex=${cs(B.max_codex)}; max_astra=${cs(astraCap)}; max_sol=${cs(solCap)}; usage_rate_cap_pct_per_h=${cs(B.usage_rate_cap_pct_per_h)}`);
   L.push(`- defaults: claude_model=${B.claude_model || 'claude-opus-5-5'}; claude_effort=${B.claude_effort || 'medium'}; checkin_model=${ps(B.checkin_model)}; checkin_effort=${ps(B.checkin_effort)}; codex_astra_effort=${B.codex_astra_effort || 'xhigh'}; codex_sol_effort=${B.codex_sol_effort || 'medium'}`);
-  L.push(`- check-ins paused: ${bool(paused.some(f => fs.existsSync(f)))}`);
+  const pz = readPause(paused);   // RM-37: the mode in force, who set it and why (pausemode.mjs)
+  L.push(`- pause: ${pz ? `${pz.label}${pz.by ? ` by ${pz.by}` : ''}${pz.at ? ` since ${pz.at.slice(0, 16)}Z` : ''}${pz.why ? ` (${pz.why})` : ''} - ${PAUSE_MODES[pz.mode].says}` : 'none'}`);
   const items = Object.values(st.items);
   const dirs = items.filter(i => i.kind === 'directive' && i.state === 'active');
   L.push(`- directive count: ${dirs.length} active (norn rec list --open --kind DIR; below DECISION-RULES stops and owner-only asks)`);

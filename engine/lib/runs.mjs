@@ -30,6 +30,7 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
+import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -266,10 +267,11 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
   }
   return lost;
 }
-/** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, PAUSED, the weekly guard) for a run's spec -> { refused | null, count, max } */
+/** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, the weekly guard) for a run's spec -> { refused | null, count, max }.
+ * RM-37: a pause never refuses it - startRun queues the resume while a pause holds starts (pausemode.mjs), and the fill starts it on release */
 export function autoResumeRefusal(spec, state) {
   const pol = spec.policy || {}, count = spec.resumes || 0, max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
-  const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}` : (spec.paused || []).some(f => fs.existsSync(f)) ? 'paused'
+  const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}`
     : usageRefusal(spec, state, { rate: false });   // the weekly guard (one home with the queue fill: usageguard.mjs)
   return { refused: refused || null, count, max };
 }
@@ -492,6 +494,12 @@ export function startRun(o) {
   if (o.labels?.length && !o.fromQueue && !o.claim_of) {   // META-GTP-FED piece 1: a labelled run always queues; the fill here or a node serving its labels starts it (a node's claimed run starts in place)
     const { queue: _q, ...rest } = o;
     return { ...queueRun(rest), queued: true, why: `labels ${o.labels.join(',')}: started by a machine that serves them` };
+  }
+  // RM-37: while a pause holds starts (Hold the queue / Pause everything) new work and hand-off resumes wait queued, never refused;
+  // a resume (a continuation) goes ahead of new work, merges first (pausemode.mjs heldPriority). A check-in and a helper are not held here.
+  if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {
+    const ph = readPause(o.paused);
+    if (holdsStarts(ph)) { const { queue: _q, ...rest } = o; return { ...queueRun(o.resumeOf ? { ...rest, priority: heldPriority(rest) } : rest), queued: true, why: `held: ${ph.label} (${ph.file})` }; }
   }
   if (o.queue) {   // META-GT12: a full cap queues the run instead of refusing it (a held worktree still refuses: exit 3)
     const { queue: _q, ...rest } = o;
@@ -841,8 +849,8 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     let spec = readJson(queueSpecPath(state, q.id));
     if (!spec) { gone('queue spec missing'); continue; }
     try { spec = { ...spec, budget: liveBudget(spec) }; } catch (e) { row.terms.push(e.message); continue; }   // GAP-2: caps, usage guard, floor of NOW
-    const paused = (spec.paused || []).find(f => fs.existsSync(f));
-    if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
+    const paused = readPause(spec.paused);   // RM-37: Hold the queue / Pause everything hold every queued run; Pause check-ins none
+    if (holdsStarts(paused)) row.terms.push(pauseTerm(paused));
     const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;
     row.account = onAccount(info);   // GAP-1 (holds.mjs): "every queued Claude run held" counts the rows the usage guard applies to
     const usage = row.account ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)

@@ -57,6 +57,7 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .kpop{position:absolute;right:0;z-index:5;margin-top:4px;width:min(320px,calc(100vw - 40px));background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px var(--shadow);padding:8px;display:flex;flex-wrap:wrap;gap:6px}
 .kpop>div{flex-basis:100%;margin-top:4px}
 .glist{margin:0;padding:0 0 0 18px}
+.sexplain{margin-top:3px;overflow-wrap:anywhere}.sexplain summary{cursor:pointer}.sexplain dl{margin:4px 0 0}.sexplain dt{font-weight:600;margin-top:4px}.sexplain dd{margin:0}.sexplain code{white-space:normal;word-break:break-all}
 /* META-UX-BUILD S2: the sub-view pattern (subviews.mjs) - a summary row of at most 4 numbers, the sub-view row, the chosen part */
 .subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
 .subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid var(--line)}.subnav button[aria-selected=true]{background:var(--ink);color:var(--bg)}.subnav button[aria-selected=true] .mute{color:inherit}
@@ -392,6 +393,9 @@ body[data-tab=home] main{padding:0;max-width:none}
 .htop{position:relative}
 .hpick>summary{list-style:none;cursor:pointer}.hpick>summary::-webkit-details-marker{display:none}.hpick>summary::after{content:'\25BE';margin-left:2px}
 .hpop{position:absolute;left:14px;top:38px;z-index:5;width:min(460px,calc(100vw - 28px));white-space:normal;background:var(--panel);border:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 18px var(--shadow)}
+/* RM-37: the header's pause menu (ui.mjs pauseMenu): one row per mode (its button, its effect), what waits, Pause half, Resume all */
+.ppop{position:absolute;right:20px;top:100%;z-index:5;margin-top:4px;width:min(440px,calc(100vw - 20px));box-sizing:border-box;white-space:normal;background:var(--panel);border:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 18px var(--shadow)}.ppop[hidden]{display:none}
+.pm-mode{display:flex;gap:10px;align-items:baseline}.pm-mode button{flex:none;min-width:9.5em}.ppop .acts{display:flex;gap:8px;flex-wrap:wrap}
 .hpick-row{display:flex;gap:12px;flex-wrap:wrap}.hpick-row select{margin-left:4px;font:inherit}.hpop .acts{display:flex;gap:8px;flex-wrap:wrap}
 button.hnote{cursor:pointer;background:none;font:inherit;font-size:12px}
 .composer{position:relative}.slashmenu{position:absolute;left:14px;right:14px;bottom:100%;z-index:4}
@@ -435,7 +439,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 @media (max-width:700px){.home{display:grid;grid-template-columns:minmax(0,1fr);height:auto;min-height:0}
  .home-l,.home-r{display:none}
  .htop{position:sticky;top:var(--hdr-h,0px);z-index:1}header #project{flex:1 1 0;width:0}
- .hpop{left:10px;width:calc(100vw - 20px)}.slashmenu{left:10px;right:10px}
+ .hpop{left:10px;width:calc(100vw - 20px)}.ppop{right:10px}.pm-mode{flex-direction:column;gap:2px}.slashmenu{left:10px;right:10px}
  .hhead{padding:6px 10px;gap:8px}.hnote,.heff,.hlim{display:none}.hctx .hbar{width:54px}
  .hfilters{padding:6px 10px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.hf{flex:none}
  .hscroll{overflow:visible;padding:10px 10px 4px}.ev-card{margin-left:0;padding:9px 10px}
@@ -447,7 +451,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
  .bbar button[aria-current=page]{color:var(--run);box-shadow:inset 0 3px 0 var(--run)}
  .bbar .bg{font-size:17px;line-height:1}.bbar .bl{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase}
  .bbar .count{position:absolute;top:3px;left:55%;background:var(--accent);color:var(--on-accent);font-size:10px;padding:0 4px;font-weight:700}
- body:not(.more) #tabs,body:not(.more) header>#status,body:not(.more) header>#look,body:not(.more) header>#theme,body:not(.more) header>#pause,body:not(.more) header>#tick{display:none}
+ body:not(.more) #tabs,body:not(.more) header>#status,body:not(.more) header>#look,body:not(.more) header>#theme,body:not(.more) header>#pause,body:not(.more) header>#pause-pop,body:not(.more) header>#tick{display:none}
  #needs-btn:not([hidden]){display:inline-block;margin-left:auto}}
 </style>
 <link rel="stylesheet" href="/norn/norn.css">
@@ -462,7 +466,8 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
   <button class="ghost" id="orc" hidden title="SloppaChoppa: call him up" aria-label="SloppaChoppa"></button>
   <button class="ghost" id="look" title="Norn look / classic look">Look: norn</button>
   <button class="ghost" id="theme" title="Light / dark / system">Theme: system</button>
-  <button id="pause">Pause check-ins</button><button id="tick">Run tick now</button>
+  <button id="pause" aria-expanded="false" aria-controls="pause-pop">Pause &#9662;</button><button id="tick">Run tick now</button>
+  <div id="pause-pop" class="ppop" hidden aria-label="Pause"></div>
 </header>
 <nav id="tabs" aria-label="Dashboard"></nav>
 <div id="error" role="alert"></div>
@@ -493,7 +498,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, renderActivity, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '/activity.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal, pauseMenu } from '/ui.mjs';
 import { hoChip } from '/widgets.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
 const laneShowQs = v => { const k = String(v ?? '').split(',').filter(x => LANE_SHOW.some(c => c[0] === x)); return new Set(v == null ? LANE_SHOW_DEFAULT : k); };
@@ -510,7 +515,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -557,12 +562,11 @@ async function header(g = get) {
     $('#status').textContent = 'no project yet'; $('#pause').disabled = $('#tick').disabled = true; return null;
   }
   const ov = await g(`/api/overview?project=${encodeURIComponent(S.project)}`);
-  S.needs = needsCount(ov); S.usage = ov.burn?.usage ?? null; S.paused = ov.paused; S.at = Date.now();
+  S.needs = needsCount(ov); S.usage = ov.burn?.usage ?? null; S.pause = ov.pause; S.ov = ov; S.at = Date.now(); pausePaint();
   document.title = pageTitle(S.needs, S.project, look());
-  $('#status').innerHTML = `status ${fmtTime(ov.now)} · check-ins <b>${ov.paused ? 'paused' : 'on'}</b>${ov.checkin_locked ? ' · tick running' : ''} · ${S.live ? 'live' : 'reconnecting ...'}${REMOTE ? ` · remote: ${esc(REMOTE.name)}` : ''}`;
-  $('#pause').textContent = ov.paused ? 'Resume check-ins' : 'Pause check-ins';
+  $('#status').innerHTML = `status ${fmtTime(ov.now)} · ${ov.pause ? `<b>${esc(ov.pause.label)}</b>` : 'check-ins <b>on</b>'}${ov.checkin_locked ? ' · tick running' : ''} · ${S.live ? 'live' : 'reconnecting ...'}${REMOTE ? ` · remote: ${esc(REMOTE.name)}` : ''}`;
   $('#pause').disabled = $('#tick').disabled = S.project === 'all';
-  $('#tick').disabled = $('#tick').disabled || ov.paused || ov.checkin_locked;
+  $('#tick').disabled = $('#tick').disabled || !!ov.pause?.checkins || ov.checkin_locked;
   $('#needs-btn').hidden = !S.needs || S.project === 'all'; $('#needs-btn').textContent = `${S.needs} need you`;   // META-CONTROLLER C2: phone header
   return ov;
 }
@@ -1094,7 +1098,14 @@ document.addEventListener('click', e => {
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
   if (d.act === 'proposal') act(() => post('/api/proposal', { project: d.project || p, run: d.run, stage: d.stage, pick: d.pick }));   // RM-28 S1: one stage's pick
   if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
-  if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, paused: false }));   // GAP-1: the hold row of a PAUSED file
+  if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, resume: 'all' }));   // GAP-1: the hold row of a PAUSED file
+  // RM-37: the pause menu (a mode, Pause half: its pick line then Confirm, Resume all) and a row's Pause / Resume - each one POST /api/pause
+  if (d.act === 'pause-mode') act(() => post('/api/pause', { project: S.project, mode: d.mode }));
+  if (d.act === 'pause-half') { post('/api/pause/half', { project: S.project }).then(h => { S.half = h; pausePaint(); }, e => err(e.message)); return; }
+  if (d.act === 'pause-half-go') act(async () => { await post('/api/pause', { project: S.project, runs: d.runs.split(','), why: 'pause half' }); S.half = null; });
+  if (d.act === 'pause-resume-all') act(() => post('/api/pause', { project: S.project, resume: 'all' }));
+  if (d.act === 'run-pause' && confirm(`Pause ${d.run}? It finishes the step in progress, commits, hands off and waits for your Resume.`)) act(() => post('/api/pause', { project: p, runs: [d.run] }));
+  if (d.act === 'run-resume') act(() => post('/api/pause', { project: p, resume: d.run }));
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
   if (d.act === 'fx-skip') { const k = (S.fxSkip ??= {})[d.run] ??= new Set(); if (k.has(d.file)) k.delete(d.file); else k.add(d.file); fxPaint(); return; }   // META-UX-BUILD S7
@@ -1138,7 +1149,10 @@ document.addEventListener('click', e => {
     }, e => err(e.message));
   }
 });
-$('#pause').onclick = () => act(() => post('/api/pause', { project: S.project, paused: !S.paused }));
+$('#pause').onclick = () => { S.pauseOpen = !S.pauseOpen; S.half = null; pausePaint(); };
+// RM-37: the pause menu paints from the last overview (header() repaints it, so an open menu follows the live state)
+function pausePaint() { const m = $('#pause-pop'), open = S.pauseOpen && !!S.ov; m.hidden = !open; $('#pause').setAttribute('aria-expanded', String(open));
+  if (open) m.innerHTML = pauseMenu(S.ov, { now: Date.parse(S.ov.now), half: S.half }); }
 $('#tick').onclick = () => act(() => post('/api/checkin', { project: S.project }));
 // ---- META-ADOPT A3: the setup page (Add a project -> What is there -> Reading -> Review -> Set up). Every button is one POST /api/adopt/*
 // (or /api/project/new) with the page token; the step is derived from GET /api/adopt, so a reload / another device lands in the same place ----

@@ -10,6 +10,7 @@ import path from 'node:path';
 import { readText } from '../fsnap.mjs';
 import { fold, readEvents, recordsFile } from '../records.mjs';
 import { globToRe } from '../dlvgit.mjs';
+import { explainOf } from './check.mjs';
 
 export const slopDir = state => path.join(state, 'slop');
 const readJ = (f, dflt) => { const t = readText(f); return t === null ? dflt : JSON.parse(t); };   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
@@ -74,3 +75,10 @@ export function hostWrite(state, payload) {
 
 /** one line per finding for a worker / a resume prompt; the path in backticks (it is code: the dashboard's prose shows it as a path) */
 export const findingLine = f => `${f.rule} \`${f.file}${f.line ? ':' + f.line : ''}\` ${f.msg} [${f.fp}]`;
+/** RM-27: the waiver path for one finding - the one way a finding may stay (owner / controller only) */
+export const waiverCmd = f => `norn rec add waiver --rule ${f.rule} --scope ${f.fp} --why "<why it may stay>"`;
+/** RM-27: a finding's rule explanation as lines (what / why / fix / keep it), for the CLI and the resume prompt; [] = no such rule */
+export function explainLines(f, { pad = '    ', projectDir = null } = {}) {
+  const x = explainOf(f.rule, projectDir);
+  return x ? [`${pad}what: ${x.what}`, `${pad}why:  ${x.why}`, `${pad}fix:  ${x.fix}`, `${pad}keep it: only the owner or the controller waives a finding: ${waiverCmd(f)}`] : [];
+}

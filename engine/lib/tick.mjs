@@ -1,4 +1,4 @@
-// `norn tick` (META-GENERAL-DESIGN 9 checkin.ps1 row, 10.2, 12-S5): PAUSED -> tick lock -> one check-in at a time ->
+// `norn tick` (META-GENERAL-DESIGN 9 checkin.ps1 row, 10.2, 12-S5): the pause (RM-37 pausemode.mjs: Pause everything exits here) -> tick lock -> one check-in at a time ->
 // norn status -> CHECKIN rendering -> the check-in launched as RUN kind checkin through the S4 supervisor (`norn run` path).
 // Port of meta/checkin.ps1; the old synchronous claude -p becomes a supervised detached run (heartbeat, usage, transcript).
 import fs from 'node:fs';
@@ -15,7 +15,7 @@ import { authRefusal, authNoticeDue, loginHolds } from './authguard.mjs';
 import { limitRefusal } from './limitgate.mjs';
 import { readEvents, recordsFile, fold, loadState } from './records.mjs';
 import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate, rateBand, idleProbe, STALL_IDLE_MIN } from './gate.mjs';
-import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './checkins.mjs';
+import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, metaCli } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
 import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
@@ -35,6 +35,10 @@ import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
+import { tickLanes, lanesProbe } from './lifecycle.mjs';
+import { tickPaths } from './lanepaths.mjs';
+import { lateNotice, cleanMin } from './pause.mjs';
+import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');
@@ -111,7 +115,7 @@ export function gateProbes(p, machine = {}) {
   const m = p?.checkin?.stall_idle_min;
   return [watchProbe(p, machine), idleProbe({ minutes: Number.isInteger(m) ? m : STALL_IDLE_MIN, projectsDir: machine?.claude?.projects_dir }),
     p?.merge?.gate?.fast && p.state ? mqProbe(p.state) : null, p?.ci?.repo && p.state ? ciProbe(p) : null,
-    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null].filter(Boolean);   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
+    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null, lanesProbe(p?.policy)].filter(Boolean);   // lifecycle.mjs: an idle / stopped lane = lanes:<rule>:L:x, MAJOR   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
 }
 
 // NORN-WATCH S2: a project's checkin.max_quiet_min overrides the machine's checkin_max_quiet_min for that project (additive)
@@ -153,6 +157,9 @@ export function tick(o) {
       const h = holdNoticeDue(o.project.state, { min: noticeMin(o.project.policy), status, project: o.project.name });
       if (h) r = { ...r, hold_notice: h };
     } catch { /* a notice never fails the tick */ }
+    // RM-37: the one owner notice of a run asked to pause that has not reached a clean point within policy.pause.clean_min (never killed)
+    try { const n = lateNotice(o.project.state, { min: cleanMin(o.project.policy), project: o.project.name, ...(o.now ? { now: o.now().getTime() } : {}) }); if (n) r = { ...r, pause_notice: n }; }
+    catch { /* a notice never fails the tick */ }
     return r;
   }
   finally {
@@ -168,9 +175,10 @@ export function tick(o) {
 function holdStep(state, tag) { try { trackHold(state, readiness(state)); } catch (e) { tickLog(state, `${tag}: hold: ${e.message}`); } }
 function tickPass(o, g = {}) {
   const p = o.project, state = p.state, staleMs = o.staleMs ?? STALE_MS;
-  const paused = [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')];
+  const paused = pauseFiles(state);
   const tag = `tick ${p.name}${o.reason ? ' (' + o.reason + ')' : ''}`;
-  if (paused.some(f => fs.existsSync(f))) { notePaused(state); holdStep(state, tag); return { code: 0, msg: `${tag}: PAUSED - exit before status or check-in` }; }
+  // RM-37: Pause everything exits before the sweep, the status and the check-in; Pause check-ins runs all of it but the check-in (below)
+  { const pz = readPause(paused); if (stopsTick(pz)) { notePaused(state); holdStep(state, tag); return { code: 0, msg: `${tag}: PAUSED (${pz.label}) - exit before status or check-in` }; } }
   fs.mkdirSync(state, { recursive: true });
   const lockF = path.join(state, 'tick.lock');
   const held = takeLock(lockF, `pid ${process.pid} start ${new Date().toISOString()} reason ${o.reason || '-'}`);
@@ -207,12 +215,18 @@ function tickPass(o, g = {}) {
     if (o.overlap !== false && !o.dry) projectOverlap(p);
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
+    // item 9 (MAIL-20, lanepaths.mjs tickPaths): finished work reaches a PR by code - unpushed commits pushed, the MERGE stage queued (P1)
+    if (!o.dry || o.lanes) try { for (const x of tickPaths(state, { project: p, dry: !!o.dry, cli: o.cli || metaCli(META_CMD), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: path to main ${x.id}: ${x.act} - ${x.note}`); } catch (e) { tickLog(state, `${tag}: path to main: ${e.message}`); }
+    // lane norn-lifecycle item 5 (lifecycle.mjs): no lane sits - the orphan / stopped-and-landed / done-merged-and-old lanes archived by code
+    // before the digest (which then lists the idle and stopped ones for the check-in); never fails the tick
+    if (!o.dry || o.lanes) try { for (const x of tickLanes(state, { project: p, ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, x.refused ? `${tag}: ${x.id} (${x.rule}) not archived: ${x.refused}` : `${tag}: archived ${x.id} (${x.rule}; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}) - ${x.why}`); } catch (e) { tickLog(state, `${tag}: lanes: ${e.message}`); }
     // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag
     try { const tr = Object.keys(loadRoadmap(state).items).length ? buildTree({ stateDir: state, project: p }) : null; const sw = stuckSweep(state, tr ? itemsOf(tr) : [], { project: p.name }); if (sw.notices.length) g.stuck = sw.notices; }
     catch (e) { tickLog(state, `${tag}: stuck sweep failed: ${e.message}`); }
     const start = new Date().toISOString();
     const s = writeStatus({ state, project: p.name, providers: providersOf(p), budget: B, projectsDir: machine.claude?.projects_dir, usageJson: machine.usage || {},
       cacheFile: path.join(state, 'usage-cache.json'), paused, staleMs, ci: p.ci, digest: tryDigest(state, p) });
+    { const pz = readPause(paused); if (stopsCheckins(pz)) { notePaused(state); tickLog(state, `${tag}: ${pz.label} - no check-in`); return { code: 0, msg: `${tag}: ${s.line}; PAUSED (${pz.label}) - no check-in` }; } }
     // META-CHECKIN-GATE: wake the LLM only on a material change since the last real check-in (or past checkin_max_quiet_min)
     const live = { band: Number.isFinite(s.weekly) ? Math.floor(s.weekly / 5) : null, rate_ok: s.rateOk, rate_band: rateBand(s.rate, B.usage_rate_cap_pct_per_h),
       quiet: fs.existsSync(quietFlag(p)) };
@@ -238,7 +252,7 @@ function tickPass(o, g = {}) {
     const minorModel = B.checkin_minor_model ?? MACHINE_DEFAULTS.checkin_minor_model, minor = gate.cls === 'minor' && !!minorModel;
     const ck = renderCheckin(p, { budgetFile: o.budgetFile, budget: B, statusFile: s.out, template: minor ? CHECKIN_MINOR_PROMPT : CHECKIN_PROMPT, wake: gate.why + stuckWake(state, gate.why),
       cv: checkinCv(p, { budget: B, projectsDir: machine.claude?.projects_dir }) });
-    if (paused.some(f => fs.existsSync(f))) { notePaused(state); return { code: 0, msg: `${tag}: PAUSED - exit` }; }
+    if (stopsCheckins(readPause(paused))) { notePaused(state); return { code: 0, msg: `${tag}: PAUSED - exit` }; }
     const cx = checkinExecutor({ B, machine, p, minor, dry: o.dry });   // H2 Setting + the H7 trial (piece 4)
     if (cx.error) return { code: 2, msg: `${tag}: ${cx.error}` };
     const { executor, model, effort } = cx;

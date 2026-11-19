@@ -244,14 +244,14 @@ export function renderDigest(d, { level = 2 } = {}) {
   sec('2 Queued + triggers', s.queued, r => `- ${r.id} ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''} not_before ${r.not_before ?? '-'}`
     + `${r.after.length ? '; after ' + r.after.map(a => `${a.cond}=${a.met === null ? '?' : a.met ? 'met' : a.gone ? 'gone' : 'unmet'}`).join(', ') : ''}`
     + `${r.inputs.length ? '; inputs ' + r.inputs.join(', ') : ''}${r.terms ? '; ' + readyWords(r) : ''}`);
-  sec('3 Questions', s.questions, r => `- ${r.id} ${r.state}${r.owner_only ? ' OWNER-ONLY' : ''} ${r.lane ?? '-'} (${r.hours} h): ${r.title}`
+  sec('3 Questions', s.questions, r => `- ${r.id} ${r.state}${r.owner_only ? ' OWNER-ONLY' : ''} ${r.lane ?? '-'} (${r.hours} h): ${r.title}${r.missed?.length ? ` - MISSED by ${r.missed.join(', ')}: apply it first` : ''}`
     + (r.answered_by ? `
   - ${r.id} open, possibly answered by ${r.answered_by} (${r.answered_why}): close it with META rec answer ${r.id} --from ${r.answered_by}, or META rec not-an-answer ${r.answered_by} --q ${r.id}` : ''));
   sec('4 Ended without a clean successor', s.ended, r => `- ${r.id} ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''} ${r.state} ${r.outcome} exit=${r.exit ?? '-'}`
     + `${r.dirty !== null ? ` dirty=${r.dirty}` : ''}${r.external_term ? ' external_term' : ''} ended ${r.ended} (${r.hours} h)${r.worktree ? ' wt ' + r.worktree : ''}`);
   sec('5 Directives with no action', s.directives, r => `- ${r.id} (${r.hours} h): ${r.text}`);
   if (s.ci) sec('6 CI red on main', s.ci, r => `- ${r.id} ${r.repo} run ${r.run} ${String(r.sha ?? '-').slice(0, 9)} ${r.conclusion} created ${r.created} (${r.hours} h); failing: `
-    + `${r.failing === null ? 'not read yet' : r.failing.length ? r.failing.slice(0, 8).join('; ') : 'none named in the log'}; fix task: queue a lane, never a re-run`);
+    + `${r.failing === null ? 'not read yet' : r.failing.length ? r.failing.slice(0, 8).join('; ') : 'none named in the log'}; fix task (never a re-run): ${r.fix?.line ?? 'queue it on lane ci-fix'}`);
   // META-ROADMAP S3: the audit's Unplaced list (only once the project has a roadmap); place each with norn road add --from / link
   if (s.roadmap) sec('7 Unplaced on the roadmap', s.roadmap, r => `- ${r.id} ${r.kind}: ${r.why}`);
   // META-GUARD R1: open usage alarms; the check-in rules each (let it run / mail it / stop it), Norn never kills a run by itself
@@ -263,5 +263,7 @@ export function renderDigest(d, { level = 2 } = {}) {
   // gap #5: one active directive restating another; the check-in folds the pair (CHECKIN.md 2b), the row leaves when one is not active
   if (s.dupdirs) sec('12 Possible duplicate directives', s.dupdirs, r => `- possible duplicate directives: ${r.older} ~ ${r.newer} (${r.why}): fold them, `
     + `e.g. META rec supersede ${r.older} --by ${r.newer} --why "restated by ${r.newer}"`);
+  // lifecycle.mjs: no lane sits - act on each this pass (CHECKIN.md 2j); the row leaves when the lane runs, is parked or archived
+  if (s.lanes) sec('13 Lanes nothing acts on (act this pass)', s.lanes, r => `- ${r.id} ${r.rule}${r.run ? ' (' + r.run + ')' : ''}: ${r.why}`);
   return L.join('\n') + '\n';
 }

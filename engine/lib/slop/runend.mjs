@@ -4,7 +4,7 @@
 import { gitRun, slopCheck, effectiveRules } from './check.mjs';
 import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
-import { findingLine } from './host.mjs';
+import { findingLine, explainLines } from './host.mjs';
 
 /** the merge base of a commit with main (the remote's main first: it is the fresher), or null (no main, or no common history) */
 export function mainBase(repo, head = 'HEAD', { main = 'main', remote = 'origin' } = {}) {
@@ -48,8 +48,8 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
 }
 
 /** the resume prompt: the list and what to do with it */
-export function slopPrompt(open, brief) {
-  return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds:`, ...open.map(f => '- ' + findingLine(f)),
+export function slopPrompt(open, brief, { projectDir = null } = {}) {
+  return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds:`, ...open.flatMap((f, i) => ['- ' + findingLine(f), ...(open.findIndex(g => g.rule === f.rule) === i ? explainLines(f, { pad: '  ', projectDir }) : [])]),   // RM-27: the rule's what / why / fix, once per rule
     'Fix each one in this worktree and commit; run `norn slop check` until it lists none; then end with `norn done` as before.',
     'A finding that must stay needs a waiver from the owner or the controller: say so and end with `norn done --outcome stopped --why "slop waiver needed"`.',
     ...(brief ? [`Your brief: ${brief}`] : [])].join('\n');

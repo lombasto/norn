@@ -165,7 +165,7 @@ test('dash, remote on: every remote write needs the pairing + token + Origin and
     fs.mkdirSync(path.dirname(threadFile(s)), { recursive: true });
     fs.appendFileSync(threadFile(s), JSON.stringify({ ts: new Date().toISOString(), seg: 1, kind: 'owner', text: 'keep the night quiet' }) + '\n');
     const ctx = context({ state: s, project: null, profile: 'chat', client: 'chat', env: {}, cli: () => 0, approvalMs: 60000, pollMs: 10, notifyFn: () => {} });
-    const pending = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_pause', arguments: { on: true } } }, ctx);
+    const pending = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_pause', arguments: { mode: 'all' } } }, ctx);
     let id = null;
     for (let i = 0; i < 500 && !id; i++) { id = fs.existsSync(approvalsDir(s)) && fs.readdirSync(approvalsDir(s)).find(x => /^AP-[0-9a-f]{8}\.json$/.test(x))?.slice(0, 11); if (!id) await new Promise(r => setTimeout(r, 10)); }
     assert.ok(id, 'an approval card is open');

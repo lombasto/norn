@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The FAKE executor (`norn run --executor fake`): stands in for a headless claude worker in tests and `norn smoke`.
-// The brief drives it, one "key: value" per line: mode (done | stopped | handoff | handoff-once | no-result | crash | sleep | term | orphan),
+// The brief drives it, one "key: value" per line: on_pause (1: obey the owner's pause order - poll mail, end HANDOFF), mode (done | stopped | handoff | handoff-once | no-result | crash | sleep | term | orphan),
 // say (a line on stderr = the run log), cache_read (the final's cache_read_input_tokens, default 20), ms (wait before finishing), read (files read at the end, logged in NOTES; one missing = STOPPED), until (file: finish once it exists - no clock; a test releases it), pids (file: {pid, grandchild} - sleep mode spawns a grandchild so a tree kill can be checked), done_via (cli: end through the real `norn done` CLI, not result.mjs).
 // It appends a NOTES block (its free-form log), writes the run's result as `norn done` does (gap #3: done | stopped | handoff, with a
 // hand-off text; no-result / crash / term write none) and prints a claude-like `--output-format json` result on stdout.
@@ -76,5 +76,21 @@ const finishRun = () => {
   process.exitCode = mode === 'crash' ? 3 : mode === 'term' ? 143 : 0;   // term: an external SIGTERM's exit code (S5)
 };
 // `until`: live until the test releases the run (or stops it) - event-based, so a loaded machine cannot outrun a fixed clock
-if (brief.until && !resumeSid) { const t = setInterval(() => { if (fs.existsSync(brief.until)) { clearInterval(t); finishRun(); } }, 50); }
-else setTimeout(finishRun, ms);
+let main;
+if (brief.until && !resumeSid) { main = setInterval(() => { if (fs.existsSync(brief.until)) { clearInterval(main); finishRun(); } }, 50); }
+else main = setTimeout(finishRun, ms);
+// on_pause: a worker that obeys the owner's pause order (RM-37): it takes its mail as the PostToolUse hook would, between steps, and
+// on the PAUSE order acks it and ends HANDOFF at once (its "clean point")
+if (brief.on_pause && process.env.META_RUN_ID && process.env.META_RUN_STATE) {
+  const { checkMail, ackMail } = await import('../lib/mail.mjs');
+  const run = process.env.META_RUN_ID, state = process.env.META_RUN_STATE;
+  const poll = setInterval(() => {
+    let got = []; try { got = checkMail(state, { by: 'worker', run, via: 'hook' }); } catch { /* the log is busy: next poll */ }
+    const m = got.find(x => /^PAUSE/.test(x.data.subject));
+    if (!m) return;
+    clearInterval(poll); clearInterval(main); clearTimeout(main);
+    ackMail(state, { by: 'worker', run, id: m.id });
+    mode = 'handoff'; finishRun();
+  }, 100);
+  poll.unref();   // the run lives as long as its own timer; the poll never keeps it alive
+}

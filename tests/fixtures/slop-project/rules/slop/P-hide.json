@@ -5,6 +5,11 @@
   "tool": "eslint",
   "title": "a new child-process call without windowsHide",
   "how": "a spawn / spawnSync / execFile / execFileSync / exec / execSync call (bare, or child_process.x without exec: RegExp has one) with no windowsHide property in its arguments. Each such call can flash a console window on Windows; the flag is ignored elsewhere. Options passed as a variable or a spread need the flag written in the call",
+  "explain": {
+    "what": "A new child-process call has no windowsHide option.",
+    "why": "On Windows, each such call can flash a console window in front of the user.",
+    "fix": "Add windowsHide: true to the call's options."
+  },
   "files": [
     "engine/**",
     "tests/**"

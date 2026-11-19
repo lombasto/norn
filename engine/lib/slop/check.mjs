@@ -26,11 +26,15 @@ export const KIND_PARAMS = {
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'eslint'];
 
+// RM-27: every rule, built-in or a project's own, carries its explanation beside its parameters - what was found, why the rule
+// exists, what to do - so the CLI, the resume prompt and the Slop page say the same thing; a rule without all three does not load.
+export const EXPLAIN = ['what', 'why', 'fix'];
 function checkRule(r, f) {
   if (!r.id || !LEVELS.includes(r.level) || !DETECT[r.kind]) throw new Error(`${f}: a rule needs an id, a level (${LEVELS.join(' | ')}) and a known kind`);
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
   if (r.kind === 'eslint' && (r.tool !== 'eslint' || !r.rules || Object.keys(r.rules).some(k => !LINT_RULES.includes(k)))) throw new Error(`${f}: an eslint rule names core rules from ${LINT_RULES.join(', ')} only`);
   if (r.kind === 'ast' && (r.tool !== 'eslint' || !r.selectors?.length || r.selectors.some(s => typeof s.selector !== 'string' || typeof s.message !== 'string'))) throw new Error(`${f}: an ast rule is a list of { selector, message } (tool eslint)`);
+  if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
   if (r.key && r.key !== 'match') throw new Error(`${f}: key is "match" or absent (the line)`);
   return r;
 }
@@ -68,6 +72,14 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
 
 /** the rule-set hash every stored check carries (audit 6): an edited rule (its text or its `rev`) makes "checked clean at head X" stale */
 export const rulesHash = (rules = loadRules()) => crypto.createHash('sha256').update(JSON.stringify([...rules].sort((a, b) => (a.id < b.id ? -1 : 1)))).digest('hex').slice(0, 16);
+
+let shipped = null;
+/** a rule's { what, why, fix }: a built-in, or a project's own P-* rule read from its file (projectDir); null = no such rule */
+export function explainOf(id, projectDir = null) {
+  if (!String(id).startsWith('P-')) return (shipped ||= new Map(loadRules().map(r => [r.id, r.explain]))).get(id) ?? null;
+  const f = projectDir && path.join(projectDir, 'rules', 'slop', `${id}.json`);
+  return f && fs.existsSync(f) ? readRule(f).explain : null;
+}
 
 // ---------- git ----------
 export function gitRun(cwd, args, { input, ok = [0], buffer = false } = {}) {

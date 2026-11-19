@@ -41,7 +41,7 @@ test('hold-ups in plain words from the real walk terms (after / usage / resource
   assert.equal(w('not_before 2026-11-12T23:03:00.000Z'), 'not before today 23:03');   // R2: one day-aware clock
   assert.equal(w('after q:Q-12:answered unmet'), 'waits for your answer (Q-12)');
   assert.equal(w('worktree held by RUN-1'), 'waits for its folder (Adopt A1 is writing there)');
-  assert.equal(w('PAUSED (C:/x/PAUSED)'), 'held: paused');
+  assert.equal(w('PAUSED all (C:/x/PAUSED)'), 'held: paused');
   const p = buildPlan({ runs: [...runs, run(2, 'queued', { lane: 'adopt', stage: 'A2', after: [after('RUN-1', 'merged')] })],
     ready: [{ id: 'RUN-2', ready: false, terms: ['after run:RUN-1:merged unmet', 'usage: RATE_OK=0'] }], now: NOW });
   assert.deepEqual(p.upnext[0].holds, ['waits for Adopt A1 to merge', 'held: usage over the hourly cap']);
