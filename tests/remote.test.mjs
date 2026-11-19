@@ -228,7 +228,7 @@ test('Settings: the "Reach Norn from your phone" pane - off says how to start; o
   const base = { project: 'kestrel', version: 'v', settings: [], profiles: [], files: { machine: 'm', project: 'p' }, targets: [], notify: { backend: 'none' },
     sections: [{ id: 'notify', label: 'Notifications', help: 'h', info: true, subs: [{ id: 'ping', label: 'Phone / desktop ping' }, { id: 'remote', label: 'Reach Norn from your phone' }] }] };
   const off = renderTab('settings', { ...base, remote: null }, { setCat: 'notify' });
-  assert.match(off, /id="sub-notify-remote"/); assert.match(off, /norn remote setup/); assert.ok(!off.includes('data-act="remote-pair"'));
+  assert.match(off, /id="sub-notify-phone"/); assert.match(off, /norn remote setup/); assert.ok(!off.includes('data-act="remote-pair"'));
   const on = { on: true, trust: 'tailscale', url: `https://${HOST}/`, hosts: [HOST], logins: [LOGIN], viewer: null,
     devices: [{ id: 'dev-0a1b2c3d', name: 'Pixel 9', login: LOGIN, created: '2026-11-13T10:00:00Z', last_seen: '2026-11-13T11:00:00Z' }] };
   const desk = renderTab('settings', { ...base, remote: on }, { setCat: 'notify' });

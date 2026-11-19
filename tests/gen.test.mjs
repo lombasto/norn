@@ -161,7 +161,7 @@ test('CLI: norn gen --check exit 0 when clean, 1 on drift; norn gen writes; temp
   fs.writeFileSync(path.join(pd, 'roles', 'controller.md'), '---\nname: controller\nresume: resume ${root:win}' + B + 'x\nresume_message: hi\n---\n# ctl\n');
   const f = path.join(pd, 'project.json');
   fs.writeFileSync(f, JSON.stringify({ schema: 1, name: 'demo', title: 'demo', root: '${home}/dev/demo',
-    install: { agents: '${meta}/projects/demo/agents', roles: '${meta}/projects/demo/roles', resume_hook: '${state}/resume-hook.json' } }));
+    install: { agents: '${norn}/projects/demo/agents', roles: '${norn}/projects/demo/roles', resume_hook: '${state}/resume-hook.json' } }));
   assert.equal(run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
   let r = run('gen', '--check');
   assert.equal(r.code, 0, r.out); assert.match(r.out, /gen --check: ok/);

@@ -162,6 +162,40 @@ function patterns(rule, text, file, ctx) {
   }));
 }
 
+// RM-9 (DIR-2, the CLAUDE.md rule on old names kept alive): K16. The rule's patterns line by line, plus every page whose label does not
+// name its id (a page has ONE name: label, id and URL). One finding a line, the first pattern's; each message ends with the rule's fix.
+const stem = t => (t.length > 3 ? t.replace(/s$/, '') : t);
+const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+/** the label names the id: a part of the id (split on - and _, a plural s dropped) is in the label's letters, or starts like a label
+ *  word (4 letters, or the whole part: notify ~ Notifications) */
+export const labelNamesId = (id, label) => {
+  const low = label.toLowerCase(), l = low.replace(/[^a-z0-9]/g, ''), words = low.split(/[^a-z0-9]+/).filter(Boolean);
+  return id.toLowerCase().split(/[-_]/).filter(Boolean).some(t => l.includes(stem(t)) || words.some(w => prefix(w, t) >= Math.min(4, t.length)));
+};
+const PAIR_RE = /\[\s*(['"])([\w-]+)\1\s*,\s*(['"])([^'"\n]*)\3/y, OBJ_RE = /\{\s*id\s*:\s*(['"])([\w-]+)\1\s*,\s*label\s*:\s*(['"])([^'"\n]*)\3/g;
+/** [index, id, label] of each page: { id, label } objects, and the direct [id, label, ...] elements of a list the rule's `pages` names */
+function pagesOf(rule, text) {
+  const out = [...text.matchAll(OBJ_RE)].map(m => [m.index, m[2], m[4]]);
+  for (const m of text.matchAll(new RegExp(rule.pages, 'g'))) {
+    let depth = 0, q = null;
+    for (let i = m.index + m[0].length - 1; i < text.length; i++) {   // from the list's [ to its matching ]; quotes skipped
+      const c = text[i];
+      if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+      if (c === "'" || c === '"' || c === '`') q = c;
+      else if (c === '[') { if (++depth === 2) { PAIR_RE.lastIndex = i; const p = PAIR_RE.exec(text); if (p) out.push([i, p[2], p[4]]); } }
+      else if (c === ']' && --depth === 0) break;
+    }
+  }
+  return out;
+}
+export function shimFindings(rule, text, file) {
+  const byLine = new Map(), fix = rule.fix;
+  const add = (i, msg) => { const line = lineAt(text, i); if (!byLine.has(line)) byLine.set(line, { file, line, msg: `${msg}: ${fix}`, snippet: lineText(text, line) }); };
+  for (const p of rule.patterns) for (const m of text.matchAll(new RegExp(p.re, 'g' + (p.flags || '')))) add(m.index, p.msg);
+  for (const [i, id, label] of pagesOf(rule, text)) if (!labelNamesId(id, label)) add(i, `page label '${label}' does not name its id '${id}' (a page has one name: label, id and URL)`);
+  return [...byLine.values()].sort((a, b) => a.line - b.line);
+}
+
 // static `import ... from 'x'` / `export ... from 'x'` / `import 'x'` (a dynamic import() is no load-order edge)
 const IMPORT_RE = /^\s*(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/gm;
 function importGraph(rule, ctx, side) {
@@ -216,6 +250,7 @@ const DETECT = {
   },
   swallow: (rule, ctx) => content(rule, ctx, (t, f) => swallows(rule, t, f)),
   pattern: (rule, ctx) => content(rule, ctx, (t, f) => patterns(rule, t, f, ctx)),
+  shim: (rule, ctx) => content(rule, ctx, (t, f) => shimFindings(rule, t, f)),
   eslint: lint,
   ast: lint,
   dup,

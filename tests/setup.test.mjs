@@ -34,7 +34,7 @@ function project(sb, name = 'demo') {
   fs.mkdirSync(path.join(sb.home, 'dev', name), { recursive: true });
   const f = path.join(pd, 'project.json');
   fs.writeFileSync(f, JSON.stringify({ schema: 1, name, title: name, root: '${home}/dev/' + name,
-    install: { agents: `\${meta}/projects/${name}/agents`, skills: `\${meta}/projects/${name}/skills` } }));
+    install: { agents: `\${norn}/projects/${name}/agents`, skills: `\${norn}/projects/${name}/skills` } }));
   return f;
 }
 
@@ -144,10 +144,10 @@ test('doctor without machine.json says to run setup', () => {
 });
 
 // S8: project sources carry ${...} forms only (lint); install renders the project's builtin vars so the installed agent works
-test('install renders ${meta} / ${home} / ${root} / ${name} in agent and skill text; other ${...} kept; doctor ok, stale after a source edit', () => {
+test('install renders ${norn} / ${home} / ${root} / ${name} in agent and skill text; other ${...} kept; doctor ok, stale after a source edit', () => {
   const sb = sandbox(); const f = project(sb);
   const src = path.join(sb.root, 'projects', 'demo', 'agents', 'demo-impl.md');
-  fs.writeFileSync(src, '# impl\nrules ${meta}/house-rules.txt, repo ${root}, home ${home}, project ${name}, shell ${HOME} ${lane}\n');
+  fs.writeFileSync(src, '# impl\nrules ${norn}/house-rules.txt, repo ${root}, home ${home}, project ${name}, shell ${HOME} ${lane}\n');
   assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
   assert.equal(fs.readFileSync(path.join(sb.cfg, 'agents', 'demo-impl.md'), 'utf8'),
     `# impl\nrules ${fwd(sb.root)}/house-rules.txt, repo ${fwd(sb.home)}/dev/demo, home ${fwd(sb.home)}, project demo, shell \${HOME} \${lane}\n`);
@@ -307,7 +307,7 @@ test('META-ONBOARD cut-over expand: doctor notes pending compatibility paths (no
 });
 
 test('META-NAME-W3: doctor names a project.json / template still using ${meta} / {{meta}} with the one-line fix; it still loads', () => {
-  const sb = sandbox(); const f = project(sb);   // project() writes the old ${meta} form
+  const sb = sandbox(); const f = project(sb);
   const extra = path.join(sb.root, 'projects', 'demo', 'extra.md');
   fs.writeFileSync(extra, 'run {{meta}} status\n');
   const o = JSON.parse(fs.readFileSync(f, 'utf8')); fs.writeFileSync(f, JSON.stringify({ ...o, checkin_extra: '${meta}/projects/demo/extra.md' }));

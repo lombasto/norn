@@ -88,7 +88,7 @@ test('Settings: a worker setting saved below the floor is refused; raising the f
   assert.ok(!row('policy.executors.review.model').options.includes('claude-sonnet-5-5'));
   assert.ok(row('policy.executors.review.model').options.includes('claude-opus-5-5'));
   assert.deepEqual(row('claude_effort').options, ['medium', 'high', 'xhigh']);
-  for (const k of ['worker_min_model', 'worker_min_effort']) assert.deepEqual(sectionOf(SETTINGS.find(s => s.key === k)), ['executors', 'floor']);
+  for (const k of ['worker_min_model', 'worker_min_effort']) assert.deepEqual(sectionOf(SETTINGS.find(s => s.key === k)), ['executors', 'minimum']);
   assert.match(generatedLines(under).executors, /Worker minimum: claude-opus-5-5/);
 });
 

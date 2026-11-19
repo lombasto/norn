@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -25,6 +25,7 @@ import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../li
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
+import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
@@ -117,7 +118,6 @@ const FLAGS = {
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
   list: ['open!', 'kind', 'lane', 'json!'], show: ['json!', 'full!'], views: [],
 };
-const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
 const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
@@ -1334,6 +1334,7 @@ Plan and land work:
   norn epic                        group runs and deliverables under one goal
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
+  norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
   norn plan                        what happens next, and when (up next, chains, landing, forecast)
   norn instructions                every file that steers the agents: load, ~tokens, cost today, hints, the measured standing context
@@ -1379,7 +1380,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1438,6 +1439,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'adopt') return adoptCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'init') return initCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'flow') return flowCmd(argv.slice(1), env, out, err);
@@ -1474,7 +1476,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
 
     if (cmd === 'list') {
       if (pos.length) throw new Usage(`unexpected ${pos[0]}`, cmd);
-      const kind = flags.kind && (KIND_ALIAS[flags.kind] || flags.kind);
+      const kind = flags.kind && kindNamed(flags.kind);
       if (kind && !KINDS[kind]) throw new Usage(`--kind must be Q|DEC|DIR|L|RUN`, cmd);
       const items = Object.values(st().items).filter(i => (!kind || i.kind === kind) && (!flags.lane || i.data.lane === flags.lane || i.id === laneId(flags.lane, state)) && (!flags.open || isOpen(i))).sort(order);
       if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => i), null, 1));
@@ -2028,6 +2030,59 @@ function stuckCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + STUCK_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// RM-28 S1 (proposals.mjs): a planner run's DONE = a proposal; each stage is ruled queue (launch its brief now, --item = the planner's
+// roadmap item) / later (a child roadmap item, horizon next) / drop - every pick ONE decision. The dashboard Inbox card calls rule.
+const PROPOSAL_USAGE = 'norn proposal [list] [--json] [--all (also the decided ones)] | rule RUN-n S<k> queue|later|drop [--as owner|dashboard|checkin]    [--project F | --state D]';
+function proposalCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if (['json', 'all'].includes(k)) { flags[k] = true; continue; }
+      if (!['project', 'state', 'as'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    const { state } = where(flags, env);
+    const props = o => proposalsOf(loadState(state).items, loadRoadmap(state), o);
+    if (!pos.length || pos[0] === 'list') {
+      if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
+      const xs = props({ all: !!flags.all });
+      out(flags.json ? JSON.stringify(xs, null, 1) : renderProposals(xs));
+      return 0;
+    }
+    if (pos[0] !== 'rule') throw new RunError(`unknown subcommand ${pos[0]}`);
+    const [, run, key, pick] = pos;
+    if (!run || !key || !PICKS.includes(pick) || pos.length > 4) throw new RunError('rule needs RUN-n S<k> queue|later|drop');
+    const by = flags.as || env.META_ROLE;
+    if (!by) throw new RunError('no role: pass --as <role>');
+    const { p, s, why } = openStage(props({ all: true }), run, key);
+    if (why) throw new RunError(why);
+    let ref = null;
+    if (pick === 'queue') {   // the normal launcher: Ready lines, --item, the queue's caps and slots; its refusal is the answer
+      const lines = [], loc = [...(flags.project ? ['--project', flags.project] : []), ...(flags.state ? ['--state', flags.state] : [])];
+      const code = runCmd([...queueArgv(p, s), ...loc], env, l => lines.push(l), l => lines.push(l));
+      const m = lines.join('\n').match(/\b(?:QUEUED|STARTED) (RUN-\d+)/);
+      if (code !== 0 || !m) { for (const l of lines) err(l); throw new RunError(`${run} ${s.key}: the launch was refused (exit ${code}); nothing recorded`); }
+      ref = m[1];
+      for (const l of lines) out(l);
+    }
+    if (pick === 'later') {
+      if (!p.item) throw new RunError(`${run} belongs to no open roadmap item (none links run:${run} or lane:${p.lane}): link one (norn road link RM-n run:${run}), or queue / drop`);
+      ref = record(state, laterItem(p, s, by), { views: false }).id;
+      out(`${ref} ${p.lane} ${s.key} under ${p.item}, horizon next`);
+    }
+    const d = record(state, pickDecision(p, s, pick, by, ref));
+    out(`${d.id} ${run} ${s.key}: ${pick}${ref ? ` -> ${ref}` : ''}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + PROPOSAL_USAGE); return 2; }
+    if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
     throw e;
   }
 }

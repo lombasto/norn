@@ -207,13 +207,13 @@ export const SECTIONS=[
     {id:'routing',label:'Work-class routing',help:'One line per work class: executor, model, effort (blank = the executor default).',inline:true,
       subs:Object.entries(WORK_CLASSES).map(([id,label])=>({id,label}))},
     {id:'defaults',label:'Default model & effort',help:'Launcher defaults when the check-in passes none.'},
-    {id:'floor',label:'Minimum for workers',help:'No worker run below this model and effort: lower settings are refused, lower runs are raised.'},
+    {id:'minimum',label:'Minimum for workers',help:'No worker run below this model and effort: lower settings are refused, lower runs are raised.'},
     {id:'critical',label:'Critical path',help:'Lanes blocking the next release get the critical effort.'},
     {id:'fallbacks',label:'Fallbacks',help:'Who takes the work when an executor is unavailable or over its guard.'}]},
   {id:'agents',label:'Agents & context',help:'Context hand-off limits per agent role, rounds and escalation.',subs:[
     {id:'context',label:'Context limits (k tokens)',help:'No new step past / hand-off at / hard max - generated into each agent file.',inline:true,
       subs:Object.entries(ROLES).map(([id,label])=>({id,label}))},
-    {id:'iteration',label:'Rounds & escalation',help:'When a stage counts as grinding and what happens then.'}]},
+    {id:'rounds',label:'Rounds & escalation',help:'When a stage counts as grinding and what happens then.'}]},
   {id:'checkins',label:'Check-ins & scheduling',help:'When the scheduled check-in runs and on which model.',subs:[
     {id:'schedule',label:'Schedule',help:'Task Scheduler repetition and exit triggers.'},
     {id:'model',label:'Check-in model',help:'The check-in and the dashboard Talk controller.'}]},
@@ -221,17 +221,17 @@ export const SECTIONS=[
     {id:'session',label:'Session',help:'Harness, model, effort and idle stop of the chat process (the next message obeys a change).'},
     {id:'acting',label:'Acting',help:'How long a chat act holds a lane, and whether shell / file edits are off, ask, or on.'}]},
   {id:'rules',label:'Rule switches',help:'Project rule switches (DECISION-RULES) and the house rule line.',subs:[
-    {id:'speed',label:'Rule switches A-D',help:'An OFF item does not apply (generated into DECISION-RULES.md).'},
-    {id:'gpu',label:'House rule line (read-only)',help:'Line 1 of the project rules file, edited by hand.'}]},
+    {id:'switches',label:'Rule switches A-D',help:'An OFF item does not apply (generated into DECISION-RULES.md).'},
+    {id:'house',label:'House rule line (read-only)',help:'Line 1 of the project rules file, edited by hand.'}]},
   {id:'advanced',label:'Advanced',help:'Rarely changed: executor permissions, harness wiring, fixed and dangerous values.',subs:[
-    {id:'ranks',label:'Allowed work classes',help:'Which classes each executor may be given; routing offers only allowed executors.'},
+    {id:'classes',label:'Allowed work classes',help:'Which classes each executor may be given; routing offers only allowed executors.'},
     {id:'harness',label:'Harness',help:'Only claude is wired today (H5 / H7 open the others).'},
     {id:'danger',label:'Danger zone',help:'A wrong value here skews the usage gate or breaks the one-writer rule.',danger:true}]},
   {id:'voice',label:'Slop voice',help:'SloppaChoppa on the Slop page: his pop-ups and how often (DEC-264).',subs:[
-    {id:'switch',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
+    {id:'onoff',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
     {id:'popups',label:'Pop-ups',help:'Off by default until the owner review of SloppaChoppa (DIR-36).'}]},
   {id:'notify',label:'Notifications',basic:true,help:'A phone or desktop ping when Norn needs you (machine.json notify; norn setup --notify).',info:true,subs:[
-    {id:'ping',label:'Phone / desktop ping'},{id:'remote',label:'Reach Norn from your phone'}]},
+    {id:'ping',label:'Phone / desktop ping'},{id:'phone',label:'Reach Norn from your phone'}]},
   {id:'files',label:'Project & files',help:'Where each setting is stored and the generated policy lines.',info:true,subs:[
     {id:'sources',label:'Source files'},{id:'targets',label:'Policy targets'}]}];
 export const SECTION_RULES=[
@@ -243,18 +243,18 @@ export const SECTION_RULES=[
   [/^(max_[a-z0-9_-]+|policy\.delegate\.max_per_parent|policy\.ask\.max_per_day)$/,'workers/helpers'],
   [/^policy\.executors\.([a-z_]+)\.(executor|model|effort)$/,'executors/routing/$1'],
   [/^(claude_model|claude_effort|codex_astra_effort|codex_sol_effort)$/,'executors/defaults'],
-  [/^worker_min_(model|effort)$/,'executors/floor'],
+  [/^worker_min_(model|effort)$/,'executors/minimum'],
   [/^policy\.critical_(lanes|effort)$/,'executors/critical'],
   [/^policy\.fallbacks\./,'executors/fallbacks'],
   [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
-  [/^policy\.iteration\./,'agents/iteration'],
-  [/^policy\.stuck\./,'agents/iteration'],
-  [/^policy\.mail\./,'agents/iteration'],
-  [/^policy\.dod\./,'agents/iteration'],
-  [/^policy\.overlap\./,'agents/iteration'],
-  [/^policy\.instructions\./,'agents/iteration'],
-  [/^policy\.done_lanes\./,'agents/iteration'],
-  [/^policy\.slop\./,'voice/switch'],
+  [/^policy\.iteration\./,'agents/rounds'],
+  [/^policy\.stuck\./,'agents/rounds'],
+  [/^policy\.mail\./,'agents/rounds'],
+  [/^policy\.dod\./,'agents/rounds'],
+  [/^policy\.overlap\./,'agents/rounds'],
+  [/^policy\.instructions\./,'agents/rounds'],
+  [/^policy\.done_lanes\./,'agents/rounds'],
+  [/^policy\.slop\./,'voice/onoff'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
   [/^policy\.holds\./,'workers/usage'],
@@ -267,9 +267,9 @@ export const SECTION_RULES=[
   [/^(checkin_executor|checkin_executor_trial)$/,'advanced/harness'],
   [/^chat_(executor|model|effort|idle_min)$/,'chat/session'],
   [/^chat_(hold_min|raw_shell)$/,'chat/acting'],
-  [/^policy\.speed_mode\./,'rules/speed'],
-  [/^rules\./,'rules/gpu'],
-  [/^policy\.allowed_classes\./,'advanced/ranks']];
+  [/^policy\.speed_mode\./,'rules/switches'],
+  [/^rules\./,'rules/house'],
+  [/^policy\.allowed_classes\./,'advanced/classes']];
 /** [category, sub-category(, sub-sub-category)] of a setting row, or null (an orphan: tests/settings-ia fails). */
 export function sectionOf(s){for(const [re,at] of SECTION_RULES){const m=s.key.match(re);if(m)return at.replace('$1',m[1]??'').split('/');}return null;}
 const ALL_CLASSES=Object.keys(WORK_CLASSES);

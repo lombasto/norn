@@ -25,7 +25,7 @@ function sandbox({ register = true } = {}) {
   const pf = `${meta}/projects/demo/project.json`;
   fs.writeFileSync(`${meta}/local/machine.json`, JSON.stringify({ schema: 1, home, claude: { exe: 'claude', config_dir: cfg, projects_dir: `${home}/.claude/projects` },
     codex: null, node: process.execPath, scheduler: { kind: 'windows-task', name: 't', interval_min: 15 }, dash: { port: 0, bind: '127.0.0.1' },
-    projects: register ? [{ name: 'demo', config: '${meta}/projects/demo/project.json' }] : [] }, null, 1));
+    projects: register ? [{ name: 'demo', config: '${norn}/projects/demo/project.json' }] : [] }, null, 1));
   fs.writeFileSync(`${meta}/local/budget.json`, '{}\n');
   const machine = loadMachine(`${meta}/local/machine.json`, { meta });
   const p = loadProject(pf, { home, meta });

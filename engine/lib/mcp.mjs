@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, loadState, kindOfId, RecordError, KINDS, holdOf, laneId, laneName } from './records.mjs';
+import { record, loadState, kindOfId, kindNamed, RecordError, KINDS, holdOf, laneId, laneName } from './records.mjs';
 import { ConfigError, metaRoot, fwd, loadMachine, loadProject, expandVars } from './config.mjs';
 import { genAfterPolicy, projectNew, SetupError } from './setup.mjs';
 import { scan, interviewOf, proposalOf, adoptDecide, adoptApply, renderProposal, AdoptError, PARTS } from './adopt.mjs';
@@ -82,7 +82,6 @@ const obj = (properties, required = []) => ({ type: 'object', properties, requir
 const tail = (file, n) => { if (!n || !file) return ''; try { return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n').split('\n').filter((l, i, a) => i < a.length - 1 || l).slice(-n).join('\n'); } catch { return ''; } };
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 const lastSeq = i => i.history.at(-1)?.seq ?? 0;
-const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
 const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : Number(a.id.replace(/\D/g, '')) - Number(b.id.replace(/\D/g, '')));
 
@@ -238,7 +237,7 @@ function inbox(a, ctx) {
   return { text: items.map(i => `${i.id}  ${i.why}  ${i.lane ?? '-'}  ${i.title}`).join('\n') + `\ncursor: since_seq=${cursor.seq} since_runs_seq=${cursor.runs_seq}`, data: { items, cursor } };
 }
 function records(a, ctx) {
-  const kind = a.kind && (KIND_ALIAS[a.kind] || a.kind);
+  const kind = a.kind && kindNamed(a.kind);
   let rows = Object.values(st(ctx).items).filter(i => (!kind || i.kind === kind) && (!a.state || i.state === a.state) && (!a.id || i.id === a.id)
     && (!a.lane || i.data.lane === a.lane || i.id === laneId(a.lane, ctx.state))).sort(order);
   rows = rows.slice(-(a.limit ?? 50)).map(({ history, ...i }) => (a.id ? { ...i, history } : i));

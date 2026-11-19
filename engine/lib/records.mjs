@@ -200,6 +200,8 @@ const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').to
 const CREATE_EV = { run: 'start' };
 const createEv = kind => CREATE_EV[kind] || 'create';
 
+/** a --kind value: a kind name, or its record prefix (DIR = directive, as in DIR-7); unknown values come back as given */
+export const kindNamed = k => Object.keys(KINDS).find(n => KINDS[n].prefix.replace(/[-:]$/, '') === k) ?? k;
 export const kindOfId = id => {
   if (typeof id !== 'string') return null;
   if (id.startsWith('L:')) return 'lane';
