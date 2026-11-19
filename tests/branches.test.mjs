@@ -13,6 +13,8 @@ import { branchState, branchesView, scanBranches, refreshBranches, readBranches,
 import { loadDeliverables } from '../engine/lib/deliverables.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
+import { fixture } from './helpers/dash-fixture.mjs';
+import { openPage, skipWhy } from './helpers/cdp.mjs';
 
 test.after(cleanTmp);
 const NOW = Date.parse('2026-11-19T12:00:00Z'), DAY = 864e5;
@@ -185,4 +187,60 @@ test('Lanes page: 3 sub-views; Branches lists rows with state chips, filters and
   // the Lanes sub-view still shows the lane table
   const l = renderTab('lanes', { sub: 'lanes', lanes: [] }, { project: 'p', now: NOW });
   assert.match(l, /No LANE records/); assert.match(l, /lanes-sub-branches/);
+});
+
+// ---------- the dashboard: the route, the row action through the CLI child, the phone ----------
+// a fixture repo for the dash project: main + a merged branch + an unmerged hand branch, scanned into its branches.json
+async function dashRepo(f) {
+  const repo = f.pa.root;
+  g(repo, 'init', '-q', '-b', 'main'); g(repo, 'config', 'commit.gpgsign', 'false'); commit(repo, 'README.md', 'r\n', 'init');
+  g(repo, 'checkout', '-q', '-b', 'norn/landed-with-a-rather-long-branch-name-for-the-phone'); commit(repo, 'a.txt', 'a\n', 'feat: a'); g(repo, 'checkout', '-q', 'main');
+  g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'norn/landed-with-a-rather-long-branch-name-for-the-phone');
+  g(repo, 'checkout', '-q', '-b', 'hand/wip'); commit(repo, 'w.txt', 'w\n', 'wip'); g(repo, 'checkout', '-q', 'main');
+  await refreshBranches(f.pa, { gh: null });
+}
+
+test('GET /api/branches + POST /api/branches/act: the rows with states; delete a merged branch, Undo restores it; an unmerged one is refused', { timeout: 900000 }, async () => {
+  const f = await fixture();
+  try {
+    await dashRepo(f);
+    const r = await f.get('/api/branches?project=kestrel');
+    assert.equal(r.status, 200);
+    const row = Object.fromEntries(r.data.rows.map(x => [x.name, x]));
+    assert.equal(row['hand/wip'].state, 'unknown'); assert.equal(row['hand/wip'].project, 'kestrel');
+    assert.equal(row['norn/landed-with-a-rather-long-branch-name-for-the-phone'].state, 'stale');
+    assert.deepEqual(r.data.states, BRANCH_STATES);
+    assert.ok(r.data.scans[0].at, 'the scan time');
+    const all = await f.get('/api/branches?project=all');
+    assert.ok(all.data.rows.length >= 2, 'the all-projects view lists every project\'s rows');
+    const no = await f.post('/api/branches/act', { project: 'kestrel', act: 'delete', branch: 'hand/wip' });
+    assert.equal(no.status, 409, 'an unmerged branch is refused'); assert.match(no.data.error ?? JSON.stringify(no.data), /cannot be deleted/);
+    const name = 'norn/landed-with-a-rather-long-branch-name-for-the-phone', tip = g(f.pa.root, 'rev-parse', name);
+    const d = await f.post('/api/branches/act', { project: 'kestrel', act: 'delete', branch: name });
+    assert.equal(d.status, 200, JSON.stringify(d.data)); assert.equal(d.data.undo.local, tip);
+    assert.equal(execFileSync('git', ['-C', f.pa.root, 'branch', '--list', name], { encoding: 'utf8' }).trim(), '');
+    const u = await f.post('/api/branches/act', { project: 'kestrel', act: 'undo', undo: d.data.undo });
+    assert.equal(u.status, 200, JSON.stringify(u.data));
+    assert.equal(g(f.pa.root, 'rev-parse', name), tip, 'Undo: back at the same commit');
+    assert.equal((await f.post('/api/branches/act', { project: 'kestrel', act: 'prune' })).status, 400, 'only the four verbs');
+  } finally { await f.done(); }
+});
+
+test('the browser: Branches at 390 px has no sideways scroll; a state chip and the lane filter hide rows; Worktrees lists the worktrees', { skip: skipWhy, timeout: 900000 }, async () => {
+  const f = await fixture(), pg = await openPage([390, 844]);
+  try {
+    await dashRepo(f);
+    await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+    await pg.go(`${f.url}/?project=kestrel&tab=lanes&sub=branches`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('table.brtab [data-state=unknown]')`, 90000), 'Branches shows the rows');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Branches at 390 px');
+    await pg.ev(`document.querySelector('[data-act=br-state][data-state=unknown]').click()`);
+    assert.ok(await pg.until(`!document.querySelector('table.brtab [data-state=unknown]') && !!document.querySelector('table.brtab [data-state=stale]')`, 30000), 'unknown off hides the hand branch only');
+    await pg.ev(`(s => { s.value = '-'; s.dispatchEvent(new Event('change', { bubbles: true })); })(document.querySelector('select[data-br=lane]'))`);
+    assert.ok(await pg.until(`!!document.querySelector('table.brtab [data-state=stale]')`, 30000), 'not part of a lane keeps the lane-less rows');
+    await pg.ev(`document.querySelector('[data-act=sub][data-sub=worktrees]').click()`);
+    assert.ok(await pg.until(`document.querySelector('#lanes-sub')?.dataset.sub === 'worktrees'`, 60000), 'the Worktrees sub-view');
+    assert.match(await pg.ev('location.search'), /sub=worktrees/);
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Worktrees at 390 px');
+  } finally { await pg.close(); await f.done(); }
 });
