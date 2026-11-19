@@ -8,13 +8,13 @@ import { SECTIONS, sectionOf, settingsFor, settingsView, applySettings, withDefa
 import { renderTab, loadTab, settingsMatch } from '../engine/dash/ui.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 
-const PV = ['glm', 'kimi'];
+const PV = ['glm', 'kimi'], PROJECTS = ['norn', 'solve-shack'];   // the registered projects: one Capacity row pair each (fair-slots item 8)
 const find = (path) => { const [c, s, x] = path; const cat = SECTIONS.find(k => k.id === c); const sub = cat?.subs.find(k => k.id === s);
   return { cat, sub, sub3: x === undefined ? null : sub?.subs?.find(k => k.id === x) }; };
 
 test('grouping is complete: every setting (with and without providers) has one existing category / sub-category home', () => {
   for (const pv of [[], PV]) {
-    const rows = settingsFor({ providers: pv }), keys = new Set();
+    const rows = settingsFor({ providers: pv, projects: PROJECTS }), keys = new Set();
     for (const s of rows) {
       assert.ok(!keys.has(s.key), 'duplicate key ' + s.key); keys.add(s.key);
       const at = sectionOf(s); assert.ok(Array.isArray(at) && at.length >= 2, 'orphan setting ' + s.key);
@@ -25,7 +25,7 @@ test('grouping is complete: every setting (with and without providers) has one e
     }
   }
   // every declared section is used (no empty nav entry), labels + one-line help everywhere
-  const used = new Set(settingsFor({ providers: PV }).map(s => sectionOf(s).slice(0, 2).join('/')));
+  const used = new Set(settingsFor({ providers: PV, projects: PROJECTS }).map(s => sectionOf(s).slice(0, 2).join('/')));
   for (const c of SECTIONS) {
     assert.ok(c.label && c.help, c.id + ' label / help');
     for (const s of c.subs) { assert.ok(s.label, `${c.id}/${s.id} label`); if (!c.info) assert.ok(used.has(`${c.id}/${s.id}`), `empty section ${c.id}/${s.id}`); }
