@@ -716,7 +716,7 @@ const rank = r => PRIORITIES.indexOf(PRIORITIES.includes(r.data.priority) ? r.da
 /** The queued runs of a fold's run items in fill order (priority, then oldest first), with their 1-based position in it (pure). */
 export function queueOf(runs) {
   return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => rank(a) - rank(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
-    .map((r, i) => ({ id: r.id, name: r.data.name ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null,
+    .map((r, i) => ({ id: r.id, name: r.data.name ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
       executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
       after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null, labels: r.data.labels ?? [] }));
 }
