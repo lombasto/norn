@@ -111,7 +111,7 @@ test('a deliverable whose branch is gone falls back to its recorded tip (not on 
   const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
   mkDlv(state, { repo, branch: 'feat/gone', tip: a, delivers: 'x', done_utc: at(-30).toISOString() });
   const r0 = deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
-  assert.equal(r0.state, 'unknown'); assert.match(r0.unknown_why, /the branch feat/gone is deleted/);
+  assert.equal(r0.state, 'unknown'); assert.match(r0.unknown_why, /the branch feat\/gone is deleted/);
   g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
   assert.equal(deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0].state, 'merged');
 });
