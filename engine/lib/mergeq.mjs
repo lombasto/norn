@@ -421,7 +421,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
   const out = { updates: project.deliverables || project.merge ? updatePass({ stateDir, project, locksDir, git, now, acquire }) : [], batch: null, fix: null, land: null, why: '' };
   const cfg = mergeConfig(project);
   if (!cfg.gate?.fast) {   // MERGE-FIRST (3): no batch - each stage-gated row lands by code (landing.mjs); a failure queues its MERGE
-    const land = await landPass({ stateDir, project, locksDir, rows: mergeQueue({ stateDir, project, now, git }).rows, cfg, git, gateRunner, cli, gh, now });
+    const land = await landPass({ stateDir, project, locksDir, rows: mergeQueue({ stateDir, project, now, git }).rows, cfg, git, gateRunner, cli, gh, now, hbMs });
     return { ...out, land, why: `no fast merge gate declared (merge.gate.fast): no batch; land: ${land.why}` };
   }
   const mq = loadMq(stateDir);

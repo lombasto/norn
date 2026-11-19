@@ -53,7 +53,7 @@ export function fallbackBrief(project, { row, run, failure }) {
 
 /**
  * One landing step of the mergeq pass. o: { stateDir, project, locksDir, rows (mergeQueue rows), cfg, git, gateRunner (runGate),
- * cli (args -> { code, out }: the norn CLI, for the fallback MERGE and the notice), gh (merge-land's; tests fake it), now }.
+ * cli (args -> { code, out }: the norn CLI, for the fallback MERGE and the notice), gh (merge-land's; tests fake it), now, hbMs }.
  * Returns { landed: [DLV], fallback: [{ id, kind, queued }], why }.
  */
 export async function landPass(o) {
@@ -86,13 +86,14 @@ export async function landPass(o) {
   return out;
 }
 
-async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, queuedMerges, runs, git, gateRunner, cli, gh, now }) {
+async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, queuedMerges, runs, git, gateRunner, cli, gh, now, hbMs = 30000 }) {
   const ts = new Date(now).toISOString(), tag = `mergeq land ${r.id}`;
   let slot = null;
   for (let i = 0; i < mergeParallel(project) && !slot; i++) { try { slot = acquireLock(locksDir, slotKey(cfg.repo, i), { run: tag }); } catch { /* slot busy */ } }
   if (!slot) return { why: `${r.id}: the ${mergeParallel(project)} merge slot(s) are busy` };
   const wt = mergeWtPath(stateDir, r.lane, r.tip);
   let wlock = null;
+  const hb = setInterval(() => { slot.refresh(); wlock?.refresh(); }, hbMs);   // a gate may run an hour: both locks stay fresh
   try {
     try { wlock = acquireLock(locksDir, wt, { run: tag }); } catch (e) { return { why: `${r.id}: merge worktree ${fwd(wt)}: ${e.message}` }; }
     // the queued MERGE of the lane would merge the same work: withdrawn (a failure below queues the MERGE again, with the failure)
@@ -120,6 +121,7 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
     cli?.(['notify', '--class', 'merge', '--title', `landed ${r.branch}`, '--body', `${r.id} (${r.lane}) merged clean on ${cfg.main} ${s7(base)}, gate ${gate.skip ? 'skipped' : 'green'}: PR ${pr.url}`, '--project', fwd(project.file)]);
     return { landed: true, gated: !gate.skip, why: `${r.id} LANDED by code: PR ${pr.url} (gate ${gate.skip ? 'skipped' : 'green'})` };
   } finally {
+    clearInterval(hb);
     removeMergeWorktree({ repo: cfg.repo, wt, git, waitMs: 5000 });
     wlock?.release();
     slot.release();
