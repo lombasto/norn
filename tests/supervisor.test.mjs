@@ -120,7 +120,7 @@ process.exit(0);`;
     assert.equal(o.error, undefined);
     assert.ok(tail > 0, 'the tail started');
     assert.ok(o.r.procs.some(p => p.pid === tail && /^tail\.exe$/i.test(p.name)), `tail ${tail} reaped: ${JSON.stringify(o.r.procs)}`);
-    await waitFor(() => !alive(tail), 5000).catch(() => {});
+    await waitFor(() => !alive(tail), 5000).catch(() => { /* the assert below names it */ });
     assert.equal(alive(tail), false, 'the watcher is dead');
   } finally { if (tail > 0 && alive(tail)) process.kill(tail); }
 });
@@ -136,7 +136,7 @@ test('proc-hygiene: boundedSync kills the whole tree at its timeout; exit code, 
   assert.ok(Date.now() - t0 < 12000, 'bounded');
   assert.equal(r.error?.code, 'ETIMEDOUT'); assert.equal(r.status, null);
   const g = Number(fs.readFileSync(gpid, 'utf8'));
-  await waitFor(() => !alive(g), 5000).catch(() => {});
+  await waitFor(() => !alive(g), 5000).catch(() => { /* the assert below names it */ });
   try { assert.equal(alive(g), false, `grandchild ${g} died with the timeout`); } finally { if (alive(g)) process.kill(g); }
   const ok = boundedSync(process.execPath, ['-e', 'process.stdin.pipe(process.stdout); process.stdin.on("end", () => process.exit(3))'], { timeout: 10000, input: 'a "b" c' });
   assert.equal(ok.status, 3); assert.equal(ok.stdout, 'a "b" c');

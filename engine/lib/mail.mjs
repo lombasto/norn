@@ -114,7 +114,7 @@ export const nudgePrompt = (m, afterMin = NUDGE_AFTER_MIN) => `NUDGE: an urgent 
 export const HOOK_MAX_MS = 20000;
 export function hookWatchdog(ms = Number(process.env.META_HOOK_MAX_MS) || HOOK_MAX_MS) {
   const w = new Worker(`const { workerData: d } = require('node:worker_threads'); setTimeout(() => {
-    try { require('node:fs').writeSync(2, 'norn mail check --inject: no answer in ' + d.ms + ' ms, ended\\n'); } catch {}
+    try { require('node:fs').writeSync(2, 'norn mail check --inject: no answer in ' + d.ms + ' ms, ended\\n'); } catch { /* stderr gone: the kill below still ends the hook */ }
     process.kill(d.pid, 'SIGKILL'); }, d.ms);`, { eval: true, workerData: { ms, pid: process.pid } });
   w.unref();
   return w;
