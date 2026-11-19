@@ -82,7 +82,7 @@ function bothHomes() {
   const B = homeRig(w, 'b', undefined, ['slop']); seedB(B.state);
   return { w, A, B };
 }
-const remoteHeads = origin => spawnSync('git', ['--git-dir', origin, 'for-each-ref', '--format=%(refname) %(objectname)'], { encoding: 'utf8' }).stdout;
+const remoteHeads = origin => spawnSync('git', ['--git-dir', origin, 'for-each-ref', '--format=%(refname) %(objectname)'], { encoding: 'utf8', windowsHide: true }).stdout;
 const tree = dir => { const o = {}; const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else o[path.relative(dir, p)] = fs.readFileSync(p, 'utf8'); } }; walk(dir); return o; };
 
 test('the bare home: ids stay, lanes become L:a/x, the branch moves locally (checked out in a worktree) and on origin; an open PR keeps its branch', () => {

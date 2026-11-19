@@ -17,6 +17,8 @@ import { fedOf } from './fed.mjs';
 import { listClaims, registerHome, registerProject, homeKey, projectKey } from './claims.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { subdirOf } from './monorepo.mjs';
+import { fwd } from './config.mjs';
+import { readJsonS as readJson } from './fsnap.mjs';
 import { renameRetry } from './runs.mjs';
 
 export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
@@ -29,9 +31,7 @@ const LIVE = ['running', 'queued', 'claimed'];   // a run that may still write (
 // state subdirs whose entries are never renamed: other homes' copies (S1c), the claims bookkeeping, generated views
 const NO_RENAME = new Set(['homes', 'sync', 'views', '.git', 'node_modules']);
 const LOG_FILES = [...new Set(Object.values(KINDS).map(k => k.file))].map(f => f + '.jsonl');
-const fwd = p => String(p).replace(/\\/g, '/');
 const esc = s => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 function writeAtomic(f, text) { const t = `${f}.${process.pid}.cut.tmp`; fs.writeFileSync(t, text); renameRetry(t, f); }
 function g(cwd, args) {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
@@ -59,7 +59,7 @@ function rewriter({ home, bare, lanes, branchMap }) {
   parts.push('(?<!\\w)role:(checkin|controller)(?![\\w@-])');
   if (!bare) parts.push(ID_RE.source);
   const re = new RegExp(parts.join('|'), 'g'), seen = new Map();
-  const fn = s => s.replace(re, (m, ...a) => {
+  const fn = s => s.replace(re, m => {
     if (branchMap[m]) return branchMap[m];
     if (m.startsWith('L:') || m.startsWith('lane:')) { const i = m.indexOf(':') + 1; return m.slice(0, i) + home + '/' + m.slice(i); }
     if (m.startsWith('role:')) return m + '@' + home;
@@ -223,7 +223,7 @@ export function syncCut(o) {
 const branchLine = b => (['rename', 'done'].includes(b.action) ? `${b.old} -> ${b.new}` : `${b.old} ${b.action}: ${b.why}`);
 function idMap(name, home, plan, now) {
   const L = [`# ID-MAP: ${name} cut as home ${home} (${new Date(now).toISOString().slice(0, 10)})`, '',
-    'Written by norn sync cut (RM-46). Old names in NOTES, briefs and commit messages read through this list; no code reads it.', '',
+    'Written by norn sync cut (RM-46). It maps each id, lane and branch of this home before the cut to its name after it, for people reading NOTES, briefs and commit messages written before the cut; no code reads it.', '',
     `Bare home of the project: ${plan.bare_home}.`, ''];
   const sec = (h, rows) => { L.push(`## ${h}`, ''); L.push(...(rows.length ? rows.map(r => '- ' + r) : ['- none'])); L.push(''); };
   sec('Ids', plan.ids.map(([a, b]) => `${a} -> ${b}`));
