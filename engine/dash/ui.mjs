@@ -62,6 +62,7 @@ export function stateOf(text) {
   if (t.startsWith('exited: no-result')) return ['no-result', 'no-result'];
   if (t.startsWith('exited: crash')) return ['bad', 'crash'];
   if (t === 'lost') return ['lost', 'lost'];
+  if (t.startsWith('heartbeat late')) return ['warn', 'late'];   // MAIL-22: running, its beat late (lanes.mjs); the sweep's record decides lost
   if (t.startsWith('killed')) return ['bad', 'killed'];
   if (t.startsWith('waiting')) return ['warn', 'waiting'];
   if (t === 'no runs') return ['idle', 'no runs'];

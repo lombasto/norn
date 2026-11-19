@@ -245,9 +245,23 @@ const BOOT_SLACK_MS = 60e3;   // record ts are whole seconds and uptime drifts: 
 export const pidGone = pid => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
 // the causes whose death is certain (the auto-resume policy relaunches them: relaunchLost); `stale` may be a stall, never relaunched
 export const DEAD_CAUSES = ['boot', 'gone', 'no-start'];
-export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone } = {}) {
+// MAIL-22 (norn RUN-80: lost at a 210 s beat while 11 workers held the CPU at 97-100 %, beating again 8 min later): a late beat under
+// a busy CPU is a stall, not a death. While the CPU is at LATE_CPU_PCT or more, a stale beat whose supervisor pid lives waits up to
+// LATE_FACTOR x the threshold before the sweep calls it lost. The sweep keeps its sample in hb/load.json: the pages name it.
+export const LATE_CPU_PCT = 90, LATE_FACTOR = 3;
+const loadPath = state => path.join(state, 'hb', 'load.json');
+/** the CPU % the last sweep sampled, when it is at most maxMs old, else null (the pages' "heartbeat late (N s, CPU x %)"); read: the dash's snapshot reader */
+export const sweptCpu = (state, { now = Date.now(), maxMs = 5 * 60e3, read = readJson } = {}) => { const l = read(loadPath(state)); return l && now - Date.parse(l.ts) <= maxMs ? l.cpu_pct : null; };
+// the run's heartbeat was written after its lost record (whose ts is whole seconds: a beat in a later second)
+const beatSinceLost = (state, it) => (fs.statSync(hbPath(state, it.id), { throwIfNoEntry: false })?.mtimeMs ?? 0) >= Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts) + 1000;
+export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone, load = () => sampleResources({ ms: 250 }).cpu_pct } = {}) {
   const lost = [];
   const t = now().getTime(), bt = boot();
+  let cpu;   // sampled once per sweep, only when a live supervisor's beat is stale
+  const busy = () => {
+    if (cpu === undefined) { cpu = Math.round(load()); try { fs.mkdirSync(path.dirname(loadPath(state)), { recursive: true }); fs.writeFileSync(loadPath(state), JSON.stringify({ cpu_pct: cpu, ts: new Date(t).toISOString() })); } catch { /* the pages go without it */ } }
+    return cpu >= LATE_CPU_PCT;
+  };
   for (const it of runsOf(state)) {
     // a stall swept as lost (cause stale) whose heartbeat is fresh again and whose supervisor lives: alive, so its own end is accepted
     // (2026-11-18: a machine busy starting processes let heartbeats fall 210-297 s behind; five live runs read lost and would have
@@ -268,6 +282,7 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     if (Date.parse(it.created) < bt - BOOT_SLACK_MS) { cause = 'boot'; why = `machine rebooted at ${new Date(bt).toISOString().slice(0, 19)}Z after the run started`; }
     else if (hb && gone(hb.supervisor_pid)) { cause = 'gone'; why = `supervisor pid ${hb.supervisor_pid} gone without an end record`; }
     else if (age <= staleMs) continue;
+    else if (hb && Number.isInteger(hb.supervisor_pid) && hb.supervisor_pid > 0 && age <= staleMs * LATE_FACTOR && busy()) continue;   // late, not lost (MAIL-22)
     // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
     else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
     else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
@@ -326,6 +341,7 @@ export function endLost(state, { now = Date.now(), gone = pidGone } = {}) {
   const out = [];
   for (const it of runsOf(state)) {
     if (it.state !== 'lost' || it.data.kind === 'interactive' || relaunchable(it, now)) continue;
+    if (beatSinceLost(state, it)) continue;   // MAIL-22: it beat after the lost record - never ended (a live stall is revived above)
     const hb = readJson(hbPath(state, it.id)), pids = [hb?.supervisor_pid, hb?.pid, it.lost?.supervisor_pid].filter(p => Number.isInteger(p) && p > 0);
     if (!pids.every(gone)) continue;
     const why = `lost: ${it.lost?.why ?? 'no heartbeat'}; supervisor and executor gone, no end record`;

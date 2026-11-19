@@ -36,11 +36,11 @@ test('sweep: a supervisor pid that names no process -> lost at once (cause gone)
 test('sweep: a run lost for a stale heartbeat comes back alive when its heartbeat is fresh again and its supervisor lives; its end is then accepted', () => {
   const d = sandbox(), a = d.start(), b = d.start(), c = d.start();
   for (const id of [a, b, c]) { d.hb(id, { supervisor_pid: process.pid }); stale(d, id); }
-  assert.deepEqual(sweepLost(d.state).sort(), [a, b, c].sort());
+  assert.deepEqual(sweepLost(d.state, { load: () => 0 }).sort(), [a, b, c].sort());   // load: a busy box would make the beats late (MAIL-22)
   for (const id of [a, b, c]) { assert.equal(d.item(id).state, 'lost'); assert.equal(d.item(id).lost.cause, 'stale'); }
   d.hb(a, { supervisor_pid: process.pid });            // a: the beat comes back, supervisor alive -> alive
   d.hb(b, { supervisor_pid: deadPid() });              // b: a fresh file but the supervisor is gone -> stays lost
-  sweepLost(d.state);                                  // c: still stale -> stays lost
+  sweepLost(d.state, { load: () => 0 });               // c: still stale -> stays lost
   assert.equal(d.item(a).state, 'running');
   assert.match(d.item(a).history.at(-1).data.why, /heartbeat \d+ s old again/);
   assert.equal(d.item(b).state, 'lost'); assert.equal(d.item(c).state, 'lost');
@@ -63,7 +63,7 @@ test('sweep: the first sweep after a boot -> every run started before it is lost
 test('sweep: a resume that shows no start (no heartbeat) within 2 min -> lost, cause no-start; a stale beat of a live pid -> cause stale', () => {
   const d = sandbox(), r = d.start({ resume_of: 'RUN-1', resumes: 1 }), s = d.start();
   d.hb(s, { supervisor_pid: process.pid }); stale(d, s);
-  assert.deepEqual(sweepLost(d.state, { now: () => new Date(Date.now() + 60e3) }), [s], 'inside 2 min the resume is only starting');
+  assert.deepEqual(sweepLost(d.state, { now: () => new Date(Date.now() + 60e3), load: () => 0 }), [s], 'inside 2 min the resume is only starting');   // load: a busy box would make the beat late (MAIL-22)
   assert.equal(d.item(s).lost.cause, 'stale');
   assert.deepEqual(sweepLost(d.state, { now: () => new Date(Date.now() + 121e3) }), [r]);
   assert.equal(d.item(r).lost.cause, 'no-start'); assert.match(d.item(r).lost.why, /never started/);
@@ -74,7 +74,7 @@ test('relaunch: a certain death goes through the auto-resume policy once (relaun
   d.spec(a); d.spec(capped, { resumes: 2 }); d.spec(off, { policy: { auto_resume_handoff: false } }); d.spec(st); d.spec(ck);
   for (const id of [a, capped, off, ck]) d.hb(id, { supervisor_pid: deadPid() });
   d.hb(st, { supervisor_pid: process.pid }); stale(d, st);
-  sweepLost(d.state);
+  sweepLost(d.state, { load: () => 0 });
   const calls = [];
   const start = o => { calls.push(o); return { run: d.start({ resume_of: o.resumeOf, resumes: o.resumes }) }; };
   const rows = relaunchLost(d.state, { start });
@@ -133,4 +133,61 @@ test('end the lost: start + lost + no live pid -> the sweep writes ONE end (cras
   relaunchLost(d.state, { start: () => { throw new Error('no slot'); } });   // the policy has its say (refused) -> then the sweep ends it
   assert.deepEqual(endLost(d.state), [fresh]);
   assert.equal(d.item(fresh).end.cause, 'gone');
+});
+
+// MAIL-22 (norn RUN-80): lost at a 210 s beat while 11 workers held the CPU at 97-100 %; its heartbeat came back 8 min later. A late
+// beat is not a death: the sweep revokes `lost` when the beat returns, the end-of-lost never ends it, and a busy CPU stretches the cut.
+test('lost, then the heartbeat returns -> alive again (one alive record, running), never ended; lost with a live pid -> not ended', async () => {
+  const { endLost } = await import('../engine/lib/runs.mjs');
+  const d = sandbox(), a = d.start(), b = d.start();
+  d.hb(a, { supervisor_pid: process.pid }); stale(d, a);
+  assert.deepEqual(sweepLost(d.state, { load: () => 10 }), [a]);
+  assert.equal(d.item(a).state, 'lost');
+  // the beat returns after the lost record (the record's ts is whole seconds: the beat is written a second later)
+  const back = new Date(Date.now() + 2000); fs.utimesSync(hbPath(d.state, a), back, back);
+  assert.deepEqual(endLost(d.state, { now: back.getTime(), gone: () => true }), [], 'a beat newer than the lost record: never ended, whatever the pids say');
+  assert.deepEqual(sweepLost(d.state, { now: () => back, load: () => 10 }), []);
+  const it = d.item(a);
+  assert.equal(it.state, 'running', 'alive again: it counts against the cap and the pages show it running');
+  assert.equal(it.history.filter(h => h.ev === 'alive').length, 1);
+  assert.match(it.alive.why, /heartbeat \d+ s old again \(lost for a stale heartbeat/);
+  sweepLost(d.state, { now: () => back, load: () => 10 });
+  assert.equal(d.item(a).history.filter(h => h.ev === 'alive').length, 1, 'idempotent');
+  // lost with a live supervisor pid and an old beat: not ended, not revived
+  d.hb(b, { supervisor_pid: process.pid }); stale(d, b);
+  sweepLost(d.state, { load: () => 10 });
+  assert.deepEqual(endLost(d.state), []);
+  assert.equal(d.item(b).state, 'lost');
+});
+
+test('a busy CPU stretches the cut: a live supervisor\'s beat 210 s old at CPU 98 % is late, not lost (up to 3x the threshold); a quiet CPU, a dead pid or 3x late -> lost', () => {
+  const d = sandbox(), late = d.start(), quiet = d.start(), dead = d.start(), hung = d.start();
+  const at = (id, s) => { const t = new Date(Date.now() - s * 1000); fs.utimesSync(hbPath(d.state, id), t, t); };
+  d.hb(late, { supervisor_pid: process.pid }); at(late, 210);
+  d.hb(dead, { supervisor_pid: deadPid() }); at(dead, 210);
+  d.hb(hung, { supervisor_pid: process.pid }); at(hung, 400);
+  let samples = 0;
+  assert.deepEqual(sweepLost(d.state, { load: () => { samples++; return 98; } }).sort(), [dead, hung].sort());
+  assert.equal(samples, 1, 'one CPU sample per sweep');
+  assert.equal(d.item(late).state, 'running');
+  assert.equal(d.item(dead).lost.cause, 'gone');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(d.state, 'hb', 'load.json'), 'utf8')).cpu_pct, 98, 'the sample is kept for the pages');
+  d.hb(quiet, { supervisor_pid: process.pid }); at(quiet, 210);
+  assert.deepEqual(sweepLost(d.state, { load: () => 30 }).sort(), [late, quiet].sort());
+  assert.equal(d.item(quiet).lost.cause, 'stale');
+  // a sweep with no stale live beat never samples (a sample costs time)
+  const e = d.start(); d.hb(e, { supervisor_pid: process.pid });
+  assert.deepEqual(sweepLost(d.state, { load: () => { throw new Error('sampled'); } }), []);
+});
+
+test('the lanes view: a running run with a late beat reads "heartbeat late (N s, CPU x %)", never "lost" (only the sweep\'s record says lost)', async () => {
+  const { lanesView } = await import('../engine/lib/lanes.mjs');
+  const d = sandbox();
+  record(d.state, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'demo', worktree: '/wt/demo' } });
+  d.start();
+  const st = loadState(d.state), view = o => lanesView(st, { hbAge: () => 210e3, ...o }).find(l => l.name === 'demo').text;
+  assert.equal(view({ cpu: 98 }), 'heartbeat late (210 s, CPU 98 %)');
+  assert.equal(view({}), 'heartbeat late (210 s)');
+  const { stateOf } = await import('../engine/dash/ui.mjs');
+  assert.deepEqual(stateOf('heartbeat late (210 s, CPU 98 %)'), ['warn', 'late']);
 });

@@ -131,7 +131,7 @@ test('lanes: no lane without a LANE record; archived only with all; exited / los
   assert.deepEqual(v.map(l => l.name).sort(), ['gen', 'idle', 'parkd', 'render']);
   const by = Object.fromEntries(v.map(l => [l.name, l.text]));
   assert.equal(by.gen, 'waiting: auto-resume refused (cap 8/8)');
-  assert.equal(by.idle, 'lost');
+  assert.equal(by.idle, 'heartbeat late (600 s)', 'a stale beat is late; only the sweep record says lost (MAIL-22)');
   assert.equal(by.parkd, 'parked by Q-7');
   assert.equal(by.render, 'no runs');
   assert.ok(lanesView(st, { all: true }).some(l => l.name === 'gone'));
