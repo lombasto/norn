@@ -95,6 +95,8 @@ export const KINDS = {
     unpark: { from: ['parked'], to: 'open', roles: [...CK, ...OWNER] },
     // META-GTP-MERGEQ piece 0: the work landed another way (another DLV, or a port commit): terminal, never resurfaces
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
+    // RM-7 S3: the owner does not want the work on main (the "drop" answer to a closed / stuck PR): terminal, never asked or merged again
+    drop: { from: ['open', 'parked'], to: 'dropped', roles: [...CK, ...OWNER] },
     // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
     pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
     // RM-7 S2: GitHub reported that PR in a new state (gh pr view): { url, number, state open|merged|closed, merged_at }
@@ -431,6 +433,7 @@ function validateData(kind, ev, d, target, st, by) {
     if (ev === 'done') for (const k of ['run', 'tip', 'done_utc']) str(d[k], k, { req: false });
     if (ev === 'pr-state') { str(d.url, 'url'); oneOf(d.state, 'state', ['open', 'merged', 'closed']); str(d.merged_at, 'merged_at', { req: false }); }
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
+    if (ev === 'drop') str(d.why, 'why', { max: 600 });
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
       if (/^DLV-\d+$/.test(d.by)) {

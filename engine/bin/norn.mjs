@@ -1161,7 +1161,7 @@ function askCmd(argv, env, out, err) {
 }
 
 // ---------- norn deliverables (DELIVERABLES-SPEC 6): done work followed to main / the install, any harness ----------
-const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry]    [--project F] [--state D] [--as role]';
+const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | drop DLV-n --why W | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry]    [--project F] [--state D] [--as role]';
 const DLV_FLAGS = ['project', 'state', 'as', 'why', 'by', 'only', 'executor', 'json!', 'all!', 'due!', 'apply!', 'resolve!', 'dry!'];
 function deliverablesCmd(argv, env, out, err) {
   try {
@@ -1205,6 +1205,13 @@ function deliverablesCmd(argv, env, out, err) {
       if (!by) throw new RunError('no role: pass --as <role> or set META_ROLE');
       const e = record(state, { kind: 'deliverable', ev: sub, id, by, data: sub === 'park' ? { why: flags.why } : {} }, { views: false });
       out(`${e.id} ${sub === 'park' ? 'parked' : 'open'}`);
+      return 0;
+    }
+    if (sub === 'drop') {   // RM-7 S3: the owner's "drop" answer - terminal, out of the queue and the Inbox for good
+      if (!id) throw new RunError('drop needs a DLV-n');
+      if (!by) throw new RunError('no role: pass --as <role> or set META_ROLE');
+      const e = record(state, { kind: 'deliverable', ev: 'drop', id, by, data: { why: flags.why } }, { views: false });
+      out(`${e.id} dropped`);
       return 0;
     }
     if (sub === 'supersede') {   // META-GTP-MERGEQ piece 0: terminal; a cited sha must exist in the deliverable's repo
@@ -1591,7 +1598,7 @@ function mergeqCmd(argv, env, out, err) {
     for (const r of q.rows) out(formatMq(r));
     if (!q.rows.length) out('merge queue empty');
     for (const r of q.awaiting) out(`${r.id} PR #${r.pr.number ?? '?'} open: waits for the owner to merge ${r.pr.url} (${r.branch})`);   // RM-7 S2
-    for (const h of q.held) out(`HELD ${h.id} ${h.branch}: ${h.why}`);   // META-CATCH S2: a look item's row waits for its picture proof
+    for (const h of q.held) out(`HELD ${h.id} ${h.branch}: ${h.why}`);   // META-CATCH S2: a look item's row waits for its picture proof; RM-7 S3: a closed PR
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + MQ_USAGE); return 2; }

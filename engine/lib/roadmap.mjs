@@ -107,9 +107,9 @@ export function reach(node, W) {
   for (const l of L.lane) for (const d of W.dlvByLane[l] || []) dlvs.add(d);
   const br = new Map();
   for (const d of dlvs) {
-    const sup = !!d.superseded || d.record_state === 'superseded', onMain = sup || d.state !== 'done';
+    const sup = !!d.superseded || d.record_state === 'superseded', drop = !!d.dropped || d.record_state === 'dropped', onMain = sup || d.state !== 'done';   // RM-7 S3: dropped = terminal, not on main
     const tgtInstall = W.hasInstall && d.target !== 'main';
-    br.set(d.branch, { name: d.branch, dlv: d.id, state: sup ? 'superseded' : d.state, on_main: onMain, at_target: sup || (tgtInstall ? d.state === 'installed' : onMain),
+    br.set(d.branch, { name: d.branch, dlv: d.id, state: sup ? 'superseded' : drop ? 'dropped' : d.state, on_main: onMain, at_target: sup || drop || (tgtInstall ? d.state === 'installed' : onMain),
       days: d.days ?? null, ts: Date.parse(d.done_utc || '') || null });
   }
   for (const b of L.branch) if (!br.has(b)) {
@@ -239,7 +239,7 @@ export function unplacedOf(nodes, W) {
   }
   for (const [l, rs] of Object.entries(byLane)) if (!lanes.has(l))
     out.push({ kind: 'lane', id: 'L:' + l, why: `${plural(rs.length, 'run')} in 3 d${rs.some(r => r.state === 'running') ? ', live now' : ''}` });
-  for (const d of W.dlv) if (d.state === 'done' && !d.superseded && d.record_state !== 'superseded' && !dlvs.has(d.id) && !brs.has(d.branch) && !(d.lane && lanes.has(d.lane)))
+  for (const d of W.dlv) if (d.state === 'done' && !d.superseded && !d.dropped && !['superseded', 'dropped'].includes(d.record_state) && !dlvs.has(d.id) && !brs.has(d.branch) && !(d.lane && lanes.has(d.lane)))
     out.push({ kind: 'dlv', id: d.id, why: `${d.branch} DONE ${Number(d.days ?? 0).toFixed(0)} d, not on main` });
   for (const i of Object.values(W.items)) if (i.kind === 'directive' && i.state === 'active' && !L.dir.includes(i.id))
     out.push({ kind: 'dir', id: i.id, why: String(i.data?.text ?? '').replace(/\s+/g, ' ').slice(0, 90) });

@@ -61,7 +61,7 @@ function finished(runs, dlvRows, { now, git, main, cited }) {
   for (const d of dlvRows) {
     if (d.state !== 'done') continue;
     if (d.record_state === 'parked' && !d.park?.expired) continue;
-    if (d.record_state === 'superseded') continue;   // META-GTP-MERGEQ piece 0: terminal
+    if (d.record_state === 'superseded' || d.record_state === 'dropped') continue;   // META-GTP-MERGEQ piece 0, RM-7 S3: terminal
     rows.push({ id: d.id, kind: 'deliverable', lane: d.lane ?? null, branch: d.branch ?? null, run: d.run ?? null, days: d.days ?? null,
       what: d.delivers || '', why: 'done, not merged' });
   }
@@ -217,7 +217,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
 // git unreadable: every open deliverable record counts as done (listing too much beats dropping work)
 function fallbackDlv(stateDir) {
   try {
-    return Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state !== 'superseded')
+    return Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && !['superseded', 'dropped'].includes(i.state))
       .map(i => ({ id: i.id, state: 'done', record_state: i.state, park: i.state === 'parked' ? { expired: false } : null, lane: i.data.lane ?? null,
         branch: i.data.branch, run: i.data.run ?? null, delivers: i.data.delivers ?? '', days: null }));
   } catch { return []; }
