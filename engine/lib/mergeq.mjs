@@ -14,6 +14,7 @@ import { pathKey } from './config.mjs';
 import { acquireLock, laneWriter, killTree } from './runs.mjs';
 import { renderBatchBrief, suiteMode, briefMarker } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
+import { acquireGate } from './gatelock.mjs';
 import { findingLine } from './slop/host.mjs';
 import { doorCheck, storedCheck } from './slop/door.mjs';
 import { rulesHash } from './slop/check.mjs';
@@ -220,16 +221,21 @@ export const batchFile = (stateDir, n) => path.join(mqDir(stateDir), `batch-${n}
 export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
-/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state) */
-export function runGate(gate, { cwd, log }) {
+/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state).
+ * heavy (default): a project gate takes the machine gate lock first (gatelock.mjs, in locksDir; fair-slots 5a) - its wait lines go to
+ * the log, its children run under it (META_GATE_HELD); heavy false = a brief's own test command, no lock. acquire: tests. */
+export async function runGate(gate, { cwd, log, heavy = true, locksDir, acquire = acquireGate }) {
   cwd = inDir(cwd, gate.dir);
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, '');
+  const say = l => { try { fs.appendFileSync(log, `norn: ${l}\n`); } catch { /* log only */ } };
+  const lock = heavy ? await acquire({ what: `gate ${gateText(gate)} in ${fwd(cwd)}`, ...(locksDir ? { locksDir } : {}), say }) : null;
   return new Promise(resolve => {
     const t0 = Date.now();
-    fs.mkdirSync(path.dirname(log), { recursive: true });
-    const fd = fs.openSync(log, 'w');
-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_')));
+    const fd = fs.openSync(log, 'a');
+    const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_'))), ...lock?.env };
     let child, timedOut = false, done = false;
-    const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
+    const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); lock?.release(); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
     const timer = setTimeout(() => { timedOut = true; killTree(child?.pid); }, (gate.timeout_min ?? 30) * 60e3);
     try { child = spawn(gate.cmd, { cwd, shell: true, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', fd, fd], env }); }
     catch (e) { end(-1, { error: e.message }); return; }
@@ -466,7 +472,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       let k = 0;
       const gateAt = async (commit, label) => {
         git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach', commit]);
-        return gateRunner(cfg.gate, { cwd: cfg.scratch, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
+        return gateRunner(cfg.gate, { cwd: cfg.scratch, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`), locksDir });
       };
       // skip: the members merged clean (buildBatch drops a conflicting pick), so nothing runs; the MERGE stage keeps its smoke
       const res = skip ? { status: 'green', runs: [], green_prefix: b.members.length } : await gateBatch(b, gateAt);

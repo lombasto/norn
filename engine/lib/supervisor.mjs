@@ -246,7 +246,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {
     const hb = setInterval(beat, spec.hbMs);
-    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run }); }
+    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks') }); }
     catch (e) { data.dod = { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
     finally { clearInterval(hb); }
     logLine(`dod: Done ${data.dod.ok ? 'green' : 'RED: ' + data.dod.why}${data.dod.tests.length ? ' (' + data.dod.tests.map(testLine).join('; ') + ')' : ''}`);

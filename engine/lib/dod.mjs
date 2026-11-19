@@ -60,9 +60,10 @@ function testCmds(tests, worktree, testCmd) {
 /**
  * Norn's Done check on the worktree's branch. dod = the spec's dod part ({ ready, gate, test_cmd, timeout_min, notes }); logDir
  * gets one log per command (<run>-dod-<name>.log). -> { ok, why, at, branch, base, head, dirty: [path], changed: [path],
- * out_of_scope: [path], tests: [{ name, cmd, code, ok, ms, counts, log, timed_out }], problems: [text] }
+ * out_of_scope: [path], tests: [{ name, cmd, code, ok, ms, counts, log, timed_out }], problems: [text] }. locksDir: the machine's
+ * locks dir - the project gate waits there for the machine gate lock (fair-slots 5a); the brief's own tests take none.
  */
-export async function doneCheck({ worktree, dod, logDir, run }) {
+export async function doneCheck({ worktree, dod, logDir, run, locksDir }) {
   const ready = dod.ready, out = { ok: false, why: null, at: new Date().toISOString(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] };
   const st = gitRun(worktree, ['status', '--porcelain', '-z', '--untracked-files=all']).split('\0').filter(Boolean);
   out.dirty = st.filter(l => /^.. /.test(l)).map(l => l.slice(3));
@@ -81,10 +82,10 @@ export async function doneCheck({ worktree, dod, logDir, run }) {
   // a docs-only branch runs no gate: CI ignores such a push and its MERGE runs no suite (RUN-1063 / RUN-1072 timed out on README + pictures)
   const docs = bb && out.changed.length > 0 && out.changed.every(p => inScope(p, DOCS_ONLY));
   if (docs && dod.gate?.cmd) out.gate_skipped = `docs-only branch (every changed path in the CI paths-ignore: ${DOCS_ONLY.join(' ')})`;
-  const jobs = [...(t.cmds || []).map((cmd, i) => ({ name: t.cmds.length > 1 ? `tests-${i + 1}` : 'tests', cmd, timeout_min: dod.timeout_min ?? 20 })),
-    ...(dod.gate?.cmd && !docs ? [{ name: 'gate', cmd: dod.gate.cmd, dir: dod.gate.dir, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20 }] : [])];
+  const jobs = [...(t.cmds || []).map((cmd, i) => ({ name: t.cmds.length > 1 ? `tests-${i + 1}` : 'tests', cmd, timeout_min: dod.timeout_min ?? 20, heavy: false })),
+    ...(dod.gate?.cmd && !docs ? [{ name: 'gate', cmd: dod.gate.cmd, dir: dod.gate.dir, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20, heavy: true }] : [])];
   for (const j of jobs) {
-    const log = path.join(logDir, `${run}-dod-${j.name}.log`), r = await runGate({ cmd: j.cmd, timeout_min: j.timeout_min, ...(j.dir ? { dir: j.dir } : {}) }, { cwd: worktree, log });
+    const log = path.join(logDir, `${run}-dod-${j.name}.log`), r = await runGate({ cmd: j.cmd, timeout_min: j.timeout_min, ...(j.dir ? { dir: j.dir } : {}) }, { cwd: worktree, log, heavy: j.heavy, ...(locksDir ? { locksDir } : {}) });
     let text = '';
     try { text = fs.readFileSync(log, 'utf8'); } catch { /* no log */ }
     out.tests.push({ name: j.name, cmd: j.cmd, code: r.code, ok: r.ok, ms: r.ms, counts: testCounts(text), log: fwd(log), ...(r.timedOut ? { timed_out: true } : {}) });
