@@ -31,7 +31,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - stopped (end.why): rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
   record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`. If it is owner-only, record
   `META rec add question --lane L --title T --body-file F --option "a|..|cost" --recommend "<key>|<why>" --class <i-v> --blocks L`
-  (the lane is parked by it). Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
+  (the lane is parked by it). Options: list every real alternative - 3-4 where they exist; never trim to the default plus one, never
+  pad with a fake one. A Q built from a plan / notes / brief section: `--from-source "<file>#<section>"` copies every alternative it
+  names verbatim and records the source; an `--option` you add beside it is marked added by you. Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
   The body (F) is short markdown the Inbox renders: one lead sentence, then one bullet per fact. Write ids bare (RUN-146, Q-4, a
   lane name: the Inbox links them); backticks only for code (a command, a path); a number with its unit; a change as "a -> b". Example:
 
@@ -51,6 +53,11 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - FIRST, every answered Q (above all one that parks a lane): act on it this pass (rule / dispatch / unpark), then
   `META rec apply Q-n --refs <ids>`. The owner has ruled; an answered Q left for a later pass is a miss. A ruling to waive a slop
   finding is yours to write: `META rec add waiver --rule K --scope S --why W --q Q-n`, then apply - never mail it to the controller.
+- Every open Q with an "owner wrote" line under it (STATUS): the owner typed a message in its Inbox thread - a question or a doubt,
+  NOT an answer (never answer, rule or apply the Q from it). Reply in the thread, short and plain: `META rec reply Q-n --text T`.
+  The owner's words show the options were unclear: revise them in the same reply (`--option "k|text|cost"` once per option = the
+  whole new list; reword or add a real one, keep the keys of the ones kept). The owner's words state a decision: propose it as a
+  ruling they confirm with one tap - `--propose "<key or empty>|<the ruling in their words>"`. Only the owner's pick or tap answers it.
 - Every digest row "Q-n open, possibly answered by DEC-m" (the owner answered in a chat that wrote only a decision): read the DEC;
   when its owner words answer Q-n, `META rec answer Q-n --from DEC-m` (the words copied from the DEC, + apply); else
   `META rec not-an-answer DEC-m --q Q-n --why W`. Either one; the row leaves.

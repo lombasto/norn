@@ -122,8 +122,8 @@ test('project switcher: two projects, ?project= scopes every tab, all sums the o
     assert.equal((await f.get('/api/records?project=all')).status, 400);
     assert.equal((await f.get('/api/inbox?project=nope')).status, 404);
     assert.equal((await f.post('/api/answer', { project: 'other', id: 'Q-1', text: 'ok' })).status, 200);
-    assert.equal(loadState(f.pb.state).items['Q-1'].state, 'answered');
-    assert.equal(loadState(f.pa.state).items['Q-1'].state, 'open', 'the other project is untouched');
+    assert.equal(loadState(f.pb.state).items['Q-1'].history.at(-1).ev, 'say', 'typed words on a Q with no options: a message in its thread (INBOX-REPLIES)');
+    assert.equal(loadState(f.pa.state).items['Q-1'].history.at(-1).ev, 'create', 'the other project is untouched');
   } finally { await f.done(); }
 });
 
