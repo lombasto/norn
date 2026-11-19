@@ -3,7 +3,8 @@
 // records of the SAME state dir (ids are per state). Level-triggered: a condition is evaluated from the records every time.
 import { loadState, fold, readEvents, recordsFile } from './records.mjs';
 import fs from 'node:fs';
-import { makeGit, isAncestor, refTip } from './dlvgit.mjs';
+import { makeGit, workOnMain } from './dlvgit.mjs';
+import { dlvMerged } from './deliverables.mjs';
 
 // kind -> { prefix, default state, allowed states }
 export const AFTER_KINDS = {
@@ -88,8 +89,7 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
     if (c.kind === 'dlv') {
       const d = dlvs()[c.id];
       if (!d) return { met: false, gone: `${c.id} does not exist` };
-      const tip = refTip(d.data.repo, d.data.branch, { git }) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
-      return { met: !!tip && workOnMain(d.data.repo, tip, d.data.main || 'main', { git }), gone: null };   // META-DLV-LANDED: the one rule
+      return { met: d.state === 'superseded' || dlvMerged(d, { git }).merged, gone: null };   // DLV-MERGED-TRUTH: the one rule (deliverables.mjs)
     }
     const all = recs(), it = all[c.id];
     if (!it) return { met: false, gone: `${c.id} does not exist` };
@@ -132,56 +132,6 @@ export function successorOf(runs, r, seen = new Set()) {
   const n = id => Number(String(id).replace(/^RUN-(?:[^-]+-)?/, ''));
   return Object.values(runs).filter(x => x.kind === 'run' && !seen.has(x.id) && n(x.id) > n(r.id) && x.data.lane === lane && x.data.stage === stage
     && x.data.kind !== 'checkin' && x.data.role !== 'helper' && !(x.state === 'withdrawn' && !x.withdraw?.next)).sort((a, b) => n(b.id) - n(a.id))[0] ?? null;
-}
-
-/**
- * META-AUTONOMY R1 cause 1: is the WORK of `head` on main (local main, else origin's)? The one home of "merged" for run conditions.
- * Industry standard, as git itself decides it (git rebase / `git cherry` / `git log --cherry-pick` skip a commit whose patch is already
- * upstream; squash detection as git-trim / git-delete-merged-branches do it):
- *  1. head is an ancestor of main (a fast-forward or a merge commit);
- *  2. else every commit of merge-base..head has a patch-id equal to a commit on main (`git cherry`: all '-') - a rebase, a merge-queue
- *     rebase, a cherry-pick, a rebase + --no-ff merge;
- *  3. else the branch's WHOLE diff (one synthetic commit: head's tree on the merge-base, `git commit-tree`) has the patch-id of a commit
- *     on main - a squash merge;
- *  4. (META-DLV-LANDED) else head's tree IS its merge-base's tree: the branch adds nothing to main - merged, then the merge queue's update
- *     step merged main into it (a merge commit that no patch-id matches; DLV-45 11-13);
- *  5. else every commit of main..head is a merge and each one is CLEAN (its tree = git's own merge of its parents: no edits of its
- *     own) - the branch landed, then the merge queue merged main into it, and main has moved on since (so 4's trees differ).
- * A rebase that resolved a conflict changes that commit's patch: git cannot see it, so the condition is held for a ruling (norn runs
- * landed). Not used: "a merge commit naming the branch" (a branch name is reused across rounds - R1 / R2 of meta-plan - so it would
- * count an older round's merge).
- */
-// rule 5: main..head holds merge commits only, each with exactly the tree git's merge of its two parents gives (no conflict, no edit)
-function onlyCleanMerges(repo, head, base, git) {
-  const own = git(repo, ['rev-list', '--no-merges', '--count', `${base}..${head}`], { allowFail: true });
-  if (own === null || Number(own.trim()) !== 0) return false;
-  const merges = String(git(repo, ['rev-list', '--merges', '--parents', `${base}..${head}`], { allowFail: true }) ?? '').split('\n').filter(Boolean);
-  if (!merges.length) return false;
-  return merges.every(l => {
-    const [m, ...ps] = l.trim().split(/\s+/);
-    if (ps.length !== 2) return false;   // an octopus: not judged
-    const r = git(repo, ['merge-tree', '--write-tree', ps[0], ps[1]], { status: true });
-    return r.code === 0 && r.out.split('\n')[0].trim() === git(repo, ['rev-parse', `${m}^{tree}`], { allowFail: true })?.trim();
-  });
-}
-
-export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) {
-  const lines = out => String(out ?? '').split('\n').map(l => l.trim()).filter(Boolean);
-  for (const base of [main, `refs/remotes/origin/${main}`]) {
-    if (isAncestor(repo, head, base, git)) return true;
-    if (onlyCleanMerges(repo, head, base, git)) return true;
-    const mb = git(repo, ['merge-base', base, head], { allowFail: true })?.trim();
-    if (!mb) continue;
-    const tree = git(repo, ['rev-parse', `${head}^{tree}`], { allowFail: true })?.trim();
-    if (tree && tree === git(repo, ['rev-parse', `${mb}^{tree}`], { allowFail: true })?.trim()) return true;
-    const own = lines(git(repo, ['cherry', base, head, mb], { allowFail: true }));
-    if (own.length && own.every(l => l.startsWith('-'))) return true;
-    const synth = tree && git(repo, ['commit-tree', tree, '-p', mb, '-m', 'norn: the branch as one patch (squash check)'], { allowFail: true,
-      env: { GIT_AUTHOR_NAME: 'norn', GIT_AUTHOR_EMAIL: 'norn@localhost', GIT_COMMITTER_NAME: 'norn', GIT_COMMITTER_EMAIL: 'norn@localhost' } })?.trim();
-    const sq = synth ? lines(git(repo, ['cherry', base, synth, mb], { allowFail: true })) : [];
-    if (sq.length === 1 && sq[0].startsWith('-')) return true;
-  }
-  return false;
 }
 
 /** { met: all met, gone: [why] , conds: [{cond, met, gone}] } for one queued run's after list */
