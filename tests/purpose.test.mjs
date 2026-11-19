@@ -122,7 +122,7 @@ test('lane type from the roadmap: the item\'s words, then its theme\'s; a word i
 });
 
 test('lane output: code -> a PR to the repo and its state (no PR yet / PR #n open / merged); a design lane -> its notes, not in git', () => {
-  const row = (id, state, pr) => ({ id, state, repo: 'C:/Users/x/Documents/Github/norn-public', lane: 'lane-purpose', pr });
+  const row = (id, state, pr) => ({ id, state, repo: 'C:/repos/norn-public', lane: 'lane-purpose', pr });
   assert.deepEqual(laneOutput('build', { deliverables: [] }), { kind: 'code', text: 'code → PR to the repo · no PR yet', href: null });
   assert.deepEqual(laneOutput('build', { deliverables: [row('DLV-20', 'done', null)] }), { kind: 'code', text: 'code → PR to norn-public · no PR yet', href: null });
   assert.deepEqual(laneOutput('build', { deliverables: [row('DLV-3', 'merged', null), row('DLV-20', 'done', { url: 'https://github.com/lombasto/norn/pull/18', number: 18 })] }),
