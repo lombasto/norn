@@ -134,7 +134,7 @@ test('D1 merge-land: refuses a lane branch whose pushed head has an open BLOCK; 
   const ghGit = makeGit((cwd, args) => (args[0] === 'remote' && args[1] === 'get-url' ? 'https://github.com/o/r.git\n' : git(cwd, ...args) + '\n'));
   const created = [];
   const gh = args => { if (args[1] === 'list') return { code: 0, out: '[]', err: '' }; created.push(args[args.indexOf('--head') + 1]); return { code: 0, out: `https://github.com/o/r/pull/${created.length}\n`, err: '' }; };
-  const door = (branch, tip) => { const d = doorCheck({ state, repo, branch, head: tip, tool: noTool }); return d.open.length ? `${d.open.length} open slop BLOCK finding(s) at ${tip.slice(0, 7)}` : null; };
+  const door = (branch, tip) => doorCheck({ state, repo, branch, head: tip, tool: noTool });
   const rs = openPrs({ repo, wt, branches: ['feat/bad', 'feat/ok'], git: ghGit, gh, door });
   assert.deepEqual(rs.map(r => [r.branch, r.status]), [['feat/bad', 'refused'], ['feat/ok', 'opened']], JSON.stringify(rs));
   assert.match(rs[0].why, /1 open slop BLOCK finding\(s\) at [0-9a-f]{7}/);
