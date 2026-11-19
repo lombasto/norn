@@ -25,6 +25,7 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
+import { SHARE_KEY, RESERVE, shareOf } from '../lib/share.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
@@ -32,7 +33,7 @@ import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
 import { homeDir, realPath } from '../lib/config.mjs';
-import { executorExtra } from '../lib/executors.mjs';
+import { executorExtra, capsOfRun } from '../lib/executors.mjs';
 import { loginHolds, authFile } from '../lib/authguard.mjs';
 import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
 import { limitLines } from '../lib/limitgate.mjs';
@@ -272,7 +273,23 @@ export function createDashboard(o) {
     const budget = JSON.parse(braw || '{}'), proj = JSON.parse(praw);
     return { budget, proj, view: merged(budget, proj.policy), version: hash(braw + '\n\u0000\n' + praw) };
   }
-  const exExtra = p => executorExtra(p);  // configured typed executors: names, cap defaults, enabled (META-EXEC-S1, META-AGNOSTIC-EXEC)
+  // configured typed executors: names, cap defaults, enabled (META-EXEC-S1, META-AGNOSTIC-EXEC); fair-slots item 8: projects = every
+  // registered project (they share this machine's Claude pool): Settings > Capacity has a reserve + a ceiling row for each, on one
+  // screen, whichever project's Settings is open
+  const exExtra = p => ({ ...executorExtra(p), projects: projects.map(x => x.name).sort() });
+  // fair-slots item 8c: the Claude pool per registered project, counted as runs.mjs capacityView counts it (using = a running,
+  // non-interactive run on the Claude cap with a fresh heartbeat; queued = a queued one on it) but on fs.promises: capacityView's
+  // existsSync / statSync would be sync reads in a GET (DEC-338, tests/dash-async-census)
+  const onClaudeCap = d => d.kind !== 'checkin' && capsOfRun(d).includes('max_claude_workers');
+  async function capacityOf() {
+    const budget = JSON.parse((await readA(o.budgetFile, '{}')) || '{}'), now = Date.now();
+    const rows = await Promise.all(projects.map(async p => {
+      const rs = runsOf(await stAsync(p)), sh = shareOf(budget, p.name), live = rs.filter(r => r.state === 'running' && r.data.kind !== 'interactive' && onClaudeCap(r.data));
+      const beats = await Promise.all(live.map(r => statA(hbPath(p.state, r.id)).then(x => x?.mtimeMs ?? Date.parse(r.created))));
+      return { project: p.name, reserved: sh.reserve, using: beats.filter(t => now - t <= STALE_MS).length, queued: rs.filter(r => r.state === 'queued' && onClaudeCap(r.data)).length, ceiling: sh.ceiling };
+    }));
+    return { cap: Number.isInteger(budget.max_claude_workers) ? budget.max_claude_workers : null, rows: rows.sort((a, b) => a.project.localeCompare(b.project)) };
+  }
   async function regenerate(p, m) {
     const lines = generatedLines(m, exExtra(p)), done = [];
     for (const f of p.policy_targets || []) {
@@ -289,7 +306,26 @@ export function createDashboard(o) {
       settings: settingsView(s.view, { quietRule, quietFile: o.quietFile, ...exExtra(p) }), sections: SECTIONS, generated: generatedLines(s.view, exExtra(p)), targets,
       // F-6: each profile as Settings changes for this project's executors + role agents - the form is filled, Save stays the human step
       profiles: profileChoices(profileFor(p, s)), profile_now: profileNow(p, s), billing: billingChoices(), billing_now: s.budget?.billing ?? null,
-      notify: notifyInfo(p) };
+      notify: notifyInfo(p), capacity_undo: capUndoOf(p, s) };   // + capacity (capacityOf, async) at the route
+  }
+  // fair-slots item 8d: every save that changes a project's reserve or ceiling records a "capacity" decision with the keys' values
+  // before and after (null = unset); the latest one, while its values are still in force, offers an Undo: the before-values written back
+  // through the same save path (validated again, recorded again with `undoes`). An Undo is not itself undone (save again instead).
+  const CAP_Q = 'capacity';
+  const capRec = i => i.kind === 'decision' && i.data?.lane === 'settings' && i.data?.question === CAP_Q;
+  const decNum = i => Number(i.id.split('-').pop());
+  const capWord = (k, v) => { const [, proj, f] = k.split('.'); return `${proj} ${f === RESERVE ? 'reserve' : 'max'} ${v ?? 'unset'}`; };
+  const capWords = (from, to) => Object.keys(to).map(k => `${capWord(k, from[k])} -> ${to[k] ?? 'unset'}`).join(', ');
+  const rawOf = (b, k) => getPath(b, k) ?? null;
+  function capUndoOf(p, s = settingsState(p)) {
+    const d = Object.values(st(p).items).filter(capRec).sort((a, b) => decNum(b) - decNum(a))[0];
+    if (!d || d.data.undoes || !Object.entries(d.data.to ?? {}).every(([k, v]) => JSON.stringify(rawOf(s.budget, k)) === JSON.stringify(v))) return null;
+    return { id: d.id, choice: d.data.choice, at: d.created };
+  }
+  async function capUndo(p, id) {
+    const s = settingsState(p), u = capUndoOf(p, s);
+    if (u?.id !== id) throw fail(409, `${id} is not the last capacity change in force: nothing to undo (a later change or an Undo came after it)`);
+    return saveSettings(p, st(p).items[id].data.from, s.version, undefined, id);
   }
   // META-PROFILE-BUG R1: a profile routes to the Codex executors this machine has (setup found codex) and the project did not switch
   // off, never to a retired one (retiredExecutors: its own cap 0 while Codex is open); the role names are the project's own agents
@@ -312,7 +348,7 @@ export function createDashboard(o) {
     if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
     const fc = floorChanges(s.view, changes, exExtra(p)), asked = changes; changes = fc.changes;   // the worker floor raises the settings it leaves below it
     const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget);
-    const rulings = Object.values(st(p).items).filter(i => (i.kind === 'directive' && i.state === 'active') || (i.kind === 'decision' && i.state !== 'overruled' && !capsRec(i)));
+    const rulings = Object.values(st(p).items).filter(i => (i.kind === 'directive' && i.state === 'active') || (i.kind === 'decision' && i.state !== 'overruled' && !capsRec(i) && !capRec(i)));
     const words = v => (v === null || v === undefined ? 'unset' : Array.isArray(v) ? v.join(', ') || '(none)' : String(v));
     const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const lines = Object.keys(changes).map(k => {
@@ -384,10 +420,13 @@ export function createDashboard(o) {
       out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
+  // fair-slots item 2: the PRs merge-land opened (a deliverable's `pr` event) whose branch is not on main yet, per lane - from the cached
+  // deliverables rows (git runs in their child, never here); before the first answer no lane reads 'awaiting PR approval'
+  const openPrs = p => Object.fromEntries((deliverablesOf(p).rows || []).filter(r => r.lane && r.pr && r.state === 'done' && !r.superseded).map(r => [r.lane, r.pr]));
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), prs: openPrs(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -1282,6 +1321,7 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/settings') return saveSettings(p, data.changes, data.version, data.profile);
     if (route === '/api/settings/review') return reviewSettings(p, data.changes, data.version);
+    if (route === '/api/settings/capacity-undo') return capUndo(p, String(data.id ?? ''));   // fair-slots item 8d
     if (route === '/api/audit') {   // META-TEND P5: an audit hunk card's tap - accept (a decision + the directive the check-in applies) or decline (a decision)
       if (!['accept', 'decline'].includes(data.verdict)) throw fail(400, 'verdict must be accept or decline');
       const c = auditsView(p, loadState(p.state).items).cards.find(x => x.id === data.id);
@@ -1359,7 +1399,7 @@ data: ${JSON.stringify(l)}
     const ls = t => t.split(/\r?\n/).filter(Boolean);
     return { ran: true, problems: ls(r.err).map(l => l.replace(/^error: /, '')), lines: ls(r.out) };
   }
-  async function saveSettings(p, changes, version, profile) {
+  async function saveSettings(p, changes, version, profile, undoes = null) {   // undoes: the capacity decision an Undo reverts (capUndo)
     const s = settingsState(p);
     if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
     let values = null, prof = null;
@@ -1380,7 +1420,14 @@ data: ${JSON.stringify(l)}
       decision = (await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'settings', question: 'caps profile', choice: `${prof.label} (${profile.cost})`,
         why: `saved from Settings: ${from} setting(s) from the profile${own.length ? `, ${own.length} of the owner's own` : ''}`, profile: prof.name, cost: profile.cost, values, own } })).id;
     }
-    return { ok: true, written, decision, regenerated: await regenerate(p, updated), gen: await genA(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
+    const capKeys = Object.keys(changes).filter(k => k.startsWith(SHARE_KEY + '.') && JSON.stringify(rawOf(s.budget, k)) !== JSON.stringify(rawOf(updated, k)));
+    let capacity = null;
+    if (capKeys.length) {
+      const from = Object.fromEntries(capKeys.map(k => [k, rawOf(s.budget, k)])), to = Object.fromEntries(capKeys.map(k => [k, rawOf(updated, k)]));
+      capacity = (await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'settings', question: CAP_Q, choice: capWords(from, to),
+        why: undoes ? `Undo of ${undoes} from Settings > Capacity` : 'saved from Settings > Capacity', from, to, ...(undoes ? { undoes } : {}) } })).id;
+    }
+    return { ok: true, written, decision, capacity, regenerated: await regenerate(p, updated), gen: await genA(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
   }
 
   // a remote device's request runs inside writeOrigin (records stamp via remote:<device>); cleared when it ends (no stamp leaks into
@@ -1437,7 +1484,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
         if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
-        if (route === '/api/lanes') return send(200, { lanes: lanesWithSpend(pick(url, { all: true })) });
+        if (route === '/api/lanes') return send(200, { lanes: lanesWithSpend(pick(url, { all: true })), capacity: await capacityOf() });
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
@@ -1455,7 +1502,7 @@ data: ${JSON.stringify(l)}
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
         if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
-        if (route === '/api/settings') return send(200, settingsInfo(one(url)));
+        if (route === '/api/settings') return send(200, { ...settingsInfo(one(url)), capacity: await capacityOf() });
         if (route === '/api/feed') return await openFeed(req, res, url);
         if (route === '/api/stream') return await openStream(req, res, url);
         if (route === '/api/sessions') return send(200, { sessions: await sessions.list() });
