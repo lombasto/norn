@@ -126,14 +126,14 @@ test('run:RUN-n:merged follows a HANDOFF successor to the run that ended DONE an
 });
 
 // ---------- piece 2: epics (EP-n, epics.jsonl) ----------
-test('epic records: own file, create / add / remove / close, P0-P3, members are RUN-n / DLV-n; loadState unchanged', () => {
+test('epic records: own file, create / add / remove / close, P0-P4, members are RUN-n / DLV-n; loadState unchanged', () => {
   const d = sandbox();
   const rec = (ev, data, id, by = 'controller') => record(d.state, { kind: 'epic', ev, id, by, data }, { views: false });
   const ep = rec('create', { title: 'water picture', priority: 'P1', members: [], integration_branch: 'int/water' }).id;
   assert.equal(ep, 'EP-1');
   assert.ok(fs.existsSync(path.join(d.state, 'epics.jsonl')), 'its own file');
   assert.equal(loadState(d.state).items[ep], undefined, 'loadState stays as is');
-  assert.throws(() => rec('create', { title: 'x', priority: 'P4' }), /priority/);
+  assert.throws(() => rec('create', { title: 'x', priority: 'P5' }), /priority/);
   assert.throws(() => rec('create', { priority: 'P1' }), /title/);
   assert.throws(() => rec('add', { members: ['Q-1'] }, ep), /members/);
   rec('add', { members: ['RUN-3', 'DLV-2'] }, ep, 'launcher');

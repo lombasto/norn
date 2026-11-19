@@ -1,7 +1,7 @@
 // META-GTP-MERGEQ (GT-PARITY-PLAN sec. 2.4; Bors / the GitHub merge queue; Gas Town refinery - cited, not ported): the merge
 // queue of DONE-not-merged deliverables. Code only, no LLM: the tick runs it after the fill.
 //  1. MR score (Gas Town internal/refinery/score.go:43-51, 81-87): 1000 + epic_hours*10 + (4 - priority)*100
-//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P3; none = P2, the DAG default), retries = its
+//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P4; none = P2, the DAG default), retries = its
 //     resolve / fix rounds, the DLV's age since DONE.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,7 +27,7 @@ const H = 3600e3;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const pad = (s, n) => String(s ?? '').padEnd(n);
 export const MQ_DEFAULTS = { batch_max: 4 };
-export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
 /** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
 // a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own
