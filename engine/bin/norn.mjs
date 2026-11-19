@@ -83,17 +83,20 @@ import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
+import { sourceQuestion, SourceError } from '../lib/qsource.mjs';
 import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
 import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll, pausedHandoffs } from '../lib/pause.mjs';
 import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
-  'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
+  'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--from-source "<file>#<section>"] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]    (list every real alternative - 3-4 where they exist; never trim to two, never pad with a fake one. --from-source copies every alternative the section lists, verbatim, and records the file + section; an --option next to it is marked "added by <you>")',
   'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
   'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO] [--q Q-n]    (owner / controller: a slop finding that may stay; a check-in only with --q, the answered Q whose ruling is the waiver)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
+  say: 'norn rec say Q-n --text "<owner words>" --via dashboard|chat    (the owner message on an open Q: the Q stays open, the controller replies in its thread)',
+  reply: 'norn rec reply Q-n --text T [--option "key|text|cost"]... [--recommend "key|why"] [--propose "key|ruling"]    (the controller in the thread of a Q: --option revises the whole option list, --propose = a ruling from the owner words the owner confirms with one tap; key may be empty)',
   apply: 'norn rec apply Q-n --refs DEC-n,RUN-n',
   'not-an-answer': 'norn rec not-an-answer DEC-m --q Q-n [--why W]    (the DEC is not the answer to Q-n: the digest / Inbox stop pointing at it)',
   supersede: 'norn rec supersede ID --by ID --why W',
@@ -112,16 +115,16 @@ const USAGE = {
 };
 const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
-  'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
+  'add question': ['lane', 'title', 'body', 'body-file', 'from-source', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
   'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
   'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until', 'q'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
-  answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
+  answer: ['text', 'via', 'choice', 'each', 'from'], say: ['text', 'via'], reply: ['text', 'option*', 'recommend', 'propose'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
   list: ['open!', 'kind', 'lane', 'json!'], show: ['json!', 'full!'], views: [],
 };
-const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
+const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|say|reply|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
 
@@ -153,17 +156,30 @@ function parse(cmd, argv) {
 const csv = v => v === undefined ? undefined : v.split(',').map(s => s.trim()).filter(Boolean);
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
-function addData(what, f, cmd) {
+const optionsOf = (f, cmd) => (f.option || []).map(o => {
+  const [key, text, cost = ''] = o.split('|');
+  if (!key || text === undefined) throw new Usage(`--option must be "key|text|cost" (got ${JSON.stringify(o)})`, cmd);
+  return { key: key.trim(), text: text.trim(), cost: cost.trim() };
+});
+const recommendOf = (f, cmd, by) => {
+  if (f.recommend === undefined) return undefined;
+  const i = f.recommend.indexOf('|');
+  if (i < 1) throw new Usage('--recommend must be "key|why"', cmd);
+  return { key: f.recommend.slice(0, i).trim(), why: f.recommend.slice(i + 1).trim(), from: by };
+};
+function addData(what, f, cmd, by) {
   if (what === 'question') {
-    const options = (f.option || []).map(o => {
-      const [key, text, cost = ''] = o.split('|');
-      if (!key || text === undefined) throw new Usage(`--option must be "key|text|cost" (got ${JSON.stringify(o)})`, cmd);
-      return { key: key.trim(), text: text.trim(), cost: cost.trim() };
-    });
-    let recommend;
-    if (f.recommend !== undefined) { const i = f.recommend.indexOf('|'); if (i < 1) throw new Usage('--recommend must be "key|why"', cmd); recommend = { key: f.recommend.slice(0, i).trim(), why: f.recommend.slice(i + 1).trim() }; }
+    let options = optionsOf(f, cmd), recommend = recommendOf(f, cmd, by), origin, source = f.source;
+    if (f['from-source'] !== undefined) {   // INBOX-REPLIES (6a): every alternative the section names, verbatim; the writer's own marked
+      let q;
+      try { q = sourceQuestion(f['from-source']); } catch (e) { if (e instanceof SourceError) throw new Usage(e.message, cmd); throw e; }
+      const taken = new Set(q.options.map(o => o.key));
+      for (const o of options) if (taken.has(o.key)) throw new Usage(`--option ${o.key}: the source already has an option ${o.key} (${q.options.find(x => x.key === o.key).text}) - pick another key`, cmd);
+      options = [...q.options, ...options.map(o => ({ ...o, added_by: by }))];
+      recommend ??= q.recommend; origin = q.origin; source ??= `${q.origin.file}#${q.origin.section}`;
+    }
     const body = f['body-file'] !== undefined ? fs.readFileSync(f['body-file'], 'utf8') : f.body;
-    return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source: f.source, owner_only: f['owner-only'] ? true : undefined });
+    return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source, origin, owner_only: f['owner-only'] ? true : undefined });
   }
   if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
   if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
@@ -172,9 +188,15 @@ function addData(what, f, cmd) {
   throw new Usage(`unknown kind ${what}`, cmd);
 }
 
-function eventData(ev, f) {
+function eventData(ev, f, by) {
   switch (ev) {
     case 'answer': return drop({ choice: f.choice, text: f.text, via: f.via, from: f.from });
+    case 'say': return drop({ text: f.text, via: f.via });
+    case 'reply': {
+      let propose;
+      if (f.propose !== undefined) { const i = f.propose.indexOf('|'); if (i < 0) throw new Usage('--propose must be "key|ruling" (key may be empty)', 'reply'); propose = drop({ key: f.propose.slice(0, i).trim() || undefined, text: f.propose.slice(i + 1).trim() }); }
+      return drop({ text: f.text, options: f.option ? optionsOf(f, 'reply') : undefined, recommend: recommendOf(f, 'reply', by), propose });
+    }
     case 'not-an-answer': return drop({ q: f.q, why: f.why });
     case 'apply': case 'done': return drop({ refs: csv(f.refs) });
     case 'supersede': return drop({ by: f.by, why: f.why });
@@ -1525,12 +1547,12 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     if (cmd.startsWith('add ')) {
       if (pos.length) throw new Usage(`unexpected ${pos[0]}`, cmd);
       const kind = cmd.slice(4);
-      ev = { kind, ev: 'create', by, data: addData(kind, flags, cmd) };
+      ev = { kind, ev: 'create', by, data: addData(kind, flags, cmd, by) };
     } else {
       if (pos.length !== 1) throw new Usage(`${cmd} needs one ID`, cmd);
       const kind = kindOfId(pos[0]);
       if (!kind) throw new Usage(`${pos[0]} is not a record id (Q-n, DEC-n, DIR-n, L:name)`, cmd);
-      ev = { kind, ev: cmd === 'not-an-answer' ? 'notanswer' : cmd, id: pos[0], by, data: eventData(cmd, flags) };
+      ev = { kind, ev: cmd === 'not-an-answer' ? 'notanswer' : cmd, id: pos[0], by, data: eventData(cmd, flags, by) };
     }
     if (flags.item) {   // META-ROADMAP S3: --item RM-n (add lane only) - checked before the lane exists
       try { openItem(state, flags.item); } catch (x) { throw new Usage(x.message, cmd); }
