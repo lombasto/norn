@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseCodexLog } from './runs.mjs';
-import { runName } from './names.mjs';
+import { doerOf } from './crew.mjs';
 import { handoffOf } from './lanes.mjs';
 import { findTranscript, findTranscriptA, usageCtx } from './harness/claude.mjs';
 import { ctxView } from './ctxlimit.mjs';
@@ -178,7 +178,7 @@ export function agentsTree(runs, o = {}) {
   for (const r of [...runs].filter(x => x.kind === 'run').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)))) {
     if (!shown(r, now)) continue;
     const d = r.data || {}, end = r.end || {};
-    const node = { id: r.id, name: runName(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
+    const node = { id: r.id, ...doerOf(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
       model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null,
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
       dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log }) => ({ name, code, counts, log })) } : null,   // META-DOD 1

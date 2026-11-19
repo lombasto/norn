@@ -114,7 +114,7 @@ test('overlap: the digest row (running lanes only, level-triggered), the Lanes c
   // the dashboard: the chip on the lane row, a PR one links to the PR
   const c = readOverlap(f.state);
   c.lanes.feat.overlaps = [{ kind: 'pr', ref: 'feat/same-thing', number: 12, title: 'Same feature', url: 'https://github.com/someone/proj/pull/12', n: 3, files: ['src/a.js'] }];
-  const html = renderTab('lanes', { lanes: [{ name: 'feat', id: 'L-feat', state: 'active', data: {}, run, run_name: null, executor: 'fake', run_state: 'running', text: 'running fake for 1 min', project: 'k', overlap: c.lanes.feat.overlaps }] }, {});
+  const html = renderTab('lanes', { lanes: [{ name: 'feat', id: 'L-feat', state: 'active', data: {}, run, dwarf: null, kind_word: null, executor: 'fake', run_state: 'running', text: 'running fake for 1 min', project: 'k', overlap: c.lanes.feat.overlaps }] }, {});
   assert.match(html, /<a [^>]*href="https:\/\/github\.com\/someone\/proj\/pull\/12"[^>]*>[^<]*overlaps upstream: PR #12 \(3 files\)/);
   // the lane stops: the row leaves
   record(f.state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data: { outcome: 'done', exit: 0 } });

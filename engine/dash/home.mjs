@@ -7,6 +7,10 @@
 // and done cards (Undo -> POST /api/chat/undo) come from the chat profile's outbox lines; a card without a verb keeps its button disabled.
 import { dodChips, hoChip } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips; the live hand-off chip
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** a run's dwarf (DWARVES 3.3): its display name, bold, with data-dwarf for the dossier link the Dwarves page adds (?tab=dwarves&dwarf=<id>) */
+export const dwarfName = d => (d ? ` <b class="aname" data-dwarf="${esc(d.id)}">${esc(d.name)}</b>` : '');
+/** who ran a run: its dwarf, else its kind word (a check-in, a merge, a run from before the crew) - never a blank */
+export const runWho = (d, kw) => (d ? dwarfName(d) : kw ? ` <span class="mute">${esc(kw)}</span>` : '');
 const fin = v => typeof v === 'number' && Number.isFinite(v);
 const hhmm = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 16) : ''; };
 const ago = (iso, now) => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return ''; const m = Math.max(0, (now - t) / 60000);
@@ -92,7 +96,8 @@ export const threadOnly = (why = [], tab) => tab === 'home' && why.some(r => r =
  * [{ key, ts, cat, kind, ... }]. Check-in runs are not items (their ledger line is, with the facts line of the run that wrote it);
  * helpers neither; a MERGE stage is a merge; only what needs you now (no answered-not-applied rows).
  */
-export function homeEvents({ thread = [], runs = [], items = null, ledger = [], needs = [], count = 300 } = {}) {
+// dwarf: run -> { id, name } | null (the server's crew.mjs dwarfOf: the display names live there)
+export function homeEvents({ thread = [], runs = [], items = null, ledger = [], needs = [], count = 300, dwarf = () => null } = {}) {
   const out = [], cards = new Map(), dones = new Map(), dividers = new Map();
   const VERDICT = v => (v.verdict === 'approve' ? 'approved' : v.why === 'timeout' ? 'timeout' : 'denied');
   thread.forEach((l, i) => {
@@ -119,7 +124,7 @@ export function homeEvents({ thread = [], runs = [], items = null, ledger = [], 
     const d = r.data || {};
     if (d.kind === 'checkin' || d.role === 'helper') continue;
     const cat = String(d.stage ?? '').toUpperCase() === 'MERGE' ? 'merge' : 'run';
-    const head = { run: r.id, lane: d.lane ?? null, stage: d.stage ?? null, name: d.name ?? null };
+    const head = { run: r.id, lane: d.lane ?? null, stage: d.stage ?? null, dwarf: dwarf(r) };
     if (r.state !== 'queued') out.push({ key: `r${r.id}`, ts: startTs(r), cat, kind: 'run-start', ...head, executor: d.executor ?? null, model: d.model ?? null, effort: d.effort ?? null });
     const end = endOf(r), ets = endTs(r);
     if (end && ets) out.push({ key: `e${r.id}`, ts: ets, cat, kind: 'run-end', ...head, outcome: end.outcome ?? r.state, why: end.why ?? null, dod_ready: d.dod_ready ?? null, dod: end.dod ?? null,
@@ -163,7 +168,7 @@ function card(e, ctx) {
   if (e.kind === 'stop') return `<span class="line">chat ${e.why === 'idle' ? 'idle - stopped; the next message resumes it' : `stopped (${esc(e.why ?? '?')}${fin(e.code) ? ` ${e.code}` : ''})`} · ${at}</span>`;
   if (e.kind === 'checkin') return `<details class="ck"${ctx.open?.has?.(e.key) ? ' open' : ''}><summary class="line">check-in${e.ckrun ? ` ${rid(e.ckrun)}` : ''} · ${at} · ${e.line ? inline(e.line) : 'no run record'}</summary>`
     + `<div class="ck-full">${[inline(e.headline), ...(e.subs || []).map(s => `${s.label ? `<b>${esc(s.label)}</b> ` : ''}${inline(s.text)}`)].map(t => `<div class="txt">${t}</div>`).join('')}${shots(e.images, ctx.project)}</div></details>`;
-  const who = `${e.stage === 'MERGE' || e.cat === 'merge' ? tag('merge', 'MERGE') : ''}${rid(e.run)}${e.lane ? ` <b>${esc(e.lane)}</b>` : ''}${e.stage && e.stage !== 'MERGE' ? ` · ${esc(e.stage)}` : ''}`;
+  const who = `${e.stage === 'MERGE' || e.cat === 'merge' ? tag('merge', 'MERGE') : ''}${rid(e.run)}${dwarfName(e.dwarf)}${e.lane ? ` <b>${esc(e.lane)}</b>` : ''}${e.stage && e.stage !== 'MERGE' ? ` · ${esc(e.stage)}` : ''}`;
   if (e.kind === 'run-start') return `<div class="head">${tag('run', 'STARTED')}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>
     <div class="txt small mute">${[e.executor, SHORT(e.model), e.effort].filter(Boolean).map(esc).join(' · ') || '-'}</div>`;
   if (e.kind === 'run-end') { const [c, w] = OUT[e.outcome] ?? ['idle', String(e.outcome ?? 'ended').toUpperCase()];
@@ -210,7 +215,7 @@ const sh = (h, body) => `<section class="hs"><h4>${esc(h)}</h4>${body}</section>
 const NOW_GLYPH = { running: ['run', '▶'], queued: ['idle', '‖'], claimed: ['idle', '‖'] };
 function left(s, ctx) {
   const now = (s.now || []).map(n => { const [c, g] = NOW_GLYPH[n.state] ?? ['idle', '○'];
-    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
+    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)}${runWho(n.dwarf, n.kind_word)} <span class="ell">${esc(n.lane ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
     || '<div class="mute small">no run is running or queued</div>';
   const u = s.usage || {}, pct = fin(u.used) ? u.used : null;
   const usage = `<div class="hbar"><i style="width:${pct === null ? 0 : Math.min(100, pct)}%"></i>${fin(u.stop) ? `<b style="left:${Math.min(100, u.stop)}%"></b>` : ''}</div>

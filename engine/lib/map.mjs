@@ -2,7 +2,7 @@
 // state, no transcript reads beyond the agents tree the caller already built). Columns left to right: lanes, runs (latest large,
 // the previous RECENT_RUNS-1 small, the rest behind "more"), children (helpers, subagents), questions. Bands top to bottom: the
 // check-in band ("controller"), then lanes running > parked > idle. Pure; the browser only draws it (inline SVG, ui.mjs).
-import { runName } from './names.mjs';
+import { dwarfDisplay, kindWord } from './crew.mjs';
 import { critiqueOfNode } from './critique.mjs';
 
 export const RECENT_RUNS = 3;   // Q-B2 (controller 2026-11-08): last 3 runs per lane, the rest behind "more"
@@ -70,11 +70,11 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
     vis.forEach((r, i) => {
       const d = r.data || {}, [rc, rw] = runWord(r), big = i === 0;
       const crit = d.class === 'planning' ? critiqueOfNode(runs, r.id) : null;   // META-DOD 3: the plan's review (ui.mjs mapNode: its sub line)
-      add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: runName(r) ?? r.id, sub: [r.id, d.executor, d.stage].filter(Boolean).join(' · '), critique: crit,
+      add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: dwarfDisplay(d.dwarf) ?? r.id, sub: [d.dwarf ? r.id : kindWord(d), d.executor, d.stage].filter(Boolean).join(' · '), critique: crit,   // DWARVES 3.3: the bead is the dwarf; no dwarf = id + kind word
         state: r.state, cls: rc, word: rw, x: COL[1], y: ry, w: W[1], h: big ? H.big : H.small, faded: !big, feed: r.id, executor: d.executor ?? null, handoff: hoBy[r.id] ?? null });
       edge(laneId, r.id, 'owns');
-      const kids = [...(helpersOf[r.id] || []).map(h => { const [hc, hw] = runWord(h); return { id: h.id, type: 'helper', lane: name, label: runName(h) ?? h.id,
-        sub: [h.id, h.data.executor, 'helper'].filter(Boolean).join(' · '), cls: hc, word: hw, feed: h.id, executor: h.data.executor ?? null }; }),
+      const kids = [...(helpersOf[r.id] || []).map(h => { const [hc, hw] = runWord(h); return { id: h.id, type: 'helper', lane: name, label: h.id,
+        sub: [h.data.executor, 'helper'].filter(Boolean).join(' · '), cls: hc, word: hw, feed: h.id, executor: h.data.executor ?? null }; }),
       ...(subsOf[r.id] || []).map(s => ({ id: `${r.id}/${s.id}`, type: 'subagent', lane: name, label: s.agentType ?? 'subagent', sub: clip(s.description ?? s.id, 40),
         cls: s.state === 'running' ? 'running' : 'done', word: s.state ?? 'subagent' }))];
       kids.forEach((k, j) => { add({ ...k, x: COL[2], y: ry + j * (H.child + GAP), w: W[2], h: H.child }); edge(r.id, k.id, 'delegates'); });

@@ -1,7 +1,7 @@
 // Truthful lanes (META-GENERAL-DESIGN 5, 12-S6): the lane list is LANE records only (no folder scan); a lane's state text is its
 // latest RUN on that lane, any executor. Pure over a loadState() fold; heartbeat age comes from the caller.
 import { STALE_MS } from './runs.mjs';
-import { runName } from './names.mjs';
+import { doerOf } from './crew.mjs';
 import { loginCommand } from './authguard.mjs';
 
 const runNum = id => Number(String(id).slice(4));
@@ -103,7 +103,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, sta
     const group = laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
-    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
+    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, ...(r ? doerOf(r) : { dwarf: null, kind_word: null }), executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
       handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old };
   }));
 }

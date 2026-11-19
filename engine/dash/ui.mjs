@@ -5,7 +5,7 @@
 import { renderMarkdown } from './docs.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
-import { renderHome } from './home.mjs';
+import { renderHome, dwarfName, runWho } from './home.mjs';
 import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord, hoChip } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
@@ -42,8 +42,6 @@ export function fmtTime(iso, now = Date.now()) {
 const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
   const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
 
-// run name (META-UX-R1 C): stable human name next to the RUN id everywhere a run shows
-const aname = n => n ? ` <b class="aname">${esc(n)}</b>` : '';
 export const chip = (cls, txt) => `<span class="chip ${esc(cls)}">${esc(txt ?? cls)}</span>`;
 // built-ins by name; every configured (typed) executor - API or cli - is an own-account executor ('prov')
 const exClass = ex => String(ex ?? '').startsWith('codex') ? 'codex' : !ex || ['claude', 'fake'].includes(ex) ? 'claude' : 'prov';
@@ -305,7 +303,7 @@ function needItem(i, ctx) {
   if (i.type === 'handedit') return editRow(i, ctx);
   if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.id.slice(2))} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
   const [cls] = stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state);
-  return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${aname(i.name)} unreviewed - no review event yet</div></div></div>`;
+  return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${runWho(i.dwarf, i.kind_word)} unreviewed - no review event yet</div></div></div>`;
 }
 
 // META-ADOPT A3: ONE needs-you row while a drafted setup waits (Review / Not now = a close with the reason)
@@ -378,7 +376,7 @@ function overview(d, ctx) {
     const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
     const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
     const ctxCell = ctxMeter(n, { codexNote: true });
-    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
+    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${runWho(l.dwarf ?? n.dwarf, l.kind_word ?? n.kind_word)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
       <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
       <td class="mono run-burn">${burnCell(l)}</td></tr>`;
   }).join('') || `<tr><td colspan="5" class="mute">${art(ctx, 'empty-no-runs', 'empty')}No lane is running.</td></tr>`;
@@ -436,7 +434,7 @@ function inbox(d, ctx) {
   const other = [
     ...items.filter(i => i.type === 'parked').map(i => row(i, chip('parked'), `lane <b>${esc(i.id.slice(2))}</b> ${i.q ? `parked by ${esc(i.q)}` : esc(i.why ?? '')}`)),
     ...items.filter(i => i.type === 'unreviewed').map(i => row(i, chip(stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state)[0], String(i.outcome ?? i.state).toUpperCase()),
-      `<b>${esc(i.lane ?? '-')}</b> ${esc(i.why ?? '')}<div class="small mute">${aname(i.name)} unreviewed: ended with no review event</div>`)),
+      `<b>${esc(i.lane ?? '-')}</b> ${esc(i.why ?? '')}<div class="small mute">${runWho(i.dwarf, i.kind_word)} unreviewed: ended with no review event</div>`)),
     ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${esc(i.title)}<div class="small mute">${esc(i.answer?.text ?? '')} · ${fmtTime(i.updated, ctx.now)} · waits for the next tick to apply</div>`)),
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
@@ -473,7 +471,7 @@ function lanes(d, ctx) {
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
     const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
     return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
+      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run ? `<div>${runWho(l.dwarf, l.kind_word)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
   }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
   const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
   return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
@@ -516,8 +514,8 @@ function historyHub(d) {
 function runs(d, ctx) {
   const top = Object.fromEntries((d.top || []).map(t => [t.id, t]));
   const name = n => n.kind === 'subagent' ? `${esc(n.agentType ?? 'subagent')}${n.description ? ` "${esc(n.description)}"` : ''}`
-    : n.kind === 'helper' ? `<span class="id">${esc(n.id)}</span>${aname(n.name)} helper${n.class ? ' · ' + esc(n.class) : ''}${n.q ? ` "${esc(n.q)}"` : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}`
-    : `<span class="id">${esc(n.id)}</span>${aname(n.name)} ${esc(n.lane ?? '')}${n.stage ? ' · ' + esc(n.stage) : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}${n.helpers ? ` · helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok` : ''}`;
+    : n.kind === 'helper' ? `<span class="id">${esc(n.id)}</span> helper${n.class ? ' · ' + esc(n.class) : ''}${n.q ? ` "${esc(n.q)}"` : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}`
+    : `<span class="id">${esc(n.id)}</span>${runWho(n.dwarf, n.kind_word)} ${esc(n.lane ?? '')}${n.stage ? ' · ' + esc(n.stage) : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}${n.helpers ? ` · helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok` : ''}`;
   const tok = n => n.tokens === '-' ? '-' : fin(n.tokens) ? `${int(n.tokens)}${n.tokens_src ? ` (${esc(n.tokens_src)})` : ''}` : fin(n.cacheR) ? `${mTok(n.cacheR)} cacheR` : String(n.executor ?? '').startsWith('codex') ? 'at end' : '-';
   const age = n => fin(n.age_min) ? fmtMin(n.age_min) : n.first ? fmtMin(minsSince(n.first, ctx.now)) : n.started ? fmtMin(minsSince(n.started, ctx.now)) : '-';
   const one = (n, lvl, kids, pid) => {
@@ -697,7 +695,7 @@ function planPart(p, ctx) {
   if (p.error) return `${head}<div class="card pl-sec"><p class="mute">The plan could not be worked out: ${esc(p.error)}</p></div>`;
   const up = (p.upnext || []).map(u => {
     const [c, w] = PL_STATUS[u.status] ?? ['idle', u.status];
-    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${aname(u.name)}</span>
+    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${u.dwarf ? `${dwarfName(u.dwarf)} takes it` : ''}</span>
       ${chip(c, w)}<span class="small pl-est" title="${esc(plBasis(u.estimate))}">${esc(u.estimate.word)}</span><span class="small pl-start"${u.start.why ? ` title="${esc(u.start.why)}"` : ''}>start ${esc(u.start.at && u.start.word !== 'now' ? `~${plAt(u.start.at, now)}` : u.start.word)}</span>
       <span class="pl-holds small">${u.holds.map((h, i) => esc(u.holdAt?.[i] ? `not before ${plAt(u.holdAt[i], now)}` : h)).join('<br>')}</span></div>`;
   }).join('');
@@ -847,7 +845,7 @@ export function renderFeedHead(h, now = Date.now()) {
   const [cls, word] = stateOf(st);
   const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
   const c = h.commit;
-  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
+  return `<div class="fh-top">${dwarfName(h.dwarf)}<span class="id">${esc(h.run)}</span>${h.dwarf ? '' : runWho(null, h.kind_word)}${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
    <div class="fh-ex">${exChip(h.executor, h.model, h.effort)}${h.role === 'helper' ? ' <span class="tag">helper</span>' : ''}</div>
    <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? meter(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
    <span class="mute">context</span><span>${fin(h.ctx) ? ctxMeter(h) : kTok(h.ctx)}${fin(h.ctx_window) ? ` <span class="small mute">(window ${kTok(h.ctx_window)})</span>` : ''}</span>
