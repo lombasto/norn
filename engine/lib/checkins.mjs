@@ -2,8 +2,8 @@
 // thinks only when there is something to decide, sized to the wake.
 //   routine ends   - a run end the policy calls routine (policy.checkin.routine) is handled by code in the tick, never by a model:
 //                    merge_done = a MERGE run ended DONE (its norn done result) -> reviewed; worker_done_stage = a worker DONE with a
-//                    pushed head on an auto-stage lane -> the standard staged merge (merge-brief --sha + a queued MERGE run; with a
-//                    fast merge-queue gate the queue batches it; where a merge gate is known, mergeq lands it by code: landing.mjs) and reviewed. Every action is a run review record by: launcher
+//                    pushed head on an auto-stage lane -> reviewed: mergeq lands its deliverable (a fast gate's batch, else by code:
+//                    landing.mjs; a failed landing queues the LLM MERGE). Every action is a run review record by: launcher
 //                    with { routine, why }. STOPPED / HANDOFF / no-result / an unpushed head / a question by the run: a model.
 //   debounce       - run ends within policy.checkin.debounce_min wake ONE tick (at the oldest new end + the window).
 //   lane levels    - full (today) | on-end (its running / stall / idle facts never wake: a long design run is not re-reviewed
@@ -17,9 +17,6 @@ import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
-import { landsByCode } from './landing.mjs';
-import { mergeConfig } from './mergeq.mjs';
-import { mainTip } from './mergewt.mjs';
 
 export const ROUTINE_KINDS = ['merge_done', 'worker_done_stage'];   // = the policy.checkin.routine row's options
 export const LEVELS = ['none', 'on-end', 'full'];
@@ -73,36 +70,23 @@ export const metaCli = metaCmd => args => { const r = spawnSync(process.execPath
 
 /**
  * The tick's code pass over unreviewed ends: every routine one is handled and recorded (run review by: launcher, data { refs, routine,
- * why[, queued, brief] }). o: { cli(args) -> { code, out } (default: the meta CLI), metaCmd, pushed, now }. Returns [{ id, kind, ok, note }].
- * A failed stage leaves the end unreviewed: the next check-in (a model) sees it.
+ * why }). o: { pushed, now }. Returns [{ id, kind, ok, note }]. MERGE-FIRST (3): a routine worker end is never staged as an LLM MERGE
+ * any more - mergeq lands its deliverable (a fast gate's batch, else landing.mjs); only a failed landing queues a MERGE run.
  */
 export function handleRoutineEnds(state, p, o = {}) {
   const cp = checkinPolicy(p.policy);
   if (!cp.routine.length) return [];
   const runEvs = readEvents(recordsFile(state, 'run')), recEvs = readEvents(recordsFile(state, 'question')), mailEvs = readEvents(recordsFile(state, 'mail'));
-  const cli = o.cli || (o.metaCmd ? metaCli(o.metaCmd) : null), out = [];
-  let landed;   // landsByCode, read once per pass (it reads main's tree)
+  const out = [];
   for (const r of Object.values(fold(runEvs).items)) {
     if (r.kind !== 'run') continue;
     const rt = routineOf(r, { cp, recEvs, mailEvs, pushed: o.pushed || pushedHead, home: homeOf(state)?.id });
     if (!rt) continue;
     const data = { refs: [r.id], routine: rt.kind, why: rt.why };
-    if (rt.action === 'stage') {
-      const cfg = mergeConfig(p);
-      if (p.merge?.gate?.fast) data.why += ' (the fast merge-queue gate batches its deliverable: meta mergeq)';
-      // MERGE-FIRST (3): a merge gate is known -> mergeq lands it with no LLM; only a conflict, red gate or slop block queues its MERGE
-      else if ((landed ??= o.landsByCode ?? landsByCode(p, { cfg, tip: mainTip(cfg.repo, { main: cfg.main, remote: cfg.remote }) }))) data.why += ' (mergeq lands it by code: a conflict, red gate or slop block queues its MERGE)';
-      else {
-        if (!cli || !p.file) { out.push({ id: r.id, kind: rt.kind, ok: false, note: 'no meta CLI / project file to stage with' }); continue; }
-        const a = stageArgs(p, r, rt, cp), b = cli(a.brief);
-        if (b.code !== 0) { out.push({ id: r.id, kind: rt.kind, ok: false, note: `merge-brief exit ${b.code}: ${b.out.slice(0, 160)}` }); continue; }
-        const q = cli(a.run), m = q.out.match(/RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+/);
-        if (q.code !== 0 || !m) { out.push({ id: r.id, kind: rt.kind, ok: false, note: `norn run --queue exit ${q.code}: ${q.out.slice(0, 160)}` }); continue; }
-        Object.assign(data, { queued: m[0], brief: a.out });
-      }
-    }
+    if (rt.action === 'stage') data.why += p.merge?.gate?.fast ? ' (the fast merge-queue gate batches its deliverable: meta mergeq)'
+      : ' (mergeq lands it by code: a conflict, red check or slop block queues its MERGE)';
     record(state, { kind: 'run', ev: 'review', id: r.id, by: 'launcher', data }, { run: null, ...(o.now ? { now: o.now } : {}) });
-    out.push({ id: r.id, kind: rt.kind, ok: true, note: data.queued ? `staged ${rt.sha.slice(0, 7)} -> ${data.queued}` : 'reviewed' });
+    out.push({ id: r.id, kind: rt.kind, ok: true, note: 'reviewed' });
   }
   return out;
 }
@@ -194,12 +178,11 @@ export function checkinDays(state, { now = Date.now(), days = 7 } = {}) {
 export function checkinDoctorLines(p) {
   const c = checkinPolicy(p.policy), L = x => (x.length ? x.join(', ') : 'none'), out = [];
   // SHIP-READY R1: plain words for a reader who never saw the policy keys (the warn lines below name the keys to edit)
-  const said = { merge_done: 'a finished merge is reviewed', worker_done_stage: 'a finished worker on an auto-merge lane gets its merge queued' };
+  const said = { merge_done: 'a finished merge is reviewed', worker_done_stage: 'a finished worker on an auto-merge lane is reviewed (mergeq lands its work)' };
   const byCode = c.routine.filter(k => said[k]).map(k => said[k]);
   out.push({ level: 'ok', text: `${p.name}: check-ins: run ends within ${c.debounce_min} min share one check-in; done by code, no model turn: ${byCode.length ? byCode.join(', ') : 'nothing'}; auto-merge lanes: ${L(c.auto_stage)}; lanes that never wake a check-in: ${L(c.none_lanes)}; lanes checked only when a run ends: ${L(c.on_end_lanes)}` });
   for (const k of c.routine) if (!ROUTINE_KINDS.includes(k)) out.push({ level: 'warn', text: `${p.name}: policy.checkin.routine names ${k}, not a routine kind (${ROUTINE_KINDS.join(' | ')}): ignored` });
   if (c.auto_stage.length && !c.routine.includes('worker_done_stage')) out.push({ level: 'warn', text: `${p.name}: policy.checkin.auto_stage lists lanes but routine has no worker_done_stage: no lane is staged by code` });
-  if (c.auto_stage.length && c.routine.includes('worker_done_stage') && !p.merge?.gate?.fast && !p.file) out.push({ level: 'warn', text: `${p.name}: auto-stage needs the project file to queue the staged merge (norn run --queue)` });
   return out;
 }
 export const checkinDayText = x => `check-ins: ${x.n} (${x.mechanical} mechanical, ${x.minor} minor, ${x.full} full)`;
