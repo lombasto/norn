@@ -13,6 +13,7 @@ import { withLock, homeOf, KINDS } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger } from './ledger.mjs';
 import { rgit, fetchRefs, claimsLock } from './claimsref.mjs';
 import { fedOf } from './fed.mjs';
+import { readJsonS } from './fsnap.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const SHARED = ['question', 'decision', 'directive', 'lane', 'item', 'mail', 'waiver'], COPIED = ['run', 'deliverable'];
@@ -23,9 +24,7 @@ export const HOME_FILES = [{ from: 'home.json', to: 'home.json' }, ...logsOf(SHA
 const HOME_SPEC = '+refs/heads/home/*:refs/sync/home/*';
 const SEG = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, HOME_ID = /^[a-z][a-z0-9]{0,7}$/;
 
-const iso = ms => new Date(ms).toISOString();
 const ls = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch { return []; } };
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const writeAtomic = (f, b) => { fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, b); fs.renameSync(tmp, f); };
 const logTo = (cfg, s) => { try { fs.appendFileSync(path.join(cfg.dir, 'sync.log'), `${new Date().toISOString()} ${s}\n`); } catch { /* no dir */ } };
 // <ledger>/home-manifest.json { head, pushed, files: { rel: "size:mtime" } } (a no-op pass spawns no git); home-stopped.txt = why
@@ -68,14 +67,14 @@ function commitHome(cfg, f, ref, head, files) {
   if (refused.length) { logTo(cfg, `publish refused - a machine.json secret value in: ${refused.join(', ')}`); return { refused }; }
   const index = path.join(cfg.dir, `home-index-${process.pid}`);
   try {
-    try { fs.unlinkSync(index); } catch { /* none */ }
+    try { fs.unlinkSync(index); } catch { /* no index left: update-index starts an empty one */ }
     rgit(f, ['update-index', '--add', '-z', '--index-info'], { index, input: lines.join('\0') + '\0' });
     const tree = rgit(f, ['write-tree'], { index }).out.trim();
     if (head && rgit(f, ['rev-parse', `${head}^{tree}`]).out.trim() === tree) return { head };
     const sha = rgit(f, ['commit-tree', tree, ...(head ? ['-p', head] : []), '-m', `home/${cfg.home_id}: publish\n\n${files.size} files\n`]).out.trim();
     rgit(f, ['update-ref', ref, sha, ...(head ? [head] : [])]);
     return { sha };
-  } finally { try { fs.unlinkSync(index); } catch { /* gone */ } }
+  } finally { try { fs.unlinkSync(index); } catch { /* already removed: nothing to clean up */ } }
 }
 
 /**
@@ -85,13 +84,13 @@ function commitHome(cfg, f, ref, head, files) {
 export function publishHome(cfg0, o = {}) {
   let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
   if (!cfg) return { off: true };
-  const f = fedOf(cfg), ref = `refs/heads/home/${cfg.home_id}`, now = o.now ?? Date.now();
+  const f = fedOf(cfg), ref = `refs/heads/home/${cfg.home_id}`, now = new Date(o.now ?? Date.now()).toISOString();
   try {
     ensureLedger(cfg);
     return withLock(path.join(cfg.dir, 'home.lock'), () => {
       const stopped = fs.existsSync(at(cfg, 'stopped')) ? fs.readFileSync(at(cfg, 'stopped'), 'utf8').trim() : null;
       if (stopped) return { stopped };
-      const m = readJson(at(cfg, 'manifest')), { files, stat } = homeWalk(cfg), unchanged = m && same(m.files || {}, stat);
+      const m = readJsonS(at(cfg, 'manifest')), { files, stat } = homeWalk(cfg), unchanged = m && same(m.files || {}, stat);
       if ((unchanged && m.pushed === m.head) || (!files.size && !m)) return { noop: true };
       let head = m?.head ?? tipOf(f, ref), sha;
       if (!unchanged) {
@@ -109,7 +108,7 @@ export function publishHome(cfg0, o = {}) {
       }
       const bad = r.out.split('\n').find(l => l.startsWith('!'));
       if (bad && /rejected|non-fast-forward|fetch first/.test(bad)) {
-        const why = `push rejected at ${iso(now)}: home/${cfg.home_id} moved on the remote - another install uses home id ${cfg.home_id}? Publishing stopped; remove ${F.stopped} once the id is unique`;
+        const why = `push rejected at ${now}: home/${cfg.home_id} moved on the remote - another install uses home id ${cfg.home_id}? Publishing stopped; remove ${F.stopped} once the id is unique`;
         logTo(cfg, why); fs.writeFileSync(at(cfg, 'stopped'), why + '\n');
         return { rejected: why };
       }
@@ -135,7 +134,7 @@ function blobBytes(f, sha) {
 export function fetchHomes(cfg0, o = {}) {
   let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
   if (!cfg) return { off: true };
-  const f = fedOf(cfg), now = o.now ?? Date.now(), st = readJson(at(cfg, 'fetch')) || {};
+  const f = fedOf(cfg), now = new Date(o.now ?? Date.now()).toISOString(), st = readJsonS(at(cfg, 'fetch')) || {};
   try {
     ensureLedger(cfg);
     const lk = claimsLock(f);
@@ -143,7 +142,7 @@ export function fetchHomes(cfg0, o = {}) {
   } catch (e) {
     const why = e.message.split('\n').pop();
     logTo(cfg, `fetch failed (the last copies stay): ${why}`);
-    writeAtomic(at(cfg, 'fetch'), JSON.stringify({ ...st, fetch_error: why, failed_at: iso(now) }));
+    writeAtomic(at(cfg, 'fetch'), JSON.stringify({ ...st, fetch_error: why, failed_at: now }));
     return { error: why };
   }
   try {
@@ -163,7 +162,7 @@ export function fetchHomes(cfg0, o = {}) {
       }
     }
     const gone = mine.flatMap(p => ls(path.join(cfg.state_root, p, 'homes')).filter(d => d.isDirectory() && !tips[d.name]).map(d => `${p}/${d.name}`)).sort();
-    writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: iso(now), fetch_error: null, failed_at: null, gone }));
+    writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone }));
     return { homes, written, gone };
   } catch (e) { logTo(cfg, `copies failed: ${e.message}`); return { error: e.message }; }
 }
@@ -172,8 +171,8 @@ export function fetchHomes(cfg0, o = {}) {
 export function syncStatus(cfg0) {
   let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
   if (!cfg) return { off: true };
-  const m = readJson(at(cfg, 'manifest')) || {}, ft = readJson(at(cfg, 'fetch')) || {};
-  let stopped = null; try { stopped = fs.readFileSync(at(cfg, 'stopped'), 'utf8').trim(); } catch { /* publishing */ }
+  const m = readJsonS(at(cfg, 'manifest')) || {}, ft = readJsonS(at(cfg, 'fetch')) || {};
+  let stopped = null; try { stopped = fs.readFileSync(at(cfg, 'stopped'), 'utf8').trim(); } catch { /* no stop file: publishing runs, stopped stays null */ }
   return { home: cfg.home_id, remote: cfg.remote ? 'set' : null, head: m.head ?? null, pushed: m.pushed ?? null, stopped,
     fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, gone: ft.gone || [] };
 }

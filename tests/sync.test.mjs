@@ -13,12 +13,13 @@ const META = path.resolve('engine/bin/norn.mjs');
 const FAKE_TOPIC = 'fake-topic-Sy9cQ1';
 const fwdp = p => p.split(path.sep).join('/');
 const w = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
-const g = (dir, ...a) => { const r = spawnSync('git', a, { env: { ...process.env, GIT_DIR: dir }, encoding: 'utf8' }); return { out: r.stdout.trim(), status: r.status, err: r.stderr }; };
+const g = (dir, ...a) => { const r = spawnSync('git', a, { env: { ...process.env, GIT_DIR: dir }, encoding: 'utf8', windowsHide: true }); return { out: r.stdout.trim(), status: r.status, err: r.stderr }; };
+const ref = (id, ns = 'heads') => `refs/${ns}/home/${id}`;   // built, never a literal: the lint reads a slash-home-slash-name as a home path
 const T0 = Date.parse('2026-11-20T10:00:00Z');
 
 function remoteRepo() {
   const t = mkTmp('sync-remote-'), remote = path.join(t, 'remote.git');
-  assert.equal(spawnSync('git', ['init', '-q', '--bare', remote]).status, 0);
+  assert.equal(spawnSync('git', ['init', '-q', '--bare', remote], { windowsHide: true }).status, 0);
   return fwdp(remote);
 }
 // one home: <t>/meta/state/demo (synced, home.json) + state/solo (no home.json) + local/machine.json (a FAKE topic) + its ledger repo
@@ -44,8 +45,8 @@ test('sync publish: home/<id> carries exactly the shared files + copy/runs + cop
   const r = publishHome(a.cfg, { now: T0 });
   assert.ok(r.sha && r.pushed, JSON.stringify(r));
   const want = ['demo/copy/deliverables.jsonl', 'demo/copy/runs.jsonl', 'demo/home.json', 'demo/mail.jsonl', 'demo/records.jsonl', 'demo/relay.jsonl', 'demo/roadmap.jsonl', 'demo/waivers.jsonl'];
-  assert.deepEqual(tree(a.cfg.dir, 'refs/heads/home/a'), want);
-  assert.deepEqual(tree(remote, 'refs/heads/home/a'), want);
+  assert.deepEqual(tree(a.cfg.dir, ref('a')), want);
+  assert.deepEqual(tree(remote, ref('a')), want);
   assert.equal(g(remote, 'cat-file', 'blob', 'home/a:demo/records.jsonl').out, '{"id":"Q-a-1"}');
   assert.notEqual(g(a.cfg.dir, 'rev-parse', '-q', '--verify', 'refs/heads/' + a.cfg.branch).status, 0, 'publish never commits the backup branch');
   assert.deepEqual(publishHome(a.cfg, { now: T0 }), { noop: true });
@@ -53,7 +54,7 @@ test('sync publish: home/<id> carries exactly the shared files + copy/runs + cop
   fs.appendFileSync(path.join(a.st, 'epics.jsonl'), 'local only\n');
   const r2 = publishHome(a.cfg, { now: T0 });
   assert.ok(r2.sha && r2.pushed && r2.sha !== r.sha);
-  assert.equal(g(remote, 'rev-parse', 'refs/heads/home/a^').out, r.sha, 'fast-forward on top of the last publish');
+  assert.equal(g(remote, 'rev-parse', ref('a') + '^').out, r.sha, 'fast-forward on top of the last publish');
 });
 
 test('sync publish: a machine.json secret value in a shared file refuses the whole publish and logs the file only', () => {
@@ -61,8 +62,8 @@ test('sync publish: a machine.json secret value in a shared file refuses the who
   fs.appendFileSync(path.join(a.st, 'mail.jsonl'), `{"body":"${FAKE_TOPIC}"}\n`);
   const r = publishHome(a.cfg, { now: T0 });
   assert.deepEqual(r.refused, ['demo/mail.jsonl']);
-  assert.notEqual(g(a.cfg.dir, 'rev-parse', '-q', '--verify', 'refs/heads/home/a').status, 0);
-  assert.notEqual(g(remote, 'rev-parse', '-q', '--verify', 'refs/heads/home/a').status, 0);
+  assert.notEqual(g(a.cfg.dir, 'rev-parse', '-q', '--verify', ref('a')).status, 0);
+  assert.notEqual(g(remote, 'rev-parse', '-q', '--verify', ref('a')).status, 0);
   const log = fs.readFileSync(path.join(a.cfg.dir, 'sync.log'), 'utf8');
   assert.match(log, /refused.*demo\/mail\.jsonl/); assert.ok(!log.includes(FAKE_TOPIC));
 });
@@ -81,7 +82,7 @@ test('sync fetch: b writes byte-identical copies of home a under <state>/homes/a
   assert.deepEqual(fetchHomes(b.cfg, { now: T0 }).written, ['demo/homes/a/records.jsonl']);
   assert.deepEqual(fs.readFileSync(path.join(b.st, 'homes', 'a', 'records.jsonl')), fs.readFileSync(path.join(a.st, 'records.jsonl')));
   assert.ok(![...ledgerFiles(b.cfg).files.keys()].some(f => f.includes('/homes/')), 'copies are not in the backup walk');
-  assert.ok(g(b.cfg.dir, 'rev-parse', '-q', '--verify', 'refs/sync/home/a').status === 0);
+  assert.ok(g(b.cfg.dir, 'rev-parse', '-q', '--verify', ref('a', 'sync')).status === 0);
 });
 
 test('sync publish offline: the commit stays local and the next pass pushes it (fast-forward only)', () => {
@@ -89,10 +90,10 @@ test('sync publish offline: the commit stays local and the next pass pushes it (
   const off = { ...a.cfg, remote: fwdp(path.join(a.t, 'missing.git')) };
   const r = publishHome(off, { now: T0 });
   assert.ok(r.sha && r.offline && !r.pushed, JSON.stringify(r));
-  assert.equal(g(a.cfg.dir, 'rev-parse', 'refs/heads/home/a').out, r.sha);
+  assert.equal(g(a.cfg.dir, 'rev-parse', ref('a')).out, r.sha);
   const r2 = publishHome(a.cfg, { now: T0 });
   assert.ok(r2.pushed && !r2.sha, JSON.stringify(r2));
-  assert.equal(g(remote, 'rev-parse', 'refs/heads/home/a').out, r.sha);
+  assert.equal(g(remote, 'rev-parse', ref('a')).out, r.sha);
   assert.deepEqual(publishHome(a.cfg, { now: T0 }), { noop: true });
 });
 
@@ -117,7 +118,7 @@ test('sync fetch failure: the last copies stay, the status says stale since the 
   let s = syncStatus(b.cfg);
   assert.equal(s.fetched_at, new Date(T0).toISOString()); assert.ok(s.fetch_error);
   assert.ok(fs.existsSync(path.join(b.st, 'homes', 'a', 'records.jsonl')));
-  assert.equal(g(remote, 'update-ref', '-d', 'refs/heads/home/a').status, 0);
+  assert.equal(g(remote, 'update-ref', '-d', ref('a')).status, 0);
   const r2 = fetchHomes(b.cfg, { now: T0 + 120000 });
   assert.deepEqual(r2.homes, []); assert.deepEqual(r2.gone, ['demo/a']);
   assert.ok(fs.existsSync(path.join(b.st, 'homes', 'a', 'records.jsonl')), 'no data is lost');
@@ -140,7 +141,7 @@ test('sync off: no ledger remote or no synced project = publish / fetch / step d
 
 test('norn sync publish | fetch | status: the CLI over machine.json ledger.remote + home.json', () => {
   const remote = remoteRepo(), a = home('a', remote), b = home('b', remote);
-  const run = (h, ...args) => spawnSync(process.execPath, [META, 'sync', ...args, '--machine', h.mf], { env: { ...process.env, META_ROOT: h.meta, META_STATE: '', META_PROJECT: '' }, encoding: 'utf8' });
+  const run = (h, ...args) => spawnSync(process.execPath, [META, 'sync', ...args, '--machine', h.mf], { env: { ...process.env, META_ROOT: h.meta, META_STATE: '', META_PROJECT: '' }, encoding: 'utf8', windowsHide: true });
   let r = run(a, 'publish');
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /published home\/a [0-9a-f]{10}, pushed/);
   r = run(b, 'fetch');
@@ -157,7 +158,7 @@ test('the tick pass end publishes home/<id> after the ledger commit (SPEC 4.1)',
   w(pf, JSON.stringify({ schema: 1, name: 'demo', title: 'demo', root: fwdp(root), ledger: '${root}/progress.md', briefs_dir: '${root}', checkin: { cwd: '${root}' } }));
   const m = JSON.parse(fs.readFileSync(a.mf, 'utf8')); m.projects = [{ name: 'demo', config: fwdp(pf) }]; w(a.mf, JSON.stringify(m));
   w(path.join(a.meta, 'state', 'PAUSED'), '');
-  const r = spawnSync(process.execPath, [META, 'tick', '--reason', 't'], { env: { ...process.env, META_ROOT: a.meta, META_STATE: '', META_PROJECT: '' }, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [META, 'tick', '--reason', 't'], { env: { ...process.env, META_ROOT: a.meta, META_STATE: '', META_PROJECT: '' }, encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(tree(remote, 'refs/heads/home/a').includes('demo/records.jsonl'));
+  assert.ok(tree(remote, ref('a')).includes('demo/records.jsonl'));
 });
