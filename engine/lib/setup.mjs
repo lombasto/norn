@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { providersOf, keySet, isCli } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
 import { oldServerProblems } from './harness/oldnames.mjs';
-import { listProcs, runFacts, strays, strayLine } from './strays.mjs';
+import { listProcs, runFacts, strays, strayLine, derelicts, derelictLine } from './strays.mjs';
 import { readDash, dashRows } from './dashlive.mjs';
 import { starterPolicy, allowedExecutors, ROLE_AGENTS, slopOn } from './policy.mjs';
 import { HEADLESS_SLOP } from './harness/common.mjs';
@@ -679,7 +679,9 @@ export function doctor({ env = process.env, out }) {
   }
   // NORN-WATCH S5: what ended runs left running (a warning, not a problem: it names them, the owner / Norn stops them)
   const procs = listProcs();
-  if (states.length) { const f = runFacts(states); for (const s of strays(procs, f)) out('warn ' + strayLine(s)); }
+  const facts = states.length ? runFacts(states) : { live: new Set(), ended: [] };
+  if (states.length) for (const s of strays(procs, facts)) out('warn ' + strayLine(s));
+  for (const d of derelicts(procs, facts)) out('warn ' + derelictLine(d));   // proc-hygiene (5): watchers, git, scans, hooks left behind
   if (m.scheduler?.name) for (const l of windowedSchedLines({ machine: m, meta })) out('warn ' + l);
   // META-AUTH-VENDOR: an open auth episode (per state home): a login one is a problem (log in), a vendor one a note (no login needed)
   for (const s of [...new Map(states.map(x => [path.dirname(path.resolve(x)), x])).values()])

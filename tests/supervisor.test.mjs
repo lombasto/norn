@@ -191,6 +191,35 @@ test('K3 round 2: a run the supervisor starts itself (auto-resume) breaks away f
   assert.match(log, new RegExp(`auto-resume -> ${next} \\(1/1\\) breakaway`), log);
 });
 
+// proc-hygiene (5): the census families under the sweep's evidence rules - parent gone (a reused pid counts as gone), no live run above,
+// older than 2 h - each with its evidence; a suspended-at-birth one says so
+test('proc-hygiene derelicts: orphaned watchers, git, scans, kill helpers, Claude shells, hooks; a live parent, a live run, youth or another program spare it', async () => {
+  const { derelicts, derelictLine } = await import('../engine/lib/strays.mjs');
+  const now = Date.parse('2026-11-19T16:40:00Z'), h = n => now - n * 3600e3;
+  const procs = [
+    { pid: 1, ppid: 0, name: 'explorer.exe', created: h(50), cmd: 'explorer' },
+    { pid: 10, ppid: 999, name: 'tail.exe', created: h(30), cmd: 'tail -n 0 -f C:/Temp/lp-suite.log' },
+    { pid: 11, ppid: 999, name: 'grep.exe', created: h(30), cmd: 'grep --line-buffered -E exit=|ALLDONE' },
+    { pid: 12, ppid: 998, name: 'git.exe', created: h(5), cmd: 'git -C C:/r rev-parse abc^{tree}', threads: 1, cpu: 0 },
+    { pid: 13, ppid: 997, name: 'powershell.exe', created: h(3), cmd: 'powershell.exe -Command "Get-CimInstance Win32_Process | ..."' },
+    { pid: 14, ppid: 996, name: 'getprocaddr64.exe', created: h(3), cmd: 'getprocaddr64 ExitProcess 143 5' },
+    { pid: 15, ppid: 995, name: 'node.exe', created: h(20), cmd: '"C:/n/node.exe" "C:/norn/engine/bin/norn.mjs" mail check --inject --run RUN-1 --state "C:/s"' },
+    { pid: 16, ppid: 994, name: 'bash.exe', created: h(4), cmd: 'bash -c -l source C:/Users/x/.claude/shell-snapshots/snapshot-bash-1.sh' },
+    { pid: 20, ppid: 1, name: 'git.exe', created: h(9), cmd: 'git fetch' },   // parent alive
+    { pid: 21, ppid: 999, name: 'git.exe', created: h(1), cmd: 'git status' },   // young
+    { pid: 22, ppid: 999, name: 'grep.exe', created: h(9), cmd: 'grep foo' },   // not a watcher
+    { pid: 23, ppid: 999, name: 'Code.exe', created: h(9), cmd: 'code' },   // not a family
+    { pid: 30, ppid: 31, name: 'tail.exe', created: h(9), cmd: 'tail -f x' },   // under a live run
+    { pid: 31, ppid: 999, name: 'node.exe', created: h(9), cmd: 'supervisor.mjs' },
+    { pid: 40, ppid: 41, name: 'git.exe', created: h(9), cmd: 'git log' },   // its parent pid now names a YOUNGER process: reused = gone
+    { pid: 41, ppid: 1, name: 'notepad.exe', created: h(1), cmd: 'notepad' },
+  ];
+  const d = derelicts(procs, { live: new Set([31]), now, self: -1 });
+  assert.deepEqual(d.map(x => [x.pid, x.kind]), [[10, 'watcher'], [11, 'watcher'], [12, 'git'], [13, 'process-scan'], [14, 'kill-helper'], [15, 'mail-hook'], [16, 'shell'], [40, 'git']]);
+  assert.match(derelictLine(d.find(x => x.pid === 12)), /^derelict git pid 12 git\.exe: parent 998 gone, no live run above it, 5\.0 h old, suspended at birth \(1 thread, no CPU\): stop it/);
+  assert.doesNotMatch(d.find(x => x.pid === 10).evidence, /suspended/);
+});
+
 test('S5 doctor strays: old headless browsers / node in an ended run\'s worktree with no live run above them; live, young or unrelated ones are not', async () => {
   const { strays, strayLine } = await import('../engine/lib/strays.mjs');
   const now = Date.parse('2026-11-09T12:00:00Z'), h = n => now - n * 3600e3;
