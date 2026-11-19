@@ -24,7 +24,8 @@ import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
 import { tickFix } from './fixer.mjs';
-import { closeLandedQuestions } from './deliverables.mjs';
+import { closeLandedQuestions, latchMerged } from './deliverables.mjs';
+import { makeGh } from './mergeland.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { tickTests } from './testscli.mjs';
 import { checkinCv } from './cv.mjs';
@@ -205,6 +206,9 @@ function tickPass(o, g = {}) {
     catch (e) { tickLog(state, `${tag}: routine ends failed: ${e.message}`); }
     // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
     if (o.overlap !== false && !o.dry) projectOverlap(p);
+    // DLV-MERGED-TRUTH: each recorded PR asked on GitHub, every merge latched, the 'cannot tell' rulings asked / applied - before the
+    // stale questions and the digest read the deliverables (never fails the tick; the first tick after a deploy re-judges them all)
+    if (!o.dry) try { for (const c of latchMerged(state, { project: p, gh: o.gh || makeGh() })) tickLog(state, `${tag}: ${c.dlv} ${c.ev} - ${c.why}`); } catch (e) { tickLog(state, `${tag}: merge latch: ${e.message}`); }
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
     // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag
