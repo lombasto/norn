@@ -54,11 +54,11 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
-import { openProjectPrs, prLine, LAND_EXIT } from '../lib/mergeland.mjs';
+import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve } from '../lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching, mergeConfig } from '../lib/mergeq.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
@@ -1201,7 +1201,7 @@ function askCmd(argv, env, out, err) {
 }
 
 // ---------- norn deliverables (DELIVERABLES-SPEC 6): done work followed to main / the install, any harness ----------
-const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry]    [--project F] [--state D] [--as role]';
+const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry] | recheck [--dry]    [--project F] [--state D] [--as role]';
 const DLV_FLAGS = ['project', 'state', 'as', 'why', 'by', 'only', 'executor', 'json!', 'all!', 'due!', 'apply!', 'resolve!', 'dry!'];
 function deliverablesCmd(argv, env, out, err) {
   try {
@@ -1265,6 +1265,13 @@ function deliverablesCmd(argv, env, out, err) {
       const r = askDeliverable(state, id, { project, by });
       if (r.refused) { out('REFUSED: ' + r.refused); return 3; }
       out(r.id);
+      return 0;
+    }
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+      if (id) throw new RunError(`unexpected ${id}`);
+      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
+      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)

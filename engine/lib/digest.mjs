@@ -61,12 +61,12 @@ const reviewKind = (r, cited = new Set()) => {
 
 function finished(runs, dlvRows, { now, git, main, cited }) {
   const rows = [];
-  for (const d of dlvRows) {
-    if (d.state !== 'done') continue;
+  for (const d of dlvRows) {   // DLV-MERGED-TRUTH: the state comes from deliverablesView (dlvMerged), the one merge rule
+    if (d.state !== 'done' && d.state !== 'unknown') continue;
     if (d.record_state === 'parked' && !d.park?.expired) continue;
     if (d.record_state === 'superseded') continue;   // META-GTP-MERGEQ piece 0: terminal
     rows.push({ id: d.id, kind: 'deliverable', lane: d.lane ?? null, branch: d.branch ?? null, run: d.run ?? null, days: d.days ?? null,
-      what: d.delivers || '', why: 'done, not merged' });
+      what: d.delivers || '', why: d.state === 'unknown' ? `${d.state_word}${d.ruling ? ` - ruling ${d.ruling} in the Inbox` : ''}` : 'done, not merged' });
   }
   const covered = new Set(dlvRows.map(d => d.run).filter(Boolean));
   for (const r of runs) {

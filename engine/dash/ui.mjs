@@ -1002,17 +1002,20 @@ function map(d, ctx) {
 }
 
 // ---------- deliverables (DELIVERABLES-SPEC 3): "Done, not installed" card (Overview + Inbox), the drawer, the Map band pill ----------
-const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed' };
+const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed', unknown: 'cannot tell if merged' };
 const dlvChip = r => r.record_state === 'parked'
   ? chip('parked', `parked ${Math.floor(r.park?.days ?? 0)} d${r.park?.expired ? ' (expired)' : ''}`)
-  : chip(r.state === 'done' ? 'warn' : r.state === 'merged' ? 'running' : 'ok', DLV_WORD[r.state] ?? r.state);
+  : chip(r.state === 'done' ? 'warn' : r.state === 'unknown' ? 'needs' : r.state === 'merged' ? 'running' : 'ok', `${DLV_WORD[r.state] ?? r.state}${r.merged_how === 'equivalent' ? ' (equivalent)' : ''}`);
+const onMain = r => r.state === 'merged' || r.state === 'installed';
+// DLV-MERGED-TRUTH: why Norn cannot tell, and the one Inbox ruling that settles it
+const dlvWhy = r => r.state === 'unknown' ? `<div class="small mute">${esc(r.unknown_why ?? '')}${r.ruling ? ` · ruling <a href="#" data-rid="${esc(r.ruling)}">${esc(r.ruling)}</a> in the Inbox` : ' · the next check-in asks you'}</div>` : '';
 const dlvNative = r => (r.native === true ? chip('bad', 'native') : r.native === false ? '<span class="small mute">no</span>' : '<span class="small mute">?</span>');
 export function deliverablesCard(dl, ctx = {}) {
   const rows = (dl?.rows || []).filter(r => !r.at_target).sort((a, b) => (b.days ?? 0) - (a.days ?? 0));
   const body = rows.map(r => `<tr id="dlv-${esc(r.id)}"><td><b>${projTag(ctx, r.project)}${esc(r.branch)}</b><div class="small mute"><span class="id">${esc(r.id)}</span> ${esc(r.lane ?? '')}</div></td>
-    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}</td>
+    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}</td>
     <td class="mono">${fin(r.days) ? r.days.toFixed(1) + ' d' : '-'}</td>
-    <td class="mono">${fin(r.behind) ? r.behind + ' behind' : r.state === 'done' ? '-' : 'on main'}</td>
+    <td class="mono">${fin(r.behind) ? r.behind + ' behind' : onMain(r) ? 'on main' : '-'}</td>
     <td>${dlvNative(r)}</td>
     <td>${dlvChip(r)}${r.due ? ' ' + chip('open', 'question due') : r.asked ? ` <span class="small mute">asked ${esc(r.asked)}</span>` : ''}</td>
     <td><button data-dlv="${esc(r.id)}" data-project="${esc(r.project)}">Open</button></td></tr>`).join('');
@@ -1024,7 +1027,7 @@ export function deliverablesCard(dl, ctx = {}) {
 }
 export function renderDeliverable(r, ctx = {}) {
   if (!r) return '<div class="small mute">deliverable not found (refresh the page)</div>';
-  const reached = { done: 1, merged: 2, installed: 3 }[r.state] ?? 0;
+  const reached = { done: 1, unknown: 1, merged: 2, installed: 3 }[r.state] ?? 0;
   const steps = ['done', 'merged', 'installed'].map((s, i) => chip(i < reached ? 'ok' : 'idle', s.toUpperCase())).join(' <span class="mute">&rarr;</span> ');
   const kv = (k, v) => `<span class="mute small">${esc(k)}</span><div>${v}</div>`;
   const nat = r.native === null ? '<span class="mute">unknown (no native globs for this repo)</span>' : r.native
@@ -1033,7 +1036,9 @@ export function renderDeliverable(r, ctx = {}) {
    <div style="margin:6px 0 12px">${steps} <span class="small mute">target ${esc(r.target)}${r.at_target ? ' · reached' : ''}</span></div>
    <div class="kv">${kv('repo', `<span class="mono small">${esc(r.repo)}</span>`)}${kv('tip', `<span class="mono">${esc(String(r.tip ?? '-').slice(0, 9))}</span>${r.branch_exists === false ? ' <span class="small mute">(branch gone: the tip recorded at DONE)</span>' : ''}`)}
    ${kv('lane / run', `${esc(r.lane ?? '-')} · ${esc(r.run ?? '-')}`)}${kv('done', `${esc(fmtTime(r.done_utc, ctx.now ?? Date.now()))} · ${fin(r.days) ? r.days.toFixed(1) + ' d ago' : '-'}`)}
-   ${kv('vs main', fin(r.behind) ? `${r.behind} behind · ${r.ahead ?? '?'} ahead` : r.state === 'done' ? '-' : 'on main')}${kv('native', nat)}
+   ${kv('vs main', fin(r.behind) ? `${r.behind} behind · ${r.ahead ?? '?'} ahead` : onMain(r) ? 'on main' : '-')}${kv('native', nat)}
+   ${onMain(r) ? kv('merged', `${esc(r.state_word ?? r.state)}${r.merge_commit ? ` · <span class="mono">${esc(String(r.merge_commit).slice(0, 9))}</span>` : ''}${r.merged_at ? ` · ${esc(fmtTime(r.merged_at, ctx.now ?? Date.now()))}` : ''}`) : ''}
+   ${r.state === 'unknown' ? kv('merged?', `${chip('needs', 'cannot tell')} ${dlvWhy(r)}`) : ''}
    ${r.rehearsal ? kv('merge rehearsal', r.rehearsal.clean ? chip('ok', 'clean') : `${chip('bad', 'conflict')}<div class="mono small">${r.rehearsal.files.map(esc).join('<br>')}</div>`) : ''}
    ${kv('park', r.park ? `${chip('parked', `parked ${Math.floor(r.park.days)} d`)} ${esc(r.park.why)} <span class="small mute">by ${esc(r.park.by ?? '-')}${r.park.expired ? ' · expired: back on the list' : ''}</span>` : '<span class="mute">not parked</span>')}
    ${kv('question', r.asked ? `<a href="#" data-rid="${esc(r.asked)}">${esc(r.asked)}</a> (one per deliverable)` : r.due ? chip('open', 'question due: the next check-in asks') : '<span class="mute">none</span>')}</div>
@@ -1041,7 +1046,7 @@ export function renderDeliverable(r, ctx = {}) {
 norn deliverables unpark ${esc(r.id)}
 norn deliverables ask ${esc(r.id)}      (the check-in: one question per deliverable)${r.resolve ? `
 norn deliverables resolve ${esc(r.id)}  (${esc(r.resolve.why)}; native = door work)` : ''}</div>
-   <div class="small mute" style="margin-top:8px">DONE / MERGED / INSTALLED come from git and the last install receipt - nobody types them.</div></div>`;
+   <div class="small mute" style="margin-top:8px">MERGED comes from the PR on GitHub, else git, else the change itself found on main (equivalent); INSTALLED from the last install receipt. Only a 'cannot tell' asks you.</div></div>`;
 }
 function dlvPill(b, project) {
   const r = b.deliverables?.[0];
