@@ -6,14 +6,13 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { locReport, CLASSES, APART } from './loc.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
-import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers } from './host.mjs';
+import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers, findingLine } from './host.mjs';
 import { spawnOutside } from '../jobguard.mjs';
 import { slopOn } from '../policy.mjs';
 import { inDir } from '../monorepo.mjs';
 import { readText } from '../fsnap.mjs';
 import { landedUnchecked, landedWords } from './landed.mjs';
 import { mainTip } from './runend.mjs';
-import { findingLine } from './host.mjs';
 
 const num = n => n.toLocaleString('en-US');
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
