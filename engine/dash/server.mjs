@@ -52,7 +52,7 @@ import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
 import { runName } from '../lib/names.mjs';
 import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
-import { handEdits, takeBack, keepEdit } from '../lib/handedits.mjs';
+import { handEdits, takeBack, keepEdit, handEditDiff } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
 import { costRollup, accountUsage, weekStart, nextReset, parseReset } from '../lib/cost.mjs';
 import { Worker } from 'node:worker_threads';
@@ -228,7 +228,7 @@ export function createDashboard(o) {
   const one = url => pick(url)[0];
   // st(p): the request snapshot's fold (primed on fs.promises by primeFor) - the sync loadState only outside a snapshot
   const st = p => snap.getStore()?.folds.get(p.state) ?? loadState(p.state);
-  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {});
+  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {}, { role: 'dashboard' });
   const hbAge = p => id => { const x = statS(hbPath(p.state, id)); return x ? Date.now() - x.mtimeMs : Infinity; };
   // the live hand-off state (lanes.mjs handoffOf, one home): wrote = the run's own result.json says HANDOFF, written since its start
   // (result.mjs readResult's rule); talked = its session's first model event (agents.mjs runTalked, the tree's tail cache)
@@ -385,6 +385,7 @@ export function createDashboard(o) {
       if (h) out.push(h); }
     // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
     for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited, generated: e.generated,
+      verdict: e.verdict, recommend: e.recommend, why: e.why, lines: e.lines, diff: e.diff,   // RM-35: what changed and who probably did it
       title: `${path.basename(e.file)} changed outside Norn: Norn has stopped updating it` });
     // OOTB-R2 N-5: runs held for a login that is down = ONE needs-you row per harness, carrying the command the human runs
     for (const h of loginHolds(p.state, items, { entryOf: x => p.executors?.[x] }))
@@ -1627,7 +1628,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1653,6 +1654,9 @@ data: ${JSON.stringify(l)}
         }
         if (route === '/api/records') return send(200, records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));
+        if (route === '/api/handedit/diff') {   // RM-35: last written by Norn vs now, for the diff viewer
+          try { return send(200, await handEditDiff(one(url).state, url.searchParams.get('file') || '')); } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
+        }
         if (route === '/api/usage') return send(200, usageView(pick(url, { all: true }), url));
         if (route === '/api/plan') return send(200, { parts: pick(url, { all: true }).map(planOf) });
         if (route === '/api/docs') { const p = one(url), kp = docKeyPath(p, url.searchParams.get('file') ?? ''); if (kp) await prime({ files: [kp] }); return send(200, docsAt(p, url)); }   // META-UX-BUILD S3
