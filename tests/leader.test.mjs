@@ -96,7 +96,7 @@ test('the old leader fences its MERGE run: unconfirmed past fence_s (offline), a
 
 // ---------- a non-leader opens the PRs of its DONE pushed lane branches ----------
 const GENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' };
-const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', env: GENV, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', env: GENV, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).trim();
 const ghGit = () => makeGit((cwd, args) => (args[0] === 'remote' && args[1] === 'get-url' ? 'https://github.com/o/r.git\n' : git(cwd, ...args) + '\n'));
 function laneRepo(t) {
   const origin = path.join(t, 'origin.git'), repo = path.join(t, 'repo');
