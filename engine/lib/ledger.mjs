@@ -42,9 +42,7 @@ export function ledgerConfig(machine, { metaRoot, machineFile } = {}) {
   const reviews = path.resolve(L.reviews || path.join(dev, path.basename(meta) + '-reviews'));
   // META-GTP-FED: machine.json fed.host names the machine in the federation (two WSL distros may share a hostname)
   const name = /^[a-z0-9._-]+$/.test(machine?.fed?.host || '') ? machine.fed.host : host();
-  // RM-46 S1c (SPEC 3.1): ledger.home_id names this machine's home in a multi-home sync (`home` is taken); none = no home/<id> branch
-  const home_id = /^[a-z][a-z0-9]{0,7}$/.test(L.home_id || '') ? L.home_id : null;
-  return { dir, state_root, reviews, root: commonParent(state_root, reviews), branch: `machine/${name}`, remote: L.remote || null, home_id,
+  return { dir, state_root, reviews, root: commonParent(state_root, reviews), branch: `machine/${name}`, remote: L.remote || null,
     machine_file: machineFile ? path.resolve(machineFile) : path.join(meta, 'local', 'machine.json') };
 }
 
