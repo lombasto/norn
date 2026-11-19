@@ -26,6 +26,7 @@ import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
+import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
@@ -58,7 +59,7 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, ghPrViewer } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -1231,7 +1232,8 @@ function deliverablesCmd(argv, env, out, err) {
     if (more.length) throw new RunError(`unexpected ${more[0]}`);
     const by = flags.as || env.META_ROLE;
     if (!sub) {
-      const v = deliverablesView({ stateDir: state, project });
+      // lane-outputs item 6: the --json listing (the dashboard's child) asks GitHub for each PR's state (cached; a merged one never again)
+      const v = deliverablesView({ stateDir: state, project, ...(flags.json ? { ghPr: ghPrViewer(makeGh()) } : {}) });
       // --resolve (META-DLV-R2): the rows a check-in may dispatch a resolve run for - flagged, not native, open, none live
       const rows = v.rows.filter(r => flags.all || (flags.resolve ? r.resolve && r.native !== true && r.record_state === 'open' && !liveResolve(state, r.id) : flags.due ? r.due : !r.at_target));
       if (flags.json) { out(JSON.stringify({ rows, install: v.install, git: v.git }, null, 1)); return 0; }
@@ -1384,6 +1386,7 @@ Plan and land work:
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
   norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
+  norn asks                        post the rulings a lane's notes ask of the owner as Inbox questions (the run end does it by itself)
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
   norn plan                        what happens next, and when (up next, chains, landing, forecast)
   norn instructions                every file that steers the agents: load, ~tokens, cost today, hints, the measured standing context
@@ -1432,7 +1435,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1493,6 +1496,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'asks') return asksCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'pause') return pauseCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'resume') return pauseCmd(argv.slice(1), env, out, err, { resume: true });
   if (argv[0] === 'adopt') return adoptCmd(argv.slice(1), env, out, err);
@@ -2148,6 +2152,34 @@ function stuckCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + STUCK_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// lane-outputs item 9 (runasks.mjs): a run's end posts its notes' owner asks by itself; this posts them for runs that ended before
+// (the sweep starts its clock when it first runs) - one question per ask, an ask already asked (same lane + title) skipped
+const ASKS_USAGE = 'norn asks scan (--lane L | --run RUN-n) [--dry] [--as checkin|controller]    [--project F | --state D]';
+function asksCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if (k === 'dry') { flags.dry = true; continue; }
+      if (!['project', 'state', 'as', 'lane', 'run'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    if (pos[0] !== 'scan' || pos.length > 1) throw new RunError(pos.length ? `unknown subcommand ${pos[0]}` : 'a subcommand is required');
+    if (!flags.lane === !flags.run) throw new RunError('pass one of --lane L or --run RUN-n');
+    const { state } = where(flags, env);
+    const xs = scanAsks(state, { lane: flags.lane ?? null, run: flags.run ?? null, dry: !!flags.dry, by: flags.as || env.META_ROLE || 'checkin' });
+    for (const x of xs) for (const q of x.posted) out(`${x.run} ${q.id ?? (flags.dry ? 'would ask' : 'REFUSED')}: ${q.title}${q.refused ? ` (${q.refused})` : ''}`);
+    if (!xs.length) out('nothing new to ask');
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + ASKS_USAGE); return 2; }
+    if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
     throw e;
   }
 }

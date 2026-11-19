@@ -28,7 +28,8 @@ const fail = msg => { throw new RecordError(msg, 2); };
 // kind -> { prefix, file, initial, events: { ev: { from: [states] | null (create), to: state | null (flag), roles } } }
 export const KINDS = {
   question: { prefix: 'Q-', file: 'records', events: {
-    create: { from: null, to: 'open', roles: CK },
+    // lane-outputs item 9: the launcher (a run's supervisor) posts the asks its run's notes make of the owner (runasks.mjs)
+    create: { from: null, to: 'open', roles: [...CK, 'launcher'] },
     answer: { from: ['open'], to: 'answered', roles: OWNER },
     apply: { from: ['answered'], to: 'applied', roles: CK },
     supersede: { from: ['open', 'answered'], to: 'superseded', roles: CK },

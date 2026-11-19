@@ -36,6 +36,8 @@ import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxli
 import { findTranscript } from './harness/claude.mjs';
 import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
+import { cutoffOf } from './laneout.mjs';
+import { postRunAsks } from './runasks.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -198,6 +200,10 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (outcome === 'handoff') { try { const pz = pauseOf(state, run, spec); if (pz) data.paused = { mail: pz.mail, ...(pz.why ? { why: pz.why } : {}) }; } catch (e) { logLine(`pause order not read: ${e.message}`); } }
   if (signal) data.signal = signal;
   if (error) data.error = error;
+  // lane-outputs item 10b: the CLI stopped the run's background work after its last turn ("Background tasks still running ... stopping
+  // them"): the task names on the end, so the run and its lane say what was cut off
+  const cutoff = cutoffOf(tail(spec.log));
+  if (cutoff) data.cutoff = cutoff;
   // NORN-WATCH S5 evidence: an exit no `norn stop` explains, the worktree's uncommitted state, the branch + head it ended on
   if ((code === 143 || signal === 'SIGTERM') && !killedByMeta()) data.external_term = true;
   if (spec.worktree && spec.role !== 'helper') Object.assign(data, gitEvidence(spec.worktree));
@@ -252,6 +258,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // DELIVERABLES-SPEC 1: a DONE run's branch becomes (or refreshes) its deliverable; never fails the exit
   if (outcome === 'done') { try { const d = onRunDone(state, run); if (d) logLine(`deliverable ${d.id} ${d.ev}`); } catch (e) { logLine(`deliverable not recorded: ${e.message}`); } }
+  // lane-outputs items 7, 9, 10a: every ruling the run's notes ask of the owner becomes an Inbox question, whatever the outcome
+  if (spec.notes && spec.role !== 'helper' && spec.kind !== 'checkin') { try { for (const q of postRunAsks(state, run)) logLine(q.id ? `asked the owner: ${q.id} ${q.title}` : `ask not posted: ${q.title} (${q.refused})`); } catch (e) { logLine(`owner asks not posted: ${e.message}`); } }
   // META-ADOPT A2: the adopt read's final becomes its proposal's draft (or one retry, or the facts-only draft); a norn stop ingests nothing
   if (spec.adopt && !killedByMeta()) {
     try { const a = ingestRead(state, spec, { capped }); logLine(`adopt ${a.id}: ${a.ev}${a.ev === 'retry' ? ' ' + a.run : ''}${a.why ? ` (${a.why})` : ''}`); }
