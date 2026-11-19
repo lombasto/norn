@@ -6,7 +6,7 @@
 // keeps only the episode (term, since, notified); the tick deletes it once the walk no longer holds, and the item and the row leave.
 import fs from 'node:fs';
 import path from 'node:path';
-import { billingOf } from './billing.mjs';
+import { waitWords } from './waitwords.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { queueSpecPath, liveBudget } from './runs.mjs';
 
@@ -56,47 +56,25 @@ export function trackHold(state, rows, { now = Date.now() } = {}) {
 }
 
 const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
-/** the term in plain words for the owner: { reason, fix, clears (null = only the fix clears it), setting / command / file / resume } */
-export function holdWords(term, { billing = null, status = '' } = {}) {
-  const bm = billingOf({ billing }), t = String(term);
-  const reset = status.match(/reset (\d{4}-\d\d-\d\dT\d\d:\d\dZ)/)?.[1] ?? null;
-  let m;
-  if (t === 'usage: weekly unknown') return bm && bm.type !== 'api'
-    ? { reason: `the weekly usage is not measured yet, and the usage guard holds Claude work it cannot measure (billing: ${bm.label})`, clears: null, command: 'norn calib --pct N',
-      fix: `run norn calib --pct N, N = the weekly % claude.ai shows (Settings > Usage), so Norn can measure the week; on API billing set Billing (Settings) to api instead`, setting: 'billing' }
-    : { reason: 'the weekly usage is not measured yet, and the usage guard holds Claude work it cannot measure (Billing is not set)', clears: null, command: 'norn calib --pct N', setting: 'billing',
-      fix: 'set Billing (Settings): on API billing choose api (no weekly limit, nothing to measure); on a plan (pro, max-5x, max-20x, ultra) choose it, then run norn calib --pct N with the weekly % claude.ai shows' };
-  if (t === 'usage: RATE_OK unknown') return { reason: 'the hourly usage rate is not measured yet (STATUS.md has no RATE_OK line)', clears: null, command: 'norn status',
-    fix: 'run norn status (the tick writes STATUS.md every pass; the tick log says why it did not); on API billing set Billing (Settings) to api', setting: 'billing' };
-  if (t === 'usage: RATE_OK=0') return { reason: 'Claude usage over the last 2 h is above the hourly rate cap', setting: 'usage_rate_cap_pct_per_h',
-    clears: 'by itself as the trailing 2 h rate falls under the cap', fix: 'wait, or raise the usage rate cap (Settings)' };
-  if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return { reason: `the week's usage (${m[1]} %) reached the weekly stop (${m[2]} %)`, setting: 'weekly_stop_pct',
-    clears: reset ? `by itself at the weekly reset (${hhmm(reset)})` : 'by itself at the weekly reset', fix: 'wait for the reset, or raise the weekly stop (Settings)' };
-  if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return { reason: `API spend ($${m[1]} in the last 24 h) reached the $${m[2]} daily cap`, setting: 'api_usd_per_day',
-    clears: 'by itself as the last 24 h of spend falls under the cap', fix: 'wait, or raise or clear the API daily cap (Settings)' };
-  if ((m = t.match(/^PAUSED \((.+)\)$/))) return { reason: `Norn is paused: the file ${m[1]} exists`, clears: null, file: m[1], resume: true,
-    fix: `delete ${m[1]} (the header's Resume button deletes the project's own PAUSED file)` };
-  return { reason: t, clears: null, fix: 'see the Plan tab' };
-}
-
 const minsOf = (rec, now) => Math.max(0, Math.floor((now - Date.parse(rec.since)) / 60000));
 const what = rec => `${rec.runs.length} queued ${rec.scope === 'claude' ? 'Claude ' : ''}run${rec.runs.length === 1 ? '' : 's'}${rec.merges ? ` (${rec.merges} merge${rec.merges === 1 ? '' : 's'})` : ''}`;
 
-/** the needs-you item of a hold.json record once it is min minutes old, else null (the dashboard Inbox; the digest row) */
-export function holdItem(rec, { now = Date.now(), min = NOTICE_MIN, status = '', project = null } = {}) {
+/** the needs-you item of a hold.json record once it is min minutes old, else null (the dashboard Inbox; the digest row); state = the
+ * project's state dir (the PAUSED words: this project or all of Norn) */
+export function holdItem(rec, { now = Date.now(), min = NOTICE_MIN, status = '', project = null, state = null } = {}) {
   if (!rec?.term || !rec.since || !rec.runs?.length) return null;
   const minutes = minsOf(rec, now);
   if (minutes < min) return null;
-  const w = holdWords(rec.term, { billing: rec.billing, status });
+  const { text, code: _c, acts: _a, ...w } = waitWords(rec.term, { billing: rec.billing, status, state });   // the words: waitwords.mjs, one module
   return { type: 'hold', id: 'hold', project, term: rec.term, scope: rec.scope, runs: rec.runs, merges: rec.merges ?? 0, since: rec.since, minutes, created: rec.since,
-    title: `All ${what(rec)} held since ${hhmm(rec.since)}: ${w.reason}`, ...w };
+    title: `All ${what(rec)} held since ${hhmm(rec.since)}. ${text}`, reason: text, ...w };
 }
 
 /** the owner notice of the episode, ONCE (hold.json notified): null before min minutes or when sent; the caller sends it (norn tick) */
 export function holdNoticeDue(state, { now = Date.now(), min = NOTICE_MIN, status = '', project = null } = {}) {
-  const rec = readHold(state), it = holdItem(rec, { now, min, status, project });
+  const rec = readHold(state), it = holdItem(rec, { now, min, status, project, state });
   if (!it || rec.notified) return null;
   write(state, { ...rec, notified: new Date(now).toISOString() });
   return { title: `Norn${project ? ' ' + project : ''}: all queued work held ${Math.round(it.minutes / 6) / 10} h - ${it.reason}`,
-    body: `${it.title}. Fix: ${it.fix}.${it.clears ? ` Or it clears ${it.clears}.` : ''} Held: ${it.runs.join(', ')}.` };
+    body: `${it.title} Fix: ${it.fix}.${it.clears ? ` Or it clears ${it.clears}.` : ''} Held: ${it.runs.join(', ')}.` };
 }

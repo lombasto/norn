@@ -12,7 +12,7 @@ import { renderMergeBrief, briefMarker } from '../engine/lib/mergebrief.mjs';
 import { mergeWtPath, ensureMergeWorktree, slotKey, mergeParallel } from '../engine/lib/mergewt.mjs';
 import { openPrs, openProjectPrs, prLine, ghSlug } from '../engine/lib/mergeland.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
-import { holdWords } from '../engine/lib/plan.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { loadDeliverables } from '../engine/lib/deliverables.mjs';
 import { main as nornMain } from '../engine/bin/norn.mjs';
@@ -194,7 +194,7 @@ test('the brief: a merge names its merge worktree and merge-land, never the owne
   assert.deepEqual(writeTrees(mergeSpec(d.opts('a', b))).map(fwd), [wt]);
   const rbf = path.join(d.t, 'rb.md'); fs.writeFileSync(rbf, rb);
   assert.deepEqual(writeTrees(mergeSpec(d.opts('a', rbf))).map(fwd), [mergeWtPath(d.state, 'a'), '/w/a']);
-  assert.equal(holdWords('merge slots full: 2 merge(s) running in /r (RUN-1, RUN-2; policy.merge.parallel 2)'), 'waits for a merge slot (2 merges running)');
+  assert.equal(waitWords('merge slots full: 2 merge(s) running in /r (RUN-1, RUN-2; policy.merge.parallel 2)').text, 'Waiting for a merge slot (2 merges running).');
 });
 
 test('MERGE runs: two start at once (policy.merge.parallel 2) in their own merge worktrees, the third waits for a slot; ends remove the worktrees; the owner checkout is never locked', () => {

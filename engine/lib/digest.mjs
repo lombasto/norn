@@ -184,7 +184,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const hw = wholeHold(ready), hr = hw ? readHold(stateDir) : null;
   if (hw && hr?.term === hw.term) {
     let status = ''; try { status = fs.readFileSync(path.join(stateDir, 'STATUS.md'), 'utf8'); } catch { /* no reset words */ }
-    const it = holdItem({ ...hr, ...hw }, { now, min: noticeMin(project?.policy), status });
+    const it = holdItem({ ...hr, ...hw }, { now, min: noticeMin(project?.policy), status, state: stateDir });
     if (it) sections.hold = [{ id: 'HOLD', term: it.term, scope: it.scope, runs: it.runs, merges: it.merges, since: it.since, min: it.minutes, reason: it.reason, fix: it.fix, clears: it.clears }];
   }
   // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0

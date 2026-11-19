@@ -2,7 +2,8 @@
 process.env.TZ = 'UTC';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlan, holdWords, estimator, forecastOf, formatPlan } from '../engine/lib/plan.mjs';
+import { buildPlan, estimator, forecastOf, formatPlan } from '../engine/lib/plan.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 import { queueOf } from '../engine/lib/runs.mjs';
 
 const NOW = Date.parse('2026-11-12T22:00:00Z');
@@ -30,21 +31,23 @@ test('Up next: every queued run in the fill order itself (queueOf, priority then
 
 test('hold-ups in plain words from the real walk terms (after / usage / resources / cap / not_before / question / worktree)', () => {
   const runs = [run(1, 'running', { lane: 'adopt', stage: 'A1' })];
-  const w = t => holdWords(t, { runs, now: NOW });
-  assert.equal(w('after run:RUN-1:merged unmet'), 'waits for Adopt A1 to merge');
-  assert.equal(w('after run:RUN-1:done unmet'), 'waits for Adopt A1 to finish');
-  assert.equal(w('usage: RATE_OK=0'), 'held: usage over the hourly cap');
-  assert.equal(w('usage: weekly 96 % >= guard 95 %'), 'held: weekly usage at the stop (96 % of 95 %)');
-  assert.equal(w('resources: free RAM 2.0 GB < fill.min_free_gb 4'), 'held: CPU / memory gate');
-  assert.equal(w('cap max_claude_workers: kept for RUN-1 (fill order per cap)'), 'waits for a worker slot');
-  assert.equal(w('cap: 2 claude workers running, budget max_claude_workers=2'), 'waits for a worker slot');
-  assert.equal(w('not_before 2026-11-12T23:03:00.000Z'), 'not before today 23:03');   // R2: one day-aware clock
-  assert.equal(w('after q:Q-12:answered unmet'), 'waits for your answer (Q-12)');
-  assert.equal(w('worktree held by RUN-1'), 'waits for its folder (Adopt A1 is writing there)');
-  assert.equal(w('PAUSED (C:/x/PAUSED)'), 'held: paused');
+  // RM-21 S1: the words are waitwords.mjs (the one word module); the Plan names runs with its own labeler
+  const w = t => waitWords(t, { now: NOW, label: id => (id === 'RUN-1' ? 'Adopt A1' : id) }).text;
+  assert.equal(w('after run:RUN-1:merged unmet'), 'Waiting for Adopt A1 to merge.');
+  assert.equal(w('after run:RUN-1:done unmet'), 'Waiting for Adopt A1 to finish.');
+  assert.equal(w('usage: RATE_OK=0'), 'Held: usage over the hourly cap. Clears by itself.');
+  assert.equal(w('usage: weekly 96 % >= guard 95 %'), "Held: the week's usage (96 %) reached the weekly stop (95 %). Clears at the reset.");
+  assert.equal(w('resources: free RAM 2.0 GB < fill.min_free_gb 4'), 'Held: this machine is low on memory (2.0 GB free < 4 GB).');
+  assert.equal(w('cap max_claude_workers: kept for RUN-1 (fill order per cap)'), 'Waiting for a free Claude slot; Adopt A1 is ahead in line.');
+  assert.equal(w('cap: 2 claude workers running, budget max_claude_workers=2'), 'Waiting for a free Claude slot (2 / 2). Next in line.');
+  assert.equal(w('not_before 2026-11-12T23:03:00.000Z'), 'Starts at today 23:03.');   // R2: one day-aware clock
+  assert.equal(w('after q:Q-12:answered unmet'), 'Waiting for your answer to Q-12.');
+  assert.equal(w('worktree held by RUN-1'), 'Waiting for its folder: Adopt A1 is writing there.');
+  assert.equal(w('PAUSED (C:/x/PAUSED)'), 'Paused (C:/x/PAUSED).');
   const p = buildPlan({ runs: [...runs, run(2, 'queued', { lane: 'adopt', stage: 'A2', after: [after('RUN-1', 'merged')] })],
     ready: [{ id: 'RUN-2', ready: false, terms: ['after run:RUN-1:merged unmet', 'usage: RATE_OK=0'] }], now: NOW });
-  assert.deepEqual(p.upnext[0].holds, ['waits for Adopt A1 to merge', 'held: usage over the hourly cap']);
+  assert.deepEqual(p.upnext[0].holds, ['Waiting for Adopt A1 to merge.', 'Held: usage over the hourly cap. Clears by itself.']);
+  assert.deepEqual(p.upnext[0].terms, ['after run:RUN-1:merged unmet', 'usage: RATE_OK=0'], 'the raw walk terms ride along (the dashboard joins its reason)');
   assert.equal(p.upnext[0].status, 'held');
   const r = buildPlan({ runs: [run(9, 'queued', { lane: 'z' })], ready: [{ id: 'RUN-9', ready: true, terms: [] }], now: NOW });
   assert.equal(r.upnext[0].status, 'ready'); assert.deepEqual(r.upnext[0].holds, ['ready to start']);
@@ -107,7 +110,7 @@ test('landing next: merging now, then the merge queue in its order, plain-words 
   const ready = [{ id: 'RUN-2', ready: false, terms: ['merge slots full: 2 merge(s) running in /r (RUN-1, RUN-9; policy.merge.parallel 2)'] }];
   const merges = { rows: [{ id: 'DLV-7', lane: 'cv', branch: 'feat/cv', word: 'clean', delivers: 'cv view' }, { id: 'DLV-3', lane: 'adopt', branch: 'feat/adopt', word: 'conflict: a.mjs' }] };
   const p = buildPlan({ runs, ready, merges, now: NOW, status: STATUS('0.62') });
-  assert.deepEqual(p.landing.map(l => [l.id, l.word]), [['RUN-1', 'merging now'], ['DLV-7', 'ready to merge'], ['DLV-3', 'waits for a merge slot (2 merges running)']]);
+  assert.deepEqual(p.landing.map(l => [l.id, l.word]), [['RUN-1', 'merging now'], ['DLV-7', 'ready to merge'], ['DLV-3', 'Waiting for a merge slot (2 merges running).']]);
   const red = buildPlan({ runs: [], ready: [], merges, now: NOW, status: STATUS('0.62').replace('CI main: success', 'CI main: failure') });
   assert.deepEqual(red.landing.map(l => l.word), ['blocked: CI red on main', 'blocked: CI red on main']);
 });
@@ -147,7 +150,7 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   const before = fs.readFileSync(path.join(state, 'runs.jsonl'), 'utf8');
   const txt = meta('plan', '--state', state);
   assert.equal(txt.status, 0, txt.stderr);
-  assert.match(txt.stdout, /1\. Adopt A1 \(RUN-1\)  ~30 min  start ~Thu 01-01 00:00  - not before Thu 01-01 00:00/);
+  assert.match(txt.stdout, /1\. Adopt A1 \(RUN-1\)  ~30 min  start ~Thu 01-01 00:00  - Starts at Thu 01-01 00:00./);
   const js = JSON.parse(meta('plan', '--json', '--state', state).stdout);
   assert.equal(js.upnext[0].id, 'RUN-1'); assert.equal(js.upnext[0].estimate.basis, 'budget');
   assert.equal(fs.readFileSync(path.join(state, 'runs.jsonl'), 'utf8'), before, 'read-only: no record written');
@@ -170,6 +173,6 @@ test('ui: Plan sits in Work; Runs has no queue table; Plan renders sections, all
   const runs = [run(1, 'running', { lane: 'adopt', stage: 'A1', budget_min: 60 }, { created: T(-20) }), run(2, 'queued', { lane: 'adopt', stage: 'A2', after: [after('RUN-1', 'merged')] })];
   const p = buildPlan({ project: 'demo', runs, ready: [{ id: 'RUN-2', ready: false, terms: ['after run:RUN-1:merged unmet'] }], status: STATUS('0.62'), budget: { weekly_stop_pct: 95 }, now: NOW });
   const html = renderTab('plan', { parts: [p, { project: 'kestrel', pending: true }] }, { project: 'all', now: NOW });
-  for (const s of ['Adopt A2', 'RUN-2', 'waits for Adopt A1 to merge', 'class="pl-chain"', 'class="pl-step s-play"', 'class="pl-step s-ring"', 'at this rate the weekly stop is reached',
+  for (const s of ['Adopt A2', 'RUN-2', 'Waiting for Adopt A1 to merge.', 'class="pl-chain"', 'class="pl-step s-play"', 'class="pl-step s-ring"', 'at this rate the weekly stop is reached',
     '>demo<', '>kestrel<', 'Working out the plan']) assert.ok(html.includes(s), s);
 });

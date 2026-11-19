@@ -13,6 +13,7 @@ import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { mergeQueue } from './mergeq.mjs';
 import { loadRoadmap } from './roadmap.mjs';
+import { waitWords } from './waitwords.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -147,35 +148,7 @@ export function estimator(runs, { per = null } = {}) {
   return est;
 }
 
-// ---------- hold-ups: the fill walk's terms in plain words ----------
-const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
-/** one readiness term -> plain words. ctx: { runs (array), now, label (run data -> name) } */
-export function holdWords(term, { runs = [], now = Date.now(), label = labelOf } = {}) {
-  const t = String(term), byId = id => runs.find(r => r.id === id);
-  const name = id => { const r = byId(id); return r ? label({ ...r.data, id }) : id; };
-  let m;
-  if ((m = t.match(/^after run:(RUN-\d+):(\w+) unmet$/))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
-  if ((m = t.match(/^after q:(Q-\d+):(\w+) unmet$/))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
-  if ((m = t.match(/^after dlv:(DLV-\d+):\w+ unmet$/))) return `waits for finished work ${m[1]} to reach main`;
-  if ((m = t.match(/^after dir:(DIR-\d+):\w+ unmet$/))) return `waits for instruction ${m[1]} to be done`;
-  if ((m = t.match(/^not_before (\S+)$/))) return `not before ${dayClock(Date.parse(m[1]), now)}`;
-  if (t.startsWith('PAUSED')) return 'held: paused';
-  if (t === 'usage: RATE_OK=0') return 'held: usage over the hourly cap';
-  if (t === 'usage: RATE_OK unknown') return 'held: hourly usage not measured yet';
-  if (t === 'usage: weekly unknown') return 'held: weekly usage not measured yet (on API billing, set Billing to api)';
-  if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return `held: API spend $${m[1]} in 24 h reached the $${m[2]} daily cap`;
-  if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`;
-  if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
-  if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
-  if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
-  if (t.startsWith('labels ')) return 'offered to another machine';
-  if (t.startsWith('resources:')) return 'held: CPU / memory gate';
-  if (t.startsWith('withdraw:')) return 'withdrawn: a condition can no longer be met';
-  if (t.startsWith('needs a ruling: ')) return `needs a ruling (the check-in repairs it): ${t.slice(16)}`;   // META-AUTONOMY R1
-  return t;
-}
+// ---------- hold-ups: the fill walk's terms in plain words (one word module: waitwords.mjs) ----------
 const isHeld = t => /^(usage:|resources:|PAUSED|MERGE )/.test(t);
 
 // ---------- forecast: STATUS.md (the file the usage guard reads) + the budget ----------
@@ -216,16 +189,16 @@ export function forecastOf({ status = '', budget = {}, now = Date.now(), queuedC
 const SHAPE = { done: 'check', merged: 'check', running: 'play', ready: 'ring', waiting: 'ring', offered: 'ring', held: 'pause', ruling: '!', stopped: 'stop', withdrawn: 'stop' };
 const LIVE = ['queued', 'running', 'claimed'];
 /**
- * buildPlan({ project, runs: run items (fold), ready: the fill walk's rows (runs.readiness), status: STATUS.md text, budget,
+ * buildPlan({ project, state (its state dir: the PAUSED words), runs: run items (fold), ready: the fill walk's rows (runs.readiness), status: STATUS.md text, budget,
  *   merges: { rows (mergeQueue order), error? }, roadmap: [{ id, title, links }], lanes: [{ name, title }], now, zone })
  *   -> { upnext, chains, landing, forecast, method, zone }
  */
-export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
+export function buildPlan({ project = null, state = null, runs = [], ready = [], status = '', budget = {}, merges = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
   runs = runs.filter(r => r.kind === 'run');
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
   const label = makeLabeler({ project, runs, roadmap, lanes });
-  const ctx = { runs, now, label }, words = t => holdWords(t, ctx);
+  const ctx = { now, state, billing: budget.billing ?? null, status, label: id => (map[id] ? label({ ...map[id].data, id }) : id) }, words = t => waitWords(t, ctx).text;
   const queued = queueOf(runs);
   const at = ms => ({ at: new Date(ms).toISOString(), word: `~${dayClock(ms, now)}` });
 
@@ -314,7 +287,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     const holds = row ? (row.ready ? ['ready to start'] : row.terms.map(words)) : ['not checked yet'];
     const holdAt = row && !row.ready ? row.terms.map(t => { const m = String(t).match(/^not_before (\S+)$/); return m && Number.isFinite(Date.parse(m[1])) ? new Date(Date.parse(m[1])).toISOString() : null; }) : holds.map(() => null);
     return { id: q.id, name: q.name, label: label({ ...r.data, id: q.id }), position: q.position, lane: q.lane, stage: q.stage, executor: q.executor,
-      priority: q.priority, status: qStatus(q.id), holds, holdAt, estimate: e,
+      priority: q.priority, status: qStatus(q.id), holds, holdAt, terms: row ? row.terms : null, ready: row ? row.ready : null, estimate: e,
       start: s === null ? { at: null, word: 'no estimate', why: why.get(`s${q.id}`) ?? null } : s <= now ? { at: new Date(now).toISOString(), word: 'now' } : at(s) };
   });
 
@@ -468,7 +441,7 @@ export function loadPlan({ state, project = null, budget = {}, now = Date.now(),
   if (project) { try { merges = mergeQueue({ stateDir: state, project, now, ...(git ? { git } : {}) }); } catch (e) { merges = { rows: [], error: String(e.message).slice(0, 300) }; } }
   let roadmap = [];
   try { roadmap = Object.values(loadRoadmap(state).items).filter(i => i.state !== 'dropped').map(i => ({ id: i.id, title: i.title, links: i.links })); } catch { /* none */ }
-  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, roadmap, lanes, now });
+  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), state, runs, ready, status, budget, merges, roadmap, lanes, now });
 }
 
 // ---------- text (norn plan, norn_plan) ----------

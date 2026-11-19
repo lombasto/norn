@@ -11,7 +11,8 @@ import { usageRefusal } from '../engine/lib/usageguard.mjs';
 import { billingChanges, billingChoices, spendDay, billingLine, BILLING_NAMES } from '../engine/lib/billing.mjs';
 import { liveBudget } from '../engine/lib/runs.mjs';
 import { capsMissing } from '../engine/lib/policy.mjs';
-import { forecastOf, holdWords } from '../engine/lib/plan.mjs';
+import { forecastOf } from '../engine/lib/plan.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 import { buildStatus } from '../engine/lib/status.mjs';
 
 const NORN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
@@ -43,7 +44,7 @@ test('API billing: no weekly guard and no rate cap, even with weekly_stop_pct se
   assert.equal(usageRefusal(spec(0), r.state), null, '0 = no cap');
   assert.equal(usageRefusal(spec(40), r.state), null, '$32.50 in 24 h (the 30 h old run is out of the window) is under $40');
   assert.equal(usageRefusal(spec(30), r.state), 'api spend $32.50 in 24 h >= cap $30.00');
-  assert.equal(holdWords('usage: api spend $32.50 in 24 h >= cap $30.00'), 'held: API spend $32.50 in 24 h reached the $30.00 daily cap');
+  assert.equal(waitWords('usage: api spend $32.50 in 24 h >= cap $30.00').text, 'Held: API spend ($32.50 in 24 h) reached the $30.00 daily cap.');
 });
 
 test('spend counts Claude runs of every project under the root, never an own-account executor', () => {

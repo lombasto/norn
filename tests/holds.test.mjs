@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { queueRun, readiness } from '../engine/lib/runs.mjs';
-import { wholeHold, trackHold, readHold, holdItem, holdNoticeDue, holdWords, noticeMin, NOTICE_MIN } from '../engine/lib/holds.mjs';
+import { wholeHold, trackHold, readHold, holdItem, holdNoticeDue, noticeMin, NOTICE_MIN } from '../engine/lib/holds.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
@@ -29,15 +30,15 @@ test('wholeHold: every queued (Claude) run on the same machine-level term, else 
   assert.equal(wholeHold([row('RUN-1', ['PAUSED (C:/s/PAUSED)', W]), row('RUN-2', ['PAUSED (C:/s/PAUSED)'], { account: false })]).term, 'PAUSED (C:/s/PAUSED)');
 });
 
-test('holdWords: the reason and the exact fix, in the billing mode in force', () => {
-  assert.match(holdWords(W).fix, /set Billing \(Settings\): on API billing choose api.*norn calib --pct N/);
-  assert.equal(holdWords(W).setting, 'billing');
-  const plan = holdWords(W, { billing: 'max-5x' });
-  assert.match(plan.fix, /^run norn calib --pct N/); assert.match(plan.reason, /billing: /);
-  assert.match(holdWords('usage: RATE_OK=0').clears, /trailing 2 h rate/);
-  assert.match(holdWords('usage: weekly 96.0 % >= guard 95 %', { status: '- reset 2026-11-20T08:00Z\n' }).clears, /weekly reset \(2026-11-20 08:00Z\)/);
-  assert.match(holdWords('usage: api spend $12.00 in 24 h >= cap $10.00').reason, /\$10.00 daily cap/);
-  const p = holdWords('PAUSED (C:/s/PAUSED)');
+test('waitWords (the one word module, RM-21 S1): the reason of a machine hold and the exact fix, in the billing mode in force', () => {
+  assert.match(waitWords(W).fix, /set Billing \(Settings\): on API billing choose api.*norn calib --pct N/);
+  assert.equal(waitWords(W).setting, 'billing');
+  const plan = waitWords(W, { billing: 'max-5x' });
+  assert.match(plan.fix, /^run norn calib --pct N/); assert.match(plan.text, /billing: /);
+  assert.match(waitWords('usage: RATE_OK=0').clears, /trailing 2 h rate/);
+  assert.match(waitWords('usage: weekly 96.0 % >= guard 95 %', { status: '- reset 2026-11-20T08:00Z\n' }).clears, /weekly reset \(2026-11-20 08:00Z\)/);
+  assert.match(waitWords('usage: api spend $12.00 in 24 h >= cap $10.00').text, /\$10.00 daily cap/);
+  const p = waitWords('PAUSED (C:/s/PAUSED)');
   assert.equal(p.file, 'C:/s/PAUSED'); assert.equal(p.resume, true); assert.match(p.fix, /delete C:\/s\/PAUSED/);
   assert.equal(noticeMin({}), NOTICE_MIN); assert.equal(noticeMin({ holds: { notice_min: 15 } }), 15);
 });
@@ -51,7 +52,7 @@ test('trackHold / holdItem / holdNoticeDue: one episode, its since kept, one not
   assert.equal(holdItem(readHold(state), { now: T + 59 * 60000 }), null, 'under the threshold: nothing');
   const it = holdItem(readHold(state), { now: T + 61 * 60000, project: 'demo' });
   assert.equal(it.type, 'hold'); assert.equal(it.minutes, 61); assert.deepEqual(it.runs, ['RUN-1', 'RUN-2']);
-  assert.match(it.title, /^All 2 queued runs \(1 merge\) held since 2026-11-17 00:00Z: the weekly usage is not measured yet/);
+  assert.match(it.title, /^All 2 queued runs \(1 merge\) held since 2026-11-17 00:00Z. Held: the weekly usage is not measured yet/);
   assert.equal(holdNoticeDue(state, { now: T + 10 * 60000 }), null, 'no notice before the threshold');
   const n = holdNoticeDue(state, { now: T + 61 * 60000, project: 'demo' });
   assert.match(n.title, /^Norn demo: all queued work held 1 h/); assert.match(n.body, /Fix: set Billing/);
@@ -118,8 +119,8 @@ test('tick: a PAUSED tick still tracks the hold, and returns ONE hold notice pas
   assert.match(readHold(state).term, /^PAUSED \(/); assert.equal(r1.hold_notice, undefined, 'not before notice_min');
   fs.writeFileSync(path.join(state, 'hold.json'), JSON.stringify({ ...readHold(state), since: new Date(Date.now() - 31 * 60000).toISOString() }));
   const r2 = go();
-  assert.match(r2.hold_notice.title, /all queued work held .*Norn is paused/);
+  assert.match(r2.hold_notice.title, /all queued work held .*Paused: this project./);
   assert.equal(go().hold_notice, undefined, 'once per episode');
   fs.unlinkSync(pausedF);
-  assert.equal(holdWords(readHold(state).term).resume, true);
+  assert.equal(waitWords(readHold(state).term).resume, true);
 });
