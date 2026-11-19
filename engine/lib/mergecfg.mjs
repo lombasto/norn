@@ -1,10 +1,9 @@
 // A project's merge settings (project.json `merge` over the defaults): their own module, below mergeq.mjs and mergeland.mjs, so
 // merge-land can read them without importing the merge queue (mergeq -> landing -> mergeland -> mergeq was a K10 cycle).
-import { deliverableConfig } from './deliverables.mjs';
+import { deliverableConfig, fwd } from './deliverables.mjs';
 import { subdirOf } from './monorepo.mjs';
 
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
-export const MQ_DEFAULTS = { batch_max: 4 };
+const MQ_DEFAULTS = { batch_max: 4 };
 
 /** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
 // a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own

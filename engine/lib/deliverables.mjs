@@ -13,7 +13,7 @@ export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', '
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
   target: 'install', ask_after_h: 24, park_days: 7, resolve_behind: 100 };
 const DAY = 864e5;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+export const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 export const sameRepo = (a, b) => pathKey(a) === pathKey(b);   // the same repo in any spelling (8.3 short name, link, case)
 
 // project.json `deliverables` over the defaults; repo defaults to the project root
