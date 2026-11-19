@@ -9,7 +9,16 @@ import { which, resolveShim } from '../paths.mjs';
 import { metaRoot } from '../config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const TOOLS = { eslint: { pkg: 'eslint@10.15.0', config: path.join(HERE, 'eslint.config.mjs') } };
+export const TOOLS = { eslint: { pkg: 'eslint@10.15.0' } };
+// the ESLint core rules a rule file may name (kind `eslint`); kind `ast` adds no-restricted-syntax selectors. Rule files are data:
+// the engine writes the flat config from them, so a rule can never load a plugin or any other code.
+export const LINT_RULES = ['no-unused-vars', 'no-duplicate-imports'];
+/** the flat config of one ESLint run: { rules: { core rule: options }, selectors: [{ selector, message }] } -> module text */
+export function eslintConfig({ rules = {}, selectors = [] }) {
+  const all = { ...rules, ...(selectors.length ? { 'no-restricted-syntax': ['error', ...selectors] } : {}) };
+  return `export default [${JSON.stringify({ files: ['**/*.mjs', '**/*.js', '**/*.cjs'], languageOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+    linterOptions: { noInlineConfig: true }, rules: all })}];\n`;
+}
 export const NORN = path.join(HERE, '..', '..', 'bin', 'norn.mjs');
 export const toolCache = (env = process.env) => path.join(metaRoot(env), 'state', 'tools', 'npm');
 
@@ -20,28 +29,30 @@ export function npxArgv(pkg, args, env = process.env) {
   return resolveShim(npx, ['--yes', pkg, ...args]);
 }
 
-/** ESLint `-f json` output -> [{ file (relative to dir), line, msg }] */
+/** ESLint `-f json` output -> [{ file (relative to dir), rule, line, column, endLine, endColumn, msg }] */
 export function parseEslint(raw, dir) {
   return JSON.parse(raw).flatMap(r => r.messages.filter(m => m.ruleId).map(m => ({
-    file: (path.isAbsolute(r.filePath) ? path.relative(dir, r.filePath) : r.filePath).replace(/\\/g, '/'), line: m.line, msg: m.message,
+    file: (path.isAbsolute(r.filePath) ? path.relative(dir, r.filePath) : r.filePath).replace(/\\/g, '/'), rule: m.ruleId,
+    line: m.line, column: m.column, endLine: m.endLine ?? m.line, endColumn: m.endColumn ?? m.column, msg: m.message,
   })));
 }
 
 /**
- * The real tool runner: tool(rule, side, { dir, files }) -> raw output | null (no output for that side).
- * o.baseline: { [rule id]: text } - a command rule's base side (its last run on main); o.env.
+ * The real tool runner: tool(rule, side, { dir, files }) -> raw output | null (no output for that side). A tool rule here is the
+ * ONE ESLint run of a check: { tool: 'eslint', rules, selectors } (its eslint and ast rules together, one npx start per side). A
+ * command rule runs once, at check time (its output is the machine's, not a side's: the check keeps only the lines whose source
+ * the diff touches). o.env.
  */
-export function makeTool({ baseline = {}, env = process.env } = {}) {
+export function makeTool({ env = process.env } = {}) {
   return (rule, side, { dir, files } = {}) => {
     if (rule.kind === 'command') {
-      if (side === 'base') return baseline[rule.id] ?? null;
       const r = spawnSync(process.execPath, [NORN, ...rule.argv], { cwd: dir, env, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
       if (r.error) throw r.error;
       return r.stdout;
     }
     const t = TOOLS[rule.tool];
     if (!t) throw new Error(`${rule.id}: unknown tool ${rule.tool}`);
-    fs.copyFileSync(t.config, path.join(dir, 'eslint.config.mjs'));
+    fs.writeFileSync(path.join(dir, 'eslint.config.mjs'), eslintConfig(rule));
     const { exe, args } = npxArgv(t.pkg, ['-f', 'json', ...files], env);
     const r = spawnSync(exe, args, { cwd: dir, env: { ...env, npm_config_cache: toolCache(env), npm_config_update_notifier: 'false' }, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
     if (r.error) throw r.error;

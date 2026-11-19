@@ -1,0 +1,39 @@
+{
+  "id": "K17",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "a new TODO / FIXME / HACK / XXX comment",
+  "how": "the upper-case markers in comments (the word todo as data or a status is not one)",
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ],
+  "in": [
+    "comment"
+  ],
+  "patterns": [
+    "\\b(?:TODO|FIXME|HACK|XXX)\\b"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// TODO: wire the retry\nexport const a = 1; /* FIXME later */\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "export const state = 'TODO';\n// the todo list is read from the board\nexport const a = 1;\n"
+      }
+    }
+  }
+}

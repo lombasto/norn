@@ -130,7 +130,7 @@ test('MERGE brief template: filled from the lane + the project policy merge.shot
   assert.throws(() => renderMergeBrief(p, { ...o, branch: '' }), /branch/);
   // the CLI writes the brief (the check-in's one command); the shots mode comes from the project file
   const pj = path.join(t, 'project.json');
-  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 'norn', title: 'n', root: fwd(t), ledger: '${root}/L.md', briefs_dir: '${root}', policy: { merge: { shots: 'before' } } }));
+  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 'norn', title: 'n', root: fwd(t), ledger: '${root}/L.md', briefs_dir: '${root}', policy: { merge: { shots: 'before' }, slop: { enabled: false } } }));   // no repo here: the slop door (slop-gate.test) would refuse
   const outF = path.join(t, 'task-MERGE-brief.md');
   const r = spawnSync(process.execPath, [META, 'merge-brief', '--project', pj, '--lane', 'meta-watch', '--branch', 'feat/x', '--worktree', fwd(t) + '-x', '--notes', fwd(t) + '/N.md', '--ui', '--out', outF],
     { env: { ...process.env, META_ROOT: t }, encoding: 'utf8' });
