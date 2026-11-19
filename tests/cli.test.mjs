@@ -26,7 +26,7 @@ test('add question -> Q-1 on stdout, envelope written, questions view generated'
   const e = JSON.parse(fs.readFileSync(path.join(s, 'records.jsonl'), 'utf8'));
   assert.equal(e.by, 'checkin'); assert.equal(e.run, null);
   assert.deepEqual(e.data.options, [{ key: 'a', text: 'carve', cost: '1 round' }, { key: 'b', text: 'fill', cost: '' }]);
-  assert.deepEqual(e.data.recommend, { key: 'a', why: 'keeps relief' });
+  assert.deepEqual(e.data.recommend, { key: 'a', why: 'keeps relief', from: 'checkin' });   // a recommendation names its source: the writer
   assert.deepEqual(e.data.blocks, ['gen']); assert.equal(e.data.body, 'Seed 7: 3 sinks.\n');
   assert.match(fs.readFileSync(path.join(s, 'views', 'OWNER-QUESTIONS.md'), 'utf8'), /### Q-1 · Carve or fill\?/);
 });

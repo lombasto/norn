@@ -12,6 +12,7 @@ import { readEvents, fold, recordsFile } from './records.mjs';
 import { startRun, sweepLost, lockPath, RunRefused, RunError, STALE_MS } from './runs.mjs';
 import { isApi, isCli, isProvider, keySet, providersOf, cliMode, typedExe } from './executors.mjs';
 import { presetExe } from './presets.mjs';
+import { sleepMs } from './views.mjs';
 import { executorsFor, withDefaults } from './policy.mjs';
 
 export const MAX_PER_PARENT_DEFAULT = 4;
@@ -24,7 +25,6 @@ const Q_CHARS = 120;
 
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const runsOf = state => fold(readEvents(recordsFile(state, 'run'))).items;
-const sleepMs = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** Ranked helper executors for class `cls`: allowed by policy, enabled, key set (API types). */
 export function pickExecutors({ policy, cls, providers = {}, env = process.env }) {

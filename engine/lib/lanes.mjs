@@ -4,7 +4,7 @@ import { STALE_MS } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
 import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
-import { idNum as runNum } from './records.mjs';
+import { idNum as runNum, laneNameIn } from './records.mjs';
 
 
 function runText(r, { now, hbAge, staleMs, items = {} }) {
@@ -96,13 +96,13 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
  * A lane idle by its rule reads "idle: no run" and sits under needs you, not queued.
  */
 export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote,
-  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null } = {}) {
-  const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
+  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, home = null } = {}) {
+  const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged, home }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
   const items = Object.values(st.items);
   const latest = {};
   for (const r of items) if (r.kind === 'run' && r.data?.lane && (!latest[r.data.lane] || runNum(r.id) > runNum(latest[r.data.lane].id))) latest[r.data.lane] = r;
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
-    const name = l.id.slice(2), r = latest[name];
+    const name = laneNameIn(l.id, home), r = latest[name];
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
     // item 8 (MAIL-9): parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling
     const ruled = park?.q && st.items[park.q]?.state === 'answered' ? st.items[park.q] : null;

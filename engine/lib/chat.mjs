@@ -22,7 +22,7 @@ import { adapterFor, capsOf, harnessOf } from './harness/index.mjs';
 import { drain as drainOutbox, decide as decideApproval, approvalsDir, readVerdict, readRequest, chatDir, threadFile } from './chatact.mjs';
 import { readEvents, recordsFile, fold, loadState, heldLanes, holdWho, hhmm, roleAddr } from './records.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
-import { HANDOFF_PROMPT, ctxLevel } from './ctxlimit.mjs';
+import { HANDOFF_PROMPT, ctxLevel, kTok } from './ctxlimit.mjs';
 import { tryDigest } from './digest.mjs';
 import { renderDigest } from './views.mjs';
 import { checkMail } from './mail.mjs';
@@ -200,7 +200,6 @@ const HANDOFF_MS = 10 * 60000;   // a hand-off turn that has not ended by then i
 const TURNS_CARRIED = 10, TURN_CLIP = 2000;
 // the fixed hand-off turn ({ctx} / {limit} filled in): ONE copy with the run orders (ctxlimit.mjs, META-CTX-ENFORCE R1)
 export { HANDOFF_PROMPT };
-const kTok = n => `${Math.round(n / 1000)}k`;
 /** the "- x" lines under "## Open threads" ("- none" is none) */
 export function openThreads(md) {
   const out = [];

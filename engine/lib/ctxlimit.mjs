@@ -11,7 +11,7 @@ import { usageCtx, findTranscript } from './harness/claude.mjs';
 
 export { usageCtx };
 export const CTX_ROLES = Object.keys(POLICY_DEFAULTS.context);
-const kTok = n => `${Math.round(n / 1000)}k`;
+export const kTok = n => `${Math.round(n / 1000)}k`;
 
 /** the policy.context row of a run (its start data or launch spec): check-ins their own row, the chat the controller's, else by agent name */
 export function ctxRole(d = {}) {

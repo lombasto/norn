@@ -20,7 +20,7 @@ import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from 
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
@@ -414,7 +414,7 @@ export function createDashboard(o) {
       out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
     // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in
     for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) { const q = l.park?.q ? s.items[l.park.q] : null;
-      out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
+      out.push({ type: 'parked', id: l.id, lane: laneName(l.id, p.state), project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
         ...(q?.state === 'answered' ? { ruled: { q: q.id, choice: q.answer?.choice ?? null, text: q.answer?.text ?? null, at: q.updated } } : {}) }); }
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
     let adv = [];
@@ -429,7 +429,7 @@ export function createDashboard(o) {
   const repoOf = new Map();
   const repoSlug = p => { if (!repoOf.has(p.root)) repoOf.set(p.root, new Promise(r => execFile('git', ['-C', p.root || '.', 'remote', 'get-url', 'origin'], { timeout: 5000, windowsHide: true }, (e, out) => r(e ? null : githubRepo(String(out).trim()))))); return repoOf.get(p.root); };
   async function proseOf(p, items) {
-    const lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane').map(i => i.id.slice(2));
+    const home = homeIdOf(p.state)?.id, lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane').map(i => laneNameIn(i.id, home));
     const texts = items.flatMap(i => [i.body, i.title, i.why, i.answer?.text, i.recommend?.why, i.file && `\`${i.file}\``, i.card?.why, ...(i.options || []).flatMap(o => [o.text ?? o.t, o.cost ?? o.c])]).filter(x => typeof x === 'string');
     const want = [...new Set(texts.flatMap(pathsIn))], docs = {};
     if (want.length) {
@@ -453,8 +453,8 @@ export function createDashboard(o) {
   // RM-34: each Lanes row's driver (purpose.mjs: the objective + where it is written); the briefs it reads are primed by primeBriefs
   const briefsDirOf = p => path.resolve(p.briefs_dir || path.join(p.state, 'briefs'));
   const briefHead = f => (readText(f) ?? '').split(/\r?\n/).find(l => /^#/.test(l)) ?? null;
-  const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items;
-    return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(l.id.slice(2), items, briefsDirOf(p))) }); }));
+  const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items, home = homeIdOf(p.state)?.id;
+    return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(laneNameIn(l.id, home), items, briefsDirOf(p))) }); }));
   // MAIL-29: its type (purpose.mjs laneType) and where its output goes (laneOutput): PR state from the deliverables cache (the child
   // process keeps it; never git here), the branch tips' subjects as the commit-type signal, documents to the run's notes folder
   const notesOf = (p, lane, items) => {
@@ -1112,7 +1112,7 @@ export function createDashboard(o) {
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
       checkins_paused: stopsCheckins(pauseOfP(p)), limits: limitLines(p.state),   // RM-37: Pause check-ins / Pause everything   // META-LIMIT-GATE: executors out of quota
-      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${String(n.id).slice(2)} parked` : n.id), created: n.created ?? null })),
+      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${n.lane} parked` : n.id), created: n.created ?? null })),
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };

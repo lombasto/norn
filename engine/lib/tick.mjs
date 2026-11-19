@@ -118,7 +118,7 @@ export function gateProbes(p, machine = {}) {
   const m = p?.checkin?.stall_idle_min;
   return [watchProbe(p, machine), idleProbe({ minutes: Number.isInteger(m) ? m : STALL_IDLE_MIN, projectsDir: machine?.claude?.projects_dir }),
     p?.merge?.gate?.fast && p.state ? mqProbe(p.state) : null, p?.ci?.repo && p.state ? ciProbe(p) : null,
-    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null, lanesProbe(p?.policy)].filter(Boolean);   // lifecycle.mjs: an idle / stopped lane = lanes:<rule>:L:x, MAJOR   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
+    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null, lanesProbe(p?.policy, p?.state ? homeOf(p.state)?.id ?? null : null)].filter(Boolean);   // lifecycle.mjs: an idle / stopped lane = lanes:<rule>:L:x, MAJOR   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
 }
 
 // NORN-WATCH S2: a project's checkin.max_quiet_min overrides the machine's checkin_max_quiet_min for that project (additive)

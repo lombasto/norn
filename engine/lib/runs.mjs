@@ -13,7 +13,7 @@ import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from
 import { adapterFor, harnessOf } from './harness/index.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
-import { writeQueueView } from './views.mjs';
+import { writeQueueView, sleepMs } from './views.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
 import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
@@ -97,14 +97,13 @@ export function renameRetry(t, f, tries = 40) {
 // Windows sharing / delete-pending errors on a lock or flag file are transient (graceful-fs's EPERM practice, as renameRetry): retried
 // on the monotonic clock up to STALE_MS, then thrown - a caller logs it; never a silent lost wakeup (META-OOTB-FIX FLOW-STALL)
 const TRANSIENT = ['EPERM', 'EACCES', 'EBUSY'];
-const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function retryTransient(fn, what) {
   const t0 = performance.now();
   for (;;) {
     try { return fn(); } catch (e) {
       if (!TRANSIENT.includes(e.code)) throw e;
       if (performance.now() - t0 > STALE_MS) throw new RunError(`${what}: ${e.code} for ${STALE_MS} ms`);
-      sleepSync(25);
+      sleepMs(25);
     }
   }
 }
@@ -758,7 +757,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
       if (h === 'live') return false;   // another filler is at it
       if (h === 'stale') { try { io.unlinkSync(lockFile); } catch { /* another breaker / pending: the next read says */ } }
       if (performance.now() - t0 > STALE_MS) throw new RunError(`queue fill: ${fwd(lockFile)} not acquired in ${STALE_MS} ms (${h})`);
-      if (h === 'pending') sleepSync(25);
+      if (h === 'pending') sleepMs(25);
     }
   };
   // FLOW-STALL window (iii): a swallowed unlink failure left a holder-less fresh lock - every filler lost for STALE_MS
