@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState, RecordError } from '../engine/lib/records.mjs';
 import { scanRepo, globToRe, makeGit } from '../engine/lib/dlvgit.mjs';
-import { deliverablesView, loadDeliverables, lastInstall, deliverableConfig, formatDeliverable } from '../engine/lib/deliverables.mjs';
+import { deliverablesView, loadDeliverables, lastInstall, deliverableConfig, formatDeliverable, latchMerged } from '../engine/lib/deliverables.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
 
@@ -104,6 +104,26 @@ test('the PR norn merge-land opened shows on its row and listing line; the newes
   for (const n of [4, 7]) record(state, { kind: 'deliverable', ev: 'pr', id, by: 'launcher', data: { url: `https://github.com/o/r/pull/${n}`, number: n, repo: 'o/r', head: 'fix/b', base: 'main' } }, { now: () => at(-1), views: false });
   assert.deepEqual(row().pr, { url: 'https://github.com/o/r/pull/7', number: 7 });
   assert.match(formatDeliverable(row()), /fix\/b +PR #7 \| DUE \| clean \| docs b$/);
+});
+
+test('lane-outputs item 6: every PR of a deliverable, newest first, with the GitHub state and merge date (the tick asks, the view reads); a closed PR is never asked again', () => {
+  const { repo } = fixture();
+  const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
+  const id = mkDlv(state, { repo, branch: 'fix/b', delivers: 'docs b', done_utc: at(-30).toISOString() }).id;
+  for (const n of [4, 7]) record(state, { kind: 'deliverable', ev: 'pr', id, by: 'launcher', data: { url: `https://github.com/o/r/pull/${n}`, number: n, repo: 'o/r', head: 'fix/b', base: 'main' } }, { now: () => at(-1), views: false });
+  const prs = () => deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0].prs.map(x => [x.number, x.state, x.merged_at]);
+  assert.deepEqual(prs(), [[7, 'open', null], [4, 'open', null]], 'no GitHub answer: open');
+  const asked = [], ans = { 'https://github.com/o/r/pull/4': { state: 'CLOSED', closedAt: '2026-11-02T00:00:00Z' }, 'https://github.com/o/r/pull/7': { state: 'OPEN', reviewDecision: 'APPROVED' } };
+  const gh = args => { asked.push(args[2]); return { code: 0, out: JSON.stringify(ans[args[2]]) }; };
+  latchMerged(state, { project: p, gh, nowMs: NOW });
+  assert.deepEqual(asked.sort(), ['https://github.com/o/r/pull/4', 'https://github.com/o/r/pull/7'], 'every PR of the deliverable is asked, not only the last');
+  assert.deepEqual(prs(), [[7, 'approved', null], [4, 'closed', null]]);
+  ans['https://github.com/o/r/pull/7'] = { state: 'MERGED', mergedAt: at(-0.5).toISOString() };
+  asked.length = 0; latchMerged(state, { project: p, gh, nowMs: NOW + 60e3 });
+  assert.deepEqual(asked, [], 'an open PR is asked again only after 10 min; a closed one never');
+  latchMerged(state, { project: p, gh, nowMs: NOW + 11 * 60e3 });
+  assert.deepEqual(asked, ['https://github.com/o/r/pull/7']);
+  assert.deepEqual(prs(), [[7, 'merged', at(-0.5).toISOString()], [4, 'closed', null]]);
 });
 
 test('a deliverable whose branch is gone falls back to its recorded tip (not on main: cannot tell, never plain done)', () => {
