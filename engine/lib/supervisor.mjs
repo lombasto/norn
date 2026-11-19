@@ -22,6 +22,7 @@ import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
+import { syncStep } from './sync.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
 import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
@@ -253,6 +254,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // GTP-LEDGER: the run end (after its `end` record) is a ledger commit; a failure is logged, never the run's
   if (spec.git_ledger) { try { const n = ledgerStep(spec.git_ledger, `run end ${run} (${outcome})`); if (n) logLine(n); } catch (e) { logLine(`ledger: failed: ${e.message}`); } }
+  // RM-46 S1c (SPEC 4.1): the run end publishes home/<id> too (sync off = null; syncStep never throws)
+  if (spec.git_ledger) { const n = syncStep(spec.git_ledger, `run end ${run}`); if (n) logLine(n); }
   try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
   for (const lf of lockFiles) releaseLock(lf, run);
   try { const gone = stopOrphans(state); if (gone.length) logLine(`helpers stopped with the parent: ${gone.join(', ')}`); } catch (e) { logLine(`helper stop failed: ${e.message}`); }
