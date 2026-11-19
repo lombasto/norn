@@ -110,6 +110,10 @@ test('a foreign create is rejected; a copy that does not parse is an integrity r
   const v2 = loadState(a);
   assert.ok(v2.items['Q-a-1']);
   assert.deepEqual(v2.integrity.map(x => x.home), ['b']);
+  // what the fetch noted (a copy that was not an append of the last one) shows as an integrity row of that log
+  fs.mkdirSync(path.join(a, 'sync'), { recursive: true });
+  fs.writeFileSync(path.join(a, 'sync', 'copy-integrity.json'), JSON.stringify([{ home: 'b', file: 'records.jsonl', why: 'not an append' }]));
+  assert.deepEqual(loadState(a).integrity.map(x => x.why).slice(1), ['not an append']);
 });
 
 test('record() on the merged view: a check-in / controller write on another home\'s lane is refused; a create takes the own prefix', () => {
