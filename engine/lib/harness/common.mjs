@@ -62,9 +62,11 @@ export function detectExe(exe) {
 // (gap #3: the only source of its outcome); its NOTES are its free-form log
 // META-BETA-PREP (DIR-52): the slop sentence on its own - a pack of a project whose SloppaChoppa switch is off leaves it out (setup.mjs)
 export const HEADLESS_SLOP = ' Before you end with `norn done`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
+// proc-hygiene (6): 84 `tail -f <log> | grep --line-buffered` watchers outlived the workers that started them (tail -f never exits)
+export const HEADLESS_WATCH = ' Wait on a command\'s exit, never on `tail -f | grep`; a watcher you start must end by itself (`timeout N`, `grep -m1`).';
 export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
   + "brief's DECISION-RULES or stop. Write your log to your NOTES file. " + DONE_LINE
-  + HEADLESS_SLOP;
+  + HEADLESS_SLOP + HEADLESS_WATCH;
 // META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
 export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP norn_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (norn_mail ack / norn mail ack MAIL-n).';
 
