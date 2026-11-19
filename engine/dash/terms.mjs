@@ -2,9 +2,9 @@
 // thing come from these functions only, so the Overview card, the Inbox, the tab badge, the page title and the Home filter agree.
 // Pure, no I/O: the server (server.mjs) and the browser (ui.mjs, home.mjs) both load it.
 
-/** an Inbox row that waits for you: every row but an answered question (it waits for the next check-in, not for you) and model advice
- * (advisory: it blocks nothing) */
-export const isNeed = i => !!i && i.type !== 'answered' && i.type !== 'advice';
+/** an Inbox row that waits for you: every row but an answered question (it waits for the next check-in, not for you), model advice
+ * (advisory: it blocks nothing) and an enforce card already asked for (its directive exists) */
+export const isNeed = i => !!i && i.type !== 'answered' && i.type !== 'advice' && !(i.type === 'enforce' && i.asked);
 /** the rows of an Inbox list that need you */
 export const needsOf = items => (items || []).filter(isNeed);
 /** THE needs-you count of an Inbox list */

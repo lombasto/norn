@@ -142,7 +142,8 @@ export function repeats(texts) {
 function corrections(items, rows) {
   const out = [];
   for (const i of Object.values(items)) {
-    if (i.kind === 'directive' && i.data?.text) out.push({ id: i.id, text: String(i.data.text).slice(0, 600), date: i.created });
+    // an approval of a card (data.card / "Enforce (advisory A-...") is the answer, not one more correction: it never grows a cluster
+    if (i.kind === 'directive' && i.data?.text && !i.data.card && !/^Enforce \(advisory A-/.test(i.data.text)) out.push({ id: i.id, text: String(i.data.text).slice(0, 600), date: i.created });
     if (i.kind === 'decision' && i.state === 'overruled') { const h = [...(i.history || [])].reverse().find(x => x.ev === 'overrule'); out.push({ id: i.id, text: `${i.data?.question || ''} ${h?.data?.text || ''}`.slice(0, 600), date: h?.ts || i.updated }); }
   }
   for (const r of rows.filter(x => x.kind === 'memory-topic' && x.exists !== false)) {
@@ -236,7 +237,7 @@ export function ruleLedger(rows, { project: p = {}, items = {}, hints = [], home
       source: 'REPORT meta-practice s.3.6', items: c.members.map(m => ({ text: `${m.id}: ${clean(m.text).slice(0, 160)}` })),
       fix: { tier: 'card', action: `approve = a directive asks the check-in for a task brief that adds ${d.mech}; Norn installs nothing`, patch: d.patch, kind: 'call', ways: ['Make it enforced', 'Leave it as prose'] } });
     if (r) { r.cluster = a.id; a.rule = r.id; }
-    a.approve = approvalText(a);
+    a.approve = approvalText(a); a.asked = askedBy(a, items);
     cards.push(a);
   }
   // retired: in the last remembered scan, gone now (<state>/instructions/rules.json, a cache)
@@ -252,20 +253,38 @@ export function ruleLedger(rows, { project: p = {}, items = {}, hints = [], home
   const counts = Object.fromEntries(STATES.map(s => [s, rules.filter(r => r.state === s).length]));
   return { rules, counts, advisories: adv, cards };
 }
-/** the open approval cards of the last remembered scan (the Inbox): a card is closed once a directive cites its id (its approval) */
-export function openCards(state, items = {}) {
-  return openOf(state ? readJson(rulesJson(state)) : null, items);
+/**
+ * the directive that asked for a card (its approval) -> { id, state, at } or null. A card's id is a hash of its cluster's first
+ * correction and rule line, so it moves when the cluster grows or the line moves; the approval still counts when the directive records
+ * the card (data.card), cites its id, or is an "Enforce (advisory A-...)" approval naming the same corrections (more than half of the
+ * ids it lists are in the card, at least 2). Newest first, an active directive before any other.
+ */
+export function askedBy(card, items = {}) {
+  const mine = new Set((card.items || []).map(x => String(x.text).match(/^([A-Z]+-\d+):/)?.[1]).filter(Boolean));
+  const hit = d => {
+    const t = String(d.data?.text || '');
+    if (d.data?.card === card.id || t.includes(card.id)) return true;
+    const said = /^Enforce \(advisory A-[0-9a-f]+/.test(t) ? t.match(/said \d+ times \(([^)]*)\)/)?.[1] : null;
+    const ids = said ? said.split(/,\s*/).filter(x => /^[A-Z]+-\d+$/.test(x)) : [], n = ids.filter(x => mine.has(x)).length;
+    return n >= 2 && n * 2 > ids.length;
+  };
+  const ds = Object.values(items).filter(i => i.kind === 'directive' && hit(i))
+    .sort((a, b) => (b.state === 'active') - (a.state === 'active') || String(b.created).localeCompare(String(a.created)));
+  return ds.length ? { id: ds[0].id, state: ds[0].state, at: ds[0].created ?? null } : null;
 }
+/** the approval cards of the last remembered scan, each with asked (askedBy); open = not asked yet */
+export function enforceCards(state, items = {}) {
+  return cardsOf(state ? readJson(rulesJson(state)) : null, items);
+}
+/** the open ones (the CLI's audit view) */
+export const openCards = (state, items = {}) => enforceCards(state, items).filter(c => !c.asked);
 const rulesJson = state => path.join(state, 'instructions', 'rules.json');
-const openOf = (j, items) => {
-  const cited = Object.values(items).filter(i => i.kind === 'directive').map(i => String(i.data?.text || '')).join('\n');
-  return (j?.cards || []).filter(c => !cited.includes(c.id));
-};
-/** META-DASH-ASYNC R1: openCards on fs.promises (the dash Inbox / Home pick order; the CLI keeps openCards) */
-export async function openCardsAsync(state, items = {}) {
+const cardsOf = (j, items) => (j?.cards || []).map(c => ({ ...c, asked: askedBy(c, items) }));
+/** META-DASH-ASYNC R1: enforceCards on fs.promises (the dash Inbox) */
+export async function enforceCardsAsync(state, items = {}) {
   let j = null;
   if (state) { try { j = JSON.parse(await fs.promises.readFile(rulesJson(state), 'utf8')); } catch { j = null; } }
-  return openOf(j, items);
+  return cardsOf(j, items);
 }
 /** the directive an approval writes: the check-in turns it into a task brief (Norn installs nothing itself) */
 export const approvalText = c => `Enforce (advisory ${c.id}, the repeat detector): ${c.why} Draft: ${String(c.fix?.patch || '').slice(0, 1500)} - write a task brief that adds it, red-first, and retire the prose line once it lands.`;

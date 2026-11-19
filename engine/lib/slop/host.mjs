@@ -72,5 +72,5 @@ export function hostWrite(state, payload) {
   throw new Error(`hostWrite: unknown payload type ${payload.type}`);
 }
 
-/** one line per finding for a worker / a resume prompt */
-export const findingLine = f => `${f.rule} ${f.file}${f.line ? ':' + f.line : ''} ${f.msg} [${f.fp}]`;
+/** one line per finding for a worker / a resume prompt; the path in backticks (it is code: the dashboard's prose shows it as a path) */
+export const findingLine = f => `${f.rule} \`${f.file}${f.line ? ':' + f.line : ''}\` ${f.msg} [${f.fp}]`;

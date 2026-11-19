@@ -115,7 +115,7 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   const next = await waitFor(() => loadState(state).items[id]?.resume?.next, { what: 'the slop resume' });
   await waitFor(() => settled(loadState(state).items[next]) && fs.existsSync(path.join(state, 'slop', 'holds.json')) && slopHolds(state)['feat/x']?.run === next, { what: 'the resumed run ends' });
   assert.equal(loadState(state).items[id].resume.slop, 1);
-  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 a\.txt\.orig /, 'the resume carries the list');
+  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 `a\.txt\.orig` /, 'the resume carries the list (the path in backticks)');
   assert.equal(loadState(state).items[next].resume, undefined, 'a second BLOCK is not resumed again: the check-in decides');
   assert.deepEqual(openBlocks(state, 'feat/x').map(b => b.rule), ['K15']);
   const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha'];

@@ -47,6 +47,7 @@ export const POLICY_DEFAULTS={
   context:{implementer:{no_new_step_k:90,handoff_k:110,hard_max_k:150},planner:{no_new_step_k:90,handoff_k:150,hard_max_k:150},
     runner:{no_new_step_k:90,handoff_k:110,hard_max_k:150},controller:{no_new_step_k:90,handoff_k:110,hard_max_k:150},
     checkin:{no_new_step_k:90,handoff_k:110,hard_max_k:150}},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
+  sizing:{thrash_startup_pct:60,loose_pct:40},   // WORK-SIZING S1 (sizing.mjs verdict): a first edit at this share of the no-new-step mark in hand-off sessions = thrashing; every peak under loose_pct of the hand-off mark = loose
   iteration:{round_estimate_default:2,escalation_multiplier:2,escalation_action:'raise effort',escalation_effort:'xhigh',wall_time_multiplier:2},   // escalation_effort: META-TEND P2 (owner Q3) - the effort 'raise effort' goes to
   cadence:{checkin_interval_min:15,trigger_on_exit:true},
   // META-CHECKIN-DIET R1 (checkins.mjs): routine ends handled by code, the end debounce, per-lane check-in levels, the staged-merge run
@@ -136,6 +137,8 @@ export const SETTINGS=[
     S('context',`policy.context.${a}.no_new_step_k`,`${a}: no new step past (k tokens)`,int(30,400),'Past this context the agent starts no new step.',String(POLICY_DEFAULTS.context[a].no_new_step_k),'Higher = fewer hand-offs but costlier, less reliable late turns.',[`the ${a} agent file (policy:context.${a})`]),
     S('context',`policy.context.${a}.handoff_k`,`${a}: hand-off at (k tokens)`,int(30,400),'At this context the agent stops at a clean point and hands off (norn done --outcome handoff).',String(POLICY_DEFAULTS.context[a].handoff_k),'Higher = each turn re-reads a bigger context (cost grows per turn).',[`the ${a} agent file (policy:context.${a})`]),
     S('context',`policy.context.${a}.hard_max_k`,`${a}: hard max (k tokens)`,int(30,400),'Never run past this context.','150','Near the window limit quality drops and compaction may kick in.',[`the ${a} agent file (policy:context.${a})`])]),
+  S('context','policy.sizing.thrash_startup_pct','Sizing: thrashing at first edit (% of no-new-step mark)',int(30,95),'The verdict of norn size on a lane stage: sessions that handed off after using this share of the no-new-step mark before their first edit are thrashing; a stage whose every peak stayed under the second share of the hand-off mark could have a lower mark.',String(POLICY_DEFAULTS.sizing.thrash_startup_pct),'Lower = a stage is called thrashing sooner; the verdict changes no mark by itself.',['norn size']),
+  S('context','policy.sizing.loose_pct','Sizing: could be lower, every peak under (% of hand-off mark)',int(5,90),'A lane stage whose every session peaked under this share of the hand-off mark reads "could be lower" (norn size).',String(POLICY_DEFAULTS.sizing.loose_pct),'Display only: unused context costs nothing; a loose mark only catches a runaway late.',['norn size']),
   S('iteration','policy.iteration.round_estimate_default','Default round estimate per stage',int(1,10),'Rounds a stage is expected to take when its plan gives none.','2','Higher hides grinding stages longer.',[CHECKIN]),
   S('iteration','policy.iteration.escalation_multiplier','Escalate past (x round estimate)',num(1,5),'A stage past this multiple of its round estimate is escalated (rule switch D).','2','Higher = more rounds burned before escalation.',['DECISION-RULES.md (policy:iteration)',CHECKIN]),
   S('iteration','policy.iteration.escalation_action','Escalation does',en(ESCALATE),'What escalation does first.','raise effort','A stronger model / higher effort costs more per round; re-scope costs planning time.',['DECISION-RULES.md (policy:iteration)']),
@@ -212,7 +215,7 @@ export const SECTIONS=[
     {id:'fallbacks',label:'Fallbacks',help:'Who takes the work when an executor is unavailable or over its guard.'}]},
   {id:'agents',label:'Agents & context',help:'Context hand-off limits per agent role, rounds and escalation.',subs:[
     {id:'context',label:'Context limits (k tokens)',help:'No new step past / hand-off at / hard max - generated into each agent file.',inline:true,
-      subs:Object.entries(ROLES).map(([id,label])=>({id,label}))},
+      subs:[...Object.entries(ROLES).map(([id,label])=>({id,label})),{id:'sizing',label:'Sizing verdict'}]},
     {id:'rounds',label:'Rounds & escalation',help:'When a stage counts as grinding and what happens then.'}]},
   {id:'checkins',label:'Check-ins & scheduling',help:'When the scheduled check-in runs and on which model.',subs:[
     {id:'schedule',label:'Schedule',help:'Task Scheduler repetition and exit triggers.'},
@@ -247,6 +250,7 @@ export const SECTION_RULES=[
   [/^policy\.critical_(lanes|effort)$/,'executors/critical'],
   [/^policy\.fallbacks\./,'executors/fallbacks'],
   [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
+  [/^policy.sizing./,'agents/context/sizing'],
   [/^policy\.iteration\./,'agents/rounds'],
   [/^policy\.stuck\./,'agents/rounds'],
   [/^policy\.mail\./,'agents/rounds'],

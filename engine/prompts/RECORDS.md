@@ -58,7 +58,7 @@ Not security (any local process can write the file - same as today); it is consi
 
 ## 3.5 CLI (the agents' only interface; `norn` = `node <norn install>/engine/bin/norn.mjs`, on PATH after setup)
 ```
-norn rec add question --lane gen --title "..." --body-file f.md --option "a|...|cost" --option "b|..." --recommend "a|why" --class ii --blocks gen
+norn rec add question --lane gen --title "..." --body-file f.md --option "a|...|cost" --option "b|..." --recommend "a|why" --class ii --blocks gen   (the body: a lead sentence, then bullets; ids bare, backticks only for code - CHECKIN.md step 2)
 norn rec add decision --lane relief --question "..." --choice "..." --why "..." --cost "..." --source "Tarboton 1997" [--answers Q-3] [--notify]
 norn rec add decision ... --answers Q-n --owner-words "<owner words>"   (an owner pick: decision + answer + apply, one call; exit 3 = an owner
   pick on a lane with an open Q named neither by --answers nor --not-an-answer)

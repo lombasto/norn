@@ -31,6 +31,13 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`. If it is owner-only, record
   `META rec add question --lane L --title T --body-file F --option "a|..|cost" --recommend "<key>|<why>" --class <i-v> --blocks L`
   (the lane is parked by it). Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
+  The body (F) is short markdown the Inbox renders: one lead sentence, then one bullet per fact. Write ids bare (RUN-146, Q-4, a
+  lane name: the Inbox links them); backticks only for code (a command, a path); a number with its unit; a change as "a -> b". Example:
+
+      RUN-146 measured four slow paths; it queued none.
+      - worker-gil: UI stalls 2.4 s -> ~0.5 s on the real files
+      - long-run-ui: stalls 0.6-1.9 s per open, synthetic sizes only
+      Briefs: `notes/perf-audit/`
 - handoff: the next stage is the hand-off's "exact next step" (end.handoff; resume brief = the same brief + "resume from <end.handoff>").
   The supervisor auto-resumes a clean HANDOFF itself up to the project's auto_resume_max; a HANDOFF listed here was refused or
   reached the max (its run history has the `resume` verdict).

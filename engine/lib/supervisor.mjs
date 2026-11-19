@@ -30,6 +30,7 @@ import { hostWrite } from './slop/host.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
+import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
@@ -211,6 +212,10 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // RM-44 D1: every lane run end that leaves commits is checked (stopped and hand-off too) - slop before the Done check
   const slopOpen = slopEnd();
+  // WORK-SIZING S1: the session's size on its end record, so the run stays judged after its transcript is gone (sizing.mjs)
+  if (data.transcript && cmd?.parse === 'claude') {
+    try { const s = sizeOfRun(data.transcript, { notesDir: spec.notes ? path.dirname(spec.notes) : null }); if (s) data.ctx = s; } catch (e) { logLine(`session size: ${e.message}`); }
+  }
   // META-DOD 1 (DIR-68): a DONE counts only on Norn's own green Done check (dod.mjs) - the agent's words are never the evidence.
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {

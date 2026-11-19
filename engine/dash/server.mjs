@@ -28,7 +28,7 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
-import { overlapFile, overlapOn } from '../lib/overlap.mjs';
+import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { loadMail } from '../lib/mail.mjs';
@@ -64,9 +64,10 @@ import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
 import { isNeed, needsYou } from './terms.mjs';
-import { docsList as docsListOf } from './docparts.mjs';
+import { docsList as docsListOf, docKey } from './docparts.mjs';
+import { pathsIn } from './prose.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
-import { openCardsAsync } from '../lib/rules.mjs';
+import { enforceCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
@@ -382,7 +383,7 @@ export function createDashboard(o) {
     for (const x of proposalsOf(s.items, loadRoadmap(p.state))) out.push({ type: 'proposal', id: x.run, project: p.name, lane: x.lane, item: x.item, title: `Decide: ${x.lane} plan`,
       summary: x.summary, plans: x.plans, stages: x.stages, open: x.open, created: x.ended });
     // META-TEND P3: the repeat detector's approval cards (one per cluster, ranked): approve = a directive the check-in turns into a brief
-    for (const c of await openCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
+    for (const c of await enforceCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, asked: c.asked, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
@@ -396,6 +397,22 @@ export function createDashboard(o) {
     for (const r of runsOf(s).filter(r => ['exited', 'lost', 'killed'].includes(r.state) && !r.review && r.data.role !== 'helper' && (r.state !== 'exited' || r.end?.outcome === 'stopped')))
       out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
+  }
+  // RM-30 S1: what the prose renderer (prose.mjs) needs per project: its lane names, its GitHub repo (PR / commit links; the origin is
+  // read once per root) and the Docs key of each path the Inbox texts name that the Docs reader can show (a scan row or a project doc)
+  const repoOf = new Map();
+  const repoSlug = p => { if (!repoOf.has(p.root)) repoOf.set(p.root, new Promise(r => execFile('git', ['-C', p.root || '.', 'remote', 'get-url', 'origin'], { timeout: 5000, windowsHide: true }, (e, out) => r(e ? null : githubRepo(String(out).trim()))))); return repoOf.get(p.root); };
+  async function proseOf(p, items) {
+    const lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane').map(i => i.id.slice(2));
+    const texts = items.flatMap(i => [i.body, i.title, i.why, i.answer?.text, i.recommend?.why, i.file && `\`${i.file}\``, i.card?.why, ...(i.options || []).flatMap(o => [o.text ?? o.t, o.cost ?? o.c])]).filter(x => typeof x === 'string');
+    const want = [...new Set(texts.flatMap(pathsIn))], docs = {};
+    if (want.length) {
+      const rows = [...(insCache(p).v?.rows || []).filter(r => r.exists).map(r => ({ key: r.id, path: r.path })), ...docsList(p).filter(d => d.exists).map(d => ({ key: docKey(d.i), path: d.path }))];
+      const byPath = new Map(rows.map(r => [fwdLow(r.path), r.key])), byName = new Map();
+      for (const r of rows) { const b = path.posix.basename(fwdLow(r.path)); byName.set(b, byName.has(b) ? null : r.key); }   // a name two files share opens neither
+      for (const w of want) { const k = /[\\/]/.test(w) ? byPath.get(fwdLow(path.resolve(p.root || '.', w))) : byName.get(w.toLowerCase()); if (k) docs[w] = k; }
+    }
+    return { lanes, repo: await repoSlug(p), docs };
   }
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
@@ -1358,10 +1375,17 @@ data: ${JSON.stringify(l)}
       try { const r = await newLaneAsync(p, { name: data.lane === undefined ? FIRST_LANE : String(data.lane), task: text, by: 'dashboard' }); await viewsA(p); return { ok: true, ...r }; }
       catch (e) { if (e instanceof LaneError) throw fail(e.code === 1 ? 500 : 400, e.message); if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/directive') {   // gap #5: a restatement of an active directive = 409 unless new: true (the page asks, then sends new: true)
-      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text);
-      if (dup && data.new !== true) throw fail(409, dupMessage(dup, 'new: true'));
-      return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(dup ? { distinct_from: [dup.id] } : {}) } });
+    // gap #5: a restatement of an active directive = 409 carrying the match (dup: the page says it in plain words and offers Open DIR-n /
+    // Replace it with this wording); new: true creates it anyway, replace: DIR-n creates it and supersedes DIR-n by it (both recorded).
+    // card: the repeat detector's card this approves (rules.mjs askedBy closes the card on it)
+    if (route === '/api/directive') {
+      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text), card = /^A-[0-9a-f]{10}$/.test(data.card ?? '') ? data.card : null;
+      const replace = data.replace == null ? null : String(data.replace), old = replace ? st(p).items[replace] : null;
+      if (replace && !(old?.kind === 'directive' && old.state === 'active')) throw fail(400, `${replace} is not an active directive`);
+      if (dup && data.new !== true && !replace) throw Object.assign(fail(409, dupMessage(dup, 'new: true')), { body: { dup: { id: dup.id, line: dup.line, why: dup.why } } });
+      const r = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(card ? { card } : {}), ...(dup && dup.id !== replace ? { distinct_from: [dup.id] } : {}) } });
+      if (replace) await rec(p, { kind: 'directive', ev: 'supersede', id: replace, by: 'dashboard', data: { by: r.id, why: 'restated: replaced by this wording from the dashboard' } });
+      return { ...r, ...(replace ? { superseded: replace } : {}) };
     }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
@@ -1569,7 +1593,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1581,7 +1605,9 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
-        if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
+        if (route === '/api/inbox') { const ps = pick(url, { all: true }), per = await Promise.all(ps.map(inbox)), items = per.flat();
+          const prose = Object.fromEntries(await Promise.all(ps.map(async (p, i) => [p.name, await proseOf(p, per[i])])));
+          return send(200, { items, needs_you: needsYou(items), prose }); }
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
           const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)) }); }
@@ -1699,7 +1725,7 @@ data: ${JSON.stringify(l)}
         return r;
       });
       send(200, result);
-    } catch (e) { if (!res.headersSent) send(e.status ?? 500, { error: e.message }); else res.end(); }
+    } catch (e) { if (!res.headersSent) send(e.status ?? 500, { error: e.message, ...(e.body || {}) }); else res.end(); }
   };
   const server = http.createServer(handler);
   server.requestTimeout = 300000; server.headersTimeout = 15000;

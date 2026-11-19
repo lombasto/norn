@@ -146,9 +146,30 @@ tr:last-child td{border-bottom:0}
 .big{font-size:26px;font-weight:650;line-height:1.1}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center}
 .sg{grid-column:1;margin-top:10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);font-weight:600}
-.opts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.opt{border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--soft);font-size:13px;max-width:440px}
+/* RM-30 S1: a question's options = small cards (key, text, cost; the recommended one marked, with its why) */
+.opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:8px;margin-top:8px}
+.opt{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--soft);font-size:13px;min-width:0}
 .opt.rec{border-color:var(--accent);background:var(--accent-bg)}
+.ohead{display:flex;gap:6px;align-items:center;margin-bottom:4px}.okey{min-width:22px;text-align:center;border-radius:5px;background:var(--panel);border:1px solid var(--line);font:700 12px ui-monospace,Consolas,monospace;padding:0 5px}
+.ocost,.owhy{display:flex;gap:6px;align-items:baseline;margin-top:5px;font-size:12.5px}.ocost .prose,.owhy .prose{flex:1}
+.olab{flex:none;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+.qbody{margin:8px 0}.enf-why{margin:4px 0}.enf-asked{margin-top:4px}
+/* RM-30 S1: Norn prose (prose.mjs): chips, path chips, values; long tokens wrap, so a 390 px page never scrolls sideways */
+.prose{line-height:1.5;overflow-wrap:anywhere;min-width:0}.prose p,.prose ul,.prose ol,.prose table,.prose pre{margin:0 0 .5em}.prose>:last-child{margin-bottom:0}
+.prose ul,.prose ol{padding-left:20px}.prose li+li{margin-top:2px}.prose .ph{margin:.4em 0 .2em}.prose a:not(.rid){color:var(--run)}
+.prose code{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:var(--soft);padding:0 4px;border-radius:4px}
+.prose pre.code{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow-x:auto;max-width:100%}.prose pre.code code{background:none;padding:0}
+.prose table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%}.prose th,.prose td{border:1px solid var(--line);padding:3px 8px;font-size:13px}
+.ppath{display:inline;white-space:normal}.ppath .pp{font:12.5px ui-monospace,Consolas,monospace;background:var(--soft);padding:0 5px;border-radius:4px;overflow-wrap:anywhere}
+.ppath button.pp{border:1px solid var(--line);color:var(--run);cursor:pointer;min-height:0;line-height:inherit;text-align:left}
+.pcopy{border:0;background:none;padding:0 3px;font-size:12px;color:var(--mute);cursor:pointer;min-height:0;line-height:1}
+.pv{font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}.pba{display:inline-block;white-space:nowrap;padding:0 5px;border-radius:5px;background:var(--soft)}
+.parr{color:var(--mute);font-weight:700;padding:0 4px}.pop{font-weight:650;padding:0 1px}.pmath{font-style:italic}
+.pmore{display:none}
+@media (max-width:700px){.prose.pclamp:not(.open){max-height:4.5em;overflow:hidden;-webkit-mask-image:linear-gradient(var(--ink) 55%,transparent);mask-image:linear-gradient(var(--ink) 55%,transparent)}
+ .pmore{display:inline-block;margin:2px 0;padding:0 8px;font-size:12px;line-height:18px}}
+#dupask{padding:10px 20px;background:var(--warn-bg);border-bottom:1px solid var(--line);font-size:13px}#dupask[hidden]{display:none}
+.dupcmp{display:grid;gap:6px;margin:6px 0}.dupcmp>div{display:flex;gap:6px;align-items:baseline;min-width:0}.dupbtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .q{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
 .q.openq{box-shadow:inset 3px 0 0 var(--accent)}
 .proposal{overflow-wrap:anywhere}.phead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.psum{margin:8px 0;padding-left:22px;font-size:13px}.psum li{margin:2px 0}.ppath{word-break:break-all}
@@ -251,7 +272,7 @@ button.reset{padding:2px 8px}
 .hljs-keyword,.hljs-selector-tag,.hljs-doctag{color:var(--codex);font-weight:600}.hljs-string,.hljs-regexp,.hljs-addition,.hljs-symbol{color:var(--ok)}
 .hljs-number,.hljs-literal,.hljs-built_in,.hljs-type{color:var(--warn)}.hljs-comment,.hljs-quote,.hljs-meta{color:var(--mute);font-style:italic}
 .hljs-title,.hljs-section,.hljs-function .hljs-title{color:var(--run)}.hljs-attr,.hljs-variable,.hljs-attribute,.hljs-name,.hljs-property{color:var(--run)}.hljs-deletion{color:var(--bad)}
-a.rid{display:inline-block;padding:0 6px;border-radius:9px;font:600 12px ui-monospace,Consolas,monospace;text-decoration:none;background:var(--soft);color:var(--ink);border:1px solid var(--line)}
+a.rid,span.rid{display:inline-block;padding:0 6px;border-radius:9px;font:600 12px ui-monospace,Consolas,monospace;text-decoration:none;background:var(--soft);color:var(--ink);border:1px solid var(--line)}
 a.rid.r-dec{background:var(--ok-bg);color:var(--ok)}a.rid.r-dir{background:var(--codex-bg);color:var(--codex)}a.rid.r-run{background:var(--run-bg);color:var(--run)}a.rid.r-q{background:var(--warn-bg);color:var(--warn)}
 a.rid.r-dlv{background:var(--warn-bg);color:var(--warn)}
 /* Ledger (LEDGER-UX R1): one row per entry in the Records look; long text wraps, no horizontal scroll at phone width */
@@ -445,6 +466,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 </header>
 <nav id="tabs" aria-label="Dashboard"></nav>
 <div id="error" role="alert"></div>
+<div id="dupask" hidden></div>
 <main id="main"></main>
 <div id="bbar" class="bbar" role="navigation" aria-label="Sections"></div>
 <aside id="feed" class="drawer" hidden aria-label="Live feed">
@@ -471,7 +493,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, renderActivity, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '/activity.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal } from '/ui.mjs';
 import { hoChip } from '/widgets.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
 const laneShowQs = v => { const k = String(v ?? '').split(',').filter(x => LANE_SHOW.some(c => c[0] === x)); return new Set(v == null ? LANE_SHOW_DEFAULT : k); };
@@ -488,7 +510,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -500,7 +522,7 @@ const MAPEV = createEvents(), reducedQ = matchMedia('(prefers-reduced-motion: re
 let NM = null;
 const get = async p => { const r = await fetch(p); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
 const post = async (p, body) => { const r = await fetch(p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': TOKEN }, body: JSON.stringify(body) });
-  const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
+  const d = await r.json(); if (!r.ok) throw Object.assign(new Error(d.error || r.status), { status: r.status, body: d }); return d; };   // body: a refusal's data (a 409's dup)
 // META-UX-BUILD S6: the sheet's ticks live in S.fixall (a re-render keeps them); the count = ticked + picked findings
 const fxKeys = () => { if (S.fixall) S.fixall.keys = new Set([...document.querySelectorAll('#fixall input[data-fx-key]:checked')].map(x => x.dataset.fxKey)); };
 function fxCount() {
@@ -646,7 +668,7 @@ async function render(force = false, why = []) {
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) box.value = S.find; S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
-    step('render:finish'); fxPaint(); recFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
+    step('render:finish'); fxPaint(); recFit(); proseFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
     document.body.dataset.ready = S.tab;   // the ready signal: this tab's data is fetched and painted (tests wait on it, not on a clock)
   } catch (e) { err('Refresh failed: ' + e.message); document.body.dataset.ready = 'error'; }
 }
@@ -758,6 +780,13 @@ document.addEventListener('input', e => { const el = e.target.closest?.('[data-r
 // Records text (RECORDS-TEXT R1): an opened cell stays open over re-renders; a clamped cell that fits (or hides < ~2 lines,
 // less than the button costs) loses its "more" button
 function recOpen(t, b, open) { t.classList.toggle('open', open); b.setAttribute('aria-expanded', String(open)); b.textContent = open ? 'less' : 'more'; }
+// RM-30 S1 (prose.mjs): a long text is a 3-line preview + "more" on the phone; an opened one stays open over re-renders
+function proseFit() { for (const t of document.querySelectorAll('.prose.pclamp')) if (S.proseOpen.has(t.dataset.key)) { t.classList.add('open'); const b = t.nextElementSibling; if (b) { b.textContent = 'less'; b.setAttribute('aria-expanded', 'true'); } } }
+// RM-30 S1: a directive refused as a restatement (409 { dup }) = the plain-words notice under the bar (ui.mjs dupRefusal); its buttons
+// open the match, replace it with this wording (supersede, recorded) or keep both (new: true)
+function paintDup() { const el = $('#dupask'); el.innerHTML = S.dupAsk ? sanitize(dupRefusal(S.dupAsk)) : ''; el.hidden = !S.dupAsk; if (S.dupAsk) el.scrollIntoView({ block: 'nearest' }); }
+const dirSend = (x, extra = {}) => act(async () => { try { await post('/api/directive', { project: x.project, text: x.text, ...(x.card ? { card: x.card } : {}), ...extra }); S.dupAsk = null; }
+  catch (e) { if (!e.body?.dup) throw e; S.dupAsk = { ...x, dup: e.body.dup }; } finally { paintDup(); } });
 function recFit() {
   for (const t of document.querySelectorAll('.rtext.rclamp')) { const b = t.nextElementSibling;
     if (S.recOpen.has(t.dataset.key)) recOpen(t, b, true); else if (t.scrollHeight <= t.clientHeight + 40) { t.classList.remove('rclamp'); b?.remove(); } }
@@ -1087,13 +1116,16 @@ document.addEventListener('click', e => {
   if (d.act === 'revoke' && confirm(`Revoke ${d.id}?`)) act(() => post('/api/directive/revoke', { project: p, id: d.id }));
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
   if (d.act === 'first-task') { const t = $('#first-task-text').value.trim(); if (t) act(() => post('/api/first-task', { project: d.project || p, text: t })); }
-  if (d.act === 'adv-approve' && confirm('Approve: a directive asks the check-in for a task brief that adds this enforcement. Norn installs nothing itself.')) act(() => post('/api/directive', { project: d.project || p, text: d.text }));   // META-TEND P3
-  if (d.act === 'directive') {   // gap #5: a restatement of an active directive is refused (409); the owner may create it anyway
-    const t = prompt('New directive (binds the check-in):');
-    if (t) act(async () => { try { await post('/api/directive', { project: p, text: t }); } catch (e) {
-      if (!/looks like a duplicate of DIR-/.test(e.message) || !confirm(`${e.message.replace(/ \(a directive has no edit.*$/, '')}\n\nCreate it anyway?`)) throw e;
-      await post('/api/directive', { project: p, text: t, new: true }); } });
-  }
+  if (d.act === 'adv-approve') { dirSend({ project: d.project || p, text: d.text, card: d.id }); return; }   // META-TEND P3; RM-30 S1: one tap, the directive is the record
+  if (d.act === 'directive') { const t = prompt('New directive (binds the check-in):'); if (t) dirSend({ project: p, text: t }); return; }   // gap #5: a restatement = the dup notice
+  if (d.act === 'dup-close') { S.dupAsk = null; paintDup(); return; }
+  if (d.act === 'dup-replace' && S.dupAsk) { dirSend(S.dupAsk, { replace: d.id }); return; }
+  if (d.act === 'dup-new' && S.dupAsk) { dirSend(S.dupAsk, { new: true }); return; }
+  if (d.act === 'dup-open') { S.dupAsk = null; paintDup(); S.tab = 'records'; S.find = d.id; S.jump = 'rec-' + d.id; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=records`); render(); return; }
+  if (d.act === 'open-doc') { if (d.project && S.project !== d.project) S.project = d.project; S.tab = 'docs'; S.sub = null; S.doc = d.doc; S.docLine = null; history.pushState(null, '', tabUrl()); render(); return; }   // RM-30 S1: a path chip
+  if (d.act === 'copy-path') { navigator.clipboard?.writeText(d.copy).then(() => { b.textContent = '✓'; setTimeout(() => { b.textContent = '⧉'; }, 1200); }, () => err('Copy failed: the browser refused the clipboard')); return; }
+  if (d.act === 'prose-more') { const t = b.previousElementSibling, open = !t.classList.contains('open'); t.classList.toggle('open', open); b.setAttribute('aria-expanded', String(open)); b.textContent = open ? 'less' : 'more';
+    if (t.dataset.key) { if (open) S.proseOpen.add(t.dataset.key); else S.proseOpen.delete(t.dataset.key); } return; }
   if (d.act === 'settings-review') {   // META-PROFILE-BUG R1: each change in plain words + a flag on a recorded ruling / a retired executor
     const changes = {};
     for (const el of document.querySelectorAll('[data-key]:not([disabled])')) if (changed(el)) changes[el.dataset.key] = valueOf(el);

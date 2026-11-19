@@ -75,6 +75,7 @@ import { listClaims, allowPair, releaseWork } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
+import { stageSizes, verdict, sizingThresholds } from '../lib/sizing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
@@ -1341,6 +1342,7 @@ Plan and land work:
                                    (suggest: ranked tightening candidates; confirm <file>#<anchor>: "still true"; apply <S-id>: the owner's tap)
   norn usage                        where the week's tokens went: per lane + stage, top 5 spenders (--sources: what fills the contexts)
   norn guard                        the usage guard: live runs vs their peers, open alarms (watch / rule / sources)
+  norn size                         the sessions of a lane stage: floor, first edit, peak against the marks they ran under, a verdict
   norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
   norn deliverables                follow finished work to main and to an install
   norn mergeq                      the merge queue of finished branches
@@ -1380,7 +1382,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1455,6 +1457,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'scope') return scopeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'cv') return cvCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'size') return sizeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
   if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
@@ -2544,6 +2547,45 @@ function guardCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err(GUARD_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// ---------- WORK-SIZING S1 (RM-25): norn size - the sessions of a lane stage, their size against the marks they ran under, a verdict ----------
+const SIZE_USAGE = 'usage: norn size [RUN-n | --lane L [--stage S]] [--json] [--project project.json | --state D] [--machine F]    (read-only: RUN-n = the stage of that run; '
+  + 'no --stage = the lane\'s last stage)';
+function sizeCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--json') { flags.json = true; continue; }
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      if (!['--lane', '--stage', '--project', '--state', '--machine'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    if (pos.length > 1 || (pos.length && flags.lane) || (!pos.length && !flags.lane)) throw new RunError('name one run (RUN-n) or one --lane');
+    if (pos.length && !/^RUN-\d+$/.test(pos[0])) throw new RunError(`unexpected ${pos[0]}`);
+    const { project, state } = where(flags, env), m = machineOf(flags, env);
+    let at = { lane: flags.lane, stage: flags.stage };
+    if (pos.length) {
+      const r = loadState(state).items[pos[0]];
+      if (!r || r.kind !== 'run') throw new RunError(`no run ${pos[0]}`);
+      at = { lane: r.data.lane, stage: r.data.stage ?? null };
+    }
+    const s = stageSizes(state, at, { projectsDir: projectsDirOf(m.machine, env) }), v = verdict(s.sessions, sizingThresholds(project?.policy));
+    if (flags.json) { out(JSON.stringify({ ...s, verdict: v }, null, 1)); return 0; }
+    const k = n => (Number.isFinite(n) ? `${Math.round(n / 1000)}k` : '-');
+    out(`${s.lane}${s.stage ? ' / ' + s.stage : ''}: ${s.sessions.length} session(s)`);
+    for (const x of s.sessions) {
+      const z = x.size || {}, mk = x.marks ? `${x.marks.no_new_step_k}/${x.marks.handoff_k}/${x.marks.hard_max_k}k` : 'not recorded';
+      out(`- ${x.run} ${x.outcome || '-'}: floor ${k(z.floor)}, first edit ${k(z.first_edit)}, peak ${k(z.peak)}; marks ${mk}; orders ${x.orders.join(', ') || 'none'}; commits ${z.commits ?? '-'}`);
+    }
+    out(`verdict: ${v.words}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err(SIZE_USAGE); return 2; }
     throw e;
   }
 }
