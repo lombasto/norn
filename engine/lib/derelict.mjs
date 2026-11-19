@@ -106,11 +106,12 @@ export function sweepDerelicts(procs, { kill, ...o } = {}) {
 /**
  * The tick's sweep: at most once per SWEEP_MS machine-wide (a stamp in <state root>/locks), list the processes, kill the derelicts and
  * record each (<state>/derelicts.jsonl). Returns its log lines. o: { list, kill, live (pids), now, tmpRoots, everyMs, env }. With no
- * list given, a process inside a test (META_TEST_OWNER) lists nothing: a test never sweeps the machine's real processes. live
- * (default): the live runs of this state and every state beside it.
+ * list given, a tick inside a test (META_TEST_OWNER) or on a state in the temp dir (a test fixture whose spawn dropped the env) lists
+ * nothing: a test never sweeps the machine's real processes. live (default): the live runs of this state and every state beside it.
  */
 export function tickDerelicts(state, { list, kill = killTree, live, now = Date.now(), tmpRoots, everyMs = SWEEP_MS, env = process.env } = {}) {
-  if (!list && testOwner(env)) return [];
+  const rel = path.relative(os.tmpdir(), path.resolve(state)), inTmp = !rel.startsWith('..') && !path.isAbsolute(rel);
+  if (!list && (testOwner(env) || inTmp)) return [];
   list ||= listProcs;
   const stamp = path.join(path.dirname(path.resolve(state)), 'locks', 'derelict-sweep.stamp');
   try { if (now - fs.statSync(stamp).mtimeMs < everyMs) return []; } catch { /* first sweep */ }

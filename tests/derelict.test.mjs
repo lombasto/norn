@@ -111,7 +111,7 @@ test('derelictFacts + sweepDerelicts on the 11-19 evidence: the orphaned supervi
   assert.deepEqual([bad[0].killed, bad[0].error], [false, 'access denied']);
 });
 
-test('tickDerelicts: once per window machine-wide (a stamp in <state root>/locks), each kill in <state>/derelicts.jsonl + a line; inside a test with no listing given it lists nothing', () => {
+test('tickDerelicts: once per window machine-wide (a stamp in <state root>/locks), each kill in <state>/derelicts.jsonl + a line; inside a test or on a temp-dir state, with no listing given, it lists nothing', () => {
   const state = mkTmp('meta-drl-');
   const killed = [];
   const o = { list: () => EVIDENCE, kill: pid => killed.push(pid), live: new Set([701]), now: NOW, tmpRoots: [TMP] };
@@ -126,6 +126,7 @@ test('tickDerelicts: once per window machine-wide (a stamp in <state root>/locks
   assert.ok(fs.existsSync(path.join(path.dirname(state), 'locks', 'derelict-sweep.stamp')));
   assert.deepEqual(tickDerelicts(state, { ...o, now: NOW + 60e3 }), [], 'the next tick in the window does not sweep');
   assert.deepEqual(tickDerelicts(mkTmp('meta-drl2-'), { kill: () => assert.fail('killed a real process') }), [], 'inside a test: no real listing');
+  assert.deepEqual(tickDerelicts(mkTmp('meta-drl3-'), { env: {}, kill: () => assert.fail('killed a real process') }), [], 'a state in the temp dir (a fixture whose spawn dropped META_*): no real listing');
 });
 
 test('tick: the dry tick sweeps with the injected listing and logs each kill in tick.log', async () => {
