@@ -154,3 +154,23 @@ test('the Guard lists each unrated model finding with its thumbs (shadow: low, n
   assert.match(r.why, /^M5: /);
   assert.equal(r.quote, 'line 0');
 });
+
+test('the dashboard: a V- row with its thumb; POST /api/slop/rate records it, the row leaves and the rule shows its precision', async () => {
+  const { fixture } = await import('./helpers/dash-fixture.mjs');
+  const f = await fixture();
+  try {
+    hostWrite(f.pa.state, { type: 'check', branch: 'feat/v', lane: 'v', run: 'RUN-1', base: 'b'.repeat(40), head: 'h'.repeat(40), hash: 'x', blocks: [], findings: [vf('M1', 0)] });
+    const fp = vf('M1', 0).fp, rules = async () => (await f.get('/api/guard?project=kestrel&part=rules')).data.rules;
+    const voiceRows = async () => (await f.get('/api/guard?project=kestrel&part=fix')).data.fix.batches.flatMap(x => x.rows).filter(r => r.rate);
+    const before = await rules();
+    assert.deepEqual((await voiceRows()).map(r => [r.id, r.rate.fp]), [['V-' + fp, fp]]);
+    assert.equal(before.precision.find(p => p.rule === 'M1').rated, 0);
+    assert.equal((await f.post('/api/slop/rate', { project: 'kestrel', fp: 'f'.repeat(16), up: true })).status, 400, 'no model finding: refused');
+    assert.equal((await f.post('/api/slop/rate', { project: 'kestrel', fp, up: 'yes' })).status, 400);
+    const r = await f.post('/api/slop/rate', { project: 'kestrel', fp, up: true });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const after = await rules();
+    assert.equal((await voiceRows()).length, 0, 'a rated finding leaves the Guard');
+    assert.deepEqual(['rated', 'up', 'precision'].map(k => after.precision.find(p => p.rule === 'M1')[k]), [1, 1, 1]);
+  } finally { await f.done(); }
+});
