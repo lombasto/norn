@@ -6,13 +6,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, recordsFile, fold, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
+import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
 
 export const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
-export const loadMail = state => fold(readEvents(recordsFile(state, 'mail'))).items;
+// RM-46 S1d (SPEC 4.6): in a synced dir the merged mail - a home delivers what is addressed to it, whichever home sent it
+export const loadMail = state => loadShared(state, 'mail').items;
 const loadRuns = state => fold(readEvents(recordsFile(state, 'run'))).items;
 const byId = (a, b) => num(a.id) - num(b.id);
 
