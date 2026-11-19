@@ -29,7 +29,8 @@ const CHUNK = 200;             // records per rec event
 export function createStreams({ pollMs = 1000, pulseMs = 15000, deriveMs = 60000, lingerMs = 10000, max = 16 } = {}) {
   const hubs = new Map();
   let clients = 0;
-  const write = (res, event, data, id) => { try { res.write(`${id ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* gone */ } };
+  // sent: this server's clock (ms, fractional) - the page orders it against an answer's X-Served (a render that read after it is current)
+  const write = (res, event, data, id) => { try { res.write(`${id ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify({ ...data, sent: performance.timeOrigin + performance.now() })}\n\n`); } catch { /* gone */ } };
   // META-DASH-ASYNC R1: every poll's stat / read / flag / sig is on fs.promises - a stalled syscall delays this hub's tick only
   const size = async f => { try { return (await fs.promises.stat(f)).size; } catch { return 0; } };
   const mtime = async d => { try { return (await fs.promises.stat(d)).mtimeMs; } catch { return 0; } };

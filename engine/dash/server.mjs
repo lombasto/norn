@@ -1454,6 +1454,8 @@ data: ${JSON.stringify(l)}
     const send = (status, data, type = 'application/json; charset=utf-8') => {
       res.setHeader('Server-Timing', `app;dur=${(performance.now() - tr.t0).toFixed(1)}${tr.prime === null ? '' : `, prime;dur=${tr.prime.toFixed(1)}`}`);
       res.writeHead(status, { 'content-type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); };
+    // X-Served: when this request was taken (the stream's sent clock): a page render that read after an event needs no re-render for it
+    res.setHeader('X-Served', String(performance.timeOrigin + tr.t0));
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     try {

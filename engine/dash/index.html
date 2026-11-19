@@ -484,7 +484,8 @@ S.rm.view = S.rm.view || (() => { try { return localStorage.getItem('meta-rmview
 // changes; its events come from the state stream (MAPEV), fire time = record ts. Gone when the tab or the look changes.
 const MAPEV = createEvents(), reducedQ = matchMedia('(prefers-reduced-motion: reduce)'), reducedNow = () => qs.get('reduced') === '1' || reducedQ.matches;
 let NM = null;
-const get = async p => { const r = await fetch(p); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
+// served(t): the server's clock when it took the request (X-Served), for a render's reads (dash-latency, sched below)
+const get = async (p, served) => { const r = await fetch(p); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); served?.(Number(r.headers.get('x-served'))); return d; };
 const post = async (p, body) => { const r = await fetch(p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': TOKEN }, body: JSON.stringify(body) });
   const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
 // META-UX-BUILD S6: the sheet's ticks live in S.fixall (a re-render keeps them); the count = ticked + picked findings
@@ -550,10 +551,10 @@ function paintOrc() {
 }
 // RM-18 S1: the bar in its Norn colours; Health's colour needs the Guard rows, so the bar repaints (alone) when they land
 function paintNav() { const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }, healthStates({ usage: S.usage, rows: S.guard?.rows ?? null })); nav.scrollLeft = navX; }
-function guardHeader() {
+function guardHeader(g = get) {
   if (!S.project || S.project === 'all') { S.guard = null; paintOrc(); return; }
   const want = S.project;
-  get(`/api/guard?project=${encodeURIComponent(want)}`).then(g => { if (S.project !== want) return; S.guard = g; if (S.tab === 'slop') ls(orcKey('seen'), Date.now()); paintNav(); paintOrc(); popUp(); }).catch(() => {});
+  g(`/api/guard?project=${encodeURIComponent(want)}`).then(v => { if (S.project !== want) return; S.guard = v; if (S.tab === 'slop') ls(orcKey('seen'), Date.now()); paintNav(); paintOrc(); popUp(); }).catch(() => {});
 }
 function callUp() {
   if (S.guard?.slop === false) return;
@@ -604,11 +605,12 @@ async function render(force = false, why = []) {
     // dash-latency: the header and the tab load at once (they were a waterfall: the header's /api/overview, then the tab's), and one
     // render fetches a URL once (the Overview, Runs, Work and Health tabs read the header's /api/overview); a render a newer one
     // overtook (a click while a slow fetch was out) never paints
-    const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
+    const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), served = [], g = u => { if (!memo.has(u)) memo.set(u, get(u, t => served.push(t))); return memo.get(u); };
+    S.full = { memo, served };   // what this render read, and when the server served each answer (sched below)
     const tab = S.project ? S.tab : 'adopt';
     const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     want.catch(() => {});   // a header failure is reported first; the tab's own failure is awaited below
-    step('render:header'); await header(g); guardHeader();
+    step('render:header'); await header(g); guardHeader(g);
     if (seq !== S.renderSeq) return;
     document.body.dataset.tab = S.tab; $('#bbar').innerHTML = S.project ? renderBottomBar(S.tab, { inbox: S.needs }) : '';
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
@@ -699,7 +701,7 @@ function chatLive(project) {
   if (chatEs) chatEs.close(); chatEs = null; chatFor = project;
   if (!project) return;
   chatEs = new EventSource(`/api/chat?project=${encodeURIComponent(project)}&live=1&from=1000000000`);
-  chatEs.addEventListener('line', () => sched.poke('chat'));
+  chatEs.addEventListener('line', () => poke('chat'));
 }
 // META-CHAT-CONTROLS R1: the "/" menu under the box (Norn's commands, then the session's own), the picker's two buttons
 function slashShow() {
@@ -817,19 +819,29 @@ function applyFilters() {
 const act = async (fn, okMsg) => { try { await fn(); if (okMsg) err(''); await render(); } catch (e) { err(e.message); } };
 // ---- state stream (META-VISUAL-B S1, the #4 push channel): the page re-renders when the project's records / flags change,
 // never on a timer; a hidden tab defers to one catch-up render when shown; a reconnect re-renders (it may have missed some) ----
-const sched = createScheduler({ render: why => render(false, why), hidden: () => document.hidden });
+// dash-latency: a scheduled render is skipped when the last full render read everything after the server sent the waiting events (a
+// click on a tab just as a derived event arrives: it would fetch the same URLs again). The server's clock orders them: an event's
+// sent vs each answer's X-Served; a poke without one (a chat line) always renders
+let sentMax = null;
+const poke = (k, m) => { let t; try { t = JSON.parse(m.data).sent; } catch { /* no event data */ } sentMax = Math.max(sentMax ?? -Infinity, Number.isFinite(t) ? t : Infinity); sched.poke(k); };
+async function covered(t) {
+  const f = S.full; if (t === null || !f) return false;
+  for (let n = -1; n !== f.memo.size;) { n = f.memo.size; await Promise.allSettled([...f.memo.values()]); }   // the render's late reads too
+  return f.served.length === f.memo.size && Math.min(...f.served) > t;
+}
+const sched = createScheduler({ render: async why => { const t = sentMax; sentMax = null; if (!(await covered(t))) await render(false, why); }, hidden: () => document.hidden });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sched.visible(); });
 let stream = null;
 function openStream() {
   if (stream) stream.close();
   S.quietBy = {}; S.live = false;
   const es = stream = new EventSource(`/api/stream?project=${encodeURIComponent(S.project)}`);
-  es.addEventListener('hello', () => { S.live = true; sched.poke('hello'); });
-  for (const k of ['rec', 'pulse', 'derived', 'reset']) es.addEventListener(k, () => sched.poke(k));
+  es.addEventListener('hello', m => { S.live = true; poke('hello', m); });
+  for (const k of ['rec', 'pulse', 'derived', 'reset']) es.addEventListener(k, m => poke(k, m));
   // the Map's live events: a record appended = an event at its ts; a heartbeat = the running beads breathe
   es.addEventListener('rec', m => { if (MAPEV.push(eventsOfRecords(JSON.parse(m.data).records))) { NM?.map.poke(); mapHud(); } });
   es.addEventListener('pulse', m => { if (MAPEV.push(beatOf(JSON.parse(m.data).ts))) NM?.map.poke(); });
-  es.addEventListener('state', m => { const d = JSON.parse(m.data); S.quietBy[d.project] = !!d.quiet; S.quiet = Object.values(S.quietBy).some(Boolean); setQuiet(S.quiet); NM?.map.setQuiet(S.quiet); sched.poke('state'); });
+  es.addEventListener('state', m => { const d = JSON.parse(m.data); S.quietBy[d.project] = !!d.quiet; S.quiet = Object.values(S.quietBy).some(Boolean); setQuiet(S.quiet); NM?.map.setQuiet(S.quiet); poke('state', m); });
   es.onerror = () => { if (stream !== es) return; S.live = false; const st = $('#status'); if (st) st.innerHTML = st.innerHTML.replace(/live$/, 'reconnecting ...'); };
 }
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
