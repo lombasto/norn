@@ -24,7 +24,7 @@ import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, PO
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
+import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
@@ -218,6 +218,7 @@ export function createDashboard(o) {
   const st = p => snap.getStore()?.folds.get(p.state) ?? loadState(p.state);
   const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {});
   const hbAge = p => id => { const x = statS(hbPath(p.state, id)); return x ? Date.now() - x.mtimeMs : Infinity; };
+  const hbLateOf = p => (id, r) => hbLate(p.state, r);   // only asked for a stale .hb: the second signal before 'lost' (runs.hbLate)
   // the live hand-off state (lanes.mjs handoffOf, one home): wrote = the run's own result.json says HANDOFF, written since its start
   // (result.mjs readResult's rule); talked = its session's first model event (agents.mjs runTalked, the tree's tail cache)
   const wroteHandoff = p => id => { const j = readJsonS(resultPath(p.state, id)), r = st(p).items[id];
@@ -387,7 +388,7 @@ export function createDashboard(o) {
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    return lanesView(st(p), { all, hbAge: hbAge(p), hbLate: hbLateOf(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';

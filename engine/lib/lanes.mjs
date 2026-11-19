@@ -6,7 +6,7 @@ import { loginCommand } from './authguard.mjs';
 
 const runNum = id => Number(String(id).slice(4));
 
-function runText(r, { now, hbAge, staleMs, items = {} }) {
+function runText(r, { now, hbAge, hbLate, staleMs, items = {} }) {
   const d = r.data || {}, end = r.end || {};
   // OOTB-R2 N-5: a queued run is queued (it has no end), and one re-queued after an auth exit says it waits for the login
   if (r.state === 'queued' || r.state === 'claimed') {
@@ -15,10 +15,12 @@ function runText(r, { now, hbAge, staleMs, items = {} }) {
     return prev?.end?.outcome === 'auth' ? `queued: held for login (${prev.id} exited: auth) - run ${loginCommand(d.executor)}` : r.state;
   }
   if (r.state === 'running') {
-    if (hbAge && hbAge(r.id, r) > staleMs) return 'lost';
+    // a stale .hb is 'lost' only without the second signal (runs.hbLate: supervisor alive + output advancing): else 'heartbeat late'
+    const age = hbAge ? hbAge(r.id, r) : 0, late = age > staleMs ? hbLate?.(r.id, r) : null;
+    if (age > staleMs && !late) return 'lost';
     const min = Math.max(0, Math.round((now - Date.parse(r.created)) / 60000));
     const who = [d.executor, d.model, d.effort].filter(Boolean).join(' ');
-    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '');
+    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '') + (late ? ` - heartbeat late (${Math.round(age / 1000)} s)` : '');
   }
   if (r.state === 'lost') return 'lost';
   if (r.state === 'killed') return 'killed' + (r.kill?.why ? `: ${r.kill.why}` : '');
@@ -88,10 +90,10 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
 /**
  * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
  * executor, text, handoff, group, created, ended, at, old }.
- * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs, oldDays (policy.done_lanes.old_days),
+ * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, hbLate (runId, run) -> truthy when a stale one is only late, staleMs, oldDays (policy.done_lanes.old_days),
  *   talked / wrote (handoffOf's hooks: the row's `handoff`) }
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote } = {}) {
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbLate = null, staleMs = STALE_MS, oldDays = 2, talked, wrote } = {}) {
   const items = Object.values(st.items);
   const latest = {};
   for (const r of items) if (r.kind === 'run' && r.data?.lane && (!latest[r.data.lane] || runNum(r.id) > runNum(latest[r.data.lane].id))) latest[r.data.lane] = r;
@@ -99,7 +101,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, sta
     const name = l.id.slice(2), r = latest[name];
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
     const text = park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
-      : r ? runText(r, { now, hbAge, staleMs, items: st.items }) : 'no runs';
+      : r ? runText(r, { now, hbAge, hbLate, staleMs, items: st.items }) : 'no runs';
     const group = laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
