@@ -12,7 +12,7 @@
 // checkin_max_quiet_min -> forced. Later slices add event types here (deliverable aged, executor-agnostic check-ins).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, fold } from './records.mjs';
+import { readEvents, recordsFile, fold, homeOf, roleAddrIn } from './records.mjs';
 import { MACHINE_DEFAULTS } from './policy.mjs';
 import { findTranscript } from './harness/claude.mjs';
 
@@ -57,10 +57,10 @@ export function notePaused(state, now = new Date()) {
  * with ctx { at, running, runs, items } - the GT-5 seam (a live run whose log / transcript mtime has not moved for N min is a
  * stall the budget clock cannot see); their facts are major wakes unless MINOR_FACTS lists their prefix.
  */
-export function facts(recEvs, runEvs, { at, mult = 2, probes = [], dlvEvs = [], mailEvs = [], levelOf = () => 'full' }) {
+export function facts(recEvs, runEvs, { at, mult = 2, probes = [], dlvEvs = [], mailEvs = [], levelOf = () => 'full', home = null }) {
   const F = new Set();
   // META-GTP-MAIL piece 4: mail addressed to the check-in and not acked yet (a run's reply) - a MAJOR wake; only its arrival is news
-  for (const m of Object.values(fold(mailEvs).items)) if (m.kind === 'mail' && m.data.to === 'role:checkin' && m.state !== 'acked') F.add(`mail:${m.id}`);
+  for (const m of Object.values(fold(mailEvs).items)) if (m.kind === 'mail' && m.data.to === roleAddrIn('checkin', home) && m.state !== 'acked') F.add(`mail:${m.id}`);
   // META-CHECKIN-DIET R1 lane levels (checkins.mjs laneLevel): none = no fact of its runs; on-end = its ends and stalls only
   const runs = Object.values(fold(runEvs).items).filter(r => isWork(r.data) && levelOf(r.data.lane) !== 'none');
   const running = runs.filter(r => r.state === 'running');
@@ -124,7 +124,7 @@ const capRaises = (baseCaps, caps) => Object.entries(caps || {}).filter(([k, v])
 // an acked mail leaving is no news; nor is a red CI run leaving (main went green: META-CIWATCH wakes on the red only)
 const opening = ch => ch.filter(x => x !== '+rate_near:1' && x !== '-rate_near:0' && !x.startsWith('-mail:') && !x.startsWith('-ci:'));
 const diff = (a, b) => [...[...b].filter(x => !a.has(x)).map(x => '+' + x), ...[...a].filter(x => !b.has(x)).map(x => '-' + x)];
-const loadEvents = state => ({ rec: readEvents(recordsFile(state, 'question')), run: readEvents(recordsFile(state, 'run')), dlv: readEvents(recordsFile(state, 'deliverable')), mail: readEvents(recordsFile(state, 'mail')) });
+const loadEvents = state => ({ home: homeOf(state)?.id ?? null, rec: readEvents(recordsFile(state, 'question')), run: readEvents(recordsFile(state, 'run')), dlv: readEvents(recordsFile(state, 'deliverable')), mail: readEvents(recordsFile(state, 'mail')) });
 // what check-in `run` saw: everything up to its start + its own actions while it was alive (a worker it dispatched inherits
 // META_RUN_ID, so that worker's later end / resume events carry the check-in's id too: those are news, not its own action)
 export const endOf = (runEvs, run) => { const it = fold(runEvs).items[run]; const h = it?.history.find(x => ['end', 'lost', 'kill'].includes(x.ev)); return h ? Date.parse(h.ts) : Infinity; };
@@ -142,8 +142,8 @@ export const actionsOf = (evs, run, endMs, checkins = new Set()) => [...new Set(
 /** compare what check-in `base` (start startMs) saw with the state at nowMs; returns { skip, changes } */
 function compare(E, base, startMs, nowMs, { caps, baseCaps, mult, live, baseLive, pausedFlip, probes = [], levelOf }) {
   const endMs = endOf(E.run, base);
-  const b = facts(seenBy(E.rec, base, startMs, endMs), seenBy(E.run, base, startMs, endMs), { at: startMs, mult, probes, levelOf, dlvEvs: seenBy(E.dlv || [], base, startMs, endMs), mailEvs: seenBy(E.mail || [], base, startMs, endMs) });
-  const c = facts(E.rec, E.run, { at: nowMs, mult, probes, levelOf, dlvEvs: E.dlv || [], mailEvs: E.mail || [] });
+  const b = facts(seenBy(E.rec, base, startMs, endMs), seenBy(E.run, base, startMs, endMs), { at: startMs, mult, probes, levelOf, home: E.home, dlvEvs: seenBy(E.dlv || [], base, startMs, endMs), mailEvs: seenBy(E.mail || [], base, startMs, endMs) });
+  const c = facts(E.rec, E.run, { at: nowMs, mult, probes, levelOf, home: E.home, dlvEvs: E.dlv || [], mailEvs: E.mail || [] });
   for (const x of liveFacts(baseLive, live)) b.add(x);
   for (const x of liveFacts(live, baseLive, pausedFlip)) c.add(x);
   // META-CHECKIN-DIET R1: a run the tick's code closed as routine (a launcher review) is no news: its run leaving, its deliverable

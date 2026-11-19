@@ -527,7 +527,7 @@ function runs(d, ctx) {
   const age = n => fin(n.age_min) ? fmtMin(n.age_min) : n.first ? fmtMin(minsSince(n.first, ctx.now)) : n.started ? fmtMin(minsSince(n.started, ctx.now)) : '-';
   const one = (n, lvl, kids, pid) => {
     const b = top[n.id];
-    const feed = /^RUN-\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
+    const feed = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
     return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
      <div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
      <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
@@ -1585,7 +1585,7 @@ export function parseRmHash(h) {
   if (v) s = s.slice(v.length + 1);
   if (!s) return o;
   if (RM_SCOPES.includes(s)) return { ...o, scope: s };
-  const m = s.match(/^rm-(RM-\d+)$/);
+  const m = s.match(/^rm-(RM-(?:[a-z][a-z0-9]{0,15}-)?\d+)$/);
   return m ? { ...o, item: m[1] } : {};
 }
 /** one item against the filters (scope, theme, status, live only, drift only, text over title / id / links / branches); pure */

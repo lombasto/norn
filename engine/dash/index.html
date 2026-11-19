@@ -648,7 +648,8 @@ const homeScroller = () => (matchMedia('(max-width:700px)').matches ? document.s
 function homeKeep() {
   const t = $('#chat-text'), sc = $('#thread') ? homeScroller() : null;
   if ($('#thread')) S.homeOpen = new Set([...document.querySelectorAll('#thread details.ck[open]')].map(x => x.closest('li')?.dataset.key).filter(Boolean));   // expanded check-ins stay expanded
-  const pm = $('#pick-model'), pe = $('#pick-effort');
+  const pm = $('#pick-model'), pe = $('#pick-effort'), hp = $('details.hpick');
+  if (hp) S.pickOpen = hp.open;   // the DOM, not the 'toggle' event (a queued task a repaint can beat): an open just set stays open
   return { pick: pm && pe && S.pickOpen ? [pm.value, pe.value] : null, text: t?.value ?? S.chatDraft ?? '', focus: document.activeElement === t, sel: t ? [t.selectionStart, t.selectionEnd] : null,
     bottom: !sc || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 60, top: sc?.scrollTop ?? 0 };
 }

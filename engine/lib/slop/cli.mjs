@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadRules, slopCheck, gitRun } from './check.mjs';
-import { loadState } from '../records.mjs';
+import { loadState, laneId } from '../records.mjs';
 import { checkBranch } from './runend.mjs';
 import { hostWrite, activeWaivers, covers, findingLine } from './host.mjs';
 import { makeTool } from './tools.mjs';
@@ -41,7 +41,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   if (verb === 'check') {
     let repo = f.repo ? toplevel(f.repo) : process.cwd();
     if (f.lane) {
-      const lane = state && loadState(state).items['L:' + f.lane];
+      const lane = state && loadState(state).items[laneId(f.lane, state)];
       if (!lane?.data?.worktree) { err(`error: lane ${f.lane} names no worktree${state ? '' : ' (no state: pass --project / --state)'}`); return 2; }
       repo = lane.data.worktree;
     }

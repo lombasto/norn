@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm } from '../lib/records.mjs';
+import { record, loadState, kindOfId, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -196,7 +196,7 @@ function answerEach(state, f, pos, by, vpaths, out, err) {
   if (pos.length) throw new Usage('--each replaces the Q-n argument', 'answer');
   if (f.choice !== undefined) throw new Usage('--each carries the choices (Q-n=key); drop --choice', 'answer');
   const pairs = f.each.split(',').map(x => x.trim()).filter(Boolean).map(x => {
-    const m = /^(Q-\d+)=(\S+)$/.exec(x);
+    const m = /^(Q-(?:[a-z][a-z0-9]{0,15}-)?\d+)=(\S+)$/.exec(x);
     if (!m) throw new Usage(`--each wants "Q-n=key,..." (got ${JSON.stringify(x)})`, 'answer');
     return [m[1], m[2]];
   });
@@ -1288,7 +1288,7 @@ function laneHold(sub, pos, f, env, out, err) {
   const min = f.min === undefined ? 30 : Number(f.min);
   if (!(Number.isFinite(min) && min > 0 && min <= 24 * 60)) { err('error: --min must be minutes, 1..1440'); err('usage: ' + LANE_HOLD_USAGE); return 2; }
   try {
-    const { state } = where(f, env), by = f.as || env.META_ROLE || 'owner', id = 'L:' + pos[0];
+    const { state } = where(f, env), by = f.as || env.META_ROLE || 'owner', id = laneId(pos[0], state);
     const data = { ...(f.why ? { why: f.why } : {}), ...(f.via ? { via: f.via } : {}) };
     if (sub === 'claim') data.until = new Date(Date.now() + min * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     record(state, { kind: 'lane', ev: sub, id, by, data });
@@ -1472,7 +1472,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       if (pos.length) throw new Usage(`unexpected ${pos[0]}`, cmd);
       const kind = flags.kind && (KIND_ALIAS[flags.kind] || flags.kind);
       if (kind && !KINDS[kind]) throw new Usage(`--kind must be Q|DEC|DIR|L|RUN`, cmd);
-      const items = Object.values(st().items).filter(i => (!kind || i.kind === kind) && (!flags.lane || i.data.lane === flags.lane || i.id === 'L:' + flags.lane) && (!flags.open || isOpen(i))).sort(order);
+      const items = Object.values(st().items).filter(i => (!kind || i.kind === kind) && (!flags.lane || i.data.lane === flags.lane || i.id === laneId(flags.lane, state)) && (!flags.open || isOpen(i))).sort(order);
       if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => i), null, 1));
       else for (const i of items) out(`${i.id}\t${i.state}${i.review ? ' reviewed' : ''}\t${i.data.lane ?? ''}\t${title(i)}`.replace(/\t/g, '  '));
       return 0;
@@ -2453,7 +2453,7 @@ function guardCmd(argv, env, out, err) {
     if (extra || (!verb || verb === 'watch') && arg) throw new RunError(`unexpected ${extra || arg}`);
     const { project, state } = where(flags, env), p = project || {}, m = machineOf(flags, env), o = { projectsDir: projectsDirOf(m.machine, env) };
     if (verb === 'rule') {
-      if (!/^GRD-\d+$/.test(arg || '')) throw new RunError('rule needs GRD-n');
+      if (!/^GRD-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(arg || '')) throw new RunError('rule needs GRD-n');
       if (!GUARD_ACTIONS.includes(flags.action)) throw new RunError(`--action must be ${GUARD_ACTIONS.join(' | ')}`);
       if (!flags.why) throw new RunError('rule needs --why');
       record(state, { kind: 'guard', ev: 'rule', id: arg, by: flags.as || env.META_ROLE || 'controller', data: { action: flags.action, why: flags.why } });
@@ -2533,7 +2533,7 @@ function scopeCmd(argv, env, out, err) {
   for (let i = 1; i < argv.length; i += 2) { const k = { '--run': 'run', '--state': 'state' }[argv[i]]; if (!k || argv[i + 1] === undefined) { err('error: unexpected ' + argv[i]); err('usage: ' + SCOPE_USAGE); return 2; } f[k] = argv[i + 1]; }
   if (argv[0] !== 'check' || !f.state) { err('error: ' + (argv[0] !== 'check' ? 'scope needs: check' : 'check needs --state')); err('usage: ' + SCOPE_USAGE); return 2; }
   // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
-  const run = f.run && /^RUN-\d+$/.test(f.run) ? f.run : env.META_RUN_ID;
+  const run = f.run && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(f.run) ? f.run : env.META_RUN_ID;
   let payload = null;
   try { payload = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (e) { payload = { tool_name: '?', tool_input: {}, unreadable: e.message }; }
   const r = scopeCheck({ state: path.resolve(f.state), run: run || '-', payload, env });
@@ -2576,10 +2576,10 @@ function mailCmd(argv, env, out, err) {
     }
     if (sub === 'check') {
       // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
-      const reader = flags.run !== undefined && !/^RUN-\d+$/.test(flags.run) && run ? run : flags.run;
+      const reader = flags.run !== undefined && !/^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(flags.run) && run ? run : flags.run;
       if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
-      if (flags.to && flags.to !== 'role:controller' && !(flags.to === 'role:checkin' && by === 'checkin')) throw new RunError('--to: the controller\'s session reads role:controller (a run reads with --run)');
+      if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
       const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }

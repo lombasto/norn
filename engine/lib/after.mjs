@@ -31,7 +31,7 @@ export function parseAfter(s) {
 export function parseInputs(s) {
   if (s === undefined || s === null || s === '') return [];
   const ids = String(s).split(',').map(t => t.trim()).filter(Boolean);
-  for (const id of ids) if (!/^DLV-\d+$/.test(id)) throw new AfterError(`--inputs ${JSON.stringify(id)}: want DLV-n ids`);
+  for (const id of ids) if (!/^DLV-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(id)) throw new AfterError(`--inputs ${JSON.stringify(id)}: want DLV-n ids`);
   return ids;
 }
 export const condText = c => `${c.kind}:${c.id}:${c.state}`;

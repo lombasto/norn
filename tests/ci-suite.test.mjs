@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseKnown, judge, suiteEnv } from '../engine/lib/cisuite.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
+import { findBrowser } from '../engine/lib/shot.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CI = path.join(REPO, 'engine', 'bin', 'ci-suite.mjs');
@@ -94,6 +95,17 @@ test('ci-suite: an explicit glob without smoke runs only the parallel phase; one
   assert.doesNotMatch(s.stdout, /parallel phase/);
 });
 
+// CI 44335427788: a fresh ubuntu runner's first browser launch passed the 30 s DevTools wait of the first browser tests
+test('ci-suite: with a browser test in the run, one browser launch (warm-up, timed) goes before the files; without one, none', { skip: !findBrowser() && 'no browser installed', timeout: 120000 }, () => {
+  const dir = mkTmp('meta-cisuite-warm-'), f = path.join(dir, 'b.test.mjs');
+  fs.writeFileSync(f, `// a browser test by its import: import { openPage } from './helpers/cdp.mjs'\nimport test from 'node:test';\ntest('b', () => {});\n`);
+  const r = spawnSync(process.execPath, [CI, '--known', `${FX}/known.txt`, f.split('\\').join('/')], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /ci-suite: browser warm-up \d+ ms \(.+\)\n[\s\S]*ci-suite: parallel phase/, 'timed, before the files');
+  assert.doesNotMatch(r.stdout, /warm-up \d+ ms[^\n]*failed/, r.stdout);
+  assert.doesNotMatch(serial('', [`${SER}/p1.test.mjs`]).stdout, /warm-up/, 'no browser test: no launch');
+});
+
 // 11-13 RUN-471 / RUN-477 / RUN-481 / RUN-505: a worker's own META_RUN_ID / META_ROLE / META_STATE (and CLAUDECODE) leaked into
 // the suite it ran - 4 CLI test files went red and the suite hung; the MERGE of feat/meta-shot stopped on it.
 test('ci-suite: the calling run identity (META_RUN_ID, META_ROLE, META_STATE, ..., CLAUDECODE) never reaches the suite', () => {
@@ -106,9 +118,11 @@ test('ci-suite: the calling run identity (META_RUN_ID, META_ROLE, META_STATE, ..
 
 // 11-13 MAIL-33: `node --test` run straight from a worker (no ci-suite) inherited META_RUN_ID / META_RUN_STATE / META_JOB: 4 tests in
 // cli / digest / delegate went red and mail.test hung. tests/helpers/tmp.mjs (every spawning test file imports it) drops CALLER_ENV.
-test('tests/helpers/tmp.mjs: importing it drops the calling run identity (CALLER_ENV, META_JOB, META_PARENT_RUN) from process.env', () => {
+// wt-reds: META_RESULT_DIR too - with it and no META_RUN_ID the fake executor's writeResult threw, so probe.test (fake) went red in a worker.
+test('tests/helpers/tmp.mjs: importing it drops the calling run identity (CALLER_ENV, META_JOB, META_PARENT_RUN, META_RESULT*) from process.env', () => {
   const ids = { META_RUN_ID: 'RUN-1', META_RUN_STATE: '/x/state', META_ROLE: 'checkin', META_STATE: '/x/state', META_PROJECT: 'p',
-    META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', META_JOB: 'j', META_PARENT_RUN: 'RUN-2', CLAUDECODE: '1' };
+    META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', META_JOB: 'j', META_PARENT_RUN: 'RUN-2', CLAUDECODE: '1',
+    META_RESULT: '/x/state/results/RUN-1/result.json', META_RESULT_DIR: '/x/state/results/RUN-1' };
   const r = spawnSync(process.execPath, ['--input-type=module', '-e',
     "await import('./tests/helpers/tmp.mjs'); console.log(JSON.stringify(Object.keys(process.env).filter(k => /^(META_|CLAUDECODE$)/i.test(k))))"],
     { cwd: REPO, encoding: 'utf8', env: { ...process.env, ...ids, META_WALL_STEP_MS: '5' } });

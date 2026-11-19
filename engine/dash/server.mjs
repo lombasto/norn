@@ -19,7 +19,7 @@ import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from 
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
@@ -259,7 +259,7 @@ export function createDashboard(o) {
       return Promise.all([prime({ files: [...auditFiles(p, x.items), ...live.map(r => resultPath(p.state, r.id))], stats: live.map(r => hbPath(p.state, r.id)) }),
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
       stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
@@ -420,7 +420,7 @@ export function createDashboard(o) {
   // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
     const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
-    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows }) };
+    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows, home: homeIdOf(p.state)?.id }) };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
@@ -914,12 +914,12 @@ export function createDashboard(o) {
     if (l?.kind !== 'done' || !u) throw fail(400, `thread line ${line} is not a done card with an Undo`);
     if (items.some(x => x.kind === 'undone' && x.line === line)) throw fail(409, 'Undone already');
     const why = `undo from the chat (thread line ${line})`, runOf = id => runsOf(st(p)).find(r => r.id === id);
-    if (u.verb === 'revoke' && /^DIR-\d+$/.test(u.id)) await rec(p, { kind: 'directive', ev: 'revoke', id: u.id, by: 'dashboard', data: {} });
-    else if (u.verb === 'stop' && /^RUN-\d+$/.test(u.run)) {
+    if (u.verb === 'revoke' && /^DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.id)) await rec(p, { kind: 'directive', ev: 'revoke', id: u.id, by: 'dashboard', data: {} });
+    else if (u.verb === 'stop' && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.run)) {
       const r = runOf(u.run);
       if (r?.state !== 'queued') throw fail(409, `${u.run} is ${r?.state ?? 'gone'}: Undo withdraws only a queued run`);
       await stopRunAsync({ state: p.state, locksDir: o.locksDir ?? path.join(path.dirname(path.resolve(p.state)), 'locks'), run: u.run, by: 'dashboard', why });
-    } else if (u.verb === 'requeue' && /^RUN-\d+$/.test(u.run) && /^RUN-\d+$/.test(u.from)) {
+    } else if (u.verb === 'requeue' && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.run) && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.from)) {
       try { requeueRun({ state: p.state, run: u.run, after: runOf(u.from)?.data.after ?? [], by: 'dashboard', why }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
     } else throw fail(400, `no undo verb ${u.verb}`);
     await viewsA(p);
@@ -1124,7 +1124,7 @@ data: ${JSON.stringify(l)}
     }
     let lane = null;
     const fp = P?.parts.find(x => x.id === 'first'), fl = fp?.applied && fp.lines.find(l => !l.already && !(fp.decision?.off || []).includes(l.id));
-    if (fl) { try { const name = laneNameOf(fl.text), at = lanePaths(p, name); lane = { name, task: fl.text, worktree: fwdP(at.worktree), branch: at.branch, brief: fwdP(at.brief), exists: !!st(p).items['L:' + name] }; } catch { /* no lane paths */ } }
+    if (fl) { try { const name = laneNameOf(fl.text), at = lanePaths(p, name); lane = { name, task: fl.text, worktree: fwdP(at.worktree), branch: at.branch, brief: fwdP(at.brief), exists: !!st(p).items[laneId(name, p.state)] }; } catch { /* no lane paths */ } }
     return { project: p.name, title: p.title ?? p.name, root: p.root ?? null, facts, scan_error: scanError, interview: facts ? interviewOf(facts) : [], consent,
       setup: setupOf(p), proposal: P, read: rd, lane, answer_keys: ANSWER_KEYS };
   }
@@ -1225,7 +1225,7 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/adopt/rehearse') {   // the first lane on the fake executor: spends nothing, shows the whole path
       const name = String(data.lane ?? ''), at = adoptCall(() => lanePaths(p, name));
-      if (!st(p).items['L:' + name]) throw fail(404, `lane ${name} does not exist`);
+      if (!st(p).items[laneId(name, p.state)]) throw fail(404, `lane ${name} does not exist`);
       return { ok: true, ...(await platform.rehearse(p, name, at.brief)) };
     }
     throw fail(404, 'Not found');
@@ -1238,7 +1238,7 @@ data: ${JSON.stringify(l)}
     if (rmo) return roadEdit(p, rmo[1], data);
     if (route === '/api/answer') {
       if (data.from !== undefined) {   // META-Q-RECONCILE R1: "already answered in DEC-m" - the owner words the DEC recorded
-        if (typeof data.from !== 'string' || !/^DEC-\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
+        if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
         return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { from: data.from } });
       }
       const text = str(data.text, 'Answer', 4000);
@@ -1257,7 +1257,7 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
-    if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: 'L:' + String(data.lane), by: 'dashboard', data: {} });
+    if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: laneId(String(data.lane), p.state), by: 'dashboard', data: {} });
     if (route === '/api/handedit') {   // GAP-8: "Let Norn take it back" (a .bak of the hand text, then the views rewritten) or "Keep my version"
       if (!['takeback', 'keep'].includes(data.choice)) throw fail(400, 'choice must be takeback or keep');
       if (typeof data.file !== 'string' || !data.file) throw fail(400, 'file is required');

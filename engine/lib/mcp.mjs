@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, loadState, kindOfId, RecordError, KINDS, holdOf } from './records.mjs';
+import { record, loadState, kindOfId, RecordError, KINDS, holdOf, laneId, laneName } from './records.mjs';
 import { ConfigError, metaRoot, fwd, loadMachine, loadProject, expandVars } from './config.mjs';
 import { genAfterPolicy, projectNew, SetupError } from './setup.mjs';
 import { scan, interviewOf, proposalOf, adoptDecide, adoptApply, renderProposal, AdoptError, PARTS } from './adopt.mjs';
@@ -240,7 +240,7 @@ function inbox(a, ctx) {
 function records(a, ctx) {
   const kind = a.kind && (KIND_ALIAS[a.kind] || a.kind);
   let rows = Object.values(st(ctx).items).filter(i => (!kind || i.kind === kind) && (!a.state || i.state === a.state) && (!a.id || i.id === a.id)
-    && (!a.lane || i.data.lane === a.lane || i.id === 'L:' + a.lane)).sort(order);
+    && (!a.lane || i.data.lane === a.lane || i.id === laneId(a.lane, ctx.state))).sort(order);
   rows = rows.slice(-(a.limit ?? 50)).map(({ history, ...i }) => (a.id ? { ...i, history } : i));
   return { text: rows.map(i => `${i.id}  ${i.state}  ${i.data.lane ?? ''}  ${title(i)}`).join('\n') || '(none)', data: { rows } };
 }
@@ -286,7 +286,7 @@ function startRunTool(a, ctx) {
   for (const [k, f] of [['model', 'model'], ['effort', 'effort'], ['budget_min', 'budget-min'], ['parent', 'parent'], ['worktree', 'worktree'], ['notes', 'notes']]) if (a[k] !== undefined) args.push('--' + f, String(a[k]));
   const r = ctx.cliRun(args);
   if (r.code) throw new ToolError(r.code === 4 ? `cap: do it later (${r.out || r.err})` : (r.err || r.out), r.code);
-  const m = r.out.match(/^STARTED (RUN-\d+) lane \S+ (\S+) (\S+) (\S+)/m) || [];
+  const m = r.out.match(/^STARTED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) lane \S+ (\S+) (\S+) (\S+)/m) || [];
   return { text: r.out, data: { run: m[1], executor: m[2], model: m[3], effort: m[4] } };
 }
 function stop(a, ctx) {
@@ -300,7 +300,7 @@ function askTool(a, ctx) {
   const args = ['ask', a.run, '--q', a.ask, ...(a.executor ? ['--executor', a.executor] : []), ...(a.max_s !== undefined ? ['--max-s', String(a.max_s)] : [])];
   const r = ctx.cliRun(args);
   if (![0, 5].includes(r.code)) throw new ToolError(r.code === 4 ? `cap: ${r.out || r.err}` : (r.err || r.out), r.code);
-  const m = r.out.match(/^(RUN-\d+) asks \S+: (fork|cold)/m) || [];
+  const m = r.out.match(/^(RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) asks \S+: (fork|cold)/m) || [];
   return { text: r.out, data: { run: a.run, ask_run: m[1] ?? null, mode: m[2] ?? null, code: r.code } };
 }
 function runShow(a, ctx) {
@@ -576,7 +576,7 @@ function doneCard(t, a, r, ctx) {
   if (t.name === 'norn_directive') return emit(ctx.state, { kind: 'done', title: `${r.data.id} saved in your words`, lines: [a.text], undo: { verb: 'revoke', id: r.data.id } });
   if (t.name === 'norn_answer') return emit(ctx.state, { kind: 'done', title: `${a.q} answered in your words`, lines: [a.text] });
   if (t.name !== 'norn_cli') return undefined;
-  const out = r.data.out ?? '', q = out.match(/^QUEUED (RUN-\d+)/m), rq = out.match(/^REQUEUED (RUN-\d+) -> (RUN-\d+)/m), d = out.match(/^directive (DIR-\d+).*$/m);
+  const out = r.data.out ?? '', q = out.match(/^QUEUED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/m), rq = out.match(/^REQUEUED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) -> (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/m), d = out.match(/^directive (DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+).*$/m);
   if (q) emit(ctx.state, { kind: 'done', title: `${q[1]} queued`, lines: [q.input.split('\n').find(l => l.startsWith('QUEUED'))], undo: { verb: 'stop', run: q[1] } });
   if (rq) emit(ctx.state, { kind: 'done', title: `${rq[1]} re-queued as ${rq[2]}`, lines: [rq[0]], undo: { verb: 'requeue', run: rq[2], from: rq[1] } });
   if (d) emit(ctx.state, { kind: 'done', title: `${d[1]} saved in your words`, lines: [d[0]], undo: { verb: 'revoke', id: d[1] } });
@@ -604,7 +604,7 @@ function gated(t, a, ctx) {
 // ---------- META-CONTROLLER C4 (SPEC sec. 2 item 1): a controller's act on a lane sets or extends its hold ----------
 // the lane an act writes on (null = none / not a lane act); norn_cli lane claim / release are the hold itself
 function actLane(name, a, ctx) {
-  const ofId = id => (!id ? null : String(id).startsWith('L:') ? String(id).slice(2) : st(ctx).items[id]?.data?.lane ?? null);
+  const ofId = id => (!id ? null : String(id).startsWith('L:') ? laneName(id, ctx.state) : st(ctx).items[id]?.data?.lane ?? null);
   if (['norn_run', 'norn_decision_add', 'norn_question_add'].includes(name)) return a.lane ?? null;
   if (name === 'norn_stop') return ofId(a.run);
   if (name === 'norn_answer') return ofId(a.q);
@@ -621,7 +621,7 @@ const isoMin = min => new Date(Date.now() + min * 60000).toISOString().replace(/
 function autoHold(t, a, ctx) {
   let lane = null;
   try { if (tierOf(t.name, a) < 1) return; lane = actLane(t.name, a, ctx); } catch { return; }
-  const l = lane && st(ctx).items['L:' + lane];
+  const l = lane && st(ctx).items[laneId(lane, ctx.state)];
   if (!l || !KINDS.lane.events.claim.from.includes(l.state)) return;   // no LANE record (nothing to hold) or done / archived
   const h = holdOf(l), holder = ctx.profile === 'chat' ? 'chat' : 'controller';
   if (h?.holder === 'owner') return;   // your hold stays yours
