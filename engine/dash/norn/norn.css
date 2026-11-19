@@ -42,7 +42,7 @@
 :root.norn .md tr:nth-child(2n) td { background: var(--zebra); }
 :root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--line); }
 :root.norn button.primary { color: var(--on-accent); }
-:root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn .opt, :root.norn .tg { border-radius: 0; }
+:root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn span.rid, :root.norn .opt, :root.norn .okey, :root.norn .pba, :root.norn .ppath .pp, :root.norn .tg { border-radius: 0; }
 :root.norn #error { background: var(--bad-bg); color: var(--bad); }
 
 /* state tokens on chips: the token (16 art px at 1 device px each) + word + colour; the art map supplies --tk-<state> */

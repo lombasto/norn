@@ -4,6 +4,11 @@
   "kind": "pattern",
   "title": "new commented-out code",
   "how": "a // comment line that is a statement (a declaration, return / await / throw, an import or export, an if / for / while opening, a call or an assignment ending in ;, a lone })",
+  "explain": {
+    "what": "A new comment line is a line of code: a declaration, a call, a return, an if, a lone }.",
+    "why": "Commented-out code does not run and is not tested. Readers cannot tell if it is a plan, a left-over or a bug. Git already keeps the old version.",
+    "fix": "Delete it. If it explains something, write the explanation in words."
+  },
   "files": [
     "**/*.mjs",
     "**/*.js",

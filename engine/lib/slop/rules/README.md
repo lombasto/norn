@@ -1,7 +1,9 @@
 # SloppaChoppa rules
 
 A rule is a data file: an id, a level (`BLOCK`, `WARN`, `TREND`, `LIST`), a kind, that kind's parameters and a fixture with a
-`hit` and a near-miss `miss` (each a base and a head tree). Only new findings count: a finding is fingerprinted at head and at the
+`hit` and a near-miss `miss` (each a base and a head tree). Every rule, a project's own too, carries `explain`: `what` (the finding in plain
+words), `why` (why the rule exists) and `fix` (what to do). A rule without all three does not load. `norn slop check`, the run-end
+resume prompt and the Slop page show it under the finding, with the waiver command for that finding. Only new findings count: a finding is fingerprinted at head and at the
 merge base, and only a head finding the base did not have is reported. A new `BLOCK` finding holds the branch's merge until it is
 fixed or waived (`norn rec add waiver`).
 

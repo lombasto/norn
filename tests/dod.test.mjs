@@ -64,7 +64,7 @@ test('readyGate: policy.dod.ready off | warn | refuse (default off); a MERGE sta
   assert.equal(g.refused, null); assert.deepEqual(g.dod.ready.scope, ['src/**', 'README.md']); assert.equal(g.dod.ok, true);
   assert.match(readyGate({ brief: path.join(t, 'none.md'), policy: { dod: { ready: 'refuse' } } }).refused, /not readable/);
   const row = SETTINGS.find(s => s.key === 'policy.dod.ready');
-  assert.deepEqual([row.type, row.options, sectionOf(row).join('/')], ['enum', ['off', 'warn', 'refuse'], 'agents/iteration']);
+  assert.deepEqual([row.type, row.options, sectionOf(row).join('/')], ['enum', ['off', 'warn', 'refuse'], 'agents/rounds']);
 });
 
 test('testCounts: node test / TAP and pytest summaries; none = null', () => {

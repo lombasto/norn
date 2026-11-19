@@ -4,6 +4,11 @@
   "kind": "pattern",
   "title": "a new TODO / FIXME / HACK / XXX comment",
   "how": "the upper-case markers in comments (the word todo as data or a status is not one)",
+  "explain": {
+    "what": "A new comment has a TODO, FIXME, HACK or XXX marker.",
+    "why": "A marker in the code is a task that no list tracks. It stays in the code long after anyone remembers it.",
+    "fix": "Do the work now, or record it (`norn road add` or a record) and delete the marker."
+  },
   "files": [
     "**/*.mjs",
     "**/*.js",

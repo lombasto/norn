@@ -40,12 +40,12 @@ test('the Guard parts: the summary has no list (counts + the top row for his lin
   const g = bigGuard(), s = guardSummary(g);
   assert.equal(s.rows, undefined); assert.equal(s.trend, undefined); assert.equal(s.types, undefined);
   assert.deepEqual([s.total, s.new, s.warn, s.ledger.prose], [100, 3, 30, 7]);
-  assert.deepEqual(s.counts, { fix: 100, types: 2, rules: 12, growing: null });
+  assert.deepEqual(s.counts, { fix: 100, types: 2, rules: 12, age: null });
   assert.equal(s.top.length, 1); assert.equal(s.top[0].id, 'A-0');
   assert.equal(s.labels.rules, 'rules');
   assert.equal(typeof s.sig, 'string');
   assert.notEqual(guardSummary({ ...g, rows: g.rows.map((r, i) => (i ? r : { ...r, new: false })) }).sig, s.sig, 'a row turning old changes the sig');
-  assert.deepEqual(GUARD_SUBS.map(x => x[0]), ['fix', 'types', 'rules', 'growing']);
+  assert.deepEqual(GUARD_SUBS.map(x => x[0]), ['fix', 'types', 'rules', 'age']);
   // META-UX-BUILD S5: To fix = batches (check + kind of fix), each with its first BATCH_ROWS rows; one open batch has every row up to the limit
   const fix = guardPart(g, 'fix').fix; assert.deepEqual([fix.nb, fix.n, fix.batches.length], [2, 100, 2]);
   assert.ok(fix.batches.every(b => b.rows.length === BATCH_ROWS), 'a closed batch: its first rows');
@@ -53,7 +53,7 @@ test('the Guard parts: the summary has no list (counts + the top row for his lin
   assert.equal(open.open, 'instructions|drafts'); assert.equal(open.batches.find(b => b.key === 'instructions|drafts').rows.length, 80);
   const rules = guardPart(g, 'rules').rules; assert.equal(rules.n, 12); assert.ok(rules.rows.every(r => r.type === 'rules')); assert.equal(rules.ledger.prose, 7);
   assert.equal(guardPart(g, 'types').types.rows.length, 3);
-  assert.equal(guardPart(g, 'growing').growing.trend.series.length, 1);
+  assert.equal(guardPart(g, 'age').age.trend.series.length, 1);
   assert.throws(() => guardPart(g, 'nope'), e => e.status === 400);
 });
 
@@ -86,7 +86,7 @@ test('the Guard page: his section, 4 numbers, 4 sub-views, then the list - the e
   assert.match(renderTab('slop', { ...base, sub: 'fix', ...guardPart(g, 'fix', SUB_CAP, 'instructions|drafts'), parts_loading: false }, {}), /showing 40 of 88[^]*data-act="sub-more"/);
   assert.match(view('types'), /id="slop-types"/);
   assert.match(view('rules'), /id="slop-ledger"[^]*id="slop-rule-rows"[^]*id="slop-A-11"/);
-  assert.match(view('growing'), /id="slop-trend"/);
+  assert.match(view('age'), /id="slop-trend"/);
   assert.match(renderTab('slop', { ...base, sub: 'rules', parts_loading: true }, {}), /id="slop-sub-loading"/);
 });
 

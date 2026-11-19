@@ -45,7 +45,7 @@ const projectJson = (root, repo, policy) => {
 test('Settings: ONE row "SloppaChoppa" on / off per project, default on, beside the pop-ups row; the old run_end key folds into it', () => {
   const row = SETTINGS.find(s => s.key === 'policy.slop.enabled');
   assert.ok(row, 'the row exists');
-  assert.deepEqual([row.label, row.type, row.recommended, sectionOf(row).join('/')], ['SloppaChoppa', 'bool', 'on', 'voice/switch']);
+  assert.deepEqual([row.label, row.type, row.recommended, sectionOf(row).join('/')], ['SloppaChoppa', 'bool', 'on', 'voice/onoff']);
   assert.equal(SETTINGS.filter(s => /^policy\.slop\./.test(s.key)).length, 1, 'no second switch');
   assert.equal(SETTINGS.find(s => s.key === 'policy.voice.popups').recommended, 'off', 'pop-ups stay their own row, default off');
   const v = settingsView({}).find(s => s.key === 'policy.slop.enabled');

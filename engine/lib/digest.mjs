@@ -3,7 +3,8 @@
 // and leaves only when the target state is reached - never because someone reviewed or read it. Read-only: writes no record.
 // Sections: finished (not on main), queued (+ after / inputs, evaluated by S4), questions, ended (no clean successor), directives,
 // ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green),
-// overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes).
+// overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
+// lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk).
 import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
 import { deliverablesView, deliverableConfig } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
@@ -23,6 +24,8 @@ import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
+import { laneRules, lanePolicy, ciFixPlan, laneHooks } from './lifecycle.mjs';
+import { readSync } from './claims.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -126,9 +129,12 @@ function questions(items, { now }) {
   const rank = q => (q.state === 'open' ? (q.data.owner_only ? 0 : 1) : 2);
   // META-Q-RECONCILE R1: an open Q a later DEC on its lane may already answer (owner words / OWNER PICK / its evidence paths)
   const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));
+  // item 8 (MAIL-9 c): the check-ins that started after the owner's answer and ended without applying it (RUN-61, RUN-68 on Q-1) - a miss
+  const checkins = items.filter(i => i.kind === 'run' && i.data?.kind === 'checkin' && !['queued', 'claimed', 'running'].includes(i.state));
+  const missed = q => { const at = q.history.findLast(h => h.ev === 'answer')?.ts; return at ? checkins.filter(r => r.created >= at).map(r => r.id) : []; };
   return qs.sort((a, b) => rank(a) - rank(b) || Date.parse(a.created) - Date.parse(b.created))
     .map(q => ({ id: q.id, state: q.state, owner_only: !!q.data.owner_only, lane: q.data.lane ?? null, title: q.data.title ?? '', hours: age(now, q.created),
-      ...(pa.has(q.id) ? { answered_by: pa.get(q.id).dec, answered_why: pa.get(q.id).why } : {}) }));
+      ...(pa.has(q.id) ? { answered_by: pa.get(q.id).dec, answered_why: pa.get(q.id).why } : {}), ...(q.state === 'answered' ? { missed: missed(q) } : {}) }));
 }
 
 function directives(items, { now }) {
@@ -148,12 +154,12 @@ function queued(runs, { evalAfter, ready }) {
 }
 
 // META-CIWATCH: the cached gh read of ciwatch.mjs (one gh call at most; gh absent = no row); the cache lives in the digest's state dir.
-function ciRed(project, { now }) {
+function ciRed(project, { now, st }) {
   let c = null;
   try { c = projectCi(project, new Date(now)); } catch { c = null; }
   const r = c?.red;
   return r ? [{ id: `CI-${r.databaseId}`, repo: project.ci.repo, run: r.databaseId, sha: r.headSha ?? null, conclusion: r.conclusion, created: r.createdAt,
-    hours: age(now, r.createdAt), failing: r.failing }] : [];
+    hours: age(now, r.createdAt), failing: r.failing, fix: ciFixPlan(st, { run: r.databaseId }) }] : [];   // lifecycle.mjs: the ONE ci-fix lane
 }
 
 /**
@@ -173,7 +179,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
     questions: questions(items, { now }),
     ended: ended(runs, { now }),
     directives: directives(items, { now }),
-    ci: ciRed({ ...project, state: stateDir }, { now }),
+    ci: ciRed({ ...project, state: stateDir }, { now, st }),
   };
   // META-CONTROLLER C4 (SPEC sec. 2): the lanes the controller holds - a check-in skips them (its writes there exit 5); only while one is held
   const held = heldLanes(st.items, now);
@@ -210,8 +216,35 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // cache, the digest only reads it) - the check-in decides: carry on, rebase onto it, or ask the owner
   const ov = overlapOn(project?.policy) ? overlapRows(stateDir, st.items) : [];
   if (ov.length) sections.overlap = ov;
+  // lane norn-lifecycle item 5: no lane sits - each idle / stopped lane is the check-in's to act on this pass (CHECKIN.md 2j); a worktree a
+  // tick archive kept (dirty or not on main) stays a row while it exists. Only while any.
+  const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy) }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
+    ...atRisk(items), ...offMain(stateDir, items, now)];
+  if (ln.length) sections.lanes = ln;
+  // RM-46 S2b: the multi-home work claims - queued runs a claim holds ("held by <home>"), drift / fenced / taken-over events, stale
+  // claims of other homes (the owner may take them over); only while any is there
+  const cl = claimRows(stateDir, st.items);
+  if (cl.length) sections.claims = cl;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
+}
+
+// item 9 (lanepaths.mjs tickPaths): a lane whose finished work is red on its path to main - at risk, or off main past OFF_MAIN_H with no
+// merge step - is a row (rule off-main) until it reaches a PR
+const offMain = (stateDir, items, now) => { const h = laneHooks(stateDir);
+  return items.filter(l => l.kind === 'lane' && ['active', 'done'].includes(l.state)).flatMap(l => { const x = h.path(l.id.slice(2), now);
+    return x?.red ? [{ id: l.id, lane: x.lane, rule: 'off-main', run: x.run, why: `${x.text} - stage its merge (or say why not)` }] : []; }); };
+// an archived lane whose archive kept its worktree (lifecycle.mjs dropWorktree: uncommitted changes / commits not on main), while it exists
+const atRisk = items => items.filter(l => l.kind === 'lane' && l.state === 'archived').flatMap(l => {
+  const a = l.history.findLast(h => h.ev === 'archive')?.data?.at_risk, wt = a ? a.slice(0, a.lastIndexOf(': ')) : null;
+  return wt && fs.existsSync(wt) ? [{ id: l.id, lane: l.id.slice(2), rule: 'at-risk', run: null, why: `work at risk: ${a} - commit / merge it or remove the worktree by hand` }] : [];
+});
+// RM-46 S2b: <state>/sync/claim-holds.json (runs.mjs claimDoor) for runs still queued + <state>/sync/claims-digest.json (tick.mjs claimsPass)
+function claimRows(stateDir, items) {
+  const holds = Object.entries(readSync(stateDir, 'holds')).filter(([id]) => items[id]?.state === 'queued')
+    .map(([id, h]) => ({ id, kind: 'held', lane: items[id].data.lane ?? null, home: h.home, why: h.home ? `held by ${h.home}: ${h.why}` : `held: ${h.why}` }));
+  const r = readSync(stateDir, 'rows');
+  return [...holds, ...(r.events || []).map(e => ({ id: e.id, kind: e.kind, at: e.at, why: e.why })), ...(r.stale || [])];
 }
 
 // git unreadable: every open deliverable record counts as done (listing too much beats dropping work)

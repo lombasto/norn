@@ -12,8 +12,9 @@ import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './q
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
 import { checkinBelow } from './floor.mjs';
 
-// worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it
-export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker'];
+// worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
+// tick archiving a lane by its rules - only the lane archive allows it
+export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker', 'tick'];
 const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
 const CK = ['controller', 'checkin'];
 const MAILERS = ['worker', ...CK];
@@ -51,7 +52,8 @@ export const KINDS = {
     park: { from: ['active'], to: 'parked', roles: CK },
     unpark: { from: ['parked'], to: 'active', roles: CK },
     done: { from: ['active', 'parked'], to: 'done', roles: CK },
-    archive: { from: ['active', 'parked', 'done'], to: 'archived', roles: [...OWNER, 'controller'] },
+    // lifecycle.mjs: the check-in archives an idle / stopped lane (CHECKIN.md 2j); the tick its orphan / landed / merged-and-old ones
+    archive: { from: ['active', 'parked', 'done'], to: 'archived', roles: [...OWNER, ...CK, 'tick'] },
     unarchive: { from: ['archived'], to: 'active', roles: [...OWNER, 'controller'] },
     // META-CONTROLLER C4 (SPEC sec. 2): a hold (a lease) - { until ISO, holder?, why?, via? }; a later claim extends it, release ends it,
     // the clock ends it at `until`. While held, a check-in write on the lane is refused with exit 5 (HELD_EXIT). Never a check-in's.
@@ -86,6 +88,8 @@ export const KINDS = {
     hold: { from: ['queued'], to: null, roles: ['launcher'] },
     // META-AUTONOMY R1: a ruling 'its work counts as merged on main' (git cannot see it): { why, sha? } - after.mjs honours it
     landed: { from: ['exited', 'filled', 'lost', 'killed', 'withdrawn'], to: null, roles: [...OWNER, ...CK] },
+    // RM-37: the owner's safe pause of a running work run ({ mail: MAIL-n, why? }): the urgent order went out; its HANDOFF end is paused (pause.mjs)
+    pause: { from: ['running'], to: null, roles: [...OWNER, 'controller'] },
     // META-CHECKIN-GUARDS R1: a guard refused a move of this (running) run ({ guard: busy | owner-only, why, lane, stage?, answers? })
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
@@ -116,7 +120,7 @@ export const KINDS = {
   // one wins, the other is refused - the state machine, never a reader-side dedupe. nudge = the supervisor's one claim of an
   // urgent unacked mail (it resumes the run with the mail as its prompt). Owner asks stay Q records.
   mail: { prefix: 'MAIL-', file: 'mail', events: {
-    create: { from: null, to: 'queued', roles: MAILERS },
+    create: { from: null, to: 'queued', roles: [...MAILERS, ...OWNER] },   // RM-37: the owner's pause order (pause.mjs)
     deliver: { from: ['queued'], to: 'delivered', roles: ['launcher', ...MAILERS] },
     nudge: { from: ['queued', 'delivered'], to: 'delivered', roles: ['launcher'] },
     ack: { from: ['queued', 'delivered'], to: 'acked', roles: MAILERS },
@@ -159,9 +163,10 @@ export const KINDS = {
     close: { from: ['open', 'ruled'], to: 'closed', roles: ['launcher', ...CK, ...OWNER] },
   } },
   // META-SLOP-A (SPEC 3.4.2): a slop finding waived - { rule, scope (a fingerprint or a path glob), why, until? } in its own file
-  // (waivers.jsonl). The owner or the controller; a check-in never waives. Past `until` it no longer counts (derived, no event).
+  // (waivers.jsonl). The owner or the controller; a check-in only on the owner's word: { q: an answered Q } (waiverGuard - RUN-61 / RUN-68
+  // left Q-1 "waive" unapplied for an hour, mailing the controller). Past `until` it no longer counts (derived, no event).
   waiver: { prefix: 'WVR-', file: 'waivers', events: {
-    create: { from: null, to: 'active', roles: [...OWNER, 'controller'] },
+    create: { from: null, to: 'active', roles: [...OWNER, ...CK] },
     revoke: { from: ['active'], to: 'revoked', roles: [...OWNER, 'controller'] },
   } },
 };
@@ -200,6 +205,8 @@ const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').to
 const CREATE_EV = { run: 'start' };
 const createEv = kind => CREATE_EV[kind] || 'create';
 
+/** a --kind value: a kind name, or its record prefix (DIR = directive, as in DIR-7); unknown values come back as given */
+export const kindNamed = k => Object.keys(KINDS).find(n => KINDS[n].prefix.replace(/[-:]$/, '') === k) ?? k;
 export const kindOfId = id => {
   if (typeof id !== 'string') return null;
   if (id.startsWith('L:')) return 'lane';
@@ -366,7 +373,7 @@ function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'waiver') {
     if (ev === 'create') {
       str(d.rule, 'rule'); if (!/^[A-Z]+\d+$/.test(d.rule)) fail('rule must be a slop rule id (K2, T1, ...)');
-      str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false });
+      str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false }); str(d.q, 'q', { req: false });
       if (d.until !== undefined && !Number.isFinite(Date.parse(d.until))) fail(`until must be an ISO time (got ${JSON.stringify(d.until)})`);
     }
     return;
@@ -671,13 +678,28 @@ const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
-function archiveGuard(stateDir, lane) {
+function archiveGuard(stateDir, lane, ev = {}) {
+  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
+  const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
+  if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
+    const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;
+    if (!(pth.tip && dir && fs.existsSync(dir) && isAncestor(dir, pth.tip, 'main')))
+      fail(`L:${lane} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
+  }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
     const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
     if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
     fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
+}
+// item 8 (lane norn-lifecycle): a check-in writes a waiver only as the owner's ruling it applies - data.q names a question the owner
+// answered (answered / applied); its own judgement never waives
+function waiverGuard(stateDir, d) {
+  if (!d.q) fail('a check-in waives only on the owner answer: pass --q Q-n (the answered question that says to waive)');
+  const q = loadState(stateDir).items[d.q];
+  if (!q || q.kind !== 'question') fail(`${d.q} is not a question`);
+  if (!['answered', 'applied'].includes(q.state)) fail(`${d.q} is ${q.state}, not answered: a check-in waives only what the owner ruled`);
 }
 // META-GTP-MAIL piece 1: the cross-file rules of mail (the runs + epics logs are read here, under the mail log's lock).
 // A run's mailbox = its id, the runs it continues (resume / queue fill / re-queue / fallback chain), lane:<its lane>, and
@@ -859,7 +881,8 @@ function recordCtx(stateDir, evIn, opts) {
       for (const k of ['parent', 'after']) if (k in d) d[k] = ref$(d[k]);
       ev = { ...ev, id: ref$(ev.id), data: d };
     }
-    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, String(ev.id || '').slice(2));
+    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, String(ev.id || '').slice(2), ev);
+    if (kind === 'waiver' && ev.ev === 'create' && ev.by === 'checkin') waiverGuard(stateDir, ev.data || {});
     if (kind === 'deliverable' && ev.ev === 'park' && ev.by !== 'migration') inputGuard(stateDir, ev.id);
     if (kind === 'mail') mailGuard(stateDir, ev, run, st);
     // META-Q-RECONCILE R1: an owner pick in a decision closes the Q it answers in the same step, or the write is refused

@@ -25,7 +25,7 @@ Records rules: {{records}} (the one home; read it once per session).
 - `norn_run` starts a supervised run (lane, brief file, executor or work class). Exit code 4 = a cap is full: do it later, never
   force it. Code 3 = the worktree already has a writer (one writer per tree).
 - `norn_run_show` reads a run (state, outcome, usage, log / notes tails); `norn_stop` kills one with a reason.
-- `norn_tick` starts one detached check-in tick; `norn_pause` sets / clears the PAUSED flag (no new dispatches).
+- `norn_tick` starts one detached check-in tick; `norn_pause` takes exactly one of: `mode` (checkins = Pause check-ins, queue = Hold the queue, all = Pause everything; a held start waits queued, never refused), `runs` (a safe pause of each: an urgent order to finish the step, commit and hand off; the paused hand-off waits for a resume), `half` (the pick of pause half: show its line to the owner, pause only what they confirm) or `resume` (RUN-n: its resume queued first; all: the pause released and every paused hand-off queued, merges first).
 - `norn_settings` reads or changes Settings through the same validation as the dashboard; use `dry_run` first and show the diff.
 
 ## Errors

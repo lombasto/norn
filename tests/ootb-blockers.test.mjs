@@ -61,7 +61,7 @@ test('F-3 sched install refuses without caps: one line saying how to set them, n
   assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler').code, 0);
   const m = JSON.parse(fs.readFileSync(sb.machineFile, 'utf8'));
   m.scheduler = { kind: 'cron', name: 'meta-ootb-test-never-installed', interval_min: 15 };
-  m.projects = [{ name: 'x', config: '${meta}/local/x.json' }];
+  m.projects = [{ name: 'x', config: '${norn}/local/x.json' }];
   fs.writeFileSync(sb.machineFile, JSON.stringify(m));
   for (const budget of [null, '{"weekly_stop_pct": 50}']) {
     if (budget === null) fs.rmSync(sb.budgetFile, { force: true }); else fs.writeFileSync(sb.budgetFile, budget);
