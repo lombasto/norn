@@ -1,0 +1,42 @@
+# SloppaChoppa on every pull request (RM-44 stage B, audit D2): the PR's diff against its merge base with the target branch, the same
+# rules as a lane's run end. Exit 1 = a new BLOCK finding: the `slop` status fails. Its own workflow, with NO path filter: a required
+# status that a filter skips stays pending and blocks the PR (GitHub: "Handling skipped but required checks"), so it reports on
+# every PR, docs-only ones too. --ci skips the rules flagged `machine` in their data (K14 reads the machine's generated files).
+# engine/lib/slop/rules/README.md ("On a pull request"): the owner makes `slop` a required status.
+name: slop
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # META_ROOT pins Norn's tool cache (<META_ROOT>/state/tools/npm, tools.mjs toolCache): npx fetches the pinned ESLint once per
+    # runner, and actions/cache carries it to the next run
+    env:
+      META_ROOT: ${{ runner.temp }}/norn
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/norn/state/tools/npm
+          key: slop-tools-${{ runner.os }}-${{ hashFiles('engine/lib/slop/tools.mjs') }}
+      - name: norn slop check (the PR's diff from its merge base)
+        shell: bash
+        run: |
+          base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          node engine/bin/norn.mjs slop check --ci --diff "$base..HEAD"

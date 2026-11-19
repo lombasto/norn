@@ -52,3 +52,26 @@ rule and list it as skipped; every other check runs it. The flag is the rule's d
 
 Each rule's fixtures run in `tests/slop.test.mjs` (tool rules from their recorded output); `norn slop fixtures` runs the real tools on
 them. Before a rule blocks, replay it over recent merged branches: a rule that fires on many of them is noise, not a gate.
+
+## On a pull request
+
+Every pull request runs the `slop` job (`.github/workflows/slop.yml`): `norn slop check --ci --diff <merge base>..HEAD`, the same
+rules a lane's run end uses, on the PR's diff against its merge base with the target branch. A new BLOCK finding fails it (exit 1)
+and the job lists each finding (`BLOCK <rule> <file>:<line> ...`). `--ci` skips the rules flagged `machine` in their data (K14 reads
+the generated harness files of the machine it runs on; a runner has none) and lists them as skipped.
+
+### Make it a required status (owner, once)
+
+The job only blocks a merge when the branch protection asks for it. In the repo's Settings > Rules > Rulesets, in the ruleset
+that targets the default branch, turn on "Require status checks to pass" and add the check `slop` (source: GitHub Actions). This
+is a repository setting: no file in the repo can make it required.
+
+The workflow has no path filter on purpose: a required status whose workflow a filter skips stays "expected" and blocks the PR.
+
+### What else covers main
+
+- `norn merge-land` opens no PR for a lane branch with open BLOCK findings at its pushed head, and writes the WARN findings of
+  that head's stored check into the PR body.
+- An admin merge or a direct push cannot be stopped from here. The daily report lists every first-parent landing on main since
+  the last report that has no stored check, with its findings ("Landed unchecked"); its digest line carries
+  `LANDED UNCHECKED n`.
