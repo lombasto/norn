@@ -6,11 +6,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, recordsFile, fold, RecordError, mailboxOf } from './records.mjs';
+import { record, readEvents, recordsFile, fold, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
 
 export const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
-const num = id => Number(String(id).replace(/\D/g, ''));
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
 export const loadMail = state => fold(readEvents(recordsFile(state, 'mail'))).items;
@@ -26,15 +25,15 @@ export function mailRole(state, env, as) {
   return as || (env.META_ROLE === 'checkin' ? 'checkin' : 'controller');
 }
 
-/** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>); returns the envelope */
+/** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>, role:<by>@<home> in a home); returns the envelope */
 export function sendMail(state, { by, run = null, to, subject, body, body_file, urgent }) {
-  const from = by === 'worker' ? run : `role:${by}`;
+  const from = by === 'worker' ? run : roleAddr(by, state);
   return record(state, { kind: 'mail', ev: 'create', by, data: drop({ from, to, subject, body, body_file, urgent: urgent ? true : undefined }) }, { run });
 }
 
 /** the addresses a reader takes mail for: a run's mailbox (records.mailboxOf), or one address (the controller's role:controller) */
 export function boxOf(state, { run, to }) {
-  if (run) return mailboxOf(loadRuns(state), run);
+  if (run) return mailboxOf(loadRuns(state), run, homeOf(state)?.id);
   return new Set(to ? [to] : []);
 }
 

@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAfter, AfterError, checkRefs, makeEval } from './after.mjs';
-import { record, loadState, RecordError } from './records.mjs';
+import { record, loadState, RecordError, idNum } from './records.mjs';
 import { loadEpics } from './epics.mjs';
 import { renderMergeBrief } from './mergebrief.mjs';
 
@@ -234,7 +234,6 @@ function launchSteps(f, r, todo, { epic, ctx, launch, runs, attempts, passed = {
   return out;
 }
 
-const idNum = id => Number(String(id).replace(/^\D+-/, ''));
 
 // a launch = a run the flow queued (not the fill / HANDOFF resume / limit re-queue of one: those carry the same data.flow)
 const isLaunch = r => !r.data.from_queue && !r.data.resume_of && !r.data.requeue_of;

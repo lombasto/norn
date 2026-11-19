@@ -212,6 +212,10 @@ test('R1 the browser: the filter survives a reload (URL); the empty "you + contr
     assert.match(menu, /\/model[\s\S]*\/effort[\s\S]*\/clear[\s\S]*\/help/);
     await pg.ev('document.querySelector("#slash-menu [data-slash=\'/effort\']").click()');
     assert.equal(await pg.ev('document.querySelector("#chat-text").value'), '/effort ');
+    // CI-RED-44384DB: the details 'toggle' event is a queued task, so a live repaint (a stream poke) landing between the open and that
+    // task rebuilt the picker closed; here the repaint (a filter tap: paintMain, synchronous) runs in the same task as the open
+    await pg.ev('(d => { d.open = true; document.querySelector("[data-act=home-filter][aria-pressed=true]").click(); })(document.querySelector("details.hpick"))');
+    assert.equal(await pg.ev('new Promise(r => setTimeout(() => r(document.querySelector("details.hpick").open), 50))'), true, 'a repaint before the toggle event keeps the picker open');
     // the picker: open, choose sonnet, apply -> the chip says sonnet
     await pg.ev('document.querySelector("details.hpick").open = true');
     await pg.ev('(() => { const s = document.querySelector("#pick-model"); s.value = "claude-sonnet-5-5"; s.dispatchEvent(new Event("change", { bubbles: true })); })()');

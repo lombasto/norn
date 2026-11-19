@@ -14,6 +14,19 @@ Every rule home (CHECKIN, DECISION-RULES, agent files, skills, ASK) points here 
 `seq` monotonic per file (under the lock), `by` = role (owner | controller | checkin | launcher | dashboard | migration), `run` = the
 writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of events by id in seq order (pure function, tested).
 
+## 3.2a Id formats: solo, fed node, synced home
+- Solo state dir (no `home.json`, no `node.json`): ids `Q-n`, `RUN-n`, ...; the next number is 1 + the highest of the kind. Lanes
+  `L:<name>` on branch `norn/<name>` (a monorepo project: `norn/<project>/<name>`). Mail addresses `RUN-n`, `lane:<name>`,
+  `role:checkin`, `role:controller`.
+- Fed node (`<state>/node.json {id}`): new ids `<P><id>-n` (`RUN-wsl-3`), numbered as solo; lanes and branches as solo.
+- Synced home (`<state>/home.json {id, bare_home}`, written by the cut; id `[a-z][a-z0-9]{0,7}`): new ids `<P><home>-n`
+  (`RM-b-30`, `Q-b2-3`). The next number is 1 + the highest id with the own prefix; the bare home (`bare_home` = its id) also counts
+  its bare legacy ids, so `RM-47` and `RM-a-47` never both exist. Lanes `L:<home>/<name>` on branch `norn/<home>/<name>`
+  (monorepo `norn/<home>/<project>/<name>`). A lane name typed as `x` is this home's; another home's is typed `b/x`.
+  Mail addresses `RUN-b-12`, `lane:b/x`, `role:checkin@b`; a home's own check-in reads `role:checkin@<home>`.
+- Every id field, link (`run:RUN-b-12`, `lane:b/x`) and mail `to` accepts both forms; a run of another home is not in this state
+  dir, so mail to it is not checked for existence here.
+
 ## 3.3 Kinds and fields (`data` of `create`; later events carry their own small `data`)
 - question `Q-n`: title (<= 120 chars), lane, body (numbers, 2-3 examples), options [{key, text, cost}], recommend {key, why},
   class (delegation i-v), blocks [lanes parked by it], source (NOTES path:line or final.md), owner_only (true = no check-in

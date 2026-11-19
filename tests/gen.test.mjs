@@ -29,7 +29,9 @@ function filesUnder(d) {
 function demoSandbox({ codex = true } = {}) {
   const t = mkTmp('meta-gen-');
   const home = fwd(path.join(t, 'hx')), meta = `${home}/dev/sdd-codex`, cfg = fwd(path.join(t, 'cfg'));
-  fs.cpSync(path.join(REPO, 'tests', 'fixtures', 'projects', 'demo'), `${meta}/projects/demo`, { recursive: true, filter: s => !/[\\/]state([\\/]|$)/.test(s) });
+  // the fixture's own state/ stays out, tested relative to the fixture: every Norn worktree itself sits under <root>/state/...
+  const src = path.join(REPO, 'tests', 'fixtures', 'projects', 'demo');
+  fs.cpSync(src, `${meta}/projects/demo`, { recursive: true, filter: s => !/^state([\\/]|$)/.test(path.relative(src, s)) });
   fs.mkdirSync(cfg, { recursive: true });
   const machine = { schema: 1, home, claude: { exe: 'claude', config_dir: cfg }, codex: codex ? { exe: 'codex' } : null };
   const p = loadProject(`${meta}/projects/demo/project.json`, { home, meta });

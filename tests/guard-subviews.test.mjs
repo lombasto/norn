@@ -138,8 +138,9 @@ test('every nav tab paints on its first visit: no "Refresh failed" (the selected
 });
 
 test('the chosen sub-view lives in the URL: a shared link lands on it, a tap pushes it, Back returns, reload keeps it', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture(), pg = await openPage([390, 844]);
+  const f = await fixture(); let pg;
   try {
+    pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });   // the phone, as the Instructions phone test
     const sel = () => pg.ev(`document.querySelector('#slop-subs [aria-selected=true]')?.dataset.sub ?? null`);
     const painted = sub => pg.until(`document.querySelector('#slop-sub[data-sub=${sub}]') && !document.querySelector('#slop-sub-loading') && document.querySelector('#slop-subs [aria-selected=true]')?.dataset.sub === '${sub}'`, 60000);
@@ -155,5 +156,5 @@ test('the chosen sub-view lives in the URL: a shared link lands on it, a tap pus
     await pg.go(`${f.url}/${await pg.ev('location.search')}`);
     assert.ok(await painted('rules'), 'reload keeps it');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on a phone');
-  } finally { await pg.close(); await f.done(); }
+  } finally { await pg?.close(); await f.done(); }
 });

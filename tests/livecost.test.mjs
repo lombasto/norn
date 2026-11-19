@@ -156,13 +156,14 @@ test('the dash in plan mode keeps the %/h burn column and no $ columns', async (
 
 test('phone width unchanged: Overview, Lanes and Usage in API mode at 390 px have no sideways scroll', { skip: skipWhy, timeout: 420000 }, async () => {
   resetLiveCost();
-  const { f } = await apiFixture(), pg = await openPage([390, 844]);
+  const { f } = await apiFixture(); let pg;
   try {
+    pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     for (const [tab, sel] of [['overview', '.run-burn'], ['lanes', '.lane-usd'], ['usage', '#usage-spend']]) {
       await pg.go(`${f.url}/?project=kestrel&tab=${tab}`, 60000);
       assert.ok(await pg.until(`!!document.querySelector('${sel}')`, 60000), `${tab}: ${sel} painted`);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `${tab}: no sideways scroll on a phone`);
     }
-  } finally { await pg.close(); await f.done(); }
+  } finally { await pg?.close(); await f.done(); }
 });

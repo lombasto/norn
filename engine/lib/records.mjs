@@ -166,8 +166,10 @@ export const KINDS = {
 };
 // META-ROADMAP S1: a roadmap link is a kind:id term (the --after grammar); existence is checked by roadmap.mjs checkLinks
 const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
+// RM-46 S1a: a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
+const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
 export const ITEM_LINK_RE = new RegExp(`^(?:dir:${NID('DIR')}|dec:${NID('DEC')}|q:${NID('Q')}|run:${NID('RUN')}|dlv:${NID('DLV')}|ep:${NID('EP')}`
-  + '|lane:[A-Za-z0-9][A-Za-z0-9_.-]*|branch:[A-Za-z0-9][A-Za-z0-9._/-]*|sha:[0-9a-f]{7,40}|doc:\\S.*)$');
+  + `|lane:${LANE_REF}|branch:[A-Za-z0-9][A-Za-z0-9._/-]*|sha:[0-9a-f]{7,40}|doc:\\S.*)$`);
 export const HORIZONS = ['now', 'next', 'later'];
 // the current parent of an item record (create.parent, then the last move that set one)
 export const itemParent = it => { const m = [...it.history].reverse().find(h => h.ev === 'move' && 'parent' in h.data); return m ? m.data.parent : it.data.parent ?? null; };
@@ -187,10 +189,12 @@ const itemLook = it => {
 };
 const itemProof = it => itemLook(it).proof, itemViews = it => itemLook(it).views;
 export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in a body_file
-export const MAIL_TO_RE = /^(RUN-\d+|lane:[A-Za-z0-9][A-Za-z0-9_.-]*|role:(checkin|controller))$/;
+// RM-46 S1a: RUN-n / RUN-<home>-n, lane:<lane> (lane:<home>/<name>), role:<r> / role:<r>@<home>
+export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
+export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
-export const EPIC_MEMBER_RE = /^(RUN|DLV)-\d+$/;
+export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
 const createEv = kind => CREATE_EV[kind] || 'create';
@@ -202,15 +206,43 @@ export const kindOfId = id => {
   for (const [k, d] of Object.entries(KINDS)) if (k !== 'lane' && new RegExp('^' + d.prefix + '(?:[a-z][a-z0-9]{0,15}-)?\\d+$').test(id)) return k;
   return null;
 };
-const idNum = id => Number(String(id).replace(/^\D+-/, ''));
+export const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // F8: the trailing number (a home id may hold digits: Q-b2-12)
+const idHome = id => String(id).match(/^[A-Z]+-([a-z][a-z0-9]{0,15})-\d+$/)?.[1] ?? null;
 
 export const recordsFile = (stateDir, kind = 'question') => path.join(stateDir, (KINDS[kind]?.file || 'records') + '.jsonl');
 
-// META-GTP-FED piece 3: <state>/node.json { id } = a node's own state dir (norn node run writes it): its new ids carry the id
-export function nodePrefix(stateDir) {
+const idFile = (stateDir, file, re) => {
   let j;
-  try { j = JSON.parse(readText(path.join(stateDir, 'node.json'))); } catch { return null; }   // snapshot-aware (recordAsync primes it)
-  return typeof j?.id === 'string' && /^[a-z][a-z0-9]{0,15}$/.test(j.id) ? j.id : null;
+  try { j = JSON.parse(readText(path.join(stateDir, file))); } catch { return null; }   // snapshot-aware (recordAsync primes it)
+  return typeof j?.id === 'string' && re.test(j.id) ? j : null;
+};
+// RM-46 S1a: <state>/home.json { id, bare_home } = a synced project's state dir (the cut writes it): new ids <P><id>-n, lanes
+// L:<id>/<name>, branches norn/<id>/... No home.json = a solo dir: everything as before (a setting, not a fallback).
+export function homeOf(stateDir) {
+  const j = idFile(stateDir, 'home.json', /^[a-z][a-z0-9]{0,7}$/);
+  return j ? { id: j.id, bare_home: typeof j.bare_home === 'string' ? j.bare_home : null } : null;
+}
+// The prefix of a state dir's new ids: its home id, else (META-GTP-FED piece 3) the id of <state>/node.json { id }, a fed node's
+// own state dir (norn node run writes it), else none
+export const idPrefix = stateDir => homeOf(stateDir)?.id ?? idFile(stateDir, 'node.json', /^[a-z][a-z0-9]{0,15}$/)?.id ?? null;
+// A lane as typed (x = this home's lane, b/x = home b's) -> its id / mail address; In = the home id given (saves the read in a loop)
+const laneRef = (name, h) => (h && !String(name).includes('/') ? `${h}/${name}` : String(name));
+export const laneIdIn = (name, h) => 'L:' + laneRef(name, h);
+export const laneId = (name, stateDir) => laneIdIn(name, homeOf(stateDir)?.id);
+export const laneAddrIn = (name, h) => 'lane:' + laneRef(name, h);
+/** a lane id -> the name as typed in this state dir (this home's lanes bare, another home's b/x) */
+export const laneNameIn = (id, h) => { const n = String(id).replace(/^L:/, ''); return h && n.startsWith(h + '/') ? n.slice(h.length + 1) : n; };
+export const laneName = (id, stateDir) => laneNameIn(id, homeOf(stateDir)?.id);
+// a role's mail address: role:checkin, or role:checkin@a in a home
+export const roleAddrIn = (role, h) => `role:${role}${h ? '@' + h : ''}`;
+export const roleAddr = (role, stateDir) => roleAddrIn(role, homeOf(stateDir)?.id);
+// The next number of a kind: a home counts its own prefix (the bare home also its bare ids), so RM-47 and RM-a-47 never both
+// exist; a solo dir or a fed node: 1 + the max over every id of the kind, as before
+function nextNum(st, kind, home) {
+  if (!home) return (st.next[kind] || 0) + 1;
+  let n = 0;
+  for (const i of Object.values(st.items)) if (i.kind === kind) { const h = idHome(i.id); if (h === home.id || (h === null && home.bare_home === home.id)) n = Math.max(n, idNum(i.id) || 0); }
+  return n + 1;
 }
 
 // ---------- read ----------
@@ -329,7 +361,7 @@ export const authorOf = it => (it.by === 'migration' && it.data?.legacy_by) || i
 const isOwnerRecord = it => it && (it.kind === 'directive' || (it.kind === 'question' && ['answered', 'applied'].includes(it.state))
   || (it.kind === 'decision' && OWNER.includes(authorOf(it))));
 
-function validateData(kind, ev, d, target, st, by) {
+function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'waiver') {
     if (ev === 'create') {
       str(d.rule, 'rule'); if (!/^[A-Z]+\d+$/.test(d.rule)) fail('rule must be a slop rule id (K2, T1, ...)');
@@ -432,7 +464,7 @@ function validateData(kind, ev, d, target, st, by) {
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
-      if (/^DLV-\d+$/.test(d.by)) {
+      if (new RegExp(`^${NID('DLV')}$`).test(d.by)) {
         if (d.by === target.id) fail(`${target.id} cannot supersede itself`);
         if (!st.items[d.by]) fail(`supersede cites ${d.by}, which does not exist`);
       } else if (!/^[0-9a-f]{7,40}$/.test(d.by)) fail(`supersede --by must be a DLV-n or a commit sha (7-40 hex), got ${JSON.stringify(d.by)}`);
@@ -447,7 +479,7 @@ function validateData(kind, ev, d, target, st, by) {
   if (kind === 'mail') {
     if (ev === 'create') {
       str(d.subject, 'subject', { max: 120 }); str(d.from, 'from'); str(d.to, 'to');
-      if (!MAIL_TO_RE.test(d.to)) fail(`to must be RUN-n | lane:<name> | role:checkin | role:controller (got ${JSON.stringify(d.to)})`);
+      if (!MAIL_TO_RE.test(d.to)) fail(`to must be RUN-n | lane:<name> | role:checkin | role:controller, each with an optional home (RUN-b-n, lane:b/x, role:checkin@b) (got ${JSON.stringify(d.to)})`);
       if ((d.body === undefined) === (d.body_file === undefined)) fail('give exactly one of body (<= 2 KB) or body_file');
       if (d.body !== undefined) {
         str(d.body, 'body');
@@ -455,7 +487,7 @@ function validateData(kind, ev, d, target, st, by) {
         if (n > MAIL_BODY_MAX) fail(`body is ${n} bytes: at most 2 KB (${MAIL_BODY_MAX}) - put a longer message in a body_file`);
       } else str(d.body_file, 'body_file', { max: 400 });
       if (d.urgent !== undefined && typeof d.urgent !== 'boolean') fail('urgent must be true or false');
-      if (by !== 'worker' && by !== 'migration' && d.from !== `role:${by}`) fail(`from must be role:${by} (a ${by} sends as itself)`);
+      if (by !== 'worker' && by !== 'migration' && d.from !== roleAddrIn(by, home?.id)) fail(`from must be ${roleAddrIn(by, home?.id)} (a ${by} sends as itself)`);
     }
     if (ev === 'deliver') { str(d.run, 'run', { req: false }); oneOf(d.via, 'via', MAIL_VIA); }   // no run = the controller's session (role:controller)
     if (ev === 'nudge') { if (target.nudge) fail(`${target.id} is already nudged (${target.nudge.run})`); str(d.run, 'run'); }
@@ -463,7 +495,7 @@ function validateData(kind, ev, d, target, st, by) {
   if (kind === 'item') validateItem(ev, d, target, st, by);
   if (kind === 'proposal') validateProposal(ev, d, target, st);
   if (kind === 'run') {
-    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !/^EP-\d+$/.test(d.epic)) fail('epic must be an EP-n id'); }
+    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !new RegExp(`^${NID('EP')}$`).test(d.epic)) fail('epic must be an EP-n id'); }
     if (ev === 'start' || ev === 'queue') oneOf(d.kind, 'kind', ['worker', 'codex', 'cli', 'checkin', 'talk', 'interactive', 'fake', 'provider', 'audit']);
     if ((ev === 'start' || ev === 'queue') && d.after !== undefined && !(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string'))))
       fail('after must be a list of {kind, id, state}');
@@ -580,14 +612,14 @@ export function holdOf(lane, now = Date.now()) {
   if (!lane || lane.kind !== 'lane') return null;
   const h = [...lane.history].reverse().find(x => x.ev === 'claim' || x.ev === 'release');
   if (h?.ev !== 'claim' || !(Date.parse(h.data.until) > now)) return null;
-  return { id: lane.id, lane: lane.id.slice(2), holder: h.data.holder ?? holderOf(h.by, h.data.via), until: h.data.until, why: h.data.why ?? null, by: h.by,
+  return { id: lane.id, lane: lane.data.name ?? lane.id.slice(2), holder: h.data.holder ?? holderOf(h.by, h.data.via), until: h.data.until, why: h.data.why ?? null, by: h.by,
     via: h.data.via ?? null, ts: h.ts, run: h.run ?? null };
 }
 /** every live hold among the items, by lane name */
 export const heldLanes = (items, now = Date.now()) => Object.values(items).map(i => holdOf(i, now)).filter(Boolean).sort((a, b) => a.lane.localeCompare(b.lane));
 export const holdWho = h => (h.holder === 'chat' ? 'the controller chat' : h.holder === 'controller' ? `the controller${h.via ? ` (${h.via})` : ''}` : h.holder === 'owner' ? 'the owner' : h.holder);
 export const hhmm = t => new Date(Date.parse(t)).toISOString().slice(11, 16) + 'Z';
-export const holdMessage = h => `L:${h.lane} is held by ${holdWho(h)} until ${hhmm(h.until)}${h.why ? ` (${h.why})` : ''} - a check-in skips a held lane `
+export const holdMessage = h => `${h.id} is held by ${holdWho(h)} until ${hhmm(h.until)}${h.why ? ` (${h.why})` : ''} - a check-in skips a held lane `
   + '(exit 5) and leaves it to the holder; to reach the holder: norn mail send --to role:controller';
 // the lane an event writes on: the LANE itself, the record's lane field, or the target record's
 function laneOfEvent(e, st) {
@@ -607,7 +639,7 @@ function firstWriter(kind, target) {
 }
 
 // Check one event against the state; returns the full envelope (without seq / ts).
-function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
+function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } = {}) {
   const k = KINDS[kind];
   if (!k) fail(`unknown kind ${JSON.stringify(kind)} (question | decision | directive | lane | run | mail)`);
   const def = k.events[ev];
@@ -618,10 +650,10 @@ function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
   let target = null;
   if (def.from === null) {
     if (kind === 'lane') {
-      validateData(kind, ev, data, null, st, by);
-      id = 'L:' + data.name;
+      validateData(kind, ev, data, null, st, by, home);
+      id = laneIdIn(data.name, home?.id);
       if (st.items[id]) fail(`${id} already exists`);
-    } else id = k.prefix + (pfx ? pfx + '-' : '') + ((st.next[kind] || 0) + 1);
+    } else id = k.prefix + (pfx ? pfx + '-' : '') + nextNum(st, kind, home);
   } else {
     if (kindOfId(id) !== kind) fail(`${JSON.stringify(id)} is not a ${kind} id`);
     target = st.items[id];
@@ -629,7 +661,7 @@ function check(st, { kind, ev, id, by, data = {} }, pfx = null) {
     if (!def.from.includes(target.state)) fail(`${id} is ${target.state}; ${ev} needs ${def.from.join(' | ')}${firstWriter(kind, target)}`);
     if (kind === 'run' && ev === 'review' && target.review) fail(`${id} is already reviewed`);
   }
-  if (kind !== 'lane' || def.from !== null) validateData(kind, ev, data, target, st, by);
+  if (kind !== 'lane' || def.from !== null) validateData(kind, ev, data, target, st, by, home);
   if (kind === 'run' && (ev === 'start' || ev === 'queue')) data = { ...data, name: agentName(id) };   // META-UX-R1 C: stable name, fixed at launch
   return { id, kind, ev, by, data };
 }
@@ -643,20 +675,20 @@ function archiveGuard(stateDir, lane) {
   for (const d of open) {
     const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
     if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
-    fail(`L:${lane} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
+    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
 }
 // META-GTP-MAIL piece 1: the cross-file rules of mail (the runs + epics logs are read here, under the mail log's lock).
 // A run's mailbox = its id, the runs it continues (resume / queue fill / re-queue / fallback chain), lane:<its lane>, and
-// role:checkin for a check-in run.
+// role:checkin for a check-in run; in home h (RM-46 S1a) lane:h/<lane> and role:checkin@h.
 const CHAIN = ['resume_of', 'from_queue', 'requeue_of', 'fallback_of'];
-export function mailboxOf(runs, id) {
+export function mailboxOf(runs, id, home = null) {
   const box = new Set();
   const me = runs[id];
   if (!me) return box;
   for (let r = me, n = 0; r && !box.has(r.id) && n < 1000; n++) { box.add(r.id); r = CHAIN.map(k => runs[r.data[k]]).find(Boolean); }
-  if (me.data.lane) box.add(`lane:${me.data.lane}`);
-  if (me.data.kind === 'checkin') box.add('role:checkin');
+  if (me.data.lane) box.add(laneAddrIn(me.data.lane, home));
+  if (me.data.kind === 'checkin') box.add(roleAddrIn('checkin', home));
   return box;
 }
 // the epics run `id` belongs to: members (create + add - remove, as epics.mjs epicMembers) or the run's own epic field
@@ -672,9 +704,12 @@ function epicsOf(stateDir, runs, id) {
   }
   return out;
 }
+// a run of this state dir: solo RUN-n; a home its own RUN-<home>-n (the bare home also RUN-n). Another home's run is not in this
+// state (RM-46 S1a: its existence is not checked here)
+const ownRun = (id, home) => RUN_ID_RE.test(id || '') && (home ? [home.id, home.bare_home === home.id ? null : home.id].includes(idHome(id)) : /^RUN-\d+$/.test(id));
 function mailGuard(stateDir, e, run, st) {
   if (e.by === 'migration') return;
-  const d = e.data || {};
+  const d = e.data || {}, home = homeOf(stateDir), checkin = roleAddrIn('checkin', home?.id), controller = roleAddrIn('controller', home?.id);
   const runs = fold(readEvents(recordsFile(stateDir, 'run'))).items;
   const needRun = () => {
     if (!run) fail(`a run ${e.ev === 'create' ? 'sends' : 'reads'} mail as itself: META_RUN_ID is not set`);
@@ -682,19 +717,19 @@ function mailGuard(stateDir, e, run, st) {
     return runs[run];
   };
   if (e.ev === 'create') {
-    if (/^RUN-\d+$/.test(d.to || '') && !runs[d.to]) fail(`to ${d.to} does not exist`);
+    if (ownRun(d.to, home) && !runs[d.to]) fail(`to ${d.to} does not exist`);
     if (e.by !== 'worker') return;
     const me = needRun();
     if (d.from !== run) fail(`from must be ${run} (a run sends as itself)`);
     const peers = () => { const mine = epicsOf(stateDir, runs, run); return mine.size > 0 && [...epicsOf(stateDir, runs, d.to)].some(x => mine.has(x)); };
-    const ok = d.to !== run && (d.to === 'role:checkin' || d.to === 'role:controller' || d.to === me.data.parent || (/^RUN-\d+$/.test(d.to) && peers()));
-    if (!ok) fail(`${run} may not mail ${d.to}: a run mails its parent, role:checkin, role:controller or runs of its own epic`);
+    const ok = d.to !== run && (d.to === checkin || d.to === controller || d.to === me.data.parent || (ownRun(d.to, home) && peers()));
+    if (!ok) fail(`${run} may not mail ${d.to}: a run mails its parent, ${checkin}, ${controller} or runs of its own epic`);
   }
   if ((e.ev === 'deliver' || e.ev === 'ack') && e.by === 'worker') {
     needRun();
     if (e.ev === 'deliver' && d.run !== run) fail(`a run takes delivery for itself: run must be ${run} (got ${d.run})`);
     const m = st.items[e.id];
-    if (m?.kind === 'mail' && !mailboxOf(runs, run).has(m.data.to)) fail(`${e.id} is not addressed to ${run} (to ${m.data.to})`);
+    if (m?.kind === 'mail' && !mailboxOf(runs, run, home?.id).has(m.data.to)) fail(`${e.id} is not addressed to ${run} (to ${m.data.to})`);
   }
 }
 // NORN-WATCH S4: a deliverable a queued run takes as an input (queue field `inputs`) cannot be parked under it
@@ -740,7 +775,7 @@ export const writeOrigin = new AsyncLocalStorage();
 export function record(stateDir, evIn, opts = {}) {
   const c = recordCtx(stateDir, evIn, opts);
   fs.mkdirSync(stateDir, { recursive: true });
-  c.setPfx(nodePrefix(stateDir));
+  c.setIds(stateDir);
   try {
     return withLock(c.lock, () => {
       const r = c.plan();
@@ -759,8 +794,8 @@ export async function recordAsync(stateDir, evIn, opts = {}) {
   await fp.mkdir(stateDir, { recursive: true });
   try {
     return await withLockAsync(c.lock, () => snap.run(newSnap(), async () => {
-      await prime({ files: [c.file, recordsFile(stateDir, 'lane'), path.join(stateDir, 'node.json')] });
-      c.setPfx(nodePrefix(stateDir));
+      await prime({ files: [c.file, recordsFile(stateDir, 'lane'), path.join(stateDir, 'home.json'), path.join(stateDir, 'node.json')] });
+      c.setIds(stateDir);
       const r = c.plan();
       const fh = await fp.open(c.file, 'a');
       try { await fh.write(r.text); await fh.sync(); } finally { await fh.close(); }
@@ -781,9 +816,9 @@ function recordCtx(stateDir, evIn, opts) {
   const lock = file.replace(/\.jsonl$/, '.lock');
   const now = opts.now || (() => new Date());
   const run = opts.run !== undefined ? opts.run : (process.env.META_RUN_ID && launchedHere(stateDir, process.env) ? process.env.META_RUN_ID : null);
-  let pfx = null;
+  let ids = {};
   const via = writeOrigin.getStore()?.via ?? null;   // C6: a remote device's write (the dashboard sets it per request)
-  return { file, lock, setPfx: v => { pfx = v; }, plan };
+  return { file, lock, setIds: s => { ids = { pfx: idPrefix(s), home: homeOf(s) }; }, plan };
   /** the checked batch (no write): its jsonl text, the folded state after it, whether the views follow, the caller's result */
   function plan() {
     const base = readEvents(file);
@@ -795,10 +830,10 @@ function recordCtx(stateDir, evIn, opts) {
     const push = e => {
       if (e.by === 'checkin') {
         // the clock is read only for a lane that was ever claimed (a caller's clock may count its calls: the golden views)
-        const ln = laneOfEvent(e, st), l = ln ? laneItems()['L:' + ln] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
+        const ln = laneOfEvent(e, st), l = ln ? laneItems()[laneIdIn(ln, ids.home?.id)] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
         if (h) throw new RecordError(holdMessage(h), HELD_EXIT);
       }
-      const c = check(st, e, pfx);
+      const c = check(st, e, ids);
       const env = { v: 1, seq: st.seq + 1, ts: isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, by: c.by, run, ...(via ? { via } : {}), data: c.data };
       batch.push(env);
       st = fold([...base, ...batch]);
@@ -854,7 +889,7 @@ function recordCtx(stateDir, evIn, opts) {
     // Lane parking follows the blocking question (3.4: "Parked is set by the Q that blocks it and cleared by its apply").
     if (kind === 'question' && ev.ev === 'create') {
       for (const name of primary.data.blocks || []) {
-        const l = st.items['L:' + name];
+        const l = st.items[laneIdIn(name, ids.home?.id)];
         if (l && l.state === 'active') push({ kind: 'lane', ev: 'park', id: l.id, by: ev.by, data: { why: `blocked by ${primary.id}: ${primary.data.title}`, q: primary.id } });
       }
     }

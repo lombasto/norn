@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, recordAsync, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, nodePrefix } from './records.mjs';
+import { record, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, idPrefix } from './records.mjs';
 import { loadRoadmap, world, goneLinks, planEvents, checkLinks, buildTree, writeRoadmapView, writeRoadmapViewAsync, roadmapViewPath } from './roadmap.mjs';
 import { laneSteps, LANE_IO } from './lanenew.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';
@@ -507,7 +507,7 @@ function openFor(stateDir, { project, by, answers = {} }) {
   fs.mkdirSync(stateDir, { recursive: true });
   let p = proposalOf(stateDir), created = false;
   if (!p || p.state !== 'open') {
-    const pfx = nodePrefix(stateDir), n = Math.max(0, ...proposals(stateDir).map(x => num(x.id))) + 1;
+    const pfx = idPrefix(stateDir), n = Math.max(0, ...proposals(stateDir).map(x => num(x.id))) + 1;
     const dir = path.join(stateDir, 'adopt', `ADP-${pfx ? pfx + '-' : ''}${n}`);
     fs.mkdirSync(dir, { recursive: true });
     const text = JSON.stringify(facts, null, 1) + '\n', file = path.join(dir, 'facts.json');

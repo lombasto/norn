@@ -31,8 +31,9 @@ export function judge(fails, known) {
 // own META_RUN_ID / META_ROLE / META_STATE turned 4 CLI test files red and hung the suite (RUN-471 / RUN-477 / RUN-481 / RUN-505).
 // Test knobs (META_UPDATE_GOLDEN, META_WALL_STEP_MS, META_TEST_*, ...) are not identity and pass through.
 // MAIL-33: META_JOB (the worker's reap job: runs.mjs spawns inside it) and META_PARENT_RUN (a helper's depth-1 mark) are identity too.
+// wt-reds: META_RESULT / META_RESULT_DIR (the worker's own result file): a fake executor a test spawns would write into it (or throw).
 export const CALLER_ENV = ['META_RUN_ID', 'META_RUN_STATE', 'META_ROLE', 'META_STATE', 'META_PROJECT', 'META_SESSION_ID', 'META_RESUMES',
-  'META_NOTES', 'META_JOB', 'META_PARENT_RUN', 'CLAUDECODE'];
+  'META_NOTES', 'META_JOB', 'META_PARENT_RUN', 'META_RESULT', 'META_RESULT_DIR', 'CLAUDECODE'];
 // META-TEST-TRIM: git's auto maintenance (gc / maintenance --auto after a commit, fetch or push) is one more process per git write
 // in the suite's temp repos and nothing under test; on Windows it cost ~1/4 of a git-heavy test (mergeq main-red 70 s -> 54 s).
 const SUITE_GIT = [['maintenance.auto', 'false'], ['gc.auto', '0']];

@@ -5,7 +5,7 @@
 // Project-agnostic: every project fact comes from project.json (deliverables target / receipts, root, views.roadmap).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, loadState } from './records.mjs';
+import { readEvents, recordsFile, loadState, homeOf, laneIdIn } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
@@ -89,12 +89,13 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : w.endsWith('h') ? 'es' : 's'
  *   docs: [paths] | fn(path) -> bool, hasInstall (the target is an install: deliverables receipts set), epics: { EP-n: { state, title, members } },
  *   idle: { days (default 7), now (default 3) } }
  */
-export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {}, policy = {} } = {}) {
+// home = the state dir's home id (RM-46 S1a): a lane link x names L:<home>/x there
+export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {}, policy = {}, home = null } = {}) {
   const fnOf = (v, miss) => typeof v === 'function' ? v : Array.isArray(v) ? (k => v.includes(k)) : (k => (k in v ? v[k] : miss));
   // OOTB-R2 N-4: a fake-executor run is a rehearsal - never evidence for the derived status (as deliverables' NOT_DELIVERING)
   const runs = Object.values(items).filter(i => i.kind === 'run' && i.data?.kind !== 'checkin' && i.data?.executor !== 'fake');
   const group = key => { const m = {}; for (const d of dlv) if (d[key]) (m[d[key]] ||= []).push(d); return m; };
-  return { now, items, runs, dlv, dlvById: Object.fromEntries(dlv.map(d => [d.id, d])), dlvByBranch: group('branch'), dlvByLane: group('lane'),
+  return { now, home, lane: n => laneIdIn(n, home), items, runs, dlv, dlvById: Object.fromEntries(dlv.map(d => [d.id, d])), dlvByBranch: group('branch'), dlvByLane: group('lane'),
     branch: fnOf(branches, null), sha: fnOf(shas, null), doc: fnOf(docs, false), hasInstall, epics, idle: { days: 7, now: 3, ...idle }, stuck: stuckPolicy(policy) };   // META-CATCH S1: policy.stuck
 }
 
@@ -143,7 +144,7 @@ export function derive(node, W) {
   const stages = [...ran, ...planned];
   const B = branches.filter(b => b.state !== 'gone');
   const qOpen = L.q.filter(id => W.items[id]?.state === 'open');
-  const parked = L.lane.filter(l => W.items['L:' + l]?.state === 'parked');
+  const parked = L.lane.filter(l => W.items[W.lane(l)]?.state === 'parked');
   const shaOk = L.sha.filter(s => W.sha(s) === true);
   const ago = ts => Math.round((now - ts) / DAY);
   const ids = xs => xs.map(r => r.id).join(', ');
@@ -152,7 +153,7 @@ export function derive(node, W) {
   else if (live.length) { row = 2; status = 'building'; why = `${plural(live.length, 'run')} live: ${ids(live)}`; }
   else if (qOpen.length || parked.length) {
     row = 3; status = 'waiting';
-    why = [qOpen.length ? `open ${qOpen.join(', ')}` : null, ...parked.map(l => `L:${l} parked${W.items['L:' + l].park?.why ? ': ' + W.items['L:' + l].park.why : ''}`)].filter(Boolean).join('; ');
+    why = [qOpen.length ? `open ${qOpen.join(', ')}` : null, ...parked.map(l => `${W.lane(l)} parked${W.items[W.lane(l)].park?.why ? ': ' + W.items[W.lane(l)].park.why : ''}`)].filter(Boolean).join('; ');
   }
   else if (B.length && B.every(b => b.at_target)) { row = 4; status = 'shipped'; why = `${plural(B.length, 'branch')} on main${W.hasInstall ? ' and installed' : ''}`; }
   else if (B.length && B.every(b => b.on_main)) { row = 5; status = 'merged'; why = `${plural(B.length, 'branch')} on main, not installed`; }
@@ -200,7 +201,7 @@ export function goneLinks(links, W) {
   return (links || []).filter(t => {
     const { kind, id } = parseLink(t);
     if (['dir', 'dec', 'q', 'run'].includes(kind)) return !W.items[id];
-    if (kind === 'lane') return !W.items['L:' + id] && !W.runs.some(r => r.data?.lane === id);
+    if (kind === 'lane') return !W.items[W.lane(id)] && !W.runs.some(r => r.data?.lane === id);
     if (kind === 'dlv') return !W.dlvById[id];
     if (kind === 'ep') return !W.epics[id];
     if (kind === 'branch') { if (W.dlvByBranch[id]) return false; const g = W.branch(id); return !g || (!g.exists && !g.merged); }
@@ -240,7 +241,7 @@ export function unplacedOf(nodes, W) {
     if (r.state === 'running' || QUEUED.includes(r.state) || W.now - runTs(r) < 3 * DAY) (byLane[r.data.lane] ||= []).push(r);
   }
   for (const [l, rs] of Object.entries(byLane)) if (!lanes.has(l))
-    out.push({ kind: 'lane', id: 'L:' + l, why: `${plural(rs.length, 'run')} in 3 d${rs.some(r => r.state === 'running') ? ', live now' : ''}` });
+    out.push({ kind: 'lane', id: W.lane(l), why: `${plural(rs.length, 'run')} in 3 d${rs.some(r => r.state === 'running') ? ', live now' : ''}` });
   for (const d of W.dlv) if (d.state === 'done' && !d.superseded && d.record_state !== 'superseded' && !dlvs.has(d.id) && !brs.has(d.branch) && !(d.lane && lanes.has(d.lane)))
     out.push({ kind: 'dlv', id: d.id, why: `${d.branch} DONE ${Number(d.days ?? 0).toFixed(0)} d, not on main` });
   for (const i of Object.values(W.items)) if (i.kind === 'directive' && i.state === 'active' && !L.dir.includes(i.id))
@@ -278,7 +279,7 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
     return (shaMemo[x] = !full ? null : git(cfg.repo, ['merge-base', '--is-ancestor', full, s.mainSha], { allowFail: true }) !== null);
   };
   const docs = p => fs.existsSync(path.isAbsolute(p) ? p : path.join(project.root || path.dirname(path.resolve(stateDir)), p));
-  const W = worldOf({ now, items: st.items, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy });
+  const W = worldOf({ now, items: st.items, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy, home: homeOf(stateDir)?.id });
   W.repo = cfg.repo || null;
   return W;
 }
@@ -291,7 +292,7 @@ function epicsOf(stateDir) {
 export function unplacedNow(stateDir, { now = Date.now(), items, dlv = [] } = {}) {
   const nodes = Object.values(loadRoadmap(stateDir).items);
   if (!nodes.length) return null;
-  return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, epics: epicsOf(stateDir) }));
+  return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, epics: epicsOf(stateDir), home: homeOf(stateDir)?.id }));
 }
 
 /** refuse links to what does not exist (SPEC sec. 1: the checkRefs rule epics use); a branch / sha needs the project's repo */

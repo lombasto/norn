@@ -56,7 +56,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
 // META-CI-WORKCLASS R4 (DEC-336): --cpu-prof DIR - a browser test file (it imports shot.mjs or helpers/cdp.mjs) runs with
 // NODE_OPTIONS --cpu-prof into DIR/<file>, so its node processes leave a sampling profile that names a sync call blocking the loop
 // by its JS caller (tests/helpers/profgap.mjs reads them; the Windows CI job)
-const profEnv = f => !cpuProf || !/shot\.mjs|helpers\/cdp\.mjs/.test(fs.readFileSync(f, 'utf8')) ? {}
+const isBrowserTest = f => /shot\.mjs|helpers\/cdp\.mjs/.test(fs.readFileSync(f, 'utf8'));
+const profEnv = f => !cpuProf || !isBrowserTest(f) ? {}
   : { NODE_OPTIONS: `${childEnv.NODE_OPTIONS ?? ''} --cpu-prof --cpu-prof-dir="${fwd(path.resolve(cpuProf, path.basename(f, '.mjs')))}"`.trim() };
 const runFile = (name, f, i) => new Promise(resolve => {
   const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`), mout = path.join(tmp, `${name}-${i}.measure.jsonl`);
@@ -100,6 +101,15 @@ const phase = async (name, c, files) => {
   return { name, status, quiet, fails: res.flatMap(r => r.fails), leaks: res.map(r => r.leak).filter(Boolean), hangs: res.map(r => r.hang).filter(Boolean), ms: Date.now() - t0,
     measured: res.map(r => r.measured).filter(Boolean) };
 };
+// CI 44335427788: a fresh runner's first browser launch is slow (ubuntu: 25-36 s; two at once passed the 30 s DevTools wait). With a
+// browser test in the run, one launch to the DevTools port and down goes first: the one-time cost lands here, measured, not on a
+// test's clock. A failed warm-up is logged and the suite goes on: the browser tests then fail with their own message.
+if (files.some(isBrowserTest)) {
+  const { findBrowser, warmBrowser } = await import('../lib/shot.mjs'), browser = findBrowser();
+  if (browser) { const w = await warmBrowser({ browser, tmp });
+    console.log(`ci-suite: browser warm-up ${w.ms} ms (${browser.exe})${w.error ? `, failed: ${w.error}` : ''}`);
+    if (w.ms > 5000 && !w.error && w.stderr) console.log(`ci-suite: the slow warm-up's browser stderr ends:\n${w.stderr}`); }
+}
 const runs = [];
 if (parFiles.length) runs.push(await phase('parallel', conc, parFiles));
 if (serFiles.length) runs.push(await phase('serial', '1', serFiles));
