@@ -22,6 +22,16 @@ export function hoChip(h, self = null, { short = false } = {}) {
   return `<span class="ho ${h.phase === 'resumed' ? 'resumed' : 'pending'}" role="status"${short ? ` title="${esc(h.text)}"` : ''}><span class="pulse" aria-hidden="true"></span><span>${esc(short ? h.short ?? h.text : h.text)}${h.run && self && h.run !== self ? ` <span class="id">${esc(h.run)}</span>` : ''}</span></span>`;
 }
 
+/**
+ * RM-21 S1: a lane's or run's state (lanes.mjs laneState: { state, why }) -> its chip; with why, the reason under it. The six states are
+ * the server's; this is only their colour (index.html .chip classes).
+ */
+export const STATE_CHIP = { running: 'running', waiting: 'warn', parked: 'parked', stopped: 'stopped', shipped: 'done', idle: 'idle' };
+export function stateChip(s, { why = false } = {}) {
+  if (!s?.state) return '';
+  return `<span class="chip ${STATE_CHIP[s.state] ?? 'idle'}">${esc(s.state)}</span>${why && s.why ? ` <span class="state-why">${esc(s.why)}</span>` : ''}`;
+}
+
 /** one value against a max -> a single bar, an optional tick at `mark` (a p90, a hand-off line); no data = a dash */
 export function meter(v, max, mark, cls = '') {
   if (!fin(v) || !fin(max) || max <= 0) return '<span class="mute">-</span>';

@@ -6,7 +6,7 @@ import { renderMarkdown } from './docs.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord, hoChip } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord, hoChip, stateChip } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
@@ -51,11 +51,11 @@ export function exChip(ex, model, effort) {
   const t = [ex, model && ex && String(model).startsWith(ex + '-') ? String(model).slice(ex.length + 1) : model].filter(Boolean).join(' ') + (effort && effort !== '-' ? ` · ${effort}` : '');
   return t ? chip(exClass(ex), t) : dash;
 }
-// Lane / run state text -> chip class + short word (lanes.mjs text grammar, design 5).
+// A run's record state or "exited: <OUTCOME>" -> chip class + short word (the feed head, an unreviewed run); a lane's state is the
+// server's (lanes.mjs laneState) and its chip is widgets.mjs stateChip.
 export function stateOf(text) {
   const t = String(text ?? '');
   if (t.startsWith('running')) return ['running', 'running'];
-  if (t.startsWith('parked')) return ['parked', 'parked'];
   if (t === 'exited: DONE') return ['done', 'DONE'];
   if (t.startsWith('exited: STOPPED')) return ['stopped', 'STOPPED'];
   if (t.startsWith('exited: HANDOFF')) return ['handoff', 'HANDOFF'];
@@ -63,8 +63,6 @@ export function stateOf(text) {
   if (t.startsWith('exited: crash')) return ['bad', 'crash'];
   if (t === 'lost') return ['lost', 'lost'];
   if (t.startsWith('killed')) return ['bad', 'killed'];
-  if (t.startsWith('waiting')) return ['warn', 'waiting'];
-  if (t === 'no runs') return ['idle', 'no runs'];
   return ['idle', t || '-'];
 }
 const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
@@ -465,21 +463,22 @@ function lanes(d, ctx) {
   const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => laneShowOf(l) === k).length;
   const usd = all.some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
   const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
-  // a done lane says how long ago it ended; an old one reads stopped (its row is faded)
-  const nowText = l => l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`;
+  // RM-21 S1: the lane's state chip + its one reason (laneState), under the lane name - the first thing a phone row shows; a done
+  // lane adds how long ago it ended (an old one is faded)
+  const why = l => ({ ...l.status, why: l.group === 'done' && l.ended ? `${l.status.why} · ended ${laneAge(ctx.now - Date.parse(l.ended))} ago` : l.status.why });
   const rows = all.filter(l => show.has(laneShowOf(l))).map(l => {
-    const [cls, word] = stateOf(l.text), log = l.run ? `<a href="/log?run=${encodeURIComponent(l.run)}&project=${encodeURIComponent(l.project)}" target="_blank"><button>Log</button></a>` : '';
-    const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
+    const log = l.run ? `<a href="/log?run=${encodeURIComponent(l.run)}&project=${encodeURIComponent(l.project)}" target="_blank"><button>Log</button></a>` : '';
+    const act = l.status.state === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
-    const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
-    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
-  }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
+    const no = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
+    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td class="lane-cell"><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="lane-state small" data-state="${esc(l.status.state)}">${stateChip(why(l), { why: true })}</div>${hoChip(l.handoff, l.run)}<div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}${no ? `<div class="lane-refused small">${esc(no)}</div>` : ''}</td><td>${chip(l.state)}</td>
+      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
+  }).join('') || `<tr><td colspan="${usd ? 7 : 6}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
   const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
-  return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
+  return `<div class="banner">Lanes come from LANE records only (no folder scan). State: running, waiting, parked, stopped, shipped or idle, each with its one reason.</div>
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
    <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span></div>
-   <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+   <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane · state</th><th>record</th><th>executor</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // ---------- UX review 2: Work, Health and History - one card per page under the destination: what it shows + what needs a look now ----------
@@ -517,7 +516,7 @@ function runs(d, ctx) {
   const top = Object.fromEntries((d.top || []).map(t => [t.id, t]));
   const name = n => n.kind === 'subagent' ? `${esc(n.agentType ?? 'subagent')}${n.description ? ` "${esc(n.description)}"` : ''}`
     : n.kind === 'helper' ? `<span class="id">${esc(n.id)}</span>${aname(n.name)} helper${n.class ? ' · ' + esc(n.class) : ''}${n.q ? ` "${esc(n.q)}"` : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}`
-    : `<span class="id">${esc(n.id)}</span>${aname(n.name)} ${esc(n.lane ?? '')}${n.stage ? ' · ' + esc(n.stage) : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}${n.helpers ? ` · helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok` : ''}`;
+    : `<span class="id">${esc(n.id)}</span>${aname(n.name)} ${esc(n.lane ?? '')}${n.stage ? ' · ' + esc(n.stage) : ''}${n.status?.state === 'stopped' || n.status?.state === 'shipped' ? ` · <span class="run-why">${esc(n.status.state)}: ${esc(n.status.why)}</span>` : n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}${n.helpers ? ` · helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok` : ''}`;
   const tok = n => n.tokens === '-' ? '-' : fin(n.tokens) ? `${int(n.tokens)}${n.tokens_src ? ` (${esc(n.tokens_src)})` : ''}` : fin(n.cacheR) ? `${mTok(n.cacheR)} cacheR` : String(n.executor ?? '').startsWith('codex') ? 'at end' : '-';
   const age = n => fin(n.age_min) ? fmtMin(n.age_min) : n.first ? fmtMin(minsSince(n.first, ctx.now)) : n.started ? fmtMin(minsSince(n.started, ctx.now)) : '-';
   const one = (n, lvl, kids, pid) => {
@@ -744,7 +743,7 @@ function mapNode(n, project) {
   const ho = n.handoff?.text ? `<circle class="pulse ho-${n.handoff.phase === 'resumed' ? 'resumed' : 'pending'}" cx="18" cy="${n.h - (n.h < 46 ? 11 : 16)}" r="4"/>` : '';
   if (ho) n = { ...n, sub: n.handoff.short ?? n.handoff.text, hoX: 26, hoTip: n.handoff.text };
   const small = n.h < 46, feed = n.feed ? ` data-feed="${esc(n.feed)}" data-project="${esc(project)}" role="button" tabindex="0"` : '';
-  const tip = [n.label, n.hoTip ?? n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
+  const tip = [n.label, n.hoTip ?? n.sub, n.word, n.why, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
   const more = n.type === 'lane' && (n.more > 0 || n.expanded)
     ? `<text class="more" x="12" y="${n.h + 14}" data-act="map-more" data-lane="${esc(n.lane)}">${n.expanded ? `${n.capped ? 'latest 30 · ' : ''}show last 3` : `+${n.more} more`}</text>` : '';
   const room = Math.max(6, Math.floor((n.w - 30 - String(n.word ?? '').length * 7) / 7.6)); // label chars beside the state word
@@ -757,7 +756,7 @@ function mapNode(n, project) {
 // page mounts into #map-host (norn/mapview.mjs), live from the state stream. This is only its frame: view switch, archived-lanes
 // toggle, zoom, legend. The classic look keeps the SVG map below. ----------
 export const MAP_VIEWS = [['well', 'The Well'], ['tapestry', 'The Tapestry']];
-const MAP_STATES = [['running', 'running'], ['done', 'DONE'], ['handoff', 'HANDOFF'], ['stopped', 'STOPPED'], ['parked', 'parked'], ['needs', 'needs you'], ['idle', 'idle']];
+const MAP_STATES = [['running', 'running'], ['warn', 'waiting'], ['parked', 'parked'], ['stopped', 'stopped'], ['done', 'shipped · DONE'], ['handoff', 'HANDOFF'], ['needs', 'needs you'], ['idle', 'idle']];
 function nornMap(d, ctx) {
   const view = MAP_VIEWS.some(v => v[0] === ctx.mapView) ? ctx.mapView : 'well', nz = ctx.nornZoom || 1;
   const views = MAP_VIEWS.map(([k, w]) => `<button data-act="map-view" data-view="${k}" aria-pressed="${k === view}"${k === view ? ' class="strong"' : ''}>${w}</button>`).join('');

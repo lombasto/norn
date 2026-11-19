@@ -6,10 +6,9 @@ import { knotCands } from './live.mjs';
 import { hoChip } from '../widgets.mjs';   // the live hand-off chip (lanes.mjs handoffOf) on stake and knot labels
 export { weave } from './live.mjs';
 
-export const ST = { running: 'thread', handoff: 'aqua', stopped: 'weird', bad: 'rune', done: 'leaf', 'no-result': 'frost', idle: 'mist' };
+export const ST = { running: 'thread', handoff: 'aqua', waiting: 'aqua', parked: 'aqua', stopped: 'weird', bad: 'rune', done: 'leaf', shipped: 'leaf', 'no-result': 'frost', idle: 'mist' };
 export const stCol = cls => P[ST[cls] || 'mist'];
 const LOUD = new Set(['handoff', 'stopped', 'bad']);   // finished but worth a label (A2 RANK 1)
-const WORD = { running: 'running', handoff: 'HANDOFF', stopped: 'STOPPED', bad: 'bad', done: 'DONE', 'no-result': 'no result', parked: 'parked', idle: 'idle' };
 
 export function knotMat(cls, faded, { flat = false } = {}) {
   const c = new THREE.Color(stCol(cls));
@@ -29,7 +28,8 @@ export const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;',
 export function labelSet(W, pos, stakePos, { stakeCands = () => [[6, 0, 'left']], knotDx = 10 } = {}) {
   const out = [];
   for (const l of W.lanes) {
-    const word = WORD[l.cls] || l.cls, q = l.questions ? ` · <b class="nd">${l.questions} needs you</b>` : '';
+    const word = l.node.word ?? l.cls,   // RM-21 S1: the lane's state (laneState), from the map payload
+      q = l.questions ? ` · <b class="nd">${l.questions} needs you</b>` : '';
     out.push({ id: l.node.id, pos: stakePos(l), html: `${esc(l.name)}<small>${esc(word)}${q}</small>${hoChip(l.node.handoff, null, { short: true })}`, cls: `lane st-${l.cls}${l.live ? ' live' : ''}`,
       prio: l.live ? 2 : l.questions ? 3 : 6, cands: stakeCands(l) });
     for (const k of l.knots) if (k.cls === 'running' || k.handoff || (!k.faded && LOUD.has(k.cls)))

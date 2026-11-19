@@ -23,7 +23,7 @@ const FIX = [
   { key: 'c2', ts: T(3), cat: 'chat', kind: 'tools', names: ['norn_boot', 'norn_status'] },
   { key: 'c3', ts: T(4), cat: 'chat', kind: 'controller', text: `Done. Shots: ${SHOT}`, images: [SHOT] },
   { key: 'r1', ts: T(5), cat: 'run', kind: 'run-start', run: 'RUN-413', lane: 'meta-ledger', stage: 'R2', executor: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-  { key: 'r2', ts: T(6), cat: 'run', kind: 'run-end', run: 'RUN-399', lane: 'meta-notify', outcome: 'stopped', why: 'stalled 40 min', images: [] },
+  { key: 'r2', ts: T(6), cat: 'run', kind: 'run-end', run: 'RUN-399', lane: 'meta-notify', outcome: 'stopped', why: 'stalled 40 min', status: { state: 'stopped', why: 'stalled 40 min' }, images: [] },
   { key: 'm1', ts: T(7), cat: 'merge', kind: 'run-end', run: 'RUN-420', lane: 'mq', stage: 'MERGE', outcome: 'done', why: null, images: [] },
   { key: 'q1', ts: T(8), cat: 'needs', kind: 'question', id: 'Q-17', project: 'kestrel', title: 'Plan tab: where does the forecast sit?', lane: 'meta-plan',
     options: [{ key: 'a', text: 'top strip' }, { key: 'b', text: 'own card' }], recommend: { key: 'a', why: 'one glance' } },
@@ -89,7 +89,7 @@ test('C2 renderThread on a fixture thread: every card kind, escaped text, shots 
 const HOME = {
   project: 'kestrel', now: T(60), events: FIX, needs_you: 2,
   status: { running: false, busy: false, segment: 1, executor: 'claude', model: 'claude-opus-5-5', effort: 'medium', ctx: 62000, handoff_k: 110 },
-  side: { now: [{ run: 'RUN-411', lane: 'meta-autonomy', state: 'running', age_min: 38, ctx: 71000 }, { run: 'RUN-413', lane: 'meta-ledger', state: 'queued' }],
+  side: { now: [{ run: 'RUN-411', lane: 'meta-autonomy', state: 'running', status: { state: 'running', why: 'claude for 38 min' }, age_min: 38, ctx: 71000 }, { run: 'RUN-413', lane: 'meta-ledger', state: 'queued', status: { state: 'waiting', why: 'Waiting for a free Claude slot (2 / 2). Next in line.' } }],
     usage: { used: 38, stop: 95 }, interval_min: 15, paused: false,
     waiting: [{ id: 'Q-17', type: 'question', title: 'Plan tab forecast', created: T(0) }],
     ruled: [{ id: 'DEC-112', text: 'autonomy R1 first' }], orders: [{ id: 'DIR-15', text: 'no merges 23-07', created: T(0) }] },
@@ -108,6 +108,9 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   assert.match(html, /<textarea id="chat-text"[^>]*maxlength="8000"/); assert.match(html, /data-act="chat-send"/);
   assert.match(html, /data-rid="DEC-112"/); assert.match(html, /data-rid="DIR-15"/); assert.match(html, /RUN-411/);
   assert.match(html, /38 % of the weekly guard/); assert.match(html, /every 15 min/);
+  // RM-21 S1: the Now list says why a run waits (the server's status), never the bare word "queued"
+  const nowList = html.slice(html.indexOf('class="home-l"'), html.indexOf('Held by this chat'));
+  assert.match(nowList, /aria-label="waiting">‖/); assert.ok(nowList.includes('Waiting for a free Claude slot (2 / 2). Next in line.'), 'the reason'); assert.doesNotMatch(nowList, /queued/);
   assert.match(renderTab('home', HOME, { project: 'kestrel', homeFilter: 'run' }), /data-filter="run" aria-pressed="true"/);
   assert.match(renderTab('home', { one: true }, { project: 'all' }), /belongs to one project/);
 });

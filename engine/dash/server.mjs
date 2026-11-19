@@ -25,7 +25,7 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
-import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
+import { lanesView, sortLanes, handoffOf, laneState } from '../lib/lanes.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
@@ -356,7 +356,7 @@ export function createDashboard(o) {
     }
     // GAP-1 (holds.mjs): ONE needs-you row while ALL queued work has waited on one machine-level hold past policy.holds.notice_min
     // (the tick keeps hold.json; it is gone - and the row with it - once the hold clears)
-    { const h = holdItem(await readHoldAsync(p.state), { min: noticeMin(withDefaults(settingsState(p).view).policy), status: await readA(path.join(p.state, 'STATUS.md')), project: p.name });
+    { const h = holdItem(await readHoldAsync(p.state), { min: noticeMin(withDefaults(settingsState(p).view).policy), status: await readA(path.join(p.state, 'STATUS.md')), project: p.name, state: p.state });
       if (h) out.push(h); }
     // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
     for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited, generated: e.generated,
@@ -385,15 +385,20 @@ export function createDashboard(o) {
     return out;
   }
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
-  function lanes(p, all) {
+  // RM-21 S1: walk = the fill walk's rows (one reason per queued run, waitwords.mjs) joined by run id from the plan child (planOf: the
+  // walk samples the CPU for 1 s - never in this process) and the deliverable rows (shipped / waits to merge); only the pages that show
+  // the reason ask for it (Lanes, Home), so the Overview's running count does not start a plan child
+  const walkOf = p => new Map((planOf(p).upnext || []).filter(u => u.terms).map(u => [u.id, { id: u.id, ready: u.ready, terms: u.terms }]));
+  function lanes(p, all, { walk = false } = {}) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days,
+      ...(walk ? { walk: walkOf(p), deliverables: deliverablesOf(p).rows } : {}) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
   const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
   function lanesWithSpend(ps) {
-    const rows = sortLanes(ps.flatMap(p => lanes(p, true)));   // RM-19 S1: every row, one order across projects; the page filters
+    const rows = sortLanes(ps.flatMap(p => lanes(p, true, { walk: true })));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
@@ -407,7 +412,8 @@ export function createDashboard(o) {
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
     await primeAgents(runs, { projectsDir, codexDir, cache });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
     return agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) })
-      .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
+      .map(n => { const rf = refused(n.id), r = byId.get(n.id);   // RM-21 S1: a run's state + why (laneState over the run): a stopped run says why on Runs
+        return { ...n, project: p.name, ...(r ? { status: laneState(null, r, { items: st(p).items, runs: [r], ...hoHooks(p) }) } : {}), ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
   // runs = the run ids the Runs page lists, so the tab links only those
@@ -420,7 +426,7 @@ export function createDashboard(o) {
   // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
     const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
-    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows }) };
+    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows, walk: walkOf(p), hbAge: hbAge(p) }) };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
@@ -525,7 +531,7 @@ export function createDashboard(o) {
   async function overview(ps) {
     const m = withDefaults(settingsState(ps[0]).view);
     let needs = [], running = [], tree = [];
-    for (const p of ps) { needs.push(...(await inbox(p)).filter(isNeed)); running.push(...lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running'))); tree.push(...await agents(p)); }
+    for (const p of ps) { needs.push(...(await inbox(p)).filter(isNeed)); running.push(...lanes(p, false).filter(l => l.status.state === 'running')); tree.push(...await agents(p)); }
     const live = tree.filter(n => n.state === 'running');
     const isCodex = n => String(n.executor).startsWith('codex'), isClaude = n => n.kind === 'worker' || n.kind === 'fake';
     const codex = live.filter(isCodex).length, claude = live.filter(isClaude).length;
@@ -533,7 +539,7 @@ export function createDashboard(o) {
     // (or whose lane row is not "running") gets a row from its agents-tree node; a LANE row keeps its fields
     const laneRow = new Map(running.map(l => [`${l.project}|${l.run}`, l]));
     running = live.filter(n => isCodex(n) || isClaude(n)).map(n => laneRow.get(`${n.project}|${n.id}`)
-      ?? { name: n.lane ?? n.id, id: null, state: null, data: {}, run: n.id, run_name: n.name ?? null, executor: n.executor ?? null, run_state: 'running', text: 'running', project: n.project });
+      ?? { name: n.lane ?? n.id, id: null, state: null, data: {}, run: n.id, run_name: n.name ?? null, executor: n.executor ?? null, run_state: 'running', status: { state: 'running', why: 'running' }, project: n.project });
     const perPct = m.cacheR_per_pct || null;
     const burners = tree.flatMap(n => [n, ...(n.children || [])]).filter(n => n.burn30 > 0)
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
@@ -938,7 +944,10 @@ export function createDashboard(o) {
     const s = st(p), runs = runsOf(s), lines = readThread(p.state).items, seg = threadState(lines).seg;
     // an unreviewed run / a parked lane sits in the thread at its record's last event (the inbox row has no created time)
     const needs = (await inbox(p)).filter(isNeed).map(n => (n.created ? n : { ...n, created: s.items[n.id]?.updated ?? null }));
-    const events = homeEvents({ thread: lines, runs, items: Object.values(s.items), ledger: p.ledger ? (await tail(p.ledger, 400)).map(parseLedgerLine) : [], needs });
+    // RM-21 S1: a run's state + reason (laneState over that one run: the fill walk's first reason for a queued run, shipped once landed)
+    const walk = walkOf(p), hb = hbAge(p), runStatus = r => laneState(null, r, { items: s.items, runs: [r], walk, hbAge: hb, ...hoHooks(p) });
+    const events = homeEvents({ thread: lines, runs, items: Object.values(s.items), ledger: p.ledger ? (await tail(p.ledger, 400)).map(parseLedgerLine) : [], needs })
+      .map(e => (e.kind === 'run-end' && s.items[e.run] ? { ...e, status: runStatus(s.items[e.run]) } : e));
     const m = withDefaults(settingsState(p).view), usageLine = [...lines].reverse().find(l => l.kind === 'usage' && (!seg || l.seg === seg.n));
     // C5: model / effort / raw shell as the NEXT start will use them (Settings, live); the context meter amber past no_new_step_k; the cost line
     const live = (() => { try { return chatConfig(p); } catch { return null; } })(), cc = m.policy?.context?.controller ?? {}, day = new Date(); day.setHours(0, 0, 0, 0);
@@ -951,7 +960,7 @@ export function createDashboard(o) {
     const nodes = new Map((await agents(p)).map(n => [n.id, n])), today = new Date().toDateString(), byNew = (a, b) => String(b.created).localeCompare(String(a.created));
     // + a run that just ended HANDOFF and waits for its resume verdict (handoffOf step 'ending'): the lane is not idle, it hands off
     const now = runs.filter(r => (['running', 'queued', 'claimed'].includes(r.state) || (r.end?.outcome === 'handoff' && !r.resume && hoOf(p, r)?.step === 'ending')) && r.data.kind !== 'checkin' && r.data.role !== 'helper')
-      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, age_min: n.age_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
+      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, status: runStatus(r), age_min: n.age_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,

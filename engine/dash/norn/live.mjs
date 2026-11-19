@@ -9,7 +9,7 @@
 //   a knot is marked for MARK s instead.
 
 export const PULSE = 0.7, SPARK = 1.1, MOTE = 1.6, GLOW = 2.5, MAXA = 2.6, MARK = 2, LAG = 3, KEEP = 120;
-const RANK = { running: 0, handoff: 1, stopped: 1, bad: 1, needs: 1, parked: 2, 'no-result': 2, done: 3, idle: 4 };
+const RANK = { running: 0, stopped: 1, parked: 1, waiting: 2, shipped: 3, idle: 4 };   // a lane's state (lanes.mjs laneState)
 
 // ---------- /api/map -> graph -> weave (lanes in band order, running first; their run knots latest-first; the controller) ----------
 export function graphOf(map) {
@@ -24,7 +24,7 @@ export function weave(g) {
   const lanes = g.lanes.filter(l => l.lane !== 'checkin').map(l => {
     const knots = l.runs.filter(r => r.type === 'run').sort((a, b) => a.y - b.y || a.x - b.x);
     const live = knots.some(k => k.cls === 'running'), questions = l.runs.filter(r => r.type === 'question').length;
-    const cls = live ? 'running' : l.cls === 'parked' ? 'parked' : knots[0]?.cls || 'idle';
+    const cls = l.cls;   // RM-21 S1: the lane node carries its state (map.mjs over lanes.mjs laneState)
     return { node: l, name: l.lane, knots, live, questions, cls, more: l.more || 0 };
   });
   lanes.sort((a, b) => (RANK[a.cls] ?? 5) - (RANK[b.cls] ?? 5) || a.node.y - b.node.y);

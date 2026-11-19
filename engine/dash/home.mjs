@@ -146,7 +146,9 @@ const inline = t => esc(t).split(/(`[^`\n]+`)/).map(s => s.startsWith('`') && s.
   : s.replace(/\b((?:RUN|Q|DEC|DIR)-\d+)\b/g, (m, id) => rid(id))).join('');
 const tag = (cls, word) => `<span class="tag tag-${cls}">${esc(word)}</span>`;
 const SHORT = m => String(m ?? '').replace(/^claude-/, '').replace(/-\d.*$/, '');
-const OUT = { done: ['ok', 'DONE'], stopped: ['bad', 'STOPPED'], handoff: ['run', 'HANDOFF'], killed: ['bad', 'KILLED'], lost: ['bad', 'LOST'] };
+// RM-21 S1: an end card's tag is the run's state now (the server's laneState over the run): shipped once its work landed, stopped with
+// its why; otherwise it finished (DONE) or handed off to the next session (HANDOFF)
+const endTag = e => (e.status?.state === 'shipped' ? ['ok', 'SHIPPED'] : e.status?.state === 'stopped' ? ['bad', 'STOPPED'] : e.outcome === 'handoff' ? ['run', 'HANDOFF'] : ['ok', 'DONE']);
 
 const APPROVAL_SAID = { approved: 'approved once', denied: 'denied', timeout: 'no tap in time - denied' };
 const UNDO_SAID = { revoke: 'revoke the directive', stop: 'withdraw the queued run', requeue: 'put the run back on its old conditions' };
@@ -166,8 +168,8 @@ function card(e, ctx) {
   const who = `${e.stage === 'MERGE' || e.cat === 'merge' ? tag('merge', 'MERGE') : ''}${rid(e.run)}${e.lane ? ` <b>${esc(e.lane)}</b>` : ''}${e.stage && e.stage !== 'MERGE' ? ` · ${esc(e.stage)}` : ''}`;
   if (e.kind === 'run-start') return `<div class="head">${tag('run', 'STARTED')}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>
     <div class="txt small mute">${[e.executor, SHORT(e.model), e.effort].filter(Boolean).map(esc).join(' · ') || '-'}</div>`;
-  if (e.kind === 'run-end') { const [c, w] = OUT[e.outcome] ?? ['idle', String(e.outcome ?? 'ended').toUpperCase()];
-    return `<div class="head">${tag(c, w)}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>${e.why ? `<div class="txt">${inline(e.why)}</div>` : ''}${e.dod_ready || e.dod ? `<div class="txt">${dodChips(e.dod_ready, e.dod, { evidence: true })}</div>` : ''}${shots(e.images, ctx.project)}`; }
+  if (e.kind === 'run-end') { const [c, w] = endTag(e), why = e.status?.state === 'stopped' || e.status?.state === 'shipped' ? e.status.why : e.why;
+    return `<div class="head">${tag(c, w)}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>${why ? `<div class="txt">${inline(why)}</div>` : ''}${e.dod_ready || e.dod ? `<div class="txt">${dodChips(e.dod_ready, e.dod, { evidence: true })}</div>` : ''}${shots(e.images, ctx.project)}`; }
   if (e.kind === 'question') { const rk = e.recommend?.key ?? e.recommend?.k ?? null;
     return `<div class="head">${tag('needs', 'NEEDS YOU')}${rid(e.id)} <b class="ttl">${esc(e.title)}</b><span class="spacer"></span><span class="mute small">${esc(e.lane ?? '')} · ${at}</span></div>
     ${e.body ? `<div class="txt">${inline(e.body)}</div>` : ''}<div class="acts">${(e.options || []).map(o => { const k = o.key ?? o.k, t = o.text ?? o.t ?? '';
@@ -207,10 +209,10 @@ export function renderThread(events, ctx = {}) {
 // ---------- the Look 3 page ----------
 const HARNESS = { claude: 'Claude Code', codex: 'Codex', fake: 'fake' };
 const sh = (h, body) => `<section class="hs"><h4>${esc(h)}</h4>${body}</section>`;
-const NOW_GLYPH = { running: ['run', '▶'], queued: ['idle', '‖'], claimed: ['idle', '‖'] };
+const NOW_GLYPH = { running: ['run', '▶'], waiting: ['idle', '‖'] };   // by the run's state (laneState: running | waiting | stopped)
 function left(s, ctx) {
-  const now = (s.now || []).map(n => { const [c, g] = NOW_GLYPH[n.state] ?? ['idle', '○'];
-    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
+  const now = (s.now || []).map(n => { const st = n.status?.state ?? 'idle', [c, g] = NOW_GLYPH[st] ?? ['idle', '○'];
+    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(st)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${st === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(st)}</span></div>${st !== 'running' && n.status?.why ? `<div class="small mute now-why">${esc(n.status.why)}</div>` : ''}${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
     || '<div class="mute small">no run is running or queued</div>';
   const u = s.usage || {}, pct = fin(u.used) ? u.used : null;
   const usage = `<div class="hbar"><i style="width:${pct === null ? 0 : Math.min(100, pct)}%"></i>${fin(u.stop) ? `<b style="left:${Math.min(100, u.stop)}%"></b>` : ''}</div>
