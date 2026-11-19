@@ -1,0 +1,53 @@
+{
+ "id": "M2",
+ "level": "WARN",
+ "shadow": true,
+ "kind": "model",
+ "title": "a compatibility shim kept alive",
+ "question": "Is a compatibility shim kept alive: an alias or redirect map, a fallback to an old format, a label that no longer matches its id, a deprecated option still accepted, code kept for old links?",
+ "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
+ "files": [
+  "**/*.mjs",
+  "**/*.js",
+  "**/*.cjs",
+  "**/*.ts",
+  "**/*.py",
+  "**/*.rs",
+  "**/*.md"
+ ],
+ "on": [
+  "code"
+ ],
+ "hits": [
+  "K11",
+  "K11A"
+ ],
+ "context": [
+  "CLAUDE.md",
+  "AGENTS.md"
+ ],
+ "fixture": {
+  "hit": {
+   "base": {
+    "src/flags.mjs": "export const FLAGS = { lane: 1 };\n"
+   },
+   "head": {
+    "src/flags.mjs": "export const FLAGS = { lane: 1 };\nexport const flagOf = f => FLAGS[f] ?? FLAGS[{ track: 'lane' }[f]];\n"
+   },
+   "recorded": {
+    "head": "{\"findings\":[{\"rule\":\"M2\",\"file\":\"src/flags.mjs\",\"quote\":\"export const flagOf = f => FLAGS[f] ?? FLAGS[{ track: 'lane' }[f]];\",\"why\":\"the old flag name track still works through an alias map\"}]}"
+   }
+  },
+  "miss": {
+   "base": {
+    "src/flags.mjs": "export const FLAGS = { lane: 1 };\n"
+   },
+   "head": {
+    "src/flags.mjs": "export const FLAGS = { lane: 1 };\nexport const flagOf = f => FLAGS[f] ?? FLAGS[{ track: 'lane' }[f]];\n"
+   },
+   "recorded": {
+    "head": "{\"findings\":[{\"rule\":\"M2\",\"file\":\"src/flags.mjs\",\"quote\":\"export const FLAGS = { lane: 1 };\",\"why\":\"not an added line\"}]}"
+   }
+  }
+ }
+}
