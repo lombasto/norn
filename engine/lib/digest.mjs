@@ -8,6 +8,7 @@
 // homes (RM-46 S1d: a synced dir's refused cross-home writes and copies that did not fold).
 import { loadState, loadShared, readEvents, recordsFile, fold, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS } from './records.mjs';
 import { deliverablesView, deliverableConfig, mergeBacklog, backlogMax } from './deliverables.mjs';
+import { fwd } from './dlvmerge.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
 import { makeEval, condText } from './after.mjs';
 import { readiness } from './runs.mjs';
@@ -34,7 +35,6 @@ const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
 const isWork = d => !NOT_WORK.includes(d.kind) && d.role !== 'helper' && !d.parent;
 const endOf = r => r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)) || null;
 const BAD_END = ['crash', 'no-result'];
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const isMain = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const age = (now, ts) => +((now - Date.parse(ts)) / H).toFixed(1);
 
