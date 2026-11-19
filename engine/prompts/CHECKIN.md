@@ -66,6 +66,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - An open Q marked STALE (> 24 h): confirm it still blocks, or withdraw it with `META rec withdraw Q-n --why W`.
 
 ## 2c. Deliverables (finished work followed to main and the install; state derived from git, never typed)
+- Landing is code: where a merge gate is known, mergeq merges a clean pushed DONE deliverable, gates it and opens its PR
+  (`META mergeq` shows the queue; `<state>/mq/land/DLV-n.json` the last try). Queue no MERGE for such a deliverable. A conflict,
+  a red gate or a slop block queues its MERGE by itself, the failure in the brief.
 - `META deliverables --due` lists every deliverable DONE > 24 h and not merged, not parked (or its 7-day park expired), not yet
   asked. For each row: `META deliverables ask DLV-n` - ONE question per deliverable (it refuses a second; never one per tick).
 - Rule it like any Q: merge = the controller's (an install session when native; the check-in never merges); batch =
