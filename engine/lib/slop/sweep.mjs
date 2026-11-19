@@ -20,12 +20,12 @@ const fwd = pathKey;   // a worktree's identity in any spelling (8.3 short name,
 /** one branch against main: { kind: merged | empty | real, conflicts } */
 export function classify(repo, main, mainTree, tip) {
   if (isAncestor(repo, tip, main)) return { kind: 'merged', conflicts: false };
-  const r = spawnSync('git', ['merge-tree', '--write-tree', '--no-messages', main, tip], { cwd: repo, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync('git', ['merge-tree', '--write-tree', '--no-messages', main, tip], { cwd: repo, encoding: 'utf8', windowsHide: true, timeout: 120000 });
   if (r.status !== 0 && r.status !== 1) throw new Error(`git merge-tree ${main} ${tip}: ${String(r.stderr).trim()}`);
   if (r.status === 1) return { kind: 'real', conflicts: true };
   return { kind: r.stdout.trim() === mainTree ? 'empty' : 'real', conflicts: false };
 }
-const related = (repo, a, b) => spawnSync('git', ['merge-base', a, b], { cwd: repo, windowsHide: true }).status === 0;
+const related = (repo, a, b) => spawnSync('git', ['merge-base', a, b], { cwd: repo, windowsHide: true, timeout: 120000 }).status === 0;
 const isAncestor = (repo, a, b) => { try { gitRun(repo, ['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } };
 
 function worktrees(repo) {

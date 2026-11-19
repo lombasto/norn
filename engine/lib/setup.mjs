@@ -253,7 +253,7 @@ export function projectAdd(file, { env = process.env, out, err }) {
 }
 
 // ---------- META-ONBOARD S3: `norn project new` (SPEC 3.3) ----------
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); return r.status === 0 ? (r.stdout || '').trim() : null; };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true, timeout: 120000 }); return r.status === 0 ? (r.stdout || '').trim() : null; };
 /** a GitHub remote URL (https or ssh, .git stripped) -> "owner/repo", else null */
 export function githubRepo(url) {
   const m = /^(?:https?:\/\/(?:[^@/]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(url || '').trim());

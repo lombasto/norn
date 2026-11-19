@@ -922,7 +922,7 @@ function descendants(pid, psOut = spawnSync('ps', PS, { encoding: 'utf8' }).stdo
 }
 export function killTree(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return;
-  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return; }
+  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 30000 }); return; }
   signal(pid, 'SIGSTOP');
   for (const c of descendants(pid)) signal(c, 'SIGKILL');
   signal(pid, 'SIGKILL');

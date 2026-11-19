@@ -103,7 +103,7 @@ export function classify(p) {
 }
 // one test case per match: node:test / mocha / jest test( it(, pytest def test_, Rust #[test], Go func TestX(
 export const TEST_CASE = String.raw`^\s*((test|it)(\.(only|skip|todo))?\s*\(|(async\s+)?def\s+test_|#\[(\w+::)?test\]|func\s+Test\w*\()`;
-const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
 const grepCounts = (repo, sha, pattern) => {
   let out = '';
   try { out = git(repo, ['grep', '-I', '-c', '-E', pattern, sha]); } catch (e) { if (e.status !== 1) throw e; }   // 1 = no match

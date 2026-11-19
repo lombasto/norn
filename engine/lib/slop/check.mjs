@@ -30,7 +30,7 @@ export const rulesHash = (rules = loadRules()) => crypto.createHash('sha256').up
 
 // ---------- git ----------
 export function gitRun(cwd, args, { input, ok = [0], buffer = false } = {}) {
-  const r = spawnSync('git', args, { cwd, input, encoding: buffer ? null : 'utf8', maxBuffer: 1 << 29, windowsHide: true });
+  const r = spawnSync('git', args, { cwd, input, encoding: buffer ? null : 'utf8', maxBuffer: 1 << 29, windowsHide: true, timeout: 120000 });
   if (r.error) throw r.error;
   if (!ok.includes(r.status)) throw new Error(`git ${args.join(' ')}: ${String(r.stderr).trim()}`);
   return r.stdout;
