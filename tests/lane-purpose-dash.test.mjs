@@ -1,6 +1,7 @@
 // RM-34 on the dashboard: each Lanes row says why the lane exists (its objective + source links, or the 'no recorded driver' chip),
 // the Docs reader opens a lane's brief, and the Runs page has a Lane column (lane · stage; "check-in" for a check-in) with the
-// Session column cut to the session's id + name. Sandbox only: the shared dash fixture (temp dirs) and a private headless browser.
+// Session column cut to the session's id + name. MAIL-29: each row's type chip (its tooltip = the deciding signal) and output words,
+// and the type filter beside Active / Done / Old (URL &type=). Sandbox only: the shared dash fixture (temp dirs) and a private headless browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -44,6 +45,40 @@ test('the Lanes rows: an RM source, a DIR source and none (the finding); the bri
   } finally { await f.done(); }
 });
 
+// MAIL-29: a planner lane (design, documents to its notes) next to gen (build, code)
+function sketch(f) {
+  const S = f.pa.state;
+  record(S, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'sketch' } });
+  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'sketch', stage: 'plan', agent: 'planner', notes: path.join(S, 'notes', 'sketch', 'NOTES.md') } });
+}
+
+test('the Lanes rows: a type chip naming its signal and the output in words; the type filter', { timeout: 120000 }, async () => {
+  const f = await fixture();
+  try {
+    drivers(f); sketch(f);
+    const { data } = await f.get('/api/lanes?project=kestrel'), by = n => data.lanes.find(l => l.name === n);
+    assert.deepEqual(by('sketch').lane_type, { type: 'design', signal: `${by('sketch').run}: agent planner`, now: null });
+    assert.equal(by('sketch').output.kind, 'documents');
+    assert.match(by('sketch').output.text, /^documents → (.+\/)?notes\/sketch\/ \(not in git; backed up only if the ledger is on\)$/);
+    assert.equal(by('gen').lane_type.type, 'build');
+    assert.match(by('gen').output.text, /^code → PR to .+ · no PR yet$/);
+    assert.equal(by('seabed').lane_type.type, null, 'a run with no stage, brief, item or commit: no type');
+    // a code lane whose PR is open (the deliverables cache's row), rendered
+    const lanes = data.lanes.map(l => l.name !== 'gen' ? l : { ...l, output: { kind: 'code', text: 'code → PR to lombasto/norn · PR #18 open', href: 'https://github.com/lombasto/norn/pull/18' } });
+    const html = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['active', 'done', 'old', 'archived'] }), row = n => html.match(new RegExp(`<tr id="lane-${n}"[^]*?</tr>`))?.[0];
+    assert.match(row('gen'), /<div class="lane-kind small"><span class="chip idle" title="type from RUN-\d+: stage S1">build<\/span> <a class="lane-out" href="https:\/\/github.com\/lombasto\/norn\/pull\/18" target="_blank" rel="noopener">code → PR to lombasto\/norn · PR #18 open<\/a><\/div>/);
+    assert.match(row('sketch'), /title="type from RUN-\d+: agent planner">design<\/span> <span class="lane-out">documents → [^<]*notes\/sketch\/ \(not in git; backed up only if the ledger is on\)<\/span>/);
+    assert.match(row('seabed'), /<span class="chip warn" title="type from RUN-\d+: no stage, brief, item or commit names a type">no type<\/span>/);
+    assert.match(html, /aria-label="Lane type"><button class="hf" data-act="lane-type" data-type="build" aria-pressed="false">build <b>1<\/b><\/button><button class="hf" data-act="lane-type" data-type="design" aria-pressed="false">design <b>1<\/b>/);
+    const only = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['active', 'done', 'old', 'archived'], laneType: 'design' });
+    assert.ok(only.includes('id="lane-sketch"') && !only.includes('id="lane-gen"') && !only.includes('id="lane-seabed"'), 'the filter keeps one type');
+    assert.match(only, /data-type="design" aria-pressed="true">design <b>1<\/b>/);
+    const none = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['active'], laneType: 'audit' });
+    assert.match(none, /data-type="audit" aria-pressed="true">audit <b>0<\/b>/, 'a picked type with no row keeps its chip, so a tap can clear it');
+    assert.match(none, /No lanes under these filters\./);
+  } finally { await f.done(); }
+});
+
 test('the Runs page: a Lane column - a worker (lane · stage, linked to its row), a MERGE, a check-in; Session is the id + name, the rest its title', () => {
   const tree = [
     { id: 'RUN-7', name: 'amber-fox', kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [], helpers: { n: 1, running: 0, tokens: 1200 } },
@@ -59,7 +94,7 @@ test('the Runs page: a Lane column - a worker (lane · stage, linked to its row)
   assert.match(node('RUN-9'), /<div class="lanecol small">check-in<\/div>/);
 });
 
-test('the browser at 390 px: Lanes (objective + links) and Runs (the Lane column on the second line) never scroll sideways', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser at 390 px: Lanes (objective + links, type + output, the type filter) and Runs (the Lane column on the second line) never scroll sideways', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
     drivers(f);
@@ -73,6 +108,11 @@ test('the browser at 390 px: Lanes (objective + links) and Runs (the Lane column
     await pg.ev(`document.querySelector('#lane-seabed .lane-why summary').click()`);
     assert.equal(await pg.ev(`document.querySelector('#lane-seabed .lane-why').open`), true, 'a tap opens it in full');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'still no sideways scroll with the objective open');
+    // MAIL-29: the type filter - a tap keeps one type and writes it to the URL; still no sideways scroll
+    assert.ok(await pg.until(`!!document.querySelector('[data-act="lane-type"][data-type="build"]')`, 30000), 'the type chips show');
+    await pg.ev(`document.querySelector('[data-act="lane-type"][data-type="build"]').click()`);
+    assert.ok(await pg.until(`location.search.includes('&type=build') && !document.querySelector('#lane-seabed') && !!document.querySelector('#lane-gen .lane-kind')`, 30000), 'the filter keeps build lanes, in the URL');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll with the type line and the filter');
     await pg.go(`${f.url}/?project=kestrel&tab=runs`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'runs' && !!document.querySelector('#node-RUN-3 .lanecol a')`, 90000), 'Runs shows the Lane column');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Runs at 390 px');

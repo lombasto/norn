@@ -473,6 +473,11 @@ export const laneSrcLink = s => s.doc ? `<button class="lnk lane-src" data-go="d
 export const laneWhy = d => !d ? '' : !d.sources.length ? `<div class="lane-why">${chip('warn', d.finding)}</div>`
   : `<details class="lane-why"><summary title="${esc(d.objective)}">${esc(d.objective)}</summary><ul class="small">${d.sources.map(s => `<li>${laneSrcLink(s)} ${esc(s.title)}</li>`).join('')}</ul></details>
     <div class="lane-srcs small">${d.sources.map(laneSrcLink).join(' ')}</div>`;
+// MAIL-29: the lane's type as a chip (its tooltip = the signal that decided it; purpose.mjs laneType), a landing run in flight beside it
+// (MERGE is what the lane does now, not its type), and where the output goes in words (laneOutput: a PR and its state, or the notes)
+export const laneKind = l => { const t = l.lane_type, o = l.output; if (!t && !o) return '';
+  const out = !o ? '' : o.href ? `<a class="lane-out" href="${esc(o.href)}" target="_blank" rel="noopener">${esc(o.text)}</a>` : `<span class="lane-out">${esc(o.text)}</span>`;
+  return `<div class="lane-kind small"><span class="chip ${t?.type ? 'idle' : 'warn'}" title="${esc(`type from ${t?.signal ?? '-'}`)}">${esc(t?.type ?? 'no type')}</span>${t?.now ? ` ${chip('running', t.now)}` : ''} ${out}</div>`; };
 export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
   const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), refused = ctx.laneRefused ?? {}, undo = ctx.laneUndo;
@@ -481,19 +486,22 @@ function lanes(d, ctx) {
   const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
   // a done lane says how long ago it ended; an old one reads stopped (its row is faded)
   const nowText = l => l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`;
-  const rows = all.filter(l => show.has(laneShowOf(l))).map(l => {
+  // MAIL-29: the type filter - one type at a time (none = all); its chips are the types of the rows the state chips leave, counted
+  const kind = ctx.laneType ?? null, typeOf = l => l.lane_type?.type ?? 'no type', shown = all.filter(l => show.has(laneShowOf(l)));
+  const kinds = [...new Set([...shown.map(typeOf), ...(kind ? [kind] : [])])].sort();
+  const rows = shown.filter(l => !kind || typeOf(l) === kind).map(l => {
     // the lane's run opens in the live feed drawer (as a Runs row does), not the supervisor's plain-text tail in a new browser tab
     const [cls, word] = stateOf(l.text), log = l.run ? `<button data-act="lane-feed" data-project="${esc(l.project)}" data-run="${esc(l.run)}" title="Open ${esc(l.run)} in the live feed">Feed</button>` : '';
     const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
     const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
-    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
+    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${laneKind(l)}${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
       <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
   }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
   const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
   return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
-   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span></div>
+   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span><span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span></div>
    <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 

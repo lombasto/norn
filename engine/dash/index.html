@@ -163,6 +163,7 @@ tr:last-child td{border-bottom:0}
 .filters{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
 input[type=search]{background:var(--panel);width:260px}
 .lane-why{margin-top:3px;font-size:12.5px;max-width:46ch}.lane-why summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;list-style:none}.lane-why summary::-webkit-details-marker{display:none}.lane-why[open] summary{white-space:normal}.lane-why ul{margin:4px 0 0;padding-left:16px;font-weight:400}.lane-srcs{display:flex;flex-wrap:wrap;gap:2px 8px;max-width:46ch}.lane-src{font-size:12px}button.lnk.lane-src{background:none;border:0;padding:0;color:var(--accent);cursor:pointer}@media (max-width:700px){.lane-why,.lane-srcs{max-width:62vw}}
+.lane-kind{margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;max-width:46ch}.lane-out{color:var(--mute);overflow-wrap:anywhere}.lane-types{border-left:1px solid var(--line);padding-left:8px}
 tr.old{opacity:.55}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}.lane-show{display:flex;gap:6px;flex-wrap:wrap}
 .lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
 .rowacts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
@@ -465,6 +466,9 @@ import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEF
 import { hoChip } from '/widgets.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
 const laneShowQs = v => { const k = String(v ?? '').split(',').filter(x => LANE_SHOW.some(c => c[0] === x)); return new Set(v == null ? LANE_SHOW_DEFAULT : k); };
+// MAIL-29: the type filter (one type or none = every type) in S.laneType and the URL (&type=design); the chips are the types the rows
+// carry (purpose.mjs LANE_TYPES on the server), so any word is kept and an unknown one just matches no row
+const laneTypeQs = v => v || null;
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
 import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, stillOnly, createStage, avoidRects } from '/norn/orc.mjs';
 import { createScheduler } from '/norn/motion.mjs';
@@ -475,7 +479,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -593,11 +597,11 @@ async function partsFetch(tab, d) {
   } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
-const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = q.get('tab');
   if (!TABS.some(x => x[0] === t) || q.get('project') !== S.project) return;
-  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); render();
+  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -652,7 +656,7 @@ function paintMain(d) {
   const a = document.activeElement, fx = a?.matches?.('[data-rmf="q"]') ? [a.selectionStart, a.selectionEnd] : null;
   const home = S.tab === 'home' ? homeKeep() : null;
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
   if (home) homeRestore(home);
   if (form) {
     for (const x of document.querySelectorAll('#main [data-answer], #main [data-adopt]')) { const k = x.dataset.answer ? 'a:' + x.dataset.answer : 'p:' + x.dataset.adopt; if (form[k] !== undefined && form[k] !== '') x.value = form[k]; }
@@ -968,7 +972,7 @@ document.addEventListener('click', e => {
   if (rid) { e.preventDefault(); const id = rid.dataset.rid, k = id.split(/[-:]/)[0];
     if (k === 'RM') { S.tab = 'roadmap'; S.rm = { item: id, view: S.rm.view }; S.rmJump = true; history.replaceState(null, '', rmUrl()); render(); return; }   // META-ROADMAP S2
     S.tab = { DEC: 'records', DIR: 'records', Q: 'inbox', RUN: 'runs', L: 'lanes' }[k] ?? 'records';
-    if (S.tab === 'records') S.find = id; if (S.tab === 'lanes') { S.find = id.slice(2); S.laneShow = new Set(LANE_SHOW.map(c => c[0])); }
+    if (S.tab === 'records') S.find = id; if (S.tab === 'lanes') { S.find = id.slice(2); S.laneShow = new Set(LANE_SHOW.map(c => c[0])); S.laneType = null; }
     S.jump = { inbox: 'q-' + id, runs: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
     history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') : ''}`); render(); return; }
   const b = e.target.closest('button,[data-t],a[data-tab]'); if (!b) return;
@@ -1063,6 +1067,7 @@ document.addEventListener('click', e => {
     post('/api/lane/archive', { project: p, lane: d.lane }).then(() => { S.archiving.delete(k); S.laneUndo = { project: p, lane: d.lane }; render(); },
       e => { S.archiving.delete(k); S.laneRefused[k] = e.message; lanesRepaint(); }); return; }
   if (d.act === 'lane-undo') { S.laneUndo = null; act(() => post('/api/lane/archive', { project: p, lane: d.lane, unarchive: true })); return; }
+  if (d.act === 'lane-type') { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'lane-show') { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'revoke' && confirm(`Revoke ${d.id}?`)) act(() => post('/api/directive/revoke', { project: p, id: d.id }));
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }

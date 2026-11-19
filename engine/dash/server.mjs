@@ -27,7 +27,7 @@ import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
-import { laneDriver, laneBriefFiles } from '../lib/purpose.mjs';
+import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
@@ -401,9 +401,17 @@ export function createDashboard(o) {
   const briefHead = f => (readText(f) ?? '').split(/\r?\n/).find(l => /^#/.test(l)) ?? null;
   const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items;
     return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(l.id.slice(2), items, briefsDirOf(p))) }); }));
+  // MAIL-29: its type (purpose.mjs laneType) and where its output goes (laneOutput): PR state from the deliverables cache (the child
+  // process keeps it; never git here), the branch tips' subjects as the commit-type signal, documents to the run's notes folder
+  const notesOf = (p, lane, items) => {
+    const n = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.notes).sort((a, b) => b.id.localeCompare(a.id, 'en', { numeric: true }))[0]?.data.notes;
+    const dir = n ? (/\.md$/i.test(n) ? path.dirname(n) : n) : path.join(p.state, 'notes', lane), rel = path.relative(path.resolve(p.root || path.dirname(p.state)), path.resolve(dir));
+    return (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : dir).replace(/\\/g, '/') + '/';
+  };
   function withDriver(p, rows) {
-    const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name };
-    return rows.map(l => ({ ...l, driver: laneDriver(l.name, o) }));
+    const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name }, dl = deliverablesOf(p).rows || [];
+    return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
+      return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
   }
   function lanesWithSpend(ps) {
     const rows = sortLanes(ps.flatMap(p => withDriver(p, lanes(p, true))));   // RM-19 S1: every row, one order across projects; the page filters
