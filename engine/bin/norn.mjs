@@ -2863,7 +2863,7 @@ function syncCmd(argv, env, out, err) {
     const r = syncCut({ state, project, home: f.home, bare: !!f.bare, apply: !!f.apply, ledger: cfg, machineFile: mf });
     for (const l of cutLines(r, { project: project.name, home: f.home, apply: !!f.apply })) out(l);
     return r.refused.length ? 1 : 0;
-  } catch (e) { if (e instanceof RunError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+  } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------

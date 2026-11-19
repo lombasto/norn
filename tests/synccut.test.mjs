@@ -211,3 +211,14 @@ test('cli: norn sync cut needs --home; --home must be a valid id', () => {
   assert.equal(main(['sync', 'cut', '--project', 'demo', '--home', 'B-1'], { META_ROOT: mkTmp('meta-cut-cli-') }, out, out), 2);
   assert.equal(main(['sync', 'nope'], { META_ROOT: mkTmp('meta-cut-cli-') }, out, out), 2);
 });
+
+test('machine.json takes the ledger.home_id the cut writes (SPEC 3.1); a malformed id is refused', async () => {
+  const { loadMachine } = await import('../engine/lib/config.mjs');
+  const t = path.dirname(path.dirname(mkTmp('meta-cut-mf-'))), mf = path.join(t, 'machine.json');
+  const m = home_id => ({ schema: 1, home: t, claude: { exe: 'claude', config_dir: t, projects_dir: t }, node: process.execPath,
+    scheduler: { kind: 'cron', name: 'x', interval_min: 5 }, dash: { port: 0, bind: '127.0.0.1' }, projects: [], ledger: { dir: path.join(t, 'l.git'), home_id } });
+  fs.writeFileSync(mf, JSON.stringify(m('a')));
+  assert.equal(loadMachine(mf, { meta: t }).ledger.home_id, 'a');
+  fs.writeFileSync(mf, JSON.stringify(m('B-1')));
+  assert.throws(() => loadMachine(mf, { meta: t }), /home_id/);
+});
