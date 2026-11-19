@@ -71,6 +71,7 @@ import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
 import { ClaimsError } from '../lib/claimsref.mjs';
+import { syncCut, cutLines, HOME_RE } from '../lib/synccut.mjs';
 import { listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
@@ -1445,6 +1446,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'sync') return syncCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
@@ -2836,6 +2838,32 @@ function claimCmd(argv, env, out, err) {
     out(`released: ${r.removed.join(' ')}`);
     return 0;
   } catch (e) { if (e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
+// ---------- RM-46 S1b: norn sync cut (multi-home SPEC sec. 6; the cut tool: engine/lib/synccut.mjs) ----------
+const SYNC_USAGE = 'norn sync cut --project P --home <id> [--bare] [--apply] [--machine F]    (the one cut that makes this project a home of a synced project: a dry run by default that prints every rename; --apply registers the home on the claims branch, renames the lane branches (local + origin; an open PR keeps its), rewrites the logs, renames the files keyed by id and writes home.json + ID-MAP.md. --bare: the first home, which keeps its bare ids. Pre-conditions: the project paused, no run running or queued, the lane worktrees clean)';
+function syncCmd(argv, env, out, err) {
+  const [sub, ...rest] = argv, f = {};
+  const usage = msg => { err('error: ' + msg); err('usage: ' + SYNC_USAGE); return 2; };
+  if (sub !== 'cut') return usage(sub ? `unknown sync subcommand ${sub}` : 'missing subcommand');
+  for (let i = 0; i < rest.length; i++) {
+    if (['--bare', '--apply'].includes(rest[i])) { f[rest[i].slice(2)] = true; continue; }
+    const k = { '--project': 'project', '--state': 'state', '--home': 'home', '--machine': 'machine' }[rest[i]];
+    if (!k) return usage(`unexpected ${rest[i]}`);
+    if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
+    f[k] = rest[++i];
+  }
+  if (!f.home) return usage('sync cut needs --home <id>');
+  if (!HOME_RE.test(f.home)) return usage(`--home ${f.home}: want [a-z][a-z0-9]{0,7}`);
+  try {
+    const { project, state } = where(f, env);
+    if (!project) return usage('sync cut needs --project (its repo holds the lane branches)');
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const r = syncCut({ state, project, home: f.home, bare: !!f.bare, apply: !!f.apply, ledger: cfg, machineFile: mf });
+    for (const l of cutLines(r, { project: project.name, home: f.home, apply: !!f.apply })) out(l);
+    return r.refused.length ? 1 : 0;
+  } catch (e) { if (e instanceof RunError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------
