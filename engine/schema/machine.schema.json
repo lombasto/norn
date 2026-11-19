@@ -26,7 +26,8 @@
       "backend": { "enum": ["none", "ntfy", "pushover", "toast", "desktop"] }, "topic": { "type": "string" }, "server": { "type": "string" },
       "token_env": { "type": "string" }, "user_env": { "type": "string" } } },
     "ledger": { "type": "object", "additionalProperties": false, "properties": {
-      "dir": { "type": "string" }, "remote": { "type": "string" }, "state_root": { "type": "string" }, "reviews": { "type": "string" } } },
+      "dir": { "type": "string" }, "remote": { "type": "string" }, "state_root": { "type": "string" }, "reviews": { "type": "string" },
+      "home_id": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,7}$", "$comment": "RM-46 S1b: this machine's home id in synced projects (norn sync cut writes it; SPEC 3.1)" } } },
     "projects_home": { "type": "string", "$comment": "META-ONBOARD 3.2: where `norn project new` writes <name>/project.json (default ${home}/.norn/projects; never inside the engine tree)" },
     "fed": { "type": "object", "additionalProperties": false, "properties": {
       "labels": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$" } }, "id": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,15}$" }, "host": { "type": "string", "pattern": "^[a-z0-9._-]+$" },

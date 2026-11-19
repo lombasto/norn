@@ -64,6 +64,7 @@ import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching, me
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
+import { publishHome, fetchHomes, syncStatus, homeIdOf } from '../lib/sync.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
@@ -71,6 +72,7 @@ import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
 import { ClaimsError } from '../lib/claimsref.mjs';
+import { syncCut, cutLines, HOME_RE } from '../lib/synccut.mjs';
 import { listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
@@ -1404,6 +1406,7 @@ Plumbing:
   norn mcp                         the stdio MCP server
   norn node                        one federation pull-agent job
   norn claim                       the multi-home work claims (list, allow a pair, release, take over a stale one)
+  norn sync                        the multi-home sync (status, publish home/<id>, fetch the other homes' copies)
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
   norn hook                        the Claude Code session hook
   norn scope                       the PreToolUse hook: what a run may touch
@@ -1412,7 +1415,7 @@ function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
+    node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
@@ -1467,6 +1470,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'sync') return syncCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
@@ -2858,6 +2862,73 @@ function claimCmd(argv, env, out, err) {
     out(`released: ${r.removed.join(' ')}`);
     return 0;
   } catch (e) { if (e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
+// ---------- RM-46 S1b: norn sync cut (multi-home SPEC sec. 6; the cut tool: engine/lib/synccut.mjs) ----------
+const SYNC_CUT_USAGE = 'norn sync cut --project P --home <id> [--bare] [--apply] [--machine F]    (the one cut that makes this project a home of a synced project: a dry run by default that prints every rename; --apply registers the home on the claims branch, renames the lane branches (local + origin; an open PR keeps its), rewrites the logs, renames the files keyed by id and writes home.json + ID-MAP.md. --bare: the first home, which keeps its bare ids. Pre-conditions: the project paused, no run running or queued, the lane worktrees clean)';
+function syncCutCmd(argv, env, out, err) {
+  const [sub, ...rest] = argv, f = {};
+  const usage = msg => { err('error: ' + msg); err('usage: ' + SYNC_CUT_USAGE); return 2; };
+  if (sub !== 'cut') return usage(sub ? `unknown sync subcommand ${sub}` : 'missing subcommand');
+  for (let i = 0; i < rest.length; i++) {
+    if (['--bare', '--apply'].includes(rest[i])) { f[rest[i].slice(2)] = true; continue; }
+    const k = { '--project': 'project', '--state': 'state', '--home': 'home', '--machine': 'machine' }[rest[i]];
+    if (!k) return usage(`unexpected ${rest[i]}`);
+    if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
+    f[k] = rest[++i];
+  }
+  if (!f.home) return usage('sync cut needs --home <id>');
+  if (!HOME_RE.test(f.home)) return usage(`--home ${f.home}: want [a-z][a-z0-9]{0,7}`);
+  try {
+    const { project, state } = where(f, env);
+    if (!project) return usage('sync cut needs --project (its repo holds the lane branches)');
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const r = syncCut({ state, project, home: f.home, bare: !!f.bare, apply: !!f.apply, ledger: cfg, machineFile: mf });
+    for (const l of cutLines(r, { project: project.name, home: f.home, apply: !!f.apply })) out(l);
+    return r.refused.length ? 1 : 0;
+  } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
+// ---------- RM-46 S1c: norn sync status | publish | fetch | cut (home/<id> on the ledger remote; the loop is S4's) ----------
+const SYNC_USAGE = 'norn sync status | publish | fetch  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote, fetch every other home\'s into <state>/<project>/homes/<h>/; on with machine.json ledger.remote and a synced project: home.json { id } names the home)' + '\n       ' + SYNC_CUT_USAGE;
+function syncCmd(argv, env, out, err) {
+  if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
+  const [sub, ...rest] = argv, f = {};
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
+    f.machine = rest[++i];
+  }
+  if (!['status', 'publish', 'fetch'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
+  try {
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const id = cfg && homeIdOf(cfg);
+    if (!id) { err('error: sync is off (it needs machine.json ledger.remote and a synced project: a state dir with home.json)'); return 1; }
+    if (sub === 'status') {
+      const s = syncStatus(cfg);
+      out(`home ${s.home} remote set  published ${s.head ? s.head.slice(0, 10) : 'never'}${s.head && s.head !== s.pushed ? ' (not pushed yet)' : ''}`);
+      if (s.stopped) out(`publish stopped: ${s.stopped}`);
+      out(s.fetched_at ? `fetched ${s.fetched_at}` : 'never fetched');
+      if (s.fetch_error) out(`stale since ${s.fetched_at || 'never'}: the fetch at ${s.failed_at} failed (${s.fetch_error})`);
+      if (s.gone.length) out(`gone (copies kept): ${s.gone.join(' ')}`);
+      return 0;
+    }
+    if (sub === 'publish') {
+      const r = publishHome(cfg);
+      if (r.error || r.refused || r.stopped || r.rejected) { err('error: ' + (r.error || r.stopped || r.rejected || `refused: a machine.json secret value in ${r.refused.join(', ')}`)); return 1; }
+      out(r.noop ? 'nothing to publish' : `published home/${id}${r.sha ? ' ' + r.sha.slice(0, 10) : ''}, ${r.pushed ? 'pushed' : `not pushed (${r.offline}): the next pass retries`}`);
+      return 0;
+    }
+    const r = fetchHomes(cfg);
+    if (r.error) { err(`error: fetch failed, the last copies stay: ${r.error}`); return 1; }
+    out(`fetched ${r.homes.length} home${r.homes.length === 1 ? '' : 's'} (${r.homes.join(' ') || '-'}), ${r.written.length} copies written`);
+    if (r.gone.length) out(`gone (copies kept): ${r.gone.join(' ')}`);
+    return 0;
+  } catch (e) {
+    err('error: ' + e.message);
+    return e instanceof ConfigError ? 2 : 1;
+  }
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------

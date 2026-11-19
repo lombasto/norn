@@ -31,7 +31,7 @@ import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked, tailA } from '../lib/agents.mjs';
+import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
@@ -513,15 +513,15 @@ export function createDashboard(o) {
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
-  async function agents(p) {
+  async function agents(p, win) {
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
     const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
     // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
-    await primeAgents(runs, { projectsDir, codexDir, cache });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
-    const tree = agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
+    await primeAgents(runs, { projectsDir, codexDir, cache, window: win });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
+    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
     // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
@@ -1107,7 +1107,7 @@ export function createDashboard(o) {
     const nodes = new Map((await agents(p)).map(n => [n.id, n])), today = new Date().toDateString(), byNew = (a, b) => String(b.created).localeCompare(String(a.created));
     // + a run that just ended HANDOFF and waits for its resume verdict (handoffOf step 'ending'): the lane is not idle, it hands off
     const now = runs.filter(r => (['running', 'queued', 'claimed'].includes(r.state) || (r.end?.outcome === 'handoff' && !r.resume && hoOf(p, r)?.step === 'ending')) && r.data.kind !== 'checkin' && r.data.role !== 'helper')
-      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, age_min: n.age_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
+      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, ran_min: n.ran_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
@@ -1673,7 +1673,11 @@ data: ${JSON.stringify(l)}
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
           const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)) }); }
-        if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
+        if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
+          const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
+          const ps = pick(url, { all: true }), win = windowMs(w);
+          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win)))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+        }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
           const vs = pick(url, { all: true }).map(deliverablesOf);

@@ -179,7 +179,7 @@ tr:last-child td{border-bottom:0}
 .decisions{margin-bottom:12px}.decisions>h2{margin:4px 0 8px}.pindex{display:flex;flex-wrap:wrap;gap:4px 14px;margin-bottom:10px;overflow-wrap:anywhere}
 .pstages{list-style:none;margin:8px 0;padding:0}.pstage{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line)}.pstage>div:first-child{flex:1 1 260px;min-width:0}.pacts{display:flex;gap:6px;flex-wrap:wrap}
 .tree{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 0}
-.node{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) 230px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
+.node{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) 230px 80px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
 .node.head{border-top:0;color:var(--mute);font-size:12px;font-weight:600}
 .node .name{display:flex;gap:6px;align-items:center;min-width:0}
 .node .name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node .lanecol{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -384,7 +384,7 @@ mark.dv-w{color:var(--on-accent);border-radius:2px}.dv-del mark.dv-w{background:
 .pl-step{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}.pl-sep{margin:0 2px}.pl-meta{flex-basis:100%;margin-top:4px}
 .pl-empty{padding:10px 14px;margin:0}.pl-fc{padding:10px 14px}.pl-fc .kv>span>.bar{display:inline-block;width:160px;vertical-align:middle;margin-right:6px}
 @media (max-width:700px){.pl-row{grid-template-columns:32px 1fr auto}.pl-est,.pl-start{grid-column:2}.pl-holds{grid-column:2 / -1}.pl-step{white-space:normal}}
-@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}.node{grid-template-columns:1fr 64px 120px}.node>:nth-child(3),.node>:nth-child(5),.node>:nth-child(6),.node>:nth-child(8){display:none}.node>.lanecol{grid-column:1/-1;order:1;padding-left:28px}.node.head>.lanecol{display:none}.node>.lanecol:empty{display:none}.node>.horow{order:2}}
+@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}.node{grid-template-columns:1fr 64px 120px}.node>:nth-child(3),.node>:nth-child(5),.node>:nth-child(6),.node>:nth-child(7),.node>:nth-child(9){display:none}.node>.lanecol{grid-column:1/-1;order:1;padding-left:28px}.node.head>.lanecol{display:none}.node>.lanecol:empty{display:none}.node>.horow{order:2}}
 /* phone width (PHONE-HEADER, both looks): the header wraps and the project select shrinks; the tab bar and wide tables scroll inside
    themselves, setting rows stack - the page itself never scrolls sideways */
 @media (max-width:700px){header{flex-wrap:wrap;gap:8px;padding:8px 10px}header select{min-width:0;max-width:100%}nav{overflow-x:auto;padding:0 8px}nav>button{flex:none}
@@ -528,7 +528,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, renderActivity, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '/activity.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal, pauseMenu } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal, pauseMenu, runsViewOf, runsViewQs } from '/ui.mjs';
 import { hoChip } from '/widgets.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
@@ -546,7 +546,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -663,11 +663,11 @@ async function partsFetch(tab, d) {
   } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
-const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = q.get('tab');
   if (!TABS.some(x => x[0] === t) || q.get('project') !== S.project) return;
-  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); render();
+  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -677,7 +677,7 @@ async function render(force = false, why = []) {
     // overtook (a click while a slow fetch was out) never paints
     const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
     const tab = S.project ? S.tab : 'adopt';
-    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
+    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     want.catch(() => {});   // a header failure is reported first; the tab's own failure is awaited below
     step('render:header'); await header(g); guardHeader();
     if (seq !== S.renderSeq) return;
@@ -700,30 +700,55 @@ async function render(force = false, why = []) {
     if (S.tab === 'docs' && S.docScroll && $('#main [data-focus]')) { S.docScroll = false; $('#main [data-focus]').scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card / a finding opens its line
     step('render:map'); if ($('#map-host')) await mountMap(d); else dropMap();
     if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
-    if (S.find) { const box = document.querySelector('[data-filter]'); if (box) box.value = S.find; S.find = null; }
+    if (S.find) { const box = document.querySelector('[data-filter]'); if (box) { box.value = S.find; draftNote(box); } S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
     step('render:finish'); fxPaint(); recFit(); proseFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
     document.body.dataset.ready = S.tab;   // the ready signal: this tab's data is fetched and painted (tests wait on it, not on a clock)
   } catch (e) { err('Refresh failed: ' + e.message); document.body.dataset.ready = 'error'; }
 }
-// ---- the Roadmap tab (META-ROADMAP S2): the scope switch + filters re-paint from the last data (no refetch); the scope and a deep
-// link (#rm-RM-n) live in the URL hash; typing in the filter box keeps its focus and caret across re-paints (stream ones too) ----
-function adoptForm() {   // META-ADOPT A3: the setup page's typed answers / path and line ticks, kept across stream re-paints
-  if (!$('#main .adp')) return S.adoptForm;
-  const v = {};
-  for (const x of document.querySelectorAll('#main [data-answer], #main [data-adopt]')) v[(x.dataset.answer ? 'a:' + x.dataset.answer : 'p:' + x.dataset.adopt)] = x.value;
-  for (const x of document.querySelectorAll('#main .adp-part input[data-line]')) v[`l:${x.closest('[data-part]').dataset.sha}:${x.dataset.line}`] = x.checked;
-  return v;
+// ---- typed drafts (owner bug 2026-11-19): every paint rebuilds #main, so what the owner typed into any keyed input or textarea of
+// #main (the Home composer, an Inbox answer, the Adopt answers / path / line ticks, a list filter ...) is kept in S.drafts at each
+// keystroke and put back after the paint, with the focus and the caret. A draft outlives a tab switch; the action that sends it
+// drops it (draftDrop). A control whose value is already rendered from S keeps only its focus and caret: the roadmap filters
+// (S.rm), the settings search and rows (S.setQ, the Settings diff), action checkboxes (data-act / data-fx-key).
+const DRAFT_SKIP = '[data-rmf], [data-set-search], [data-key], [data-act], [data-fx-key]';
+const draftEl = el => !!el?.matches?.('#main textarea, #main input:not([type=button],[type=submit],[type=hidden],[type=file])');
+const ticked = el => el.type === 'checkbox' || el.type === 'radio';
+function draftKey(el) {   // its id, else its name + data-* keys under the nearest id (a versioned card's data-sha too: a new version drops the tick)
+  if (el.id) return '#' + el.id;
+  const own = Object.entries(el.dataset).sort().map(([k, v]) => `${k}=${v}`).join(','); if (!own && !el.name) return null;
+  const at = el.parentElement?.closest('[id]'); return `${at?.id ?? ''}${at?.dataset.sha ? '@' + at.dataset.sha : ''}/${el.name}/${own}`;
+}
+const draftId = k => `${S.tab}|${S.project}|${k}`;
+function draftNote(el) {
+  if (!draftEl(el) || el.matches(DRAFT_SKIP)) return;
+  const group = el.type === 'radio' && el.name ? [...document.querySelectorAll('#main input[type=radio]')].filter(r => r.name === el.name) : [el];   // a radio unticks its group silently
+  for (const x of group) { const k = draftKey(x); if (k) S.drafts.set(draftId(k), ticked(x) ? x.checked : x.value); }
+}
+// drop the drafts of a tab (null: any tab), all of them or the one keyed k, in any project
+function draftDrop(tab, k) { for (const id of [...S.drafts.keys()]) if ((tab === null || id.startsWith(tab + '|')) && (k === undefined || id.endsWith('|' + k))) S.drafts.delete(id); }
+document.addEventListener('input', e => draftNote(e.target));
+function draftsKeep() { const a = document.activeElement; return draftEl(a) ? { focus: draftKey(a), sel: [a.selectionStart, a.selectionEnd] } : {}; }
+function draftsRestore(keep) {
+  for (const el of document.querySelectorAll('#main input, #main textarea')) {
+    if (!draftEl(el)) continue; const k = draftKey(el); if (!k) continue;
+    const v = el.matches(DRAFT_SKIP) ? undefined : S.drafts.get(draftId(k));
+    if (v !== undefined && !el.disabled) { if (ticked(el)) el.checked = v; else el.value = v; }
+    if (keep.focus === k) { el.focus(); if (keep.sel[0] != null) try { el.setSelectionRange(...keep.sel); } catch { /* a number box has no caret API */ } }
+  }
 }
 // the Lanes page re-paints from its last data (a chip, an archive tap); any other state = a fresh render
+// the Runs page re-paints from its last data on a chip or a lane keystroke; a new window refetches (the server cuts the tree)
+function runsRepaint() { history.replaceState(null, '', tabUrl()); if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); else render(); }
 function lanesRepaint() { if (S.tab === 'lanes' && S.last && S.lastTab === 'lanes') { paintMain(S.last); applyFilters(); } else render(); }
 function paintMain(d) {
-  const a = document.activeElement, fx = a?.matches?.('[data-rmf="q"]') ? [a.selectionStart, a.selectionEnd] : null;
+  const a = document.activeElement, keep = draftsKeep(), fxSel = ['[data-rmf="q"]', '[data-runs-lane]'].find(k => a?.matches?.(k)), fx = fxSel ? [a.selectionStart, a.selectionEnd] : null;
   const home = S.tab === 'home' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  draftsRestore(keep);
   if (home) homeRestore(home);
   if (lcard) document.getElementById(lcard)?.querySelector('.lhov > :first-child')?.focus();
   if (form) {
@@ -732,7 +757,7 @@ function paintMain(d) {
     S.adoptForm = form;
     if (focus) document.querySelector('#main ' + focus)?.focus();
   }
-  if (fx) { const q = document.querySelector('[data-rmf="q"]'); if (q) { q.focus(); q.setSelectionRange(...fx); } }
+  if (fx) { const q = document.querySelector(fxSel); if (q) { q.focus(); q.setSelectionRange(...fx); } }   // a filter box keeps its focus and caret
   if (S.tab === 'roadmap') document.documentElement.style.setProperty('--rm-top', ($('header')?.offsetHeight || 0) + 'px');   // S2b: the board's heads stick under the header
   if (S.tab === 'roadmap' && S.rmJump && S.rm.item) { S.rmJump = false; document.getElementById('rm-' + S.rm.item)?.scrollIntoView({ block: 'center' }); }
 }
@@ -740,17 +765,16 @@ function paintMain(d) {
 // was at the bottom) survive every re-paint; new thread lines arrive on /api/chat?live=1 (SSE, from now on) and poke one re-render ----
 const homeScroller = () => (matchMedia('(max-width:700px)').matches ? document.scrollingElement : $('#thread'));
 function homeKeep() {
-  const t = $('#chat-text'), sc = $('#thread') ? homeScroller() : null;
+  const sc = $('#thread') ? homeScroller() : null;
   if ($('#thread')) S.homeOpen = new Set([...document.querySelectorAll('#thread details.ck[open]')].map(x => x.closest('li')?.dataset.key).filter(Boolean));   // expanded check-ins stay expanded
   const pm = $('#pick-model'), pe = $('#pick-effort'), hp = $('details.hpick');
   if (hp) S.pickOpen = hp.open;   // the DOM, not the 'toggle' event (a queued task a repaint can beat): an open just set stays open
-  return { pick: pm && pe && S.pickOpen ? [pm.value, pe.value] : null, text: t?.value ?? S.chatDraft ?? '', focus: document.activeElement === t, sel: t ? [t.selectionStart, t.selectionEnd] : null,
-    bottom: !sc || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 60, top: sc?.scrollTop ?? 0 };
+  return { pick: pm && pe && S.pickOpen ? [pm.value, pe.value] : null, bottom: !sc || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 60, top: sc?.scrollTop ?? 0 };
 }
 function homeRestore(k) {
   document.documentElement.style.setProperty('--hdr-h', ($('header')?.offsetHeight || 0) + 'px');
   document.documentElement.style.setProperty('--home-top', (($('header')?.offsetHeight || 0) + ($('#tabs')?.offsetHeight || 0) + ($('#error')?.offsetHeight || 0)) + 'px');
-  const t = $('#chat-text'); if (t) { t.value = k.text; if (k.focus) { t.focus(); if (k.sel) t.setSelectionRange(...k.sel); } slashShow(); }
+  if ($('#chat-text')) slashShow();   // its text, focus and caret: draftsRestore
   if (k.pick && $('#pick-model')) { [$('#pick-model').value, $('#pick-effort').value] = k.pick; pickDirty(); }
   const sc = homeScroller(); if (sc) sc.scrollTop = k.bottom ? sc.scrollHeight : k.top;
 }
@@ -794,13 +818,15 @@ async function chatSend() {
   const t = $('#chat-text'), text = t?.value.trim(); if (!text) return;
   const btn = $('[data-act="chat-send"]'); if (btn) btn.disabled = true;
   // a live line may have re-painted the composer while the post was in flight: clear the one on the page now
-  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) { st.textContent = r?.queued ? 'sent - waiting in Norn until the chat restarts ...' : 'sent - the controller is on it ...'; st.className = 'small chat-live'; } }
+  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; draftDrop('home', '#chat-text'); err(''); const st = $('#chat-state'); if (st) { st.textContent = r?.queued ? 'sent - waiting in Norn until the chat restarts ...' : 'sent - the controller is on it ...'; st.className = 'small chat-live'; } }
   catch (e) { err('Not sent: ' + e.message); }
   finally { if (btn) btn.disabled = false; }
 }
 document.addEventListener('keydown', e => { if (e.target.id !== 'chat-text') return; const m = $('#slash-menu');
-  if (m && !m.hidden && (e.key === 'Tab' || e.key === 'Escape')) { e.preventDefault(); const first = m.querySelector('[data-slash]'); if (e.key === 'Tab' && first) { e.target.value = first.dataset.slash + ' '; } m.hidden = true; } });
+  if (m && !m.hidden && (e.key === 'Tab' || e.key === 'Escape')) { e.preventDefault(); const first = m.querySelector('[data-slash]'); if (e.key === 'Tab' && first) { e.target.value = first.dataset.slash + ' '; draftNote(e.target); } m.hidden = true; } });
 document.addEventListener('keydown', e => { if (e.target.id === 'chat-text' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(pointer:coarse)').matches) { e.preventDefault(); chatSend(); } });
+// ---- the Roadmap tab (META-ROADMAP S2): the scope switch + filters re-paint from the last data (no refetch); the scope and a deep
+// link (#rm-RM-n) live in the URL hash; the filter box keeps its focus and caret across re-paints (draftsRestore) ----
 const rmUrl = () => `?project=${encodeURIComponent(S.project)}&tab=roadmap${rmUrlHash(S.rm)}`;
 function rmSet(next) { S.rm = next; history.replaceState(null, '', rmUrl()); if (S.tab === 'roadmap' && S.last) paintMain(S.last); }
 addEventListener('hashchange', () => { const h = parseRmHash(location.hash); S.rm = { ...S.rm, scope: h.scope ?? null, item: h.item ?? null, view: h.view ?? S.rm.view }; S.rmJump = !!h.item; if (S.tab === 'roadmap' && S.last) paintMain(S.last); });
@@ -913,6 +939,7 @@ function openStream() {
   es.onerror = () => { if (stream !== es) return; S.live = false; const st = $('#status'); if (st) st.innerHTML = st.innerHTML.replace(/live$/, 'reconnecting ...'); };
 }
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
+  if (e.target.matches('[data-runs-lane]')) { S.runsView.lane = e.target.value; runsRepaint(); }
   if (e.target.matches('[data-set-search]')) { S.setQ = e.target.value; setFilter(); } if (e.target.matches('[data-key]')) dirty(); });
 document.addEventListener('change', e => {
   if (e.target.matches('[data-set-billing]')) { const o = e.target.selectedOptions[0]; $('#set-billing-note').textContent = o ? o.title : ''; }
@@ -1114,7 +1141,7 @@ document.addEventListener('click', e => {
   // R1: the filter lives in the URL too (a reload keeps it); a paint uses Home data only (S.last of another tab = a fresh render)
   if (d.act === 'home-filter') { S.homeFilter = d.filter; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=home${S.homeFilter === 'all' ? '' : '&filter=' + S.homeFilter}`);
     if (S.tab === 'home' && S.last && S.lastTab === 'home') paintMain(S.last); else render(); return; }
-  if (d.act === 'slash') { const t = $('#chat-text'); t.value = d.slash + ' '; t.focus(); $('#slash-menu').hidden = true; return; }
+  if (d.act === 'slash') { const t = $('#chat-text'); t.value = d.slash + ' '; draftNote(t); t.focus(); $('#slash-menu').hidden = true; return; }
   if (d.act === 'chat-pick') { act(pickNow); return; }
   if (d.act === 'chat-default') { act(async () => { await pickNow(); await post('/api/chat/default', { project: S.project }); }); return; }
   if (d.act === 'open-setting') { S.pickOpen = false; S.tab = 'settings'; S.setQ = d.setting; S.jump = 'set-' + d.setting; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=settings&setq=${encodeURIComponent(d.setting)}`); render(); return; }
@@ -1181,7 +1208,7 @@ document.addEventListener('click', e => {
   if (d.act === 'remote-revoke' && confirm(`Revoke ${d.name}? It must be paired again to open Norn.`)) { post('/api/remote/revoke', { id: d.id }).then(() => render(true), e => err(e.message)); return; }
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
-  if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
+  if (d.act === 'answer') act(async () => { await post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }); draftDrop(null, '#ans-' + d.id); });
   if (d.act === 'proposal') act(() => post('/api/proposal', { project: d.project || p, run: d.run, stage: d.stage, pick: d.pick }));   // RM-28 S1: one stage's pick
   if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
   if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, resume: 'all' }));   // GAP-1: the hold row of a PAUSED file
@@ -1199,8 +1226,8 @@ document.addEventListener('click', e => {
   if (d.act === 'fixall-rest') act(() => post('/api/fixall', { project: d.project || p, rest: d.dir }));
   if (d.act === 'audit-decline') act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'decline' }));
   if (d.act === 'advice-keep') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'keep' }));
-  if (d.act === 'answer-from') act(() => post('/api/answer', { project: p, id: d.id, from: d.from }));
-  if (d.act === 'answer-text') { const t = $(`#ans-${CSS.escape(d.id)}`).value.trim(); if (t) act(() => post('/api/answer', { project: d.project || p, id: d.id, text: t })); }   // INBOX-REPLIES: a bare key picks; other words = a message in the Q's thread
+  if (d.act === 'answer-from') act(async () => { await post('/api/answer', { project: p, id: d.id, from: d.from }); draftDrop(null, '#ans-' + d.id); });
+  if (d.act === 'answer-text') { const t = $(`#ans-${CSS.escape(d.id)}`).value.trim(); if (t) act(async () => { await post('/api/answer', { project: d.project || p, id: d.id, text: t }); draftDrop(null, '#ans-' + d.id); }); }   // INBOX-REPLIES: a bare key picks; other words = a message in the Q's thread; a sent answer drops its draft
   if (d.act === 'rule') act(() => post('/api/answer', { project: d.project || p, id: d.id, ruling: Number(d.ruling) }));   // INBOX-REPLIES: one tap confirms the ruling the controller proposed
   if (d.act === 'stop' && confirm(`Stop ${d.run}?`)) act(() => post('/api/stop', { project: p, run: d.run, confirm: true }));
   // RM-19 S1: Archive acts on the tap - the row leaves at once (S.archiving), then an Undo bar (S.laneUndo, the chat's Undo without a
@@ -1210,10 +1237,12 @@ document.addEventListener('click', e => {
       e => { S.archiving.delete(k); S.laneRefused[k] = e.message; lanesRepaint(); }); return; }
   if (d.act === 'lane-undo') { S.laneUndo = null; act(() => post('/api/lane/archive', { project: p, lane: d.lane, unarchive: true })); return; }
   if (d.act === 'lane-type') { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
+  if (d.act === 'runs-show') { const s = S.runsView[d.group]; if (s.has(d.show)) s.delete(d.show); else s.add(d.show); runsRepaint(); return; }
+  if (d.act === 'runs-window') { S.runsView.window = d.window; history.replaceState(null, '', tabUrl()); render(); return; }
   if (d.act === 'lane-show') { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'revoke' && confirm(`Revoke ${d.id}?`)) act(() => post('/api/directive/revoke', { project: p, id: d.id }));
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
-  if (d.act === 'first-task') { const t = $('#first-task-text').value.trim(); if (t) act(() => post('/api/first-task', { project: d.project || p, text: t })); }
+  if (d.act === 'first-task') { const t = $('#first-task-text').value.trim(); if (t) act(async () => { await post('/api/first-task', { project: d.project || p, text: t }); draftDrop(null, '#first-task-text'); }); }
   if (d.act === 'adv-approve') { dirSend({ project: d.project || p, text: d.text, card: d.id }); return; }   // META-TEND P3; RM-30 S1: one tap, the directive is the record
   if (d.act === 'directive') { const t = prompt('New directive (binds the check-in):'); if (t) dirSend({ project: p, text: t }); return; }   // gap #5: a restatement = the dup notice
   if (d.act === 'dup-close') { S.dupAsk = null; paintDup(); return; }
@@ -1271,7 +1300,7 @@ async function adoptAct(b, d) {
       const r = await post('/api/adopt/scan', { root });
       if (r.registered) { S.project = r.registered; $('#project').value = S.project; adoptGo(); openStream(); }
       else adoptGo({ scan: { project: null, root, facts: r.facts, interview: r.interview, consent: r.consent, proposal: null, read: null } });
-      S.adoptForm = null; err(''); await render();
+      draftDrop('adopt'); err(''); await render();
     } catch (e) { err(e.message); b.disabled = false; b.textContent = 'Look at it'; }
     return;
   }
@@ -1285,14 +1314,14 @@ async function adoptAct(b, d) {
         project = S.project = r.project; await loadProjects(); openStream();
       }
       await post('/api/adopt/draft', { project, read, answers: a });
-      S.adoptScan = null; S.adoptAsk = null; S.adoptAdd = false; S.adoptForm = null;
+      S.adoptScan = null; S.adoptAsk = null; S.adoptAdd = false; draftDrop('adopt');
       history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=adopt`);
     });
     return;
   }
   if (d.act === 'adopt-edit') {
     const t = prompt('Edit this line (one line; the draft keeps the original):', d.text); if (t === null || !t.trim()) return;
-    (S.adoptEdits[d.part] ||= {})[d.line] = t.trim(); S.adoptForm = adoptForm(); paintMain(S.last); return;
+    (S.adoptEdits[d.part] ||= {})[d.line] = t.trim(); paintMain(S.last); return;
   }
   if (d.act === 'adopt-decide') {
     const card = b.closest('section[data-part]'), part = card.dataset.part, body = { project: p, part, verdict: d.verdict, sha: card.dataset.sha };
@@ -1304,7 +1333,7 @@ async function adoptAct(b, d) {
       body.on = boxes.filter(x => x.checked && x.dataset.unverified).map(x => x.dataset.line);
     }
     if (S.adoptEdits[part] && Object.keys(S.adoptEdits[part]).length) body.edits = S.adoptEdits[part];
-    try { const r = await post('/api/adopt/decide', body); delete S.adoptEdits[part]; S.adoptForm = null; err(''); S.last = { ...S.last, proposal: r.proposal }; paintMain(S.last); document.getElementById('part-' + part)?.scrollIntoView({ block: 'nearest' }); }
+    try { const r = await post('/api/adopt/decide', body); delete S.adoptEdits[part]; draftDrop('adopt'); err(''); S.last = { ...S.last, proposal: r.proposal }; paintMain(S.last); document.getElementById('part-' + part)?.scrollIntoView({ block: 'nearest' }); }
     catch (e) { err(/changed since/.test(e.message) ? e.message + ' (the page reloads the draft)' : e.message); if (/changed since/.test(e.message)) render(); }
     return;
   }

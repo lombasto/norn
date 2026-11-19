@@ -166,7 +166,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'work') { const [overview, a] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`)]); return { overview, queue: a.queue || [] }; }
   if (tab === 'health') { const [overview, slop] = await Promise.all([get(`/api/overview?${q}`), all ? null : Promise.resolve().then(() => get(`/api/guard?${q}&part=summary`)).catch(() => null)]); return { overview, slop }; }
   if (tab === 'history') return { records: await get(`/api/records?${q}`) };
-  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
+  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}${ctx.runsWindow && ctx.runsWindow !== '2h' ? '&window=' + ctx.runsWindow : ''}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
     const d = await get(`/api/roadmap?${q}`);
@@ -401,7 +401,7 @@ function overview(d, ctx) {
   const burnCell = l => { if (!apiB) return fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-';
     const v = liveUsd.get(`${l.project}|${l.run}`); return fin(v) ? `~$${v.toFixed(2)}` : '-'; };
   const rows = o.running.lanes.map(l => {
-    const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
+    const n = byId[l.run] || {}, age = n.ran_min, b = n.budget_min;
     const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
     const ctxCell = ctxMeter(n, { codexNote: true });
     return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
@@ -509,7 +509,7 @@ function inbox(d, ctx) {
     ${q.answered_by ? `<div class="card needs" style="margin:8px 0;padding:8px 10px"><span class="small">Possibly answered in <b class="mono">${esc(q.answered_by.id)}</b>${q.answered_by.words ? `: <q>${esc(q.answered_by.words)}</q>` : ` (${esc(q.answered_by.why ?? '')})`}</span>
       ${q.answered_by.words ? `<button class="primary" style="margin-left:8px" data-act="answer-from" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-from="${esc(q.answered_by.id)}">Yes - already answered in ${esc(q.answered_by.id)}</button>` : ''}</div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${opts.map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">Choose (${esc(k)})${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
-    <input type="search" id="ans-${esc(q.id)}" placeholder="or write to the controller (a doubt, a question) ..." style="flex:1;min-width:0"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
+    <textarea id="ans-${esc(q.id)}" rows="2" placeholder="or write to the controller (a doubt, a question) ..." aria-label="Answer ${esc(q.id)} in your words" style="flex:1;min-width:0"></textarea><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
     <div class="small mute" style="margin-top:6px">A Choose button answers <span class="mono">${esc(q.id)}</span>; the next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}. Words you type go to the controller, who replies here: ${esc(q.id)} stays open until you pick an option or confirm a ruling (a bare key such as <span class="mono">b</span> picks it).</div></article>`;
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
   const props = decisionsSection(items, ctx);
@@ -658,31 +658,91 @@ function historyHub(d) {
 const LANES_ALL = LANE_SHOW.map(([k]) => k).join(',');
 export const runLane = n => n.kind === 'checkin' ? 'check-in' : !n.lane ? dash
   : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&lanes=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
+// ---------- the Runs page (owner 2026-11-19): running first, then queued, then ended; filter chips for state, kind and project, a lane
+// box and the window, all kept in the URL (index.html: S.runsView, runsViewOf / runsViewQs); 'ran' and 'ended' time columns ----------
+export const RUNS_STATES = [['running', 'running'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];
+export const RUNS_KINDS = [['worker', 'worker'], ['checkin', 'check-in'], ['helper', 'helper'], ['talk', 'talk']];
+export const RUNS_WINDOWS = [['2h', '2 h'], ['12h', '12 h'], ['24h', '24 h'], ['today', 'all today']];   // the server's RUN_WINDOWS
+const RUN_FAILED = ['crash', 'stopped', 'no-result', 'limit', 'auth'];   // an end outcome that did not finish the work
+/** a tree root's (or a queue entry's) state chip: running / queued / failed (lost, killed or a failed outcome) / finished */
+export const runStateOf = n => n.state === 'queued' ? 'queued' : n.state === 'running' || n.state === 'alive' ? 'running'
+  : n.state === 'lost' || n.state === 'killed' || RUN_FAILED.includes(n.outcome) ? 'failed' : 'finished';
+/** its kind chip: a helper (norn delegate), a check-in, a talk session (an interactive run too), else a worker (any executor) */
+export const runKindOf = n => n.kind === 'helper' || n.role === 'helper' ? 'helper' : n.kind === 'checkin' ? 'checkin' : n.kind === 'talk' || n.kind === 'interactive' ? 'talk' : 'worker';
+const isoMs = x => { const v = Date.parse(x ?? ''); return Number.isFinite(v) ? v : null; };
+/**
+ * A node's times in minutes: ran = start to end (start to now while running), ended = now minus its end (null while running),
+ * queued = now minus its queue time (queue entries only). A run's start / end are its own start and end events (agentsTree);
+ * a subagent's are its first and last transcript lines. An ended node with no end time has no ran either.
+ */
+export function runTimes(n, now) {
+  if (n.state === 'queued') { const q = isoMs(n.queued); return { ran_min: null, ended_min: null, queued_min: q === null ? null : Math.max(0, (now - q) / 60000) }; }
+  const live = runStateOf(n) === 'running', s = isoMs(n.started ?? n.first), e = live ? null : isoMs(n.ended ?? n.last);
+  return { ran_min: s === null || (!live && e === null) ? null : Math.max(0, ((e ?? now) - s) / 60000), ended_min: e === null ? null : Math.max(0, (now - e) / 60000), queued_min: null };
+}
+/** the default order: running (newest start first), then queued (longest waiting first: the fill order), then ended (latest end first) */
+export function runsOrder(roots) {
+  const g = n => ({ running: 0, queued: 1 })[runStateOf(n)] ?? 2, t = x => isoMs(x) ?? 0;
+  const key = n => g(n) === 0 ? -t(n.started ?? n.first) : g(n) === 1 ? t(n.queued) : -t(n.ended ?? n.last ?? n.started);
+  return [...roots].sort((a, b) => g(a) - g(b) || key(a) - key(b));
+}
+const allOf = l => new Set(l.map(x => x[0]));
+/** the page's view from the URL: &state= &kind= (a missing key = every chip on), &proj= (none = every project), &lane=, &window= */
+export function runsViewOf(qs) {
+  const set = (k, l) => { const v = qs.get(k); return v == null ? allOf(l) : new Set(v.split(',').filter(x => l.some(c => c[0] === x))); };
+  return { state: set('state', RUNS_STATES), kind: set('kind', RUNS_KINDS), proj: new Set((qs.get('proj') ?? '').split(',').filter(Boolean)), lane: qs.get('lane') ?? '',
+    window: RUNS_WINDOWS.some(w => w[0] === qs.get('window')) ? qs.get('window') : '2h' };
+}
+/** the view as URL params ('&state=running,queued...'): only what differs from the default, so a plain Runs link stays plain */
+export function runsViewQs(v) {
+  const full = (x, l) => x.size === l.length && l.every(c => x.has(c[0])), p = [];
+  if (!full(v.state, RUNS_STATES)) p.push(['state', [...v.state].join(',')]);
+  if (!full(v.kind, RUNS_KINDS)) p.push(['kind', [...v.kind].join(',')]);
+  if (v.proj.size) p.push(['proj', [...v.proj].join(',')]);
+  if (v.lane) p.push(['lane', v.lane]);
+  if (v.window !== '2h') p.push(['window', v.window]);
+  return p.map(([k, x]) => `&${k}=${encodeURIComponent(x)}`).join('');
+}
+/** the roots the view shows (children travel with their root) */
+export const runsFilter = (roots, v) => roots.filter(n => v.state.has(runStateOf(n)) && v.kind.has(runKindOf(n)) && (!v.proj.size || v.proj.has(n.project))
+  && (!v.lane || String(n.lane ?? '').toLowerCase().includes(v.lane.toLowerCase())));
+const queueNode = q => ({ id: q.id, name: q.name, kind: q.kind, role: q.role, state: 'queued', lane: q.lane, stage: q.stage, executor: q.executor, model: q.model, queued: q.queued, project: q.project, children: [] });
+const RUNS_HEAD = [['session', ''], ['lane', '', 'lanecol'], ['model · effort', ''], ['state', ''],
+  ['ran', 'How long the run ran: its start to its end, or to now while it runs. A queued run shows how long it has waited in the queue.'],
+  ['ended', 'How long ago the run ended. Empty while it runs.'], ['tokens', ''], ['context now (tick = hand-off, bar end = hard max)', ''], ['burn', '']];
 function runs(d, ctx) {
   const top = Object.fromEntries((d.top || []).map(t => [t.id, t]));
+  const v = ctx.runsView ?? runsViewOf(new URLSearchParams());
   // RM-34: Session = what identifies the session (its id + name); the rest of the old line (class, question, outcome, helpers) is its
   // title, and the lane it works for has its own column
   const name = n => n.kind === 'subagent' ? esc(n.agentType ?? 'subagent') : n.kind === 'talk' ? esc(n.id) : `<span class="id">${esc(n.id)}</span>${aname(n.name)}${n.kind === 'helper' ? ' helper' : ''}`;
   const more = n => (n.kind === 'subagent' ? [n.description] : [n.kind === 'helper' && 'helper', n.class, n.q && `"${n.q}"`, n.lane && [n.lane, n.stage].filter(Boolean).join(' · '),
     n.outcome && String(n.outcome).toUpperCase(), n.helpers && `helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok`]).filter(Boolean).join(' · ');
   const tok = n => n.tokens === '-' ? '-' : fin(n.tokens) ? `${int(n.tokens)}${n.tokens_src ? ` (${esc(n.tokens_src)})` : ''}` : fin(n.cacheR) ? `${mTok(n.cacheR)} cacheR` : String(n.executor ?? '').startsWith('codex') ? 'at end' : '-';
-  const age = n => fin(n.age_min) ? fmtMin(n.age_min) : n.first ? fmtMin(minsSince(n.first, ctx.now)) : n.started ? fmtMin(minsSince(n.started, ctx.now)) : '-';
+  const times = n => { const t = runTimes(n, ctx.now);
+    return `<div class="small run-ran">${fin(t.queued_min) ? `queued for ${fmtMin(t.queued_min)}` : fmtMin(t.ran_min)}</div><div class="small run-ended">${fin(t.ended_min) ? `${fmtMin(t.ended_min)} ago` : ''}</div>`; };
   const one = (n, lvl, kids, pid) => {
     const b = top[n.id];
-    const feed = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
+    const feed = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(n.id) && n.state !== 'queued' ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
     return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t" title="${esc(more(n))}">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${n.pause ? ` ${pauseAct(n.pause, n.project, n.id)}` : ''}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
-     <div class="lanecol small">${lvl ? '' : laneCard(n.lane_card, runLane(n))}${progLine(n.progress)}</div><div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
+     <div class="lanecol small">${lvl ? '' : laneCard(n.lane_card, runLane(n))}${progLine(n.progress)}</div><div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div>${times(n)}<div class="mono small">${tok(n)}</div>
      <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
   };
   // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it
   const refusedRows = n => (n.refused || []).map(x => `<div class="node lvl1 refusedrow" data-p="p-${esc(n.id)}"><div class="small" style="grid-column:1/-1">${chip('refused', `refused: ${x.words}`)} ${esc([x.lane, x.stage ?? x.answers].filter(Boolean).join(' '))} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div></div>`).join('');
-  const tree = d.tree || [], rows = tree.map(n => one(n, 0, (n.children || []).length || (n.refused || []).length, 'p-' + n.id) + refusedRows(n) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
-    || '<div class="node"><div class="mute">No running or recent (2 h) sessions.</div></div>';
-  const by = k => tree.filter(n => exClass(n.executor) === k).length;
-  return `<div class="legend small mute"><span>Tree = every run of the last 2 h (workers, check-ins, Codex, own-account executors), talk sessions and their subagents. Click a run for its live feed.</span>
+  const tree = d.tree || [], all = [...tree, ...(d.queue || []).map(queueNode)], win = (RUNS_WINDOWS.find(w => w[0] === (d.window ?? v.window)) ?? RUNS_WINDOWS[0])[1];
+  const rows = runsOrder(runsFilter(all, v)).map(n => one(n, 0, (n.children || []).length || (n.refused || []).length, 'p-' + n.id) + refusedRows(n) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
+    || `<div class="node"><div class="mute">${all.length ? 'No runs under these filters.' : `No running, queued or recent (${esc(win)}) sessions.`}</div></div>`;
+  const by = k => tree.filter(n => exClass(n.executor) === k).length, projs = [...new Set(all.map(n => n.project).filter(Boolean))].sort();
+  const chips = (group, l, has, of) => `<span class="lane-show" role="group" aria-label="${esc(group)}">${l.map(([k, t]) => `<button class="hf" data-act="runs-show" data-group="${group}" data-show="${esc(k)}" aria-pressed="${has(k)}">${esc(t)} <b>${all.filter(n => of(n) === k).length}</b></button>`).join('')}</span>`;
+  const filters = `<div class="filters runs-filters">${chips('state', RUNS_STATES, k => v.state.has(k), runStateOf)}${chips('kind', RUNS_KINDS, k => v.kind.has(k), runKindOf)}${projs.length > 1 ? chips('proj', projs.map(p => [p, p]), k => v.proj.has(k), n => n.project) : ''}
+    <span class="lane-show" role="group" aria-label="window">${RUNS_WINDOWS.map(([k, t]) => `<button class="hf" data-act="runs-window" data-window="${k}" aria-pressed="${k === v.window}" title="ended runs from the last ${esc(t)}">${esc(t)}</button>`).join('')}</span>
+    <input type="search" data-runs-lane placeholder="filter by lane" value="${esc(v.lane)}"></div>`;
+  return `<div class="legend small mute"><span>Running first (newest start first), then queued, then ended (latest end first). Tree = every run running, queued or ended in the last ${esc(win)} (workers, check-ins, Codex, own-account executors), talk sessions and their subagents. Click a run for its live feed.</span>
     <span>Sources: RUN records + transcript <span class="mono">&lt;session&gt;.jsonl</span>, <span class="mono">subagents/agent-*.meta.json</span>, Codex log banner / rollout.</span></div>
-   <div class="tree"><div class="node head"><div>session</div><div class="lanecol">lane</div><div>model · effort</div><div>state</div><div>age</div><div>tokens</div><div>context now (tick = hand-off, bar end = hard max)</div><div>burn</div></div>${rows}</div>
-   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. Runs waiting to start: the Plan tab.</p>`;
+   ${filters}
+   <div class="tree"><div class="node head">${RUNS_HEAD.map(([h, t, c]) => `<div${c ? ` class="${c}"` : ''}${t ? ` title="${esc(t)}"` : ''}>${esc(h)}</div>`).join('')}</div>${rows}</div>
+   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>`;
 }
 // ---------- META-TEND P6: the Guard (REPORT s.5.0-5.1) - every open advisory across types, a query that owns no data ----------
 // Chips in place: guardOn(guard, pick) = the rows of one owning thing; guardChip = ONE chip shape on every tab (severity colour, the
