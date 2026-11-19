@@ -19,7 +19,8 @@ const rec = (dir, e) => record(dir, e, { now, views: false });
 // O = owner-acting roles (owner + dashboard, the owner's buttons); migration (S2 importer) may replay every event.
 const O = ['owner', 'dashboard'], C = ['controller'], K = ['checkin'], L = ['launcher'], S = ['status'];
 const SPEC = {
-  question: { create: [...C, ...K], answer: O, apply: [...C, ...K], supersede: [...C, ...K], withdraw: [...C, ...K], reopen: O },
+  question: { create: [...C, ...K, ...L],   // lane-outputs: the launcher posts a run's owner asks (runasks.mjs)
+    answer: O, apply: [...C, ...K], supersede: [...C, ...K], withdraw: [...C, ...K], reopen: O },
   decision: { create: [...C, ...K, ...O], overrule: O, supersede: [...C, ...K] },
   directive: { create: O, done: [...C, ...K], supersede: [...C, ...K, ...O], revoke: O },
   lane: { create: [...O, ...C, ...K], park: [...C, ...K], unpark: [...C, ...K], done: [...C, ...K], archive: [...O, ...C, ...K, 'tick'], unarchive: [...O, ...C] },   // META-OOTB F-1: the owner opens a lane (norn lane new, the dashboard's first task) - additive; lifecycle.mjs: the check-in archives an idle / stopped lane, the tick by its rules
