@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { startRun, readiness, writeTrees, lockPath, mergeSpec, slotsFull } from '../engine/lib/runs.mjs';
+import { startRun, readiness, writeTrees, lockPath, mergeSpec, slotsFull, mergeWtInUse } from '../engine/lib/runs.mjs';
+import { pathKey } from '../engine/lib/config.mjs';
 import { renderMergeBrief, briefMarker } from '../engine/lib/mergebrief.mjs';
 import { mergeWtPath, ensureMergeWorktree, slotKey, mergeParallel } from '../engine/lib/mergewt.mjs';
 import { openPrs, openProjectPrs, prLine, ghSlug } from '../engine/lib/mergeland.mjs';
@@ -256,4 +257,43 @@ test('MERGE runs: two start at once (policy.merge.parallel 2) in their own merge
   assert.equal(fs.existsSync(mergeWtPath(d.state, 'c', shaC)), false);
   assert.equal(slotsFull(mergeSpec(d.opts('c', cb)), 3000), null, 'every slot is free again');
   assert.equal(g(d.f.repo, 'worktree', 'list').split('\n').length, 1, 'git knows no merge worktree any more');
+});
+
+// MAIL-10 (solve-shack RUN-134): a check-in relaunched a merge as stage MERGE2. Only MERGE is a merge stage, so mergeSpec skipped the
+// brief's merge worktree: the run started in the lane worktree, its merge worktree was never made, and no sweep knew it was in use
+test('a merge brief starts only as stage MERGE (MERGE2 is refused, no record, no worktree); a MERGE brief that names no merge worktree is refused', () => {
+  const d = runBox(), sha = d.f.tips['feat/a'], b = d.brief('a', sha, path.join(d.t, 'go-a'));
+  for (const stage of ['MERGE2', 'S1', undefined]) {
+    assert.throws(() => startRun(d.opts('a', b, { stage })), e => e.code === 2 && /is a merge brief .*start it as --stage MERGE/.test(e.message), String(stage));
+    assert.throws(() => startRun(d.opts('a', b, { stage, queue: true })), e => e.code === 2, `${stage} queued`);
+  }
+  assert.equal(Object.values(loadState(d.state).items).filter(x => x.kind === 'run').length, 0, 'no run recorded');
+  assert.equal(fs.existsSync(mergeWtPath(d.state, 'a', sha)), false, 'no merge worktree made');
+  // a meta-merge marker without merge_wt (written before GAP-6, or by hand): refused, never run in the lane worktree
+  const old = path.join(d.t, 'old.md');
+  fs.writeFileSync(old, fs.readFileSync(b, 'utf8').replace(/"merge_wt":"[^"]*",/, ''));
+  assert.equal(briefMarker(fs.readFileSync(old, 'utf8')).merge_wt, undefined);
+  assert.throws(() => startRun(d.opts('a', old)), e => e.code === 2 && /names no merge worktree/.test(e.message));
+  // a hand-written brief (no marker) still runs under any stage: it is no merge brief
+  const plain = path.join(d.t, 'plain.md'); fs.writeFileSync(plain, '# task\nmode: done\n');
+  assert.deepEqual(mergeSpec(d.opts('a', plain, { stage: 'MERGE2' })).worktree, path.join(d.t, 'wt-a'));
+});
+
+test('a merge start never sweeps a merge worktree a live run works in: one its brief names (whatever the run recorded), or a lost run (it may only be stalled)', () => {
+  const d = runBox(), shaA = d.f.tips['feat/a'], shaB = d.f.tips['feat/b'], shaC = d.f.tips['feat/c'];
+  const wtA = mergeWtPath(d.state, 'a', shaA), wtC = mergeWtPath(d.state, 'c', shaC);
+  // RUN-134's shape: a running run whose record names the lane worktree, its brief the merge worktree it made by hand
+  ensureMergeWorktree({ repo: d.f.repo, wt: wtA });
+  record(d.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'a', stage: 'MERGE', worktree: fwd(path.join(d.t, 'wt-a')), brief: d.brief('a', shaA, '/never') } });
+  // a lost MERGE run: its heartbeat went stale, its executor may still be running the suite
+  ensureMergeWorktree({ repo: d.f.repo, wt: wtC });
+  const c = record(d.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'c', stage: 'MERGE', worktree: wtC, brief: d.brief('c', shaC, '/never') } }).id;
+  record(d.state, { kind: 'run', ev: 'lost', id: c, by: 'status', data: { why: 'heartbeat 900 s old', cause: 'stale' } });
+  const keep = mergeWtInUse(d.state);
+  assert.ok(keep.has(pathKey(wtA)) && keep.has(pathKey(wtC)), [...keep].join(', '));
+  // another lane's merge starts: it sweeps, and both stay
+  const go = path.join(d.t, 'go-b'), b = startRun(d.opts('b', d.brief('b', shaB, go)));
+  assert.ok(fs.existsSync(path.join(wtA, 'base.txt')), 'the merge worktree a live run works in was kept');
+  assert.ok(fs.existsSync(path.join(wtC, 'base.txt')), 'a lost run\'s merge worktree was kept');
+  fs.writeFileSync(go, 'go'); d.ends(b.run);
 });

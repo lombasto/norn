@@ -173,11 +173,15 @@ const heldWords = h => (h.own ? `worktree held by ${h.run}` : `lane worktree ${f
 
 // ---------- GAP-6: merges in their own merge worktrees - the merge slots (policy.merge.parallel) ----------
 // a MERGE run whose brief names a merge worktree (marker merge_wt) works there, whatever --worktree said: the spec's worktree is
-// it (the lock, the cwd, the scope guard), merge_wt + merge_repo say Norn makes it at the start and removes it at the end
+// it (the lock, the cwd, the scope guard), merge_wt + merge_repo say Norn makes it at the start and removes it at the end.
+// MAIL-10 (solve-shack RUN-134, a check-in's --stage MERGE2): only MERGE is a merge stage, so a merge brief under any other stage
+// ran in the lane worktree with its merge worktree never made, nor kept by the next merge's sweep: refused. So is a merge brief
+// that names no merge worktree. A brief without the marker (hand-written) is no merge brief: it runs as given.
 export function mergeSpec(o) {
-  if (!isMergeStage(o.stage) || !o.brief) return o;
-  const m = markerOf(o);
-  if (!m?.merge_wt || !m.repo) return o;
+  const m = o.brief ? markerOf(o) : null;
+  if (!m) return o;
+  if (!isMergeStage(o.stage)) throw new RunError(`stage ${o.stage ?? '(none)'}: ${fwd(o.brief)} is a merge brief (meta-merge marker) - start it as --stage MERGE, so Norn makes and keeps its merge worktree`);
+  if (!m.merge_wt || !m.repo) throw new RunError(`MERGE ${o.lane ?? ''}: ${fwd(o.brief)} names no merge worktree (marker merge_wt + repo) - write it with norn merge-brief`);
   return { ...o, worktree: m.merge_wt, merge_wt: m.merge_wt, merge_repo: m.repo, merge_slots: Number.isInteger(m.slots) && m.slots > 0 ? m.slots : 1,
     merge_main: m.main_branch || 'main', merge_remote: m.remote || 'origin' };
 }
@@ -197,13 +201,18 @@ function acquireSlot(o, opts) {
 }
 // the merge worktrees a run may still need: those of queued / running / claimed runs, and of a run that ended HANDOFF in the last
 // day (its resume goes on there). Every other one in <state>/mq is a leftover.
+// MAIL-10 (RUN-134 swept mid-suite): a lost run may only be stalled (a stale heartbeat), so it keeps its merge worktree too; and a
+// run that may still work keeps the merge worktree its brief names, whatever worktree its record names.
 export const MERGE_WT_KEEP_MS = 24 * 3600e3;
+const MAY_WORK = ['queued', 'running', 'claimed', 'lost'];
 export function mergeWtInUse(state, now = Date.now()) {
   const keep = new Set(), last = new Map();
   for (const r of runsOf(state)) {
-    if (r.kind !== 'run' || !r.data.worktree || !isMergeStage(r.data.stage)) continue;
+    if (r.kind !== 'run') continue;
+    if (MAY_WORK.includes(r.state) && r.data.brief) { const m = markerOf(r.data); if (m?.merge_wt) keep.add(normWt(m.merge_wt)); }
+    if (!r.data.worktree || !isMergeStage(r.data.stage)) continue;
     const k = normWt(r.data.worktree);
-    if (['queued', 'running', 'claimed'].includes(r.state)) keep.add(k);
+    if (MAY_WORK.includes(r.state)) keep.add(k);
     if (!last.has(k) || Number(r.id.slice(4)) > Number(last.get(k).id.slice(4))) last.set(k, r);
   }
   for (const [k, r] of last) if (r.end?.outcome === 'handoff' && now - Date.parse(r.updated || r.created) < MERGE_WT_KEEP_MS) keep.add(k);
