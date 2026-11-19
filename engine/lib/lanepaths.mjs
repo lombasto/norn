@@ -3,7 +3,7 @@
 // The rule and its words: lifecycle.mjs ("path to main": pathWords, lane-paths.json).
 import fs from 'node:fs';
 import { loadState, readEvents, recordsFile, fold, idNum as runNum } from './records.mjs';
-import { workOnMain } from './after.mjs';
+import { workOnMain } from './dlvgit.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { stageArgs, isMergeRun, checkinPolicy } from './checkins.mjs';

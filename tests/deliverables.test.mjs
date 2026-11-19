@@ -323,10 +323,32 @@ test('a merge / batch / park question is withdrawn once its deliverable lands; a
   assert.equal(loadState(state).items['Q-1'].state, 'open', 'dry: nothing written');
   const closed = closeLandedQuestions(state, { project: p, nowMs: NOW });
   assert.deepEqual(closed.map(c => [c.q, c.dlv]), [['Q-1', 'DLV-1']]);
-  assert.match(closed[0].why, /DLV-1 feat\/a is merged: nothing left to ask/);
+  assert.match(closed[0].why, /^landed on main \(git\): DLV-1 feat\/a is on main, nothing left to ask/);
   const items = loadState(state).items;
   assert.equal(items['Q-1'].state, 'withdrawn'); assert.equal(items['Q-2'].state, 'open', 'fix/b is not on main: still asked');
   assert.deepEqual(closeLandedQuestions(state, { project: p, nowMs: NOW }), [], 'a second pass finds nothing');
+});
+
+// OVERVIEW-TRUTH (1), solve-shack DLV-8: target install, asked Q-1 at 04:48, merged as PR #15 at 14:18 but not installed - the old rule
+// waited for the install target, so the owner answered 'merge' for work already merged. Landing withdraws every question it makes moot.
+test('a merged deliverable with an earlier question shows no asked and its questions are withdrawn: landed as PR #n', () => {
+  const { repo, a } = fixture();
+  const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };   // target install (the default): merged is not at its target
+  mkDlv(state, { repo, branch: 'feat/a', tip: a, lane: 'a', delivers: 'native a', done_utc: at(-30).toISOString() }, -30);
+  assert.ok(askDeliverable(state, 'DLV-1', { project: p, by: 'checkin', nowMs: NOW }).id);
+  record(state, { kind: 'question', ev: 'create', by: 'checkin', data: { title: 'feat/a conflicts with main: resolve now or wait?', lane: 'a', options: [] } }, { views: false, now: () => at(-2) });
+  record(state, { kind: 'question', ev: 'create', by: 'checkin', data: { title: 'an unrelated question', lane: 'other', options: [] } }, { views: false, now: () => at(-2) });
+  record(state, { kind: 'deliverable', ev: 'pr', id: 'DLV-1', by: 'launcher', data: { url: 'https://github.com/o/r/pull/15', number: 15 } }, { views: false, now: () => at(-1) });
+  assert.equal(deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0].asked, 'Q-1', 'not landed yet: asked');
+  g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
+  const r = deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
+  assert.equal(r.state, 'merged'); assert.equal(r.at_target, false, 'merged, not installed');
+  assert.equal(r.asked, null, 'a merged row never reads asked');
+  const closed = closeLandedQuestions(state, { project: p, nowMs: NOW });
+  assert.deepEqual(closed.map(c => c.q).sort(), ['Q-1', 'Q-2'], 'its own question and the one naming its branch');
+  const items = loadState(state).items;
+  assert.equal(items['Q-1'].state, 'withdrawn'); assert.match(items['Q-1'].history.at(-1).data.why, /^landed as PR #15: DLV-1 feat\/a is on main/);
+  assert.equal(items['Q-2'].state, 'withdrawn'); assert.equal(items['Q-3'].state, 'open', 'a question about other work stays');
 });
 
 test('due + ask: one question per deliverable; parked = quiet; a park resurfaces after 7 days and may be asked again', () => {

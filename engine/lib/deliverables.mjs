@@ -108,7 +108,8 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
     const since = Date.parse((lastEv(it, ['park', 'unpark']) || it.history[0]).ts);
-    const asked = qs.filter(q => q.data?.deliverable === it.id && !q.data?.ruling && Date.parse(q.created) >= since).sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0]?.id ?? null;
+    // OVERVIEW-TRUTH (1): a landed row asks nothing - its question is withdrawn by the tick (closeLandedQuestions), never shown as 'asked'
+    const asked = m ? null : qs.filter(q => q.data?.deliverable === it.id && !q.data?.ruling && Date.parse(q.created) >= since).sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0]?.id ?? null;
     const days = +((now - Date.parse(doneUtc)) / DAY).toFixed(1);
     const due = !superseded && state === 'done' && now - Date.parse(doneUtc) > cfg.ask_after_h * 3600e3 && (!park || park.expired) && !asked;
     // META-DLV-R2: the merge rehearsal of a DONE tip onto main, and the resolve flag (conflict, or more than resolve_behind behind)
@@ -326,19 +327,26 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
 }
 
 /**
- * A "merge, batch or park?" question goes stale once its deliverable reaches its target (merged / installed / superseded): the
- * tick withdraws it, so the owner's Inbox never asks about work that already landed. Returns [{ q, dlv, why }] (written unless dry).
+ * OVERVIEW-TRUTH (1): once a deliverable LANDS (merged, installed or superseded - not only at its install target), every open question
+ * it makes moot is withdrawn with the reason (`landed as PR #n`): its "merge, batch or park?", its 'cannot tell' ruling, and any other
+ * open question that names it or its branch (a check-in's own question about landing it). The tick runs this right after latchMerged,
+ * so the owner's Inbox never asks about work already on main. Returns [{ q, dlv, why }] (written unless dry).
  */
+export const landedWhy = r => r.superseded ? `superseded by ${r.superseded.by}` : (r.merge_pr ?? r.pr?.number) != null ? `landed as PR #${r.merge_pr ?? r.pr.number}`
+  : `landed on main (${r.merged_how === 'equivalent' ? 'its change found on main' : r.merged_how === 'ruling' ? 'the owner ruled it merged' : 'git'}${r.merge_commit ? ` ${String(r.merge_commit).slice(0, 9)}` : ''})`;
+export const isLanded = r => !!r && (r.state === 'merged' || r.state === 'installed' || !!r.superseded);
+const names = (q, r) => { const t = [q.data?.title, q.data?.body, q.data?.source].filter(Boolean).join('\n');
+  return new RegExp(`(^|[^\\w-])${r.id}(?![\\w-])`).test(t) || (!!r.branch && t.includes(r.branch)); };
 export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
-  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items)
-    .filter(q => q.kind === 'question' && q.state === 'open' && q.data?.deliverable);
+  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items).filter(q => q.kind === 'question' && q.state === 'open');
   if (!open.length) return [];
-  const rows = new Map(deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.map(r => [r.id, r]));
-  const out = [];
+  const landed = deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.filter(isLanded);
+  if (!landed.length) return [];
+  const byId = new Map(landed.map(r => [r.id, r])), out = [];
   for (const q of open) {
-    const r = rows.get(q.data.deliverable);
-    if (!r?.at_target) continue;
-    const why = `${r.id} ${r.branch} is ${r.superseded ? `superseded by ${r.superseded.by}` : r.state}: nothing left to ask (closed by the tick)`;
+    const r = q.data?.deliverable ? byId.get(q.data.deliverable) : landed.find(x => names(q, x));
+    if (!r) continue;
+    const why = `${landedWhy(r)}: ${r.id} ${r.branch} is on main, nothing left to ask (withdrawn by the tick)`;
     if (!dry) record(stateDir, { kind: 'question', ev: 'withdraw', id: q.id, by: 'checkin', data: { why } }, { views: project.views || {}, ...(now ? { now } : {}) });
     out.push({ q: q.id, dlv: r.id, why });
   }
