@@ -11,6 +11,7 @@ import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, crit
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
+import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
@@ -133,11 +134,13 @@ const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve
 // META-UX-BUILD S3: Docs - the open file is its one part (&file=<key>) of one list (project + sig).
 // META-UX-BUILD S4: Context (the Instructions view's cost half) - the parts its sub-view needs (contextParts), of one view (project + scan
 // time + sub); its route stays /api/instructions (the Norn vocabulary rule: routes stay, labels and the URL tab move).
-const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []) };
+// TESTS-RUNTIME: Tests - the chosen sub-view's part; Impact's pick rides in batch ('files:a,b' | 'lane:<name>')
+const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub] };
 const PART_API = { context: 'instructions', slop: 'guard' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
-export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
+export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
 export async function loadParts(tab, project, d, get) {
-  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? `&batch=${encodeURIComponent(d.batch)}` : ''}` : '';
+  const pick = b => (b.startsWith('lane:') ? `&lane=${encodeURIComponent(b.slice(5))}` : `&files=${encodeURIComponent(b.slice(6))}`);
+  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}` : '';
   const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
 }
@@ -193,7 +196,11 @@ export async function loadTab(tab, project, get, ctx = {}) {
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
   if (tab === 'usage') return get(`/api/usage?${q}`);
-  if (tab === 'tests') return get(`/api/tests?${q}`);   // META-TEND TESTS
+  if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
+    const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
+    const have = partsHave(ctx, 'tests', project, d);
+    return { ...d, ...(have || {}), parts_loading: !have };
+  }
   if (tab === 'slop') {   // META-TEND P6. META-UX-BUILD S2: the summary first, then the chosen sub-view's part. S5: Slop (was Guard); one open batch
     const sub = pickSub(GUARD_SUBS, ctx.sub);
     const d = { ...(await get(`/api/guard?${q}&part=summary`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'fix' && ctx.batch ? { batch: ctx.batch } : {}) };
@@ -217,21 +224,131 @@ export function renderTab(tab, d, ctx = {}) {
   return panel(tab, ({ overview, inbox, work: workHub, lanes, runs, map, roadmap, health: healthHub, history: historyHub, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
-// META-TEND TESTS (owner DIR-19 + DIR-47): lean tests, measured - count + suite time over time, the slowest, never-failing and
-// duplicate tests with their mutant evidence, the last lean-tests wave before / after, the merge check's advisories
-const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : `${(ms / 1000).toFixed(1)} s`) : '-');
+// META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
+// the test machinery raised (linked to their Inbox question), and four sub-views (testparts.mjs TESTS_SUBS), each its own part:
+//   Suite            - the runtime of every test from the last `norn tests measure` (node:test or pytest): when and by which run, where the
+//                      time goes per file and group (share of the suite total), every test slowest first with its one-line description;
+//                      a test's file opens in the code viewer drawer (index.html #srcview) at its line
+//   Costs and health - cost, health and tier per test, test share per run and lane, gate time per merge, the merge check, lean tests
+//   Impact           - which test files cover a source file, or a lane's changed files (`norn tests for`)
+//   Trends           - test cases / lines and suite time over time, suite CPU-minutes, worker test minutes per lane
+// A part whose source does not exist yet says "not measured yet" and what writes it - never a number.
+const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`) : '-');
 const shortT = t => String(t ?? '').replace(/^(\S+\.test\.mjs) :: /, '<span class="mute">$1</span> ');
 const none = '<p class="mute" style="padding:0 12px">none measured</p>';
-function testsHead(d, ctx, last, gl) {
-  const ratio = gl ? (gl.test_lines / (gl.code_lines || 1)).toFixed(2) : null;
-  const wall = [...(d.history || [])].reverse().find(x => fin(x.suite_ms));   // a merge check folds files in: no wall time of its own
-  const what = last ? `${int(last.tests)} tests in ${int(last.files)} files · ${sec(last.file_ms)} of file time${wall ? ` · suite ${sec(wall.suite_ms)} wall (full measure)` : ''}` : 'per-test time: not measured yet';
-  const when = last ? `measured ${esc(fmtTime(last.at, ctx.now))} at ${esc(last.sha ?? '?')} (<span class="mono">${esc(d.commands.measure)}</span>)`
-    : `<span class="mono">${esc(d.commands.measure)}</span> measures a node:test suite (tests/*.test.mjs, run by ci-suite)`;
-  const hist = d.git ? `history ${esc(fmtTime(d.git.at, ctx.now))} (<span class="mono">${esc(d.commands.history)}</span>)` : `tests vs code over git: <span class="mono">${esc(d.commands.history)}</span>`;
-  return `<div class="card" id="tests-head"><b>${what}</b>${last?.coverage ? ` · line coverage <b>${pct(last.coverage.pct)}</b>` : ''}${gl ? ` · ${int(gl.tests)} test cases, ${int(gl.test_lines)} test lines vs ${int(gl.code_lines)} code lines (<b>${ratio}:1</b>)` : ''}
-    <div class="small mute">${when} · ${hist}. Measured, never judged by a model; every finding is advisory.</div></div>`;
+const notYet = (what, src) => `<p class="small mute tnotyet" style="padding:0 12px"><span class="chip idle">not measured yet</span> ${what}${src ? ` <span class="mute">(${src})</span>` : ''}</p>`;
+const SUITE_NAME = { 'node:test': 'node:test', pytest: 'pytest' };
+const nodeOnly = d => (d.suite === 'pytest' ? `<p class="small mute tscope" style="padding:0 12px">${chip('idle', 'node:test only')} reads node:test suites only for now: this project's suite is pytest, so nothing fills here.</p>` : '');
+// a test's file:line opens the code viewer; the test's row names it
+const srcBtn = (file, line, label) => `<button class="lnk mono small" data-act="test-src" data-file="${esc(file)}" data-line="${esc(line ?? '')}" title="open ${esc(file)}${line ? ` at line ${esc(line)}` : ''} (read-only)">${esc(label ?? `${file}${line ? `:${line}` : ''}`)}</button>`;
+function testsWhen(t, ctx) {
+  if (!t) return '';
+  return `<p class="small mute" id="tests-when">Timings taken <b>${esc(fmtTime(t.at, ctx.now))}</b> at <span class="mono">${esc(t.sha ?? '?')}</span> by ${t.run ? `<button class="lnk" data-go="runs" title="the run that measured">${esc(t.run)}</button>` : 'a hand run'}
+    (<span class="mono">${t.via === 'merge check' ? 'norn tests check' : 'norn tests measure'}</span>${fin(t.exit) ? `, suite exit ${int(t.exit)}` : ''}${t.via === 'merge check' ? ': the changed files re-measured, the rest from the last full measure' : ''}) · ${esc(SUITE_NAME[t.suite] ?? t.suite)} · ${int(t.tests)} tests in ${int(t.files)} files${t.failed ? ` · ${chip('bad', `${t.failed} failed`)}` : ''}</p>`;
 }
+export function testsNumbers(d) {
+  const t = d.times, last = (d.history || []).at(-1), al = (d.alerts || []).length;
+  return [{ n: t ? int(t.tests) : '-', label: t ? `${SUITE_NAME[t.suite] ?? t.suite} tests timed` : 'tests timed: not measured yet' },
+    { n: t ? sec(t.total_ms) : '-', label: t?.suite === 'pytest' ? 'suite wall (one process)' : 'suite time (file times summed)' },
+    { n: t?.slowest ? sec(t.slowest.ms) : '-', label: t?.slowest ? `slowest: ${t.slowest.name.slice(0, 48)}` : 'slowest test' },
+    al ? { n: int(al), label: 'alerts: they need you', cls: 'warn' } : { n: last?.coverage ? pct(last.coverage.pct) : '-', label: 'line coverage (last measure)' }];
+}
+function testsAlerts(d) {
+  const xs = d.alerts || [];
+  if (!xs.length) return '';
+  return `<div class="card" id="tests-alerts"><b>The test machinery needs you</b> <span class="small mute">each is an Inbox question: answer it here or there</span>${xs.map(q => {
+    const rk = q.recommend?.key;
+    return `<div class="item" id="tests-alert-${esc(q.id)}">${chip('needs', q.id)}<div style="flex:1;min-width:0"><b>${esc(q.title)}</b>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${(q.options || []).map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(d.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">${esc(o.text ?? o.t ?? k)}${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
+      <button class="lnk" data-tab="inbox">Open in Inbox</button></div></div></div>`; }).join('')}</div>`;
+}
+// ---- Suite ----
+function testsBreakdown(b) {
+  const row = f => `<details class="tbd"><summary><span class="tbdn mono">${esc(f.file)}</span> <b class="mono">${sec(f.ms)}</b> <span class="small mute">${f.share === null ? '' : pct(f.share)} · ${int(f.tests)} tests</span>${meter(f.share ?? 0, 100)}</summary>
+    <ul class="tlist">${f.groups.map(g => `<li><span>${g.group ? esc(g.group) : '<span class="mute">top level</span>'}</span> <b class="mono">${sec(g.ms)}</b> <span class="small mute">${g.share === null ? '' : pct(g.share)} · ${int(g.tests)} tests</span></li>`).join('')}</ul></details>`;
+  const top = b.files.slice(0, 12), rest = b.files.slice(12);
+  return `<div class="tablecard" id="tests-breakdown"><h3>Where the time goes <span class="mute small">per file, then per group (describe / suite / parent test, or pytest class), slowest first · share of ${sec(b.total_ms)}</span></h3>
+    <div style="padding:4px 12px">${top.map(row).join('')}${rest.length ? `<details class="tbd"><summary class="small mute">${int(rest.length)} more files</summary>${rest.map(row).join('')}</details>` : ''}</div></div>`;
+}
+const descLine = t => (t.desc ? `<div class="small">${esc(t.desc)} <span class="mute">(${esc(t.from)})</span></div>` : '<div class="small mute">no description: no docstring, no comment above it, and its name says little</div>');
+function testsList(p) {
+  const rows = p.tests.rows;
+  return `<div class="tablecard" id="tests-list"><h3>Every test, slowest first <span class="mute small">${int(p.tests.n)} · share = of the suite total · tap a file to read the test</span></h3>
+    <ul class="tlist" id="tests-rows">${rows.map(t => `<li data-test="${esc(t.id)}"><div><b>${esc(t.name)}</b> <b class="mono">${sec(t.ms)}</b> <span class="small mute">${t.share === null ? '' : pct(t.share, 2)}</span>${t.ok ? '' : ` ${chip('bad', 'failed')}`}${(t.cause || []).map(c => ` ${chip(c === 'in-process work' ? 'idle' : 'prov', c)}`).join('')}</div>
+      ${descLine(t)}<div class="small mute">${srcBtn(t.file, t.line)}${t.group?.length ? ` · ${esc(t.group.join(' › '))}` : ''}</div></li>`).join('')}</ul>${subMore(rows.length, p.tests.n)}</div>`;
+}
+function testsSuite(d) {
+  if (!d.breakdown) return `<div class="card" id="tests-suite-empty">${notYet('per-test runtimes', `<span class="mono">${esc(d.commands.measure)}</span> times every test of a node:test or pytest suite: a full suite run, once, on a quiet machine`)}</div>`;
+  return testsBreakdown(d.breakdown) + testsList(d);
+}
+// ---- Costs and health ----
+const kids = c => Object.entries(c?.children || {}).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(', ') || 'none';
+function testsPerTest(d) {
+  const s = d.sources || {}, have = ['costs', 'health', 'tiers'].filter(k => s[k]);
+  const head = `<h3>Per test: cost, health, tier <span class="mute small">${have.length ? `measured: ${have.join(', ')}` : ''}</span></h3>`;
+  if (!have.length) return `<div class="tablecard" id="tests-pertest">${head}${notYet('cost (CPU s, peak MB, child processes, alone vs under load), health (failures and reruns in 7 days, passes alone but fails under load, hangs, quarantine) and tier (worker / PR check / post-batch / nightly, with the hygiene verdict)', 'costs.json, health.json, tiers.json: the test-governance machinery writes them')}</div>`;
+  const li = r => {
+    const c = r.cost, h = r.health, q = r.quarantine, tr = r.tier;
+    return `<li data-test="${esc(r.id)}"><div><b>${esc(r.name)}</b> <span class="small mute">${sec(r.ms)}</span>${q ? ` ${chip('warn', 'quarantined')}` : ''}${tr?.tier ? ` ${chip('idle', tr.tier)}` : ''}${tr?.verdict ? ` ${chip(tr.verdict === 'keep' ? 'ok' : 'warn', tr.verdict)}` : ''}</div>
+      <div class="small">${s.costs ? (c ? `CPU ${fin(c.cpu_s) ? `${c.cpu_s.toFixed(1)} s` : '-'} · peak ${fin(c.peak_mb) ? `${int(c.peak_mb)} MB` : '-'} · children: ${esc(kids(c))} · alone ${sec(c.alone_ms)} / under load ${sec(c.load_ms)}` : '<span class="mute">cost: not in the last cost measure</span>') : ''}</div>
+      <div class="small">${s.health ? (h ? `${int(h.fails)} failures, ${int(h.reruns)} reruns in ${int(s.health.days)} days · ${int(h.load_only)} passed alone but failed under load · ${int(h.hangs)} hangs` : `<span class="mute">no failure in ${int(s.health.days)} days</span>`) : ''}${q ? ` · quarantined by ${esc(q.by)}${q.until ? ` until ${esc(String(q.until).slice(0, 10))}` : ''}${q.why ? `: ${esc(q.why)}` : ''}` : ''}</div>
+      ${tr?.evidence ? `<div class="small mute">${esc(tr.evidence)}</div>` : ''}<div class="small mute">${srcBtn(r.file, r.line)}${tr?.q || q?.q ? ` · <button class="lnk" data-tab="inbox">open the ruling ${esc(tr?.q || q.q)} in Inbox</button>` : ''}</div></li>`;
+  };
+  const miss = ['costs', 'health', 'tiers'].filter(k => !s[k]);
+  return `<div class="tablecard" id="tests-pertest">${head}${s.costs?.cpu_pct !== undefined && s.costs?.cpu_pct !== null ? `<p class="small mute" style="padding:0 12px">cost measured ${esc(String(s.costs.at ?? '').slice(0, 16))} with the machine at ${pct(s.costs.cpu_pct, 0)} CPU</p>` : ''}
+    ${miss.length ? notYet(miss.join(', '), `${miss.map(k => `${k}.json`).join(', ')}: the test-governance machinery writes them`) : ''}<ul class="tlist">${d.rows.rows.map(li).join('')}</ul>${subMore(d.rows.rows.length, d.rows.n)}</div>`;
+}
+const BUDGET = { ok: 'ok', warn: 'warn', over: 'bad' };
+function testsRuns(d) {
+  const head = '<h3>Per run and lane <span class="mute small">share of the run\'s wall time in test commands · full-suite commands seen (should be 0) · the budget</span></h3>';
+  if (!d.sources?.budgets) return `<div class="tablecard" id="tests-runs">${head}${notYet('test time per run', 'budgets.jsonl: the supervisor\'s per-run test budget writes it')}</div>`;
+  return `<div class="tablecard" id="tests-runs">${head}<ul class="tlist">${d.runs.map(r => `<li>${chip(BUDGET[r.state] ?? 'idle', r.state ?? '-')} <button class="lnk" data-go="runs">${esc(r.run)}</button> <span class="mute">${esc(r.lane ?? '')}</span>
+    <div class="small">${fin(r.wall_s) && r.wall_s > 0 ? `<b>${pct(100 * (r.test_s ?? 0) / r.wall_s, 0)}</b> of ${fmtMin(r.wall_s / 60)} in tests` : `${fmtMin((r.test_s ?? 0) / 60)} in tests`} · ${r.full_suite ? chip('bad', `${int(r.full_suite)} full-suite command${r.full_suite === 1 ? '' : 's'}`) : 'no full-suite command'} <span class="mute">${esc(fmtTime(r.at))}</span></div></li>`).join('')}</ul></div>`;
+}
+const MQ = { merged: 'ok', green: 'ok', landed: 'ok', red: 'bad', 'main-red': 'bad', pinned: 'bad', flaky: 'warn', slop: 'warn', gating: 'running' };
+function testsMerges(d, ctx) {
+  const head = '<h3>Per merge <span class="mute small">the merge queue\'s batches: gate time and what the gate ran</span></h3>', xs = d.merges || [];
+  if (!xs.length) return `<div class="tablecard" id="tests-merges">${head}<p class="small mute" style="padding:0 12px">no merge-queue batch yet</p></div>`;
+  return `<div class="tablecard" id="tests-merges">${head}<ul class="tlist">${xs.map(b => `<li>${chip(MQ[b.status] ?? MQ[b.result] ?? 'idle', b.status)} <b>batch-${esc(b.n)}</b> <b class="mono">${b.skipped ? 'gate skipped' : sec(b.gate_ms)}</b> <span class="small mute">${esc(fmtTime(b.done ?? b.built, ctx.now))} · ${int(b.runs.length)} gate run${b.runs.length === 1 ? '' : 's'}${b.runs.some(r => r.timedOut) ? ' · timed out' : ''}</span>
+    <div class="small mono" style="overflow-wrap:anywhere">${esc(b.skipped || b.gate || '-')}</div><div class="small mute" style="overflow-wrap:anywhere">${esc(b.members.join(', '))}</div></li>`).join('')}</ul></div>`;
+}
+function testsAdv(d) {
+  const adv = d.advisories, head = `<h3>Last merge check <span class="mute small">${adv ? `${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · ` : ''}advisory, never a merge block</span></h3>`;
+  if (d.suite === 'pytest') return `<div class="tablecard" id="tests-adv">${head}${nodeOnly(d)}</div>`;
+  if (!adv) return `<div class="tablecard" id="tests-adv">${head}<p class="small mute" style="padding:0 12px">no merge check yet</p></div>`;
+  return `<div class="tablecard" id="tests-adv">${head}${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>`;
+}
+function testsLean(d) {
+  const lean = d.lean, mx = d.mutation, files = mx?.files || [], never = lean?.never || [], dup = lean?.duplicates || [];
+  const head = '<h3>Lean tests <span class="mute small">the hygiene evidence: mutation trials (StrykerJS, outside the repo), tests that never fail, duplicates</span></h3>';
+  if (d.suite === 'pytest') return `<div class="tablecard" id="tests-lean">${head}${nodeOnly(d)}</div>`;
+  if (!lean && !mx) return `<div class="tablecard" id="tests-lean">${head}${notYet('lean tests', `<span class="mono">${esc(d.commands.lean)}</span> after a measure and a mutation trial`)}</div>`;
+  const mut = mx ? `<div class="inswrap" id="tests-mut"><table class="instab"><thead><tr><th>file</th><th>mutants</th><th>score</th><th class="insopt">survived</th><th class="insopt">test-process time</th></tr></thead><tbody>
+    ${files.map(f => `<tr><td class="mono">${esc(f.file.split('/').pop())}</td><td class="num">${int(f.mutants)}</td><td class="num"><b>${pct(f.score)}</b>${meter(f.score, 100)}</td><td class="num insopt">${int(f.survived)}</td><td class="num insopt">${sec(f.ms)}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const nv = `<div id="tests-never"><div class="small" style="padding:4px 12px"><b>Never fail</b> <span class="mute">${int(never.length)} · ran against every mutant of ${esc(files.map(f => f.file.split('/').pop()).join(', ') || 'no file')} and killed none</span></div>
+    ${never.length ? `<ul class="tlist">${never.map(t => `<li>${chip('warn', 'kills 0')} ${shortT(esc(t.test))}${fin(t.ms) ? ` <span class="small mute">${sec(t.ms)}</span>` : ''}</li>`).join('')}</ul>` : none}</div>`;
+  const dp = `<div id="tests-dup"><div class="small" style="padding:4px 12px"><b>Duplicates</b> <span class="mute">${int(dup.length)} · every mutant it kills, another test kills too (equal sets: the slower one is listed)</span></div>
+    ${dup.length ? `<ul class="tlist">${dup.map(t => `<li>${chip(t.same ? 'warn' : 'idle', t.same ? 'same set' : 'subset')} ${shortT(esc(t.test))} <span class="small mute">kills ${int(t.kills)}${fin(t.ms) ? ` · ${sec(t.ms)}` : ''}</span><div class="small mute">inside: ${shortT(esc(t.within))}</div></li>`).join('')}</ul>` : none}
+    <p class="small mute" style="padding:0 12px">The evidence covers the trial's files only: a listed test may still guard other code - the wave gate re-measures coverage and mutants before a cut stands.</p></div>`;
+  return `<div class="tablecard" id="tests-lean">${head}${mut}${lean ? nv + dp : ''}</div>`;
+}
+const testsCosts = (d, ctx) => testsPerTest(d) + testsRuns(d) + testsMerges(d, ctx) + testsAdv(d) + testsLean(d);
+// ---- Impact ----
+function testsImpact(d) {
+  const im = d.impact, p = d.picked;
+  const form = `<div class="card" id="tests-impact-pick"><div class="small"><b>Which tests cover a file?</b> <span class="mute">the answer of <span class="mono">${esc(d.commands.for)} &lt;files&gt;</span>, from the coverage of the last measure${im ? ` (${esc(String(im.at).slice(0, 16))}, ${esc(im.sha ?? '?')})` : ''}</span></div>
+    <div class="tpick"><input type="search" id="tests-impact-files" list="tests-srcs" placeholder="source files, comma-separated" value="${esc(p && !p.lane ? p.files.join(', ') : '')}"><button data-act="tests-impact">Which tests?</button></div>
+    <datalist id="tests-srcs">${(im?.sources || []).map(s => `<option value="${esc(s)}">`).join('')}</datalist>
+    ${d.lanes?.length ? `<div class="tpick"><select id="tests-impact-lane" aria-label="a lane">${d.lanes.map(l => `<option${p?.lane === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><button data-act="tests-impact-lane">A lane's changed files</button></div>` : ''}</div>`;
+  if (!im) return form + `<div class="card" id="tests-impact-out">${notYet('test impact', `${d.suite === 'pytest' ? 'a pytest measure with pytest-cov installed' : `<span class="mono">${esc(d.commands.measure)}</span> with coverage`} writes it`)}</div>`;
+  if (!p) return form + `<p class="small mute" id="tests-impact-out">${int(im.sources.length)} source files are covered by the suite: pick one, or a lane.</p>`;
+  if (p.error) return form + `<div class="card" id="tests-impact-out">${chip('bad', 'refused')} ${esc(p.error)}</div>`;
+  return form + `<div class="tablecard" id="tests-impact-out"><h3>${p.lane ? `Lane ${esc(p.lane)}: ${int(p.files.length)} changed file(s)` : `${int(p.files.length)} file(s)`} → <b>${int(p.tests.length)} test file(s)</b></h3>
+    ${p.tests.length ? `<p class="small" style="padding:0 12px">${p.tests.map(t => srcBtn(t, null, t)).join(' ')}</p>` : ''}
+    <ul class="tlist">${p.rows.map(r => `<li><span class="mono">${esc(r.file)}</span> <span class="small mute">${r.tests.length ? `${int(r.tests.length)} test file(s)` : r.known ? 'covered by no test' : 'not in the measure\'s coverage (a test file, or not run by any test)'}</span></li>`).join('')}</ul>
+    <p class="small mute" style="padding:0 12px">The same answer in a terminal: <span class="mono" style="overflow-wrap:anywhere">${esc(d.commands.for)} ${esc(p.files.join(' '))}</span></p></div>`;
+}
+// ---- Trends ----
 function testsOver(h, g, last, gl) {
   const col = (title, cur, body) => `<div><div class="small"><b>${title}</b> <span class="mute">${cur}</span></div>${body}</div>`;
   return `<div class="tablecard" id="tests-time"><h3>Over time <span class="mute small">per day: test cases and lines (git, first parent) · per measure or merge check: the summed file time</span></h3><div class="tgrid">
@@ -240,20 +357,6 @@ function testsOver(h, g, last, gl) {
     ${col('test lines per code line', gl ? `${(gl.test_lines / (gl.code_lines || 1)).toFixed(2)}:1 now` : '-', g.length ? columns(g.map(x => ({ label: x.day.slice(5), value: Math.round(100 * x.test_lines / (x.code_lines || 1)) / 100 })), { fmt: v => `${v}:1`, title: 'test lines per code line', id: 'tests-ratio', per: 'day' })
       + stack([{ key: 'tests', label: 'test lines', value: gl.test_lines }, { key: 'code', label: 'code lines', value: gl.code_lines }], { fmt: int }) : '')}</div></div>`;
 }
-function testsLean(lean, mx) {
-  const files = mx?.files || [], never = lean?.never || [], dup = lean?.duplicates || [];
-  const slow = lean?.slowest?.length ? `<div class="tablecard" id="tests-slow"><h3>Slowest ${int(lean.slowest.length)} <span class="mute small">per-test time, last measure · cause = what the test body does</span></h3><div style="padding:4px 12px">
-    ${bars(lean.slowest.map(t => ({ label: `${t.file.replace(/^tests\//, '')} · ${t.name}`, value: t.ms, note: t.cause.map(c => chip(c === 'in-process work' ? 'idle' : 'prov', c)).join(' ') })), { fmt: sec, id: 'tests-slow-bars' })}</div></div>` : '';
-  const mut = mx ? `<div class="tablecard" id="tests-mut"><h3>Mutation trial <span class="mute small">StrykerJS, outside the repo · a mutant = one planted bug; a test that fails on it kills it</span></h3><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>mutants</th><th>score</th><th class="insopt">survived</th><th class="insopt">test-process time</th></tr></thead><tbody>
-    ${files.map(f => `<tr><td class="mono">${esc(f.file.split('/').pop())}</td><td class="num">${int(f.mutants)}</td><td class="num"><b>${pct(f.score)}</b>${meter(f.score, 100)}</td><td class="num insopt">${int(f.survived)}</td><td class="num insopt">${sec(f.ms)}</td></tr>`).join('')}</tbody></table></div></div>` : '';
-  if (!lean) return slow + mut;
-  const nv = `<div class="tablecard" id="tests-never"><h3>Never fail <span class="mute small">${int(never.length)} · ran against every mutant of ${esc(files.map(f => f.file.split('/').pop()).join(', ') || 'no file')} and killed none</span></h3>
-    ${never.length ? `<ul class="tlist">${never.map(t => `<li>${chip('warn', 'kills 0')} ${shortT(esc(t.test))}${fin(t.ms) ? ` <span class="small mute">${sec(t.ms)}</span>` : ''}</li>`).join('')}</ul>` : none}</div>`;
-  const dp = `<div class="tablecard" id="tests-dup"><h3>Duplicates <span class="mute small">${int(dup.length)} · every mutant it kills, another test kills too (equal sets: the slower one is listed)</span></h3>
-    ${dup.length ? `<ul class="tlist">${dup.map(t => `<li>${chip(t.same ? 'warn' : 'idle', t.same ? 'same set' : 'subset')} ${shortT(esc(t.test))} <span class="small mute">kills ${int(t.kills)}${fin(t.ms) ? ` · ${sec(t.ms)}` : ''}</span><div class="small mute">inside: ${shortT(esc(t.within))}</div></li>`).join('')}</ul>` : none}
-    <p class="small mute" style="padding:0 12px">The evidence covers the trial's files only: a listed test may still guard other code - the wave gate re-measures coverage and mutants before a cut stands.</p></div>`;
-  return slow + mut + nv + dp;
-}
 function testsWave(w, ctx) {
   if (!w) return '';
   return `<div class="tablecard" id="tests-wave"><h3>Last lean-tests wave ${chip(w.ok ? 'ok' : 'bad', w.ok ? 'gate passed' : 'gate failed')}${w.restored?.length ? ` ${chip('warn', 'restored')}` : ''} <span class="mute small">${esc(fmtTime(w.at, ctx.now))} · ${esc(w.head)} vs ${esc(w.base)}</span></h3><div style="padding:4px 12px">
@@ -261,14 +364,21 @@ function testsWave(w, ctx) {
     <div class="small">coverage ${pct(w.before.cov?.pct)} -> <b>${pct(w.after.cov?.pct)}</b>${w.score ? ` · mutation score ${pct(w.score.before)} -> <b>${pct(w.score.after)}</b>` : ''} · changed files ${sec(w.ms_before)} -> <b>${sec(w.ms_after)}</b>${w.lost_lines ? ` · lost ${int(w.lost_lines)} line(s)` : ''}</div>
     <div class="small mute" style="margin-top:4px;overflow-wrap:anywhere">cut: ${w.removed.map(t => shortT(esc(t))).join(' · ') || 'nothing'}</div></div></div>`;
 }
+function testsTrends(d, ctx) {
+  const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1);
+  const cpu = `<div class="tablecard" id="tests-cpu"><h3>Suite CPU-minutes per full run <span class="mute small">a hygiene pass pays off here</span></h3>${d.cpu?.length ? `<div style="padding:4px 12px">${columns(d.cpu.map(x => ({ label: String(x.at).slice(5, 10), value: x.cpu_min })), { fmt: v => `${v} min`, title: 'suite CPU-minutes per full run', id: 'tests-cpu-cols', unit: 'CPU-min', per: 'run' })}</div>` : notYet('suite CPU time', 'a measure that records its CPU-minutes (cpu_min in history.jsonl)')}</div>`;
+  const days = d.lanes ? [...new Set(d.lanes.map(x => x.day))] : [];
+  const lane = `<div class="tablecard" id="tests-lanemin"><h3>Worker test minutes per lane <span class="mute small">per day, from the per-run test budget</span></h3>${d.lanes ? `<div style="padding:4px 12px">${columns(days.map(day => ({ label: day.slice(5), value: Math.round(10 * d.lanes.filter(x => x.day === day).reduce((n, x) => n + x.min, 0)) / 10 })), { fmt: v => `${v} min`, title: 'worker test minutes per day', id: 'tests-lane-cols', unit: 'min', per: 'day' })}
+    ${bars(Object.entries(d.lanes.reduce((m, x) => ({ ...m, [x.lane]: (m[x.lane] ?? 0) + x.min }), {})).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => ({ label: k, value: Math.round(v * 10) / 10 })), { fmt: v => `${v} min`, id: 'tests-lane-bars' })}</div>` : notYet('worker test minutes', 'budgets.jsonl: the supervisor\'s per-run test budget writes it')}</div>`;
+  return testsOver(h, g, last, gl) + cpu + lane + testsWave(d.wave, ctx);
+}
+const TESTS_PART = { suite: testsSuite, costs: testsCosts, impact: testsImpact, trends: testsTrends };
 function tests(d, ctx) {
-  const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1), adv = d.advisories;
-  const advCard = adv ? `<div class="tablecard" id="tests-adv"><h3>Last merge check <span class="mute small">${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · advisory, never a merge block</span></h3>
-    ${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>` : '';
-  // a pytest (or any non node:test) project: say which parts can fill, instead of a page of "not measured yet" and a command that refuses
-  const why = d.suite === false ? `<div class="banner" id="tests-scope">This project's tests are not a node:test suite (tests/*.test.mjs), so only <b>Over time</b> fills here: test cases and lines per day from git, refreshed once a day by the tick. Per-test time, the slowest tests, the merge check and lean tests read node:test suites only.</div>`
-    : !g.length && !h.length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Over time</b> from git once a day; per-test time comes from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
-  return why + (d.suite === false ? testsOver(h, g, last, gl) : testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx));
+  // a project whose suite Norn cannot read: say which suite it is and what still fills, instead of a page of "not measured yet"
+  const why = d.suite === false ? `<div class="banner" id="tests-scope">Norn reads node:test suites (tests/*.test.mjs) and pytest suites (tests/test_*.py); this project's tests/ holds neither, so only <b>Trends</b> fills: test cases and lines per day from git, refreshed once a day by the tick.</div>`
+    : !d.times && !(d.history || []).length && !(d.git?.points || []).length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Trends</b> from git once a day; per-test runtimes come from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
+  const views = TESTS_SUBS.map(([k, label]) => [k, label, k === 'suite' && d.times ? int(d.times.tests) : null]);
+  return why + testsAlerts(d) + subviewPage('tests', { numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)

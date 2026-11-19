@@ -11,15 +11,22 @@ const fwd = s => s.split('\\').join('/');
 const rel = (p, cwd) => fwd(path.isAbsolute(p) ? path.relative(cwd, p) : p);
 export const TESTS_SOURCE = 'owner DIR-19 + DIR-47 (lean tests, measured); META-TEND TESTS';
 
-/** one test file's measure-reporter lines -> { file, ms, tests: [{ name, nesting, ms, ok }], cov: { src: [lines] }, totals: { src: n } } */
+/** one test file's measure-reporter lines -> { file, ms, tests: [{ name, nesting, line, ms, ok, group }], cov: { src: [lines] }, totals: { src: n } }.
+ *  group = the names of the describe() suites and parent tests around a test, outermost first ([] at the top level): node:test reports a
+ *  child before its parent, so an item at nesting n is the parent of every item still waiting at nesting n + 1 */
 export function measureFile(file, ms, text, cwd) {
-  const tests = [], cov = {}, totals = {};
+  const seq = [], cov = {}, totals = {}, wait = {};
   for (const l of String(text).split('\n')) {
     if (!l.trim()) continue;
     const x = JSON.parse(l);
-    if (x.t === 'test') tests.push({ name: x.name, nesting: x.nesting, ms: x.ms, ok: x.ok });
-    else if (x.t === 'cov') { const p = rel(x.path, cwd); cov[p] = x.lines; totals[p] = x.total; }
+    if (x.t === 'test' || x.t === 'suite') {
+      const it = { x, kids: wait[x.nesting + 1] ?? [] };
+      for (const k of it.kids) k.parent = it;
+      delete wait[x.nesting + 1]; (wait[x.nesting] ??= []).push(it); seq.push(it);
+    } else if (x.t === 'cov') { const p = rel(x.path, cwd); cov[p] = x.lines; totals[p] = x.total; }
   }
+  const groupOf = it => { const g = []; for (let p = it.parent; p; p = p.parent) g.unshift(p.x.name); return g; };
+  const tests = seq.filter(it => it.x.t === 'test').map(it => ({ name: it.x.name, nesting: it.x.nesting, line: it.x.line ?? null, ms: it.x.ms, ok: it.x.ok, group: groupOf(it), ...(it.kids.length ? { parent: true } : {}) }));
   return { file: fwd(file), ms, tests, cov, totals };
 }
 
