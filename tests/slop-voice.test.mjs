@@ -24,7 +24,7 @@ function repoOf(base, head) {
 const MODEL = loadRules().filter(r => r.kind === 'model');
 const answer = findings => JSON.stringify({ findings });
 // a tool that records the model prompts it got and answers with `text`
-const asking = text => { const asked = []; const tool = (rule, side) => { if (rule.kind !== 'model') return null; asked.push(rule); return text; }; tool.asked = asked; return tool; };
+const asking = text => { const asked = []; const tool = (rule, _side) => { if (rule.kind !== 'model') return null; asked.push(rule); return text; }; tool.asked = asked; return tool; };
 
 test('the six questions ship as model rules, every one in shadow at WARN', () => {
   assert.deepEqual(MODEL.map(r => r.id), ['M1', 'M2', 'M3', 'M4', 'M5', 'M6']);

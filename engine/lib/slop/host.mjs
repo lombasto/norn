@@ -4,7 +4,7 @@
 //   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends)
 //   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level) } - the door reads it
 //   REPORT.md + report.json - the daily report and its one digest line; daily.started / daily.missed - a daily start, the ones that wrote nothing
-//   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (stage F: the second voice's precision; the last one counts)
+//   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (RM-43: the second voice's precision; the last one counts)
 // Waivers are records (WVR-n, waivers.jsonl); a block is open while no active waiver covers it.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,7 +40,7 @@ export function openBlocks(state, branch, { now = Date.now() } = {}) {
 /** every stored check, oldest first: { branch, base, head, hash, lane, run, at, findings (the new ones, every level), skipped } */
 export const slopChecks = state => (readText(checksFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l));
 
-// ---------- stage F: the second voice's ratings (audit REPORT sec. 5 "Level") ----------
+// ---------- RM-43: the second voice's ratings (audit REPORT sec. 5 "Level") ----------
 // a model rule may be set to BLOCK at 90 % precision over 20 rated findings and drops to TREND under 50 % (over as many): the
 // precision view says so; the change itself is a record the owner or the controller makes (overrides.json), never automatic
 export const RATING = { rated: 20, block: 0.9, trend: 0.5 };

@@ -373,7 +373,7 @@ function autoResume(handoff) {
 function slopEnd() {
   if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
   let c;
-  // stage F: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
+  // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
   let brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
   try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
