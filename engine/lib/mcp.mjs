@@ -116,7 +116,7 @@ export const TOOLS = [
     schema: obj({ q: S.str('Q-n'), text: S.str('owner words verbatim'), choice: S.str('option key') }, ['q', 'text']), run: answer },
   { name: 'norn_directive', profiles: CTL, description: "Record an OWNER directive (owner's words verbatim), optionally scoped to lanes.",
     schema: obj({ text: S.str('owner words verbatim'), scope: S.strs, expires: S.str('UTC time'), new: S.bool }, ['text']), run: directive },
-  { name: 'norn_question_add', profiles: CK, description: 'Ask the owner one question (options with cost, a recommendation); parks the lanes it blocks. owner_only = a taste / owner pick no check-in may rule.',
+  { name: 'norn_question_add', profiles: CK, description: 'Ask the owner one question (options with cost, a recommendation); parks the lanes it blocks. options = every real alternative (3-4 if they exist, never padded). owner_only = a taste / owner pick no check-in may rule.',
     schema: obj({ lane: S.str(), title: S.str(), body: S.str('short markdown: a lead sentence, then bullets; ids bare (the Inbox links them), backticks only for code (a command, a path)'), options: { type: 'array', items: obj({ key: S.str(), text: S.str(), cost: S.str() }, ['key', 'text']) },
       recommend: obj({ key: S.str(), why: S.str() }, ['key', 'why']), class: S.str('', { enum: ['i', 'ii', 'iii', 'iv', 'v'] }), blocks: S.strs, source: S.str(), owner_only: S.bool }, ['lane', 'title', 'options']), run: questionAdd },
   { name: 'norn_decision_add', profiles: CK, description: 'Record a controller decision (question, choice, why, cost, source).',
@@ -262,7 +262,7 @@ function directive(a, ctx) {
 function questionAdd(a, ctx) {
   const options = a.options.map(o => ({ key: o.key, text: o.text, cost: o.cost ?? '' }));
   const e = write(ctx, { kind: 'question', ev: 'create', data: { title: a.title, lane: a.lane, ...(a.body !== undefined ? { body: a.body } : {}), options,
-    ...(a.recommend ? { recommend: a.recommend } : {}), ...(a.class ? { class: a.class } : {}), blocks: a.blocks || [], ...(a.source ? { source: a.source } : {}), ...(a.owner_only !== undefined ? { owner_only: a.owner_only } : {}) } });
+    ...(a.recommend ? { recommend: { ...a.recommend, from: ctx.writer } } : {}), ...(a.class ? { class: a.class } : {}), blocks: a.blocks || [], ...(a.source ? { source: a.source } : {}), ...(a.owner_only !== undefined ? { owner_only: a.owner_only } : {}) } });
   return { text: e.id, data: { id: e.id } };
 }
 function decisionAdd(a, ctx) {

@@ -150,6 +150,8 @@ tr:last-child td{border-bottom:0}
 /* RM-30 S1: a question's options = small cards (key, text, cost; the recommended one marked, with its why) */
 .opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:8px;margin-top:8px}
 .opt{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--soft);font-size:13px;min-width:0}
+/* INBOX-REPLIES: a question's thread (owner messages, controller replies, revisions, the ruling to confirm) */
+.qsrc{margin-top:8px}.qthread{list-style:none;margin:8px 0;padding:0;display:flex;flex-direction:column;gap:6px}.qmsg{border-left:3px solid var(--line);padding:4px 10px;overflow-wrap:anywhere;max-width:100%}.qmsg.ctl{border-left-color:var(--accent);background:var(--soft)}.qrev,.qprop{margin-top:4px}.qconfirm{margin:8px 0;padding:8px 10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;overflow-wrap:anywhere}#inbox-resolved summary{cursor:pointer;padding:4px 0}#inbox-resolved .q{margin-top:10px}
 .opt.rec{border-color:var(--accent);background:var(--accent-bg)}
 .ohead{display:flex;gap:6px;align-items:center;margin-bottom:4px}.okey{min-width:22px;text-align:center;border-radius:5px;background:var(--panel);border:1px solid var(--line);font:700 12px ui-monospace,Consolas,monospace;padding:0 5px}
 .ocost,.owhy{display:flex;gap:6px;align-items:baseline;margin-top:5px;font-size:12.5px}.ocost .prose,.owhy .prose{flex:1}
@@ -1198,7 +1200,8 @@ document.addEventListener('click', e => {
   if (d.act === 'audit-decline') act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'decline' }));
   if (d.act === 'advice-keep') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'keep' }));
   if (d.act === 'answer-from') act(() => post('/api/answer', { project: p, id: d.id, from: d.from }));
-  if (d.act === 'answer-text') { const t = $(`#ans-${CSS.escape(d.id)}`).value.trim(); if (t) act(() => post('/api/answer', { project: p, id: d.id, text: t })); }
+  if (d.act === 'answer-text') { const t = $(`#ans-${CSS.escape(d.id)}`).value.trim(); if (t) act(() => post('/api/answer', { project: d.project || p, id: d.id, text: t })); }   // INBOX-REPLIES: a bare key picks; other words = a message in the Q's thread
+  if (d.act === 'rule') act(() => post('/api/answer', { project: d.project || p, id: d.id, ruling: Number(d.ruling) }));   // INBOX-REPLIES: one tap confirms the ruling the controller proposed
   if (d.act === 'stop' && confirm(`Stop ${d.run}?`)) act(() => post('/api/stop', { project: p, run: d.run, confirm: true }));
   // RM-19 S1: Archive acts on the tap - the row leaves at once (S.archiving), then an Undo bar (S.laneUndo, the chat's Undo without a
   // confirm); a refusal (409: an unmerged deliverable) puts the row back with the reason kept in S.laneRefused, which a re-render keeps

@@ -15,6 +15,7 @@ import path from 'node:path';
 import { readEvents, recordsFile, fold, homeOf, roleAddrIn } from './records.mjs';
 import { MACHINE_DEFAULTS } from './policy.mjs';
 import { findTranscript } from './harness/claude.mjs';
+import { unanswered } from './qthread.mjs';
 
 export const GATE_DEFAULTS = { checkin_gate: MACHINE_DEFAULTS.checkin_gate, checkin_max_quiet_min: MACHINE_DEFAULTS.checkin_max_quiet_min, checkin_quiet_max_min: MACHINE_DEFAULTS.checkin_quiet_max_min };
 export const gateFile = state => path.join(state, 'checkin-gate.json');
@@ -73,6 +74,8 @@ export function facts(recEvs, runEvs, { at, mult = 2, probes = [], dlvEvs = [], 
   const items = Object.values(fold(recEvs).items);
   for (const i of items) {
     if (i.kind === 'question' && ['open', 'answered'].includes(i.state)) F.add(`q:${i.id}:${i.state}`);
+    // INBOX-REPLIES: the owner wrote in a Q's thread and the controller has not replied - a MAJOR wake (the reply needs a full turn)
+    if (i.kind === 'question') { const w = unanswered(i); if (w.length) F.add(`thread:${i.id}:${w.at(-1).seq}`); }
     if (i.kind === 'directive' && i.state === 'active') F.add(`dir:${i.id}`);
     if (i.kind === 'decision' && i.state === 'overruled') F.add(`dec:${i.id}:overruled`);
     if (i.kind === 'lane' && i.state !== 'archived') F.add(`lane:${i.id}:${i.state}`);
