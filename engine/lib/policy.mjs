@@ -6,7 +6,7 @@
 // allowed work classes (policy.allowed_classes.<name>, the rank) and a class -> executor pairing it does not allow is refused (400).
 import { PROVIDER_CLASSES, PROVIDER_CAP_DEFAULT, capKey, BUILTIN } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
-import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank } from './floor.mjs';
+import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank, CHECKIN_FLOOR_TEXT, checkinBelow } from './floor.mjs';
 import { BILLING_NAMES, isApi, usdCap } from './billing.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -162,11 +162,11 @@ export const SETTINGS=[
   S('cadence','policy.checkin.merge_model','Staged-merge run model',en(MODELS),'Model of the MERGE run a routine worker_done_stage queues.','claude-sonnet-5-5','Opus costs ~5x Sonnet per merge run.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_effort','Staged-merge run effort',en(EFFORTS),'Effort of that MERGE run.','medium','Higher effort per merge multiplies with merges.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_agent','Staged-merge run agent',{type:'text',pattern:'^[A-Za-z0-9._-]{0,60}$'},'Agent of that MERGE run (blank = none).','the project runner agent','—',['norn tick (engine/lib/checkins.mjs)']),
-  S('cadence','checkin_model','Check-in model',en(MODELS),'Model of the scheduled check-in and the Talk controller.','claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_model','Check-in model',en(MODELS),`Model of the scheduled check-in and the Talk controller. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
   // CHECKIN-V2 piece 2 (GT-3 ruling): a MINOR wake (gate.mjs wakeClass) runs this model / effort on the reduced prompt CHECKIN-MINOR.md
   S('cadence','checkin_minor_model','Minor check-in model',en(['',...MODELS]),'Model of a MINOR check-in (a forced quiet tick, a run start by another, the guard band): the reduced prompt engine/prompts/CHECKIN-MINOR.md; it escalates with MAJOR NEEDED. Empty = every tick is the full check-in.','claude-sonnet-5-5','Opus on minor ticks costs ~5x Sonnet for ticks that mostly act on nothing.',['norn tick (engine/lib/tick.mjs)']),
   S('cadence','checkin_minor_effort','Minor check-in effort',en(EFFORTS),'Effort of a MINOR check-in.','medium','Higher effort per minor tick multiplies with their count.',['norn tick (engine/lib/tick.mjs)']),
-  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),'Effort of the check-in.','medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),`Effort of the check-in. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
   // META-CHECKIN-GATE: norn tick wakes the LLM check-in only on a material change (engine/lib/gate.mjs); a slow forced check-in stays
   S('cadence','checkin_gate','Check-in gate (wake on change only)',bool,'A tick (scheduled or run exit) starts the LLM check-in only when the material state changed since the last one: run starts / ends / kills / stalls, owner records, questions, ready lanes, guard band, quiet flag / pause. No change = a logged skip.','on','Off = every tick is one Opus check-in (~0.9M cache-read tokens each), about half of them with nothing to do.',['norn tick (engine/lib/gate.mjs)']),
   S('cadence','checkin_max_quiet_min','Forced check-in after (min quiet)',int(15,1440),'With the gate on, a check-in still runs once the last real one is older than this, change or not.','60','Lower = more no-change check-ins (one Opus turn each); higher = slower reaction to what the gate does not see (time-only rules).',['norn tick (engine/lib/gate.mjs)']),
@@ -396,6 +396,9 @@ export function belowFloor(m){const f=floorOf(m);if(!f)return [];const v=withDef
   for(const [k,e] of Object.entries(p.executors)){model(`policy.executors.${k}.model`,e.model);effort(`policy.executors.${k}.effort`,e.effort,e.model,e.executor);}
   effort('policy.critical_effort',p.critical_effort);effort('policy.iteration.escalation_effort',p.iteration.escalation_effort);
   return out;}
+/** the check-in settings of merged view `m` below CHECKIN_FLOOR (floor.mjs checkinBelow): [{ key, kind, value, to, text }] */
+export function checkinBelowFloor(m){const v=withDefaults(m),text=`below ${CHECKIN_FLOOR_TEXT}: a check-in decides and delegates on its own`;
+  return checkinBelow({model:v.checkin_model,effort:v.checkin_effort}).map(r=>({key:'checkin_'+r.kind,...r,text}));}
 /**
  * The changes of a Settings save with the floor's raises added: every worker setting the save leaves below the floor in force after it
  * (a new or raised floor) is raised to the floor, unless the save sets that key itself (then applySettings refuses it, naming it).

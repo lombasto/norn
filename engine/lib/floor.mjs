@@ -66,5 +66,18 @@ export function raiseToFloor({ model, effort } = {}, f) {
   if (f.effort && claude && effortBelow(effort, f.effort)) { raised.effort = [effort, f.effort]; e = f.effort; }
   return { model: m, effort: e, raised: Object.keys(raised).length ? raised : null };
 }
+// RM-26 the check-in floor: a check-in decides and delegates on its own, so it needs a competent model and effort (owner 2026-11-18).
+// Fixed, not a setting. Unlike the worker floor it never refuses or raises (a check-in keeps its own model): the settings review flags
+// a checkin_model / checkin_effort below it (policy checkinBelowFloor), the dashboard shows a notice while one is in force, and a
+// decision a check-in run below it records is marked (records.mjs made_under.below_floor).
+export const CHECKIN_FLOOR = { model: 'claude-opus-5-5', effort: 'medium' };
+export const CHECKIN_FLOOR_TEXT = `the check-in floor (${CHECKIN_FLOOR.model}, effort ${CHECKIN_FLOOR.effort})`;
+/** a check-in's { model, effort } below CHECKIN_FLOOR: [{ kind: 'model' | 'effort', value, to }] (the effort only on a Claude model) */
+export function checkinBelow({ model, effort } = {}) {
+  const out = [];
+  if (modelBelow(model, CHECKIN_FLOOR.model)) out.push({ kind: 'model', value: model, to: CHECKIN_FLOOR.model });
+  if (claudeRank(model) && effortBelow(effort, CHECKIN_FLOOR.effort)) out.push({ kind: 'effort', value: effort, to: CHECKIN_FLOOR.effort });
+  return out;
+}
 /** the run kinds the floor binds: every run except a check-in (its own checkin_model / checkin_effort) */
 export const floorBinds = o => o?.kind !== 'checkin';
