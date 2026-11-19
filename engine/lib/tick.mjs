@@ -15,7 +15,7 @@ import { authRefusal, authNoticeDue, loginHolds } from './authguard.mjs';
 import { limitRefusal } from './limitgate.mjs';
 import { readEvents, recordsFile, fold, loadState, record, RecordError, homeOf, laneId } from './records.mjs';
 import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate, rateBand, idleProbe, STALL_IDLE_MIN } from './gate.mjs';
-import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, metaCli } from './checkins.mjs';
+import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, metaCli, isMergeRun } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
 import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText, syncPolicy } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
@@ -23,7 +23,8 @@ import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
+import { tickMergeq, mqProbe, spawnDetached, mergeqOn } from './mergeq.mjs';
+import { followerPrs } from './mergeland.mjs';
 import { tickFix } from './fixer.mjs';
 import { closeLandedQuestions } from './deliverables.mjs';
 import { tickSlop } from './slop/daily.mjs';
@@ -41,7 +42,7 @@ import { tickPaths } from './lanepaths.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
 import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
 import { fedOf } from './fed.mjs';
-import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync } from './claims.mjs';
+import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync, claimLeader, leaderKey } from './claims.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');
@@ -183,6 +184,8 @@ export function tick(o) {
 // is not fenced): a live run whose claim is unconfirmed past fence_s is stopped and recorded lost. A renew that finds an own claim gone
 // or under another nonce = taken over: its run stops, the claim leaves the own list. Last the observer's clock (stale foreign claims).
 // Rows for the digest go to <state>/sync/claims-digest.json: events (drift, fenced, taken) for 72 h, stale claims as they are now.
+// S6a (SPEC 4.8): the merge leader rides the same pass - renewed in the same commit, fenced the same way (its live MERGE runs stop),
+// lost when the renew finds it taken over; a home whose project runs the merge queue claims it when free or stale (taken over at once).
 const EVENT_MS = 72 * 3600e3;
 function stopForClaim(state, run, why, kill) {
   const hb = (() => { try { return JSON.parse(fs.readFileSync(hbPath(state, run.id), 'utf8')); } catch { return {}; } })();
@@ -191,14 +194,18 @@ function stopForClaim(state, run, why, kill) {
   try { fs.unlinkSync(hbPath(state, run.id)); } catch { /* gone */ }
   return true;
 }
-/** claimsPass(state, { ledger, policy, now, kill }) -> null (not synced) | { renewed, fenced, taken, released, stale, offline? } */
-export function claimsPass(state, { ledger, policy, now = Date.now(), kill = killTree } = {}) {
+/** claimsPass(state, { ledger, policy, now, kill, mergeq }) -> null (not synced) | { renewed, fenced, taken, released, stale, offline?,
+ *  leader: { leader, holder, why, took?, fenced } } (mergeq: the project runs the merge queue, so it may claim the leader) */
+export function claimsPass(state, { ledger, policy, now = Date.now(), kill = killTree, mergeq = false } = {}) {
   const home = homeOf(state)?.id, f = home ? fedOf(ledger) : null;
   if (!f) return null;
   const pol = syncPolicy(policy), items = loadState(state).items, out = { renewed: 0, fenced: [], taken: [], released: [], stale: [] };
   const own = readSync(state, 'own'), events = (readSync(state, 'rows').events || []).filter(r => now - r.ms < EVENT_MS);
   const event = (kind, id, why) => events.push({ kind, id, why, ms: now, at: new Date(now).toISOString() });
   const runOf = lane => Object.values(items).find(i => i.kind === 'run' && i.state === 'running' && i.data.lane === lane && i.data.kind !== 'checkin' && i.data.role !== 'helper');
+  const project = path.basename(path.resolve(state)), lk = leaderKey(project), lead = { leader: false, holder: null, why: '', fenced: [] };
+  let led = readSync(state, 'leader').key === lk ? readSync(state, 'leader') : null;
+  const stopMerges = why => { for (const r of Object.values(items)) if (r.kind === 'run' && r.state === 'running' && isMergeRun(r.data) && stopForClaim(state, r, why, kill)) lead.fenced.push(r.id); };
   let claims;
   try { claims = listClaims(f); } catch { claims = localClaims(f); out.offline = true; }
   for (const [k, c] of Object.entries(own)) {
@@ -207,12 +214,19 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
     try { r = releaseWork(f, c); } catch { /* offline: the next pass */ }
     if (r?.ok || r?.gone) { delete own[k]; out.released.push(k); }
   }
-  if (Object.values(own).some(c => !(now - c.confirmed_ms < pol.renew_s * 1000))) {
-    const rn = renewWork(f, Object.fromEntries(Object.entries(own).map(([k, c]) => { const r = runOf(c.lane); return [k, { nonce: c.nonce, run: r?.id, touched: r ? touchedOf(r.data.worktree) : undefined }]; })), { now });
+  if ([...Object.values(own), ...(led ? [led] : [])].some(c => !(now - c.confirmed_ms < pol.renew_s * 1000))) {
+    const rn = renewWork(f, { ...Object.fromEntries(Object.entries(own).map(([k, c]) => { const r = runOf(c.lane); return [k, { nonce: c.nonce, run: r?.id, touched: r ? touchedOf(r.data.worktree) : undefined }]; })), ...(led ? { [lk]: { nonce: led.nonce } } : {}) }, { now });
     if (rn.ok) {
-      for (const [k, n] of Object.entries(rn.renewed)) { own[k] = { ...own[k], n, confirmed_ms: now }; out.renewed++; }
+      if (led && rn.renewed[lk]) led = { ...led, n: rn.renewed[lk], confirmed_ms: now };
+      if (led && rn.gone.includes(lk)) {   // an old leader that comes back: its claim is gone, so its MERGE runs stop
+        const why = `merge leader taken over on ${new Date(now).toISOString()}`;
+        stopMerges(why);
+        event('taken', lk, `${led.home}/merge leader: ${why}${lead.fenced.length ? ` - ${lead.fenced.join(' ')} stopped` : ''}`);
+        led = null;
+      }
+      for (const [k, n] of Object.entries(rn.renewed)) if (k !== lk) { own[k] = { ...own[k], n, confirmed_ms: now }; out.renewed++; }
       for (const d of rn.drift) event('drift', d.key, d.why);
-      for (const k of rn.gone) {
+      for (const k of rn.gone.filter(x => x !== lk)) {
         const c = own[k], r = runOf(c.lane), why = `claim taken over on ${new Date(now).toISOString()}`;
         if (r) stopForClaim(state, r, why, kill);
         event('taken', k, `${c.home}/${c.lane}: ${why}${r ? ` - ${r.id} stopped` : ''}; it claims again only through a normal dispatch`);
@@ -227,8 +241,25 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
     const why = `fenced: claim not confirmed for ${forS} s`;
     if (stopForClaim(state, r, why, kill)) { event('fenced', k, `${c.home}/${c.lane}: ${r.id} ${why}`); out.fenced.push(r.id); }
   }
+  if (led && now - led.confirmed_ms > pol.fence_s * 1000) {
+    const forS = Math.floor((now - led.confirmed_ms) / 1000);
+    stopMerges(`fenced: merge leader claim not confirmed for ${forS} s`);
+    if (lead.fenced.length) event('fenced', lk, `${led.home}/merge leader: ${lead.fenced.join(' ')} fenced: claim not confirmed for ${forS} s`);
+    lead.why = `merge leader claim not confirmed for ${forS} s (fenced)`;
+  }
   const seen = observeClaims(claims, readSync(state, 'seen'), { home, now });
-  const stale = Object.entries(seen).filter(([k]) => isStale(seen[k], claims[k], now, pol)).map(([k]) => {
+  if (!led && mergeq && !out.offline) {
+    const c = claimLeader(f, { project, home, seen, now, pol });
+    if (c.won) {
+      led = { key: lk, project, home, nonce: c.claim.nonce, n: c.n, confirmed_ms: now };
+      if (c.took) { lead.took = c.took; event('taken', lk, `${c.took}/merge leader was stale: taken over by ${home}`); }
+    } else lead.why = c.why;
+  }
+  if (led) writeSync(state, 'leader', led); else writeSync(state, 'leader', {});
+  if (led && !lead.why) Object.assign(lead, { leader: true, holder: home });
+  else if (!led) { const c = (() => { try { return localClaims(f)[lk]; } catch { return null; } })(); lead.holder = c?.home ?? null; lead.why ||= c ? `merge leader is ${c.home}` : 'no merge leader'; }
+  out.leader = lead;
+  const stale = Object.entries(seen).filter(([k]) => claims[k]?.kind === 'work' && isStale(seen[k], claims[k], now, pol)).map(([k]) => {
     const c = claims[k];
     return { kind: 'stale', id: k, why: `${c.home}/${c.lane} stale: n=${c.n} unchanged ${Math.floor((now - seen[k].first_seen_ms) / 60000)} min on this home's clock - the owner may take it over: norn claim take ${c.home}/${c.lane} --project ${c.project}` };
   });
@@ -266,12 +297,18 @@ function tickPass(o, g = {}) {
     // META-GUARD R1: the usage watch before the status - a new GRD alarm is in this tick's digest and wakes the check-in (gate probe); never fails the tick
     try { const w = guardWatch(state, p, { projectsDir: o.machine?.claude?.projects_dir }); g.raised = w.raised; g.push = guardPolicy(p.policy).push; } catch (e) { tickLog(state, `${tag}: guard: ${e.message}`); }
     // RM-46 S2b: renew, fence, release, observe the work claims before the fill (which claims with the claims just fetched)
-    try { const c = claimsPass(state, { ledger: o.ledger, policy: p.policy, ...(o.now ? { now: o.now().getTime() } : {}) }); if (c && (c.fenced.length || c.taken.length || c.released.length)) tickLog(state, `${tag}: claims: fenced ${c.fenced.join(' ') || '-'}; taken over ${c.taken.join(' ') || '-'}; released ${c.released.join(' ') || '-'}`); }
-    catch (e) { tickLog(state, `${tag}: claims: ${e.message}`); }
+    let leader = null;   // S6a: a synced home's merge leader state (null = not synced: the merge queue runs as on one home)
+    try {
+      const c = claimsPass(state, { ledger: o.ledger, policy: p.policy, mergeq: mergeqOn(p), ...(o.now ? { now: o.now().getTime() } : {}) });
+      if (c && (c.fenced.length || c.taken.length || c.released.length)) tickLog(state, `${tag}: claims: fenced ${c.fenced.join(' ') || '-'}; taken over ${c.taken.join(' ') || '-'}; released ${c.released.join(' ') || '-'}`);
+      if (c?.leader) { leader = c.leader; if (c.leader.took || c.leader.fenced.length) tickLog(state, `${tag}: merge leader: ${c.leader.took ? `took over from stale ${c.leader.took}` : ''}${c.leader.fenced.length ? ` MERGE ${c.leader.fenced.join(' ')} stopped` : ''}`); }
+    } catch (e) { tickLog(state, `${tag}: claims: ${e.message}`); leader = homeOf(state) ? { leader: false, why: `claims: ${e.message}` } : null; }
     for (const f of fillQueue(state)) tickLog(state, `${tag}: queue: ${f.queued} -> STARTED ${f.next}`);   // a due not_before or a freed slot (META-GT12)
     holdStep(state, tag);   // GAP-1: before the status, so this tick's digest carries the hold row
     // META-GTP-MERGEQ piece 5: the merge queue right after the fill - a detached `norn mergeq --run` (code only; a dry tick only with o.spawnMergeq)
-    if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq }); if (m) tickLog(state, `${tag}: ${m}`); }
+    if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq, leader }); if (m) tickLog(state, `${tag}: ${m}`); }
+    // RM-46 S6a: a home that is not the merge leader only opens PRs - its DONE pushed lane branches through openPrs (the slop door applies)
+    if (leader && !leader.leader && !o.dry && mergeqOn(p)) try { for (const x of followerPrs(p, state, { gh: o.gh })) tickLog(state, `${tag}: ${x.lane}: ${x.status === 'refused' ? `NOT OPENED ${x.branch}: ${x.why}` : `PR ${x.url} (${x.status})`}`); } catch (e) { tickLog(state, `${tag}: PRs: ${e.message}`); }
     // META-UX-BUILD S7: the fixer of an active Fix all directive starts by code - a detached `norn fix start DIR-n --queue` (a dry tick only with o.spawnFix)
     if (o.fix !== false && (!o.dry || o.spawnFix)) { try { for (const m of tickFix(p, state, { metaCmd: META_CMD, items: loadState(state).items, spawnFn: o.spawnFix ?? ((exe, args) => spawnDetached(exe, args, p.root)) })) tickLog(state, `${tag}: ${m}`); } catch (e) { tickLog(state, `${tag}: fix: ${e.message}`); } }
     // META-SLOP-A: the daily slop report on the same schedule - a detached `norn slop daily` once a day (a dry tick only with o.spawnSlop)
