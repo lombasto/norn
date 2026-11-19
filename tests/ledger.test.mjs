@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ledgerConfig, commitLedger, ledgerFiles, ledgerLog, ledgerStatus, ledgerRestore, secretsOf, BIG_BYTES } from '../engine/lib/ledger.mjs';
+import { KINDS } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const FAKE_TOPIC = 'fake-topic-Zq81xY2';
@@ -215,4 +216,13 @@ test('ledger remote: ledger.remote set = a detached push of machine/<host> after
   for (const t0 = performance.now(); performance.now() - t0 < 20000 && got !== r.sha; await new Promise(res => setTimeout(res, 100)))
     got = spawnSync('git', ['--git-dir', remote, 'rev-parse', '-q', '--verify', cfg.branch], { encoding: 'utf8' }).stdout.trim();
   assert.equal(got, r.sha);
+});
+
+test('ledger whitelist: the backup carries every KINDS file (roadmap, mail, waivers, adopt, instructions, guard - RM-46 S1c, F4)', () => {
+  const { st, cfg } = ledgerTree();
+  const want = [...new Set(Object.values(KINDS).map(k => k.file))].map(f => `${f}.jsonl`);
+  for (const f of want) w(path.join(st, f), '{"x":1}\n');
+  const rel = [...ledgerFiles(cfg).files.keys()];
+  for (const f of want) assert.ok(rel.includes(`sdd-codex/state/p/${f}`), f);
+  assert.ok(want.includes('roadmap.jsonl'));
 });
