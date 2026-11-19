@@ -1,7 +1,7 @@
 // META-GTP-MERGEQ (GT-PARITY-PLAN sec. 2.4; Bors / the GitHub merge queue; Gas Town refinery - cited, not ported): the merge
 // queue of DONE-not-merged deliverables. Code only, no LLM: the tick runs it after the fill.
 //  1. MR score (Gas Town internal/refinery/score.go:43-51, 81-87): 1000 + epic_hours*10 + (4 - priority)*100
-//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P3; none = P2, the DAG default), retries = its
+//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P4; none = P2, the DAG default), retries = its
 //     resolve / fix rounds, the DLV's age since DONE.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,12 +22,13 @@ import { slopOn } from './policy.mjs';
 import { subdirOf, inDir, gateText } from './monorepo.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { rowLookItems, lookHold } from './look.mjs';
+import { landPass } from './landing.mjs';
 
 const H = 3600e3;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const pad = (s, n) => String(s ?? '').padEnd(n);
 export const MQ_DEFAULTS = { batch_max: 4 };
-export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
 /** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
 // a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own
@@ -221,14 +222,14 @@ export const batchFile = (stateDir, n) => path.join(mqDir(stateDir), `batch-${n}
 export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
-/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state) */
+/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state), then adds gate.env */
 export function runGate(gate, { cwd, log }) {
   cwd = inDir(cwd, gate.dir);
   return new Promise(resolve => {
     const t0 = Date.now();
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const fd = fs.openSync(log, 'w');
-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_')));
+    const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_'))), ...(gate.env || {}) };
     let child, timedOut = false, done = false;
     const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
     const timer = setTimeout(() => { timedOut = true; killTree(child?.pid); }, (gate.timeout_min ?? 30) * 60e3);
@@ -413,12 +414,16 @@ export async function mergeqRun(o = {}) {
     return r;
   } finally { clearInterval(hb); run.release(); }
 }
-async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), now = Date.now(), acquire = acquireLock, gateRunner = runGate, hbMs = 30000 } = {}) {
+async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), now = Date.now(), acquire = acquireLock, gateRunner = runGate, hbMs = 30000, cli = null, gh = null } = {}) {
   const skip = suiteMode(project) === 'skip';   // DIR-24: policy.merge.suite = skip -> no gate run (a bad value is refused here)
   locksDir ||= path.join(path.dirname(path.resolve(stateDir)), 'locks');
-  const out = { updates: updatePass({ stateDir, project, locksDir, git, now, acquire }), batch: null, fix: null, why: '' };
+  // auto-update pushes main into idle lane branches: only where the project opted into the merge queue (deliverables / merge set)
+  const out = { updates: project.deliverables || project.merge ? updatePass({ stateDir, project, locksDir, git, now, acquire }) : [], batch: null, fix: null, land: null, why: '' };
   const cfg = mergeConfig(project);
-  if (!cfg.gate?.fast) return { ...out, why: 'no fast merge gate declared (merge.gate.fast): no batch - one MERGE stage per branch, door work stays door work' };
+  if (!cfg.gate?.fast) {   // MERGE-FIRST (3): no batch - each stage-gated row lands by code (landing.mjs); a failure queues its MERGE
+    const land = await landPass({ stateDir, project, locksDir, rows: mergeQueue({ stateDir, project, now, git }).rows, cfg, git, gateRunner, cli, gh, now, hbMs });
+    return { ...out, land, why: `no fast merge gate declared (merge.gate.fast): no batch; land: ${land.why}` };
+  }
   const mq = loadMq(stateDir);
   if (mq.batching.off) return { ...out, why: `batching OFF since ${mq.batching.at}: ${mq.batching.why}` };
   const open = mq.n ? loadBatch(stateDir, mq.n) : null;
@@ -549,11 +554,11 @@ export function takeRunLock(stateDir) {
 }
 
 /**
- * The tick's step (tick.mjs, right after the fill): start `norn mergeq --run` detached for a project that follows deliverables, unless a
+ * The tick's step (tick.mjs, right after the fill): start `norn mergeq --run` detached for every project (MERGE-FIRST: each lands its work), unless a
  * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests) }. Returns the tick-log words or null.
  */
 export function tickMergeq(p, state, { metaCmd, spawnFn } = {}) {
-  if (!p?.file || !(p.deliverables || p.merge)) return null;
+  if (!p?.file) return null;
   const live = mqRunning(state);
   if (live) return `mergeq: pass pid ${live.pid} running`;
   const args = [metaCmd, 'mergeq', '--run', '--project', p.file, '--state', state];

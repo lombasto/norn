@@ -262,6 +262,8 @@ export function renderDigest(d, { level = 2 } = {}) {
   // GAP-1: first, while ALL queued work waits on one machine-level hold - no check-in clears it: report it, the owner has the Inbox item
   if (s.hold) sec('0b EVERYTHING HELD (report it; only the owner clears it)', s.hold, r => `- HOLD ${r.runs.length} queued${r.scope === 'claude' ? ' Claude' : ''} run(s)`
     + `${r.merges ? ` incl. ${r.merges} merge(s)` : ''} held since ${r.since} (${r.min} min) on "${r.term}": ${r.reason}; fix: ${r.fix}${r.clears ? `; or it clears ${r.clears}` : ''}`);
+  // MERGE-FIRST (4): the merge backlog is over policy.merge.backlog_max - land before starting (CHECKIN.md 3)
+  if (s.backlog) sec('0c MERGE BACKLOG (land before starting new lanes)', s.backlog, r => `- MERGE BACKLOG ${r.n} (oldest ${r.oldest_h ?? '?'} h): over max ${r.max} - land work before starting new lanes: ${r.ids.join(', ')}`);
   sec('1 Finished, not on main', s.finished, r => r.kind === 'deliverable'
     ? `- ${r.id} ${r.lane ?? '-'} ${r.branch ?? '-'} ${r.why}${r.days !== null ? ` ${r.days} d` : ''}${r.run ? ` (${r.run})` : ''}: ${String(r.what).slice(0, 120)}`
     : `- ${r.id} ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''} ${r.branch ?? '?'} ${r.why}; review ${r.review}; ended ${r.ended} (${r.hours} h)`);

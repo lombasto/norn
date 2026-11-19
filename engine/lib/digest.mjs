@@ -6,7 +6,7 @@
 // overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
 // lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk).
 import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
-import { deliverablesView, deliverableConfig } from './deliverables.mjs';
+import { deliverablesView, deliverableConfig, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
 import { makeEval, condText } from './after.mjs';
 import { readiness } from './runs.mjs';
@@ -193,6 +193,9 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
     const it = holdItem({ ...hr, ...hw }, { now, min: noticeMin(project?.policy), status });
     if (it) sections.hold = [{ id: 'HOLD', term: it.term, scope: it.scope, runs: it.runs, merges: it.merges, since: it.since, min: it.minutes, reason: it.reason, fix: it.fix, clears: it.clears }];
   }
+  // MERGE-FIRST (4): over policy.merge.backlog_max finished-but-unlanded deliverables - ONE row; the check-in lands work before it starts lanes
+  const bl = mergeBacklog(dlvRows || [], { now, max: backlogMax(project?.policy) });
+  if (bl.over) sections.backlog = [{ id: 'MERGE-BACKLOG', n: bl.n, oldest_h: bl.oldest_h, max: bl.max, ids: bl.ids }];
   // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0
   let rm = null;
   try { rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows }); } catch { rm = null; }

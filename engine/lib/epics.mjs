@@ -1,5 +1,5 @@
 // META-GTP-DAG piece 2 (GT-PARITY-PLAN sec. 2.3; Gas Town convoy, docs/concepts/convoy.md:23-25 - cited, not ported): an epic EP-n
-// groups runs and deliverables under one title + priority (P0-P3) and an optional integration branch. Records in epics.jsonl
+// groups runs and deliverables under one title + priority (P0-P4) and an optional integration branch. Records in epics.jsonl
 // (records.mjs KINDS.epic). Members = create.members + add - remove; DONE is derived from the members through the ONE after:
 // evaluator (after.mjs makeEval): a member run is done when it (or its HANDOFF / limit / fill successor) ended DONE, a member
 // DLV when it is merged. An empty epic is not done.
