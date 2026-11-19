@@ -1,4 +1,8 @@
 {
  "task-capacity-ux-plan-brief.md": "# task capacity-ux plan - \"how much can Norn run, what is using it, why is this waiting\" visible where work is shown, and adjustable there",
- "task-lane-purpose-S1-brief.md": "# task lane-purpose S1 (RM-34) - every lane shows its objective and where it is documented; the Runs page names each run's lane"
+ "task-lane-purpose-S1-brief.md": "# task lane-purpose S1 (RM-34) - every lane shows its objective and where it is documented; the Runs page names each run's lane",
+ "task-ci-fix4-red-main-brief.md": "# ci-fix4 / red-main: fix CI red on main (CI-44343850063)",
+ "task-norn-bugs-1118-brief.md": "# task norn-bugs-1118 - four Norn bugs found on 2026-11-18 (owner: \"fix the norn bugs on the norn project\")",
+ "task-norn-bugs-1118-RESUME-brief.md": "# task norn-bugs-1118 - four Norn bugs found on 2026-11-18 (owner: \"fix the norn bugs on the norn project\")",
+ "task-dwarves-plan-brief.md": "# task dwarves plan - persistent named workers (Tolkien's dwarves) with a dossier, fair performance stats, and retirement"
 }
