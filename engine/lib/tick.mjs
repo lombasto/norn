@@ -22,6 +22,7 @@ import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs'
 import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
+import { syncStep } from './sync.mjs';
 import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
 import { tickFix } from './fixer.mjs';
 import { closeLandedQuestions } from './deliverables.mjs';
@@ -161,6 +162,9 @@ export function tick(o) {
       let note;
       try { note = ledgerStep(o.ledger, `tick ${o.project.name}${o.reason ? ' (' + o.reason + ')' : ''}`); } catch (e) { note = `ledger: failed: ${e.message}`; }
       if (note && /failed|refused/.test(note)) tickLog(o.project.state, note);
+      // RM-46 S1c (SPEC 4.1): then this home's shared logs onto home/<id> (sync off = null); only a trouble note reaches the tick log
+      const sn = syncStep(o.ledger, `tick ${o.project.name}`);
+      if (sn && /failed|refused|stopped|offline/.test(sn)) tickLog(o.project.state, sn);
     }
   }
 }
