@@ -282,13 +282,15 @@ export function pairFindings(rule, got, { renamed = new Map(), inBase = () => fa
 const pathspecs = rule => [...(rule.files || ['**']).map(g => `:(glob)${g}`), ...(rule.exclude || []).map(g => `:(glob,exclude)${g}`)];
 
 /**
- * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve }) -> the ONE result:
+ * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve, machine }) -> the ONE result:
  * { base, head, at, findings: [{ rule, level, file, line, msg, snippet, fp, new, value?, base_value?, token?, shadow? }],
  *   blocks: [the new BLOCK findings of rules not in shadow], ran: [ids], skipped: [{ rule, why }] }
  * base / head are any revisions (base = the merge base the caller chose). tool(rule, side, { dir, files }) -> raw output | null.
  * resolve(record id) -> its state | null: K22's cited ids (no resolver: an id only has to be named).
+ * machine false: a rule flagged `machine` in its data (it reads this machine's state, K14) is skipped - CI and a landing's after-check
+ * have no such state to read.
  */
-export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, now = Date.now() }) {
+export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, machine = true, now = Date.now() }) {
   const sha = r => gitRun(repo, ['rev-parse', '--verify', r + '^{commit}']).trim();
   const B = sha(base), H = sha(head);
   const entries = diffEntries(repo, B, H), run = rules.filter(r => !only || only.includes(r.id));
@@ -318,6 +320,7 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
   const renamed = new Map(entries.filter(e => e.old && e.old !== e.path).map(e => [e.old, e.path]));
   const findings = [], ran = [], skipped = [];
   for (const rule of run) {
+    if (rule.machine && !machine) { skipped.push({ rule: rule.id, why: 'machine state: the rule reads this machine, not the diff (its flag machine), so it is not run here' }); continue; }
     let got;
     try { got = DETECT[rule.kind](rule, ctx); } catch (e) { skipped.push({ rule: rule.id, why: e.message.split('\n')[0] }); continue; }
     ran.push(rule.id);

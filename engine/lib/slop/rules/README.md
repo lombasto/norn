@@ -35,6 +35,12 @@ those of the rule file.
 A rule file never loads code: the engine writes the ESLint config from the rule's data, with inline config comments off, and
 accepts core rules only.
 
+## Machine rules
+
+`machine: true` marks a rule that reads this machine's state rather than the diff's trees (K14: `norn gen --check` reads the
+generated harness files on this machine). `norn slop check --ci` (the pull-request job) and the daily's check of a landing skip such a
+rule and list it as skipped; every other check runs it. The flag is the rule's data, never a project override.
+
 ## Finding shape
 
 - `key: "match"` keys a pattern or `ast` rule on the matched token instead of the line: a token is new only when no file of the
