@@ -323,7 +323,7 @@ test('a merge / batch / park question is withdrawn once its deliverable lands; a
   assert.equal(loadState(state).items['Q-1'].state, 'open', 'dry: nothing written');
   const closed = closeLandedQuestions(state, { project: p, nowMs: NOW });
   assert.deepEqual(closed.map(c => [c.q, c.dlv]), [['Q-1', 'DLV-1']]);
-  assert.match(closed[0].why, /^landed on main \(git\): DLV-1 feat\/a is on main, nothing left to ask/);
+  assert.match(closed[0].why, /^landed on main \(git [0-9a-f]{9}\): DLV-1 feat\/a is on main, nothing left to ask/);
   const items = loadState(state).items;
   assert.equal(items['Q-1'].state, 'withdrawn'); assert.equal(items['Q-2'].state, 'open', 'fix/b is not on main: still asked');
   assert.deepEqual(closeLandedQuestions(state, { project: p, nowMs: NOW }), [], 'a second pass finds nothing');
