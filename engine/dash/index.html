@@ -1349,6 +1349,7 @@ async function adoptAct(b, d) {
   if (d.act === 'adopt-notnow') { const why = prompt('Not now: why? (recorded; the draft is offered again only when you ask)', 'not now'); if (why === null) return; act(() => post('/api/adopt/close', { project: p, why: why.trim() || 'not now' })); return; }
   if (d.act === 'adopt-rule') { const t = prompt('One rule every worker reads (written to rules/RULES.md beside project.json):'); if (t && t.trim()) act(() => post('/api/adopt/rule', { project: p, text: t.trim() })); return; }
   if (d.act === 'adopt-caps-keep') { if (confirm('Keep the starter caps? This records your choice; the scheduler stays off.')) act(() => post('/api/adopt/caps', { project: p })); return; }
+  if (d.act === 'setup-gate') { act(() => post('/api/adopt/gate', { project: p, cmd: d.cmd, version: d.version })); return; }
   if (d.act === 'adopt-start') { act(async () => { await post('/api/checkin', { project: p }); err(''); }); return; }
   if (d.act === 'adopt-rehearse') { act(async () => { await post('/api/adopt/rehearse', { project: p, lane: d.lane }); }); return; }
 }
