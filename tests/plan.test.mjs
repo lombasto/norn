@@ -155,14 +155,15 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   assert.equal(bad.status, 2); assert.match(bad.stderr, /usage: norn plan/);
 });
 
-test('ui: Plan sits in Work; Runs has no queue table; Plan renders sections, all-projects groups and plain-words empty states', async () => {
+test('ui: Plan sits in Work; Runs has no queue table (a queued run is a tree row); Plan renders sections, all-projects groups and plain-words empty states', async () => {
   const { NAV, TABS, renderTab } = await import('../engine/dash/ui.mjs');
   const { TABS: SERVER_TABS } = await import('../engine/dash/server.mjs');
   assert.ok(NAV.find(d => d[0] === 'work')[2].includes('plan'));
   assert.ok(TABS.some(t => t[0] === 'plan') && SERVER_TABS.includes('plan'));
   const queue = [{ id: 'RUN-4', position: 1, lane: 'qlane', state: 'queued', project: 'demo' }];
   const ag = renderTab('runs', { tree: [], queue }, { project: 'demo' });
-  assert.ok(!/Queued|RUN-4|qlane/.test(ag), 'the queue moved to Plan');
+  assert.ok(!/Queued|<table/.test(ag), 'no queue table on Runs: the queue detail is on Plan');
+  assert.match(ag, /class="node lvl0" id="node-RUN-4"[^]*?qlane/, 'the queued run is a row of the tree (owner 2026-11-19)');
   const empty = renderTab('plan', { parts: [buildPlan({ project: 'demo', now: NOW })] }, { project: 'demo', now: NOW });
   for (const s of ['id="panel-plan"', 'Up next', 'Nothing is waiting to start.', 'Chains', 'No queued run waits for another run.', 'Landing next', 'Nothing is heading to main.',
     'Forecast', 'Usage not measured yet.']) assert.ok(empty.includes(s), s);

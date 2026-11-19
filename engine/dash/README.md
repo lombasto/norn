@@ -34,7 +34,11 @@ needs-you count. On a phone the bottom bar is Home / Inbox / Runs / Plan / More 
 - Roadmap (`norn road`): themes and items with a status derived from the linked lanes, runs and records (never typed); a tree
   or a board, filters, and the unplaced work that has no item yet.
 - Lanes: one row per lane record with its latest run (any executor), state and outcome.
-- Runs: every running and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
+- Runs: every running, queued and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
+  Running first (newest start first), then queued, then ended (latest end first). Columns `ran` (start to end, or to now while it
+  runs; `queued for` on a queued run) and `ended` (how long ago). Chips filter by state (running / queued / finished / failed),
+  kind (worker / check-in / helper / talk) and project, a box by lane, and the window of ended runs (2 h / 12 h / 24 h / all today);
+  the view lives in the URL (`&state=`, `&kind=`, `&proj=`, `&lane=`, `&window=`).
 - Records: directives and decisions with their history; Add / Revoke directive, Overrule decision.
 - Docs: the project's `docs` list rendered as markdown (docs.mjs + pinned vendor/ libs, contents sidebar, record-id chips).
   Ledger: the project ledger, one row per entry, newest first (`ledger.mjs` parses check-in / minor / auto / controller lines into a headline + labelled sub-lines, record ids link to where they live, headings / prose as markdown), search + kind filter, 100 lines then "Show older" (`/api/ledger?count=&offset=`). Settings: categories from the schema (policy.mjs `SECTIONS`) with left nav, search (`@modified`),
@@ -72,7 +76,7 @@ directives, overrules and stops become events; the generated views are re-render
 and the project's `project.json` and regenerates the marked policy lines (`<!-- policy:<key> -->`) in `project.policy_targets`.
 
 ## API (GET, `?project=<name>`; overview / inbox / lanes / agents also take `all`)
-`/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents`, `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`,
+`/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents` (`&window=2h|12h|24h|today`: ended runs kept; default 2h), `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`,
 `/log?run=RUN-n` (last 200 lines of that run's log), `/api/feed?run=RUN-n` (SSE live feed of one run), `/api/stream` (SSE state stream: record appends, flag flips, heartbeat pulse, derived changes - the page re-renders from it).
 `/api/timing`: the server's own timings - requests slower than 1 s and event-loop stalls over 250 ms (with the requests that ran in
 the stall), the last 100 of each; also appended to `local/dash-timing.jsonl`. Every answer carries `Server-Timing` (`app` = ms in
