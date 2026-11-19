@@ -1,5 +1,6 @@
 // MERGE-FIRST (3): mechanical landing (engine/lib/landing.mjs, run by the mergeq pass where no fast gate batches). A clean pushed
-// deliverable merges in a merge worktree, its merge gate runs, merge-land opens its PR: no Claude run. A red gate or a conflict
+// deliverable merges in a merge worktree, the quick check runs (syntax + the changed test files), merge-land opens its PR: no Claude
+// run. A red check or a conflict
 // queues an LLM MERGE run whose brief carries the failure. Temp repos + a bare origin; gh and the norn CLI are fakes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,14 +16,13 @@ import { mergeConfig } from '../engine/lib/mergeq.mjs';
 import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { briefMarker } from '../engine/lib/mergebrief.mjs';
 import { queueRun } from '../engine/lib/runs.mjs';
-import { handleRoutineEnds } from '../engine/lib/checkins.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 
 test.after(cleanTmp);
 const fwd = p => String(p).replace(/\\/g, '/');
 const GENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' };
 const g = (repo, ...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', env: GENV, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const commit = (repo, file, text, msg) => { fs.writeFileSync(path.join(repo, file), text); g(repo, 'add', file); g(repo, 'commit', '-q', '-m', msg); return g(repo, 'rev-parse', 'HEAD'); };
+const commit = (repo, file, text, msg) => { fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true }); fs.writeFileSync(path.join(repo, file), text); g(repo, 'add', file); g(repo, 'commit', '-q', '-m', msg); return g(repo, 'rev-parse', 'HEAD'); };
 // the remote reads as a GitHub repo (merge-land needs owner/name); every other git call is real
 const ghGit = () => makeGit((repo, args, env, input) => (args[0] === 'remote' && args[1] === 'get-url' ? 'https://github.com/o/r.git\n'
   : execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], ...(input === undefined ? {} : { input }), env: { ...GENV, ...(env || {}) } })));
@@ -40,7 +40,7 @@ function fakeGh() {
 function fakeCli() { const calls = []; return { calls, cli: args => { calls.push(args); return args[0] === 'run' ? { code: 0, out: 'RUN-90 queued' } : { code: 0, out: '' }; } }; }
 
 // origin + checkout; lane branches pushed (one worktree each), one deliverable each; main may move after (a conflict)
-function fixture(branches, { gateCmd = 'node -e "process.exit(0)"', mainEdit = null } = {}) {
+function fixture(branches, { mainEdit = null } = {}) {
   const t = mkTmp('meta-land-'), origin = path.join(t, 'origin'), repo = path.join(t, 'repo');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env: GENV });
   execFileSync('git', ['clone', '-q', origin, repo], { env: GENV, stdio: 'ignore' });
@@ -49,25 +49,27 @@ function fixture(branches, { gateCmd = 'node -e "process.exit(0)"', mainEdit = n
   commit(repo, 'README.md', 'base\n', 'base');
   g(repo, 'push', '-q', '-u', 'origin', 'main');
   const state = path.join(t, 'state', 't'), tips = {};
-  for (const [b, file, text] of branches) {
+  for (const [b, files] of branches) {
     const wt = path.join(t, 'wt-' + b.slice(5));
     g(repo, 'worktree', 'add', '-q', '-b', b, wt, 'main');
-    tips[b] = commit(wt, file, text, `${b} work`);
+    for (const [file, text] of Object.entries(files)) tips[b] = commit(wt, file, text, `${b} ${file}`);
     g(wt, 'push', '-q', '-u', 'origin', b);
     record(state, { kind: 'deliverable', ev: 'create', by: 'launcher', data: { repo: fwd(repo), branch: b, tip: tips[b], lane: b.slice(5), delivers: `feat: ${b}`, done_utc: new Date(Date.now() - 3600e3).toISOString() } }, { views: false });
   }
   if (mainEdit) { commit(repo, mainEdit[0], mainEdit[1], 'main moves'); g(repo, 'push', '-q', 'origin', 'main'); }
   const file = path.join(t, 'project.json');
   const project = { name: 't', root: fwd(repo), file: fwd(file), state: fwd(state), briefs_dir: fwd(path.join(t, 'briefs')), deliverables: { receipts: [] },
-    merge: { gate: { cmd: gateCmd, timeout_min: 2 } }, policy: { slop: { enabled: false } } };
+    policy: { slop: { enabled: false } } };
   fs.writeFileSync(file, JSON.stringify(project));
   return { t, origin, repo, state, tips, project, locks: path.join(t, 'state', 'locks') };
 }
 const pass = (f, x) => mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks, git: ghGit(), cli: x.cli, gh: x.gh, hbMs: 60000 });
 const runIds = f => Object.values(loadState(f.state).items).filter(i => i.kind === 'run');
 
-test('a clean deliverable lands with no Claude run: merged in a merge worktree, gate green, its PR opened and recorded; main untouched', async () => {
-  const f = fixture([['feat/a', 'a.txt', 'a\n']]), x = { ...fakeCli(), ...fakeGh() };
+const GREEN_TEST = "import test from 'node:test';\ntest('a', () => {});\n", RED_TEST = "import test from 'node:test';\ntest('b', () => { throw new Error('red'); });\n";
+
+test('a clean deliverable lands with no Claude run: merged in a merge worktree, quick check green, its PR opened and recorded; main untouched', async () => {
+  const f = fixture([['feat/a', { 'engine/a.mjs': 'export const a = 1;\n', 'tests/a.test.mjs': GREEN_TEST }]]), x = { ...fakeCli(), ...fakeGh() };
   // a MERGE the check-in queued for the lane would merge the same work: withdrawn by the landing
   const brief = path.join(f.t, 'm.md'); fs.writeFileSync(brief, 'mode: done\n');
   const budget_file = path.join(f.t, 'budget.json'); fs.writeFileSync(budget_file, '{}');
@@ -76,6 +78,8 @@ test('a clean deliverable lands with no Claude run: merged in a merge worktree, 
   const r = await pass(f, x);
   assert.deepEqual(r.land.landed, ['DLV-1'], r.why);
   assert.match(r.why, /DLV-1 LANDED by code: PR https:\/\/github\.com\/o\/r\/pull\/41 \(gate green\)/);
+  const log = fs.readFileSync(path.join(f.state, 'mq', 'land', 'DLV-1-gate.log'), 'utf8');
+  assert.match(log, /GREEN syntax engine\/a\.mjs/); assert.match(log, /GREEN syntax tests\/a\.test\.mjs/); assert.match(log, /GREEN test tests\/a\.test\.mjs/);
   assert.equal(x.prs.get('feat/a').number, 41);
   assert.deepEqual(x.calls.map(c => c[0]), ['notify'], 'no norn run: the only CLI call is the merge notice');
   assert.equal(loadState(f.state).items[q].state, 'withdrawn');
@@ -88,14 +92,15 @@ test('a clean deliverable lands with no Claude run: merged in a merge worktree, 
   assert.deepEqual(again.land.landed, [], 'a PR is open: the row is on its way, not landed twice');
 });
 
-test('a red gate queues an LLM MERGE with the failure attached; the same tip is not tried again', async () => {
-  const f = fixture([['feat/b', 'b.txt', 'b\n']], { gateCmd: 'node -e "console.log(\'NEW RED: x :: y\'); process.exit(1)"' }), x = { ...fakeCli(), ...fakeGh() };
+test('a red quick check (a changed test file fails) queues an LLM MERGE with the failure attached; the same tip is not tried again', async () => {
+  const f = fixture([['feat/b', { 'tests/b.test.mjs': RED_TEST }]]), x = { ...fakeCli(), ...fakeGh() };
   const r = await pass(f, x);
   assert.deepEqual(r.land.fallback, [{ id: 'DLV-1', kind: 'red', queued: 'RUN-90' }], r.why);
+  assert.match(fs.readFileSync(path.join(f.state, 'mq', 'land', 'DLV-1-gate.log'), 'utf8'), /RED test tests\/b\.test\.mjs/);
   const run = x.calls.find(c => c[0] === 'run');
   assert.deepEqual(run.slice(0, 8), ['run', '--queue', '--project', f.project.file, '--lane', 'b', '--stage', 'MERGE']);
   const text = fs.readFileSync(run[run.indexOf('--brief') + 1], 'utf8');
-  assert.match(text, /## Mechanical landing failed \(norn mergeq, DLV-1 at [0-9a-f]{7}\)\nGate red: `node -e .*` exit 1/);
+  assert.match(text, /## Mechanical landing failed \(norn mergeq, DLV-1 at [0-9a-f]{7}\)\nQuick check red: `node ".*quick-check\.mjs" --base [0-9a-f]{40}` exit 1/);
   assert.match(text, /Gate log: .*mq\/land\/DLV-1-gate\.log/);
   assert.equal(briefMarker(text).mode, 'staged', 'the marker stays last and readable');
   assert.equal(briefMarker(text).sha, f.tips['feat/b']);
@@ -105,27 +110,20 @@ test('a red gate queues an LLM MERGE with the failure attached; the same tip is 
   assert.deepEqual(again.land.fallback, []);
 });
 
-test('a conflict with main queues the MERGE naming the files; a project with no gate known leaves the row to a MERGE run', async () => {
-  const f = fixture([['feat/c', 'README.md', 'lane\n']], { mainEdit: ['README.md', 'main\n'] }), x = { ...fakeCli(), ...fakeGh() };
+test('a conflict with main queues the MERGE naming the files', async () => {
+  const f = fixture([['feat/c', { 'README.md': 'lane\n' }]], { mainEdit: ['README.md', 'main\n'] }), x = { ...fakeCli(), ...fakeGh() };
   const r = await pass(f, x);
   assert.equal(r.land.fallback[0].kind, 'conflict', r.why);
   const run = x.calls.find(c => c[0] === 'run');
   assert.match(fs.readFileSync(run[run.indexOf('--brief') + 1], 'utf8'), /Merge conflict: merging feat\/c [0-9a-f]{7} into main conflicts in README\.md/);
-  const n = fixture([['feat/d', 'd.txt', 'd\n']]);
-  delete n.project.merge;
-  assert.equal(landGate(n.project, { repo: n.repo, at: 'main', cfg: mergeConfig(n.project), git: ghGit() }), null, 'no merge.gate, no ci-suite in the tree');
-  const y = { ...fakeCli(), ...fakeGh() }, rn = await pass(n, y);
-  assert.match(rn.why, /DLV-1: no merge gate known/);
-  assert.deepEqual(y.calls, []);
 });
 
-test('the routine stage of a lane whose project lands by code queues no MERGE (mergeq lands it)', () => {
-  const f = fixture([]);
-  const e = record(f.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'e', worktree: fwd(path.join(f.t, 'wt-e')), stage: 'BUILD', brief: 'x' } }, { views: false });
-  record(f.state, { kind: 'run', ev: 'end', id: e.id, by: 'launcher', data: { outcome: 'done', exit: 0, head: 'a'.repeat(40), branch: 'feat/e' } }, { views: false });
-  const x = fakeCli();
-  const out = handleRoutineEnds(f.state, { ...f.project, policy: { ...f.project.policy, checkin: { auto_stage: ['e'] } } }, { cli: x.cli, pushed: () => true });
-  assert.deepEqual(out.map(o => [o.id, o.ok, o.note]), [[e.id, true, 'reviewed']]);
-  assert.deepEqual(x.calls, [], 'no merge-brief, no queued MERGE');
-  assert.match(loadState(f.state).items[e.id].history.findLast(h => h.ev === 'review').data.why, /mergeq lands it by code/);
+test('landGate: the quick check, never the full suite; a pytest merge gate lends its python and folder; merge.suite = skip runs none', () => {
+  const base = 'f'.repeat(40), P = (o = {}) => ({ name: 'p', root: '/r', ...o });
+  const plain = landGate(P(), { base, cfg: mergeConfig(P()) });
+  assert.match(plain.cmd, /^node ".*\/engine\/bin\/quick-check\.mjs" --base f{40}$/); assert.equal(plain.timeout_min, 30);
+  const ss = P({ subdir: 'solve-shack', merge: { gate: { cmd: '"C:\\v\\python.exe" -m pytest tests -q -p no:cacheprovider' } } });
+  assert.match(landGate(ss, { base, cfg: mergeConfig(ss) }).cmd, /--base f{40} --python "C:\/v\/python\.exe" --dir "solve-shack"$/);
+  assert.doesNotMatch(landGate(ss, { base, cfg: mergeConfig(ss) }).cmd, /pytest tests/, 'never the whole pytest suite');
+  assert.match(landGate(P({ policy: { merge: { suite: 'skip' } } }), { base, cfg: mergeConfig(P()) }).skip, /merge\.suite = skip/);
 });

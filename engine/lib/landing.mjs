@@ -1,9 +1,9 @@
 // MERGE-FIRST (3): mechanical landing - a DONE deliverable lands with no LLM. The merge queue pass (mergeq.mjs, where no fast gate
 // batches) takes the top stage-gated row whose branch is pushed and idle, merges its tip into main in its own merge worktree
-// (mergewt.mjs, under a merge slot like a MERGE run), runs the merge gate there (the project's merge.gate, else Norn's ci-suite) and
-// opens the lane branch's PR with merge-land's openProjectPrs (it records the PR and runs the slop door). Only a conflict, a red gate
-// or a refused PR (a slop block) queues an LLM MERGE run - the staged merge brief with the failure attached. One gate per pass (a
-// suite takes an hour); <state>/mq/land/<DLV>.json remembers the tip tried, so a failed tip is never retried, a new tip is.
+// (mergewt.mjs, under a merge slot like a MERGE run), runs the quick check there (quick-check.mjs: syntax + the changed
+// test files; never the full suite) and opens the lane branch's PR with merge-land's openProjectPrs (it records the PR and runs the
+// slop door). Only a conflict, a red check or a refused PR (a slop block) queues an LLM MERGE run - the staged merge brief with the
+// failure attached. One check per pass; <state>/mq/land/<DLV>.json remembers the tip tried, so a failed tip is never retried, a new tip is.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile, record } from './records.mjs';
@@ -13,7 +13,8 @@ import { mergeWtPath, slotKey, mergeParallel, ensureMergeWorktree, removeMergeWo
 import { renderMergeBrief, suiteMode } from './mergebrief.mjs';
 import { openProjectPrs } from './mergeland.mjs';
 import { checkinPolicy } from './checkins.mjs';
-import { gateText } from './monorepo.mjs';
+import { gateText, subdirOf } from './monorepo.mjs';
+import { fileURLToPath } from 'node:url';
 
 const fwd = p => String(p || '').replace(/\\/g, '/');
 const s7 = s => String(s || '').slice(0, 7);
@@ -21,25 +22,23 @@ export const landDir = stateDir => path.join(stateDir, 'mq', 'land');
 const landFile = (stateDir, id) => path.join(landDir(stateDir), `${id}.json`);
 export const loadLand = (stateDir, id) => { try { return JSON.parse(fs.readFileSync(landFile(stateDir, id), 'utf8')); } catch { return null; } };
 const saveLand = (stateDir, id, o) => { fs.mkdirSync(landDir(stateDir), { recursive: true }); fs.writeFileSync(landFile(stateDir, id), JSON.stringify(o, null, 1)); };
-export const CI_SUITE = 'engine/bin/ci-suite.mjs';
-const SUITE_MIN = 120;
+export const QUICK_CHECK = fwd(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'quick-check.mjs'));
+const QUICK_MIN = 30;
 
 /**
- * The gate a mechanical landing runs in the merged tree at commit `at` of repo: { cmd, dir?, timeout_min } | { skip: why } | null (no
- * gate known: the row is not landed by code). The project's merge.gate first (solve-shack: its pytest), else Norn's ci-suite when the
- * tree has one (with --changed <base> once the suite knows that flag: rm29's fast check), policy.merge.suite = skip -> no gate run.
+ * The gate a mechanical landing runs in the merge worktree: { cmd, timeout_min } | { skip: why }. Owner ruling 2026-11-19 (MAIL-50):
+ * a quick check, never the full suite - quick-check.mjs: the syntax of the files changed since base and their own test files, one at
+ * a time. A pytest merge gate (solve-shack) lends its python: the changed .py compile and their test_*.py run in the project's
+ * folder. The full suite runs in CI and on main after the backlog lands. policy.merge.suite = skip -> no check at all.
  */
-export function landGate(project, { repo, at, base, cfg, git = makeGit() }) {
-  if (suiteMode(project) === 'skip') return { skip: 'policy merge.suite = skip: a clean merge runs no test' };
-  if (cfg.gate?.cmd) return { ...cfg.gate, timeout_min: cfg.gate.timeout_min ?? SUITE_MIN };
-  const suite = at && git(repo, ['show', `${at}:${CI_SUITE}`], { allowFail: true });
-  if (!suite) return null;
-  return { cmd: `node ${CI_SUITE}${base && suite.includes("'--changed'") ? ` --changed ${base}` : ''}`, timeout_min: SUITE_MIN };
+export function landGate(project, { base, cfg }) {
+  if (suiteMode(project) === 'skip') return { skip: 'policy merge.suite = skip: a clean merge runs no check' };
+  const py = (String(cfg.gate?.cmd || '').match(/^\s*("[^"]+"|\S+)\s+-m\s+pytest\b/) || [])[1]?.replace(/^"|"$/g, '');
+  const dir = cfg.gate?.dir ?? subdirOf(project) ?? '';
+  return { cmd: `node "${QUICK_CHECK}" --base ${base}${py ? ` --python "${fwd(py)}"` : ''}${py && dir ? ` --dir "${dir}"` : ''}`, timeout_min: QUICK_MIN };
 }
-/** does project p land its finished work by code? (a gate is known at main's tip) - the check-in's routine stage then queues no MERGE */
-export function landsByCode(p, { git = makeGit(), cfg, tip } = {}) {
-  try { return !cfg.gate?.fast && !!landGate(p, { repo: cfg.repo, at: tip, cfg, git }); } catch { return false; }
-}
+/** does a project land its finished work by code? every one but a fast-gated one (its batches land it): the routine stage queues no MERGE */
+export const landsByCode = cfg => !cfg.gate?.fast;
 
 // the MERGE brief of a failed landing: the staged merge of the tip, with what failed put before the meta-merge marker
 export function fallbackBrief(project, { row, run, failure }) {
@@ -73,8 +72,8 @@ export async function landPass(o) {
     if (lr.some(x => x.state !== 'queued')) { said.push(`${r.id}: landing run ${lr.find(x => x.state !== 'queued').id} is live`); continue; }
     const base = git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/remotes/${cfg.remote}/${cfg.main}^{commit}`], { allowFail: true })?.trim()
       || git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${cfg.main}^{commit}`], { allowFail: true })?.trim();
-    const gate = landGate(project, { repo: cfg.repo, at: base, base, cfg, git });
-    if (!gate) { saveLand(stateDir, r.id, { tip: r.tip, at: new Date(now).toISOString(), status: 'no-gate' }); said.push(`${r.id}: no merge gate known (merge.gate.cmd, ${CI_SUITE}): left to a MERGE run`); continue; }
+    if (!base) { said.push(`${r.id}: no ${cfg.remote}/${cfg.main} nor ${cfg.main} to land on`); continue; }
+    const gate = landGate(project, { base, cfg });
     if (r.word !== 'clean' && lr.length) { said.push(`${r.id} ${r.word}: its queued ${lr[0].id} lands it`); continue; }
     const res = await landOne({ ...o, row: r, gate, base, queuedMerges: lr, runs, git, gateRunner, cli, gh, now });
     if (res.landed) out.landed.push(r.id);
@@ -113,7 +112,7 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
       const root = path.join(landDir(stateDir), 'emptyroot');   // the suite's META_ROOT: an empty folder, never this machine's live state
       fs.mkdirSync(root, { recursive: true });
       g = await gateRunner({ ...gate, env: { META_ROOT: fwd(root) } }, { cwd: wt, log });
-      if (!g.ok) return fail({ kind: 'red', what: 'Gate red', why: `\`${gateText(gate)}\` ${g.timedOut ? `timed out after ${gate.timeout_min} min` : `exit ${g.code}`} on the merge of ${s7(r.tip)} into ${cfg.main} ${s7(base)}`, log: g.log }, true);
+      if (!g.ok) return fail({ kind: 'red', what: 'Quick check red', why: `\`${gateText(gate)}\` ${g.timedOut ? `timed out after ${gate.timeout_min} min` : `exit ${g.code}`} on the merge of ${s7(r.tip)} into ${cfg.main} ${s7(base)}`, log: g.log }, true);
     }
     const pr = openProjectPrs(project, { wt, branches: [r.branch], git, ...(gh ? { gh } : {}) })[0];
     if (!pr || pr.status === 'refused') return fail({ kind: /slop/i.test(pr?.why || '') ? 'slop' : 'pr', what: /slop/i.test(pr?.why || '') ? 'Slop block' : 'PR refused', why: pr?.why || 'merge-land returned nothing' }, !gate.skip);
