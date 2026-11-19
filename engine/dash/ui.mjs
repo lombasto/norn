@@ -416,7 +416,7 @@ function overview(d, ctx) {
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}${r.kind === 'decision' ? decMark(r) : ''}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
+  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}${backlogLine(o.backlog)}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
@@ -559,6 +559,10 @@ export function laneCard(c, label) {
     ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
     <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
 }
+// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
+// policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
+export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
+  : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
   const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), refused = ctx.laneRefused ?? {}, undo = ctx.laneUndo;
@@ -583,7 +587,7 @@ function lanes(d, ctx) {
       <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}${l.path ? ` · ${l.path.red ? chip('bad', l.path.text) : esc(l.path.text)}` : ''}${progLine(l.progress)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
   }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
   const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
-  return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
+  return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>${backlogLine(d.backlog)}
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
    <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span><span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span></div>
    <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -814,7 +818,8 @@ function planPart(p, ctx) {
   if (p.error) return `${head}<div class="card pl-sec"><p class="mute">The plan could not be worked out: ${esc(p.error)}</p></div>`;
   const up = (p.upnext || []).map(u => {
     const [c, w] = PL_STATUS[u.status] ?? ['idle', u.status];
-    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${aname(u.name)}</span>
+    const prio = (p.priorities || []).length ? ` <select class="pl-prio" data-act="prio" data-project="${esc(p.project)}" data-run="${esc(u.id)}" aria-label="priority of ${esc(u.id)}" title="re-queue at this priority (its conditions are kept)">${p.priorities.map(x => `<option${x === (u.priority ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
+    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${aname(u.name)}${prio}</span>
       ${chip(c, w)}<span class="small pl-est" title="${esc(plBasis(u.estimate))}">${esc(u.estimate.word)}</span><span class="small pl-start"${u.start.why ? ` title="${esc(u.start.why)}"` : ''}>start ${esc(u.start.at && u.start.word !== 'now' ? `~${plAt(u.start.at, now)}` : u.start.word)}</span>
       <span class="pl-holds small">${u.holds.map((h, i) => esc(u.holdAt?.[i] ? `not before ${plAt(u.holdAt[i], now)}` : h)).join('<br>')}</span></div>`;
   }).join('');
@@ -835,7 +840,7 @@ function planPart(p, ctx) {
     <p><b>${esc(f.lineAt ? `${f.linePre}${plAt(f.lineAt, now)}${f.linePost}` : f.line)}</b>${f.costLine ? `<br><span class="small">${esc(f.costLine)}</span>` : ''}</p></div>`;
   return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
     ${plSection('pl-chains', 'Chains', 'runs that wait for other runs', chains || plEmpty('No queued run waits for another run.'))}
-    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`))}
+    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', backlogLine(p.backlog) + (land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`)))}
     ${plSection('pl-fc', 'Forecast', 'usage', fc)}<p class="small mute pl-method">${esc(p.method ?? '')}</p>`;
 }
 function plan(d, ctx) {

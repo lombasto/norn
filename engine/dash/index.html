@@ -356,6 +356,7 @@ svg.map .dlv.due rect{stroke:var(--accent);stroke-width:2}
 /* META-PLAN R1: the Plan tab (scoped .plan / .pl-*) */
 .plan .pl-sec{margin-bottom:14px}.pl-proj{font-size:15px;margin:18px 0 8px}
 .pl-row{display:grid;grid-template-columns:40px minmax(180px,1.3fr) 76px 64px 104px 2fr;gap:6px 12px;align-items:start;padding:8px 14px;border-bottom:1px solid var(--line)}
+.pl-prio{font-size:12px;padding:0 2px;margin-left:6px;max-width:56px}.backlog{margin:6px 0 10px}#pl-land .backlog{padding:8px 14px 0;margin:0}
 .pl-row:last-child,.pl-chain:last-child{border-bottom:0}#pl-land .pl-row{grid-template-columns:40px 1fr auto}
 .pl-chain{display:flex;flex-wrap:wrap;gap:6px 4px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 .pl-step{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}.pl-sep{margin:0 2px}.pl-meta{flex-basis:100%;margin-top:4px}
@@ -887,6 +888,8 @@ document.addEventListener('change', e => {
   if (e.target.matches('[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-key]')) dirty();
   if (e.target.matches('[data-act="map-all"]')) { S.mapAll = e.target.checked; render(); }
+  // MERGE-FIRST: Plan > Up next - a queued run re-queued at the priority picked (its after: conditions kept)
+  if (e.target.matches('[data-act="prio"]')) { const d = e.target.dataset; act(() => post('/api/requeue', { project: d.project, run: d.run, priority: e.target.value })); }
 });
 // ---- live feed drawer: one EventSource per open drawer (the server keeps one tailer per run, at most 4 feeds) ----
 // RM-36: F.act = the activity fold of every event of the run (a fresh drawer asks full=1: the whole run, not the last 256 KB),

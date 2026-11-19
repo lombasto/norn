@@ -7,6 +7,7 @@ import { fold, readEvents, recordsFile, loadState, record } from './records.mjs'
 import { scanRepo, makeGit, pruneCache } from './dlvgit.mjs';
 import { workOnMain } from './after.mjs';
 import { pathKey } from './config.mjs';
+import { POLICY_DEFAULTS } from './policy.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
@@ -298,6 +299,18 @@ export function onRunDone(stateDir, runId, { now, git = makeGit() } = {}) {
 }
 
 // the merge rehearsal in a few words (META-DLV-R2): clean | conflict: a, b, c +n | '' (none: merged, or git failed)
+// MERGE-FIRST (4): the merge backlog = the finished work not on its way to main yet - DONE, not merged, open (not parked, not
+// superseded) and no PR opened. The Lanes, Plan and Overview pages show it; over policy.merge.backlog_max the digest tells the check-in
+// to land work before it starts new lanes (digest row 0c).
+/** -> { n, oldest_h, ids, max, over (n > max), text ("merge backlog: 4, oldest 13h": the one line every page shows) }; max = backlogMax(policy) */
+export function mergeBacklog(rows = [], { now = Date.now(), max = POLICY_DEFAULTS.merge.backlog_max } = {}) {
+  const b = rows.filter(r => r.state === 'done' && r.record_state === 'open' && !r.superseded && !r.pr);
+  const oldest = Math.min(...b.map(r => Date.parse(r.done_utc)).filter(Number.isFinite));
+  const oldest_h = Number.isFinite(oldest) ? +Math.max(0, (now - oldest) / 3600e3).toFixed(1) : null;
+  return { n: b.length, oldest_h, ids: b.map(r => r.id), max, over: b.length > max,
+    text: `merge backlog: ${b.length}${b.length && oldest_h !== null ? `, oldest ${oldest_h < 1 ? '<1' : Math.round(oldest_h)}h` : ''}` };
+}
+export const backlogMax = policy => policy?.merge?.backlog_max ?? POLICY_DEFAULTS.merge.backlog_max;
 export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean'
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
 // one listing line: id, state, age, behind main, native, branch, its PR, park / question, merge rehearsal, what it delivers
