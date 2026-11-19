@@ -25,6 +25,9 @@ export function loadRules(dir = RULES_DIR) {
   });
 }
 
+/** the rule-set hash every stored check carries (audit 6): an edited rule (its text or its `rev`) makes "checked clean at head X" stale */
+export const rulesHash = (rules = loadRules()) => crypto.createHash('sha256').update(JSON.stringify([...rules].sort((a, b) => (a.id < b.id ? -1 : 1)))).digest('hex').slice(0, 16);
+
 // ---------- git ----------
 export function gitRun(cwd, args, { input, ok = [0], buffer = false } = {}) {
   const r = spawnSync('git', args, { cwd, input, encoding: buffer ? null : 'utf8', maxBuffer: 1 << 29, windowsHide: true });
@@ -56,6 +59,13 @@ export function diffEntries(repo, base, head) {
     else { const p = parts[i++]; out.push({ status: st, path: p, old: st === 'A' ? null : p }); }
   }
   return out;
+}
+// an absolute path -> its path in the repo (relative to any worktree of it: the main checkout or a lane's), or null (outside the repo)
+function repoPath(repo) {
+  const norm = p => { let r; try { r = fs.realpathSync.native(p); } catch { r = path.resolve(p); } return r.replace(/\\/g, '/').replace(/\/+$/, ''); };   // a short (8.3) or linked spelling
+  const ci = s => (process.platform === 'win32' ? s.toLowerCase() : s);
+  const roots = gitRun(repo, ['worktree', 'list', '--porcelain']).split('\n').filter(l => l.startsWith('worktree ')).map(l => ci(norm(l.slice(9))) + '/');
+  return src => { if (!path.isAbsolute(src)) return src; const k = norm(src), r = roots.find(x => ci(k).startsWith(x)); return r ? k.slice(r.length) : null; };   // a relative source is a repo path
 }
 const treeFiles = (repo, rev) => gitRun(repo, ['ls-tree', '-r', '-z', '--name-only', rev]).split('\0').filter(Boolean);
 export const matchAny = (globs = [], f) => globs.some(g => globToRe(g).test(f));
@@ -186,12 +196,16 @@ const DETECT = {
     if (!ctx.entries.some(e => rule.roots.some(r => (e.path || '').startsWith(r) || (e.old || '').startsWith(r)))) return { head: [], base: [] };
     return { head: layering(rule, ctx, 'head'), base: layering(rule, ctx, 'base') };
   },
+  // the program's output says nothing about the diff by itself (K14: the machine's generated files): a line counts only when the
+  // source it names (the `source` group) is a file the diff touches - drift no branch made never holds one (audit D3)
   command: (rule, ctx) => {
-    const lines = s => { const raw = ctx.tool(rule, s, { dir: ctx.repo }); return raw === null ? null : raw.split(/\r?\n/).flatMap(l => {
-      const m = new RegExp(rule.line).exec(l); return m ? [{ file: m[1], line: 0, msg: m[2], snippet: l }] : [];
-    }); };
-    const base = lines('base'), head = lines('head') || [];
-    return { head, base: base ?? head };   // no base run recorded yet: this run is the baseline (SPEC 3.4.1), nothing is new
+    const raw = ctx.tool(rule, 'head', { dir: ctx.repo });
+    if (raw === null) return { head: [], base: null };
+    const touched = new Set(ctx.entries.flatMap(e => [e.path, e.old]).filter(Boolean)), rel = repoPath(ctx.repo);
+    return { head: raw.split(/\r?\n/).flatMap(l => {
+      const m = new RegExp(rule.line).exec(l);
+      return m && touched.has(rel(m.groups.source)) ? [{ file: m.groups.file, line: 0, msg: m.groups.msg, snippet: l }] : [];
+    }), base: null };
   },
   junk: (rule, ctx) => {
     const added = ctx.entries.filter(e => ['A', 'R', 'C'].includes(e.status) && !matchAny(rule.allow, e.path));
@@ -242,5 +256,5 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
       findings.push({ rule: rule.id, level: rule.level, file: f.file, line: f.line, msg: f.msg, snippet: norm(f.snippet).slice(0, 200), fp, new: !left });
     }
   }
-  return { base: B, head: H, at: new Date(now).toISOString(), findings, blocks: findings.filter(f => f.new && f.level === 'BLOCK'), ran, skipped };
+  return { base: B, head: H, hash: rulesHash(rules), at: new Date(now).toISOString(), findings, blocks: findings.filter(f => f.new && f.level === 'BLOCK'), ran, skipped };
 }

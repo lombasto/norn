@@ -75,20 +75,21 @@ test('off: a lane run started by `norn run` that ends DONE with a BLOCK finding 
   assert.ok(!fs.existsSync(path.join(state, 'slop', 'holds.json')), 'no check ran, nothing held');
 });
 
-test('off: norn merge-brief and the merge queue ignore a recorded hold; on again, the same hold binds (nothing lost)', () => {
+test('off: norn merge-brief and the merge queue do not check; on again, the door checks the head and its stored check binds', () => {
   const root = mkTmp('meta-slopoff-mb-'), state = path.join(root, 'state', 'kestrel');
-  const { repo, wt } = laneRepo(root);
-  writeHold(state);
+  const { repo, wt } = laneRepo(root), head = git(wt, 'rev-parse', 'HEAD');
   const mb = policy => spawnSync(process.execPath, [NORN, 'merge-brief', '--project', projectJson(root, repo, policy), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt,
-    '--notes', path.join(root, 'NOTES.md'), '--out', path.join(root, 'MB.md'), '--sha', 'abc1234'], { encoding: 'utf8', env: { ...process.env, META_ROOT: root, HOME: root, USERPROFILE: root } });
+    '--notes', path.join(root, 'NOTES.md'), '--out', path.join(root, 'MB.md'), '--sha', head], { encoding: 'utf8', env: { ...process.env, META_ROOT: root, HOME: root, USERPROFILE: root } });
+  const view = { rows: [{ id: 'DLV-1', state: 'done', record_state: 'open', branch: 'feat/x', lane: 'x', done_utc: new Date().toISOString(), tip: head }] };
+  const q = policy => mergeQueue({ stateDir: state, project: { name: 'kestrel', root: fwd(repo), policy }, view }).rows[0].slop;
   let r = mb({ slop: { enabled: false } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(!fs.existsSync(path.join(state, 'slop', 'checks.jsonl')), 'off: nothing was checked');
+  assert.equal(q({}), null, 'on, never checked: the queue shows the head unchecked (its pick runs the check)');
   r = mb({});
   assert.equal(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout, /REFUSED: merge-brief feat\/x: 1 open slop BLOCK/);
-  const view = { rows: [{ id: 'DLV-1', state: 'done', record_state: 'open', branch: 'feat/x', lane: 'x', done_utc: new Date().toISOString(), tip: 'abc' }] };
-  const q = policy => mergeQueue({ stateDir: state, project: { name: 'kestrel', root: fwd(repo), policy }, view }).rows[0].slop;
   assert.equal(q({ slop: { enabled: false } }), 0, 'off: no hold in the queue');
-  assert.equal(q({}), 1, 'on: the hold is back');
+  assert.equal(q({}), 1, 'on: the stored check of the head binds');
 });
 
 test('off: no daily slop report from the tick and no SloppaChoppa line in the digest', () => {

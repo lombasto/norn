@@ -77,7 +77,7 @@ test('only new: a finding the base already had never blocks, even in a renamed f
 test('waiver WVR-n: owner or controller (never a check-in), why required, scope = a fingerprint or a glob; it clears an open block until it ends', () => {
   const state = mkTmp('meta-slop-w-');
   const block = { rule: 'K2', level: 'BLOCK', file: 'engine/lib/a.mjs', line: 3, fp: 'a1b2c3d4e5f60718', new: true, msg: 'empty catch' };
-  hostWrite(state, { type: 'check', branch: 'feat/x', lane: 'x', run: 'RUN-1', base: 'b', head: 'h', blocks: [block], findings: [block] });
+  hostWrite(state, { type: 'check', branch: 'feat/x', lane: 'x', run: 'RUN-1', base: 'b', head: 'h', hash: 'r1', blocks: [block], findings: [block] });
   assert.equal(openBlocks(state, 'feat/x').length, 1);
   assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'checkin', data: { rule: 'K2', scope: block.fp, why: 'x y' } }), /role/);
   assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp } }), /why/);
@@ -91,7 +91,7 @@ test('waiver WVR-n: owner or controller (never a check-in), why required, scope 
   assert.equal(openBlocks(state, 'feat/x').length, 1, 'a revoked waiver no longer counts');
   record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp, why: 'reviewed: the caller retries' } });
   assert.deepEqual(openBlocks(state, 'feat/x'), [], 'a fingerprint waiver clears it');
-  hostWrite(state, { type: 'check', branch: 'feat/x', base: 'b', head: 'h2', blocks: [], findings: [] });
+  hostWrite(state, { type: 'check', branch: 'feat/x', base: 'b', head: 'h2', hash: 'r1', blocks: [], findings: [] });
   assert.equal(slopHolds(state)['feat/x'], undefined, 'a clean check drops the hold');
 });
 
@@ -112,11 +112,11 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 a\.txt\.orig /, 'the resume carries the list');
   assert.equal(loadState(state).items[next].resume, undefined, 'a second BLOCK is not resumed again: the check-in decides');
   assert.deepEqual(openBlocks(state, 'feat/x').map(b => b.rule), ['K15']);
-  const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha', 'abc1234'];
-  const mb = () => spawnSync(process.execPath, [NORN, ...brief2], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
+  const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha'];
+  const mb = () => spawnSync(process.execPath, [NORN, ...brief2, git(wt, 'rev-parse', 'HEAD')], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
   let r = mb();
   assert.equal(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout, /REFUSED: merge-brief feat\/x: 1 open slop BLOCK/);
-  assert.deepEqual(pickBatch([{ id: 'DLV-1', gate: 'batch', word: 'clean', tip: 'abc', lane: 'x', branch: 'feat/x', slop: 1 }], { cfg: { batch_max: 4 }, mq: { red: {} }, writer: () => null }), []);
+  assert.deepEqual(pickBatch([{ id: 'DLV-1', gate: 'batch', word: 'clean', tip: 'abc', lane: 'x', branch: 'feat/x', slop: 1 }], { cfg: { batch_max: 4 }, mq: { red: {} }, writer: () => null, door: () => 1 }), []);
   record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K15', scope: '*.orig', why: 'kept on purpose: the merge test reads it' } });
   r = mb(); assert.equal(r.status, 0, r.stdout + r.stderr);
   record(state, { kind: 'waiver', ev: 'revoke', id: 'WVR-1', by: 'owner', data: {} });

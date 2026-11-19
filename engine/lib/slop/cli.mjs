@@ -48,11 +48,11 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     repo = toplevel(repo);
     const [base, head] = f.diff ? f.diff.split('..') : [null, 'HEAD'];
     if (f.diff && !(base && head)) { err('error: --diff wants base..head'); return 2; }
-    const c = checkBranch({ repo, state, base, head });
+    const c = checkBranch({ repo, base, head });
     if (!c) { out('slop check: no lane branch here (detached, on main, or no main to diff against): nothing to check'); return 0; }
     const ws = state ? activeWaivers(state) : [];
     const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id }));
-    if (state && !f.diff) hostWrite(state, { type: 'check', branch: c.branch, lane: f.lane, base: c.base, head: c.result.head, blocks: c.result.blocks, findings: c.result.findings });
+    if (state && !f.diff) hostWrite(state, { type: 'check', branch: c.branch, lane: f.lane, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped });
     const open = blocks.filter(b => !b.waived);
     if (f.json) out(JSON.stringify({ branch: c.branch, ...c.result, blocks }, null, 1));
     else {
@@ -74,7 +74,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   }
   if (verb === 'daily') {
     if (!state) { err('error: daily needs --project / --state (it writes the report there)'); return 2; }
-    const r = dailyReport({ repo: repoOf(), state, env, own });
+    const r = dailyReport({ repo: repoOf(), state, own });
     out(`slop daily: ${r.line} -> ${r.file}`);
     return 0;
   }

@@ -28,13 +28,12 @@ export function parseEslint(raw, dir) {
 }
 
 /**
- * The real tool runner: tool(rule, side, { dir, files }) -> raw output | null (no output for that side).
- * o.baseline: { [rule id]: text } - a command rule's base side (its last run on main); o.env.
+ * The real tool runner: tool(rule, side, { dir, files }) -> raw output | null (no output for that side). A command rule runs once, at
+ * check time (its output is the machine's, not a side's: the check keeps only the lines whose source the diff touches). o.env.
  */
-export function makeTool({ baseline = {}, env = process.env } = {}) {
+export function makeTool({ env = process.env } = {}) {
   return (rule, side, { dir, files } = {}) => {
     if (rule.kind === 'command') {
-      if (side === 'base') return baseline[rule.id] ?? null;
       const r = spawnSync(process.execPath, [NORN, ...rule.argv], { cwd: dir, env, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
       if (r.error) throw r.error;
       return r.stdout;

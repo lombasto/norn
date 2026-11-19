@@ -11,8 +11,8 @@ import { record, loadState, RecordError, holdOf, heldLanes, HELD_EXIT } from '..
 import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { handle, context } from '../engine/lib/mcp.mjs';
-import { cliPlan, HOLD_MIN } from '../engine/lib/chatact.mjs';
-import { createChat, readThread, threadFile, rolePack } from '../engine/lib/chat.mjs';
+import { cliPlan, HOLD_MIN, threadFile } from '../engine/lib/chatact.mjs';
+import { createChat, readThread, rolePack } from '../engine/lib/chat.mjs';
 import { sendMail, loadMail } from '../engine/lib/mail.mjs';
 import { main } from '../engine/bin/norn.mjs';
 import { tickContext, scoreTick } from '../engine/lib/eval/checkin.mjs';
