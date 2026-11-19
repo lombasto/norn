@@ -14,7 +14,8 @@ import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-import { lineDiff, fmtDur } from './activity.mjs';
+import { fmtDur } from './activity.mjs';
+import { diffBlock } from './diffview.mjs';
 export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'],
   ['work', 'Work'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['map', 'Map'], ['plan', 'Plan'], ['roadmap', 'Roadmap'],
   ['health', 'Health'], ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'],
@@ -279,11 +280,15 @@ const holdRow = (i, ctx) => `<div class="item" id="hold-${esc(i.project)}">${chi
   <div class="small">Fix: ${esc(i.fix)}${i.command ? ` <span class="mono">${esc(i.command)}</span>` : ''}${i.clears ? ` <span class="mute">- or it clears ${esc(i.clears)}</span>` : ''}</div></div>
   <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.setting ? `<button class="primary" data-tab="settings" title="${esc(i.setting)}">Open Settings</button>` : ''}${i.resume ? `<button class="primary" data-act="hold-resume" data-project="${esc(i.project)}">Resume</button>` : ''}</div></div>`;
 // GAP-8 (lib/handedits.mjs): a generated file edited by hand is no longer regenerated - take it back (a .bak keeps the hand text) or keep it
-// the words say what Norn saw and what each button does; a file that still carries Norn's GENERATED header was not written by a person
+// the words say what Norn saw and what each button does. RM-35: then what changed and who probably did it (handedits.mjs explain: the
+// write record's lines, plain text), "View diff" (last written by Norn vs now in the diff viewer) and, when the text is clearly Norn's
+// own (an older copy, or its last text with a lost hash), the recommendation to take it back with the reason
 const editRow = (i, ctx, px = { project: i.project, sanitize: ctx.sanitize }) => `<div class="item" id="${esc(i.id)}">${chip('warn', 'changed outside Norn')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${renderProse('`' + i.file + '`', px)}${i.created ? ` · changed ${fmtMin(minsSince(i.created, ctx.now))} ago` : ''}</div>
-  <div class="small">Norn writes this file itself, and its text no longer matches what Norn last wrote, so Norn leaves it alone rather than overwrite someone's edit.${i.generated ? ' It still carries Norn\'s GENERATED header, so it was most likely not edited by a person: take it back.' : ''}</div>
+  <div class="small">Norn writes this file itself, and its text no longer matches what Norn last wrote, so Norn leaves it alone rather than overwrite someone's edit.</div>
+  ${i.lines?.length ? `<ul class="small hedwho">${i.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : i.generated ? '<div class="small">It still carries Norn\'s GENERATED header, so it was most likely not edited by a person.</div>' : ''}
+  ${i.recommend === 'takeback' ? `<div class="small"><b>Recommended: Let Norn take it back</b> - ${esc(i.why)}.</div>` : ''}
   <div class="small mute"><b>Let Norn take it back</b>: the current text is saved beside it as .bak and Norn updates the file again. <b>Keep my version</b>: Norn never updates this file again, until you take it back.</div></div>
-  <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
+  <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.diff ? `<button class="ghost" data-act="diff-open" data-dv-url="/api/handedit/diff?project=${encodeURIComponent(i.project ?? '')}&amp;file=${encodeURIComponent(i.file)}" data-dv-title="${esc(i.file.split('/').pop())}" data-dv-sub="last written by Norn vs now">View diff</button>` : ''}<button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
 // META-TEND P4: one model-advice card - what, why (the measured numbers), the vendor source and the day it was read (stale = past the
 // re-read date), the proposed Settings change and one tap: apply it, or keep the setting. Both write a decision record; nothing is automatic.
 export function adviceRow(i, ctx) {
@@ -437,7 +442,7 @@ const proseCx = (d, ctx, project, key) => ({ ...(d.prose?.[project] || {}), proj
 // an option = a small card: its key, its text, its cost; the recommended one is marked and carries its why
 function optCard(o, rk, q, px) {
   const k = o.key ?? o.k, rec = k === rk, cost = o.cost ?? o.c;
-  return `<div class="opt${rec ? ' rec' : ''}" data-key="${esc(k)}"><div class="ohead"><b class="okey">${esc(k)}</b>${rec ? ` ${chip('needs', 'recommended')}` : ''}</div>${renderProse(o.text ?? o.t, px)}
+  return `<div class="opt${rec ? ' rec' : ''}" data-key="${esc(k)}"><div class="ohead"><b class="okey">${esc(k)}</b>${rec ? ` ${chip('needs', `recommended${recFrom(q.recommend) ? ` · ${recFrom(q.recommend)}` : ''}`)}` : ''}${o.added_by ? ` <span class="small mute qadded">added by ${esc(o.added_by)}</span>` : ''}</div>${renderProse(o.text ?? o.t, px)}
     ${cost ? `<div class="ocost"><span class="olab">cost</span>${renderProse(cost, px)}</div>` : ''}${rec && q.recommend.why ? `<div class="owhy"><span class="olab">why</span>${renderProse(q.recommend.why, px)}</div>` : ''}</div>`;
 }
 
@@ -466,19 +471,46 @@ export function decisionsSection(items, ctx) {
   return `<section id="inbox-decisions" class="decisions"><h2>Decisions <span class="mute small">${plural(ps.length, 'proposal')} · ${plural(stages, 'open stage')} · each stage is ruled on its own: Queue now, Later or Drop</span></h2>${idx}${ps.map(i => proposalCard(i, ctx)).join('')}</section>`;
 }
 
+// INBOX-REPLIES: a question's thread - the owner's messages, the controller's replies (each options revision shown), the ruling it
+// proposed from the owner's words (one tap confirms it). (6b) where the options came from and whose recommendation it is.
+const recFrom = r => (!r?.from ? '' : r.from === 'source' ? 'plan default' : r.from === 'checkin' || r.from === 'controller' ? "the controller's own" : `${r.from}'s own`);
+const optsHead = q => `<div class="small mute qsrc" id="qsrc-${esc(q.id)}">${plural((q.options || []).length, 'option')}${q.origin ? ` · from <button class="lnk" data-ins="${esc(`path:${q.origin.file}`)}"${q.origin.line ? ` data-line="${esc(q.origin.line)}"` : ''} title="${esc(q.origin.file)}">${esc(`${String(q.origin.file).split(/[\\/]/).pop()}#${q.origin.section}`)}</button>` : ''}</div>`;
+const tmsg = (x, q, now) => {
+  const who = x.ev === 'reply' ? esc(x.who === 'checkin' ? 'controller (check-in)' : x.who) : 'you';
+  const body = x.ev === 'answer' ? `answered${x.choice ? ` <b>(${esc(x.choice)})</b>` : ''}${x.ruling ? ' - confirmed the ruling' : ''}: ${esc(x.text)}` : x.ev === 'reopen' ? 'reopened' : esc(x.text);
+  const rev = x.options ? `<div class="small qrev">revised the options: ${x.options.map(o => `<b>(${esc(o.key)})</b> ${esc(o.text)}`).join(' · ')}</div>` : '';
+  const prop = x.propose ? `<div class="small qprop">Rule: ${x.propose.key ? `<b>(${esc(x.propose.key)})</b> ` : ''}${esc(x.propose.text)}?</div>` : '';
+  return `<li class="qmsg ${x.ev === 'reply' ? 'ctl' : 'own'}" id="qm-${esc(q.id)}-${esc(x.seq)}"><span class="small mute">${who} · ${esc(fmtTime(x.ts, now))}</span><div>${body}</div>${rev}${prop}</li>`;
+};
+function qThread(q, now) {
+  const t = q.thread || [], P = q.proposal;
+  if (!t.length) return '';
+  const wait = q.waiting ? `<li class="small mute qwait">${chip('run', 'replying')} the controller answers here (a check-in started when you sent it, or the next one)</li>` : '';
+  const conf = P ? `<div class="card needs qconfirm" id="qconfirm-${esc(q.id)}"><span>Rule: ${P.key ? `<b>(${esc(P.key)})</b> ` : ''}${esc(P.text)}?</span> <button class="primary" data-act="rule" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-ruling="${esc(P.seq)}">Yes, rule it</button></div>` : '';
+  return `<ol class="qthread" id="qt-${esc(q.id)}">${t.map(x => tmsg(x, q, now)).join('')}${wait}</ol>${conf}`;
+}
+// the Resolved view: answered / applied questions, newest first, each with its thread
+function resolvedView(rs, ctx) {
+  if (!rs.length) return '';
+  const one = r => `<article class="q" id="qr-${esc(r.id)}"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${chip(r.state, `${r.id} ${r.state}`)}<b>${esc(r.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, r.project)}${esc(r.lane ?? '-')} · ${fmtTime(r.updated, ctx.now)}</span></div>
+    ${r.origin || r.options.length ? optsHead(r) : ''}${r.answer ? `<p class="small" style="margin:6px 0">${r.answer.choice ? `<b>(${esc(r.answer.choice)})</b> ` : ''}${esc(r.answer.text ?? '')}</p>` : ''}${(r.thread || []).some(x => x.ev !== 'answer') ? qThread({ ...r, waiting: 0, proposal: null }, ctx.now) : ''}</article>`;
+  return `<details class="tablecard" id="inbox-resolved" style="margin-bottom:12px"><summary><b>Resolved</b> <span class="mute small">${int(rs.length)} answered or applied, newest first · the thread is kept</span></summary>${rs.map(one).join('')}</details>`;
+}
+
 function inbox(d, ctx) {
   const items = d.items || [];
   const qs = items.filter(i => i.type === 'question').map(q => {
     const rk = q.recommend ? q.recommend.key ?? q.recommend.k : null, opts = q.options || [], px = proseCx(d, ctx, q.project);
     return `<article class="q openq" id="q-${esc(q.id)}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${chip('open', q.id + ' open')}<b style="font-size:15px;min-width:0;overflow-wrap:anywhere">${esc(q.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, q.project)}${esc(q.lane ?? '-')} · ${fmtMin(minsSince(q.created, ctx.now))} ago${q.class ? ` · class ${esc(q.class)}` : ''}</span></div>
     ${q.body ? `<div class="qbody">${renderProse(q.body, proseCx(d, ctx, q.project, `${q.project}:${q.id}`))}</div>` : ''}
-    ${opts.length ? `<div class="opts">${opts.map(o => optCard(o, rk, q, px)).join('')}</div>` : ''}
-    ${rk && !opts.some(o => (o.key ?? o.k) === rk) ? `<div class="small owhy"><b>Recommendation (${esc(rk)}):</b> ${renderProse(q.recommend.why ?? '', px)}</div>` : ''}
+    ${opts.length ? `${optsHead(q)}<div class="opts">${opts.map(o => optCard(o, rk, q, px)).join('')}</div>` : ''}
+    ${rk && !opts.some(o => (o.key ?? o.k) === rk) ? `<div class="small owhy"><b>Recommendation (${esc(rk)}${recFrom(q.recommend) ? `, ${esc(recFrom(q.recommend))}` : ''}):</b> ${renderProse(q.recommend.why ?? '', px)}</div>` : ''}
+    ${qThread(q, ctx.now)}
     ${q.answered_by ? `<div class="card needs" style="margin:8px 0;padding:8px 10px"><span class="small">Possibly answered in <b class="mono">${esc(q.answered_by.id)}</b>${q.answered_by.words ? `: <q>${esc(q.answered_by.words)}</q>` : ` (${esc(q.answered_by.why ?? '')})`}</span>
       ${q.answered_by.words ? `<button class="primary" style="margin-left:8px" data-act="answer-from" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-from="${esc(q.answered_by.id)}">Yes - already answered in ${esc(q.answered_by.id)}</button>` : ''}</div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${opts.map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">Choose (${esc(k)})${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
-    <input type="search" id="ans-${esc(q.id)}" placeholder="or answer in your words ..." style="flex:1;min-width:220px"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
-    <div class="small mute" style="margin-top:6px">Writes <span class="mono">answer ${esc(q.id)}</span> (by dashboard). The next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}.</div></article>`;
+    <input type="search" id="ans-${esc(q.id)}" placeholder="or write to the controller (a doubt, a question) ..." style="flex:1;min-width:0"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
+    <div class="small mute" style="margin-top:6px">A Choose button answers <span class="mono">${esc(q.id)}</span>; the next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}. Words you type go to the controller, who replies here: ${esc(q.id)} stays open until you pick an option or confirm a ruling (a bare key such as <span class="mono">b</span> picks it).</div></article>`;
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
   const props = decisionsSection(items, ctx);
   const aud = items.filter(i => i.type === 'audit');
@@ -498,9 +530,10 @@ function inbox(d, ctx) {
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  const nNeeds = needsYou(items), nInfo = items.length - nNeeds;   // UX review 4: the one needs-you count (terms.mjs)
+  const rsv = items.filter(i => i.type === 'resolved'), nNeeds = needsYou(items), nInfo = items.length - nNeeds - rsv.length;   // UX review 4: the one needs-you count (terms.mjs)
   return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice; cards already asked for)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${props}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
-   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
+   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>
+    ${resolvedView(rsv, ctx)}`;
 }
 
 // item 8 (MAIL-9 a): an answered question in plain words wherever it shows - the owner's part is done, a check-in applies it
@@ -714,14 +747,13 @@ function fixItem(i, sel) {
 }
 // META-UX-BUILD S7 (REPORT s.3 step 4): the fixer's ONE result card per run - every file (Skip this file), every hunk as a diff, Apply all n
 // (minus skipped files) / Discard = POST /api/fixresult (one decision + one directive: the audit accept path); the rest = a new tap.
-// A run with no parsable hunk is failed: Discard only.
-const fxDiff = p => `<pre class="fxdiff inspatch">${String(p ?? '').split('\n').map(l => { const c = /^[+](?![+][+])/.test(l) ? 'fxadd' : /^-(?!--)/.test(l) ? 'fxdel' : ''; return c ? `<span class="${c}">${esc(l)}</span>` : esc(l); }).join('\n')}</pre>`;
+// A run with no parsable hunk is failed: Discard only. Each hunk is the shared diff component (diffview.mjs; RM-35), Open = the diff viewer.
 export function fixResultCard(c, project, px = { project }) {
   const pj = ` data-project="${esc(project)}" data-run="${esc(c.run)}"`, failed = c.state === 'failed', st = c.status || [];
   const count = ['drafted', 'skipped', 'missing'].map(k => [k, st.filter(x => x.state === k).length]).filter(([, n]) => n).map(([k, n]) => `${int(n)} ${k}`).join(' · ');
   const why = st.filter(x => x.state !== 'drafted'), fn = f => f.n ?? f.hunks.filter(h => h.applies !== false).length;
   const files = (c.files || []).map(f => `<div class="fxfile" data-file="${esc(f.file)}" data-n="${int(fn(f))}"><div class="fxfilehead"><span class="mono">${esc(f.file)}</span> <span class="small mute">${plural(f.hunks.length, 'hunk')}</span><span class="spacer"></span>${fn(f) ? `<button class="ghost" data-act="fx-skip" data-file="${esc(f.file)}"${pj} aria-pressed="false">Skip this file</button>` : ''}</div>
-    ${f.hunks.map(h => `<div class="small mute">${esc(f.file)}${h.line ? ':' + esc(h.line) : ''}</div>${h.applies === false ? `<p class="small fxmisfit">${chip('bad', 'does not apply')} ${renderProse(h.why ?? '', { ...px, inline: true })} · not in Apply all; its finding stays open</p>` : ''}${fxDiff(h.patch)}`).join('')}</div>`).join('');
+    ${f.hunks.map(h => `${h.applies === false ? `<p class="small fxmisfit">${chip('bad', 'does not apply')} ${renderProse(h.why ?? '', { ...px, inline: true })} · not in Apply all; its finding stays open</p>` : ''}${diffBlock({ patch: h.patch }, { title: f.file + (h.line ? ':' + h.line : ''), sub: 'fixer hunk', cls: 'fxdiff' })}`).join('')}</div>`).join('');
   const rest = c.more ? `<p class="small"><button class="lnk" data-act="fixall-rest" data-dir="${esc(c.directive)}" data-project="${esc(project)}">${int(c.left)} left: send the fixer for the rest (${plural(c.more, 'run')})</button></p>` : '';
   return `<li class="fxcard" id="fxcard-${esc(c.run)}"><div class="fxtop">${chip(failed ? 'bad' : 'needs', failed ? `failed: ${c.fail || 'no parsable hunk'}` : 'to apply')} <b>Fixer result ${esc(c.run)}</b> <span class="small mute">${esc(c.directive)} · ${esc(c.dec ?? '')} · ${plural(c.n, 'hunk')} in ${plural((c.files || []).length, 'file')}</span></div>
     ${count || c.bad ? `<p class="small">${[count, c.bad ? `${plural(c.bad, 'hunk')} ${c.bad === 1 ? 'does' : 'do'} not apply` : ''].filter(Boolean).join(' · ')}</p>` : ''}${why.length ? `<details><summary class="small">not drafted (${int(why.length)})</summary><ul class="small">${why.map(x => `<li><span class="mono">${esc(x.id)}</span> ${esc(x.state)}${x.why ? ': ' + renderProse(x.why, { ...px, inline: true }) : ''}</li>`).join('')}</ul></details>` : ''}
@@ -972,9 +1004,9 @@ export function renderFeedHead(h, now = Date.now()) {
 }
 const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };
 const FEED_KINDS = ['tool', 'text', 'step', 'marker', 'error'];
-// RM-36: an Edit / Write line opens to its diff (old -> new; a Write: its content as added lines)
+// RM-36: an Edit / Write line opens to its diff (old -> new; a Write: its content as added lines), drawn by the shared diff component (RM-35)
 const editDiff = i => (i && (typeof i.new_string === 'string' || typeof i.content === 'string')
-  ? fxDiff(lineDiff(i.old_string ?? '', i.new_string ?? i.content ?? '').join('\n')) : '');
+  ? diffBlock({ before: i.old_string ?? '', after: i.new_string ?? i.content ?? '' }, { title: String(i.file_path ?? '').split(/[\\/]/).pop(), sub: typeof i.new_string === 'string' ? 'edit' : 'write', cls: 'fxdiff' }) : '');
 export function renderFeedEvent(e) {
   const k = FEED_KINDS.includes(e.kind) ? e.kind : 'text', diff = k === 'tool' && (e.name === 'Edit' || e.name === 'Write') ? editDiff(e.input) : '';
   const tid = k === 'tool' && e.id ? ` data-tid="${esc(e.id)}"` : '', line = `<span class="ts">${hms(e.ts)}</span><span class="fk">${esc(k === 'tool' ? e.name ?? 'tool' : k)}</span><span class="fs">${esc(e.summary)}</span><span class="dur"></span>`;
@@ -1171,7 +1203,7 @@ function insLadder(L) {
   for (const a of adv) { if (!by.has(a.key)) by.set(a.key, []); by.get(a.key).push(a); }
   const KEY = { 'rule-several-homes': 'one rule in several homes', 'rule-drift-claim': 'says enforced, nothing found', 'rule-drift-policy': 'line vs the policy', 'rule-drift-path': 'points at code that is gone', 'rule-path-unknown': 'path not found (a runtime file or a typo)', 'enforcement-unexplained': 'enforcement no rule explains' };
   const finds = [...by].map(([k, xs]) => `<li><details class="rulegroup insgroup"><summary>${chip(xs[0].severity === 'medium' ? 'warn' : 'idle', xs[0].severity)} <b>${int(L.adv_counts?.[k] ?? xs.length)}</b> × ${esc(KEY[k] ?? k)} <span class="small mute">${esc(xs[0].source)}</span><div class="small">fix: <i>${esc(xs[0].fix.action)}</i></div></summary>
-    <ul>${xs.slice(0, INS_CAPS.advisories).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? `<pre class="inspatch">${esc(a.fix.patch)}</pre>` : ''}</li>`).join('')}</ul></details></li>`).join('');
+    <ul>${xs.slice(0, INS_CAPS.advisories).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? diffBlock({ patch: a.fix.patch }, { title: baseName(a.path) || a.surface, sub: 'proposed fix' }) : ''}</li>`).join('')}</ul></details></li>`).join('');
   return `<div class="tablecard" id="ins-ladder"><h3>The ladder <span class="mute small">${int(LADDER_STATES.reduce((n, st) => n + (L.counts[st] ?? 0), 0))} must / never rules by state · prose only ${int(L.counts.prose)} → repeated ${int(L.counts.repeated)} → enforced ${int(L.counts.enforced)} → retired ${int(L.counts.retired)} · tap a home to open its line</span></h3>
     ${board(cols, { id: 'ins-board', aria: 'rules by state' })}
     ${finds ? `<ul id="ins-rule-findings">${finds}</ul>` : ''}</div>`;
@@ -1180,7 +1212,7 @@ function insLadder(L) {
 function auditCard(c, project) {
   const pj = project ? ` data-project="${esc(project)}"` : '';
   return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
-    <pre class="inspatch">${esc(c.fix.patch ?? '')}</pre>
+    ${diffBlock({ patch: c.fix.patch ?? '' }, { title: `${baseName(c.path)}:${c.line}`, sub: 'vendor audit hunk' })}
     <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
 }
 const AUD_OUT = { done: 'ok', crash: 'bad', stopped: 'warn', limit: 'warn', auth: 'warn' };
@@ -1226,7 +1258,7 @@ function insStrip(f) {
 function enforceCard(c, project, px = { project }) {
   const a = c.asked;
   return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
-    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul><pre class="inspatch">${esc(c.fix.patch ?? '')}</pre></details>
+    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
     ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
     : `<div class="small mute">${esc(c.fix.action)}</div>
     <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;

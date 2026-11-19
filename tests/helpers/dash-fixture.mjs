@@ -1,5 +1,6 @@
 // Shared dashboard fixture (S6 tests + S7 UI tests): two projects on temp-dir state, trimmed transcripts, fake platform.
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +73,12 @@ export async function fixture(extra = {}) {
   watchServer(app.server);   // META-CI-WORKCLASS R3: a page timeout names when this server received / answered each request
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
-  const get = async r => { const x = await fetch(url + r); return { status: x.status, data: await x.json() }; };
-  const post = async (r, b, headers = {}) => { const x = await fetch(url + r, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': app.token, ...headers }, body: JSON.stringify(b) }); return { status: x.status, data: await x.json() }; };
+  // CI-44593815866: one connection per request (agent: false), never a pooled one - this server shares the test's event loop, so a
+  // step that stalls it past the server's keep-alive timeout (5 s) left fetch's idle socket due for the server's close: the next request was reset
+  const req = (r, o = {}) => new Promise((res, rej) => { const q = http.request(url + r, { agent: false, method: o.method ?? 'GET', headers: o.headers }, x => {
+    let t = ''; x.setEncoding('utf8'); x.on('data', c => { t += c; }); x.on('end', () => { try { res({ status: x.statusCode, data: JSON.parse(t) }); } catch (e) { rej(e); } }); x.on('error', rej); });
+    q.on('error', rej); q.end(o.body); });
+  const get = r => req(r);
+  const post = (r, b, headers = {}) => req(r, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': app.token, ...headers }, body: JSON.stringify(b) });
   return { app, root, pa, pb, url, get, post, counts, budgetFile, target, rules, done: async () => { await app.close(); fs.rmSync(root, { recursive: true, force: true }); } };
 }

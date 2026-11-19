@@ -62,13 +62,16 @@ test('renderActivity: Now with its duration and words, Plan, Files by group (eac
   for (const id of ['id="fa-now"', 'id="fa-dur"', 'data-k="plan"', 'data-k="files"', 'data-k="cmds"', 'data-k="commits"', 'id="fa-g-edited"', 'id="fa-g-created"', 'id="fa-g-read"']) assert.ok(html.includes(id), id);
   assert.match(html, /Thinking \/ writing/); assert.match(html, /5 pass, 0 fail/); assert.match(html, /feat\(policy\): policy\.done_lanes/);
   assert.match(html, /data-act="feed-doc" data-path="\/fx\/wt\/engine\/lib\/policy\.mjs"/);
-  assert.match(html, /class="fxdiff inspatch"/); assert.match(html, /class="fxadd"/);
+  assert.match(html, /class="dvbox fxdiff"/, 'edits drawn by the shared diff component (RM-35)'); assert.match(html, /class="dv-row dv-add"/);
   assert.match(html, /2 of 2 done/, 'Now from the NOTES, policy from the commit');
   const ended = renderActivity(activityOf(evs, { ended: true }), { ended: true });
   assert.match(ended, /The run has ended/); assert.ok(!ended.includes('id="fa-dur"'), 'no ticking duration once ended');
   clean(renderActivity(activityOf([], {})), 'empty');
   const e = renderFeedEvent({ ts: '2026-11-18T10:00:00Z', kind: 'tool', name: 'Edit', id: 't1', summary: '/fx/wt/a.mjs', input: { file_path: '/fx/wt/a.mjs', old_string: 'a <b>', new_string: 'a <c>' } });
-  assert.match(e, /^<details class="fl fl-x k-tool" data-tid="t1"><summary>/); assert.match(e, /<span class="fxdel">-a &lt;b&gt;<\/span>/); assert.match(e, /<span class="fxadd">\+a &lt;c&gt;<\/span>/);
+  assert.match(e, /^<details class="fl fl-x k-tool" data-tid="t1"><summary>/); assert.match(e, /data-act="diff-open" data-dv-before="a &lt;b&gt;" data-dv-after="a &lt;c&gt;"/, 'Open = the diff viewer');
+  assert.match(e, /<div class="dv-row dv-del"[^>]*>(<span class="dv-n">\d*<\/span>){2}<span class="dv-t">-a &lt;<mark class="dv-w">b<\/mark>&gt;<\/span>/); assert.match(e, /<div class="dv-row dv-add"[^>]*>(<span class="dv-n">\d*<\/span>){2}<span class="dv-t">\+a &lt;<mark class="dv-w">c<\/mark>&gt;<\/span>/);
+  const w = renderFeedEvent({ ts: null, kind: 'tool', name: 'Write', id: 't3', summary: '/fx/wt/n.mjs', input: { file_path: '/fx/wt/n.mjs', content: 'new\nfile' } });
+  assert.deepEqual([...w.matchAll(/<div class="dv-row (dv-\w+)"[^>]*>(?:<span class="dv-n">\d*<\/span>){2}<span class="dv-t">([^<]*)<\/span>/g)].map(m => `${m[1]} ${m[2]}`), ['dv-add +new', 'dv-add +file'], 'a Write: its content as added lines');
   assert.match(renderFeedEvent({ ts: null, kind: 'tool', name: 'Bash', id: 't2', summary: 'ls' }), /^<div class="fl k-tool"/, 'other calls stay one line');
 });
 

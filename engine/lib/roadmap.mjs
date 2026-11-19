@@ -452,4 +452,4 @@ export const writeRoadmapView = (stateDir, tree, file = roadmapViewPath(stateDir
   writeGuarded(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));
 /** META-DASH-ASYNC R1: the dash server's form (fs.promises); the CLI and adopt keep writeRoadmapView */
 export const writeRoadmapViewAsync = (stateDir, tree, file = roadmapViewPath(stateDir)) =>
-  writeGuardedAsync(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));
+  writeGuardedAsync(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree), { role: 'dashboard' });
