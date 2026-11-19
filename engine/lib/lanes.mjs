@@ -18,7 +18,6 @@ const runNum = id => Number(String(id).slice(4));
 //             newest deliverable is merged
 //   idle      nothing ran, or the last run is done and nothing follows
 export const LANE_STATES = ['running', 'waiting', 'parked', 'stopped', 'shipped', 'idle'];
-const LIVE = ['running', 'queued', 'claimed'];
 const minsAgo = (ms, now) => Math.max(0, Math.round((now - ms) / 60000));
 const isLanded = r => (r.history || []).some(h => h.ev === 'landed');
 const dlvNum = d => Number(String(d.id).slice(4)) || 0;

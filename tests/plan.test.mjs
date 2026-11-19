@@ -2,7 +2,7 @@
 process.env.TZ = 'UTC';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlan, estimator, forecastOf, formatPlan } from '../engine/lib/plan.mjs';
+import { buildPlan, estimator, forecastOf, dayClock } from '../engine/lib/plan.mjs';
 import { waitWords } from '../engine/lib/waitwords.mjs';
 import { queueOf } from '../engine/lib/runs.mjs';
 
@@ -32,7 +32,7 @@ test('Up next: every queued run in the fill order itself (queueOf, priority then
 test('hold-ups in plain words from the real walk terms (after / usage / resources / cap / not_before / question / worktree)', () => {
   const runs = [run(1, 'running', { lane: 'adopt', stage: 'A1' })];
   // RM-21 S1: the words are waitwords.mjs (the one word module); the Plan names runs with its own labeler
-  const w = t => waitWords(t, { now: NOW, label: id => (id === 'RUN-1' ? 'Adopt A1' : id) }).text;
+  const w = t => waitWords(t, { now: NOW, clock: dayClock, label: id => (id === 'RUN-1' ? 'Adopt A1' : id) }).text;
   assert.equal(w('after run:RUN-1:merged unmet'), 'Waiting for Adopt A1 to merge.');
   assert.equal(w('after run:RUN-1:done unmet'), 'Waiting for Adopt A1 to finish.');
   assert.equal(w('usage: RATE_OK=0'), 'Held: usage over the hourly cap. Clears by itself.');

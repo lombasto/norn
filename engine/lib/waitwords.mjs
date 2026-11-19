@@ -5,22 +5,22 @@
 // the raw term: tests/waitwords.test.mjs keeps one sample per term kind the walk writes and fails on that.
 import { billingOf } from './billing.mjs';
 import { loginCommand } from './authguard.mjs';
-import { dayClock } from './plan.mjs';
 
 const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
 // a cap key or an executor name -> the slot's name ("a free Claude slot")
 const SLOT = { max_claude_workers: 'Claude', max_codex: 'Codex', max_sol: 'Codex (sol)', max_astra: 'Codex (astra)', claude: 'Claude', codex: 'Codex', 'codex-sol': 'Codex (sol)', 'codex-astra': 'Codex (astra)' };
 const slot = k => SLOT[k] ?? k.replace(/^max_/, '');
 const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
-const at = (iso, now) => { const t = Date.parse(iso); return Number.isFinite(t) ? dayClock(t, now) : iso; };
 const W = (code, text, o = {}) => ({ code, text, fix: o.fix ?? null, clears: o.clears ?? null, setting: o.setting ?? null, acts: o.acts ?? [], ...o.extra });
 
 /**
  * one fill-walk term -> { code, text, fix, clears (null = only the fix clears it), setting (the Settings row that governs it), acts }.
  * ctx: { label (run id -> its name; default the id), now, billing (the budget billing key), status (STATUS.md text: the weekly reset),
- *   state (the project's state dir: tells this project's PAUSED file from all of Norn's) }
+ *   state (the project's state dir: tells this project's PAUSED file from all of Norn's), clock ((ms, now) -> words; default the UTC
+ *   minute; the Plan passes its day-aware dayClock - this module imports no plan.mjs: plan.mjs imports it) }
  */
-export function waitWords(term, { label = id => id, now = Date.now(), billing = null, status = '', state = null } = {}) {
+export function waitWords(term, { label = id => id, now = Date.now(), billing = null, status = '', state = null, clock = ms => hhmm(new Date(ms).toISOString()) } = {}) {
+  const at = iso => { const t = Date.parse(iso); return Number.isFinite(t) ? clock(t, now) : iso; };
   const t = String(term), name = id => (/^RUN-\d+$/.test(id) ? label(id) ?? id : id);
   let m;
   if (t.startsWith('withdraw: ')) return W('withdrawn', `Withdrawn: ${t.slice(10)}.`);
@@ -31,15 +31,15 @@ export function waitWords(term, { label = id => id, now = Date.now(), billing = 
       fix: `delete ${m[1]} (the header's Resume button deletes the project's own PAUSED file)`, extra: { file: m[1], resume: true } });
   }
   if ((m = t.match(/^auth: (\S+) (login down|vendor outage) since (\S+) \((.*)\)(?:; (.*))?$/))) {
-    const cmd = loginCommand(m[1]), probe = m[5] ? ` (${m[5].replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, x => at(x, now))})` : '';
+    const cmd = loginCommand(m[1]), probe = m[5] ? ` (${m[5].replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, x => at(x))})` : '';
     return m[2] === 'vendor outage'
-      ? W('login', `Held: a ${m[1]} vendor outage since ${at(m[3], now)}; it resumes by itself, no login needed${probe}.`, { clears: 'by itself when a probe passes', fix: 'nothing to do: a vendor outage, not your login' })
-      : W('login', `Held: the ${m[1]} login is down since ${at(m[3], now)}; run ${cmd}${probe}.`, { fix: `run ${cmd} in a terminal`, extra: { command: cmd } });
+      ? W('login', `Held: a ${m[1]} vendor outage since ${at(m[3])}; it resumes by itself, no login needed${probe}.`, { clears: 'by itself when a probe passes', fix: 'nothing to do: a vendor outage, not your login' })
+      : W('login', `Held: the ${m[1]} login is down since ${at(m[3])}; run ${cmd}${probe}.`, { fix: `run ${cmd} in a terminal`, extra: { command: cmd } });
   }
   if ((m = t.match(/^auth: (\S+) probe passed (\S+); (?:one canary launch since \S+, the rest wait for it|a canary launch is starting)$/)))
     return W('login', `Held: the ${m[1]} login is back; one test launch goes first and the rest wait for it.`, { clears: 'by itself when the test launch lives' });
   if ((m = t.match(/^limit: (\S+) out of quota until (\S+) \(([^)]*)\) - (.*)$/)))
-    return W('quota', `Held: ${m[1]} is out of quota until ${at(m[2], now)}.`, { clears: 'by itself at the reset', fix: m[4], acts: ['quota-back'] });
+    return W('quota', `Held: ${m[1]} is out of quota until ${at(m[2])}.`, { clears: 'by itself at the reset', fix: m[4], acts: ['quota-back'] });
   if (t === 'usage: weekly unknown') {
     const bm = billingOf({ billing });
     return bm && bm.type !== 'api'
@@ -66,7 +66,7 @@ export function waitWords(term, { label = id => id, now = Date.now(), billing = 
   if ((m = t.match(/^after q:(Q-\d+):(\w+) unmet$/))) return W('after', m[2] === 'applied' ? `Waiting for your answer to ${m[1]} to be applied.` : `Waiting for your answer to ${m[1]}.`, { acts: ['answer'] });
   if ((m = t.match(/^after dir:(DIR-\d+):\w+ unmet$/))) return W('after', `Waiting for instruction ${m[1]} to be done.`, { acts: ['start-anyway'] });
   if ((m = t.match(/^after (\S+) unmet$/))) return W('after', `Waiting for ${m[1]}.`, { acts: ['start-anyway'] });
-  if ((m = t.match(/^not_before (\S+)$/))) return W('not-before', `Starts at ${at(m[1], now)}.`, { clears: 'by itself at that time', acts: ['start-now'] });
+  if ((m = t.match(/^not_before (\S+)$/))) return W('not-before', `Starts at ${at(m[1])}.`, { clears: 'by itself at that time', acts: ['start-now'] });
   if ((m = t.match(/^worktree held by (\S+)/))) return W('folder', `Waiting for its folder: ${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there.`, { extra: { run: /^RUN-\d+$/.test(m[1]) ? m[1] : null } });
   if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return W('folder', `Waiting for its lane's folder: ${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there.`, { extra: { run: /^RUN-\d+$/.test(m[1]) ? m[1] : null } });
   if ((m = t.match(/^merge slots full: (\d+) merge/))) return W('merge', `Waiting for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running).`, { setting: 'policy.merge.parallel' });

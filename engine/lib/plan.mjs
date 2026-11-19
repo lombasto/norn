@@ -198,7 +198,7 @@ export function buildPlan({ project = null, state = null, runs = [], ready = [],
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
   const label = makeLabeler({ project, runs, roadmap, lanes });
-  const ctx = { now, state, billing: budget.billing ?? null, status, label: id => (map[id] ? label({ ...map[id].data, id }) : id) }, words = t => waitWords(t, ctx).text;
+  const ctx = { now, state, billing: budget.billing ?? null, status, clock: dayClock, label: id => (map[id] ? label({ ...map[id].data, id }) : id) }, words = t => waitWords(t, ctx).text;
   const queued = queueOf(runs);
   const at = ms => ({ at: new Date(ms).toISOString(), word: `~${dayClock(ms, now)}` });
 

@@ -43,7 +43,7 @@ test('readiness on fixture queues: cap full, slot kept for an older run, paused,
   assert.equal(mapped(T[b][0], ctx).text, `Waiting for a free Claude slot; ${a} is ahead in line.`);
   assert.equal(mapped(T[c].find(x => x.startsWith('PAUSED')), ctx).text, 'Paused: this project.');
   assert.equal(mapped(T[c].find(x => x.startsWith('PAUSED')), { now: NOW, state: path.join(d.t, 'state', 'other') }).text, 'Paused: all of Norn.');
-  assert.match(mapped(T[e][0], ctx).text, /^Starts at \S+ \d\d:\d\d\.$/);
+  assert.match(mapped(T[e][0], ctx).text, /^Starts at 2026-11-19 14:30Z\.$/, 'the default clock: the UTC minute');
   assert.equal(mapped(T[f][0], ctx).text, `Waiting for ${a} to merge.`);
   assert.equal(mapped(T[g].find(x => x.startsWith('labels ')), ctx).text, 'Offered to another machine (it needs gpu).');
   const bad = mapped(T[h][0], ctx);
@@ -64,7 +64,7 @@ test('readiness: the machine-busy gate (CPU and RAM), with the numbers from the 
 const LITERAL = {
   'needs a ruling: after: run:RUN-12:merged - RUN-12 was withdrawn': ['ruling', /^Needs a ruling: after: run:RUN-12/],
   'withdraw: queue spec missing': ['withdrawn', /^Withdrawn: queue spec missing\.$/],
-  'auth: claude login down since 2026-11-19T09:00:00.000Z (Please run /login); next probe 2026-11-19T10:05:00.000Z': ['login', /^Held: the claude login is down since .*; run claude .*login \(next probe \S+ \d\d:\d\d\)\.$/],
+  'auth: claude login down since 2026-11-19T09:00:00.000Z (Please run /login); next probe 2026-11-19T10:05:00.000Z': ['login', /^Held: the claude login is down since .*; run claude .*login \(next probe 2026-11-19 10:05Z\)\.$/],
   'auth: claude login down since 2026-11-19T09:00:00.000Z (401); probe due': ['login', /probe due/],
   'auth: claude login down since 2026-11-19T09:00:00.000Z (401); probe failed (2), next 2026-11-19T10:20:00.000Z': ['login', /probe failed \(2\)/],
   'auth: claude vendor outage since 2026-11-19T09:00:00.000Z (529 overloaded); next probe 2026-11-19T10:05:00.000Z': ['login', /vendor outage .* no login needed/],
