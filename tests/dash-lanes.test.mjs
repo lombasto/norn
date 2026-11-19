@@ -79,6 +79,33 @@ test('lanesView: running, needs you, queued, done, archived; ended and Old from 
   assert.deepEqual(sortLanes(rows).map(r => r.name), ['r', 'd2', 'd1', 'a']);
 });
 
+// fair-slots items 2 + 3 (owner 2026-11-19): a lane whose build is DONE and whose MERGE waits read only 'queued'; once merge-land
+// opened the PR it reads 'awaiting PR approval'. Each queued / running lane says its run's priority (none = the default P2, marked)
+// and a queued one its place in the fill order.
+test('lanesView: done - awaiting merge, awaiting PR approval; the run priority (P2 default marked) and the fill position', () => {
+  const s = mkTmp('fair-lanes-');
+  for (const n of ['mrg', 'prd', 'fast', 'live', 'red']) record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: n } });
+  const run = (lane, extra = {}, outcome) => { const e = record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane, ...extra } });
+    if (outcome) record(s, { kind: 'run', ev: 'end', id: e.id, by: 'launcher', data: { exit: 0, outcome } }); return e.id; };
+  const queue = (lane, extra = {}) => record(s, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane, ...extra } });
+  run('mrg', {}, 'done'); queue('mrg', { stage: 'MERGE' });         // build DONE, its MERGE queued (no priority: P2)
+  run('prd', {}, 'done'); run('prd', { stage: 'MERGE' }, 'done');   // merged by merge-land: a PR is open
+  queue('fast', { priority: 'P1' });                                // a queued build at P1: first in the fill order
+  run('live', { priority: 'P0' });                                  // running at P0
+  run('red', {}, 'stopped'); queue('red', { stage: 'MERGE' });      // the build did not finish: its queued MERGE is plain queued
+  const v = lanesView(loadState(s), { prs: { prd: { url: 'https://github.com/o/r/pull/7', number: 7 } } }), by = n => v.find(l => l.name === n);
+  assert.equal(by('mrg').land, 'awaiting-merge'); assert.equal(by('mrg').text, 'done - awaiting merge'); assert.equal(by('mrg').group, 'queued');
+  assert.equal(by('prd').land, 'awaiting-pr'); assert.equal(by('prd').text, 'awaiting PR approval: PR #7'); assert.equal(by('prd').pr.number, 7);
+  assert.equal(by('prd').group, 'needs', 'a PR to approve waits on the owner');
+  assert.equal(by('red').land, null); assert.equal(by('red').text, 'queued');
+  assert.deepEqual(by('mrg').priority, { p: 'P2', dflt: true }, 'no priority: the default P2, marked as the default');
+  assert.deepEqual(by('fast').priority, { p: 'P1', dflt: false }); assert.deepEqual(by('live').priority, { p: 'P0', dflt: false });
+  assert.equal(by('prd').priority, null, 'an ended run has no priority to show');
+  assert.deepEqual([by('fast').position, by('mrg').position, by('red').position], [1, 2, 3], 'the fill order: P1 first, then FIFO');
+  assert.equal(by('live').position, null, 'a running run has no queue position');
+  assert.equal(lanesView(loadState(s)).find(l => l.name === 'prd').land, null, 'no PR known: no awaiting PR approval');
+});
+
 test('the browser: the filter chips survive a live re-render and a reload (the URL); the phone has no sideways scroll', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
