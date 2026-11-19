@@ -167,7 +167,8 @@ test('dashboard: a bare option key typed in the box is an explicit pick (closes 
     const s0 = f.counts.ticks;
     assert.equal((await f.post('/api/answer', { id: 'Q-1', text: '(b)' })).status, 200);
     const it = loadState(f.pa.state).items['Q-1'];
-    assert.equal(it.state, 'answered'); assert.equal(it.answer.choice, 'b'); assert.equal(f.counts.ticks, s0, 'a pick starts no reply');
+    assert.equal(it.state, 'answered'); assert.equal(it.answer.choice, 'b'); assert.ok(!it.history.some(h => h.ev === 'say'), 'a pick is no message to reply to');
+    assert.equal(f.counts.ticks, s0 + 1, 'one tick: the answer applies at once (item 8, MAIL-9 d), no reply');
   } finally { await f.done(); }
 });
 
