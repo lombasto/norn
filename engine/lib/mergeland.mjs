@@ -10,14 +10,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { makeGit } from './dlvgit.mjs';
-import { mergeConfig } from './mergeq.mjs';
+import { mergeConfig } from './mergecfg.mjs';
 import { loadDeliverables, sameRepo } from './deliverables.mjs';
 import { record } from './records.mjs';
 import { slopOn } from './policy.mjs';
 import { doorCheck, doorWhy } from './slop/door.mjs';
 
-const fwd = p => String(p || '').replace(/\\/g, '/');
-const s7 = s => String(s || '').slice(0, 7);
+export const fwd = p => String(p || '').replace(/\\/g, '/');
+export const s7 = s => String(s || '').slice(0, 7);
 /** exit codes of norn merge-land: every PR opened (or already open), some branch has no PR */
 export const LAND_EXIT = { opened: 0, refused: 3 };
 

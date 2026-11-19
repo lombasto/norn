@@ -16,7 +16,7 @@ import { locReport } from '../engine/lib/slop/loc.mjs';
 import { sweep } from '../engine/lib/slop/sweep.mjs';
 import { slopCmd } from '../engine/lib/slop/cli.mjs';
 import { testsCmd } from '../engine/lib/testscli.mjs';
-import { mergeConfig } from '../engine/lib/mergeq.mjs';
+import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { laneBranch } from '../engine/lib/lanenew.mjs';
 import { scopeOf } from '../engine/lib/scope.mjs';
 import { doneCheck } from '../engine/lib/dod.mjs';

@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile } from './records.mjs';
-import { deliverablesView, deliverableConfig, rehearsalWord } from './deliverables.mjs';
+import { deliverablesView, rehearsalWord } from './deliverables.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
@@ -19,24 +19,17 @@ import { doorCheck, storedCheck } from './slop/door.mjs';
 import { rulesHash } from './slop/check.mjs';
 import { projectSlop } from './slop/runend.mjs';
 import { slopOn } from './policy.mjs';
-import { subdirOf, inDir, gateText } from './monorepo.mjs';
+import { inDir, gateText } from './monorepo.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { rowLookItems, lookHold } from './look.mjs';
 import { landPass } from './landing.mjs';
+import { mergeConfig } from './mergecfg.mjs';
 
 const H = 3600e3;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const pad = (s, n) => String(s ?? '').padEnd(n);
-export const MQ_DEFAULTS = { batch_max: 4 };
 export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
-/** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
-// a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own
-export function mergeConfig(project = {}) {
-  const m = project.merge || {}, d = deliverableConfig(project), sub = subdirOf(project);
-  const gate = m.gate ? { ...m.gate, ...(m.gate.dir === undefined && sub ? { dir: sub } : {}) } : null;
-  return { ...MQ_DEFAULTS, ...m, gate, ui: m.ui || [], scratch: fwd(m.scratch || (sub ? `${d.repo}-mq-${project.name}` : `${d.repo}-mq`)), repo: d.repo, main: d.main, remote: d.remote, native: d.native };
-}
 /** the gate kind of a queue row: door (native: the install path, the door flow), batch (a FAST gate is declared: batched + bisected),
  *  stage (one MERGE stage per branch) */
 export const gateKind = (row, cfg) => (row.native ? 'door' : cfg.gate?.fast ? 'batch' : 'stage');
