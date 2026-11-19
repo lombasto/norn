@@ -313,7 +313,7 @@ test('resource gate: norn run --queue with a free slot queues when resources are
   const q = meta(['run', '--executor', 'fake', '--lane', 'cli', '--brief', d.brief('mode: done\n'), '--worktree', d.wt(2), '--locks', d.locks, '--after', `dir:${dir}`, '--state', d.state]);
   const id = q.out.match(/QUEUED (RUN-\d+)/)[1];
   const spec = JSON.parse(fs.readFileSync(path.join(d.state, 'runs', `${id}.queue.json`), 'utf8'));
-  assert.deepEqual(spec.policy.fill, { min_free_gb: 4, max_cpu_pct: 90 }, 'no project policy.fill: the defaults');
+  assert.deepEqual(spec.policy.fill, { min_free_gb: 4, max_cpu_pct: 90, merge_reserve: 1 }, 'no project policy.fill: the defaults');
   // the CLI's own fill (met now = starts now) samples the real box: with RAM to spare it starts the queued run. Every run this test
   // caused settles here - left to the exit reap, its supervisor outlived the file on Linux (CI 43540726632 LEAK RED, RUN-3).
   await waitFor(() => !stateBusy(d.state)(), { what: 'every run the CLI fill started settled' });
