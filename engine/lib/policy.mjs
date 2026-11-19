@@ -8,6 +8,7 @@ import { PROVIDER_CLASSES, PROVIDER_CAP_DEFAULT, capKey, BUILTIN } from './execu
 import { ADAPTERS } from './harness/index.mjs';
 import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank } from './floor.mjs';
 import { BILLING_NAMES, isApi, usdCap } from './billing.mjs';
+import { SHARE_KEY, RESERVE, CEILING, sharesProblem } from './share.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -201,6 +202,7 @@ export const SECTIONS=[
     {id:'usage',label:'Weekly usage guard',help:'The guard every check-in obeys before it starts a Claude worker.'},
     {id:'calibration',label:'Usage calibration',help:'Re-read from the claude.ai usage page; STATUS turns logged tokens into weekly %.'},
     {id:'claude',label:'Claude workers',help:'Claude worker lanes alive at once (norn run refuses past the cap).'},
+    {id:'capacity',label:'Capacity',help:'How the Claude worker pool is split between the projects: a reserve each project keeps while it has queued work, and a ceiling.'},
     {id:'codex',label:'Codex runs',help:'Concurrent Codex runs; codex-astra + codex-sol fit inside the total.'},
     {id:'helpers',label:'Own-account executors & helpers',help:'Own-account executors (configured in project.json) and norn delegate helpers.'}]},
   {id:'executors',label:'Executors & models',help:'Who does which kind of work, with which model and effort.',subs:[
@@ -239,6 +241,7 @@ export const SECTION_RULES=[
   [/^(calib_pct|calib_time_utc)$/,'workers/calibration'],
   [/^(cacheR_per_pct|policy\.agents\.max_lane_writers)$/,'advanced/danger'],
   [/^(max_claude_workers|policy\.dispatch_window\.max)$/,'workers/claude'],
+  [/^project_workers\./,'workers/capacity'],
   [/^max_(codex|astra|sol)$/,'workers/codex'],
   [/^(max_[a-z0-9_-]+|policy\.delegate\.max_per_parent|policy\.ask\.max_per_day)$/,'workers/helpers'],
   [/^policy\.executors\.([a-z_]+)\.(executor|model|effort)$/,'executors/routing/$1'],
@@ -284,9 +287,12 @@ const rankNames=(providers,extra)=>{const ex=executorsOf(extra);return [...ex.fi
 export function settingsFor(extra={}){const pv=extra.providers||[],ex=executorsOf(extra),fb=fallbacksOf(extra);
   const base=SETTINGS.map(s=>s.group==='executors'&&s.key.endsWith('.executor')?{...s,options:[...ex,...pv.filter(p=>!ex.includes(p))]}
     :s.key.startsWith('policy.fallbacks.')?{...s,options:fb}:s);
-  if(!pv.length&&!extra.ranks)return [...base,...rankRows([],extra)];
   const at=base.map(s=>s.group).lastIndexOf('agents')+1;
-  return [...base.slice(0,at),...capRows(pv,extra.caps),...base.slice(at),...rankRows(pv,extra)];}
+  return [...base.slice(0,at),...capRows(pv,extra.caps),...shareRows(extra.projects),...base.slice(at),...rankRows(pv,extra)];}
+// fair-slots item 8: one reserve + one ceiling row per registered project (extra.projects: their names) - machine budget project_workers
+const shareRows=(ps=[])=>ps.flatMap(p=>[
+  S('agents',`${SHARE_KEY}.${p}.${RESERVE}`,`${p}: reserved Claude workers`,int(0,12),`Claude worker slots kept free for ${p} while it has queued work; lent to the other projects while it has none. The reserves of all projects fit inside Max Claude workers.`,'0','A reserved slot can sit idle for a moment while the project queues its next run.',['the queue fill (runs.mjs)']),
+  S('agents',`${SHARE_KEY}.${p}.${CEILING}`,`${p}: most Claude workers`,int(0,12),`The most Claude workers ${p} may run at once; unset = Max Claude workers.`,'unset','A low ceiling leaves slots free for the other projects even when they are idle.',['the queue fill (runs.mjs)','norn run (exit 4 past it)'])]);
 // metaexec X1: one cap row per configured typed executor = the machine budget key norn run enforces (max_<name>; unset = the
 // entry's cap, else 1 - extra.caps)
 const capOf=(caps,n)=>caps?.[n]??PROVIDER_CAP_DEFAULT;
@@ -375,6 +381,7 @@ function applySettingsRaw(b,changes,extra={}){const all=settingsFor(extra),pv=ex
   const out=structuredClone(b);out.policy=merge(POLICY_DEFAULTS,foldSlop(out.policy));
   for(const [k,v] of Object.entries(changes)){const s=all.find(x=>x.key===k);if(!s)throw fail('Unknown setting '+k);check(s,v);setPath(out,k,v);}
   if(out.max_astra>out.max_codex||out.max_sol>out.max_codex)throw fail('Astra and Sol caps must fit inside the Codex total');
+  {const sp=sharesProblem(out);if(sp)throw fail(`Capacity: ${sp}`);}
   for(const [k,e] of Object.entries(out.policy.executors)){const ok=allowedClasses(out.policy,e.executor,pv);
     if(!ok.includes(k))throw fail(`${e.executor} is not allowed to do ${(WORK_CLASSES[k]??k).toLowerCase()} work (its allowed classes: ${ok.join(', ')||'none'}) - pick another executor or widen ${e.executor}'s allowed classes first`);}
   for(const [a,c] of Object.entries(out.policy.context))if(!(c.no_new_step_k<=c.handoff_k&&c.handoff_k<=c.hard_max_k))throw fail(`context.${a}: no-new-step <= hand-off <= hard max`);

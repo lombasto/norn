@@ -30,6 +30,7 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
+import { shareOf, slotVerdict } from './share.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -316,14 +317,32 @@ export function lostNotice(rows, project = '') {
   return { title: `${project ? project + ': ' : ''}${head}`, body: `${head}: ${rows.length} run${rows.length === 1 ? '' : 's'} lost, ${m} relaunched (${list})` };
 }
 
-// running, non-interactive runs with a fresh heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
-export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
+/** the state dir and every sibling state dir with runs.jsonl: the projects that share this machine's worker caps (D11) */
+export function projectStates(state) {
   const parent = path.dirname(path.resolve(state));
   const states = new Set([path.resolve(state)]);
   for (const d of fs.existsSync(parent) ? fs.readdirSync(parent) : []) if (fs.existsSync(path.join(parent, d, 'runs.jsonl'))) states.add(path.join(parent, d));
+  return [...states];
+}
+// running, non-interactive runs with a fresh heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
+export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
   const live = [];
-  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && hbAge(s, it, now).age <= staleMs) live.push({ ...it, state_dir: s });
+  for (const s of projectStates(state)) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && hbAge(s, it, now).age <= staleMs) live.push({ ...it, state_dir: s });
   return live;
+}
+const onClaudeCap = data => data.kind !== 'checkin' && capsOfRun(data).includes('max_claude_workers');
+/**
+ * fair-slots item 8c: the Claude worker pool per project, machine-wide -> { cap, rows: [{ project, reserved, using, queued, ceiling }] }
+ * (every project with a state dir; ceiling null = no ceiling). budget: the machine budget in force.
+ */
+export function capacityView(state, budget, { staleMs = STALE_MS, now = Date.now() } = {}) {
+  const live = liveRuns(state, { staleMs, now });
+  const rows = projectStates(state).map(s => {
+    const project = path.basename(s), sh = shareOf(budget, project);
+    return { project, reserved: sh.reserve, using: live.filter(r => r.state_dir === s && onClaudeCap(r.data)).length,
+      queued: runsOf(s).filter(r => r.state === 'queued' && onClaudeCap(r.data)).length, ceiling: sh.ceiling };
+  });
+  return { cap: Number.isInteger(budget?.max_claude_workers) ? budget.max_claude_workers : null, rows };
 }
 // META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief
 // rebases + pushes in the lane worktree waits / is refused (exit 3) while that worktree holds a live writer lock or the lane has a
