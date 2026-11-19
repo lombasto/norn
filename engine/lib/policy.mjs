@@ -6,7 +6,7 @@
 // allowed work classes (policy.allowed_classes.<name>, the rank) and a class -> executor pairing it does not allow is refused (400).
 import { PROVIDER_CLASSES, PROVIDER_CAP_DEFAULT, capKey, BUILTIN } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
-import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank } from './floor.mjs';
+import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank, CHECKIN_FLOOR_TEXT, checkinBelow } from './floor.mjs';
 import { BILLING_NAMES, isApi, usdCap } from './billing.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -94,11 +94,6 @@ export function starterPolicy(found=['claude'],caps={}){
 const int=(min,max)=>({type:'int',min,max}),num=(min,max)=>({type:'num',min,max}),en=options=>({type:'enum',options}),bool={type:'bool'};
 const S=(group,key,label,kind,help,recommended,cost,readers,extra={})=>({group,key,label,...kind,help,recommended,cost,readers,...extra});
 const CHECKIN='CHECKIN.md (check-in prompt, generated line policy:checkin)';
-// RM-26 the check-in floor: a check-in decides and delegates on its own, so it needs a competent model and effort (owner 2026-11-18).
-// Fixed here, beside the worker floor rows below; not a setting. Unlike the worker floor it never refuses or raises (floor.mjs: a
-// check-in keeps its own model): the settings review flags a checkin_model / checkin_effort below it (checkinBelowFloor).
-export const CHECKIN_FLOOR={model:'claude-opus-5-5',effort:'medium'};
-const CHECKIN_FLOOR_TEXT=`the check-in floor (${CHECKIN_FLOOR.model}, effort ${CHECKIN_FLOOR.effort})`;
 export const SETTINGS=[
   S('agents','max_claude_workers','Max Claude workers',int(0,12),'Claude worker lanes the check-in may keep alive at once.','8 overnight, 2-3 by day','Each worker burns weekly usage in parallel; more = faster stages, faster to the guard.',['worker.ps1 (refuses past the cap)',CHECKIN]),
   S('agents','policy.dispatch_window.max','Overnight Claude slot max',int(0,12),'Workers allowed during the overnight slot window.','8','Same as above, only inside the overnight window.',[CHECKIN]),
@@ -401,11 +396,9 @@ export function belowFloor(m){const f=floorOf(m);if(!f)return [];const v=withDef
   for(const [k,e] of Object.entries(p.executors)){model(`policy.executors.${k}.model`,e.model);effort(`policy.executors.${k}.effort`,e.effort,e.model,e.executor);}
   effort('policy.critical_effort',p.critical_effort);effort('policy.iteration.escalation_effort',p.iteration.escalation_effort);
   return out;}
-/** the check-in settings of merged view `m` below CHECKIN_FLOOR: [{ key, kind, value, to, text }] (the effort only on a Claude model) */
-export function checkinBelowFloor(m){const v=withDefaults(m),out=[],text=`below ${CHECKIN_FLOOR_TEXT}: a check-in decides and delegates on its own`;
-  if(modelBelow(v.checkin_model,CHECKIN_FLOOR.model))out.push({key:'checkin_model',kind:'model',value:v.checkin_model,to:CHECKIN_FLOOR.model,text});
-  if(claudeRank(v.checkin_model)&&effortBelow(v.checkin_effort,CHECKIN_FLOOR.effort))out.push({key:'checkin_effort',kind:'effort',value:v.checkin_effort,to:CHECKIN_FLOOR.effort,text});
-  return out;}
+/** the check-in settings of merged view `m` below CHECKIN_FLOOR (floor.mjs checkinBelow): [{ key, kind, value, to, text }] */
+export function checkinBelowFloor(m){const v=withDefaults(m),text=`below ${CHECKIN_FLOOR_TEXT}: a check-in decides and delegates on its own`;
+  return checkinBelow({model:v.checkin_model,effort:v.checkin_effort}).map(r=>({key:'checkin_'+r.kind,...r,text}));}
 /**
  * The changes of a Settings save with the floor's raises added: every worker setting the save leaves below the floor in force after it
  * (a new or raised floor) is raised to the floor, unless the save sets that key itself (then applySettings refuses it, naming it).

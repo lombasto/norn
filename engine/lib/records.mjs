@@ -10,6 +10,7 @@ import { isAncestor, refTip } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
+import { checkinBelow } from './floor.mjs';
 
 // worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it
 export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker'];
@@ -694,6 +695,16 @@ function mailGuard(stateDir, e, run, st) {
     if (m?.kind === 'mail' && !mailboxOf(runs, run).has(m.data.to)) fail(`${e.id} is not addressed to ${run} (to ${m.data.to})`);
   }
 }
+// RM-26: a decision a check-in run writes carries the model / effort that run started with (its runs.jsonl start) and whether they
+// were below the check-in floor (floor.mjs checkinBelow) when it was made: made_under { model, effort, below_floor }. Only this stamps
+// it (a caller's own made_under is dropped); no run, or a run start with no model, = no stamp.
+function madeUnder(stateDir, d, by, run) {
+  const { made_under: _, ...rest } = d;
+  const r = by === 'checkin' && run ? fold(readEvents(recordsFile(stateDir, 'run'))).items[run] : null;
+  if (!r?.data?.model) return rest;
+  const model = r.data.model, effort = r.data.effort ?? null;
+  return { ...rest, made_under: { model, effort, below_floor: checkinBelow({ model, effort }).length > 0 } };
+}
 // NORN-WATCH S4: a deliverable a queued run takes as an input (queue field `inputs`) cannot be parked under it
 function inputGuard(stateDir, id) {
   const q = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items).find(r => r.state === 'queued' && (r.data.inputs || []).includes(id));
@@ -824,6 +835,7 @@ function recordCtx(stateDir, evIn, opts) {
       if (g) throw new RecordError(`${g.id} is open on lane ${d.lane} - pass --answers ${g.id} or --not-an-answer`, 3);
       if (d.answers && st.items[d.answers]?.state === 'open' && carriesOwnerPick(d) && !d.owner_words)
         fail(`${d.answers} is open: --answers with an owner pick needs --owner-words "<the owner's words, verbatim>" (they answer it in the same step)`);
+      ev = { ...ev, data: madeUnder(stateDir, d, caller, run) };
     }
     if (kind === 'question' && ev.ev === 'answer' && ev.data?.from !== undefined && caller !== 'migration') ev = answerFrom(st, ev);
     const primary = push(ev);
