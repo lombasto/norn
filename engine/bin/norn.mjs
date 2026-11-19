@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
@@ -1565,7 +1565,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
 // ---------- META-GTP-DAG piece 3: norn ready - every queued run, ready | blocked + its unmet terms (the fill's own walk, dry; read-only) ----------
 const READY_USAGE = 'norn ready [--json] [--epic EP-n] [--project F | --state D] [--locks D]';
 // ---------- META-GTP-MERGEQ: norn mergeq - the merge queue (MR score order; code only, no LLM) ----------
-const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; --batching = the kill switch)';
+const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; else the mechanical landing: merge the top clean pushed row in a merge worktree, run the merge gate, open its PR - a conflict, red gate or slop block queues its MERGE run; --batching = the kill switch)';
 function mergeqCmd(argv, env, out, err) {
   try {
     const flags = {};
@@ -1588,9 +1588,13 @@ function mergeqCmd(argv, env, out, err) {
       return 0;
     }
     if (flags.run) {   // piece 3: one merge-queue pass (async: the gate runs)
-      return mergeqRun({ stateDir: state, project, locksDir: flags.locks }).then(r => {
+      // MERGE-FIRST (3): a landing's fallback MERGE (norn run --queue) and its notice go through this CLI, in a child (as the tick's routine stage)
+      const cli = args => { const c = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true, env: { ...process.env, ...env } }); return { code: c.status ?? 1, out: `${c.stdout || ''}${c.stderr || ''}`.trim() }; };
+      return mergeqRun({ stateDir: state, project, locksDir: flags.locks, cli }).then(r => {
         if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
         for (const u of r.updates) if (u.action !== 'skip') out(`${u.id} ${u.branch} update ${u.action}: ${u.why}`);
+        for (const id of r.land?.landed || []) out(`LANDED ${id}`);
+        for (const f of r.land?.fallback || []) out(`MERGE ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
         out(`mergeq: ${r.why}`);
         if (r.batch?.dispatch && r.batch.status === 'green') out(`MERGE: norn ${r.batch.dispatch.join(' ')}`);
         if (r.fix) out(`FIX ${r.fix.id}: norn ${r.fix.run.join(' ')}`);
