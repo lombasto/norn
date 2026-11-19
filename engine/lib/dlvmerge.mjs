@@ -4,7 +4,7 @@
 import { scanRepo, makeGit, pruneCache, workOnMain, contentOnMain } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+export const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 export const sameRepo = (a, b) => pathKey(a) === pathKey(b);   // the same repo in any spelling (8.3 short name, link, case)
 export const lastEv = (it, evs) => [...it.history].reverse().find(h => evs.includes(h.ev)) || null;
 

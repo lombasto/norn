@@ -9,13 +9,12 @@ import { fold, readEvents, recordsFile, loadState, record } from './records.mjs'
 import { makeGit } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
-import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv } from './dlvmerge.mjs';
+import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv, fwd } from './dlvmerge.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
   target: 'install', ask_after_h: 24, park_days: 7, resolve_behind: 100 };
 const DAY = 864e5;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 
 // project.json `deliverables` over the defaults; repo defaults to the project root
 export function deliverableConfig(project = {}) {
