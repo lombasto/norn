@@ -4,7 +4,7 @@
 import { loadState, fold, readEvents, recordsFile } from './records.mjs';
 import fs from 'node:fs';
 import { makeGit, isAncestor, refTip } from './dlvgit.mjs';
-import { prVerdict } from './prstate.mjs';
+import { prVerdict } from './prverdict.mjs';
 
 // kind -> { prefix, default state, allowed states }
 export const AFTER_KINDS = {

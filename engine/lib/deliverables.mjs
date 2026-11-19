@@ -1,13 +1,13 @@
 // Deliverables (the Norn project's design/DELIVERABLES-SPEC.md): follow every lane's finished work to main and to an install.
 // Records: kind `deliverable` (DLV-n) in deliverables.jsonl (records.mjs). State DONE -> MERGED -> INSTALLED is derived here from
 // git (dlvgit.mjs) and the newest install receipt (project.json `deliverables.receipts`), never typed by hand; a branch with a PR is
-// MERGED when GitHub reported the PR merged (prstate.mjs, RM-7 S2), never before.
+// MERGED when GitHub reported the PR merged (prverdict.mjs, RM-7 S2), never before.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile, loadState, record } from './records.mjs';
 import { scanRepo, makeGit, pruneCache } from './dlvgit.mjs';
 import { workOnMain } from './after.mjs';
-import { prOf, prVerdict } from './prstate.mjs';
+import { prOf, prVerdict } from './prverdict.mjs';
 import { pathKey } from './config.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
