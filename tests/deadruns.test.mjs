@@ -31,6 +31,24 @@ test('sweep: a supervisor pid that names no process -> lost at once (cause gone)
   assert.equal(d.item(b).state, 'running');
 });
 
+// 2026-11-18: on a machine busy starting processes, live runs' heartbeats fell 210-297 s behind and the sweep recorded them lost
+// (cause stale); their heartbeats came back but `end` is accepted only from running, so their own end would have been refused
+test('sweep: a run lost for a stale heartbeat comes back alive when its heartbeat is fresh again and its supervisor lives; its end is then accepted', () => {
+  const d = sandbox(), a = d.start(), b = d.start(), c = d.start();
+  for (const id of [a, b, c]) { d.hb(id, { supervisor_pid: process.pid }); stale(d, id); }
+  assert.deepEqual(sweepLost(d.state).sort(), [a, b, c].sort());
+  for (const id of [a, b, c]) { assert.equal(d.item(id).state, 'lost'); assert.equal(d.item(id).lost.cause, 'stale'); }
+  d.hb(a, { supervisor_pid: process.pid });            // a: the beat comes back, supervisor alive -> alive
+  d.hb(b, { supervisor_pid: deadPid() });              // b: a fresh file but the supervisor is gone -> stays lost
+  sweepLost(d.state);                                  // c: still stale -> stays lost
+  assert.equal(d.item(a).state, 'running');
+  assert.match(d.item(a).history.at(-1).data.why, /heartbeat \d+ s old again/);
+  assert.equal(d.item(b).state, 'lost'); assert.equal(d.item(c).state, 'lost');
+  record(d.state, { kind: 'run', ev: 'end', id: a, by: 'launcher', data: { outcome: 'done', exit: 0 } });
+  assert.equal(d.item(a).state, 'exited', 'its own end is accepted after it came back');
+  sweepLost(d.state); assert.equal(d.item(a).state, 'exited', 'an ended run is never revived');
+});
+
 test('sweep: the first sweep after a boot -> every run started before it is lost (cause boot), even when its pid is alive again (pid reuse)', () => {
   const d = sandbox(), a = d.start(), b = d.start();
   d.hb(a, { supervisor_pid: process.pid });   // the pid names a live process again: reused after the boot

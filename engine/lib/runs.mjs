@@ -249,6 +249,18 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
   const lost = [];
   const t = now().getTime(), bt = boot();
   for (const it of runsOf(state)) {
+    // a stall swept as lost (cause stale) whose heartbeat is fresh again and whose supervisor lives: alive, so its own end is accepted
+    // (2026-11-18: a machine busy starting processes let heartbeats fall 210-297 s behind; five live runs read lost and would have
+    // lost their end records). Certain deaths (DEAD_CAUSES) are never revived here.
+    if (it.state === 'lost' && it.lost?.cause === 'stale' && it.data.kind !== 'interactive') {
+      const { age, has } = hbAge(state, it, t), hb = has ? readJson(hbPath(state, it.id)) : null;
+      const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
+      if (has && age <= staleMs && t - age > lostAt && hb && !gone(hb.supervisor_pid)) {
+        try { record(state, { kind: 'run', ev: 'alive', id: it.id, by, data: { why: `heartbeat ${Math.round(age / 1000)} s old again (lost for a stale heartbeat at ${new Date(lostAt).toISOString().slice(11, 19)}Z); supervisor pid ${hb.supervisor_pid} alive` } }); }
+        catch (e) { if (!(e instanceof RecordError)) throw e; }
+      }
+      continue;
+    }
     if (it.state !== 'running' || it.data.kind === 'interactive') continue;
     const { age, has } = hbAge(state, it, t);
     const hb = has ? readJson(hbPath(state, it.id)) : null;

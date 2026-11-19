@@ -214,6 +214,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
       }
     } catch { /* no projects dir */ }
   }
+  // RM-44 D1: every lane run end that leaves commits is checked (stopped and hand-off too) - slop before the Done check
+  const slopOpen = slopEnd();
   // META-DOD 1 (DIR-68): a DONE counts only on Norn's own green Done check (dod.mjs) - the agent's words are never the evidence.
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {
@@ -257,8 +259,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   let resumed = false;
   if (outcome === 'handoff') resumed = autoResume(data.handoff);
   else if (outcome === 'nudged') resumed = nudgeResume();
-  else if (outcome === 'done') resumed = slopEnd();
-  else if (data.dod?.ok === false) resumed = dodEnd(data.dod);
+  else if (outcome === 'done' || data.dod?.ok === false) resumed = fixEnd(slopOpen, data.dod);
   if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
   if (!resumed) dropMergeWt(outcome);
   try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
@@ -370,30 +371,40 @@ function autoResume(handoff) {
   return !!next;
 }
 
-// META-SLOP-A (REVIEW-FABLE 3): the run-end backstop. A lane run ending DONE is checked on its branch's diff against main; open
-// BLOCK findings (no waiver) hold the branch's merge and go back to the SAME lane once, as a resume with the list (the same session
-// where the executor resumes by flag). The resumed run is never resumed again for slop: a second BLOCK is the check-in's to decide.
+// META-SLOP-A (REVIEW-FABLE 3) + RM-44 D1: the run-end check. Every lane run end whose branch has commits past main is checked on its
+// diff, whatever the outcome (an unchecked end read as clean and let PR #11's cycle through); the check is stored (checks.jsonl) and
+// its open BLOCK findings (no waiver) hold the branch's merge. -> the open findings ([] = none, or not checked)
 function slopEnd() {
-  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return false;
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
   let c;
-  try { c = checkBranch({ repo: spec.worktree, state }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return false; }
-  if (!c) return false;   // no lane branch (on main, detached, no main to diff against)
-  const write = resumed => hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, blocks: c.result.blocks, findings: c.result.findings, resumed });
-  const open = write(null).open;
+  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
+  if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
+  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
   logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
-  if (!open.length) return false;
-  if (spec.slopOf) { logLine(`slop: BLOCK again after the slop resume of ${spec.slopOf}: no second resume, the check-in decides`); return false; }
+  return open;
+}
+
+// a DONE with open slop findings and / or a red Done check goes back to the SAME lane ONCE, as one resume carrying both lists (slop
+// first, the order they ran; the same session where the executor resumes by flag). A list its own resume already carried is not
+// sent again: a second BLOCK / a second red is the check-in's to decide.
+function fixEnd(open, d) {
+  const slop = open.length && !spec.slopOf ? open : [], dod = d?.ok === false && !spec.dodOf ? d : null;
+  if (open.length && spec.slopOf) logLine(`slop: BLOCK again after the slop resume of ${spec.slopOf}: no second resume, the check-in decides`);
+  if (d?.ok === false && spec.dodOf) logLine(`dod: red again after the Done resume of ${spec.dodOf}: no second resume, the check-in decides`);
+  if (!slop.length && !dod) return false;
   let next = null, refused = null;
   try {
     const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
-    const list = path.join(RESULT_DIR, 'slop-blocks.md');   // the full list: the prompt carries a summary
-    fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(list, slopList(open));
-    next = startRun({ ...rest, resumeOf: run, slopOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: slopPrompt(open, spec.brief, fwdPath(list)) }).run;
+    // the full slop list goes to a file; the prompt carries a summary that names it (solve-shack RUN-140)
+    const list = slop.length ? path.join(RESULT_DIR, 'slop-blocks.md') : null;
+    if (list) { fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(list, slopList(slop)); }
+    const promptText = [...(slop.length ? [slopPrompt(slop, null, fwdPath(list))] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
+    next = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText }).run;
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
-  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, slop: open.length } : { refused, slop: open.length } }); }
+  const what = { ...(slop.length ? { slop: slop.length } : {}), ...(dod ? { dod: dod.why } : {}) };
+  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, ...what } : { refused, ...what } }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
-  if (next) write(next);
-  logLine(next ? `slop: resumed ${next} with ${open.length} BLOCK finding(s)` : `slop: resume refused: ${refused}`);
+  logLine(next ? `resumed ${next} with ${slop.length ? `${slop.length} slop BLOCK finding(s)` : ''}${slop.length && dod ? ' and ' : ''}${dod ? "the Done check's evidence" : ''}` : `resume refused: ${refused}`);
   return !!next;
 }
 
@@ -410,20 +421,6 @@ function critiqueEnd() {
 // META-DOD 1: the Done check applies to a lane work run whose brief passed the Ready gate (spec.dod.ready, norn run)
 function dodOn() {
   return !!spec.dod?.ready && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly && !killedByMeta();
-}
-// a red Done check goes back to the SAME lane once, as a resume with the evidence (the slopEnd pattern); the resumed run is never
-// resumed again for it: a second red stays STOPPED and is the check-in's to decide
-function dodEnd(d) {
-  if (spec.dodOf) { logLine(`dod: red again after the Done resume of ${spec.dodOf}: no second resume, the check-in decides`); return false; }
-  let next = null, refused = null;
-  try {
-    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
-    next = startRun({ ...rest, resumeOf: run, dodOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: dodPrompt(d, spec.brief) }).run;
-  } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
-  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, dod: d.why } : { refused, dod: d.why } }); }
-  catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
-  logLine(next ? `dod: resumed ${next} with the Done check's evidence` : `dod: resume refused: ${refused}`);
-  return !!next;
 }
 
 // ---------- META-GTP-MAIL piece 3: NUDGE (GT-PARITY-PLAN 2.7; Gas Town internal/cmd/nudge.go:49-68,267-291, internal/nudge/queue.go:68-92

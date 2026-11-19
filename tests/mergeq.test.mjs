@@ -82,7 +82,7 @@ function nornProject(t, extra = {}) {
 
 test('merge-brief refuses a lane whose worktree holds a live run unless --sha (exit 3); --sha needs no worktree write', () => {
   const t = tmp('mb');
-  const pj = nornProject(t);
+  const pj = nornProject(t, { policy: { slop: { enabled: false } } });   // no repo behind 03f9b94: the slop door (slop-gate.test) would refuse it
   const state = path.join(t, 'state', 'norn'), locks = path.join(t, 'state', 'locks'), wt = path.join(t, 'wt-vis');
   fs.mkdirSync(wt, { recursive: true });
   const run = liveRun(state, locks, { lane: 'meta-vis', worktree: wt });
@@ -234,7 +234,7 @@ test('MR score = Gas Town score.go: 1000 + epic_h*10 + (4-P)*100 - min(retries*5
     ['DLV-4', 1230, 'P2', null, 0, 'door', 'clean'],
     ['DLV-3', 1122, 'P2', null, 3, 'batch', 'clean'],
   ]);
-  assert.match(formatMq(rows[0]), /^DLV-2 +1524 +P0 EP-1 +batch +clean +-1 +feat\/b/);
+  assert.match(formatMq(rows[0]), /^DLV-2 +1524 +P0 EP-1 +batch +clean +-1 +SLOP \? +feat\/b/);   // SLOP ?: no stored check of its tip yet
   // no fast gate declared (kestrel): every non-native row is its own MERGE stage
   assert.deepEqual(mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW }).rows.map(r => r.gate), ['stage', 'stage', 'door', 'stage']);
   // parked / superseded / merged rows are not queued

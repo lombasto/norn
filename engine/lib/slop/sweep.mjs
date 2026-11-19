@@ -1,4 +1,5 @@
 // META-SLOP-A (REVIEW-FABLE 4.4): the git sweep LIST - nothing is deleted here (a sweep approval card is slice B).
+//  G3 unrelated history: a branch with no common commit with main (merge-tree refuses it; listed, never a throw - audit D4);
 //  G1 real: a branch whose merge into main would change main's tree (git merge-tree --write-tree), its age, behind / ahead,
 //     and whether it conflicts with main right now;  G2 empty: merged, or unmerged but adding nothing;
 //  G4 dead worktrees: on a branch (or a detached commit) that adds nothing, clean, no live or queued run, idle IDLE_DAYS;
@@ -24,6 +25,7 @@ export function classify(repo, main, mainTree, tip) {
   if (r.status === 1) return { kind: 'real', conflicts: true };
   return { kind: r.stdout.trim() === mainTree ? 'empty' : 'real', conflicts: false };
 }
+const related = (repo, a, b) => spawnSync('git', ['merge-base', a, b], { cwd: repo, windowsHide: true }).status === 0;
 const isAncestor = (repo, a, b) => { try { gitRun(repo, ['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } };
 
 function worktrees(repo) {
@@ -49,13 +51,14 @@ function liveWorktrees(state) {
 const otherLane = (own, b) => !!own && !!b && b.startsWith('norn/') && !b.startsWith(`norn/${own.name}/`);
 const touches = (repo, ref, tip, own) => !!gitRun(repo, ['diff', '--name-only', `${ref}...${tip}`, '--', `:(top)${own.subdir}`]).trim();
 
-/** sweep(repo, { state (live / queued runs), now, main, remote, own ({ name, subdir }: a monorepo project) }) -> { main, real, empty, dead, at_risk, remote_merged } */
+/** sweep(repo, { state (live / queued runs), now, main, remote, own ({ name, subdir }: a monorepo project) }) -> { main, real, empty, unrelated, dead, at_risk, remote_merged } */
 export function sweep(repo, { state = null, now = Date.now(), main = 'main', remote = 'origin', own = null } = {}) {
   const ref = mainRef(repo, { main, remote }), mainTree = gitRun(repo, ['rev-parse', ref + '^{tree}']).trim();
-  const real = [], empty = [], kinds = new Map();
+  const real = [], empty = [], unrelated = [], kinds = new Map();
   for (const l of gitRun(repo, ['for-each-ref', '--format=%(refname:short)%09%(objectname)%09%(committerdate:unix)', 'refs/heads']).split('\n').filter(Boolean)) {
     const [branch, tip, t] = l.split('\t');
     if (branch === main || otherLane(own, branch)) continue;
+    if (!related(repo, ref, tip)) { if (!own || branch.startsWith(`norn/${own.name}/`)) unrelated.push({ branch, tip, age_days: Math.floor((now - Number(t) * 1000) / D) }); continue; }
     const c = classify(repo, ref, mainTree, tip);
     if (own && !branch.startsWith(`norn/${own.name}/`) && (c.kind !== 'real' || !touches(repo, ref, tip, own))) continue;
     kinds.set(branch, c.kind);
@@ -83,7 +86,7 @@ export function sweep(repo, { state = null, now = Date.now(), main = 'main', rem
   const remote_merged = gitRun(repo, ['branch', '-r', '--merged', `${remote}/${main}`, '--format=%(refname:short)'], { ok: [0, 1, 128] })
     .split('\n').map(s => s.trim()).filter(b => b && b.startsWith(remote + '/') && b !== `${remote}/${main}` && b !== `${remote}/HEAD` && b !== remote)
     .filter(b => !own || b.startsWith(`${remote}/norn/${own.name}/`));   // merged: only a project's own lane branch is attributable
-  return { main: ref, real, empty, dead, at_risk, remote_merged };
+  return { main: ref, real, empty, unrelated, dead, at_risk, remote_merged };
 }
 
 export function formatSweep(s) {
@@ -92,6 +95,8 @@ export function formatSweep(s) {
   for (const r of s.real) L.push(`  ${r.branch} ${r.age_days} d old, ${r.behind} behind / ${r.ahead} ahead${r.conflicts ? ', CONFLICTS with main' : ''}`);
   L.push(`G2 empty branches: ${s.empty.length} (${s.empty.filter(e => e.why === 'merged').length} merged, ${s.empty.filter(e => e.why !== 'merged').length} add nothing)`);
   for (const e of s.empty) L.push(`  ${e.branch} (${e.why}, ${e.age_days} d)`);
+  L.push(`G3 unrelated history: ${s.unrelated.length}`);
+  for (const u of s.unrelated) L.push(`  ${u.branch} (no common history with main, ${u.age_days} d)`);
   L.push(`G4 dead worktrees: ${s.dead.length}`);
   for (const w of s.dead) L.push(`  ${w.path} ${w.branch ?? '(detached)'} idle ${w.idle_days} d`);
   L.push(`G5 WORK AT RISK: ${s.at_risk.length}`);

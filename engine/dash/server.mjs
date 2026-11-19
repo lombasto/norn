@@ -12,8 +12,8 @@ import { spawn, execFile } from 'node:child_process';
 import { createSessions } from './sessions.mjs';
 import { createFeeds, decodeCursor } from './feed.mjs';
 import { createStreams } from './stream.mjs';
-import { createChat, readThread, threadFile, threadFlushed, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
-import { ActError, showRoots, outboxDir } from '../lib/chatact.mjs';
+import { createChat, readThread, threadFlushed, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
+import { ActError, showRoots, outboxDir, threadFile } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
@@ -25,7 +25,7 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
-import { lanesView, handoffOf } from '../lib/lanes.mjs';
+import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
@@ -387,13 +387,13 @@ export function createDashboard(o) {
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
   const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
-  function lanesWithSpend(ps, all) {
-    const rows = ps.flatMap(p => lanes(p, all));
+  function lanesWithSpend(ps) {
+    const rows = sortLanes(ps.flatMap(p => lanes(p, true)));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
@@ -499,6 +499,29 @@ export function createDashboard(o) {
     }
     return Object.values(by);
   }
+  // RM-18 S2: the Overview strip, one count set per Norn. Urd = what landed (a MERGE run that ended done, or a run ruled landed: norn
+  // runs landed), Verdandi = what runs and what is parked, Skuld = open questions, queued runs, the next check-in (the last check-in's
+  // start + the cadence; null = not known)
+  function stripOf(ps, running, m) {
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const evTs = (i, ev) => [...i.history].reverse().find(h => h.ev === ev)?.ts ?? null;
+    const landed = [], n = { parked: 0, questions: 0, queued: 0 };
+    let ck = null;
+    for (const p of ps) for (const i of Object.values(st(p).items)) {
+      if (i.kind === 'question' && i.state === 'open') n.questions++;
+      else if (i.kind === 'lane' && i.state === 'parked') n.parked++;
+      else if (i.kind === 'run') {
+        if (i.data.kind === 'checkin') { const t = evTs(i, 'start'); if (t && (!ck || t > ck)) ck = t; continue; }
+        if (i.state === 'queued' && i.data.role !== 'helper') n.queued++;
+        const ts = i.landed ? evTs(i, 'landed') : String(i.data.stage ?? '').toUpperCase() === 'MERGE' && i.end?.outcome === 'done' ? evTs(i, 'end') : null;
+        if (ts) landed.push({ run: i.id, lane: i.data.lane ?? null, project: p.name, ts });
+      }
+    }
+    landed.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+    const every = m.policy?.cadence?.checkin_interval_min ?? null;
+    return { landed_today: landed.filter(l => Date.parse(l.ts) >= day.getTime()).length, last_landed: landed[0] ?? null, running: running.length, ...n,
+      checkin: { every_min: every, next: Number.isFinite(every) && ck ? new Date(Date.parse(ck) + every * 60000).toISOString() : null } };
+  }
   async function overview(ps) {
     const m = withDefaults(settingsState(ps[0]).view);
     let needs = [], running = [], tree = [];
@@ -518,7 +541,7 @@ export function createDashboard(o) {
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
-      paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
+      strip: stripOf(ps, running, m), paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
@@ -1414,7 +1437,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
         if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
-        if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: lanesWithSpend(pick(url, { all: true }), all) }); }
+        if (route === '/api/lanes') return send(200, { lanes: lanesWithSpend(pick(url, { all: true })) });
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {

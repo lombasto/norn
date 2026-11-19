@@ -62,6 +62,9 @@ export const KINDS = {
     // from lost too: a stalled supervisor that ends after the sweep called it lost, and the sweep's own end of a dead lost run (runs.mjs endLost)
     end: { from: ['running', 'lost'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
+    // a run lost for a STALE heartbeat (a stall, never a certain death) whose heartbeat came back with its supervisor alive: running
+    // again (sweepLost). Without it the run's own `end` (from running only) was refused - no result, no deliverable, no hand-off resume
+    alive: { from: ['lost'], to: 'running', roles: ['launcher', 'status'] },
     kill: { from: ['running'], to: 'killed', roles: [...OWNER, 'controller'] },
     // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5); META-CATCH S1: the
     // same verdict on a run lost for a certain death (runs.mjs relaunchLost)

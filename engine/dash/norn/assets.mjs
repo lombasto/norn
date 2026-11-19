@@ -1,5 +1,5 @@
 // The ONE Norn asset map (META-VISUAL-B S1). The owner's art pick (NORN-ART round 2, RUN-1681: logo, favicons, wordmark,
-// 7 state tokens, 4 empty states, hero day + night) drops into engine/dash/norn/art/ under these file names and sizes with
+// 7 state tokens, 4 empty states; the hero left with RM-18 S2) drops into engine/dash/norn/art/ under these file names and sizes with
 // NO code change: the server lists which files exist (GET /norn/assets.json), the page uses a present file and falls back
 // to a palette-drawn placeholder otherwise. Sizes are art px; `k` = device px per art px when shown (1 = native, 'ui' =
 // the UI art scale --px). Every final PNG is palette-indexed (palette.hex) with binary alpha (art brief).
@@ -18,8 +18,6 @@ export const ASSETS = {
     [`token-${t}-24`, { file: `token-${t}-24.png`, w: 24, h: 24, k: 1, use: `state token ${t} (cards)` }],
     [`token-${t}-16`, { file: `token-${t}-16.png`, w: 16, h: 16, k: 1, use: `state token ${t} (chips)` }]])),
   ...Object.fromEntries(EMPTIES.map(e => [`empty-${e}`, { file: `empty-${e}.png`, w: 96, h: 64, k: 1, use: `empty state ${e}` }])),
-  'hero-night': { file: 'hero-night.png', w: 320, h: 180, k: 'ui', use: 'Overview header, dark ground' },
-  'hero-day': { file: 'hero-day.png', w: 320, h: 180, k: 'ui', use: 'Overview header, light ground' },
   // META-TEND P6: SloppaChoppa (ORC-1 round 5 + 6; the 96 strips = round 8, owner pick 11-17): the header bust, the phone's axe, the 96 strips of the stage
   'orc-32': { file: 'orc-32.png', w: 32, h: 32, k: 1, use: 'header: call SloppaChoppa up' },
   'orc-16': { file: 'orc-16.png', w: 16, h: 16, k: 'ui', use: 'phone header: call SloppaChoppa up (UI scale: fills the 44 px touch target)' },
@@ -38,7 +36,6 @@ export const CHIP_TOKEN = {
 export const PLACEHOLDER = name => {
   if (name.startsWith('token-')) return { glyph: name.slice(6).replace(/-\d+$/, '') };
   if (name.startsWith('empty-')) return { glyph: { 'no-runs': 'idle', 'nothing-needs-you': 'done', 'no-questions': 'handoff', 'all-delivered': 'done' }[name.slice(6)] ?? 'idle', frame: true };
-  if (name.startsWith('hero-')) return { glyph: 'verdandi', frame: true, scene: true };
   if (name === 'wordmark') return { glyph: 'running', word: 'NORN' };
   return { glyph: 'running', frame: name.startsWith('logo') };
 };

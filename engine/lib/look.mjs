@@ -80,6 +80,3 @@ export function lookHold(row, { item, run, headMs, stat = fs.statSync }) {
   if (mtimeOf(v.image, stat) === null) return `${pre}the verdict image ${fwd(v.image)} does not exist`;
   return null;
 }
-
-/** the `road show` line of a look item, or null */
-export const lookWords = n => (n.proof ? `proof: ${n.proof}; views ${(n.views || []).join(', ') || '-'}; verdict: ${n.verdict ? `${n.verdict.verdict} by ${n.verdict.by} ${n.verdict.ts} ${n.verdict.image}` : 'none'}` : null);

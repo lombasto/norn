@@ -19,7 +19,7 @@ const RULE_KEY = /^(rule-|enforcement-)/;
 // META-UX-BUILD S5 (REPORT s.3): every row carries the kind of fix its check DECLARED (advisory fix.kind, HINT_FIX, TIGHTEN_FIX,
 // ADVICE_FIX, SLOP_FIX), its two ways for "your call", and its batch = check + kind; the batch's title is the check's name.
 /** SloppaChoppa's open BLOCK findings (norn slop check): fixed on the branch or waived - the owner's call */
-export const SLOP_FIX = { kind: 'call', ways: ['Fix it on the branch', 'Waive it (norn slop waive)'], title: 'Code checks hold a branch' };
+export const SLOP_FIX = { kind: 'call', ways: ['Fix it on the branch', 'Waive it (norn rec add waiver)'], title: 'Code checks hold a branch' };
 /** META-DOD 2: a refused call - the brief was too narrow (widen Scope) or the guard did its job (leave it) - the owner's call */
 export const SCOPE_FIX = { kind: 'call', ways: ['Widen the brief Scope and resume', 'Leave it refused'], title: 'Norn refused a call outside the run scope' };
 /** the batch title of the advisory checks that are not instruction-file checks (those use CHECKS' title) */
@@ -79,7 +79,7 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
       action: c.fix ?? null, cls: c.id, ...fixOf('model-advice', ADVICE_FIX, 'Model advice for a class of work'), go: { tab: 'usage', jump: 'usage-advice' } });
   for (const h of holds) for (const b of h.blocks || [])
     out.push({ id: 'S-' + b.fp, type: 'code', severity: 'high', surface: `branch ${h.branch}`, path: b.file, line: b.line ?? null, why: `${b.rule}: ${b.msg}`,
-      source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn slop waive)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
+      source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn rec add waiver)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
       go: { tab: 'slop', jump: 'slop-S-' + b.fp } });   // its own Slop row (an ended run is on no live Runs view)
   // META-DOD 2: a call Norn's scope hook refused (scope.mjs refusals: the run, its tool, the target, the plain reason)
   for (const r of refusals)
