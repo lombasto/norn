@@ -51,7 +51,7 @@
 
 ## Suite (session 2, one full run: `node engine/bin/ci-suite.mjs`, 176 files, ~44 min)
 `0 listed red(s), 13 new, 0 leak(s), 0 hang(s)`. The reds, each checked alone:
-- tests/lint.test.mjs: mine - the laneOutput test used a `C:/Users/x/...` repo path (a home path to the lint). Fixed (f0cf5a5); lint 2/2.
+- tests/lint.test.mjs: mine - the laneOutput test used a repo path under a user's home folder (a home path to the lint). Fixed (f0cf5a5); lint 2/2.
 - tests/gen.test.mjs (7) and tests/policy-gen.test.mjs (3): `project.json: not found: <tmp>/state/kestrel/hx/dev/sdd-codex/...`.
   They fail in ANY checkout that lives under `state/<project>/wt/` (this lane worktree) and pass from a %TEMP% worktree of the same
   HEAD (gen 8/8, policy-gen 3/3) and on origin/main. Location-dependent, not this change. Finding: a lane worktree under state/ breaks

@@ -517,6 +517,7 @@ export function createDashboard(o) {
     const tree = agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
     // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
+    if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
     return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
       return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}),
