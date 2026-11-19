@@ -3,7 +3,7 @@
 //   routine ends   - a run end the policy calls routine (policy.checkin.routine) is handled by code in the tick, never by a model:
 //                    merge_done = a MERGE run ended DONE (its norn done result) -> reviewed; worker_done_stage = a worker DONE with a
 //                    pushed head on an auto-stage lane -> the standard staged merge (merge-brief --sha + a queued MERGE run; with a
-//                    fast merge-queue gate the queue batches it) and reviewed. Every action is a run review record by: launcher
+//                    fast merge-queue gate the queue batches it; where a merge gate is known, mergeq lands it by code: landing.mjs) and reviewed. Every action is a run review record by: launcher
 //                    with { routine, why }. STOPPED / HANDOFF / no-result / an unpushed head / a question by the run: a model.
 //   debounce       - run ends within policy.checkin.debounce_min wake ONE tick (at the oldest new end + the window).
 //   lane levels    - full (today) | on-end (its running / stall / idle facts never wake: a long design run is not re-reviewed
@@ -17,6 +17,9 @@ import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
+import { landsByCode } from './landing.mjs';
+import { mergeConfig } from './mergeq.mjs';
+import { mainTip } from './mergewt.mjs';
 
 export const ROUTINE_KINDS = ['merge_done', 'worker_done_stage'];   // = the policy.checkin.routine row's options
 export const LEVELS = ['none', 'on-end', 'full'];
@@ -78,13 +81,17 @@ export function handleRoutineEnds(state, p, o = {}) {
   if (!cp.routine.length) return [];
   const runEvs = readEvents(recordsFile(state, 'run')), recEvs = readEvents(recordsFile(state, 'question')), mailEvs = readEvents(recordsFile(state, 'mail'));
   const cli = o.cli || (o.metaCmd ? metaCli(o.metaCmd) : null), out = [];
+  let landed;   // landsByCode, read once per pass (it reads main's tree)
   for (const r of Object.values(fold(runEvs).items)) {
     if (r.kind !== 'run') continue;
     const rt = routineOf(r, { cp, recEvs, mailEvs, pushed: o.pushed || pushedHead, home: homeOf(state)?.id });
     if (!rt) continue;
     const data = { refs: [r.id], routine: rt.kind, why: rt.why };
     if (rt.action === 'stage') {
+      const cfg = mergeConfig(p);
       if (p.merge?.gate?.fast) data.why += ' (the fast merge-queue gate batches its deliverable: meta mergeq)';
+      // MERGE-FIRST (3): a merge gate is known -> mergeq lands it with no LLM; only a conflict, red gate or slop block queues its MERGE
+      else if ((landed ??= o.landsByCode ?? landsByCode(p, { cfg, tip: mainTip(cfg.repo, { main: cfg.main, remote: cfg.remote }) }))) data.why += ' (mergeq lands it by code: a conflict, red gate or slop block queues its MERGE)';
       else {
         if (!cli || !p.file) { out.push({ id: r.id, kind: rt.kind, ok: false, note: 'no meta CLI / project file to stage with' }); continue; }
         const a = stageArgs(p, r, rt, cp), b = cli(a.brief);
