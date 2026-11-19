@@ -14,7 +14,7 @@ import { globToRe } from '../dlvgit.mjs';
 
 export const slopDir = state => path.join(state, 'slop');
 const readJ = (f, dflt) => { const t = readText(f); return t === null ? dflt : JSON.parse(t); };   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
-export const slopFiles = state => [holdsFile(state), path.join(slopDir(state), 'report.json'), path.join(slopDir(state), 'series.json')];
+export const slopFiles = state => [holdsFile(state), path.join(slopDir(state), 'report.json'), path.join(slopDir(state), 'series.json'), checksFile(state), ratingsFile(state)];
 function writeJ(f, v) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(v, null, 1)); fs.renameSync(f + '.tmp', f); }
 const holdsFile = state => path.join(slopDir(state), 'holds.json');
 const checksFile = state => path.join(slopDir(state), 'checks.jsonl');

@@ -959,6 +959,7 @@ document.addEventListener('click', e => {
     document.querySelectorAll('#fixall [data-act=fx-way]').forEach(x => x.setAttribute('aria-pressed', String(f.picks[x.dataset.key] === x.dataset.way))); fxCount(); return; }
   if (d.act === 'fixall-send') { const f = S.fixall; if (!f || f.sent) return; fxKeys(); b.disabled = true;
     act(async () => { f.sent = await post('/api/fixall', { project: S.project, sig: d.sig, keys: [...f.keys], picks: f.picks }); }).finally(() => { if (!f.sent) b.disabled = false; }); return; }
+  if (d.act === 'slop-rate') { b.disabled = true; act(() => post('/api/slop/rate', { project: S.project, fp: d.fp, up: d.up === '1' })); return; }   // RM-43: a thumb on a second-voice finding
   if (d.act === 'slop-batch') { S.batch = d.batch || null; S.subLimit = null; render(); return; }   // META-UX-BUILD S5: open one batch (or close it)
   if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
   if (d.tab) { document.body.classList.remove('more'); S.sub = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = d.tab; history.replaceState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
