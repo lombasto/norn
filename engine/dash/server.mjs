@@ -289,7 +289,7 @@ export function createDashboard(o) {
       settings: settingsView(s.view, { quietRule, quietFile: o.quietFile, ...exExtra(p) }), sections: SECTIONS, generated: generatedLines(s.view, exExtra(p)), targets,
       // F-6: each profile as Settings changes for this project's executors + role agents - the form is filled, Save stays the human step
       profiles: profileChoices(profileFor(p, s)), profile_now: profileNow(p, s), billing: billingChoices(), billing_now: s.budget?.billing ?? null,
-      notify: notifyInfo(p) };
+      notify: notifyInfo(p), checkin_below: checkinBelowFloor(s.view) };   // RM-26: the Settings notice while a check-in setting is below the floor
   }
   // META-PROFILE-BUG R1: a profile routes to the Codex executors this machine has (setup found codex) and the project did not switch
   // off, never to a retired one (retiredExecutors: its own cap 0 while Codex is open); the role names are the project's own agents
