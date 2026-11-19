@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { fillQueue, queueRun, queueOf, readiness, requeueRun, landingPriority, workPriority, lockPath } from '../engine/lib/runs.mjs';
 import { loadState, record } from '../engine/lib/records.mjs';
 import { parseAfter } from '../engine/lib/after.mjs';
+import { digest } from '../engine/lib/digest.mjs';
+import { renderDigest } from '../engine/lib/views.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { runEnded } from './helpers/wait.mjs';
 
@@ -18,6 +20,7 @@ const meta = args => {
   const r = spawnSync(process.execPath, [META, ...args], { encoding: 'utf8', windowsHide: true, env: { ...process.env, META_ROLE: '', META_PROJECT: '', META_STATE: '', META_NO_TICK: '1' } });
   return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() };
 };
+const PIN = { free_gb: 64, cpu_pct: 5 };   // the machine's own load never gates these fills
 const runs = d => Object.values(loadState(d.state).items).filter(i => i.kind === 'run');
 
 function sandbox() {
@@ -66,10 +69,10 @@ test('one queued MERGE and one P1 build with one slot: the MERGE starts', async 
   const d = sandbox();
   const build = d.q({ lane: 'build', stage: 'BUILD', priority: 'P1' });
   const merge = d.q({ lane: 'land', stage: 'MERGE' });
-  const rows = readiness(d.state);
+  const rows = readiness(d.state, { resources: () => PIN });
   assert.deepEqual(rows.map(r => [r.id, r.ready]), [[merge, true], [build, false]]);
   assert.match(rows[1].terms.join(), /^cap: 1 claude workers running, budget max_claude_workers=1$/);
-  const got = fillQueue(d.state);
+  const got = fillQueue(d.state, { resources: () => PIN });
   assert.deepEqual(got.map(x => x.queued), [merge], 'the merge took the one slot');
   assert.equal(d.item(build).state, 'queued');
   await runEnded(d.state, got[0].next);
@@ -83,17 +86,17 @@ test('merge reserve: while a merge waits (here on its held worktree), other runs
   const merge = d.q({ lane: 'land', stage: 'MERGE', worktree: mwt, budget });
   const a = d.q({ lane: 'a', stage: 'BUILD', budget, policy: { auto_resume_max: 0, fill: { merge_reserve: 1 } } });
   const b = d.q({ lane: 'b', stage: 'BUILD', budget, policy: { auto_resume_max: 0, fill: { merge_reserve: 1 } } });
-  let rows = readiness(d.state);
+  let rows = readiness(d.state, { resources: () => PIN });
   assert.match(rows.find(r => r.id === merge).terms.join(), /worktree held by RUN-other/);
   assert.equal(rows.find(r => r.id === a).ready, true, 'one slot of two is free beyond the reserve');
   assert.match(rows.find(r => r.id === b).terms.join(), /1 slot\(s\) kept for the queued merges \(fill\.merge_reserve\)/);
   // merge_reserve 0: no slot kept
   const c = d.q({ lane: 'c', stage: 'BUILD', budget, policy: { auto_resume_max: 0, fill: { merge_reserve: 0 } } });
-  rows = readiness(d.state);
+  rows = readiness(d.state, { resources: () => PIN });
   assert.equal(rows.find(r => r.id === c).ready, true, 'its own merge_reserve 0: it may take the last slot');
   // the merge no longer waits: the lock is gone, so it takes a slot and the reserve is spent
   fs.rmSync(lockPath(d.locks, mwt));
-  rows = readiness(d.state);
+  rows = readiness(d.state, { resources: () => PIN });
   assert.deepEqual(rows.filter(r => r.ready).map(r => r.id), [merge, a]);
 });
 
@@ -120,4 +123,16 @@ test('norn requeue --priority keeps the after: conditions (and the dashboard rol
   assert.equal(cm.code, 0, cm.err);
   assert.equal(d.item(cm.out.match(/-> (RUN-\d+)/)[1]).data.priority, 'P1', 'a merge never below P1');
   assert.ok(record);
+});
+
+test('digest row 0c: over policy.merge.backlog_max finished deliverables, the check-in is told to land before starting', () => {
+  const d = sandbox(), now = Date.parse('2026-11-19T12:00:00Z');
+  const row = n => ({ id: 'DLV-' + n, state: 'done', record_state: 'open', superseded: null, pr: null, lane: 'l' + n, branch: 'norn/l' + n, delivers: 'x', done_utc: '2026-11-19T02:00:00Z', days: 0.4 });
+  const git = { run: () => ({ ok: false, out: '' }) }, dg = (rows, policy) => digest(d.state, { policy }, { now, git, dlv: rows, evalAfter: () => ({ met: true, gone: false }), ready: [] });
+  assert.equal(dg([1, 2, 3].map(row)).sections.backlog, undefined, '3 = the default max: no row');
+  const g = dg([1, 2, 3, 4].map(row));
+  assert.deepEqual(g.sections.backlog, [{ id: 'MERGE-BACKLOG', n: 4, oldest_h: 10, max: 3, ids: ['DLV-1', 'DLV-2', 'DLV-3', 'DLV-4'] }]);
+  assert.match(renderDigest(g), /0c MERGE BACKLOG[^\n]*\n- MERGE BACKLOG 4 \(oldest 10 h\): over max 3 - land work before starting new lanes: DLV-1, DLV-2, DLV-3, DLV-4/);
+  assert.equal(dg([1, 2, 3, 4].map(row), { merge: { backlog_max: 5 } }).sections.backlog, undefined, 'the setting raises the line');
+  assert.equal(dg([1, 2, 3, 4].map(n => ({ ...row(n), pr: { number: n } }))).sections.backlog, undefined, 'a PR opened = on its way: not backlog');
 });
