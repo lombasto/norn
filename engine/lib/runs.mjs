@@ -30,6 +30,7 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
+import { resultDir, readResult, NO_RESULT } from './result.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -254,6 +255,43 @@ const loadPath = state => path.join(state, 'hb', 'load.json');
 export const sweptCpu = (state, { now = Date.now(), maxMs = 5 * 60e3, read = readJson } = {}) => { const l = read(loadPath(state)); return l && now - Date.parse(l.ts) <= maxMs ? l.cpu_pct : null; };
 // the run's heartbeat was written after its lost record (whose ts is whole seconds: a beat in a later second)
 const beatSinceLost = (state, it) => (fs.statSync(hbPath(state, it.id), { throwIfNoEntry: false })?.mtimeMs ?? 0) >= Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts) + 1000;
+// MAIL-28 (2): a supervisor deletes its heartbeat as it exits; when its end record did not land (refused: RUN-80, RUN-89) the run still
+// read running, and the sweep saw no heartbeat and recorded it lost, cause no-start - a certain death, so relaunchLost relaunched a run
+// that had finished. What a finished run leaves: its supervisor's end data (END_FILE, written before the record), its result.json, its
+// log's exit line. -> { data, from } | null
+export const END_FILE = 'end.json';
+export const endFilePath = (state, run) => path.join(resultDir(state, run), END_FILE);
+function endEvidence(state, it) {
+  const e = readJson(endFilePath(state, it.id));
+  if (e?.run === it.id && e.data && typeof e.data === 'object') return { data: e.data, from: `its supervisor's end data (${END_FILE})` };
+  const log = readJson(path.join(state, 'runs', it.id + '.spec.json'))?.log;
+  let text = ''; try { text = log ? fs.readFileSync(log, 'utf8') : ''; } catch { /* no log */ }
+  const m = [...text.matchAll(/^\S+ exit=(\S+)/gm)].at(-1), code = m && /^-?\d+$/.test(m[1]) ? Number(m[1]) : null;
+  const r = readResult(resultDir(state, it.id), { run: it.id });
+  if (r && !r.error && (!m || code === 0)) return { data: { exit: code, outcome: r.outcome, outcome_source: 'result', result: fwd(resultDir(state, it.id)), ...drop({ why: r.why, summary: r.summary, handoff: r.handoff && fwd(r.handoff) }) }, from: 'its result.json' };
+  return m ? { data: { exit: code, outcome: code === 0 ? NO_RESULT : 'crash', outcome_source: 'exit' }, from: `its log's exit line (exit=${m[1]})` } : null;
+}
+// the end a sweep records from a finished run's evidence (and its heartbeat goes) -> true when recorded
+function endFromEvidence(state, it, ev) {
+  try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { ...ev.data, swept: `end not recorded by its supervisor: recorded by the sweep from ${ev.from}` } }); }
+  catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
+  try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
+  return true;
+}
+/**
+ * MAIL-28 (1): the supervisor's end record. An end refused while the run reads lost (a supervisor whose event table takes end from
+ * running only: RUN-80 "end not recorded: RUN-80 is lost; end needs running") does not give up: alive, then its end. Any other refusal
+ * (killed, already ended) throws as before. rec: a test's record.
+ */
+export function recordEnd(state, run, data, { rec = record } = {}) {
+  const end = () => rec(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data });
+  try { return end(); }
+  catch (e) {
+    if (!(e instanceof RecordError) || runsOf(state).find(r => r.id === run)?.state !== 'lost') throw e;
+    rec(state, { kind: 'run', ev: 'alive', id: run, by: 'launcher', data: { why: `its supervisor ended it (end refused: ${e.message})` } });
+    return end();
+  }
+}
 export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone, load = () => sampleResources({ ms: 250 }).cpu_pct } = {}) {
   const lost = [];
   const t = now().getTime(), bt = boot();
@@ -286,6 +324,8 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
     else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
     else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
+    const ev = DEAD_CAUSES.includes(cause) ? endEvidence(state, it) : null;   // MAIL-28 (2): a finished run is ended, never lost
+    if (ev && endFromEvidence(state, it, ev)) continue;
     try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
   }
   return lost;
@@ -344,6 +384,8 @@ export function endLost(state, { now = Date.now(), gone = pidGone } = {}) {
     if (beatSinceLost(state, it)) continue;   // MAIL-22: it beat after the lost record - never ended (a live stall is revived above)
     const hb = readJson(hbPath(state, it.id)), pids = [hb?.supervisor_pid, hb?.pid, it.lost?.supervisor_pid].filter(p => Number.isInteger(p) && p > 0);
     if (!pids.every(gone)) continue;
+    const ev = endEvidence(state, it);   // MAIL-28: the end its supervisor could not record, else a crash
+    if (ev) { if (endFromEvidence(state, it, ev)) out.push(it.id); continue; }
     const why = `lost: ${it.lost?.why ?? 'no heartbeat'}; supervisor and executor gone, no end record`;
     try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } }); }
     catch (e) { if (!(e instanceof RecordError)) throw e; continue; }

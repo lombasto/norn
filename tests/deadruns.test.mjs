@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { sweepLost, relaunchLost, lostNotice, hbPath, pidGone } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -190,4 +190,73 @@ test('the lanes view: a running run with a late beat reads "heartbeat late (N s,
   assert.equal(view({}), 'heartbeat late (210 s)');
   const { stateOf } = await import('../engine/dash/ui.mjs');
   assert.deepEqual(stateOf('heartbeat late (210 s, CPU 98 %)'), ['warn', 'late']);
+});
+
+// MAIL-28 (2): a supervisor that exits deletes its heartbeat; when its end was refused (RUN-80, RUN-89) the run still read running,
+// and the sweep saw no heartbeat and recorded it lost, cause no-start ("the run never started") - a certain death, so relaunchLost
+// tried to relaunch a run that had finished. A run that leaves its supervisor's end data, a result.json or an exit line is ended
+// from them, never lost; no-start stays for a run with none of them.
+test('sweep: a finished run whose end was not recorded (no heartbeat) is ended from its evidence - end.json, result.json, the log exit line - never lost no-start, never relaunched', async () => {
+  const { resultDir } = await import('../engine/lib/result.mjs');
+  const d = sandbox(), byEnd = d.start(), byResult = d.start(), byExit = d.start(), none = d.start(), wrongRun = d.start();
+  const later = { now: () => new Date(Date.now() + 3 * 3600e3), load: () => 0 };
+  const res = (id, j) => { fs.mkdirSync(resultDir(d.state, id), { recursive: true }); fs.writeFileSync(path.join(resultDir(d.state, id), j.file), JSON.stringify(j.body)); };
+  for (const id of [byEnd, byResult, byExit, none, wrongRun]) d.spec(id, { log: path.join(d.t, id + '.log') });
+  res(byEnd, { file: 'end.json', body: { run: byEnd, data: { exit: 0, outcome: 'done', outcome_source: 'result', dod: { ok: true }, supervisor_pid: 4242 } } });
+  res(byResult, { file: 'result.json', body: { run: byResult, outcome: 'stopped', why: 'blocked', at: new Date().toISOString() } });
+  fs.writeFileSync(path.join(d.t, byExit + '.log'), `${new Date().toISOString()} start\n2026-11-18T10:00:00.000Z exit=1\n`);
+  res(wrongRun, { file: 'result.json', body: { run: 'RUN-999', outcome: 'done', at: new Date().toISOString() } });
+  assert.deepEqual(sweepLost(d.state, later).sort(), [none, wrongRun].sort(), 'only the runs with no evidence of their own are lost');
+  const end = id => d.item(id).history.find(h => h.ev === 'end')?.data;
+  assert.equal(d.item(byEnd).state, 'exited');
+  assert.equal(end(byEnd).outcome, 'done'); assert.deepEqual(end(byEnd).dod, { ok: true }, "the supervisor's own end data, Done check included");
+  assert.match(end(byEnd).swept, /end\.json/);
+  assert.equal(end(byResult).outcome, 'stopped'); assert.equal(end(byResult).why, 'blocked'); assert.equal(end(byResult).outcome_source, 'result');
+  assert.equal(end(byExit).outcome, 'crash'); assert.equal(end(byExit).exit, 1); assert.match(end(byExit).swept, /exit line/);
+  assert.equal(d.item(none).lost.cause, 'no-start');
+  assert.deepEqual(relaunchLost(d.state, { start: () => ({ run: 'RUN-X' }) }).map(r => r.id).sort(), [none, wrongRun].sort(), 'no finished run is relaunched');
+  assert.deepEqual(sweepLost(d.state, later), [], 'idempotent');
+});
+
+test('sweep: a supervisor that is gone (cause gone) but left its end data is ended from it, not lost', async () => {
+  const { resultDir } = await import('../engine/lib/result.mjs');
+  const d = sandbox(), a = d.start();
+  d.hb(a, { supervisor_pid: deadPid() });
+  fs.mkdirSync(resultDir(d.state, a), { recursive: true });
+  fs.writeFileSync(path.join(resultDir(d.state, a), 'end.json'), JSON.stringify({ run: a, data: { exit: 0, outcome: 'handoff', outcome_source: 'result' } }));
+  assert.deepEqual(sweepLost(d.state, { load: () => 0 }), []);
+  assert.equal(d.item(a).state, 'exited'); assert.equal(d.item(a).end.outcome, 'handoff');
+  assert.equal(fs.existsSync(hbPath(d.state, a)), false, 'its heartbeat goes with the end');
+});
+
+test('endLost: a lost run whose supervisor left its end data is ended with that data, not as a crash', async () => {
+  const { endLost } = await import('../engine/lib/runs.mjs');
+  const { resultDir } = await import('../engine/lib/result.mjs');
+  const d = sandbox(), a = d.start();
+  d.spec(a, { log: path.join(d.t, 'a.log') });
+  const sup = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);   // a supervisor that stalls (lost, stale), then exits
+  d.hb(a, { supervisor_pid: sup.pid }); stale(d, a);
+  sweepLost(d.state, { load: () => 0 });
+  assert.equal(d.item(a).lost.cause, 'stale');
+  fs.mkdirSync(resultDir(d.state, a), { recursive: true });
+  fs.writeFileSync(path.join(resultDir(d.state, a), 'end.json'), JSON.stringify({ run: a, data: { exit: 0, outcome: 'done', outcome_source: 'result' } }));
+  await new Promise(r => { sup.on('exit', r); sup.kill(); });
+  stale(d, a);
+  assert.deepEqual(endLost(d.state), [a]);
+  assert.equal(d.item(a).end.outcome, 'done'); assert.match(d.item(a).end.swept, /end\.json/);
+});
+
+// MAIL-28 (1): the supervisor's end path never gives up on a run that reads lost: alive, then its end
+test('recordEnd: an end refused because the run reads lost (an older event table) records alive and then the end; a killed run stays refused', async () => {
+  const { recordEnd } = await import('../engine/lib/runs.mjs');
+  const { RecordError } = await import('../engine/lib/records.mjs');
+  const d = sandbox(), a = d.start(), k = d.start();
+  record(d.state, { kind: 'run', ev: 'lost', id: a, by: 'status', data: { why: 'heartbeat 300 s old', cause: 'stale' } });
+  // the older table: end only from running
+  const older = (st, e, o) => { if (e.ev === 'end' && loadState(st).items[e.id].state !== 'running') throw new RecordError(`${e.id} is ${loadState(st).items[e.id].state}; end needs running`); return record(st, e, o); };
+  recordEnd(d.state, a, { exit: 0, outcome: 'done' }, { rec: older });
+  assert.deepEqual(d.item(a).history.map(h => h.ev), ['start', 'lost', 'alive', 'end']);
+  assert.equal(d.item(a).state, 'exited'); assert.equal(d.item(a).end.outcome, 'done');
+  record(d.state, { kind: 'run', ev: 'kill', id: k, by: 'owner', data: {} });
+  assert.throws(() => recordEnd(d.state, k, { exit: 0, outcome: 'done' }), /is killed/);
 });

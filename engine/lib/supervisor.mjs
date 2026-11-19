@@ -13,7 +13,7 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
+import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
@@ -228,7 +228,11 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // META-DOD 3: a plan review's end names its findings file and count (critique.mjs: 0 = clean, the build it holds goes)
   if (spec.critique) data.critique = { ...spec.critique, file: String(spec.notes).replace(/\\/g, '/'), findings: findingsCount(read(spec.notes)) };
-  try { record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data }); }
+  // MAIL-28: the end data goes to END_FILE first - an end that does not land (refused, or this process dies) is recorded from it by
+  // the sweep (sweepLost / endLost), never read as a run that never started; recordEnd revives a run that reads lost before its end
+  const endFile = endFilePath(state, run);
+  try { fs.mkdirSync(path.dirname(endFile), { recursive: true }); fs.writeFileSync(endFile, JSON.stringify({ run, data })); } catch (e) { logLine(`end data not kept: ${e.message}`); }
+  try { recordEnd(state, run, data); try { fs.unlinkSync(endFile); } catch { /* not written */ } }
   catch (e) {   // killed meanwhile: `norn stop` owns the cleanup
     logLine(`end not recorded: ${e.message}`);
     // CIRED-7b3d67d: swept lost meanwhile (a stall, not a death): nobody else frees its locks or fills the queue - this exit does
