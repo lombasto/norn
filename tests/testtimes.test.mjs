@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
+import { openPage, skipWhy } from './helpers/cdp.mjs';
 import { measureFile } from '../engine/lib/testlean.mjs';
 import { suiteKind, pythonOf, parseJunit, pytestMeasure, pytestCov, describeTest, timesTable, breakdown, slowestTests, impactMap, testsFor, repoFile, testId } from '../engine/lib/testtimes.mjs';
 
@@ -179,4 +180,99 @@ test('norn tests measure on a node:test suite writes times.json + impact.json; `
   r = norn('for', 'engine/x.mjs', 'engine/nope.mjs');
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /engine\/x\.mjs: tests\/x\.test\.mjs/); assert.match(r.stdout, /engine\/nope\.mjs: not in the last measure's coverage/); assert.match(r.stdout, /1 test file\(s\) to run/);
   assert.equal(norn('for').status, 2);
+});
+
+// the dashboard: /api/tests = the summary (+ the open alerts the test machinery raised), ?part= one sub-view; /api/tests/source opens a
+// test's file only from inside the project repo
+async function tabFixture() {
+  const { fixture } = await import('./helpers/dash-fixture.mjs'), { record } = await import('../engine/lib/records.mjs');
+  const f = await fixture(), d = path.join(f.pa.state, 'tests'), repo = f.pa.root;
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true }); fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'a.test.mjs'), Array.from({ length: 80 }, (_, i) => (i === 59 ? "test('two <slow>', async () => { await new Promise(r => setTimeout(r, 300)); });" : `// line ${i + 1} of a long test file that wraps on a phone: ${'x'.repeat(i % 7 * 20)}`)).join('\n'));
+  fs.writeFileSync(path.join(f.root, 'secret.txt'), 'outside the repo');
+  const t = timesTable(NODE_MEASURE, { sha: 'abc123', run: 'RUN-7', exit: 0 });
+  fs.writeFileSync(path.join(d, 'times.json'), JSON.stringify(t)); fs.writeFileSync(path.join(d, 'impact.json'), JSON.stringify(impactMap(NODE_MEASURE, { sha: 'abc123' })));
+  fs.writeFileSync(path.join(d, 'history.jsonl'), JSON.stringify({ at: NODE_MEASURE.at, sha: 'abc123', files: 2, tests: 6, suite_ms: 900, file_ms: 900, coverage: { covered: 3, total: 7, pct: 42.9 } }) + '\n');
+  fs.writeFileSync(path.join(d, 'costs.json'), JSON.stringify({ at: NODE_MEASURE.at, cpu_pct: 12, tests: { 'tests/a.test.mjs::outer::two': { cpu_s: 2.5, peak_mb: 180, children: { browser: 1, git: 2 }, alone_ms: 300, load_ms: 900 } } }));
+  fs.mkdirSync(path.join(f.pa.state, 'mq'), { recursive: true });
+  fs.writeFileSync(path.join(f.pa.state, 'mq', 'batch-3.json'), JSON.stringify({ n: 3, status: 'merged', result: 'green', gate: 'node engine/bin/ci-suite.mjs', built: NODE_MEASURE.at, done_at: NODE_MEASURE.at, members: [{ id: 'RUN-5' }], runs: [{ label: 'tip', ok: true, ms: 61000 }] }));
+  record(f.pa.state, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'tests/a.test.mjs::outer::two failed 3 times under load', lane: 'gen', area: 'tests', options: [{ key: 'a', text: 'quarantine this test' }, { key: 'b', text: 'open a fix lane' }], recommend: { key: 'a', why: 'passes alone' } } });
+  return f;
+}
+test('Tests tab: the summary (when, which run, alerts as Inbox questions) and each sub-view\'s part; Impact for files; the source guard', async () => {
+  const { loadTab, loadParts, renderTab } = await import('../engine/dash/ui.mjs'), { TESTS_SUBS, codeView } = await import('../engine/dash/testparts.mjs');
+  const f = await tabFixture(), get = async p => (await f.get(p)).data, now = Date.parse('2026-11-19T12:00:00Z');
+  try {
+    const view = async (sub, batch) => { const d = await loadTab('tests', 'kestrel', get, { sub, batch }); return { d, html: renderTab('tests', { ...d, ...(await loadParts('tests', 'kestrel', d, get)), parts_loading: false }, { now }) }; };
+    assert.deepEqual(TESTS_SUBS.map(x => x[1]), ['Suite', 'Costs and health', 'Impact', 'Trends'], '4 sub-views (CLAUDE.md: never a fifth)');
+    const s = await view('suite');
+    assert.equal(s.d.times.run, 'RUN-7'); assert.equal(s.d.alerts.length, 1);
+    assert.match(s.html, /id="tests-when"[^]*Timings taken <b>10:00Z<\/b> at <span class="mono">abc123<\/span> by <button[^>]*>RUN-7<\/button>/);
+    assert.match(s.html, /id="tests-alerts"[^]*failed 3 times under load[^]*data-act="answer"[^]*data-choice="a"[^]*quarantine this test - recommended[^]*data-tab="inbox"/);
+    assert.match(s.html, /id="tests-sum"[^]*<b class="mono">6<\/b><span class="small mute">node:test tests timed[^]*<b class="mono">300 ms<\/b><span class="small mute">slowest: two/);
+    assert.match(s.html, /id="tests-breakdown"[^]*tests\/a\.test\.mjs<\/span> <b class="mono">600 ms<\/b> <span class="small mute">66\.7 %[^]*outer<\/span> <b class="mono">400 ms<\/b> <span class="small mute">44\.4 %/);
+    assert.match(s.html, /id="tests-rows"[^]*<li data-test="tests\/a\.test\.mjs::outer::two"><div><b>two<\/b> <b class="mono">300 ms<\/b>/);
+    assert.match(s.html, /data-act="test-src" data-file="tests\/a\.test\.mjs" data-line="4"/);
+    assert.match(s.html, /no description: no docstring, no comment above it, and its name says little/);
+    const c = await view('costs');
+    assert.match(c.html, /id="tests-pertest"[^]*measured: costs[^]*with the machine at 12 % CPU[^]*not measured yet<\/span> health, tiers/);
+    assert.match(c.html, /CPU 2\.5 s · peak 180 MB · children: 1 browser, 2 git · alone 300 ms \/ under load 900 ms/);
+    assert.match(c.html, /id="tests-runs"[^]*not measured yet/, 'no budgets.jsonl: never a number');
+    assert.match(c.html, /id="tests-merges"[^]*batch-3<\/b> <b class="mono">61 s<\/b>[^]*node engine\/bin\/ci-suite\.mjs/);
+    const i = await view('impact', 'files:engine/z.mjs,engine/none.mjs');
+    assert.match(i.html, /2 file\(s\) → <b>1 test file\(s\)<\/b>/); assert.match(i.html, /engine\/none\.mjs<\/span> <span class="small mute">not in the measure/);
+    assert.match(i.html, /norn tests for engine\/z\.mjs engine\/none\.mjs/);
+    const nl = await view('impact', 'lane:nope');
+    assert.match(nl.html, /refused<\/span> no lane nope in kestrel/);
+    const tr = await view('trends');
+    assert.match(tr.html, /id="tests-cpu"[^]*not measured yet/); assert.match(tr.html, /id="tests-lanemin"[^]*not measured yet/);
+    // the code viewer: inside the repo only
+    const r = await f.get('/api/tests/source?project=kestrel&file=tests/a.test.mjs');
+    assert.equal(r.status, 200); assert.equal(r.data.lines, 80); assert.match(r.data.text, /two <slow>/);
+    for (const bad of ['../secret.txt', 'tests/../../secret.txt', path.join(f.root, 'secret.txt'), '.git/config', ''])
+      assert.equal((await f.get(`/api/tests/source?project=kestrel&file=${encodeURIComponent(bad)}`)).status, 403, bad);
+    const cv = codeView({ file: 'tests/a.test.mjs', text: r.data.text, line: 60 });
+    assert.match(cv, /<tr id="srcl-60" class="focus" data-focus="1"><td class="ln mute">60<\/td><td class="lt"><code class="hljs"><span class="hljs-title function_">test<\/span>/);
+    assert.match(cv, /&lt;slow&gt;/, 'escaped');
+  } finally { await f.done(); }
+});
+
+// the pytest project's page: every section that reads node:test only says so itself - no banner over the whole tab
+test('Tests tab of a pytest project: the merge check and lean tests each say node:test only; the banner is only for a suite Norn cannot read', async () => {
+  const { renderTab } = await import('../engine/dash/ui.mjs');
+  const base = { project: 'ss', history: [], git: null, alerts: [], advisories: null, commands: { measure: 'norn tests measure', lean: 'norn tests lean', for: 'norn tests for' } };
+  const p = timesTable(pytestMeasure(parseJunit(JUNIT), { at: 'T' }));
+  const head = { at: p.at, suite: 'pytest', tests: p.tests.length, files: p.files.length, total_ms: p.total_ms, failed: 1, slowest: { name: p.tests[0].name, ms: p.tests[0].ms } };
+  const costs = renderTab('tests', { ...base, suite: 'pytest', times: head, sub: 'costs', sources: {}, rows: { rows: [], n: 0 }, runs: [], merges: [], lean: null, mutation: null }, {});
+  assert.doesNotMatch(costs, /id="tests-scope"/, 'no banner for a pytest suite');
+  assert.match(costs, /id="tests-adv"[^]*node:test only[^]*this project's suite is pytest/); assert.match(costs, /id="tests-lean"[^]*node:test only/);
+  assert.match(costs, /suite wall \(one process\)/);
+  const neither = renderTab('tests', { ...base, suite: false, times: null, sub: 'trends', cpu: [], lanes: null, wave: null }, {});
+  assert.match(neither, /id="tests-scope"[^]*node:test suites \(tests\/\*\.test\.mjs\) and pytest suites/);
+});
+
+test('the browser: Tests at 390 px - every sub-view without sideways scroll; a test\'s file opens in the code viewer at its line', { skip: skipWhy, timeout: 240000 }, async () => {
+  const f = await tabFixture();
+  // the slowest row points at the long file's test (line 60)
+  const tf = path.join(f.pa.state, 'tests', 'times.json'), t = JSON.parse(fs.readFileSync(tf, 'utf8')); t.tests[0].line = 60; fs.writeFileSync(tf, JSON.stringify(t));
+  const pg = await openPage([390, 844]);
+  try {
+    await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+    await pg.go(`${f.url}/?project=kestrel&tab=tests`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'tests' && !!document.querySelector('#tests-rows')`, 90000), 'Suite loads its part');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (Suite)');
+    for (const sub of ['costs', 'impact', 'trends']) {
+      await pg.ev(`document.querySelector('#tests-sub-${sub}').click()`);
+      assert.ok(await pg.until(`document.querySelector('#tests-sub')?.dataset.sub === '${sub}' && !document.querySelector('#tests-sub-loading')`, 60000), sub);
+      assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `no sideways scroll (${sub})`);
+    }
+    assert.match(await pg.ev('location.search'), /sub=trends/);
+    await pg.ev(`document.querySelector('#tests-sub-suite').click()`);
+    assert.ok(await pg.until(`!!document.querySelector('#tests-rows [data-act=test-src]')`, 60000));
+    await pg.ev(`document.querySelector('#tests-rows [data-act=test-src]').click()`);
+    assert.ok(await pg.until(`!document.querySelector('#srcview').hidden && !!document.querySelector('#srcview-code tr.focus')`, 30000), 'the viewer opens at the line');
+    assert.equal(await pg.ev(`document.querySelector('#srcview-code tr.focus').id`), 'srcl-60');
+    assert.ok(await pg.ev(`(() => { const r = document.querySelector('#srcview-code tr.focus').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()`), 'scrolled to the test\'s line');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (viewer)');
+  } finally { await pg.close(); await f.done(); }
 });
