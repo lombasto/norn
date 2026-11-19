@@ -241,7 +241,9 @@ export function fold(events) {
   let seq = 0;
   for (const e of evs) {
     seq = Math.max(seq, e.seq);
-    const def = KINDS[e.kind]?.events[e.ev];
+    // MAIL-28 (1): an event this table does not know (a newer writer's) still moves the state it names (its stamped `to`): a
+    // supervisor started before `alive` existed dropped it, read the run lost and refused its own end
+    const def = KINDS[e.kind]?.events[e.ev] ?? (KINDS[e.kind] && typeof e.to === 'string' ? { from: [], to: e.to } : null);
     if (!def) continue;
     const h = { seq: e.seq, ts: e.ts, ev: e.ev, by: e.by, run: e.run ?? null, ...(e.via ? { via: e.via } : {}), data: e.data ?? {} };
     if (def.from === null) {
@@ -799,8 +801,9 @@ function recordCtx(stateDir, evIn, opts) {
         const ln = laneOfEvent(e, st), l = ln ? laneItems()['L:' + ln] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
         if (h) throw new RecordError(holdMessage(h), HELD_EXIT);
       }
-      const c = check(st, e, pfx);
-      const env = { v: 1, seq: st.seq + 1, ts: isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, by: c.by, run, ...(via ? { via } : {}), data: c.data };
+      const c = check(st, e, pfx), def = KINDS[c.kind].events[c.ev], to = typeof def.to === 'function' ? def.to(c.data) : def.to;
+      // `to`: the state the event moves its item to, for a reader whose table does not know the event (fold, MAIL-28)
+      const env = { v: 1, seq: st.seq + 1, ts: isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, ...(to ? { to } : {}), by: c.by, run, ...(via ? { via } : {}), data: c.data };
       batch.push(env);
       st = fold([...base, ...batch]);
       return env;

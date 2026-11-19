@@ -159,7 +159,7 @@ test('dash, remote on: every remote write needs the pairing + token + Origin and
     assert.equal(evs.at(-1).via, `remote:${dev}`, 'stamped');
     // the desktop's own write stays as today: no via on the envelope
     assert.equal((await raw(f.url, { method: 'POST', route: '/api/directive', headers: T, body: { project: 'kestrel', text: 'from the desk' } })).status, 200);
-    assert.deepEqual(Object.keys(readEvents(recordsFile(f.pa.state, 'directive')).at(-1)), ['v', 'seq', 'ts', 'id', 'kind', 'ev', 'by', 'run', 'data']);
+    assert.deepEqual(Object.keys(readEvents(recordsFile(f.pa.state, 'directive')).at(-1)), ['v', 'seq', 'ts', 'id', 'kind', 'ev', 'to', 'by', 'run', 'data']);
     // a tier-2 approval card: unpaired = 403; the paired phone's tap counts and is stamped
     const s = f.pa.state;
     fs.mkdirSync(path.dirname(threadFile(s)), { recursive: true });
