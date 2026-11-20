@@ -5,6 +5,11 @@
   "tool": "eslint",
   "title": "a new duplicate import of one module",
   "how": "ESLint no-duplicate-imports (imports only) on the JS files the diff touches, at base and at head",
+  "explain": {
+    "what": "A file imports from the same module in two import lines.",
+    "why": "Two imports of one module make it harder to see what the file uses, and they often mean a merge or an edit went wrong.",
+    "fix": "Merge them into one import line."
+  },
   "rules": {
     "no-duplicate-imports": [
       "error",

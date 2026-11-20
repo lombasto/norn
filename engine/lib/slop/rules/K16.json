@@ -1,0 +1,33 @@
+{
+  "id": "K16", "level": "BLOCK", "kind": "shim",
+  "title": "a compatibility shim: an old name, alias, redirect or fallback kept alive (CLAUDE.md: No compatibility shims)",
+  "how": "code files the diff touches (tests and vendored code apart): a declared alias / redirect / old-name map, a comment or string that says an old form still works or is fallen back to, a deprecated option, or a page whose label does not name its id (an { id, label } object, or an [id, label] pair in a *TABS / *NAV / *_SUBS / *_VIEWS / *_PAGES list); one finding per line, its message names the fix",
+  "explain": {
+    "what": "The code keeps an old form alive: an alias or redirect map, an old name, a fallback to an old format, a deprecated option, or a page whose label does not name its id.",
+    "why": "A compatibility shim keeps two ways alive after a rename. It is tech debt, and nobody knows when the old one may go (CLAUDE.md, No compatibility shims).",
+    "fix": "Change every caller, link, test and doc to the new form, and delete the old one. A page's label, id and URL use one name."
+  },
+  "files": ["**/*.mjs", "**/*.js", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx"],
+  "exclude": ["tests/**", "test/**", "**/*.test.*", "**/*.spec.*", "**/vendor/**", "**/node_modules/**", "**/*.min.js"],
+  "fix": "change every caller to the new form and delete the old one",
+  "patterns": [
+    { "re": "\\b(?:const|let|var)\\s+(?:[A-Za-z]\\w*_)?(?:(?:OLD|DEPRECATED)(?:_\\w+)?|LEGACY(?:_(?:NAMES?|IDS?|TABS?|PAGES?|FLAGS?|KEYS?|VARS?|COMMANDS?|PATHS?|URLS?|ROUTES?|MAP|ALIAS(?:ES)?|REDIRECTS?))?)\\s*=", "msg": "an old-name / legacy map" },
+    { "re": "\\b(?:const|let|var)\\s+\\w+_(?:ALIAS|ALIASES|REDIRECT|REDIRECTS|RENAMES|RENAMED)\\s*=\\s*(?:\\{|new\\s+Map\\b|Object\\.)", "msg": "an alias / redirect map" },
+    { "re": "\\b(?:const|let|var)\\s+(?:old|legacy|deprecated)(?:To[A-Z]\\w*|Names?|Ids?|Tabs?|Flags?|Keys?|Aliases|Redirects?)\\s*=", "msg": "an old-name / redirect map" },
+    { "re": "\\bbackwards?[- ]?compat(?:ible|ibility)?\\b|\\bback-compat\\b", "flags": "i", "msg": "a backward-compatibility path" },
+    { "re": "\\bfall(?:s|ing)?[- ]?back\\s+to\\s+(?:the\\s+|an?\\s+|its\\s+)?(?:old|stored|legacy|previous|deprecated|former|pre-\\w+)\\b", "flags": "i", "msg": "a fallback to an old form" },
+    { "re": "\\b(?:kept|keep|keeps)\\s+(?:alive\\s+)?for\\s+(?:old|legacy|existing)\\s+\\w+|\\bfor\\s+(?:old|legacy)\\s+(?:links|urls|bookmarks|callers|clients|configs|scripts)\\b", "flags": "i", "msg": "an old form kept for old users" },
+    { "re": "\\b(?:its|the|an?|their)\\s+(?:old|former)\\s+(?:name|id|tab|flag|key|command|url|link|alias)s?\\b|\\bold name:|\\bpre-rename\\b", "flags": "i", "msg": "an old name still honoured" },
+    { "re": "\\b(?:keeps?|kept)\\s+(?:on\\s+)?(?:resolving|working)\\b|\\bstill\\s+(?:accepted|parsed|honou?red|resolves|resolved)\\b", "flags": "i", "msg": "an old form that still works" },
+    { "re": "\\bcompat(?:ibility)?\\s+(?:paths?|shims?|layers?|aliases|maps?|redirects?)\\b|\\bcompat\\.json\\b", "flags": "i", "msg": "a compatibility layer" },
+    { "re": "\\bdeprecated\\b", "flags": "i", "msg": "a deprecated form still accepted" }
+  ],
+  "pages": "\\b(?:const|let|var)\\s+(\\w*(?:TABS|NAV|_SUBS|_VIEWS|_PAGES))\\s*=\\s*\\[",
+  "fixture": {
+    "hit": { "base": { "src/nav.mjs": "export const TABS = [['runs', 'Runs']];\n" },
+      "head": { "src/nav.mjs": "export const TABS = [['agents', 'Runs']];\nconst TAB_ALIASES = { agents: 'runs' };\nexport const tabOf = t => TAB_ALIASES[t] || t;\n// no spec file: fall back to the stored copy\nexport const spec = f => f ?? stored;\n" } },
+    "miss": { "base": { "src/nav.mjs": "export const TABS = [['runs', 'Runs']];\n" },
+      "head": { "src/nav.mjs": "export const TABS = [['runs', 'Runs'], ['checkins', 'Check-ins per day'], ['types', 'Per type']];\n// no model named: fall back to the default model\nexport const model = m => m ?? 'opus';\nexport const fallback = x => x || 'none';\nconst oldest = a => a[0];\nexport const first = a => oldest(a);\n",
+        "tests/nav.test.mjs": "// the old name still resolves: a test fixture line, never scanned\n" } }
+  }
+}

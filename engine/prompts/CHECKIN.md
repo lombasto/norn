@@ -19,9 +19,10 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   exit 5 (accept it, never work around it). To tell the holder something: `META mail send --to role:controller --subject S --body B`.
 
 - EVERYTHING HELD (digest row 0b): every queued run (or every queued Claude run) has waited on ONE machine-level hold - the usage
-  guard (weekly unknown / at the stop, RATE_OK=0, the API daily cap) or a PAUSED file - past policy.holds.notice_min. No check-in
-  clears it and none works around it: dispatch nothing it holds, do not re-report the other rows as the stall, and start the ledger
-  line with `HELD <n> run(s) since <t>: <reason>; fix: <fix>`. The owner has the Inbox item and one notice; the row leaves by itself.
+  guard (weekly unknown / at the stop, RATE_OK=0, the API daily cap) or a pause that holds starts (Hold the queue / Pause everything,
+  a PAUSED file) - past policy.holds.notice_min. No check-in clears it and none works around it (a paused hand-off waits for the
+  owner's resume too): dispatch nothing it holds, do not re-report the other rows as the stall, and start the ledger line with
+  `HELD <n> run(s) since <t>: <reason>; fix: <fix>`. The owner has the Inbox item and one notice; the row leaves by itself.
 
 ## 2. For each run `META runs --unreviewed` lists (exited / lost / killed; any executor)
 - The run's outcome is already recorded (its `norn done` result: end.outcome, end.why, end.summary, end.handoff = its HANDOFF.md);
@@ -30,7 +31,16 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - stopped (end.why): rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
   record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`. If it is owner-only, record
   `META rec add question --lane L --title T --body-file F --option "a|..|cost" --recommend "<key>|<why>" --class <i-v> --blocks L`
-  (the lane is parked by it). Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
+  (the lane is parked by it). Options: list every real alternative - 3-4 where they exist; never trim to the default plus one, never
+  pad with a fake one. A Q built from a plan / notes / brief section: `--from-source "<file>#<section>"` copies every alternative it
+  names verbatim and records the source; an `--option` you add beside it is marked added by you. Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
+  The body (F) is short markdown the Inbox renders: one lead sentence, then one bullet per fact. Write ids bare (RUN-146, Q-4, a
+  lane name: the Inbox links them); backticks only for code (a command, a path); a number with its unit; a change as "a -> b". Example:
+
+      RUN-146 measured four slow paths; it queued none.
+      - worker-gil: UI stalls 2.4 s -> ~0.5 s on the real files
+      - long-run-ui: stalls 0.6-1.9 s per open, synthetic sizes only
+      Briefs: `notes/perf-audit/`
 - handoff: the next stage is the hand-off's "exact next step" (end.handoff; resume brief = the same brief + "resume from <end.handoff>").
   The supervisor auto-resumes a clean HANDOFF itself up to the project's auto_resume_max; a HANDOFF listed here was refused or
   reached the max (its run history has the `resume` verdict).
@@ -40,7 +50,14 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Then: `META runs review RUN-n --refs <DEC/Q/RUN ids>`.
 
 ## 2b. Records
-- Every answered Q: act on it (rule / dispatch / unpark), then `META rec apply Q-n --refs <ids>`.
+- FIRST, every answered Q (above all one that parks a lane): act on it this pass (rule / dispatch / unpark), then
+  `META rec apply Q-n --refs <ids>`. The owner has ruled; an answered Q left for a later pass is a miss. A ruling to waive a slop
+  finding is yours to write: `META rec add waiver --rule K --scope S --why W --q Q-n`, then apply - never mail it to the controller.
+- Every open Q with an "owner wrote" line under it (STATUS): the owner typed a message in its Inbox thread - a question or a doubt,
+  NOT an answer (never answer, rule or apply the Q from it). Reply in the thread, short and plain: `META rec reply Q-n --text T`.
+  The owner's words show the options were unclear: revise them in the same reply (`--option "k|text|cost"` once per option = the
+  whole new list; reword or add a real one, keep the keys of the ones kept). The owner's words state a decision: propose it as a
+  ruling they confirm with one tap - `--propose "<key or empty>|<the ruling in their words>"`. Only the owner's pick or tap answers it.
 - Every digest row "Q-n open, possibly answered by DEC-m" (the owner answered in a chat that wrote only a decision): read the DEC;
   when its owner words answer Q-n, `META rec answer Q-n --from DEC-m` (the words copied from the DEC, + apply); else
   `META rec not-an-answer DEC-m --q Q-n --why W`. Either one; the row leaves.
@@ -59,9 +76,11 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Resolve: each row `META deliverables --resolve` lists (DONE, merge rehearsal conflicts or > resolve_behind behind main, not native, open, no live resolve run): `META deliverables resolve DLV-n` once (one cheap run on its own worktree via `norn run --queue`; it refuses native = install-session work).
 
 ## 2d. CI red on main (META-CIWATCH; the digest's "CI red on main" row: run, sha, failing tests; STATUS `CI main:` line)
-- A red main CI is a FIX TASK: queue a lane (`META run --queue`) whose brief names the run id, the sha and the failing tests and
-  asks for the cause fixed red-first - never a re-run to green it, never a retry or a longer timeout. The row leaves only when a
-  later run on main is green; one fix lane per red run (check the queue / live runs first).
+- A red main CI is a FIX TASK on the ONE lane `ci-fix` (never a new lane per red): queue it (`META run --queue`) with the stage and
+  round the row's "fix task" names, and do the steps it lists (create / unarchive the lane, wait after a live fix run, a first
+  brief step resetting the lane branch from main when its last work landed). The brief names the run id, the sha and the failing
+  tests and asks for the cause fixed red-first - never a re-run to green it, never a retry or a longer timeout. The row leaves only
+  when a later run on main is green; one fix stage per red run (check the queue / live runs first).
 
 ## 2e. Roadmap (status is derived from the records, never typed; skip while the project has no roadmap: `META road list` empty)
 - A new owner directive lands on the roadmap the SAME tick: `META road add --from DIR-n --theme RM-n` (a new item) or
@@ -108,6 +127,20 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   and launch it with `--item RM-n` - started when a slot is free, else `--queue` (it waits its turn; queued work is never lost).
   A directive that names no item gets one first (sec. 2e).
 - Ledger: `dispatched: <lane/stage> -> <executor>` or `queued: <lane/stage> (<why>)` for each; "none" only when both lists are empty.
+
+## 2j. Lanes nothing acts on (digest sec. 13; no lane sits)
+- The tick archives by itself: a lane a check-in created and dispatched nothing on (so write the brief on the lane you dispatch, or
+  dispatch on the lane you created), a STOPPED lane whose work landed anyway, and a done lane merged on main past policy.done_lanes.archive_days.
+- Every `idle` row (an active lane with no run, or none for policy.idle_lanes.hours) and every `stopped` row (its work did not land) is
+  yours THIS pass, one of three: start / resume it (a brief exists and its item is due: sec. 2i / 3); park it with a why
+  (`META rec park L:x --why W`, or a Q with `--blocks` when the owner must pick); or archive it (`META rec archive L:x`) when its work
+  landed elsewhere, is obsolete or a duplicate - cite why in the ledger line. Never archive a stopped lane whose work did not land
+  without the owner's word.
+- A `work at risk` row: an archived lane's worktree kept (uncommitted changes or commits not on main) - name it in the ledger line.
+- Finished work reaches a PR by code: when a lane's last work run ended DONE with commits not on main, the tick pushes them and queues
+  its MERGE stage (P1) itself - do not stage it again. An `off-main` row is where that chain broke (a dirty worktree with unpushed
+  commits, a refused push or merge-brief, a merge step that ended without landing it): act on it THIS pass - fix the cause and stage
+  the merge, or ask the owner. A lane whose work is not on main cannot be archived without the owner's override.
 
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->

@@ -30,9 +30,9 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
   try {
     const q = (await f.get('/api/inbox')).data.items.find(i => i.type === 'question');
     assert.equal(q.id, 'Q-1'); assert.equal(q.recommend.key, 'a');
-    assert.equal((await f.post('/api/pause', { paused: true })).status, 200);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' })).status, 200);
     assert.equal((await f.post('/api/checkin', {})).status, 409);
-    assert.equal((await f.post('/api/pause', { paused: false })).status, 200);
+    assert.equal((await f.post('/api/pause', { resume: 'all' })).status, 200);
     fs.writeFileSync(path.join(f.pa.state, 'tick.lock'), 'busy');
     assert.equal((await f.post('/api/checkin', {})).status, 409);
     assert.equal(f.counts.ticks, 0);
@@ -61,9 +61,9 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     assert.equal((await f.post('/api/stop', { run: 'RUN-2', confirm: true })).status, 200);
     assert.equal(loadState(f.pa.state).items['RUN-2'].state, 'killed');
     assert.equal((await f.post('/api/stop', { run: 'RUN-2', confirm: true })).status, 409);
-    assert.equal((await f.post('/api/pause', { paused: true }, { origin: 'https://evil.example' })).status, 403);
-    assert.equal((await f.post('/api/pause', { paused: true }, { 'x-dash-token': 'wrong' })).status, 403);
-    assert.equal((await f.post('/api/pause', { paused: true }, { 'sec-fetch-site': 'cross-site' })).status, 403);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { origin: 'https://evil.example' })).status, 403);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'x-dash-token': 'wrong' })).status, 403);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'sec-fetch-site': 'cross-site' })).status, 403);
     assert.equal(f.counts.asks, 1);
   } finally { await f.done(); }
 });
@@ -122,8 +122,8 @@ test('project switcher: two projects, ?project= scopes every tab, all sums the o
     assert.equal((await f.get('/api/records?project=all')).status, 400);
     assert.equal((await f.get('/api/inbox?project=nope')).status, 404);
     assert.equal((await f.post('/api/answer', { project: 'other', id: 'Q-1', text: 'ok' })).status, 200);
-    assert.equal(loadState(f.pb.state).items['Q-1'].state, 'answered');
-    assert.equal(loadState(f.pa.state).items['Q-1'].state, 'open', 'the other project is untouched');
+    assert.equal(loadState(f.pb.state).items['Q-1'].history.at(-1).ev, 'say', 'typed words on a Q with no options: a message in its thread (INBOX-REPLIES)');
+    assert.equal(loadState(f.pa.state).items['Q-1'].history.at(-1).ev, 'create', 'the other project is untouched');
   } finally { await f.done(); }
 });
 

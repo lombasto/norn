@@ -26,11 +26,15 @@ export const KIND_PARAMS = {
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'eslint'];
 
+// RM-27: every rule, built-in or a project's own, carries its explanation beside its parameters - what was found, why the rule
+// exists, what to do - so the CLI, the resume prompt and the Slop page say the same thing; a rule without all three does not load.
+export const EXPLAIN = ['what', 'why', 'fix'];
 function checkRule(r, f) {
   if (!r.id || !LEVELS.includes(r.level) || !DETECT[r.kind]) throw new Error(`${f}: a rule needs an id, a level (${LEVELS.join(' | ')}) and a known kind`);
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
   if (r.kind === 'eslint' && (r.tool !== 'eslint' || !r.rules || Object.keys(r.rules).some(k => !LINT_RULES.includes(k)))) throw new Error(`${f}: an eslint rule names core rules from ${LINT_RULES.join(', ')} only`);
   if (r.kind === 'ast' && (r.tool !== 'eslint' || !r.selectors?.length || r.selectors.some(s => typeof s.selector !== 'string' || typeof s.message !== 'string'))) throw new Error(`${f}: an ast rule is a list of { selector, message } (tool eslint)`);
+  if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
   if (r.key && r.key !== 'match') throw new Error(`${f}: key is "match" or absent (the line)`);
   return r;
 }
@@ -68,6 +72,14 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
 
 /** the rule-set hash every stored check carries (audit 6): an edited rule (its text or its `rev`) makes "checked clean at head X" stale */
 export const rulesHash = (rules = loadRules()) => crypto.createHash('sha256').update(JSON.stringify([...rules].sort((a, b) => (a.id < b.id ? -1 : 1)))).digest('hex').slice(0, 16);
+
+let shipped = null;
+/** a rule's { what, why, fix }: a built-in, or a project's own P-* rule read from its file (projectDir); null = no such rule */
+export function explainOf(id, projectDir = null) {
+  if (!String(id).startsWith('P-')) return (shipped ||= new Map(loadRules().map(r => [r.id, r.explain]))).get(id) ?? null;
+  const f = projectDir && path.join(projectDir, 'rules', 'slop', `${id}.json`);
+  return f && fs.existsSync(f) ? readRule(f).explain : null;
+}
 
 // ---------- git ----------
 export function gitRun(cwd, args, { input, ok = [0], buffer = false } = {}) {
@@ -162,6 +174,40 @@ function patterns(rule, text, file, ctx) {
   }));
 }
 
+// RM-9 (DIR-2, the CLAUDE.md rule on old names kept alive): K16. The rule's patterns line by line, plus every page whose label does not
+// name its id (a page has ONE name: label, id and URL). One finding a line, the first pattern's; each message ends with the rule's fix.
+const stem = t => (t.length > 3 ? t.replace(/s$/, '') : t);
+const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+/** the label names the id: a part of the id (split on - and _, a plural s dropped) is in the label's letters, or starts like a label
+ *  word (4 letters, or the whole part: notify ~ Notifications) */
+export const labelNamesId = (id, label) => {
+  const low = label.toLowerCase(), l = low.replace(/[^a-z0-9]/g, ''), words = low.split(/[^a-z0-9]+/).filter(Boolean);
+  return id.toLowerCase().split(/[-_]/).filter(Boolean).some(t => l.includes(stem(t)) || words.some(w => prefix(w, t) >= Math.min(4, t.length)));
+};
+const PAIR_RE = /\[\s*(['"])([\w-]+)\1\s*,\s*(['"])([^'"\n]*)\3/y, OBJ_RE = /\{\s*id\s*:\s*(['"])([\w-]+)\1\s*,\s*label\s*:\s*(['"])([^'"\n]*)\3/g;
+/** [index, id, label] of each page: { id, label } objects, and the direct [id, label, ...] elements of a list the rule's `pages` names */
+function pagesOf(rule, text) {
+  const out = [...text.matchAll(OBJ_RE)].map(m => [m.index, m[2], m[4]]);
+  for (const m of text.matchAll(new RegExp(rule.pages, 'g'))) {
+    let depth = 0, q = null;
+    for (let i = m.index + m[0].length - 1; i < text.length; i++) {   // from the list's [ to its matching ]; quotes skipped
+      const c = text[i];
+      if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+      if (c === "'" || c === '"' || c === '`') q = c;
+      else if (c === '[') { if (++depth === 2) { PAIR_RE.lastIndex = i; const p = PAIR_RE.exec(text); if (p) out.push([i, p[2], p[4]]); } }
+      else if (c === ']' && --depth === 0) break;
+    }
+  }
+  return out;
+}
+export function shimFindings(rule, text, file) {
+  const byLine = new Map(), fix = rule.fix;
+  const add = (i, msg) => { const line = lineAt(text, i); if (!byLine.has(line)) byLine.set(line, { file, line, msg: `${msg}: ${fix}`, snippet: lineText(text, line) }); };
+  for (const p of rule.patterns) for (const m of text.matchAll(new RegExp(p.re, 'g' + (p.flags || '')))) add(m.index, p.msg);
+  for (const [i, id, label] of pagesOf(rule, text)) if (!labelNamesId(id, label)) add(i, `page label '${label}' does not name its id '${id}' (a page has one name: label, id and URL)`);
+  return [...byLine.values()].sort((a, b) => a.line - b.line);
+}
+
 // static `import ... from 'x'` / `export ... from 'x'` / `import 'x'` (a dynamic import() is no load-order edge)
 const IMPORT_RE = /^\s*(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/gm;
 function importGraph(rule, ctx, side) {
@@ -216,6 +262,7 @@ const DETECT = {
   },
   swallow: (rule, ctx) => content(rule, ctx, (t, f) => swallows(rule, t, f)),
   pattern: (rule, ctx) => content(rule, ctx, (t, f) => patterns(rule, t, f, ctx)),
+  shim: (rule, ctx) => content(rule, ctx, (t, f) => shimFindings(rule, t, f)),
   eslint: lint,
   ast: lint,
   dup,

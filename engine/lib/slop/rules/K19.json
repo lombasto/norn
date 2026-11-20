@@ -5,6 +5,11 @@
   "tool": "eslint",
   "title": "a new catch that drops the error and returns a default",
   "how": "a catch whose body is one return, one continue or one assignment and does not read the error; passes when its comment says what failed and what happens next (K2's reason test and deny list)",
+  "explain": {
+    "what": "A new catch block drops the error and only returns a default, continues or sets a value.",
+    "why": "The caller cannot tell a real result from a failure. The fault shows up later, far from its cause.",
+    "fix": "Use the error: log it, rethrow it, or return it. If dropping it is right, write a comment that says what failed and what happens next."
+  },
   "note": "2026-11-18: WARN for one week of its own numbers, then BLOCK - the level change is a record (RM-45), not a timer",
   "files": [
     "**/*.mjs",

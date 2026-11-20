@@ -20,16 +20,22 @@ import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from 
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
+import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
-import { overlapFile, overlapOn } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
+import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
+import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
+import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
+import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
+import { loadMail } from '../lib/mail.mjs';
+import { findTranscriptA } from '../lib/harness/claude.mjs';
+import os from 'node:os';
 import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
@@ -39,6 +45,7 @@ import { loginHolds, authFile } from '../lib/authguard.mjs';
 import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
 import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
+import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
 import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
 import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, laneNameOf } from '../lib/adopt.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
@@ -46,7 +53,7 @@ import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
 import { runName } from '../lib/names.mjs';
 import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
-import { handEdits, takeBack, keepEdit } from '../lib/handedits.mjs';
+import { handEdits, takeBack, keepEdit, handEditDiff } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
 import { costRollup, accountUsage, weekStart, nextReset, parseReset } from '../lib/cost.mjs';
 import { Worker } from 'node:worker_threads';
@@ -59,9 +66,10 @@ import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
 import { isNeed, needsYou } from './terms.mjs';
-import { docsList as docsListOf } from './docparts.mjs';
+import { docsList as docsListOf, docKey } from './docparts.mjs';
+import { pathsIn } from './prose.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
-import { openCardsAsync } from '../lib/rules.mjs';
+import { enforceCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
@@ -75,8 +83,11 @@ import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
-import { slopHolds, openBlocks, slopFiles } from '../lib/slop/host.mjs';
+import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
+import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
+import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
+import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -218,7 +229,7 @@ export function createDashboard(o) {
   const one = url => pick(url)[0];
   // st(p): the request snapshot's fold (primed on fs.promises by primeFor) - the sync loadState only outside a snapshot
   const st = p => snap.getStore()?.folds.get(p.state) ?? loadState(p.state);
-  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {});
+  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {}, { role: 'dashboard' });
   const hbAge = p => id => { const x = statS(hbPath(p.state, id)); return x ? Date.now() - x.mtimeMs : Infinity; };
   // the live hand-off state (lanes.mjs handoffOf, one home): wrote = the run's own result.json says HANDOFF, written since its start
   // (result.mjs readResult's rule); talked = its session's first model event (agents.mjs runTalked, the tree's tail cache)
@@ -254,17 +265,28 @@ export function createDashboard(o) {
     return c.st;
   }
   /** a GET's snapshot: every project's records fold + its settings / status files, read concurrently on fs.promises */
-  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED / tick.lock flags
+  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED records (pausemode.mjs), the tick.lock flag
   const primeFor = ps => Promise.all(ps.flatMap(p => [
     stAsync(p).then(x => { const live = runsOf(x).filter(r => r.state === 'running');
       // handoffOf's reads (hoHooks): each running run's result.json, a running hand-off resume's transcript / rollout tail
       return Promise.all([prime({ files: [...auditFiles(p, x.items), ...live.map(r => resultPath(p.state, r.id))], stats: live.map(r => hbPath(p.state, r.id)) }),
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
-      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), ...pausedFiles(p), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
+  // RM-37: the pause in force (pausemode.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
+  // pause, the paused hand-offs; the modes and their one-line effects (the header's pause menu)
+  const pauseOfP = p => { for (const f of pausedFiles(p)) { const raw = readText(f); if (raw !== null) return parsePause(raw, f); } return null; };
+  const pauseView = ps => {
+    const p = ps.find(x => pauseOfP(x)) ?? null, pz = p ? pauseOfP(p) : null, runs = ps.flatMap(x => runsOf(st(x)).map(r => ({ ...r, project: x.name })));
+    const row = r => ({ run: r.id, lane: r.data.lane ?? null, project: r.project, stage: r.data.stage ?? null });
+    return { pause: pz ? { ...pz, project: p.name, says: PAUSE_MODES[pz.mode].says, checkins: stopsCheckins(pz) } : null,
+      modes: Object.entries(PAUSE_MODES).map(([mode, m]) => ({ mode, ...m })),
+      waiting: { held: holdsStarts(pz) ? runs.filter(r => r.state === 'queued').length : 0, asked: runs.filter(r => pauseState(r) === 'asked').map(row),
+        handoffs: runs.filter(r => pauseState(r) === 'handoff').map(row) } };
+  };
 
   // ---------- budget (machine) + policy (project) ----------
   function budgetRaw() { return read(o.budgetFile, '{}'); }
@@ -349,6 +371,7 @@ export function createDashboard(o) {
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
   // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
   // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
+  const RESOLVED_MAX = 20;   // INBOX-REPLIES: the Resolved view's newest answered / applied Qs per project
   const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
@@ -364,22 +387,35 @@ export function createDashboard(o) {
       if (h) out.push(h); }
     // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
     for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited, generated: e.generated,
+      verdict: e.verdict, recommend: e.recommend, why: e.why, lines: e.lines, diff: e.diff,   // RM-35: what changed and who probably did it
       title: `${path.basename(e.file)} changed outside Norn: Norn has stopped updating it` });
     // OOTB-R2 N-5: runs held for a login that is down = ONE needs-you row per harness, carrying the command the human runs
     for (const h of loginHolds(p.state, items, { entryOf: x => p.executors?.[x] }))
       out.push({ type: 'login', id: 'login-' + h.harness, project: p.name, harness: h.harness, cls: h.cls, command: h.command, runs: h.runs, line: h.line, created: h.since,
         title: h.title });   // META-AUTH-VENDOR: a vendor hold names the incident and says no login is needed
     const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));   // META-Q-RECONCILE R1: the hint "already answered in DEC-m"
+    // INBOX-REPLIES: + the source the options came from, the thread (owner messages, controller replies, revisions), the ruling to confirm
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
+      origin: q.data.origin ?? null, thread: threadOf(q), waiting: unanswered(q).length, proposal: rulingOf(q),
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
+    // RM-28 S1: a finished planner run = ONE decision card (its summary, plan, a Queue now / Later / Drop per open stage)
+    await primeProposals(s.items);
+    for (const x of proposalsOf(s.items, loadRoadmap(p.state))) out.push({ type: 'proposal', id: x.run, project: p.name, lane: x.lane, item: x.item, title: `Decide: ${x.lane} plan`,
+      summary: x.summary, plans: x.plans, stages: x.stages, open: x.open, created: x.ended });
     // META-TEND P3: the repeat detector's approval cards (one per cluster, ranked): approve = a directive the check-in turns into a brief
-    for (const c of await openCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
+    for (const c of await enforceCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, asked: c.asked, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
     for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
-    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
+    // INBOX-REPLIES: the Resolved view - answered / applied Qs, newest first, each with its thread kept (for information: never a need)
+    for (const q of items.filter(i => i.kind === 'question' && ['answered', 'applied'].includes(i.state)).sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, RESOLVED_MAX))
+      out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
+    // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in
+    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) { const q = l.park?.q ? s.items[l.park.q] : null;
+      out.push({ type: 'parked', id: l.id, lane: laneName(l.id, p.state), project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
+        ...(q?.state === 'answered' ? { ruled: { q: q.id, choice: q.answer?.choice ?? null, text: q.answer?.text ?? null, at: q.updated } } : {}) }); }
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
     let adv = [];
     try { adv = (await adviceOf(p)).cards; } catch { adv = []; }
@@ -388,10 +424,28 @@ export function createDashboard(o) {
       out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
+  // RM-30 S1: what the prose renderer (prose.mjs) needs per project: its lane names, its GitHub repo (PR / commit links; the origin is
+  // read once per root) and the Docs key of each path the Inbox texts name that the Docs reader can show (a scan row or a project doc)
+  const repoOf = new Map();
+  const repoSlug = p => { if (!repoOf.has(p.root)) repoOf.set(p.root, new Promise(r => execFile('git', ['-C', p.root || '.', 'remote', 'get-url', 'origin'], { timeout: 5000, windowsHide: true }, (e, out) => r(e ? null : githubRepo(String(out).trim()))))); return repoOf.get(p.root); };
+  async function proseOf(p, items) {
+    const home = homeIdOf(p.state)?.id, lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane').map(i => laneNameIn(i.id, home));
+    const texts = items.flatMap(i => [i.body, i.title, i.why, i.answer?.text, i.recommend?.why, i.file && `\`${i.file}\``, i.card?.why, ...(i.options || []).flatMap(o => [o.text ?? o.t, o.cost ?? o.c])]).filter(x => typeof x === 'string');
+    const want = [...new Set(texts.flatMap(pathsIn))], docs = {};
+    if (want.length) {
+      const rows = [...(insCache(p).v?.rows || []).filter(r => r.exists).map(r => ({ key: r.id, path: r.path })), ...docsList(p).filter(d => d.exists).map(d => ({ key: docKey(d.i), path: d.path }))];
+      const byPath = new Map(rows.map(r => [fwdLow(r.path), r.key])), byName = new Map();
+      for (const r of rows) { const b = path.posix.basename(fwdLow(r.path)); byName.set(b, byName.has(b) ? null : r.key); }   // a name two files share opens neither
+      for (const w of want) { const k = /[\\/]/.test(w) ? byPath.get(fwdLow(path.resolve(p.root || '.', w))) : byName.get(w.toLowerCase()); if (k) docs[w] = k; }
+    }
+    return { lanes, repo: await repoSlug(p), docs };
+  }
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
+    const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
+    return lanesView(s, { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -399,8 +453,8 @@ export function createDashboard(o) {
   // RM-34: each Lanes row's driver (purpose.mjs: the objective + where it is written); the briefs it reads are primed by primeBriefs
   const briefsDirOf = p => path.resolve(p.briefs_dir || path.join(p.state, 'briefs'));
   const briefHead = f => (readText(f) ?? '').split(/\r?\n/).find(l => /^#/.test(l)) ?? null;
-  const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items;
-    return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(l.id.slice(2), items, briefsDirOf(p))) }); }));
+  const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items, home = homeIdOf(p.state)?.id;
+    return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(laneNameIn(l.id, home), items, briefsDirOf(p))) }); }));
   // MAIL-29: its type (purpose.mjs laneType) and where its output goes (laneOutput): PR state from the deliverables cache (the child
   // process keeps it; never git here), the branch tips' subjects as the commit-type signal, documents to the run's notes folder
   const notesOf = (p, lane, items) => {
@@ -413,22 +467,68 @@ export function createDashboard(o) {
     return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
       return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
   }
+  // RM-39: each run's progress against its brief, pace, why slow and alarms in words (progress.mjs). The files are read on
+  // fs.promises first (the brief, NOTES, every session's transcript - tailed into the shared cache under its own key), then the
+  // derivation runs on what was read. CPU = the os.cpus() deltas between two reads of the dash (no timer, no wait; null at first),
+  // sampled at most every 15 s: os.cpus() costs real time on a loaded Windows box (a browser test saw 2 s of it in 23 s, unthrottled)
+  let cpuPrev = null, cpuPct = null;
+  const cpuNow = () => {
+    if (cpuPrev && Date.now() - cpuPrev.at < 15000) return cpuPct;
+    const t = os.cpus().reduce((s, c) => { const x = c.times; s.idle += x.idle; s.all += x.user + x.nice + x.sys + x.idle + x.irq; return s; }, { idle: 0, all: 0, at: Date.now() });
+    if (cpuPrev && t.all > cpuPrev.all) cpuPct = 100 * (1 - (t.idle - cpuPrev.idle) / (t.all - cpuPrev.all));
+    cpuPrev = t;
+    return cpuPct;
+  };
+  const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
+  const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
+  /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
+  async function progressOf(p, ids, ctxOf = () => null) {
+    const items = st(p).items, rs = [...new Set(ids)].map(id => items[id]).filter(r => r?.kind === 'run' && r.data?.brief && r.data.lane && r.data.role !== 'helper');
+    if (!rs.length) return new Map();
+    const sess = new Map(rs.map(r => [r.id, sessionsOf(r, items)])), files = new Map();
+    await Promise.all([prime({ files: rs.flatMap(r => [r.data.brief, r.data.notes].filter(Boolean)) }),
+      ...[...new Set([...sess.values()].flat())].map(async r => { const f = await transcriptOf(r); if (f) { files.set(r.id, f); await tailA(f, pview(f), workInit, onWork); } })]);
+    let mails = [];
+    try { mails = Object.values(loadMail(p.state)); } catch { mails = []; }
+    const gc = guardChips(p.state), cpu = cpuNow(), out = new Map();
+    for (const r of rs) {
+      const work = mergeWork(sess.get(r.id).map(x => files.has(x.id) ? cache.get(PKEY + files.get(x.id)) : null));
+      out.set(r.id, runProgress(r, { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
+        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] }));
+    }
+    return out;
+  }
+  // RM-39 item 5: the lane overview card's data (one shape on Lanes and on the Runs page's Lane cell): why it exists, its type and
+  // output (RM-34), the current stage and its run's progress, pace, why slow and alarms, the last finished stage and what comes next
+  const cardOf = (l, pg) => ({ lane: l.name, objective: l.driver?.objective ?? null, source: l.driver?.sources?.[0] ?? null, finding: l.driver?.finding ?? null,
+    type: l.lane_type?.type ?? null, output: l.output?.text ?? null, stage: pg ? [l.stage ?? null, pg.run].filter(Boolean).join(' · ') : null, progress: pg ?? null, ...l.steps });
+  async function withCards(p, rows) {
+    const items = st(p).items, pg = await progressOf(p, rows.map(l => l.run).filter(Boolean));
+    return rows.map(l => { const g = pg.get(l.run), steps = laneSteps(l.name, items);
+      return { ...l, ...(g ? { progress: g } : {}), card: cardOf({ ...l, stage: items[l.run]?.data?.stage, steps }, g) }; });
+  }
   function lanesWithSpend(ps) {
     const rows = sortLanes(ps.flatMap(p => withDriver(p, lanes(p, true))));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
-  async function agents(p) {
+  async function agents(p, win) {
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
     const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
     // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
-    await primeAgents(runs, { projectsDir, codexDir, cache });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
-    return agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) })
-      .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
+    await primeAgents(runs, { projectsDir, codexDir, cache, window: win });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
+    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
+    // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
+    const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
+    if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
+    const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
+    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
+      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}),
+        ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
   // runs = the run ids the Runs page lists, so the tab links only those
@@ -566,7 +666,7 @@ export function createDashboard(o) {
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
-      strip: stripOf(ps, running, m), paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
+      strip: stripOf(ps, running, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
@@ -768,7 +868,9 @@ export function createDashboard(o) {
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
     let at = null; try { at = Date.parse(JSON.parse(await readA(bf, 'null')).at); } catch { at = null; }
     const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
-    const crossed = await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }));
+    // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
+    const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
+    const crossed = (await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }))).map(r => (told.has(r.id) && told.get(r.id).what ? { ...r, explain: told.get(r.id) } : r));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
@@ -1005,12 +1107,12 @@ export function createDashboard(o) {
     const nodes = new Map((await agents(p)).map(n => [n.id, n])), today = new Date().toDateString(), byNew = (a, b) => String(b.created).localeCompare(String(a.created));
     // + a run that just ended HANDOFF and waits for its resume verdict (handoffOf step 'ending'): the lane is not idle, it hands off
     const now = runs.filter(r => (['running', 'queued', 'claimed'].includes(r.state) || (r.end?.outcome === 'handoff' && !r.resume && hoOf(p, r)?.step === 'ending')) && r.data.kind !== 'checkin' && r.data.role !== 'helper')
-      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, age_min: n.age_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
+      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, ran_min: n.ran_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
-      paused: pausedFiles(p).some(existsS), limits: limitLines(p.state),   // META-LIMIT-GATE: executors out of quota
-      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${String(n.id).slice(2)} parked` : n.id), created: n.created ?? null })),
+      checkins_paused: stopsCheckins(pauseOfP(p)), limits: limitLines(p.state),   // RM-37: Pause check-ins / Pause everything   // META-LIMIT-GATE: executors out of quota
+      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${n.lane} parked` : n.id), created: n.created ?? null })),
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };
@@ -1285,6 +1387,14 @@ data: ${JSON.stringify(l)}
     throw fail(404, 'Not found');
   }
 
+  // INBOX-REPLIES: start the check-in that replies in a Q's thread now; a running one (or a pause) leaves it to the next tick
+  async function replyNow(p) {
+    if (pausedFiles(p).some(existsS)) return 'paused';
+    if (lockFresh(p) || checkinStarting) return 'next';
+    checkinStarting = true;
+    try { await platform.tick(p); return 'started'; } catch { return 'next'; } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }
+  }
+
   async function post(route, data) {
     if (route === '/api/project/new' || route.startsWith('/api/adopt/')) return adoptPost(route, data);
     const p = projectOf(data);
@@ -1295,23 +1405,45 @@ data: ${JSON.stringify(l)}
         if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
         return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { from: data.from } });
       }
+      const id = String(data.id), q = st(p).items[id];
+      if (data.ruling !== undefined) {   // INBOX-REPLIES: the owner's one tap on the ruling the controller proposed from their words
+        const P = rulingOf(q);
+        if (!P || P.seq !== data.ruling) throw fail(409, `${id} has no such proposed ruling any more (a newer message or reply). Reload.`);
+        return rec(p, { kind: 'question', ev: 'answer', id, by: 'dashboard', data: { text: `Rule: ${P.key ? `(${P.key}) ` : ''}${P.text} - yes`, via: 'dashboard', ruling: P.seq, ...(P.key ? { choice: P.key } : {}) } });
+      }
       const text = str(data.text, 'Answer', 4000);
       if (data.choice !== undefined && typeof data.choice !== 'string') throw fail(400, 'choice must be a string');
-      return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { text, via: 'dashboard', ...(data.choice ? { choice: data.choice } : {}) } });
+      // INBOX-REPLIES: typed words are a message to the controller, not a ruling - unless they are a bare option key ("b", "(b)").
+      // The message goes in the Q's thread (it stays open) and a check-in starts at once to reply, so the owner does not wait a tick.
+      const choice = data.choice || (q?.kind === 'question' ? pickOf(text, q.data.options) : null);
+      if (choice) {
+        const r = await rec(p, { kind: 'question', ev: 'answer', id, by: 'dashboard', data: { text, via: 'dashboard', choice } });
+        try { await platform.tick(p); } catch { /* the scheduled tick applies it then */ }   // item 8 (MAIL-9 d): an answer starts a tick at once
+        return r;
+      }
+      const r = await rec(p, { kind: 'question', ev: 'say', id, by: 'dashboard', data: { text, via: 'dashboard' } });
+      return { ...r, said: true, reply: await replyNow(p) };
     }
     if (route === '/api/first-task') {   // META-OOTB F-1: the owner's first task = a directive + lane `first` + its worktree / branch / brief
       const text = str(data.text, 'Task', 4000);
       try { const r = await newLaneAsync(p, { name: data.lane === undefined ? FIRST_LANE : String(data.lane), task: text, by: 'dashboard' }); await viewsA(p); return { ok: true, ...r }; }
       catch (e) { if (e instanceof LaneError) throw fail(e.code === 1 ? 500 : 400, e.message); if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/directive') {   // gap #5: a restatement of an active directive = 409 unless new: true (the page asks, then sends new: true)
-      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text);
-      if (dup && data.new !== true) throw fail(409, dupMessage(dup, 'new: true'));
-      return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(dup ? { distinct_from: [dup.id] } : {}) } });
+    // gap #5: a restatement of an active directive = 409 carrying the match (dup: the page says it in plain words and offers Open DIR-n /
+    // Replace it with this wording); new: true creates it anyway, replace: DIR-n creates it and supersedes DIR-n by it (both recorded).
+    // card: the repeat detector's card this approves (rules.mjs askedBy closes the card on it)
+    if (route === '/api/directive') {
+      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text), card = /^A-[0-9a-f]{10}$/.test(data.card ?? '') ? data.card : null;
+      const replace = data.replace == null ? null : String(data.replace), old = replace ? st(p).items[replace] : null;
+      if (replace && !(old?.kind === 'directive' && old.state === 'active')) throw fail(400, `${replace} is not an active directive`);
+      if (dup && data.new !== true && !replace) throw Object.assign(fail(409, dupMessage(dup, 'new: true')), { body: { dup: { id: dup.id, line: dup.line, why: dup.why } } });
+      const r = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(card ? { card } : {}), ...(dup && dup.id !== replace ? { distinct_from: [dup.id] } : {}) } });
+      if (replace) await rec(p, { kind: 'directive', ev: 'supersede', id: replace, by: 'dashboard', data: { by: r.id, why: 'restated: replaced by this wording from the dashboard' } });
+      return { ...r, ...(replace ? { superseded: replace } : {}) };
     }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
-    if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: laneId(String(data.lane), p.state), by: 'dashboard', data: {} });
+    if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: laneId(String(data.lane), p.state), by: 'dashboard', data: data.override ? { override: String(data.override) } : {} });   // item 9: work not on main needs the owner's override (records.mjs)
     if (route === '/api/handedit') {   // GAP-8: "Let Norn take it back" (a .bak of the hand text, then the views rewritten) or "Keep my version"
       if (!['takeback', 'keep'].includes(data.choice)) throw fail(400, 'choice must be takeback or keep');
       if (typeof data.file !== 'string' || !data.file) throw fail(400, 'file is required');
@@ -1322,11 +1454,19 @@ data: ${JSON.stringify(l)}
       } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
     }
     if (route === '/api/pause') {
-      if (typeof data.paused !== 'boolean') throw fail(400, 'paused must be boolean');
-      const f = path.join(p.state, 'PAUSED');
-      if (data.paused) { await fs.promises.mkdir(p.state, { recursive: true }); await fs.promises.writeFile(f, iso() + '\n'); } else { try { await fs.promises.unlink(f); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
-      return { paused: data.paused };
+      // RM-37: every pause is the CLI's (`norn pause` / `norn resume`, pause.mjs) run as a child: no sync write here. Exactly one of
+      // { mode, why? } | { runs: [RUN-n], why? } (a safe pause of each) | { resume: RUN-n | 'all' }
+      const runs = Array.isArray(data.runs) ? data.runs.map(String) : null, asks = ['mode', 'runs', 'resume'].filter(k => data[k] !== undefined);
+      if (asks.length !== 1) throw fail(400, 'give exactly one of mode | runs | resume');
+      if (runs && (!runs.length || !runs.every(r => /^RUN-\d+$/.test(r)))) throw fail(400, 'runs must be RUN-n ids');
+      if (data.resume !== undefined && !(data.resume === 'all' || /^RUN-\d+$/.test(String(data.resume)))) throw fail(400, 'resume must be RUN-n or all');
+      const args = data.mode !== undefined ? ['pause', '--mode', String(data.mode)] : runs ? ['pause', ...runs] : data.resume === 'all' ? ['resume', '--all'] : ['resume', String(data.resume)];
+      const r = await metaCli([...args, ...(data.why && data.resume === undefined ? ['--why', line(data.why)] : []), '--state', p.state, '--as', 'dashboard']);
+      if (r.code) throw cliFail(r);
+      return { ok: true, out: r.out.trim() };
     }
+    // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
+    if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
     if (route === '/api/stop') {
       if (data.confirm !== true) throw fail(400, 'confirm must be true');
       const r = st(p).items[String(data.run)];
@@ -1388,6 +1528,13 @@ data: ${JSON.stringify(l)}
       const text = `${head} ${ids.join(' ')}${ids.length < x.ids.length ? ` +${x.ids.length - ids.length} more (every id in ${r.id} and in this directive's findings)` : ''}`;
       const d = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', findings: x.ids, fixall: r.id } });
       return { ok: true, id: r.id, directive: d.id, n: x.ids.length, again: false };
+    }
+    if (route === '/api/proposal') {   // RM-28 S1: a stage's pick on the proposal card = `norn proposal rule` (the decision + the act: one path)
+      if (!['queue', 'later', 'drop'].includes(data.pick)) throw fail(400, 'pick must be queue, later or drop');
+      if (!/^RUN-\d+$/.test(String(data.run)) || !/^S\d+$/i.test(String(data.stage))) throw fail(400, 'run must be a RUN-n and stage an S<n>');
+      const r = await metaCli(['proposal', 'rule', String(data.run), String(data.stage), data.pick, '--as', 'dashboard', ...(p.file ? ['--project', p.file] : []), '--state', p.state]);
+      if (r.code !== 0) { const e = cliFail(r); throw fail(/decided already/.test(e.message) ? 409 : e.status, e.message); }
+      return { ok: true, lines: r.out.trim().split(/\r?\n/) };
     }
     if (route === '/api/advice') {   // META-TEND P4: the advice card's one tap - apply its Settings change, or keep the setting; both recorded
       if (!['apply', 'keep'].includes(data.verdict)) throw fail(400, 'verdict must be apply or keep');
@@ -1508,7 +1655,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1520,9 +1667,17 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
-        if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
-        if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); return send(200, { lanes: lanesWithSpend(ps) }); }
-        if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
+        if (route === '/api/inbox') { const ps = pick(url, { all: true }), per = await Promise.all(ps.map(inbox)), items = per.flat();
+          const prose = Object.fromEntries(await Promise.all(ps.map(async (p, i) => [p.name, await proseOf(p, per[i])])));
+          return send(200, { items, needs_you: needsYou(items), prose }); }
+        if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
+          const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
+          return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)) }); }
+        if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
+          const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
+          const ps = pick(url, { all: true }), win = windowMs(w);
+          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win)))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+        }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
           const vs = pick(url, { all: true }).map(deliverablesOf);
@@ -1530,6 +1685,9 @@ data: ${JSON.stringify(l)}
         }
         if (route === '/api/records') return send(200, records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));
+        if (route === '/api/handedit/diff') {   // RM-35: last written by Norn vs now, for the diff viewer
+          try { return send(200, await handEditDiff(one(url).state, url.searchParams.get('file') || '')); } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
+        }
         if (route === '/api/usage') return send(200, usageView(pick(url, { all: true }), url));
         if (route === '/api/plan') return send(200, { parts: pick(url, { all: true }).map(planOf) });
         if (route === '/api/docs') { const p = one(url), kp = docKeyPath(p, url.searchParams.get('file') ?? ''); if (kp) await prime({ files: [kp] }); return send(200, docsAt(p, url)); }   // META-UX-BUILD S3
@@ -1624,7 +1782,7 @@ data: ${JSON.stringify(l)}
       }
       if (route === '/api/checkin') {
         const p = projectOf(data);
-        if (pausedFiles(p).some(existsS)) throw fail(409, 'Check-ins are paused. Resume them first.');
+        if (stopsCheckins(pauseOfP(p))) throw fail(409, 'Check-ins are paused. Resume them first.');
         if (lockFresh(p) || checkinStarting) throw fail(409, 'A check-in is already running or starting.');
         checkinStarting = true;
         try { return send(200, await platform.tick(p)); } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }
@@ -1636,7 +1794,7 @@ data: ${JSON.stringify(l)}
         return r;
       });
       send(200, result);
-    } catch (e) { if (!res.headersSent) send(e.status ?? 500, { error: e.message }); else res.end(); }
+    } catch (e) { if (!res.headersSent) send(e.status ?? 500, { error: e.message, ...(e.body || {}) }); else res.end(); }
   };
   const server = http.createServer(handler);
   server.requestTimeout = 300000; server.headersTimeout = 15000;

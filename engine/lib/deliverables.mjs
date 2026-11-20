@@ -334,7 +334,7 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
     { key: 'park', text: `park it with the owner's reason: \`norn deliverables park ${id} --why "<reason>"\`; it comes back after ${cfg.park_days} d`, cost: 'stays unmerged' },
   ];
   const data = { title, lane: row.lane ?? row.branch.split('/').pop(), body, options,
-    recommend: { key: 'merge', why: `finished work belongs on main (rule 9: the proper option first); it is ${row.behind ?? '?'} commits behind and drifting` },
+    recommend: { key: 'merge', why: `finished work belongs on main (rule 9: the proper option first); it is ${row.behind ?? '?'} commits behind and drifting`, from: by },
     class: 'iii', blocks: [], source: `deliverable ${id}`, deliverable: id };
   const e = record(stateDir, { kind: 'question', ev: 'create', by, data }, { views: project.views || {}, ...(now ? { now } : {}) });
   return { id: e.id };

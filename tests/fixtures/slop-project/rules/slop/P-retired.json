@@ -5,6 +5,11 @@
   "key": "match",
   "title": "a retired term written again",
   "how": "the retired names (synthetic: oldtool is the name before newtool), keyed on the term tree-wide: new only when no file of the base tree has it, so editing a line that still carries an old term is no finding",
+  "explain": {
+    "what": "A retired term is written again.",
+    "why": "The term was renamed. Old names confuse readers and point to things that are gone.",
+    "fix": "Write the new term (newtool) instead of the old one."
+  },
   "files": [
     "engine/**",
     "docs/**",

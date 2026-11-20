@@ -88,7 +88,7 @@ test('C2 renderThread on a fixture thread: every card kind, escaped text, shots 
 const HOME = {
   project: 'kestrel', now: T(60), events: FIX, needs_you: 2,
   status: { running: false, busy: false, segment: 1, executor: 'claude', model: 'claude-opus-5-5', effort: 'medium', ctx: 62000, handoff_k: 110 },
-  side: { now: [{ run: 'RUN-411', lane: 'meta-autonomy', state: 'running', age_min: 38, ctx: 71000 }, { run: 'RUN-413', lane: 'meta-ledger', state: 'queued' }],
+  side: { now: [{ run: 'RUN-411', lane: 'meta-autonomy', state: 'running', ran_min: 38, ctx: 71000 }, { run: 'RUN-413', lane: 'meta-ledger', state: 'queued' }],
     usage: { used: 38, stop: 95 }, interval_min: 15, paused: false,
     waiting: [{ id: 'Q-17', type: 'question', title: 'Plan tab forecast', created: T(0) }],
     ruled: [{ id: 'DEC-112', text: 'autonomy R1 first' }], orders: [{ id: 'DIR-15', text: 'no merges 23-07', created: T(0) }] },
