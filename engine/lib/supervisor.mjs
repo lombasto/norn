@@ -18,6 +18,7 @@ import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
 import { holdJob, reapJob, reapGroup, spawnOutside, holdGone } from './jobguard.mjs';
+import { killNames } from './kills.mjs';
 import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
@@ -140,7 +141,7 @@ if (cmd) {
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);
     if (ctxWatched()) ctxTimer = setInterval(ctxCheck, spec.hbMs);
-    if (spec.capMs) capTimer = setTimeout(() => { capped = true; logLine(`time cap ${spec.capMs} ms: stopping the executor`); killTree(childPid); }, spec.capMs);
+    if (spec.capMs) capTimer = setTimeout(() => { capped = true; logLine(`time cap ${spec.capMs} ms: stopping the executor`); killTree(childPid, { state, killer: `${run} supervisor ${process.pid}`, reason: `time cap ${spec.capMs} ms` }); }, spec.capMs);
   } catch (e) { finish(null, null, String(e.message)); }
 }
 
@@ -200,9 +201,13 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // NORN-WATCH S5 evidence: an exit no `norn stop` explains, the worktree's uncommitted state, the branch + head it ended on
   if ((code === 143 || signal === 'SIGTERM') && !killedByMeta()) data.external_term = true;
   if (spec.worktree && spec.role !== 'helper') Object.assign(data, gitEvidence(spec.worktree));
-  if (job) { const r = reapJob(job, process.pid); if (r.error) data.reap_error = r.error; else data.reaped = r.killed.length; }
-  else if (guard && process.platform !== 'win32' && childPid) { const r = reapGroup(childPid); if (r.error) data.reap_error = r.error; else data.reaped = r.killed.length; }
-  if (data.reaped) logLine(`reaped ${data.reaped} process(es) left in the run's tree`);
+  // DEC-1088: the end keeps WHAT was reaped (pid + image; kills.jsonl has the command lines), and a skipped non-member pid
+  const reapRc = { state, killer: `${run} supervisor ${process.pid}`, reason: `reap: ${run} ended` };
+  const reap = job ? reapJob(job, process.pid, reapRc) : guard && process.platform !== 'win32' && childPid ? reapGroup(childPid, reapRc) : null;
+  if (reap?.error) data.reap_error = reap.error;
+  else if (reap) { if (reap.killed.length) data.reaped = reap.killed; if (reap.skipped?.length) data.reap_skipped = reap.skipped; }
+  if (data.reaped) logLine(`reaped ${data.reaped.length} process(es) left in the run's tree: ${killNames(data.reaped)}`);
+  if (data.reap_skipped) logLine(`reap skipped ${killNames(data.reap_skipped)}: no longer in the run's job (a reused pid)`);
   // usage fields of the end record, by the adapter that parses this output (claude json final / codex log; cli plain: none)
   if (cmd && ADAPTERS[cmd.parse]) Object.assign(data, ADAPTERS[cmd.parse].endData({ final: spec.final, log: spec.log }));
   // META-GTP-FED-2 piece 2: a node run (claim_of) carries its usage for the home guard (fed.mjs nodeUsage; 0 for non-Claude)
@@ -458,7 +463,7 @@ function nudgeCheck() {
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`nudge ${due.mail.id} not claimed: ${e.message}`); return; }   // acked meanwhile
   nudging = { mail: due.mail, afterMin: afterMin() };
   logLine(`nudge: ${due.mail.id} (urgent, not acked in ${afterMin()} min) -> stopping the run's tree, resuming session ${spec.session_id}`);
-  killTree(childPid);
+  killTree(childPid, { state, killer: `${run} supervisor ${process.pid}`, reason: `nudge ${due.mail.id}: resume session ${spec.session_id}` });
 }
 function nudgeResume() {
   const id = nudging.mail.id;
@@ -498,5 +503,5 @@ function ctxCheck() {
           + `${spec.notes ? ` (this run's own log: ${fwdPath(spec.notes)})` : ''}.` });
     } catch (e) { logLine(`forced hand-off not written: ${e.message}`); }
   }
-  killTree(childPid);
+  killTree(childPid, { state, killer: `${run} supervisor ${process.pid}`, reason: `context ${Math.round(ctx / 1000)}k past the hard max ${c.hard_max_k}k` });
 }

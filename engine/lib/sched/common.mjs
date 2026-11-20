@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 export const realIo = {
-  run: (cmd, args, input) => spawnSync(cmd, args, { input, encoding: 'utf8', windowsHide: true }),
+  run: (cmd, args, input) => spawnSync(cmd, args, { input, encoding: 'utf8', windowsHide: true, timeout: 60000 }),
   write: (f, c, encoding) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, encoding === 'utf16le' ? '﻿' + c : c, encoding || 'utf8'); },
   rm: f => { try { fs.unlinkSync(f); } catch { /* gone */ } },
   exists: f => fs.existsSync(f),

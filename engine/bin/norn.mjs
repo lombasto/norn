@@ -20,7 +20,7 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
@@ -68,7 +68,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -81,6 +81,7 @@ import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_A
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { stageSizes, verdict, sizingThresholds } from '../lib/sizing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
+import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
@@ -798,11 +799,12 @@ function s5Cmd(argv, env, out, err) {
 }
 
 // ---------- S8: norn dash / norn smoke (long-running: they return undefined and set process.exitCode themselves) ----------
-const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
+const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash --background    (the live dashboard of this install, started detached with no window unless it already answers; the way to start it from a shell)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
 // OOTB F-15: a browser tab only for a human at a terminal, or when asked; a script / agent gets the URL alone. --no-open always wins.
 export const dashOpens = (open, tty) => (open === null ? !!tty : open);
 function dashCmd(argv, env, out, err) {
   if (argv[0] === 'restart') return dashRestartCmd(argv.slice(1), env, out, err);
+  if (argv[0] === '--background') return dashRestartCmd(argv.slice(1), env, out, err, { keep: true });
   const o = { projects: [], open: null, port: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -864,15 +866,17 @@ function remoteCmd(argv, env, out, err) {
   try { machine = loadMachine(mf, { meta: root }); } catch (e) { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; }
   return sub === 'setup' ? remoteSetup({ machineFile: mf, machine, ...o, env, out }) : remoteOff({ machineFile: mf, machine, apply: o.apply, env, out });
 }
-function dashRestartCmd(argv, env, out, err) {
+// keep = `norn dash --background`: the recorded dashboard answering stays; else it starts as restart starts it (detached, hidden)
+function dashRestartCmd(argv, env, out, err, { keep = false } = {}) {
   if (argv.length) { err('error: unexpected ' + argv[0]); err(DASH_USAGE); return 2; }
   const root = metaRoot(env), mf = path.join(root, 'local', 'machine.json');
   if (!fs.existsSync(mf)) { err('error: no machine.json: run norn setup'); return 1; }
   let machine;
   try { machine = loadMachine(mf, { meta: root }); } catch (e) { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; }
   const port = machine.dash?.port ?? 8737, bind = machine.dash?.bind || '127.0.0.1';
-  dashRestart({ root, port, bind, env }).then(r => {
-    out(`dash restarted: pid ${r.pid} on ${r.url}${r.stopped ? ` (stopped pid ${r.stopped})` : ' (no recorded dashboard was running)'}`);
+  dashRestart({ root, port, bind, env, keep }).then(r => {
+    out(r.running ? `dash running: pid ${r.pid} on ${r.url} (already up; norn dash restart restarts it)`
+      : `dash ${keep ? 'started in the background' : 'restarted'}: pid ${r.pid} on ${r.url}${r.stopped ? ` (stopped pid ${r.stopped})` : keep ? '' : ' (no recorded dashboard was running)'}`);
     process.exitCode = 0;
   }, e => { err('error: ' + (e instanceof DashError ? e.message : e.stack)); process.exitCode = 1; });
   return undefined;
@@ -1386,6 +1390,7 @@ Plan and land work:
                                    (suggest: ranked tightening candidates; confirm <file>#<anchor>: "still true"; apply <S-id>: the owner's tap)
   norn usage                        where the week's tokens went: per lane + stage, top 5 spenders (--sources: what fills the contexts)
   norn guard                        the usage guard: live runs vs their peers, open alarms (watch / rule / sources)
+  norn speed                        worker speed: tok/s, model / tools / tests / idle per ended run, by workers running (the cap's data)
   norn size                         the sessions of a lane stage: floor, first edit, peak against the marks they ran under, a verdict
   norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
   norn deliverables                follow finished work to main and to an install
@@ -1509,6 +1514,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
   if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {
     if (argv[0] !== 'rec') { err(`error: unknown command ${argv[0]} - see norn help`); return 2; }
     let rest = argv.slice(1);
@@ -2602,6 +2608,37 @@ function usageCmd(argv, env, out, err) {
   }
 }
 
+// ---------- worker-speed: norn speed - tok/s and the wall split of each ended worker run, by the number of workers running beside it ----------
+const SPEED_USAGE = 'usage: norn speed [--hours N] [--json] [--project project.json | --state D] [--machine F] [--now UTC]    (read-only; default the last 24 h; no --project / --state = every project in machine.json)';
+function speedCmd(argv, env, out, err) {
+  try {
+    const flags = {};
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--json') { flags.json = true; continue; }
+      if (!['--hours', '--project', '--state', '--machine', '--now'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    const hours = flags.hours === undefined ? 24 : Number(flags.hours);
+    if (!(hours > 0)) throw new RunError(`--hours ${flags.hours}: want a number > 0`);
+    const now = flags.now ? Date.parse(flags.now) : Date.now();
+    if (!Number.isFinite(now)) throw new RunError(`--now ${flags.now} is not a date`);
+    const m = machineOf(flags, env);
+    let targets;
+    if (flags.project || flags.state) { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    else if (m.machine?.projects?.length) targets = m.machine.projects.map(p => { const project = loadProject(p.config, { meta: m.root }); return { project, state: project.state }; });
+    else { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    const parts = targets.map(t => ({ project: t.project?.name || path.basename(path.resolve(t.state)), items: Object.values(loadState(t.state).items) }));
+    const rep = speedReport(parts, { now, hours, projectsDir: projectsDirOf(m.machine, env), cpu: readCpu({ file: cpuLogFile(m.root), from: now - (hours + 48) * 3600000, to: now }) });
+    out(flags.json ? JSON.stringify(rep, null, 1) : formatSpeed(rep));
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err(SPEED_USAGE); return 2; }
+    throw e;
+  }
+}
+
 // ---------- META-GUARD R1: norn guard - the live usage guard (runaway / over the hand-off line / tool spam), alarms as GRD records ----------
 const GUARD_USAGE = 'usage: norn guard [--json]    (read-only: every live run vs its peers + the open GRD alarms)\n'
   + '       norn guard watch [--json]    (the tick runs it: raise a GRD record per new alarm, close those of ended runs)\n'
@@ -2758,6 +2795,7 @@ const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'a
 function mailCmd(argv, env, out, err) {
   const [sub, ...rest] = argv;
   const inject = sub === 'check' && rest.includes('--inject');
+  if (inject) hookWatchdog();   // proc-hygiene: the hook ends in bounded time (mail.mjs)
   try {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {

@@ -91,7 +91,8 @@ const runFile = (name, f, i) => new Promise(resolve => {
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;
-  const cap = setTimeout(() => { hung = true; killTree(child.pid); }, capS * 1000);
+  // DEC-1088: its kills are receipted (kills.mjs: the calling run's state, else <tmp>/norn-kills.jsonl)
+  const cap = setTimeout(() => { hung = true; killTree(child.pid, { killer: `ci-suite pid ${process.pid}`, reason: `${f}: no exit within the ${capS} s per-file cap` }); }, capS * 1000);
   // a killed file ends at its exit even if a stray grandchild still holds its pipes
   child.on('exit', () => { if (hung) setTimeout(() => end(null, 'killed'), 5000).unref(); });
   const end = (status, signal) => {
@@ -101,7 +102,7 @@ const runFile = (name, f, i) => new Promise(resolve => {
     const fails = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
       .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;
     const procs = listProcs(), left = procsNaming([ft], procs);
-    for (const p of left) killTree(p.pid);
+    for (const p of left) killTree(p.pid, { killer: `ci-suite pid ${process.pid}`, reason: `${f}: left alive after the file (its command line names ${fwd(ft)})` });
     const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${leakText(left, procs)}` } : null;
     const ms = Date.now() - t0, lines = measure && fs.existsSync(mout) ? fs.readFileSync(mout, 'utf8') : '';
     resolve({ f, status, signal, fails, leak, hang, ...(measure ? { measured: measureFile(f, ms, lines, process.cwd()) } : {}) });

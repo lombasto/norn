@@ -12,11 +12,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { readEvents, recordsFile, fold, record, homeOf, roleAddrIn } from './records.mjs';
 import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
 import { isMergeStage } from './usageguard.mjs';
-import { POLICY_DEFAULTS } from './policy.mjs';
+import { POLICY_DEFAULTS, laneMatch } from './policy.mjs';
 
 export const ROUTINE_KINDS = ['merge_done', 'worker_done_stage'];   // = the policy.checkin.routine row's options
 export const LEVELS = ['none', 'on-end', 'full'];
@@ -24,8 +25,6 @@ export const LEVELS = ['none', 'on-end', 'full'];
 export const CHECKIN_DEFAULTS = POLICY_DEFAULTS.checkin;   // one home: policy.mjs (the Settings rows)
 export const checkinPolicy = policy => ({ ...CHECKIN_DEFAULTS, ...(policy?.checkin || {}) });
 
-const globRe = g => new RegExp('^' + String(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
-export const laneMatch = (list, lane) => lane != null && (list || []).some(g => globRe(g).test(String(lane)));
 /** the check-in level of a lane: none | on-end | full (a lane in both lists = none, the narrower promise) */
 export const laneLevel = (cp, lane) => (laneMatch(cp.none_lanes, lane) ? 'none' : laneMatch(cp.on_end_lanes, lane) ? 'on-end' : 'full');
 export const isMergeRun = d => isMergeStage(d?.stage) || /(^|[-_])merge$|^mq$/i.test(String(d?.lane || ''));
@@ -34,7 +33,7 @@ export const isMergeRun = d => isMergeStage(d?.stage) || /(^|[-_])merge$|^mq$/i.
 /** a ref is on the remote: the worktree's remote-tracking branch is at (or past) the head - local refs only, no fetch */
 export function pushedHead(wt, branch, head, git = 'git') {
   if (!wt || !branch || !head) return false;
-  const r = spawnSync(git, ['merge-base', '--is-ancestor', head, `refs/remotes/origin/${branch}`], { cwd: wt, encoding: 'utf8', timeout: 10000, windowsHide: true });
+  const r = boundedSync(git, ['merge-base', '--is-ancestor', head, `refs/remotes/origin/${branch}`], { cwd: wt, timeout: 10000 });   // proc-hygiene: tree-killing timeout
   return r.status === 0 && !r.error;
 }
 // the run itself asked something: a question it created, or a mail it sent to the check-in

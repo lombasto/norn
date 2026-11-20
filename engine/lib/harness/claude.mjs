@@ -16,7 +16,9 @@ const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'fl
  */
 function command(o) {
   const mode = modeOf(o, 'claude', caps), ro = mode !== 'write', remote = !!o.remote;
-  const mcp = o.mcp ? ['--mcp-config', JSON.stringify({ mcpServers: { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } })] : [];
+  // proc-hygiene (4): the servers the project / lane names (profile.mcp_servers, launchpolicy.mcpServersOf) join Norn's own in one config
+  const servers = { ...(o.profile?.mcp_servers || {}), ...(o.mcp ? { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } : {}) };
+  const mcp = Object.keys(servers).length ? ['--mcp-config', JSON.stringify({ mcpServers: servers })] : [];
   const tools = mode === 'read-only' ? ['--disallowedTools', CLAUDE_RO_NOPE.join(','), ...mcp, '--strict-mcp-config']
     : mode === 'no-tools' ? ['--tools', '', ...mcp, '--strict-mcp-config'] : mcp.length ? [...mcp, '--strict-mcp-config'] : [];
   const extra = mergeArgs(tools, profileArgs(o.profile));   // META-STANDING-CONTEXT R1: before `tools` is spread (it may merge into it)
