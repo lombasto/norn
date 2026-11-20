@@ -62,7 +62,7 @@ import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
-import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
+import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE, markDeclines, DECLINE_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles, suiteOf } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
@@ -722,7 +722,8 @@ export function createDashboard(o) {
     const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
     const crossed = await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
-    const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
+    const rows0 = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
+    const rows = part('declines', () => markDeclines(rows0, st(p).items), rows0);   // a fixer's reasoned decline stands on its finding until the finding or its file changes
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
     return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, errors };
   }
@@ -740,10 +741,10 @@ export function createDashboard(o) {
     // S7: where each directive's fixer is - queued / running (its run), a card to decide (ready / failed), the rest left, or starting
     const sent = live.map(d => {
       const pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), c = cards.filter(x => x.directive === d.id), run = pl.live ? items[pl.live] : null;
-      const at = run ? (run.state === 'queued' ? 'queued' : 'running') : c.some(x => x.state === 'ready') ? 'card' : c.length ? 'failed' : pl.next ? 'starting' : pl.left.length ? 'rest' : 'done';
+      const at = run ? (run.state === 'queued' ? 'queued' : 'running') : c.some(x => x.state === 'ready') ? 'card' : c.some(x => x.state === 'failed') ? 'failed' : c.length ? 'declined' : pl.next ? 'starting' : pl.left.length ? 'rest' : 'done';
       return { id: d.data.fixall, directive: d.id, n: d.data.findings.length, open: out.filter(r => r.sent === d.data.fixall).length, at: d.created ?? null,
         fixer: { at, run: pl.live ?? c[0]?.run ?? null, left: pl.left.length, more: pl.more, approved: pl.approved, ran: pl.runs.length } };
-    }).filter(x => x.open > 0 || x.fixer.at === 'card' || x.fixer.at === 'failed');
+    }).filter(x => x.open > 0 || ['card', 'failed', 'declined'].includes(x.fixer.at));
     return { rows: out, sent, cards };
   }
   // META-UX-BUILD S2: ?part=summary (no list) or one sub-view's part (&limit= rows, SUB_CAP by default); no part = the full view (chips)
@@ -1304,16 +1305,27 @@ data: ${JSON.stringify(l)}
       if (!['apply', 'discard'].includes(data.choice)) throw fail(400, 'choice must be apply or discard');
       const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), c = fixCards(items, { batch, root: p.root }).find(x => x.run === String(data.run));
       if (!c) throw fail(409, 'That result is decided already. Reload.');
-      if (data.choice === 'apply' && c.state === 'failed') throw fail(409, 'This run drafted no hunk: there is nothing to apply.');
+      if (data.choice === 'apply' && c.state !== 'ready') throw fail(409, c.state === 'declined' ? 'The fixer declined every finding: there is nothing to apply.' : 'This run drafted no hunk: there is nothing to apply.');
       const skip = (Array.isArray(data.skip) ? data.skip.map(String) : []).filter(x => c.files.some(f => f.file === x));
       const kept = c.files.filter(f => !skip.includes(f.file)).reduce((n, f) => n + f.n, 0), choice = data.choice === 'apply' && kept ? 'apply' : 'discard';
       const d = items[c.directive], pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), { ids: took, open } = verdictIds(c), done = new Set([...pl.resolved, ...took]);
       const closes = d.state === 'active' && (d.data.findings || []).every(x => done.has(x));
       const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall-result', directive: c.directive, run: c.run, ids: took, ...(open.length ? { open } : {}), choice, skipped_files: skip,
-        question: `Fixer result ${c.run} (${c.directive}): ${c.n} hunk(s) in ${c.files.length} file(s)`, why: choice === 'apply' ? `The owner applies ${kept} hunk(s)${skip.length ? `; skipped: ${skip.join(', ')}` : ''}.` : 'The owner discards the drafts: nothing changes.' } });
+        question: `Fixer result ${c.run} (${c.directive}): ${c.n} hunk(s) in ${c.files.length} file(s)`, why: choice === 'apply' ? `The owner applies ${kept} hunk(s)${skip.length ? `; skipped: ${skip.join(', ')}` : ''}.` : c.state === 'declined' ? 'The fixer declined every finding with a reason: nothing to apply. Each decline stands on its finding (Slop page: accept it or re-scope).' : 'The owner discards the drafts: nothing changes.' } });
       const text = verdictText(c, { choice, skip, close: closes ? r.id : null });
       const x = text ? await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: text.slice(0, 4000), via: 'dashboard' } }) : null;
       return { ...r, directive: x?.id ?? null, closes };
+    }
+    if (route === '/api/fixdecline') {   // a declined finding's owner tap: accept the decline (the finding closes) or re-scope it (a new fix sentence: offered again)
+      if (!['accept', 'rescope'].includes(data.verdict)) throw fail(400, 'verdict must be accept or rescope');
+      const scope = data.verdict === 'rescope' ? line(data.scope ?? '').slice(0, 300) : null;
+      if (data.verdict === 'rescope' && !scope) throw fail(400, 're-scope needs the new fix sentence (scope)');
+      const r0 = (await guardOf(p)).rows.find(x => x.id === String(data.id) && x.declined);
+      if (!r0) throw fail(409, 'That finding is not declined now (decided already, or it changed). Reload.');
+      const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: DECLINE_LANE, finding: r0.id, run: r0.declined.run, verdict: data.verdict, ...(scope ? { scope } : {}),
+        question: `${r0.id} declined by ${r0.declined.run}: ${r0.declined.why}`.slice(0, 600), choice: scope ? `re-scope: ${scope}` : 'accept the decline: close the finding',
+        why: scope ? `The owner re-scopes the fix of ${r0.id} (was: ${r0.action ?? '-'}); Fix all offers it again with the new fix.` : `The owner accepts ${r0.declined.run}'s reason; the finding is closed.` } });
+      return { ...r, finding: r0.id };
     }
     if (route === '/api/fixall') {   // META-UX-BUILD S6 (REPORT s.3 step 2, DIR-65 Q2 A): Send the fixer = ONE decision + ONE directive (the audit card's path) with the ids
       const g = await guardOf(p);

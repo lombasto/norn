@@ -15,7 +15,7 @@ export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['growing', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
-const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}`)]));
+const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}${r.declined ? ':d' : ''}`)]));
 function fnv(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
@@ -59,9 +59,10 @@ export function guardSummary(g) {
 // ready / to-draft batch on the owner's own files are their own item (`<batch>|own`), offered and never ticked (stale paragraphs are
 // your call already, TIGHTEN_FIX). The send names the item keys + the picked ways; fixPick turns them into the finding ids of the SAME
 // view (the sig the sheet was drawn from), so the record carries ids, not a guess.
-// a row already sent to the fixer (r.sent = the Fix all decision, server.mjs fixSent) is not offered again
-const OFFER = r => !r.sent && (r.kind ?? 'drafts') !== 'count';
-const TICK = r => (r.kind === 'ready' || r.kind === 'drafts') && !r.owner_file && !r.sent;
+// a row already sent to the fixer (r.sent = the Fix all decision, server.mjs fixSent) or declined by it with a reason (r.declined,
+// fixer.mjs markDeclines: until the finding or its file changes) is not offered again
+const OFFER = r => !r.sent && !r.declined && (r.kind ?? 'drafts') !== 'count';
+const TICK = r => (r.kind === 'ready' || r.kind === 'drafts') && !r.owner_file && !r.sent && !r.declined;
 const OWN = '|own';
 const where = rows => rows.filter(r => r.path).slice(0, 3).map(r => `${String(r.path).replace(/\\/g, '/').split('/').slice(-2).join('/')}${r.line ? ':' + r.line : ''}`);
 function sheetItems(g) {
@@ -79,7 +80,7 @@ function sheetItems(g) {
 /** the sheet: { items [{ key, title, kind, ways?, action, severity, n, new, paths, tick, own? }], kinds (= the summary's), ticked, sig } */
 export function fixSheet(g) {
   const items = sheetItems(g).map(({ rows, ...i }) => i);
-  return { items, kinds: kindsOf((g.rows || []).filter(r => !r.sent)), sent: g.sent || [], ticked: items.filter(i => i.tick).reduce((n, i) => n + i.n, 0), sig: sig(g) };
+  return { items, kinds: kindsOf((g.rows || []).filter(r => !r.sent && !r.declined)), sent: g.sent || [], ticked: items.filter(i => i.tick).reduce((n, i) => n + i.n, 0), sig: sig(g) };
 }
 const bad = m => Object.assign(new Error(m), { status: 400 });
 /** { keys (ticked items), picks { <call batch key>: way } } -> { ids (sorted), picks [{ key, way, ids }], batches, set (a hash of ids + ways) } */

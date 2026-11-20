@@ -117,11 +117,7 @@ export const briefRows = text => [...String(text ?? '').replace(/\r\n/g, '\n').m
  *  status [{ id, state drafted|skipped|missing, why }], open (drafted ids whose hunk does not apply: they stay open), failed, fail (why) }
  *  readFile(file) -> its text or null; rows (briefRows) tie a finding to the hunks of its file */
 export function fixResult(text, ids, { readFile = readOrNull, rows = [] } = {}) {
-  const { hunks } = parseAudit(text), t = String(text ?? '').replace(/\r\n/g, '\n');
-  const status = ids.map(id => {
-    const m = t.match(new RegExp(`^\\s*[-*]\\s*\`?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`?\\s*:\\s*(drafted|skipped)\\b:?[ \\t]*(.*)$`, 'mi'));
-    return { id, state: m ? m[1].toLowerCase() : 'missing', why: m?.[2]?.trim() || null };
-  });
+  const { hunks } = parseAudit(text), status = findingStatus(text, ids);
   const texts = new Map(), read = f => { if (!texts.has(f)) texts.set(f, readFile(f)); return texts.get(f); };
   const hs = hunks.map(h => {
     const why = hunkMisfit(h.patch, read(h.file));
@@ -134,8 +130,56 @@ export function fixResult(text, ids, { readFile = readOrNull, rows = [] } = {}) 
     const r = rows.find(x => x.id === id), mine = r ? hs.filter(h => same(h.file, r.file)) : [];
     return mine.some(h => !h.applies) && !mine.some(h => h.applies && covers(h, r.line));
   });
-  const n = hs.filter(h => h.applies).length;
-  return { hunks: hs, status, open, failed: n === 0, fail: !hs.length ? 'no parsable hunk' : n ? null : 'no hunk applies' };
+  // a run that drafted nothing and skipped EVERY finding with a reason declined them (solve-shack RUN-180: "the move is unsafe", "the
+  // brief forbids the new file"): the right answer, not a failure. 'no parsable hunk' is a run that meant to change code and gave none.
+  const n = hs.filter(h => h.applies).length, declined = !hs.length && status.length > 0 && status.every(s => s.state === 'skipped' && s.why);
+  return { hunks: hs, status, open, declined, failed: n === 0 && !declined, fail: declined ? null : !hs.length ? 'no parsable hunk' : n ? null : 'no hunk applies' };
+}
+
+/** the answer's one line per finding: [{ id, state drafted|skipped|missing, why }] */
+export function findingStatus(text, ids) {
+  const t = String(text ?? '').replace(/\r\n/g, '\n');
+  return ids.map(id => {
+    const m = t.match(new RegExp(`^\\s*[-*]\\s*\`?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`?\\s*:\\s*(drafted|skipped)\\b:?[ \\t]*(.*)$`, 'mi'));
+    return { id, state: m ? m[1].toLowerCase() : 'missing', why: m?.[2]?.trim() || null };
+  });
+}
+
+// ---------- declines: a finding the fixer skipped with a reason is not offered again until the finding or its file changes ----------
+// The fingerprint of a finding as briefed: its id, its fix sentence, its ready patch and the whole text of its file (not the "why":
+// an instructions row's why carries "loaded 2.1x a day", which moves daily). `norn fix start` writes one per id beside the brief.
+export const findingSig = (row, text) => createHash('sha1').update(JSON.stringify([row.id, row.action ?? null, row.patch ?? null, plain(text)])).digest('hex').slice(0, 12);
+export const sigsFile = brief => String(brief).replace(/\.brief\.md$/, '.sigs.json');
+export const fixerSigs = (rows, readFile = readOrNull) => Object.fromEntries(rows.map(r => [r.id, findingSig(r, r.path ? readFile(r.path) : null)]));
+const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+export const DECLINE_LANE = 'fixall-decline';
+/** the standing declines: Map id -> { run, why, sig, at } from every ended fixer run (oldest first; a later run's line replaces an earlier
+ *  one, a later "drafted" ends it). A run without its sigs file has no fingerprint to hold a decline to: it declines nothing. */
+export function fixDeclines(items, { readNotes = readText, readBrief = readRunBrief, readSigs = r => readJson(sigsFile(r.data.brief)) } = {}) {
+  const out = new Map();
+  for (const r of Object.values(items).filter(i => i.kind === 'run' && i.data?.lane === FIX_LANE && i.end && i.end.outcome !== 'crash' && i.state !== 'cancelled' && i.data.notes).sort(byCreated)) {
+    const sigs = readSigs(r) || {};
+    for (const s of findingStatus(readNotes(r.data.notes), briefIds(readBrief(r)))) {
+      if (s.state === 'drafted') out.delete(s.id);
+      else if (s.state === 'skipped' && s.why && sigs[s.id]) out.set(s.id, { run: r.id, why: s.why, sig: sigs[s.id], at: r.end.at ?? r.updated ?? r.created });
+    }
+  }
+  return out;
+}
+/** the owner's word on declines (decisions on lane fixall-decline): Map id -> the newest { verdict accept|rescope, scope, dec } */
+export function declineVerdicts(items) {
+  const out = new Map();
+  for (const d of Object.values(items).filter(i => i.kind === 'decision' && i.state === 'in-force' && i.data?.lane === DECLINE_LANE).sort(byCreated)) out.set(d.data.finding, { verdict: d.data.verdict, scope: d.data.scope ?? null, dec: d.id });
+  return out;
+}
+/** the guard rows with the declines on them: an accepted decline closes its finding (the row leaves); a re-scope replaces the fix
+ *  sentence (a new fingerprint: offered again); a standing decline whose fingerprint still matches marks the row declined { run, why }
+ *  (Fix all no longer offers it). readFile(path) -> the file's text now. */
+export function markDeclines(rows, items, { readFile = readOrNull, declines = fixDeclines(items), verdicts = declineVerdicts(items) } = {}) {
+  return rows.filter(r => verdicts.get(r.id)?.verdict !== 'accept').map(r => {
+    const v = verdicts.get(r.id), x = v?.verdict === 'rescope' ? { ...r, action: v.scope, rescoped: v.dec } : r, d = declines.get(r.id);
+    return d && findingSig(x, x.path ? readFile(x.path) : null) === d.sig ? { ...x, declined: { run: d.run, why: d.why } } : x;
+  });
 }
 
 /** the rows of a fixer brief, kept by the dash when it sees the directive (the guard rows live only there: never a second scan) */
@@ -182,7 +226,7 @@ export function tickFix(p, state, { metaCmd, spawnFn, items, now = Date.now() } 
   return out;
 }
 
-/** the result cards of a project: ONE per ended fixer run with no verdict yet. { run, directive, dec, notes, state ready|failed, files
+/** the result cards of a project: ONE per ended fixer run with no verdict yet. { run, directive, dec, notes, state ready|failed|declined, files
  *  [{ file, hunks [{ id, line, patch }] }], n (hunks), status (drafted / skipped / missing per id), ids, left, more (the rest: runs) } */
 export function fixCards(items, { batch = 40, readNotes = readText, readBrief = readRunBrief, root = '', readFile = readOrNull } = {}) {
   const out = [], all = Object.values(items);
@@ -194,7 +238,7 @@ export function fixCards(items, { batch = 40, readNotes = readText, readBrief = 
       const res = fixResult(r.data.notes ? readNotes(r.data.notes) : '', ids, { rows, readFile: f => readFile(at(f)) });
       for (const h of res.hunks) { if (!files.has(h.file)) files.set(h.file, []); files.get(h.file).push({ id: h.id, line: h.line, patch: h.patch, applies: h.applies, why: h.why }); }
       out.push({ run: r.id, directive: d.id, dec: d.data.fixall, created: r.end?.at ?? r.updated ?? r.created, outcome: r.end?.outcome ?? null, notes: r.data.notes ?? null,
-        state: res.failed ? 'failed' : 'ready', fail: res.fail, files: [...files].map(([file, hunks]) => ({ file, hunks, n: hunks.filter(h => h.applies).length })),
+        state: res.failed ? 'failed' : res.declined ? 'declined' : 'ready', fail: res.fail, files: [...files].map(([file, hunks]) => ({ file, hunks, n: hunks.filter(h => h.applies).length })),
         n: res.hunks.filter(h => h.applies).length, bad: res.hunks.filter(h => !h.applies).length, open: res.open, status: res.status, ids,
         left: plan.left.filter(x => !ids.includes(x)).length, more: plan.next || plan.live ? 0 : plan.more });
     }
@@ -202,7 +246,8 @@ export function fixCards(items, { batch = 40, readNotes = readText, readBrief = 
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));
 }
 
-/** a verdict's ids: { ids (resolved by it), open (back to the rest: a later batch) }; a failed card resolves nothing */
+/** a verdict's ids: { ids (resolved by it), open (back to the rest: a later batch) }; a failed card resolves nothing; a declined card
+ *  resolves all (each decline stands on its finding: fixDeclines) */
 export const verdictIds = card => {
   const open = card.state === 'failed' ? [...card.ids] : card.open || [];
   return { ids: card.ids.filter(x => !open.includes(x)), open };
