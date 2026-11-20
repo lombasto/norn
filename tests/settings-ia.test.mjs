@@ -28,7 +28,7 @@ test('grouping is complete: every setting (with and without providers) has one e
   const used = new Set(settingsFor({ providers: PV }).map(s => sectionOf(s).slice(0, 2).join('/')));
   for (const c of SECTIONS) {
     assert.ok(c.label && c.help, c.id + ' label / help');
-    for (const s of c.subs) { assert.ok(s.label, `${c.id}/${s.id} label`); if (!c.info) assert.ok(used.has(`${c.id}/${s.id}`), `empty section ${c.id}/${s.id}`); }
+    for (const s of c.subs) { assert.ok(s.label, `${c.id}/${s.id} label`); if (!c.info && !s.pane) assert.ok(used.has(`${c.id}/${s.id}`), `empty section ${c.id}/${s.id}`); }
   }
 });
 

@@ -6,7 +6,8 @@
 // changed and is never edited. Copies sit outside the backup walk (it enters runs/ and views/ only), so a copy is never published again.
 // S1d: the fetch ends with the relay (relayPass) of each synced project: SPEC 4.2's pass. S4: syncPass adds the claims seen; the loop (syncLoop) polls and hears the doorbell.
 // S6b: syncJoin - a machine joins as a home by calling the stages above in order (access, private check, register, machine.json, cut, publish +
-// fetch). Node built-ins + the git binary (+ gh for the private check).
+// fetch). NORN-UI-SYNC: the join pauses each project it cuts and resumes it at the end; dry = the plan only (the dashboard's check step);
+// bare = the first home (the cut --bare of the given projects). Node built-ins + the git binary (+ gh for the private check).
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -21,6 +22,7 @@ import { localClaims, observeClaims, updateSync, listClaims, registerHome, homeK
 import { syncCut, cutLines } from './synccut.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
+import { setPause, clearPause } from './pause.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const COPIED = ['run', 'deliverable'];
@@ -414,12 +416,15 @@ const ghCli = args => { const r = spawnSync('gh', args, { encoding: 'utf8', wind
  * ledger repo is PRIVATE (gh; a public one is refused, no answer needs iCheckedPrivate); (3) register homes/<id>.json (S2a); (4) machine.json
  * ledger { remote, home_id, doorbell.topic }; (5) the cut (S1b) of each local project the claims branch names (projects/<p>.json): the dry
  * run shown, then applied; (6) the first publish + fetch (S1c); (7) the collaborator step for the ledger owner. A step already done is
- * skipped, so a re-join is a no-op. o: { home, remote, topic, machineFile, metaRoot, projects [loaded project: name, root, state],
- * iCheckedPrivate, gh ((args) -> stdout | null), openPr, ledgerOpts, now } -> { refused: [why], lines: [text], noop }
+ * skipped, so a re-join is a no-op. A project it cuts that is not paused is paused (by o.by) for the cut and resumed at the end, also after
+ * a refusal; the owner's own pause stays. o.dry: steps 1, 2, the id check and each cut's dry run - nothing written. o.bare: this machine is
+ * the first home: the given projects are cut --bare (no ledger naming them yet), no collaborator step. o: { home, remote, topic, machineFile,
+ * metaRoot, projects [loaded project: name, root, state], bare, dry, by (a pauser: owner | dashboard), iCheckedPrivate, gh ((args) -> stdout
+ * | null), openPr, ledgerOpts, now } -> { refused: [why], lines: [text], noop, dry }
  */
 export function syncJoin(o) {
-  const { home, remote, topic = null, machineFile, metaRoot, projects: mine = [], gh = ghCli, now = Date.now() } = o;
-  const lines = [], done = r => ({ refused: [], lines, noop: false, ...r });
+  const { home, remote, topic = null, machineFile, metaRoot, projects: mine = [], gh = ghCli, now = Date.now(), bare = false, dry = false, by = 'owner' } = o;
+  const lines = [], done = r => ({ refused: [], lines, noop: false, dry, ...r });
   if (!HOME_ID.test(home || '')) return done({ refused: [`home id ${JSON.stringify(home)}: want [a-z][a-z0-9]{0,7}`] });
   // 1. access
   const ls = spawnSync('git', ['ls-remote', remote], { encoding: 'utf8', windowsHide: true, timeout: 60000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
@@ -438,42 +443,62 @@ export function syncJoin(o) {
   const ledger = { ...L, remote, home_id: home, ...(topic ? { doorbell: { ...L.doorbell, topic } } : {}) };
   const cfg = ledgerConfig({ ...machine, ledger }, { metaRoot, machineFile }), fe = fedOf(cfg);
   let claims; try { claims = listClaims(fe); } catch (e) { return done({ refused: [`claims branch: ${e.message}`] }); }
-  const joined = mine.filter(p => claims[projectKey(p.name)]);
-  if (!joined.length) return done({ refused: [`the ledger names none of this machine's projects (${mine.map(p => p.name).join(', ') || 'none registered'}): the bare home cuts first (norn sync cut --bare)`] });
+  const joined = bare ? mine : mine.filter(p => claims[projectKey(p.name)]);
+  if (!joined.length) return done(bare ? { refused: ['no project to cut as the first home'] } : { refused: [`the ledger names none of this machine's projects (${mine.map(p => p.name).join(', ') || 'none registered'}): the bare home cuts first (norn sync cut --bare)`] });
   if (claims[homeKey(home)] && L.home_id !== home) return done({ refused: [`home id ${home} is taken (claims homes/${home}.json): pick another id`] });
-  let changed = false;
-  if (claims[homeKey(home)]) lines.push(`3. homes/${home}.json: registered before`);
-  else {
-    const r = registerHome(fe, { id: home, projects: joined.map(p => p.name), now });
-    if (r.exists) return done({ refused: [`home id ${home} was taken meanwhile: pick another id`] });
-    changed = true; lines.push(`3. registered homes/${home}.json (projects ${joined.map(p => p.name).join(', ')})`);
+  const cutOf = p => ({ state: p.state, project: p, home, bare, ledger: cfg, machineFile, ledgerOpts: o.ledgerOpts, now, pausing: true, ...(o.openPr ? { openPr: o.openPr } : {}) });
+  if (dry) {   // the plan: each cut's dry run (the apply pauses the project itself, so an unpaused one is not refused here)
+    const refused = [];
+    for (const p of joined) {
+      if (homeOf(p.state)?.id === home) { lines.push(`5. ${p.name}: cut before as home ${home}`); continue; }
+      const r = syncCut(cutOf(p));
+      lines.push(...cutLines(r, { project: p.name, home, apply: false }));
+      refused.push(...r.refused);
+    }
+    return done({ refused });
   }
-  // 4. machine.json (the doorbell topic is a machine.json secret, never in the ledger: SPEC 7)
-  if (JSON.stringify(ledger) === JSON.stringify(L)) lines.push('4. machine.json ledger: unchanged');
-  else { writeAtomic(machineFile, JSON.stringify({ ...machine, ledger }, null, 2) + '\n'); changed = true; lines.push(`4. machine.json ledger: remote, home_id ${home}${topic ? ', doorbell topic' : ''}`); }
-  // 5. the cut (S1b), one per joined project: the dry run, then applied
-  for (const p of joined) {
-    if (homeOf(p.state)?.id === home) { lines.push(`5. ${p.name}: cut before as home ${home}`); continue; }
-    const base = { state: p.state, project: p, home, bare: false, ledger: cfg, machineFile, ledgerOpts: o.ledgerOpts, now, ...(o.openPr ? { openPr: o.openPr } : {}) };
-    const dry = syncCut(base);
-    lines.push(...cutLines(dry, { project: p.name, home, apply: false }));
-    if (dry.refused.length) return done({ refused: dry.refused });
-    const cut = syncCut({ ...base, apply: true });
-    lines.push(...cutLines(cut, { project: p.name, home, apply: true }));
-    if (cut.refused.length) return done({ refused: cut.refused });
-    changed = true;
+  const pausedHere = [];
+  try { return joinApply(); } finally {
+    for (const p of pausedHere) { clearPause(p.state); lines.push(`8. ${p.name}: resumed`); }
   }
-  // 6. the first publish + fetch (S1c); a re-join with home/<id> already on the remote ends here
-  const published = ls.stdout.split('\n').some(l => l.trim().endsWith(`\trefs/heads/home/${home}`) || l.trim().endsWith(` refs/heads/home/${home}`));
-  if (!changed && published) return done({ noop: true, lines: [...lines, `joined before as home ${home}: nothing to do`] });
-  const pub = publishHome(cfg);
-  if (pub.error || pub.refused || pub.stopped || pub.rejected) return done({ refused: [`publish: ${pub.error || pub.stopped || pub.rejected || `a machine.json secret value in ${pub.refused.join(', ')}`}`] });
-  lines.push(`6. publish: home/${home} ${pub.pushed ? 'pushed' : pub.noop ? 'up to date' : `not pushed (${pub.offline}): the next sync pass retries`}`);
-  const fx = fetchHomes(cfg);
-  if (fx.error) return done({ refused: [`fetch: ${fx.error}`] });
-  lines.push(`6. fetch: homes ${fx.homes.join(', ') || 'none'}, ${fx.written.length} cop${fx.written.length === 1 ? 'y' : 'ies'} written`);
-  // 7. the collaborator step: the ledger owner gives this home's GitHub account push access (not needed when it is the owner's own account)
-  const user = slug ? String(gh(['api', 'user', '--jq', '.login']) ?? '').trim() : '';
-  lines.push(`7. the ledger owner runs (unless this home uses the owner's own account): gh api -X PUT repos/${slug || '<owner>/<repo>'}/collaborators/${user || '<this home\'s login>'} -f permission=push`);
-  return done({});
+  function joinApply() {
+    let changed = false;
+    if (claims[homeKey(home)]) lines.push(`3. homes/${home}.json: registered before`);
+    else {
+      const r = registerHome(fe, { id: home, projects: joined.map(p => p.name), now });
+      if (r.exists) return done({ refused: [`home id ${home} was taken meanwhile: pick another id`] });
+      changed = true; lines.push(`3. registered homes/${home}.json (projects ${joined.map(p => p.name).join(', ')})`);
+    }
+    // 4. machine.json (the doorbell topic is a machine.json secret, never in the ledger: SPEC 7)
+    if (JSON.stringify(ledger) === JSON.stringify(L)) lines.push('4. machine.json ledger: unchanged');
+    else { writeAtomic(machineFile, JSON.stringify({ ...machine, ledger }, null, 2) + '\n'); changed = true; lines.push(`4. machine.json ledger: remote, home_id ${home}${topic ? ', doorbell topic' : ''}`); }
+    // 5. the cut (S1b), one per joined project: paused here unless the owner paused it, the dry run, then applied (resumed at the end)
+    for (const p of joined) {
+      if (homeOf(p.state)?.id === home) { lines.push(`5. ${p.name}: cut before as home ${home}`); continue; }
+      if (!fs.existsSync(path.join(p.state, 'PAUSED'))) { setPause(p.state, { mode: 'all', by, why: `sync join: the cut as home ${home}` }); pausedHere.push(p); lines.push(`5. ${p.name}: paused for the cut`); }
+      const base = cutOf(p);
+      const plan = syncCut(base);
+      lines.push(...cutLines(plan, { project: p.name, home, apply: false }));
+      if (plan.refused.length) return done({ refused: plan.refused });
+      const cut = syncCut({ ...base, apply: true });
+      lines.push(...cutLines(cut, { project: p.name, home, apply: true, next: false }));
+      if (cut.refused.length) return done({ refused: cut.refused });
+      changed = true;
+    }
+    // 6. the first publish + fetch (S1c); a re-join with home/<id> already on the remote ends here
+    const published = ls.stdout.split('\n').some(l => l.trim().endsWith(`\trefs/heads/home/${home}`) || l.trim().endsWith(` refs/heads/home/${home}`));
+    if (!changed && published) return done({ noop: true, lines: [...lines, `joined before as home ${home}: nothing to do`] });
+    const pub = publishHome(cfg);
+    if (pub.error || pub.refused || pub.stopped || pub.rejected) return done({ refused: [`publish: ${pub.error || pub.stopped || pub.rejected || `a machine.json secret value in ${pub.refused.join(', ')}`}`] });
+    lines.push(`6. publish: home/${home} ${pub.pushed ? 'pushed' : pub.noop ? 'up to date' : `not pushed (${pub.offline}): the next sync pass retries`}`);
+    const fx = fetchHomes(cfg);
+    if (fx.error) return done({ refused: [`fetch: ${fx.error}`] });
+    lines.push(`6. fetch: homes ${fx.homes.join(', ') || 'none'}, ${fx.written.length} cop${fx.written.length === 1 ? 'y' : 'ies'} written`);
+    // 7. the collaborator step: the ledger owner gives this home's GitHub account push access (not needed when it is the owner's own account;
+    // the first home is the ledger owner's)
+    if (bare) return done({});
+    const user = slug ? String(gh(['api', 'user', '--jq', '.login']) ?? '').trim() : '';
+    lines.push(`7. the ledger owner runs (unless this home uses the owner's own account): gh api -X PUT repos/${slug || '<owner>/<repo>'}/collaborators/${user || '<this home\'s login>'} -f permission=push`);
+    return done({});
+  }
 }
