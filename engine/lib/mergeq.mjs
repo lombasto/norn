@@ -550,10 +550,13 @@ export function takeRunLock(stateDir) {
 
 /**
  * The tick's step (tick.mjs, right after the fill): start `norn mergeq --run` detached for a project that follows deliverables, unless a
- * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests) }. Returns the tick-log words or null.
+ * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests), leader (tick.mjs claimsPass: a synced home's merge
+ * leader state; none = not synced, the queue runs) }. RM-46 S6a: only the merge leader runs the queue. Returns the tick-log words or null.
  */
-export function tickMergeq(p, state, { metaCmd, spawnFn } = {}) {
-  if (!p?.file || !(p.deliverables || p.merge)) return null;
+export const mergeqOn = p => !!(p?.file && (p.deliverables || p.merge));
+export function tickMergeq(p, state, { metaCmd, spawnFn, leader } = {}) {
+  if (!mergeqOn(p)) return null;
+  if (leader && !leader.leader) return `mergeq: refused - ${leader.why}`;
   const live = mqRunning(state);
   if (live) return `mergeq: pass pid ${live.pid} running`;
   const args = [metaCmd, 'mergeq', '--run', '--project', p.file, '--state', state];

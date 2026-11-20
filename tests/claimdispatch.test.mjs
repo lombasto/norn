@@ -151,11 +151,13 @@ test('release: the tick CAS-deletes the own claim of a lane that is done', () =>
   assert.deepEqual(readSync(g.a.state, 'own'), {});
 });
 
-test('exempt: a check-in starts with no claim and no ledger contact; helpers, audits and MERGE stages never claim', () => {
+test('exempt: a check-in starts with no claim and no ledger contact; helpers and audits never claim; a MERGE stage only passes the leader door', () => {
   const g = rig();
   const ck = startRun(g.b.opts('checkin', { kind: 'checkin', lock: false, git_ledger: g.b.offline, scope: null }));
   assert.ok(ck.run && !ck.queued);
-  for (const o of [{ role: 'helper', lock: false }, { kind: 'audit' }, { stage: 'MERGE' }]) assert.equal(claimDoor(g.b.opts('y', o)), null, JSON.stringify(o));
+  for (const o of [{ role: 'helper', lock: false }, { kind: 'audit' }]) assert.equal(claimDoor(g.b.opts('y', o)), null, JSON.stringify(o));
+  // S6a: a MERGE stage claims no work; it starts only on the merge leader (a local check: b holds no leader claim)
+  assert.throws(() => claimDoor(g.b.opts('y', { stage: 'MERGE' })), e => e instanceof RunRefused && e.code === 3 && /MERGE: no merge leader confirmed yet/.test(e.message));
   assert.equal(claimDoor({ ...g.b.opts('y'), state: path.join(g.t, 'solo') }), null, 'a solo state dir (no home.json) never claims');
   assert.equal(spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/heads/claims'], { env: { ...process.env, GIT_DIR: g.remote }, windowsHide: true }).status, 1, 'the claims branch was never written');
 });

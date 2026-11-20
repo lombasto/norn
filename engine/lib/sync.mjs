@@ -4,13 +4,13 @@
 // pushed WITHOUT force (fast-forward only: a rejection means a second install uses this id - publishing stops). Fetch: home/* and claims in
 // one fetch (claimsref's fetchRefs, under the claims lock, since it moves refs/sync/claims too); a copy is written only when its blob
 // changed and is never edited. Copies sit outside the backup walk (it enters runs/ and views/ only), so a copy is never published again.
-// The fold of the copies and the relay are S1d's; the loop is S4's. Node built-ins + the git binary only.
+// S1d: the fetch ends with the relay (relayPass) of each synced project: SPEC 4.2's pass. S4: syncPass adds the claims seen; the loop (syncLoop) polls and hears the doorbell. Node built-ins + the git binary only.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync, spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { withLock, homeOf, KINDS } from './records.mjs';
+import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger } from './ledger.mjs';
 import { rgit, fetchRefs, claimsLock, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { fedOf } from './fed.mjs';
@@ -19,10 +19,10 @@ import { localClaims, observeClaims, updateSync } from './claims.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
-const SHARED = ['question', 'decision', 'directive', 'lane', 'item', 'mail', 'waiver'], COPIED = ['run', 'deliverable'];
+const COPIED = ['run', 'deliverable'];
 const logsOf = ks => [...new Set(ks.map(k => KINDS[k].file + '.jsonl'))];
 /** what a home branch carries per project: { from: file in the state dir, to: path under <project>/ on home/<id> (and under homes/<h>/) } */
-export const HOME_FILES = [{ from: 'home.json', to: 'home.json' }, ...logsOf(SHARED).map(f => ({ from: f, to: f })), { from: 'relay.jsonl', to: 'relay.jsonl' },
+export const HOME_FILES = [{ from: 'home.json', to: 'home.json' }, ...logsOf(SHARED_KINDS).map(f => ({ from: f, to: f })), { from: 'relay.jsonl', to: 'relay.jsonl' },
   ...logsOf(COPIED).map(f => ({ from: f, to: `copy/${f}` }))];
 const HOME_SPEC = '+refs/heads/home/*:refs/sync/home/*';
 const SEG = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, HOME_ID = /^[a-z][a-z0-9]{0,7}$/;
@@ -124,6 +124,7 @@ export function publishHome(cfg0, o = {}) {
   } catch (e) { logTo(cfg, `publish failed: ${e.message}`); return { error: e.message }; }
 }
 
+const notesOf = (cfg, p) => path.join(cfg.state_root, p, 'sync', 'copy-integrity.json');   // records.mjs homeStreams reads it
 const blobSha = b => crypto.createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest('hex');
 function blobBytes(f, sha) {
   const r = spawnSync('git', ['cat-file', 'blob', sha], { env: { ...process.env, GIT_DIR: f.dir }, windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
@@ -154,22 +155,76 @@ export function fetchHomes(cfg0, o = {}) {
     const tips = Object.fromEntries(rgit(f, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/sync/home/']).out.split('\n').filter(Boolean)
       .map(l => l.split(' ')).map(([r, sha]) => [r.slice('refs/sync/home/'.length), sha]).filter(([h]) => HOME_ID.test(h) && h !== cfg.home_id));
     const homes = Object.keys(tips).sort(), mine = projects(cfg), written = [];
+    const noted = Object.fromEntries(mine.map(p => [p, readJsonS(notesOf(cfg, p)) || []])), noted0 = JSON.stringify(noted);
     for (const h of homes) {
       const ents = rgit(f, ['ls-tree', '-r', '-z', tips[h]]).out.split('\0').filter(Boolean).map(l => { const [meta, rel] = l.split('\t'); return { sha: meta.split(' ')[2], rel }; });
+      // SPEC 3.7: a log copy that is not an append of the last copy is an integrity row, unless the home's cut_at changed (a re-cut)
+      const recut = {};
+      for (const e of ents) {
+        const [p, x, ...more] = e.rel.split('/');
+        if (x !== 'home.json' || more.length || !mine.includes(p)) continue;
+        let cut = null; try { cut = JSON.parse(blobBytes(f, e.sha)).cut_at ?? null; } catch { /* no cut_at: compared as null */ }
+        recut[p] = cut !== (readJsonS(path.join(cfg.state_root, p, 'homes', h, 'home.json'))?.cut_at ?? null);
+        if (recut[p]) noted[p] = noted[p].filter(r => r.home !== h);
+      }
       for (const e of ents) {
         const [p, ...rest] = e.rel.split('/');
         if (!mine.includes(p) || !rest.length || !rest.every(s => SEG.test(s))) continue;
-        const dest = path.join(cfg.state_root, p, 'homes', h, ...rest);
+        const dest = path.join(cfg.state_root, p, 'homes', h, ...rest), file = rest.join('/');
         let cur = null; try { cur = fs.readFileSync(dest); } catch { /* new copy */ }
         if (cur && blobSha(cur) === e.sha) continue;
-        writeAtomic(dest, blobBytes(f, e.sha));
-        written.push(`${p}/homes/${h}/${rest.join('/')}`);
+        const b = blobBytes(f, e.sha);
+        if (cur && file.endsWith('.jsonl') && !recut[p] && !b.subarray(0, cur.length).equals(cur) && !noted[p].some(r => r.home === h && r.file === file))
+          noted[p].push({ home: h, file, at: now, why: `the copy of ${file} from home ${h} is not an append of the last copy (fetched ${now})` });
+        writeAtomic(dest, b);
+        written.push(`${p}/homes/${h}/${file}`);
       }
+    }
+    if (JSON.stringify(noted) !== noted0) for (const p of mine) writeAtomic(notesOf(cfg, p), JSON.stringify(noted[p]));
+    // SPEC 4.2: the pass relays what the other homes wrote on this home's records (each project under its own record() locks)
+    const relayed = [], refused = [];
+    for (const p of mine) {
+      try { const r = relayPass(path.join(cfg.state_root, p), { now: () => new Date(o.now ?? Date.now()) }); relayed.push(...r.relayed); refused.push(...r.refused); }
+      catch (e) { logTo(cfg, `relay failed for ${p} (the next pass retries): ${e.message}`); }
     }
     const gone = mine.flatMap(p => ls(path.join(cfg.state_root, p, 'homes')).filter(d => d.isDirectory() && !tips[d.name]).map(d => `${p}/${d.name}`)).sort();
     writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone }));
-    return { homes, written, gone };
+    return { homes, written, gone, relayed, refused };
   } catch (e) { logTo(cfg, `copies failed: ${e.message}`); return { error: e.message }; }
+}
+
+// a relayed / refused pending event: "<home>:<seq> <file> <id> <ev>"
+const evName = x => `${x.e.home}:${x.e.seq} ${x.file} ${x.e.id} ${x.e.ev}`;
+/**
+ * relayPass(stateDir, { now, max }): SPEC 3.7 relay at the primary. Each event another home wrote on a record this home is primary of
+ * (pending in the merged view), oldest first (the fold order), at most `max` (200): record() it with its original by / run / data +
+ * from_home { home, seq, ts } - this home's lock, role check and from-state check decide. A refusal appends { home, seq, file, id, ev,
+ * why, ts } to <state>/relay.jsonl (published; the writer home folds it into a conflict). A busy lock or an unreadable log (RecordError
+ * code 1) is no refusal: the event stays pending for the next pass. Idempotent: a relayed or refused event is no longer pending.
+ * -> { relayed: [name], refused: [name] }; a solo dir relays nothing.
+ */
+export function relayPass(stateDir, o = {}) {
+  const home = homeOf(stateDir), out = { relayed: [], refused: [] };
+  if (!home) return out;
+  const now = o.now || (() => new Date()), todo = [];
+  for (const kind of SHARED_KINDS.filter((k, i, a) => a.findIndex(x => KINDS[x].file === KINDS[k].file) === i)) {
+    const v = loadShared(stateDir, kind);
+    for (const [id, evs] of Object.entries(v.pending)) if (primaryOf(v.items[id], home.bare_home) === home.id) for (const e of evs) todo.push({ file: KINDS[kind].file, e });
+  }
+  todo.sort((a, b) => keyBefore(foldKey(a.e, a.e.home), foldKey(b.e, b.e.home)));
+  for (const x of todo.slice(0, o.max ?? 200)) {
+    const { e } = x;
+    try {
+      record(stateDir, { kind: e.kind, ev: e.ev, id: e.id, by: e.by, data: e.data ?? {} }, { now, run: e.run ?? null, from_home: { home: e.home, seq: e.seq, ts: e.ts }, views: o.views });
+      out.relayed.push(evName(x));
+    } catch (err) {
+      if (!(err instanceof RecordError) || err.code === 1) throw err;
+      const row = { home: e.home, seq: e.seq, file: x.file, id: e.id, ev: e.ev, why: err.message, ts: now().toISOString().replace(/\.\d{3}Z$/, 'Z') };
+      withLock(path.join(stateDir, 'relay.lock'), () => fs.appendFileSync(path.join(stateDir, 'relay.jsonl'), JSON.stringify(row) + '\n'));
+      out.refused.push(evName(x));
+    }
+  }
+  return out;
 }
 
 /** what the sync files say (no git, no network): { off } | { error } | { home, remote, head, pushed, stopped, fetched_at, fetch_error, failed_at, gone } */
@@ -195,7 +250,7 @@ export function syncStep(cfg, reason, o = {}) {
   return `sync: home ${r.sha ? r.sha.slice(0, 10) : 'pushed'} (${reason})`;
 }
 
-/** SPEC 4.2's pass: the fetch (+ copies; S1d's relay once it lands in fetchHomes), then the claims seen recorded on this home's clock (4.5) */
+/** SPEC 4.2's pass: the fetch (copies + S1d's relay, in fetchHomes), then the claims seen recorded on this home's clock (4.5) */
 export function syncPass(cfg0, o = {}) {
   const r = fetchHomes(cfg0, o);
   if (r.error || r.off) return r;
