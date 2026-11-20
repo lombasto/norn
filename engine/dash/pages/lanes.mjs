@@ -127,7 +127,8 @@ function flow(l) {
 // lane-outputs: Details in the open row loads the lane's findings, outputs, rulings and PRs above the board (S.laneDetail; GET /api/lane)
 const detailBtn = (l, ctx) => `<button data-act="lane-detail" data-project="${esc(l.project)}" data-lane="${esc(l.name)}" aria-pressed="${ctx.laneDetail === laneKey(l.project, l.name)}" title="Findings, outputs, rulings and PRs of ${esc(l.name)}">Details</button> `;
 function expand(l, ctx, open) {
-  const g = l.progress, usd = l.usd?.runs ? `<span>${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)} to date</span>` : '';
+  // fair-slots item 2: the figure sums every run of the lane, and says so
+  const g = l.progress, usd = l.usd?.runs ? `<span class="mono lane-usd" title="every run of the lane; ~ = one is still running (an estimate)">${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)} to date, all runs</span>` : '';
   const ex = l.executor && exClass(l.executor) !== 'claude' ? '' : l.executor ? `<span>${esc(l.executor)}</span>` : '';
   const facts = [`<span class="mono">${esc(l.id)}</span>`, l.run ? `<span class="mono">${esc(l.run)}</span>${runWho(l.dwarf, l.kind_word)}` : '', ex, usd, `<span class="mute">${esc(l.text ?? '')}</span>`].filter(Boolean).join(' · ');
   const path = l.path ? `<div class="small">${l.path.red ? chip('bad', l.path.text) : esc(l.path.text)}</div>` : '';
