@@ -144,3 +144,32 @@ test('landed unchecked: every first-parent landing on main since the first store
   r = dailyReport({ repo, state, now: now + 2 * 86400e3, rules: [K15], tool: noTool });
   assert.doesNotMatch(r.line, /LANDED UNCHECKED/);
 });
+
+// The audit's proof case (PR #6, a hand PR merged unchecked): its diff had 6 empty catches (K2) and 3 unused names (K3). A synthetic
+// branch of the same shape, checked the way the PR job checks it (merge base with main..head, machine rules off), fails with those 9.
+// ESLint's output is recorded (as in the rule fixtures): a test fetches no tool.
+test('the PR #6 replay: the job\'s check of a branch shaped like PR #6 fails with its 9 BLOCK findings (6 K2 + 3 K3)', () => {
+  const repo = repoWith({ 'lib/core.mjs': 'export const one = 1;\n' });
+  git(repo, 'checkout', '-q', '-b', 'hand/pr6');
+  const head = commit(repo, {
+    'lib/hold.mjs': 'export function hold(f) {\n  try { return f(); } catch {}\n}\n',
+    'lib/guard.mjs': 'export function stop(f) {\n  try { f(); } catch (e) {}\n}\nexport const quiet = p => p.catch(() => {});\n',
+    'lib/cost.mjs': 'export const cost = f => { try { return f(); } catch { /* ignore */ } };\n',
+    'tests/sup.test.mjs': 'export const both = (a, b) => { try { a(); } catch {} try { b(); } catch {} };\n',
+    'lib/server.mjs': "import { readdirSync as readdirS, statSync } from 'node:fs';\nexport const size = f => statSync(f).size;\n",
+    'tests/legacy.test.mjs': "import path from 'node:path';\nexport const two = 2;\n",
+    'tests/scope.test.mjs': 'const unusedRoot = 3;\nexport const three = 3;\n',
+  }, 'pr6');
+  const base = git(repo, 'merge-base', 'main', head);
+  const msg = (line, column, name) => ({ ruleId: 'no-unused-vars', severity: 2, message: `'${name}' is defined but never used. Allowed unused vars must match /^_/u.`, line, column });
+  const lintOut = { base: '[]', head: JSON.stringify([
+    { filePath: 'lib/server.mjs', messages: [msg(1, 31, 'readdirS')] },
+    { filePath: 'tests/legacy.test.mjs', messages: [msg(1, 8, 'path')] },
+    { filePath: 'tests/scope.test.mjs', messages: [msg(1, 7, 'unusedRoot')] }]) };
+  const tool = (rule, side) => (rule.kind === 'lint' ? lintOut[side] : noTool(rule, side));   // one ESLint run serves every lint rule
+  const r = slopCheck({ repo, base, head, tool, machine: false });
+  assert.deepEqual(r.skipped.map(s => s.rule), ['K14'], 'the CI form: the machine rule is skipped');
+  const got = r.blocks.map(b => `${b.rule} ${b.file}:${b.line}`).sort();
+  assert.deepEqual(got, ['K2 lib/cost.mjs:1', 'K2 lib/guard.mjs:2', 'K2 lib/guard.mjs:4', 'K2 lib/hold.mjs:2', 'K2 tests/sup.test.mjs:1', 'K2 tests/sup.test.mjs:1',
+    'K3 lib/server.mjs:1', 'K3 tests/legacy.test.mjs:1', 'K3 tests/scope.test.mjs:1'], JSON.stringify(r.blocks.map(findingLine), null, 1));
+});
