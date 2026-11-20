@@ -11,7 +11,7 @@ const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
 // a cap key or an executor name -> the slot's name ("a free Claude slot")
 const SLOT = { max_claude_workers: 'Claude', max_codex: 'Codex', max_sol: 'Codex (sol)', max_astra: 'Codex (astra)', claude: 'Claude', codex: 'Codex', 'codex-sol': 'Codex (sol)', 'codex-astra': 'Codex (astra)' };
 const slot = k => SLOT[k] ?? k.replace(/^max_/, '');
-const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
+export const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
 const isRun = id => /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(id);   // a run id, a home's (RUN-b-7) too
 const W = (code, text, o = {}) => ({ code, text, fix: o.fix ?? null, clears: o.clears ?? null, setting: o.setting ?? null, acts: o.acts ?? [], ...o.extra });
 

@@ -86,8 +86,6 @@ export function makeLabeler({ project = null, runs = [], roadmap = [], lanes = [
     return [base, stage, acr.length ? `(${acr.join(' ')})` : ''].filter(Boolean).join(' ');
   };
 }
-/** a run in plain words without context: lane + stage ("Adopt A2"), else its name, else its id */
-export const labelOf = d => makeLabeler({})(d);
 
 // ---------- estimates: this project's own history, one sample per run family ----------
 export const ESTIMATE_METHOD = 'Estimates: the median of this project\'s finished (DONE) work with the same lane, stage and executor - a run counts with its whole family '

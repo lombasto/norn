@@ -7,7 +7,7 @@
 // keeps only the episode (term, since, notified); the tick deletes it once the walk no longer holds, and the item and the row leave.
 import fs from 'node:fs';
 import path from 'node:path';
-import { waitWords } from './waitwords.mjs';
+import { waitWords, hhmm } from './waitwords.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { queueSpecPath, liveBudget } from './runs.mjs';
 
@@ -56,7 +56,6 @@ export function trackHold(state, rows, { now = Date.now() } = {}) {
   return rec;
 }
 
-const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
 const minsOf = (rec, now) => Math.max(0, Math.floor((now - Date.parse(rec.since)) / 60000));
 const what = rec => `${rec.runs.length} queued ${rec.scope === 'claude' ? 'Claude ' : ''}run${rec.runs.length === 1 ? '' : 's'}${rec.merges ? ` (${rec.merges} merge${rec.merges === 1 ? '' : 's'})` : ''}`;
 
