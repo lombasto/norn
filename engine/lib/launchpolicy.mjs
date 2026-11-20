@@ -7,6 +7,7 @@ import path from 'node:path';
 import { loadProject } from './config.mjs';
 import { withDefaults, merged } from './policy.mjs';
 import { isTyped } from './executors.mjs';
+import { laneMatch } from './checkins.mjs';
 
 // ---------- lean launch profiles (policy.launch: { roles: { worker | merge | checkin | chat: name }, profiles: { name: overrides } }) ----------
 // harness-agnostic switches; each adapter maps them to its flags (profileArgs) or states a gap (profileGap)
@@ -30,11 +31,10 @@ export function profileOf(policy, role) {
   const L = policy?.launch || {}, name = L.roles?.[role] ?? L.default ?? 'full';
   return { name, ...(STRICT_MCP_ROLES.includes(role) ? { mcp: 'none' } : {}), ...(PROFILE_DEFAULTS[name] || {}), ...(L.profiles?.[name] || {}) };
 }
-const laneGlob = g => new RegExp('^' + String(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
 /** the MCP servers a lane's run may load, by name: policy.launch.mcp_servers (every lane) + launch.lane_mcp_servers { <lane glob>: [names] } */
 export function mcpServersOf(policy, lane) {
   const L = policy?.launch || {};
-  const byLane = Object.entries(L.lane_mcp_servers || {}).filter(([g]) => lane != null && laneGlob(g).test(String(lane))).flatMap(([, v]) => v);
+  const byLane = Object.entries(L.lane_mcp_servers || {}).filter(([g]) => laneMatch([g], lane)).flatMap(([, v]) => v);
   return [...new Set([...(L.mcp_servers || []), ...byLane].map(String))];
 }
 /** each named server's definition from the owner's Claude config (<config dir>/.claude.json or the one beside it, then the worktree's

@@ -193,14 +193,14 @@ test('norn mail check --inject = the PostToolUse hook: unread mail as additional
 });
 
 // proc-hygiene (D): two hooks hung a day each, orphaned when Claude Code's timeout killed only their shell. A torn lock file (no ts:
-// never stale) makes record() wait 60 s with the event loop blocked - the hook's watchdog thread ends it at META_HOOK_MAX_MS anyway.
+// never stale) makes record() wait 60 s with the event loop blocked - the hook's watchdog thread ends it at NORN_HOOK_MAX_MS anyway.
 test('norn mail check --inject ends in bounded time even when a lock wait blocks its event loop', () => {
   const s = tmp();
   const r = startRun(s);
   send(s, 'controller', { from: 'role:controller', to: r });
   fs.writeFileSync(path.join(s, 'mail.lock'), '{torn');
   const t0 = Date.now();
-  const h = meta(['mail', 'check', '--inject', '--run', r, '--state', s], { META_RUN_ID: r, META_HOOK_MAX_MS: '1500' });
+  const h = meta(['mail', 'check', '--inject', '--run', r, '--state', s], { META_RUN_ID: r, NORN_HOOK_MAX_MS: '1500' });
   const ms = Date.now() - t0;
   assert.ok(ms < 15000, `the hook took ${ms} ms`);
   assert.equal(h.error, undefined, 'not the test\'s own spawn timeout');

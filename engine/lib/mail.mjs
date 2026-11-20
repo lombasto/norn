@@ -110,9 +110,9 @@ export const nudgePrompt = (m, afterMin = NUDGE_AFTER_MIN) => `NUDGE: an urgent 
 
 // proc-hygiene (D: two `mail check --inject` hooks hung for a day): the hook ends in bounded time whatever blocks it. A timer cannot
 // - a lock wait (records.withLock) blocks the event loop - so a worker thread kills the whole process at HOOK_MAX_MS (well inside
-// the hook's 30 s in mailSettings: Claude Code's own timeout kills the shell, not this node). META_HOOK_MAX_MS overrides (tests).
+// the hook's 30 s in mailSettings: Claude Code's own timeout kills the shell, not this node). NORN_HOOK_MAX_MS overrides (tests).
 export const HOOK_MAX_MS = 20000;
-export function hookWatchdog(ms = Number(process.env.META_HOOK_MAX_MS) || HOOK_MAX_MS) {
+export function hookWatchdog(ms = Number(process.env.NORN_HOOK_MAX_MS) || HOOK_MAX_MS) {
   const w = new Worker(`const { workerData: d } = require('node:worker_threads'); setTimeout(() => {
     try { require('node:fs').writeSync(2, 'norn mail check --inject: no answer in ' + d.ms + ' ms, ended\\n'); } catch { /* stderr gone: the kill below still ends the hook */ }
     process.kill(d.pid, 'SIGKILL'); }, d.ms);`, { eval: true, workerData: { ms, pid: process.pid } });
