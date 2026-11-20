@@ -141,6 +141,11 @@ tr:last-child td{border-bottom:0}
 /* META-TEND P5: the lines widget (REPORT 5.3 view 1) on the --k series; the per-file strip (view 4): paragraphs by age + read / cite marks */
 .wlines svg{display:block;width:100%;height:150px}.lnax{stroke:var(--line);stroke-width:1}.ln polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.ln circle{stroke:none}.ln-1 polyline{stroke:var(--k3)}.ln-1 circle,i.ln-1{fill:var(--k3);background:var(--k3)}.ln-2 polyline{stroke:var(--k2)}.ln-2 circle,i.ln-2{fill:var(--k2);background:var(--k2)}.ln-3 polyline{stroke:var(--k1)}.ln-3 circle,i.ln-3{fill:var(--k1);background:var(--k1)}.ln-4 polyline{stroke:var(--k4)}.ln-4 circle,i.ln-4{fill:var(--k4);background:var(--k4)}.ln-5 polyline{stroke:var(--k5)}.ln-5 circle,i.ln-5{fill:var(--k5);background:var(--k5)}.ln-6 polyline{stroke:var(--k6)}.ln-6 circle,i.ln-6{fill:var(--k6);background:var(--k6)}.ln-7 polyline{stroke:var(--k7)}.ln-7 circle,i.ln-7{fill:var(--k7);background:var(--k7)}.ln-8 polyline{stroke:var(--k8)}.ln-8 circle,i.ln-8{fill:var(--k8);background:var(--k8)}.ln-9 polyline{stroke:var(--k9)}.ln-9 circle,i.ln-9{fill:var(--k9);background:var(--k9)}
 .pstrip{display:flex;height:22px;border-radius:4px;overflow:hidden;gap:1px;background:var(--line);margin:4px 0}.psg{position:relative;display:block;min-width:3px}.psg.stale{outline:2px solid var(--bad);outline-offset:-2px}.age-new,.stkdot.age-new{background:var(--ok)}.age-mid,.stkdot.age-mid{background:var(--warn)}.age-old,.stkdot.age-old{background:var(--mute)}.age-unk{background:var(--line)}.pread{position:absolute;left:2px;top:2px;width:6px;height:6px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--panel)}.pcite{position:absolute;right:2px;bottom:2px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--accent)}.pread.inl,.pcite.inl{position:static;display:inline-block;margin-right:4px;vertical-align:middle}
+/* TESTS-RUNTIME: the breakdown rows, the Impact pickers, the code viewer drawer (long lines wrap: no sideways scroll at 390 px) */
+.tbd{margin:4px 0;border-bottom:1px solid var(--line);padding:2px 0}.tbd summary{cursor:pointer;overflow-wrap:anywhere}.tbd .bar{margin-top:3px}.tbdn{font-size:12.5px}
+.tpick{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.tpick input{flex:1;min-width:0}.tpick select{min-width:0;max-width:100%}
+#srcview{width:min(820px,96vw)}#srcview-body{flex:1;min-height:0;overflow:auto}.codeview table{border-collapse:collapse;width:100%}.codeview td{vertical-align:top;padding:0 8px;border:0}
+.codeview .ln{text-align:right;user-select:none;width:1%;font-size:12px}.codeview .lt code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;background:none;padding:0}.codeview tr.focus{background:var(--soft);outline:2px solid var(--accent)}
 .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px;padding:6px 12px 10px}.tlist{margin:6px 0;padding:0 12px 0 28px}.tlist li{margin:5px 0;overflow-wrap:anywhere}.seg-tests{background:var(--codex)}.seg-code{background:var(--ok)}
 .fxres{list-style:none;margin:0;padding:0 14px}.fxcard{padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;min-width:0}.fxcard:last-child{border-bottom:0}.fxtop{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.fxfile{margin:8px 0;min-width:0}.fxfile.fxoff .fxdiff{opacity:.4;text-decoration:line-through}.fxfilehead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.fxcard .fxbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.fxmisfit{margin:4px 0}.fxmisfit+.fxdiff{opacity:.55}
 .tablecard>h3{margin:0;padding:10px 14px;font-size:13px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
@@ -379,6 +384,7 @@ mark.dv-w{color:var(--on-accent);border-radius:2px}.dv-del mark.dv-w{background:
 /* META-PLAN R1: the Plan tab (scoped .plan / .pl-*) */
 .plan .pl-sec{margin-bottom:14px}.pl-proj{font-size:15px;margin:18px 0 8px}
 .pl-row{display:grid;grid-template-columns:40px minmax(180px,1.3fr) 76px 64px 104px 2fr;gap:6px 12px;align-items:start;padding:8px 14px;border-bottom:1px solid var(--line)}
+.pl-prio{font-size:12px;padding:0 2px;margin-left:6px;max-width:56px}.backlog{margin:6px 0 10px}#pl-land .backlog{padding:8px 14px 0;margin:0}
 .pl-row:last-child,.pl-chain:last-child{border-bottom:0}#pl-land .pl-row{grid-template-columns:40px 1fr auto}
 .pl-chain{display:flex;flex-wrap:wrap;gap:6px 4px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 .pl-step{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}.pl-sep{margin:0 2px}.pl-meta{flex-basis:100%;margin-top:4px}
@@ -507,6 +513,10 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
   <div id="feed-raw-bar" class="small"><button class="ghost" id="feed-raw-tog" aria-expanded="true" aria-controls="feed-list">All events</button><span class="mute" id="feed-raw-n"></span></div>
   <div id="feed-list" class="flist mono" aria-live="polite"></div>
 </aside>
+<aside id="srcview" class="drawer" hidden aria-label="Code viewer">
+  <div class="dh"><div id="srcview-head" style="display:flex;flex-direction:column;min-width:0"></div><span class="spacer"></span><button class="ghost" id="srcview-close" title="Close (Esc)">Close</button></div>
+  <div id="srcview-body"></div>
+</aside>
 <aside id="dlv" class="drawer" hidden aria-label="Deliverable">
   <div class="dh"><b class="small">Deliverable</b><span class="small mute">done work followed to main and the install</span><span class="spacer"></span><button class="ghost" id="dlv-close" title="Close (Esc)">Close</button></div>
   <div id="dlv-body"></div>
@@ -530,6 +540,7 @@ import { activityInit, activityAdd, activityView, fmtDur } from '/activity.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey, dupRefusal, pauseMenu, runsViewOf, runsViewQs } from '/ui.mjs';
 import { hoChip } from '/widgets.mjs';
+import { codeView, codeHead } from '/testparts.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
 const laneShowQs = v => { const k = String(v ?? '').split(',').filter(x => LANE_SHOW.some(c => c[0] === x)); return new Set(v == null ? LANE_SHOW_DEFAULT : k); };
@@ -696,7 +707,7 @@ async function render(force = false, why = []) {
     }
     const mw = $('.mapwrap'), keep = mw ? [mw.scrollLeft, mw.scrollTop] : null;   // a re-render keeps the map's pan position
     step('render:paint ' + S.tab); S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
-    if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
+    if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs' || S.tab === 'tests') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
     if (S.tab === 'docs' && S.docScroll && $('#main [data-focus]')) { S.docScroll = false; $('#main [data-focus]').scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card / a finding opens its line
     step('render:map'); if ($('#map-host')) await mountMap(d); else dropMap();
     if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
@@ -947,6 +958,8 @@ document.addEventListener('change', e => {
   if (e.target.matches('[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-key]')) dirty();
   if (e.target.matches('[data-act="map-all"]')) { S.mapAll = e.target.checked; render(); }
+  // MERGE-FIRST: Plan > Up next - a queued run re-queued at the priority picked (its after: conditions kept)
+  if (e.target.matches('[data-act="prio"]')) { const d = e.target.dataset; act(() => post('/api/requeue', { project: d.project, run: d.run, priority: e.target.value })); }
 });
 // ---- live feed drawer: one EventSource per open drawer (the server keeps one tailer per run, at most 4 feeds) ----
 // RM-36: F.act = the activity fold of every event of the run (a fresh drawer asks full=1: the whole run, not the last 256 KB),
@@ -1113,6 +1126,16 @@ async function openDlv(project, id) {
   catch (err) { $('#dlv-body').textContent = String(err); }
 }
 $('#dlv-close').onclick = () => { $('#dlv').hidden = true; };
+// ---- TESTS-RUNTIME: the code viewer drawer - a test's file, read-only, highlighted, every line numbered, scrolled to the test's line.
+// The server opens only a file inside the project repo (/api/tests/source, lib/testtimes.repoFile).
+async function openSrc(file, line) {
+  closeFeed(); $('#dlv').hidden = true; $('#rmed').hidden = true; $('#srcview').hidden = false; $('#srcview-head').innerHTML = codeHead({ file, lines: '...', line }); $('#srcview-body').innerHTML = '<span class="small mute">loading ...</span>';
+  try { const r = await get(`/api/tests/source?project=${encodeURIComponent(S.project)}&file=${encodeURIComponent(file)}`); $('#srcview-head').innerHTML = codeHead({ file: r.file, lines: r.lines, line }); $('#srcview-body').innerHTML = codeView({ file: r.file, text: r.text, line });
+    $('#srcview-body [data-focus]')?.scrollIntoView({ block: 'center' }); }
+  catch (e) { $('#srcview-body').textContent = String(e.message || e); }
+}
+$('#srcview-close').onclick = () => { $('#srcview').hidden = true; };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#srcview').hidden) $('#srcview').hidden = true; });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#dlv').hidden) $('#dlv').hidden = true;
   const dv = e.target.closest?.('g[data-dlv]'); if (dv && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDlv(dv.dataset.project, dv.dataset.dlv); } });
 document.addEventListener('click', e => { const dv = e.target.closest?.('[data-dlv]'); if (dv) { e.stopPropagation(); e.preventDefault(); openDlv(dv.dataset.project, dv.dataset.dlv); } }, true);
@@ -1167,6 +1190,9 @@ document.addEventListener('click', e => {
   if (d.act === 'fixall-send') { const f = S.fixall; if (!f || f.sent) return; fxKeys(); b.disabled = true;
     act(async () => { f.sent = await post('/api/fixall', { project: S.project, sig: d.sig, keys: [...f.keys], picks: f.picks }); }).finally(() => { if (!f.sent) b.disabled = false; }); return; }
   if (d.act === 'slop-batch') { S.batch = d.batch || null; S.subLimit = null; render(); return; }   // META-UX-BUILD S5: open one batch (or close it)
+  if (d.act === 'test-src') { openSrc(d.file, Number(d.line) || null); return; }   // TESTS-RUNTIME: a test's file in the code viewer
+  if (d.act === 'tests-impact') { const v = ($('#tests-impact-files')?.value || '').split(',').map(x => x.trim()).filter(Boolean).join(','); S.batch = v ? 'files:' + v : null; S.subLimit = null; render(); return; }
+  if (d.act === 'tests-impact-lane') { const v = $('#tests-impact-lane')?.value; S.batch = v ? 'lane:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
   if (d.tab) { document.body.classList.remove('more'); S.sub = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = d.tab; history.replaceState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
   // META-UX-BUILD S3: Docs - a tap opens the file (pushed: Back returns to the list), Back on the reader, Rendered / Source
@@ -1177,6 +1203,7 @@ document.addEventListener('click', e => {
   if (d.setcat) { S.setCat = d.setcat; S.setQ = ''; $('#set-search').value = ''; setFilter();
     const to = d.setsub && document.getElementById(d.setsub); if (to) to.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0); return; }
   if (d.act === 'rec-more') { const t = b.previousElementSibling, open = !t.classList.contains('open'); recOpen(t, b, open); if (open) S.recOpen.add(t.dataset.key); else S.recOpen.delete(t.dataset.key); return; }
+  if (d.act === 'claim-take' && confirm(`Take over ${d.lane}? Its home stops the run at its next renew.`)) { act(() => post('/api/claim/take', { project: p, lane: d.lane })); return; }
   if (d.act === 'ledger-more') { S.ledgerN += 100; render(); return; }
   if (d.act === 'map-zoom') { S.mapZoom = Number(d.z); render(); return; }
   if (d.act === 'map-view') { S.mapView = d.view; try { localStorage.setItem('meta-mapview', d.view); } catch { /* private mode */ } render(); return; }
@@ -1345,6 +1372,7 @@ async function adoptAct(b, d) {
   if (d.act === 'adopt-notnow') { const why = prompt('Not now: why? (recorded; the draft is offered again only when you ask)', 'not now'); if (why === null) return; act(() => post('/api/adopt/close', { project: p, why: why.trim() || 'not now' })); return; }
   if (d.act === 'adopt-rule') { const t = prompt('One rule every worker reads (written to rules/RULES.md beside project.json):'); if (t && t.trim()) act(() => post('/api/adopt/rule', { project: p, text: t.trim() })); return; }
   if (d.act === 'adopt-caps-keep') { if (confirm('Keep the starter caps? This records your choice; the scheduler stays off.')) act(() => post('/api/adopt/caps', { project: p })); return; }
+  if (d.act === 'setup-gate') { act(() => post('/api/adopt/gate', { project: p, cmd: d.cmd, version: d.version })); return; }
   if (d.act === 'adopt-start') { act(async () => { await post('/api/checkin', { project: p }); err(''); }); return; }
   if (d.act === 'adopt-rehearse') { act(async () => { await post('/api/adopt/rehearse', { project: p, lane: d.lane }); }); return; }
 }

@@ -6,7 +6,8 @@ import { agentName } from './names.mjs';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
-import { isAncestor, refTip } from './dlvgit.mjs';
+import { dlvMerged } from './dlvmerge.mjs';
+import { isAncestor } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
@@ -15,7 +16,7 @@ import { checkinBelow } from './floor.mjs';
 // worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
 // tick archiving a lane by its rules - only the lane archive allows it
 export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker', 'tick'];
-const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
+export const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
 const CK = ['controller', 'checkin'];
 const MAILERS = ['worker', ...CK];
 
@@ -100,7 +101,8 @@ export const KINDS = {
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
   // DELIVERABLES-SPEC 1: a lane's / DONE run's branch followed to main and the install. Its own file (deliverables.jsonl), so
-  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived from git (deliverables.mjs), never events.
+  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived (dlvmerge.mjs dlvMerged); a MERGED answer is
+  // latched by a `merged` event (DLV-MERGED-TRUTH), so a deleted branch or a rebased landing never turns it back into DONE.
   deliverable: { prefix: 'DLV-', file: 'deliverables', events: {
     create: { from: null, to: 'open', roles: ['launcher', ...CK] },
     done: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },          // a later DONE run on the same branch
@@ -110,6 +112,11 @@ export const KINDS = {
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
     // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
     pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
+    // DLV-MERGED-TRUTH: its work is on main { how: pr | git | equivalent | ruling, tip?, pr?, url?, merge_commit?, merged_at?, why?, q? };
+    // the tick latches it (a merged PR, git, the content check) or the owner rules it. A later `done` reopens the question.
+    merged: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK, ...OWNER] },
+    // DLV-MERGED-TRUTH: the owner's ruling "still open" on a deliverable Norn cannot tell is merged { why?, q? }: it reads DONE again
+    still_open: { from: ['open', 'parked'], to: null, roles: [...CK, ...OWNER] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
@@ -205,7 +212,7 @@ export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in 
 export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
 export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
-export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
+export const PRIORITIES = ['P0', 'P1', 'P2', 'P3', 'P4'];   // Gas Town's 0-4 (bd create); P2 = the default
 export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
@@ -391,9 +398,31 @@ export function loadShared(stateDir, kind) {
   return { ...v, integrity: [...integrity, ...v.integrity] };
 }
 
+// RM-46 S3 (SPEC 3.3): the read-only copies of the other homes' local kinds that publish one (run, deliverable) - homes/<h>/copy/<file>.jsonl,
+// each folded alone (its home is its only writer). An item carries `home` and its lane as this home types it (b/x); a copy that does not parse is skipped.
+const otherHomes = (stateDir, home) => readdirS(path.join(stateDir, 'homes')).filter(d => d.isDirectory() && HOME_RE.test(d.name) && d.name !== home.id).map(d => d.name).sort();
+export const copyFile = (stateDir, h, kind) => path.join(stateDir, 'homes', h, 'copy', KINDS[kind].file + '.jsonl');
+/** [item + home] of `kind` from every other home's copy; a solo dir has none */
+export function copyItems(stateDir, kind) {
+  const home = homeOf(stateDir), out = [];
+  if (!home) return out;
+  for (const h of otherHomes(stateDir, home)) {
+    let f; try { f = fold(readEvents(copyFile(stateDir, h, kind))); } catch { continue; }
+    for (const it of Object.values(f.items)) if (it.kind === kind) out.push({ ...it, home: h, data: { ...it.data, ...(typeof it.data?.lane === 'string' ? { lane: laneNameIn(laneIdIn(it.data.lane, h), home.id) } : {}) } });
+  }
+  return out;
+}
+/** copyItems on fs.promises: the copies primed into the request snapshot first (the dash server's GETs) */
+export async function copyItemsAsync(stateDir, kind) {
+  if (await readTextA(path.join(stateDir, 'home.json')) === null) return [];
+  const hs = (await readdirA(path.join(stateDir, 'homes'))).filter(d => d.isDirectory() && HOME_RE.test(d.name)).map(d => d.name);
+  await prime({ files: hs.map(h => copyFile(stateDir, h, kind)) });
+  return copyItems(stateDir, kind);
+}
+
 // a synced dir's view carries its pending events, conflicts and integrity rows (SPEC 3.7)
 const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items },
-  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity } : {}) });
+  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity, newest: a.newest } : {}) });
 // META-DASH-ASYNC R1: inside a primed dash request the snapshot's fold (lib/fsnap.mjs) - a lib that folds again (limitgate, ...) reads nothing
 export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(loadShared(stateDir, 'question'), fold(readEvents(recordsFile(stateDir, 'run'))));
 /** META-DASH-ASYNC R1: loadState on fs.promises (the two records files read concurrently on the threadpool; the same fold) */
@@ -598,6 +627,8 @@ function validateData(kind, ev, d, target, st, by, home = null) {
       if (dup) fail(`${d.repo} ${d.branch} already has ${dup.id}`);
     }
     if (ev === 'done') for (const k of ['run', 'tip', 'done_utc']) str(d[k], k, { req: false });
+    if (ev === 'merged') { oneOf(d.how, 'how', ['pr', 'git', 'equivalent', 'ruling']); for (const k of ['tip', 'url', 'merge_commit', 'merged_at', 'why', 'q']) str(d[k], k, { req: false, max: 600 }); }
+    if (ev === 'still_open') for (const k of ['why', 'q']) str(d[k], k, { req: false, max: 600 });
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
@@ -806,7 +837,7 @@ function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } 
 const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
-// reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
+// reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
 function archiveGuard(stateDir, lane, ev = {}) {
   // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
@@ -817,9 +848,9 @@ function archiveGuard(stateDir, lane, ev = {}) {
   }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
-    const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
-    if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
-    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
+    const m = dlvMerged(d);
+    if (m.merged) continue;
+    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is ${m.unknown ? `done, cannot tell if merged (${m.unknown})` : 'done but not merged'} - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
 }
 // item 8 (lane norn-lifecycle): a check-in writes a waiver only as the owner's ruling it applies - data.q names a question the owner

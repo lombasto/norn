@@ -169,9 +169,12 @@ test('PAUSED holds a hand-off resume queued, never refuses it: it starts once th
   assert.equal(held.state, 'queued'); assert.equal(held.data.resume_of, q.run); assert.equal(held.data.priority, 'P1', 'ahead of new work');
   assert.deepEqual(fillQueue(p.state), [], 'nothing starts while paused');
   fs.unlinkSync(paused);
-  const [f] = fillQueue(p.state);
-  assert.equal(f.queued, held.id);
-  await p.ended(f.next);
+  // this fill starts it - or, when the handed-off run's own exit fill (supervisor) still holds queue.lock, this call loses the lock,
+  // flags a refill and returns [], and that holder starts it (CI 44655770879 windows: the [] case)
+  fillQueue(p.state);
+  const filled = await waitFor(() => { const x = p.item(held.id); return x.state !== 'queued' && x; });
+  assert.equal(filled.state, 'filled', 'released: the held resume starts');
+  await p.ended(filled.fill.next);
 });
 
 test('norn run CLI: second writer on the same worktree exits 3; worker cap exits 4; norn stop kills the whole tree', async () => {

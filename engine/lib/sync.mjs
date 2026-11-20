@@ -4,16 +4,19 @@
 // pushed WITHOUT force (fast-forward only: a rejection means a second install uses this id - publishing stops). Fetch: home/* and claims in
 // one fetch (claimsref's fetchRefs, under the claims lock, since it moves refs/sync/claims too); a copy is written only when its blob
 // changed and is never edited. Copies sit outside the backup walk (it enters runs/ and views/ only), so a copy is never published again.
-// S1d: the fetch ends with the relay (relayPass) of each synced project: SPEC 4.2's pass. The loop is S4's. Node built-ins + the git binary only.
+// S1d: the fetch ends with the relay (relayPass) of each synced project: SPEC 4.2's pass. S4: syncPass adds the claims seen; the loop (syncLoop) polls and hears the doorbell. Node built-ins + the git binary only.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn, execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger } from './ledger.mjs';
-import { rgit, fetchRefs, claimsLock } from './claimsref.mjs';
+import { rgit, fetchRefs, claimsLock, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { fedOf } from './fed.mjs';
 import { readJsonS } from './fsnap.mjs';
+import { localClaims, observeClaims, updateSync } from './claims.mjs';
+import { ringDoorbell, doorbellStream } from './notify.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const COPIED = ['run', 'deliverable'];
@@ -41,6 +44,8 @@ export function homeIdOf(cfg) {
   if (ids.length > 1) throw new Error(`the synced projects name several homes (${ids.join(', ')}): one machine is one home`);
   return ids[0] ?? null;
 }
+/** S5: this home's synced projects: [{ project, state }] (sync off: none) */
+export const syncedDirs = cfg => { const id = homeIdOf(cfg); return id ? projects(cfg, id).map(p => ({ project: p, state: path.join(cfg.state_root, p) })) : []; };
 // cfg + its home_id, or null (off); throws like homeIdOf
 const synced = cfg => { const id = homeIdOf(cfg); return id ? { ...cfg, home_id: id } : null; };
 
@@ -55,6 +60,8 @@ function homeWalk(cfg) {
   return { files, stat };
 }
 const same = (a, b) => { const ka = Object.keys(a); return ka.length === Object.keys(b).length && ka.every(k => a[k] === b[k]); };
+// nothing to publish: the walk matches the manifest and its head is pushed, or there is nothing at all
+const idle = (m, files, stat) => (!!m && same(m.files || {}, stat) && m.pushed === m.head) || (!files.size && !m);
 const tipOf = (f, ref) => rgit(f, ['rev-parse', '-q', '--verify', `${ref}^{commit}`], { ok: [0, 1] }).out.trim() || null;
 
 // commit the walk's bytes on home/<id>: -> { sha } | { head } (tree unchanged) | { refused }
@@ -91,7 +98,7 @@ export function publishHome(cfg0, o = {}) {
       const stopped = fs.existsSync(at(cfg, 'stopped')) ? fs.readFileSync(at(cfg, 'stopped'), 'utf8').trim() : null;
       if (stopped) return { stopped };
       const m = readJsonS(at(cfg, 'manifest')), { files, stat } = homeWalk(cfg), unchanged = m && same(m.files || {}, stat);
-      if ((unchanged && m.pushed === m.head) || (!files.size && !m)) return { noop: true };
+      if (idle(m, files, stat)) return { noop: true };
       let head = m?.head ?? tipOf(f, ref), sha;
       if (!unchanged) {
         const c = commitHome(cfg, f, ref, head, files);
@@ -232,13 +239,166 @@ export function syncStatus(cfg0) {
     fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, gone: ft.gone || [] };
 }
 
-/** the publish step of the tick's ledger step and of a run end: never throws; a one-line note or null (off / no-op) */
+/** the publish step of the tick's ledger step and of a run end: never throws; a one-line note or null (off / no-op). A push rings the
+ * doorbell (SPEC 4.3) from a detached child: the run end exits right after this step, and a ring must not hold it (o.publish / o.ring: tests) */
 export function syncStep(cfg, reason, o = {}) {
-  const r = publishHome(cfg, o);
+  const r = (o.publish ?? publishHome)(cfg, o);
+  if (r.pushed && doorbellOf(cfg)) { try { (o.ring ?? ringDetached)(cfg); } catch (e) { logTo(cfg, `doorbell ring not started: ${e.message}`); } }
   if (r.noop || r.off) return null;
   if (r.error) return `sync: publish failed (${reason}): ${r.error}`;
   if (r.refused) return `sync: publish refused (secret value in ${r.refused.join(', ')})`;
   if (r.stopped || r.rejected) return `sync: publish stopped: ${r.stopped || r.rejected}`;
   if (r.offline) return `sync: publish offline, the next pass pushes (${r.offline})`;
   return `sync: home ${r.sha ? r.sha.slice(0, 10) : 'pushed'} (${reason})`;
+}
+
+/** SPEC 4.2's pass: the fetch (copies + S1d's relay, in fetchHomes), then the claims seen recorded on this home's clock (4.5) */
+export function syncPass(cfg0, o = {}) {
+  const r = fetchHomes(cfg0, o);
+  if (r.error || r.off) return r;
+  const cfg = synced(cfg0), claims = localClaims(fedOf(cfg)), now = o.now ?? Date.now();
+  for (const p of projects(cfg, cfg.home_id)) updateSync(path.join(cfg.state_root, p), 'seen', cur => observeClaims(claims, cur, { home: cfg.home_id, now }));
+  return r;
+}
+
+// ---------- RM-46 S4 (SPEC 4.3): the sync loop - an ls-remote poll every poll_s + the optional doorbell ----------
+// A moved head of another home (or of claims) is one pass; a ring from another home is one pass; this home's own branch and ring are
+// ignored. Passes never overlap (a request during one is one more pass). The doorbell carries no data: down or unset = poll only.
+// The dashboard server and `norn sync watch` run the same loop (loopOf): ls-remote / for-each-ref are async children, and publish and
+// the pass run as `norn sync publish | fetch` children, so the server's event loop never blocks. Everything is injectable for tests.
+/** rules as data: the poll period and the doorbell's reconnect backoff [first, cap] (doubling) */
+export const LOOP = { poll_s: 30, backoff_s: [5, 300] };
+const HEADS = ['refs/heads/home/*', CLAIMS], SHA40 = /^[0-9a-f]{40}$/;
+const TIMERS = { setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimeout: t => clearTimeout(t) };
+/** `<sha> <ref>` lines (ls-remote, or for-each-ref with that format) -> { ref: sha } */
+export const parseHeads = text => Object.fromEntries(String(text).split('\n').map(l => l.trim().split(/\s+/)).filter(([sha, r]) => SHA40.test(sha || '') && r).map(([sha, r]) => [r, sha]));
+/** the heads that differ between the fetched and the remote ones (a deleted branch too), this home's own branch left out (its own pushes) */
+export function movedHeads(had, now, home) {
+  const own = `refs/heads/home/${home}`;
+  return [...new Set([...Object.keys(had), ...Object.keys(now)])].filter(r => r !== own && had[r] !== now[r]).sort();
+}
+// the fetched tips under their remote names: refs/sync/home/<h> -> refs/heads/home/<h>, refs/sync/claims -> refs/heads/claims
+const asRemote = heads => Object.fromEntries(Object.entries(heads).map(([r, sha]) => [r === SYNC_CLAIMS ? CLAIMS : r.startsWith('refs/sync/home/') ? 'refs/heads/home/' + r.slice('refs/sync/home/'.length) : null, sha]).filter(([r]) => r));
+/** one ntfy JSON-stream line -> { h, sha } when it is a ring (an event "message" whose message is { h, sha }), else null */
+export function ringOf(line) {
+  let e, m;
+  try { e = JSON.parse(line); } catch { return null; }
+  if (e?.event !== 'message') return null;
+  try { m = JSON.parse(e.message); } catch { return null; }
+  return HOME_ID.test(m?.h || '') && SHA40.test(m?.sha || '') ? { h: m.h, sha: m.sha } : null;
+}
+
+/** watchDoorbell({ open(signal) -> async iterable of lines, home(), onRing({h, sha}), timers, backoff_s, log }): hold the stream; a drop or a
+ * refusal reconnects after the backoff (first, doubling to the cap); an "open" event resets it. -> { stop() } */
+export function watchDoorbell({ open, home, onRing, timers = TIMERS, backoff_s = LOOP.backoff_s, log = () => {} }) {
+  let wait = backoff_s[0], timer = null, ac = null, stopped = false;
+  async function connect() {
+    timer = null;
+    if (stopped) return;
+    ac = new AbortController();
+    let why = 'stream ended';
+    try {
+      for await (const l of open(ac.signal)) {
+        if (stopped) return;
+        let ev = null; try { ev = JSON.parse(l)?.event; } catch { /* not JSON: ringOf drops it too */ }
+        if (ev === 'open') wait = backoff_s[0];
+        const r = ringOf(l);
+        if (r && r.h !== home()) onRing(r);
+      }
+    } catch (e) { why = e.message; }
+    if (stopped) return;
+    log(`doorbell: ${why}; reconnect in ${wait} s (the poll goes on)`);
+    timer = timers.setTimeout(connect, wait * 1000);
+    wait = Math.min(wait * 2, backoff_s[1]);
+  }
+  connect();
+  return { stop() { stopped = true; if (timer) timers.clearTimeout(timer); timer = null; ac?.abort(); } };
+}
+
+/**
+ * syncLoop({ home() -> id | null (null = sync off: nothing polled), lsRemote() -> { ref: sha }, known() -> the fetched heads (remote names),
+ * pass(why) -> ok, publish?(), doorbell?: { open(signal) }, timers, poll_s, log }) -> { start(), stop(), request(why) }.
+ * Each poll: publish (when due), then ls-remote vs the fetched heads; a move is one pass. No state is kept between polls: a failed pass
+ * leaves the fetched heads behind, so the next poll retries it.
+ */
+export function syncLoop({ home, lsRemote, known, pass, publish = null, doorbell = null, timers = TIMERS, poll_s = LOOP.poll_s, log = () => {} }) {
+  let timer = null, stopped = false, busy = null, again = null, bell = null;
+  function request(why) {
+    if (busy) { again = why; return busy; }
+    busy = (async () => {
+      let ok = false;
+      for (let w = why; w && !stopped; w = again) {
+        again = null;
+        try { ok = !!(await pass(w)); } catch (e) { ok = false; log(`sync loop: pass failed (${w}): ${e.message}`); }
+      }
+      return ok;
+    })().finally(() => { busy = null; });
+    return busy;
+  }
+  async function poll() {
+    timer = null;
+    if (stopped) return;
+    try {
+      const id = home();
+      if (!id) return;
+      if (publish) await publish();
+      const [now, had] = await Promise.all([lsRemote(), known()]);
+      const moved = movedHeads(had, now, id);
+      if (moved.length && !stopped) await request(`moved: ${moved.join(' ')}`);
+    } catch (e) { log(`sync loop: poll failed (the next poll retries): ${e.message}`); }
+    finally { if (!stopped) timer = timers.setTimeout(poll, poll_s * 1000); }
+  }
+  return {
+    request,
+    start() {
+      if (doorbell) bell = watchDoorbell({ ...doorbell, home, onRing: r => { request(`ring ${r.h} ${r.sha.slice(0, 10)}`); }, timers, log });
+      return poll();
+    },
+    stop() { stopped = true; if (timer) timers.clearTimeout(timer); timer = null; bell?.stop(); },
+  };
+}
+
+/** machine.json ledger.doorbell { server?, topic } (read at run time, never stored in the ledger), or null = poll only */
+export function doorbellOf(cfg) {
+  const d = cfg?.machine_file ? readJsonS(cfg.machine_file)?.ledger?.doorbell : null;
+  return d && typeof d.topic === 'string' && d.topic ? { ...(typeof d.server === 'string' ? { server: d.server } : {}), topic: d.topic } : null;
+}
+/** ring the doorbell with this home's pushed head: never throws -> { off } | { nothing } (never pushed) | { rung: sha } | { error } */
+export async function ringHome(cfg0, o = {}) {
+  let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
+  const d = cfg && doorbellOf(cfg);
+  if (!d) return { off: true };
+  const sha = readJsonS(at(cfg, 'manifest'))?.pushed;
+  if (!sha) return { nothing: true };
+  try { await ringDoorbell(d, { h: cfg.home_id, sha }, o); return { rung: sha }; }
+  catch (e) { logTo(cfg, `doorbell ring failed (the other homes poll): ${e.message}`); return { error: e.message }; }
+}
+/** the publish would do something (cheap: a stat walk, no git) - the loop spawns `norn sync publish` only then */
+export function publishDue(cfg0) {
+  let cfg; try { cfg = synced(cfg0); } catch { return false; }
+  if (!cfg || fs.existsSync(at(cfg, 'stopped'))) return false;
+  const { files, stat } = homeWalk(cfg);
+  return !idle(readJsonS(at(cfg, 'manifest')), files, stat);
+}
+
+const NORN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
+const ringDetached = cfg => spawn(process.execPath, [NORN, 'sync', 'ring', '--machine', cfg.machine_file], { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref();
+const lastLine = r => (r.err || r.out || '').trim().split('\n').pop();
+/** a norn CLI child, async: -> { code, out, err } */
+export const norn = (args, { env = process.env } = {}) => new Promise(ok => execFile(process.execPath, [NORN, ...args], { env, windowsHide: true, timeout: 600000, maxBuffer: 32 << 20 },
+  (e, out, err) => ok({ code: e ? (Number.isInteger(e.code) ? e.code : 1) : 0, out: String(out || ''), err: String(err || '') })));
+const gitA = (cfg, args) => new Promise((ok, no) => execFile('git', args, { env: { ...process.env, ...(fs.existsSync(cfg.dir) ? { GIT_DIR: cfg.dir } : {}) }, windowsHide: true, timeout: 60000, maxBuffer: 16 << 20 },
+  (e, out, err) => (e ? no(new Error(`git ${args[0]}: ${String(err || e.message).trim().split('\n').pop()}`)) : ok(String(out)))));
+
+/** the real loop of a ledger config: the dashboard passes its CLI runner (cli), `norn sync watch` the default one and ref-ed timers (they keep
+ * its process alive); log defaults to sync.log */
+export function loopOf(cfg, { cli = norn, log = s => logTo(cfg, s), transport, timers } = {}) {
+  const mf = ['--machine', cfg.machine_file], d = doorbellOf(cfg);
+  return syncLoop({
+    home: () => { try { return homeIdOf(cfg); } catch (e) { log(`sync loop: ${e.message}`); return null; } },
+    lsRemote: async () => parseHeads(await gitA(cfg, ['ls-remote', cfg.remote, ...HEADS])),
+    known: async () => { try { return asRemote(parseHeads(await gitA(cfg, ['for-each-ref', '--format=%(objectname) %(refname)', 'refs/sync/home/', SYNC_CLAIMS]))); } catch { return {}; } },
+    publish: async () => { if (!publishDue(cfg)) return; const r = await cli(['sync', 'publish', ...mf]); log(`sync loop: publish: ${lastLine(r)}`); },
+    pass: async why => { const r = await cli(['sync', 'fetch', ...mf]); log(`sync loop: pass (${why}): ${lastLine(r)}`); return r.code === 0; },
+    doorbell: d ? { open: signal => doorbellStream(d, { signal, ...(transport ? { transport } : {}) }) } : null, log, ...(timers ? { timers } : {}) });
 }

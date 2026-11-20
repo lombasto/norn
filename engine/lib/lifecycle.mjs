@@ -17,8 +17,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn } from './records.mjs';
-import { makeEval, workOnMain } from './after.mjs';
-import { makeGit } from './dlvgit.mjs';
+import { makeEval } from './after.mjs';
+import { makeGit, workOnMain } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;

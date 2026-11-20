@@ -50,7 +50,7 @@ test('DEC-362: an mcp policy save lands in the source AND the regenerated target
   assert.ok(v >= c.no_new_step_k && v <= c.hard_max_k && v !== c.handoff_k, JSON.stringify(c));
   const r = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_settings', arguments: { set: { key: 'policy.context.implementer.handoff_k', value: v } } } }, ctx);
   assert.ok(!r.result.isError, JSON.stringify(r.result));
-  const want = new RegExp(`at ~${v}k \\(even mid-wait\\)`);
+  const want = new RegExp(`at ~${v}k \\(a \\[1m\\] run: ~450k / 500k\\) \\(even mid-wait\\)`);   // NORN-CTX-1M: the line names both tiers
   assert.match(fs.readFileSync(`${sb.meta}/projects/demo/agents/demo-implementer.md`, 'utf8'), want, 'source rewritten');
   assert.match(fs.readFileSync(`${sb.cfg}/agents/demo-implementer.md`, 'utf8'), want, 'target regenerated');
   assert.ok(r.result.structuredContent.gen.ran, 'gen ran');

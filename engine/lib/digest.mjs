@@ -7,7 +7,8 @@
 // lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk),
 // homes (RM-46 S1d: a synced dir's refused cross-home writes and copies that did not fold).
 import { loadState, loadShared, readEvents, recordsFile, fold, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS } from './records.mjs';
-import { deliverablesView, deliverableConfig } from './deliverables.mjs';
+import { deliverablesView, deliverableConfig, mergeBacklog, backlogMax } from './deliverables.mjs';
+import { fwd } from './dlvmerge.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
 import { makeEval, condText } from './after.mjs';
 import { readiness } from './runs.mjs';
@@ -34,7 +35,6 @@ const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
 const isWork = d => !NOT_WORK.includes(d.kind) && d.role !== 'helper' && !d.parent;
 const endOf = r => r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)) || null;
 const BAD_END = ['crash', 'no-result'];
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const isMain = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const age = (now, ts) => +((now - Date.parse(ts)) / H).toFixed(1);
 
@@ -62,12 +62,12 @@ const reviewKind = (r, cited = new Set()) => {
 
 function finished(runs, dlvRows, { now, git, main, cited }) {
   const rows = [];
-  for (const d of dlvRows) {
-    if (d.state !== 'done') continue;
+  for (const d of dlvRows) {   // DLV-MERGED-TRUTH: the state comes from deliverablesView (dlvMerged), the one merge rule
+    if (d.state !== 'done' && d.state !== 'unknown') continue;
     if (d.record_state === 'parked' && !d.park?.expired) continue;
     if (d.record_state === 'superseded') continue;   // META-GTP-MERGEQ piece 0: terminal
     rows.push({ id: d.id, kind: 'deliverable', lane: d.lane ?? null, branch: d.branch ?? null, run: d.run ?? null, days: d.days ?? null,
-      what: d.delivers || '', why: 'done, not merged' });
+      what: d.delivers || '', why: d.state === 'unknown' ? `${d.state_word}${d.ruling ? ` - ruling ${d.ruling} in the Inbox` : ''}` : 'done, not merged' });
   }
   const covered = new Set(dlvRows.map(d => d.run).filter(Boolean));
   for (const r of runs) {
@@ -194,6 +194,9 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
     const it = holdItem({ ...hr, ...hw }, { now, min: noticeMin(project?.policy), status });
     if (it) sections.hold = [{ id: 'HOLD', term: it.term, scope: it.scope, runs: it.runs, merges: it.merges, since: it.since, min: it.minutes, reason: it.reason, fix: it.fix, clears: it.clears }];
   }
+  // MERGE-FIRST (4): over policy.merge.backlog_max finished-but-unlanded deliverables - ONE row; the check-in lands work before it starts lanes
+  const bl = mergeBacklog(dlvRows || [], { now, max: backlogMax(project?.policy) });
+  if (bl.over) sections.backlog = [{ id: 'MERGE-BACKLOG', n: bl.n, oldest_h: bl.oldest_h, max: bl.max, ids: bl.ids }];
   // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0
   let rm = null;
   try { rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows }); } catch { rm = null; }

@@ -23,6 +23,10 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   a PAUSED file) - past policy.holds.notice_min. No check-in clears it and none works around it (a paused hand-off waits for the
   owner's resume too): dispatch nothing it holds, do not re-report the other rows as the stall, and start the ledger line with
   `HELD <n> run(s) since <t>: <reason>; fix: <fix>`. The owner has the Inbox item and one notice; the row leaves by itself.
+- MERGE BACKLOG (digest row 0c): more finished deliverables wait to land than policy.merge.backlog_max. While it shows, land
+  before you start: dispatch no new lane and no new build / plan stage (hand-off and crash resumes, CI-red fixes and landing runs
+  still go). The clean ones land by mergeq (`META mergeq`); for each listed DLV with a conflict or no landing yet, queue its MERGE
+  (`META merge-brief`) or `META deliverables resolve DLV-n`. Ledger: `backlog <n>: landing <ids>`. The row leaves when the backlog is at max or below.
 
 ## 2. For each run `META runs --unreviewed` lists (exited / lost / killed; any executor)
 - The run's outcome is already recorded (its `norn done` result: end.outcome, end.why, end.summary, end.handoff = its HANDOFF.md);
@@ -69,6 +73,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - An open Q marked STALE (> 24 h): confirm it still blocks, or withdraw it with `META rec withdraw Q-n --why W`.
 
 ## 2c. Deliverables (finished work followed to main and the install; state derived from git, never typed)
+- Landing is code: mergeq merges a clean pushed DONE deliverable, runs the quick check (syntax + its changed test files) and
+  opens its PR (`META mergeq` shows the queue; `<state>/mq/land/DLV-n.json` the last try). Queue no MERGE for such a deliverable.
+  A conflict, a red check or a slop block queues its MERGE by itself, the failure in the brief.
 - `META deliverables --due` lists every deliverable DONE > 24 h and not merged, not parked (or its 7-day park expired), not yet
   asked. For each row: `META deliverables ask DLV-n` - ONE question per deliverable (it refuses a second; never one per tick).
 - Rule it like any Q: merge = the controller's (an install session when native; the check-in never merges); batch =
