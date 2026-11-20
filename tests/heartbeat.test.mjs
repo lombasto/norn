@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { hbWriter, hbPath, hbLate, sweepLost, liveRuns } from '../engine/lib/runs.mjs';
 import { lanesView } from '../engine/lib/lanes.mjs';
-import { stateOf } from '../engine/dash/ui.mjs';
+import { stateOf } from '../engine/dash/cells.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 

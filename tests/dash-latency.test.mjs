@@ -39,22 +39,24 @@ test('timing log: Server-Timing on every answer, slow requests and loop stalls i
   } finally { await f.done(); }
 });
 
-test('the browser: a tab render fetches the header and the tab at once, and /api/overview once', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser: a tab render fetches the header (/api/strip) and the tab at once; the header never asks for /api/overview', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage();
   try {
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes'`, 90000), 'Lanes painted');
-    // the header's /api/overview is held 800 ms: the Inbox's own request must not wait behind it
-    await pg.ev(wrap('/api/overview\\?', 800)); await pg.ev(tap('inbox'));
+    // the header's /api/strip is held 800 ms: the Inbox's own request must not wait behind it
+    await pg.ev(wrap('/api/strip\\?', 800)); await pg.ev(tap('inbox'));
     assert.ok(await pg.until(`document.body.dataset.ready === 'inbox'`, 30000), 'Inbox painted');
-    const r = await pg.ev('window.__req'), ov = r.find(x => x.u.startsWith('/api/overview?')), ib = r.find(x => x.u.startsWith('/api/inbox?'));
+    const r = await pg.ev('window.__req'), ov = r.find(x => x.u.startsWith('/api/strip?')), ib = r.find(x => x.u.startsWith('/api/inbox?'));
     assert.ok(ov && ib, JSON.stringify(r));
     assert.ok(ib.t0 - ov.t0 < 400, `the Inbox request went out ${Math.round(ib.t0 - ov.t0)} ms after the header's: a waterfall`);
-    // the Overview tab reads /api/overview too: one request serves the header and the tab
-    await pg.ev(wrap('^$', 0)); await pg.ev(tap('overview'));
-    assert.ok(await pg.until(`document.body.dataset.ready === 'overview'`, 30000), 'Overview painted');
-    const o = (await pg.ev('window.__req')).filter(x => x.u.startsWith('/api/overview?'));
-    assert.equal(o.length, 1, JSON.stringify(o));
+    // a page change's render asks for the strip once (a state-stream event may refresh it later) and never for the run tree's
+    // /api/overview (the strip reads the run records)
+    await pg.ev(wrap('^$', 0)); await pg.ev(tap('talk'));
+    assert.ok(await pg.until(`document.body.dataset.ready === 'talk'`, 30000), 'Talk painted');
+    const o = await pg.ev('window.__req'), st = o.filter(x => x.u.startsWith('/api/strip?'));
+    assert.ok(st.length >= 1, JSON.stringify(o)); assert.equal(st.filter(x => x.t0 - st[0].t0 < 50).length, 1, `one strip request per render: ${JSON.stringify(o)}`);
+    assert.ok(!o.some(x => x.u.startsWith('/api/overview')), JSON.stringify(o));
   } finally { await pg.close(); await f.done(); }
 });
 
