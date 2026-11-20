@@ -34,6 +34,6 @@ The testing rules (tiers, the run budget, load reds, quarantine, waiting on a te
 
 ## Dashboard
 
-- A dense tab has 3 or 4 sub-views (`subviewPage`). Don't add a fifth; fold the content into an existing one.
+- A page with views has 3 or 4 of them (`subviewPage`), switched on its title line. Don't add a fifth; fold the content into an existing one.
 - At 390 px wide (phone), no page may scroll sideways. Tests check this.
 - Every page has one name, used for its label, its id and its URL.

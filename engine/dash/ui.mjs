@@ -7,7 +7,7 @@ import { renderProse } from './prose.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord, hoChip } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
@@ -15,120 +15,32 @@ import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-import { fmtDur } from './activity.mjs';
+import { esc, fin, dash, int, mTok, fmtMin, pct, plural, aname, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
-export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'],
-  ['work', 'Work'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['map', 'Map'], ['plan', 'Plan'], ['roadmap', 'Roadmap'],
-  ['health', 'Health'], ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'],
-  ['history', 'History'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['home', 'map', 'roadmap', 'history', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
+import { lanes, map } from './pages/lanes.mjs';
+import { runs } from './pages/runs.mjs';
+import { plan, forecastCard } from './pages/plan.mjs';
+// NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
+export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
+  ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
+  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['map', 'Map'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['talk', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
-// ---------- formatting ----------
-export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fin = v => typeof v === 'number' && Number.isFinite(v);
-const dash = '<span class="mute">-</span>';
-const int = n => fin(n) ? Math.round(n).toLocaleString('en-US') : '-';
-const pct = (n, d = 1) => fin(n) ? `${n.toFixed(d)} %` : '-';
-const kTok = n => fin(n) ? `${Math.round(n / 1000)}k` : '-';
-const mTok = n => !fin(n) ? '-' : n < 1e6 ? `${Math.round(n / 1000)}k` : `${(n / 1e6).toFixed(1)}M`;
-export function fmtMin(m) {
-  if (!fin(m)) return '-';
-  m = Math.max(0, Math.round(m));
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
-}
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
-// UTC times with a Z, ids and dates as the records carry them: today "02:14Z", older "10-30 22:20Z".
-export function fmtTime(iso, now = Date.now()) {
-  const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
-  const d = new Date(t), hm = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z`;
-  return new Date(now).toISOString().slice(0, 10) === d.toISOString().slice(0, 10) ? hm : `${d.toISOString().slice(5, 10)} ${hm}`;
-}
 const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
   const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
 
-// run name (META-UX-R1 C): stable human name next to the RUN id everywhere a run shows
-const aname = n => n ? ` <b class="aname">${esc(n)}</b>` : '';
-export const chip = (cls, txt) => `<span class="chip ${esc(cls)}">${esc(txt ?? cls)}</span>`;
-// built-ins by name; every configured (typed) executor - API or cli - is an own-account executor ('prov')
-const exClass = ex => String(ex ?? '').startsWith('codex') ? 'codex' : !ex || ['claude', 'fake'].includes(ex) ? 'claude' : 'prov';
-export function exChip(ex, model, effort) {
-  const t = [ex, model && ex && String(model).startsWith(ex + '-') ? String(model).slice(ex.length + 1) : model].filter(Boolean).join(' ') + (effort && effort !== '-' ? ` · ${effort}` : '');
-  return t ? chip(exClass(ex), t) : dash;
-}
-// Lane / run state text -> chip class + short word (lanes.mjs text grammar, design 5).
-export function stateOf(text) {
-  const t = String(text ?? '');
-  if (t.startsWith('running') && t.includes(' - heartbeat late')) return ['warn', 'heartbeat late'];   // lanes.mjs: alive, its .hb behind
-  if (t.startsWith('running')) return ['running', 'running'];
-  if (t.startsWith('parked')) return ['parked', 'parked'];
-  if (t === 'exited: DONE') return ['done', 'DONE'];
-  if (t.startsWith('exited: STOPPED')) return ['stopped', 'STOPPED'];
-  if (t.startsWith('exited: HANDOFF')) return ['handoff', 'HANDOFF'];
-  if (t.startsWith('exited: no-result')) return ['no-result', 'no-result'];
-  if (t.startsWith('exited: crash')) return ['bad', 'crash'];
-  if (t === 'lost') return ['lost', 'lost'];
-  if (t.startsWith('killed')) return ['bad', 'killed'];
-  if (t.startsWith('waiting')) return ['warn', 'waiting'];
-  if (t === 'no runs') return ['idle', 'no runs'];
-  if (t.startsWith('shipped')) return ['done', 'shipped'];   // OVERVIEW-TRUTH (5): the lane's work is on main
-  if (t.startsWith('withdrawn')) return ['idle', 'withdrawn'];
-  return ['idle', t || '-'];
-}
-const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
-const projTag = (ctx, p) => ctx.project === 'all' && p ? `<span class="id">${esc(p)}</span> ` : '';
-// RM-46 S3 (SPEC 3.3, 4.7): a row another home wrote = an "on b" chip (that home commits its changes); an event written here on it and not
-// yet committed by its home = "answered on a, pending b" (the server's foreign(): home, pending [{ ev, home, primary }])
-const PAST = { answer: 'answered', say: 'said', archive: 'archived', unarchive: 'unarchived', revoke: 'revoked', overrule: 'overruled', edit: 'edited', move: 'moved', link: 'linked', unlink: 'unlinked', drop: 'dropped', reopen: 'reopened' };
-export const homeChip = x => (x?.home ? `<span class="chip home" title="${esc(`written on home ${x.home}: home ${x.home} commits its changes`)}">on ${esc(x.home)}</span> ` : '');
-export const pendingChips = x => (x?.pending || []).map(e => `<span class="chip pending" title="written here, applied once home ${esc(e.primary)} relays it">${esc(`${PAST[e.ev] ?? e.ev} on ${e.home}, pending ${e.primary}`)}</span>`).join(' ');
 const panel = (tab, html) => `<div id="panel-${tab}">${html}</div>`;
 const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose one project in the header: the ${esc(tab)} tab belongs to one project (its own records / files).</p></div>`);
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-// UX review 2: the bar is 7 destinations with plain names (both looks). Home, Overview, Inbox and Settings are one page each; Work,
-// Health and History are pages of their own (a hub: one card per page under it, with what needs a look) and, while one of them or one of
-// its pages is open, a second row lists its pages. Label, tab id and URL (?tab=<id>) are the same word for every page.
-// [id (= the destination's own page), label, the pages under it in display order]
-export const NAV = [
-  ['home', 'Home', []],
-  ['overview', 'Overview', []],
-  ['inbox', 'Inbox', []],
-  ['work', 'Work', ['lanes', 'runs', 'map', 'plan', 'roadmap']],
-  ['health', 'Health', ['usage', 'slop', 'tests', 'context']],
-  ['history', 'History', ['records', 'ledger', 'docs']],
-  ['settings', 'Settings', []],
-];
-/** the destination a page sits in ([id, label, pages]): itself or the one whose pages hold it; null for the setup page */
-export const destOf = tab => NAV.find(([g, , ids]) => g === tab || ids.includes(tab)) ?? null;
-const countBadge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
-// RM-18 S1: a Norn colour on the nav as a meaning. History = Urd (was), Work = Verdandi (is) but its Plan and Roadmap = Skuld (shall be),
-// Inbox = Skuld; Health = its worst state; Home, Overview, Settings neutral. CSS: norn.css .tone-* (both looks).
-export const DEST_NORN = { history: 'urd', work: 'verd', inbox: 'skuld' };
-export const PAGE_NORN = { plan: 'skuld', roadmap: 'skuld' };
-const RANK = { ok: 0, warn: 1, bad: 2 };
-/** the worst of { page: 'ok'|'warn'|'bad'|null } states; null when none is known */
-export const worstState = st => Object.values(st || {}).filter(v => v in RANK).reduce((w, v) => (w === null || RANK[v] > RANK[w] ? v : w), null);
 /** the Health pages' states from what the header holds: usage = the overview's burn.usage (guard STOP or over the hourly cap = bad,
  *  guard ok = ok), slop / tests / context = the Guard rows of their types (a warn-level row = warn, else ok); null = not known */
 export function healthStates({ usage = null, rows = null } = {}) {
   const u = !usage || usage.billing?.type === 'api' ? null : usage.guard === 'STOP' || usage.rateOK === false ? 'bad' : usage.guard === 'ok' ? 'ok' : null;
   const of = types => (rows ? (rows.some(r => types.includes(r.type) && (r.severity === 'high' || r.severity === 'medium')) ? 'warn' : 'ok') : null);
   return { usage: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
-}
-/** a page's tone: its Norn colour, a Health state, or '' (neutral) */
-export function navTone(id, health = {}) {
-  const d = destOf(id)?.[0];
-  if (d === 'health') return (id === 'health' ? worstState(health) : health[id]) ?? '';   // a page whose state is not known yet: neutral
-  return PAGE_NORN[id] ?? DEST_NORN[d] ?? '';
-}
-const toneCls = t => (t ? ` class="tone-${t}"` : '');
-export function renderNav(tab, counts = {}, health = {}) {
-  const label = Object.fromEntries(TABS), cur = destOf(tab);
-  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}${toneCls(navTone(g, health))}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
-  const pt = cur ? navTone(cur[0], health) : '';
-  const pages = cur && cur[2].length ? `<div class="pages${pt ? ' tone-' + pt : ''}" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}"${toneCls(navTone(k, health))}>${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
-  return `<div class="dests" role="tablist" aria-label="Sections">${top}</div>${pages}`;
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
 const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(name, cls) : '');
@@ -164,19 +76,10 @@ export async function loadTab(tab, project, get, ctx = {}) {
   }
   const q = `project=${encodeURIComponent(project)}`, all = project === 'all';
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
-  if (tab === 'home') return get(`/api/home?${q}`);   // META-CONTROLLER C2
-  if (tab === 'overview') {
-    const [overview, agents, records, ledger, deliverables] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`),
-      all ? null : get(`/api/records?${q}`), all ? null : get(`/api/ledger?${q}`), dlvGet(get, q)]);
-    return { overview, agents, records, ledger, deliverables };
-  }
+  if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return get(`/api/lanes?${q}`);
   if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
-  // UX review 2: the three destination pages - what needs a look under each, from the endpoints the pages already use
-  if (tab === 'work') { const [overview, a] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`)]); return { overview, queue: a.queue || [] }; }
-  if (tab === 'health') { const [overview, slop] = await Promise.all([get(`/api/overview?${q}`), all ? null : Promise.resolve().then(() => get(`/api/guard?${q}&part=summary`)).catch(() => null)]); return { overview, slop }; }
-  if (tab === 'history') return { records: await get(`/api/records?${q}`) };
   if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}${ctx.runsWindow && ctx.runsWindow !== '2h' ? '&window=' + ctx.runsWindow : ''}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
@@ -204,7 +107,8 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const [d, remote, guard] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null), guardGet(get, q, all)]);
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
-  if (tab === 'usage') return get(`/api/usage?${q}`);
+  // Usage carries the forecast (moved from Plan, stage NAV): /api/plan's forecast per project, beside the usage parts
+  if (tab === 'usage') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])) }; }
   if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
     const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
     const have = partsHave(ctx, 'tests', project, d);
@@ -223,14 +127,18 @@ export async function loadTab(tab, project, get, ctx = {}) {
 }
 
 // ---------- tabs ----------
+/** the cards that read the status strip (/api/strip, ctx.strip), not the page's endpoint - the retired Overview's onboarding on Lanes (the first
+ *  task, the setup gaps) and the API spend on Usage. index.html repaints #strip-cards when a newer strip lands. */
+export const stripCards = (tab, s) => `<div id="strip-cards">${!s ? '' : tab === 'lanes' ? firstTask(s.first_run) + setupGaps(s.setup)
+  : tab === 'usage' && s.usage?.billing?.type === 'api' ? `<section class="card" id="usage-burn" style="margin-bottom:12px"><h2>Last 24 h <span class="mute small">API billing, against the daily cap</span></h2>${apiBurn(s.usage.billing)}</section>` : ''}</div>`;
 export function renderTab(tab, d, ctx = {}) {
   if (tab === 'adopt') return panel(tab, renderAdopt(adoptStep(d, ctx.adoptAsk), d, ctx));
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
-  if (tab === 'usage') return panel(tab, usage(d, { ...ctx, now }));
+  if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanes(d, { ...ctx, now })));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
-  if (tab === 'home') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ overview, inbox, work: workHub, lanes, runs, map, roadmap, health: healthHub, history: historyHub, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes, runs, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
@@ -387,7 +295,7 @@ function tests(d, ctx) {
   const why = d.suite === false ? `<div class="banner" id="tests-scope">Norn reads node:test suites (tests/*.test.mjs) and pytest suites (tests/test_*.py); this project's tests/ holds neither, so only <b>Trends</b> fills: test cases and lines per day from git, refreshed once a day by the tick.</div>`
     : !d.times && !(d.history || []).length && !(d.git?.points || []).length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Trends</b> from git once a day; per-test runtimes come from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
   const views = TESTS_SUBS.map(([k, label]) => [k, label, k === 'suite' && d.times ? int(d.times.tests) : null]);
-  return why + testsAlerts(d) + subviewPage('tests', { numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
+  return subviewPage('tests', { title: 'Tests', lead: why + testsAlerts(d), numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
@@ -417,23 +325,6 @@ export function adviceRow(i, ctx) {
     <div class="small">Change: <span class="mono">${esc(ch)}</span> <span class="mute">- ${esc(i.trial ?? '')}</span></div></div>
     <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="advice-apply" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Apply</button><button class="ghost" data-act="advice-keep" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Keep as is</button></div></div>`;
 }
-function needItem(i, ctx) {
-  const ago = fmtMin(minsSince(i.created, ctx.now));
-  if (i.type === 'question') {
-    const rec = i.recommend ? (i.options || []).find(o => (o.key ?? o.k) === (i.recommend.key ?? i.recommend.k)) : null;
-    return `<div class="item">${chip('open', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${esc(i.lane ?? '-')} · asked ${ago} ago${i.class ? ` · class ${esc(i.class)}` : ''}</div>
-      ${rec ? `<div class="small">Recommended <b>(${esc(rec.key ?? rec.k)})</b> ${esc(rec.text ?? rec.t)}</div>` : ''}</div><span class="spacer"></span><button class="primary" data-tab="inbox">Answer</button></div>`;
-  }
-  if (i.type === 'setup') return setupRow(i, ctx);
-  if (i.type === 'login') return loginRow(i, ctx);
-  if (i.type === 'hold') return holdRow(i, ctx);
-  if (i.type === 'handedit') return editRow(i, ctx);
-  if (i.type === 'parked' && i.ruled) return `<div class="item">${chip('answered', i.id)}<div><b>lane ${esc(i.lane)}: waiting - your ruling is being applied</b><div class="small mute">${projTag(ctx, i.project)}${esc(rulingWords(i.ruled, ctx))}</div></div></div>`;
-  if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.lane)} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
-  const [cls] = stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state);
-  return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${aname(i.name)} unreviewed - no review event yet</div></div></div>`;
-}
-
 // META-ADOPT A3: ONE needs-you row while a drafted setup waits (Review / Not now = a close with the reason)
 const setupRow = (i, ctx) => `<div class="item">${chip('open', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}drafted ${fmtMin(minsSince(i.created, ctx.now))} ago · nothing is applied before you approve it</div></div><span class="spacer"></span><button class="primary" data-act="adopt-review" data-project="${esc(i.project)}">Review</button><button data-act="adopt-notnow" data-project="${esc(i.project)}">Not now</button></div>`;
 // META-ADOPT A3 (SPEC sec. 5): the setup gaps of one project - each names what is missing in one line and offers the next action
@@ -466,17 +357,7 @@ function firstTask(f) {
    <p class="small" style="margin:10px 0 0">Or let Norn look at the repo and draft a roadmap, rules and a first task <button data-tab="adopt">Look at the repo</button></p>
    <div class="small mute" style="margin-top:8px">Caps in force: <b>${esc(capShown(c.max_claude_workers))}</b> Claude worker(s) · <b>${esc(capShown(c.max_codex))}</b> Codex · weekly stop <b>${esc(unit(c.weekly_stop_pct, '%'))}</b> · rate cap <b>${esc(unit(c.usage_rate_cap_pct_per_h, '%/h'))}</b> (Settings, Workers &amp; budget)</div></section>`;
 }
-// META-CTX-ENFORCE R1 (DIR-56): ONE context cell - the CURRENT context (last request) on a bar to the hard max, the tick = the hand-off
-// line of the run's role (NORN-CTX-1M: "(1M tier)" when the run's model has the 1M window); red past the hand-off line, a chip naming which line it passed; the peak beside it when it was higher
-export function ctxMeter(n, { codexNote = false } = {}) {
-  if (!fin(n.ctx)) return `<span class="small mute">${codexNote && String(n.executor ?? '').startsWith('codex') ? 'n/a (codex: tokens at end)' : '-'}</span>`;
-  const lim = fin(n.ctx_limit) ? n.ctx_limit : null, hard = fin(n.ctx_hard) ? n.ctx_hard : null;
-  const over = hard && n.ctx >= hard ? 'over' : lim && n.ctx >= lim ? 'hot' : '';
-  const flag = over === 'over' ? ` ${chip('bad', 'past hard max')}` : over === 'hot' ? ` ${chip('bad', 'past hand-off')}` : '';
-  const peak = fin(n.ctx_peak) && n.ctx_peak > n.ctx ? ` · peak ${kTok(n.ctx_peak)}` : '';
-  return `<span class="ctxm${over ? ' ' + over : ''}">${meter(n.ctx, Math.max(hard ?? 150000, n.ctx), lim, over)}<span class="small mute">${kTok(n.ctx)} ctx${lim ? ` / hand-off ${kTok(lim)}${/_1m$/.test(n.ctx_role ?? '') ? ' (1M tier)' : ''}` : ''}${hard ? ` · max ${kTok(hard)}` : ''}${peak}</span>${flag}</span>`;
-}
-// API billing (lib/billing.mjs): no weekly limit - the Burn card shows the last 24 h of spend against the daily $ cap instead
+// API billing (lib/billing.mjs): no weekly limit - the Spend card (Usage) shows the last 24 h of spend against the daily $ cap instead
 // OVERVIEW-TRUTH (4): every figure names its scope - this spend is the whole machine's (every project; billing.mjs spendUsd), the
 // Usage page's API spend is one project's by lane (spendBreakdown), today = since local midnight
 function apiBurn(b) {
@@ -499,70 +380,6 @@ export function pauseMenu(o, ctx = {}) {
   return `${now}${modes}${wait ? `<div><b class="small">Waiting on the pause</b>${wait}</div>` : ''}
     <div class="acts"><button class="ghost" data-act="pause-half" title="Ask the newer half of the running runs to stop at a clean point and hand off">Pause half</button><button data-act="pause-resume-all"${pz || w.handoffs.length ? '' : ' disabled'}>Resume all</button></div>${pick}`;
 }
-// RM-37: a run row's pause action (Runs + Lanes, the menu's hand-offs) from its pauseState: Pause a running work run (the safe pause
-// order), pausing once asked, Resume a paused hand-off (its resume queued first)
-export const pauseAct = (pz, project, run) => { const at = `data-project="${esc(project)}" data-run="${esc(run)}"`;
-  return pz === 'running' ? `<button class="ghost" data-act="run-pause" ${at} title="Ask ${esc(run)} to stop at a clean point and hand off">Pause</button>`
-    : pz === 'asked' ? chip('warn', 'pausing') : pz === 'handoff' ? `<button data-act="run-resume" ${at} title="Queue the resume of ${esc(run)} first">Resume</button>` : ''; };
-// RM-18 S2: the Overview strip in place of the hero (both looks): three real links, one per Norn in its time colour (norn.css .ostrip),
-// each opening its destination - Urd History, Verdandi Work, Skuld Inbox (DEST_NORN)
-export function overviewStrip(s, ctx = {}) {
-  if (!s) return '';
-  const q = ctx.project ? `?project=${encodeURIComponent(ctx.project)}&tab=` : '?tab=';
-  const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
-  const ll = s.last_landed, ck = s.checkin || {};
-  const next = ctx.checkinsPaused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
-  return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be" title="counts for ${esc(scopeWords(ctx))}">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
-    + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
-    + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
-}
-// OVERVIEW-TRUTH (4): the scope words of the Overview's figures - what the page shows (one project or all) vs the machine / account
-export const scopeWords = ctx => (ctx.project === 'all' ? 'all projects' : ctx.project ? `project ${ctx.project}` : 'this project');
-function overview(d, ctx) {
-  const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
-  const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
-  const needs = o.needs.length ? o.needs.map(i => needItem(i, ctx)).join('') : `<div class="item">${art(ctx, 'empty-nothing-needs-you', 'empty')}${chip('ok', 'all clear')}<span>Nothing needs you</span></div>`;
-  // gap #9: API billing - the burn column is each running run's $ so far (a live estimate from its tokens; the end record has the CLI's figure)
-  const apiB = o.burn.usage?.billing?.type === 'api' ? o.burn.usage.billing : null, liveUsd = new Map((apiB?.live || []).map(x => [`${x.project}|${x.id}`, x.usd]));
-  const burnCell = l => { if (!apiB) return fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-';
-    const v = liveUsd.get(`${l.project}|${l.run}`); return fin(v) ? `~$${v.toFixed(2)}` : '-'; };
-  const rows = o.running.lanes.map(l => {
-    const n = byId[l.run] || {}, age = n.ran_min, b = n.budget_min;
-    const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
-    const ctxCell = ctxMeter(n, { codexNote: true });
-    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
-      <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
-      <td class="mono run-burn">${burnCell(l)}</td></tr>`;
-  }).join('') || `<tr><td colspan="5" class="mute">${art(ctx, 'empty-no-runs', 'empty')}No lane is running.</td></tr>`;
-  const u = o.burn.usage, used = u.weeklyUsed, stop = u.weeklyStopPct;
-  const guardChip = u.guard === 'STOP' ? chip('bad', 'guard tripped: no new Claude worker') : u.guard === 'ok' ? chip('ok', 'under guard') : chip('idle', 'guard unknown');
-  const rateChip = u.rateOK === false ? chip('bad', 'over cap: Claude dispatch off') : u.rateOK === true ? chip('ok', 'under cap') : '';
-  const trip = fin(used) && fin(stop) && fin(u.rate) && u.rate > 0 && used < stop
-    ? (() => { const h = (stop - used) / u.rate; return `in ~${h.toFixed(1)} h · <b>${esc(fmtLocal(new Date(ctx.now + h * 3600000).toISOString()))}</b>`; })()
-    : fin(used) && fin(stop) && used >= stop ? '<b>tripped</b>' : '<span class="mute">- (no trailing rate)</span>';
-  const provLine = (o.burn.executors || []).length ? `<div class="small mute" id="exec-usage" style="margin-top:8px">Own-account executors (7 days, not in burn): ${o.burn.executors.map(x => `<b>${esc(x.name)}</b> ${plural(x.runs, 'run')} ${mTok(x.tokens)} tok${x.cost_usd ? ` $${x.cost_usd.toFixed(2)}` : ''}`).join(' · ')}</div>` : '';
-  const burners = (o.burn.top || []).map(t => `<div class="item"><span class="mono" style="width:76px">${fin(t.pct_per_h) ? t.pct_per_h.toFixed(2) + ' %/h' : mTok(t.burn30)}</span><span class="small"><span class="id">${esc(t.id)}</span> ${projTag(ctx, t.project)}${esc(t.lane ?? '')}</span></div>`).join('')
-    || '<div class="small mute">no cache reads in the last 30 min</div>';
-  const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
-    .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}${r.kind === 'decision' ? decMark(r) : ''}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
-  const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
-  const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}${backlogLine(o.backlog)}<div class="glance">
-   <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
-   <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex <span class="mute small" id="running-scope">runs in ${esc(scopeWords(ctx))} · the cap is this machine's</span></h2>
-     <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
-   <section class="card" id="burn"><h2>Burn${u.billing ? ` <span class="mute small" id="burn-billing">${esc(u.billing.label)}</span>` : ''}</h2>
-     ${u.billing?.type === 'api' ? apiBurn(u.billing) : `<div class="kv"><span class="mute small">weekly, your Claude account (every project)</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${meter(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
-     <span class="mute small">trailing 2 h</span><div><b>${fin(u.rate) ? u.rate.toFixed(2) + ' %/h' : '-'}</b> <span class="mute">vs cap ${fin(u.cap) ? u.cap.toFixed(2) + ' %/h' : '-'}</span> ${rateChip}</div>
-     <span class="mute small">guard trips</span><div>${trip}</div>
-     <span class="mute small">reset</span><div>${esc(fmtLocal(u.resetAt))}</div>
-     <span class="mute small">source</span><div class="small mute">${esc(u.source)}${u.source === 'live' && u.estimate && fin(u.estimate.weekly) ? ` (estimate ${pct(u.estimate.weekly)})` : ''}</div></div>`}
-     <h2 style="margin-top:14px">Top burners <span class="mute small">last 30 min, ${esc(scopeWords(ctx))}</span></h2>${burners}${provLine}</section></div>
-   ${d.deliverables ? deliverablesCard(d.deliverables, ctx) : ''}
-   ${d.records ? `<div class="grid2"><div class="tablecard"><h3>Latest records <span class="mute small">newest first</span></h3><table><tbody>${recs || '<tr><td class="mute">no records yet</td></tr>'}</tbody></table></div>
-   <div class="tablecard"><h3>Ledger <span class="mute small">last 4 entries, newest first</span></h3><table class="ledtab compact"><tbody>${led || '<tr><td class="mute">no ledger file</td></tr>'}</tbody></table></div></div>` : ''}`;
-}
-
 // RM-30 S1: the Inbox's text goes through the one prose renderer (prose.mjs) with its project's lanes / repo / Docs keys (/api/inbox prose)
 const proseCx = (d, ctx, project, key) => ({ ...(d.prose?.[project] || {}), project, sanitize: ctx.sanitize, ...(key ? { clamp: true, key } : {}) });
 // an option = a small card: its key, its text, its cost; the recommended one is marked and carries its why
@@ -665,233 +482,6 @@ function inbox(d, ctx) {
 
 // item 8 (MAIL-9 a): an answered question in plain words wherever it shows - the owner's part is done, a check-in applies it
 const rulingWords = (r, ctx) => `You ruled: ${r.choice ?? r.text ?? '?'} (${fmtTime(r.at, ctx.now)}) on ${r.q} - waiting for the next check-in to apply it (an answer starts one at once)`;
-// GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
-// a PR one links to the PR; the shared files are its tooltip
-const overlapWords = o => `overlaps upstream: ${o.kind === 'pr' ? `PR #${o.number}` : o.ref} (${o.n} file${o.n === 1 ? '' : 's'})`;
-const overlapChip = o => {
-  const files = o.files || [], tip = esc([...(o.kind === 'pr' ? [`${o.ref}: ${o.title ?? ''}`] : []), ...files, ...(o.n > files.length ? [`+${o.n - files.length} more`] : [])].join('\n'));
-  return o.kind === 'pr' && /^https:\/\//.test(o.url || '') ? `<a class="chip warn" href="${esc(o.url)}" target="_blank" rel="noopener" title="${tip}">${esc(overlapWords(o))}</a>`
-    : `<span class="chip warn" title="${tip}">${esc(overlapWords(o))}</span>`; };
-// owner 2026-11-18: one chip per overlap stacked 2-3 lines under busy lanes and broke the table's rhythm - two or more fold into ONE
-// summary chip that opens (a native <details>: keyboard and phone work, no script) to the same per-branch chips
-const overlapChips = os => !(os || []).length ? '' : os.length === 1 ? `<div class="lane-overlap">${overlapChip(os[0])}</div>`
-  : `<details class="lane-overlap"><summary class="chip warn" title="this lane's changed files overlap ${os.length} other branches / PRs">overlaps ${os.length} upstream: ${os.reduce((n, o) => n + (o.n || 0), 0)} files</summary><div class="lane-overlap-list">${os.map(overlapChip).join(' ')}</div></details>`;
-// RM-19 S1: the Lanes filter chips (index.html keeps the pick in S.laneShow and the URL as &lanes=active,done); a row's chip from its
-// lanesView group: Active = running + needs you + queued, Done recently / Old = done younger / older than policy.done_lanes.old_days
-export const LANE_SHOW = [['active', 'Active'], ['done', 'Done recently'], ['old', 'Old'], ['archived', 'Archived']];
-export const LANE_SHOW_DEFAULT = ['active', 'done'];
-export const laneShowOf = l => l.group === 'archived' ? 'archived' : l.group === 'done' ? (l.old ? 'old' : 'done') : 'active';
-export const laneKey = (project, lane) => `${project}:${lane}`;
-// RM-34: why the lane exists (purpose.mjs laneDriver): the objective in one line under the name - a tap opens it in full with every
-// source and its title - and the sources as small links (RM / DIR / DEC / Q open the record where it lives, a brief or doc the Docs
-// reader). No source = the finding as a chip. Plain text (lane readable-text's renderer, RM-30, is not on main yet).
-const SRC_WORD = { brief: 'brief', doc: 'doc' };
-export const laneSrcLink = s => s.doc ? `<button class="lnk lane-src" data-go="docs" data-goins="${esc(s.doc)}" title="${esc(`${s.id}: ${s.title}`)}">${esc(SRC_WORD[s.kind])}</button>`
-  : `<a class="lane-src" data-rid="${esc(s.id)}" href="${esc(s.href)}" title="${esc(s.title)}">${esc(s.id)}</a>`;
-export const laneWhy = d => !d ? '' : !d.sources.length ? `<div class="lane-why">${chip('warn', d.finding)}</div>`
-  : `<details class="lane-why"><summary title="${esc(d.objective)}">${esc(d.objective)}</summary><ul class="small">${d.sources.map(s => `<li>${laneSrcLink(s)} ${esc(s.title)}</li>`).join('')}</ul></details>
-    <div class="lane-srcs small">${d.sources.map(laneSrcLink).join(' ')}</div>`;
-// MAIL-29: the lane's type as a chip (its tooltip = the signal that decided it; purpose.mjs laneType), a landing run in flight beside it
-// (MERGE is what the lane does now, not its type), and where the output goes in words (laneOutput: a PR and its state, or the notes)
-export const laneKind = l => { const t = l.lane_type, o = l.output; if (!t && !o) return '';
-  const out = !o ? '' : o.href ? `<a class="lane-out" href="${esc(o.href)}" target="_blank" rel="noopener">${esc(o.text)}</a>` : `<span class="lane-out">${esc(o.text)}</span>`;
-  return `<div class="lane-kind small"><span class="chip ${t?.type ? 'idle' : 'warn'}" title="${esc(`type from ${t?.signal ?? '-'}`)}">${esc(t?.type ?? 'no type')}</span>${t?.now ? ` ${chip('running', t.now)}` : ''} ${out}</div>`; };
-// RM-39: a run's progress against its brief (progress.mjs runProgress) - ONE short line on a row: the pace as a chip ("on track" /
-// "slow" / "stalled" / "testing": one long test running, not stalled) and "2 of 5 items done, testing item 3"; its title = why slow
-const PACE_CLS = { 'on track': 'ok', testing: 'ok', slow: 'warn', stalled: 'bad' };
-// worker-speed: "tok/s 42 · model 35 % · tests 40 %" (the server's words; a live run's are its last 10 min)
-export const speedLine = s => !s ? '' : `<div class="speed small mute" title="output tokens per second of model time; shares of the run's wall time${s.rolling ? ', last 10 min' : ''} (norn speed)">${esc(s.line)}${s.rolling ? ' (10 min)' : ''}</div>`;
-export const progLine = g => !g ? '' : `<div class="prog small" title="${esc(g.slow?.line ?? g.pace?.words ?? '')}">${chip(PACE_CLS[g.pace?.state] ?? 'idle', g.pace?.state ?? '-')} ${esc(g.line)}</div>`;
-const ITEM_MARK = { done: '✓', doing: '…', todo: '·' };
-/** the detail: the checklist with its evidence, the pace, why slow, the alarms in words and the owner's moves */
-export const progDetail = g => !g ? '' : `<ol class="prog-items small">${g.items.map(it => `<li class="prog-${esc(it.state)}"><span aria-hidden="true">${ITEM_MARK[it.state]}</span> ${esc(it.title)}<span class="mute"> - ${esc(it.state)}${it.evidence ? `: ${esc(it.evidence)}` : ''}</span></li>`).join('')}</ol>
-  <div class="small"><b>Pace</b> ${esc(g.pace.words)}</div>${g.slow?.line ? `<div class="small"><b>Why</b> ${esc(g.slow.line)}</div>` : ''}
-  ${(g.alarms || []).map(a => `<div class="small prog-alarm">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} ${esc(a.words)}<div class="mute">${esc(a.numbers)}</div><div>${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc(a.act.join(' / '))}</div></div>`).join('')}`;
-/**
- * RM-39 item 5: the lane overview card - one component on the Lanes name and the Runs page's Lane cell. Hover (desktop) or focus / tap
- * (keyboard, phone) opens it over the row under the name, never over the row's buttons; Esc closes it (index.html); on a phone it is
- * a bottom sheet (CSS). `label` = what opens it (the lane name, or the Lane cell's link).
- */
-export function laneCard(c, label) {
-  if (!c) return label;
-  const g = c.progress, src = c.source ? `<span class="mute"> (${esc(c.source.id)})</span>` : '';
-  return `<span class="lhov">${label}<div class="lcard" role="dialog" aria-label="${esc(`Lane ${c.lane}`)}">
-    <div><b>${esc(c.lane)}</b> ${c.type ? chip('idle', c.type) : ''}</div>
-    <div class="small">${c.objective ? `${esc(c.objective)}${src}` : chip('warn', c.finding ?? 'no recorded driver')}</div>${c.output ? `<div class="small mute">${esc(c.output)}</div>` : ''}
-    ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
-    <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
-}
-// MERGE-FIRST (4): "done, not merged: N (oldest Xh)" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
-// policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
-export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">done, not merged: counting ...</span>'
-  : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
-export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
-function lanes(d, ctx) {
-  const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), refused = ctx.laneRefused ?? {}, undo = ctx.laneUndo;
-  const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => laneShowOf(l) === k).length;
-  const usd = all.some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
-  const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
-  // a done lane says how long ago it ended; an old one reads stopped (its row is faded); lifecycle.mjs: then which rule acts on it and
-  // when ("archives in 3 days", "stopped: needs a check-in decision") unless the text already says it (idle)
-  const ruleText = l => !l.rule || l.text === l.rule.text ? '' : ` · ${l.rule.text}`;
-  const nowText = l => (l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`) + ruleText(l);
-  // MAIL-29: the type filter - one type at a time (none = all); its chips are the types of the rows the state chips leave, counted
-  const kind = ctx.laneType ?? null, typeOf = l => l.lane_type?.type ?? 'no type', shown = all.filter(l => show.has(laneShowOf(l)));
-  const kinds = [...new Set([...shown.map(typeOf), ...(kind ? [kind] : [])])].sort();
-  const rows = shown.filter(l => !kind || typeOf(l) === kind).map(l => {
-    // the lane's run opens in the live feed drawer (as a Runs row does), not the supervisor's plain-text tail in a new browser tab
-    const [cls, word] = stateOf(l.text), log = l.run ? `<button data-act="lane-feed" data-project="${esc(l.project)}" data-run="${esc(l.run)}" title="Open ${esc(l.run)} in the live feed">Feed</button>` : '';
-    const pa = pauseAct(l.pause, l.project, l.run), act = (pa ? pa + ' ' : '') + (cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
-      : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>`
-      : `${log} <button class="ghost" data-act="lane-undo" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Unarchive</button>`);   // an archive by the tick (lifecycle.mjs) is undone here too; RM-37: Pause / pausing / Resume first
-    const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
-    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td>${laneCard(l.card, `<button class="lnk lname" aria-haspopup="dialog"><b>${projTag(ctx, l.project)}${esc(l.name)}</b></button>`)} ${homeChip(l)}${pendingChips(l)}<div class="id">${esc(l.id)}</div>${laneKind(l)}${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}${l.path ? ` · ${l.path.red ? chip('bad', l.path.text) : esc(l.path.text)}` : ''}${progLine(l.progress)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
-  }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
-  const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
-  return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>${backlogLine(d.backlog)}
-   ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
-   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span><span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span></div>
-   <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-// ---------- UX review 2: Work, Health and History - one card per page under the destination: what it shows + what needs a look now ----------
-const HUB_WHAT = { lanes: 'one row per lane: its latest run, state and outcome', runs: 'every running and recent run as a tree: tokens, context, its findings',
-  map: 'lanes as threads, runs as beads on them', plan: 'what starts next and what it waits for, what lands next, the usage forecast',
-  roadmap: 'themes and items, their status from the linked lanes, runs and records', usage: 'usage against the weekly guard and the hourly cap; what each kind of work cost',
-  slop: 'every open finding of every check, in batches by the kind of fix', tests: 'suite time, the slowest tests, tests that never fail or duplicate others',
-  context: 'what one agent session loads and what it costs, per role and per file', records: 'directives and decisions with their history',
-  ledger: 'the project ledger, newest first', docs: "the project's docs and every file the agents read" };
-function hub(dest, now) {
-  const label = Object.fromEntries(TABS), [, , ids] = NAV.find(([g]) => g === dest);
-  return `<div class="hub" id="${dest}-hub">${ids.map(k => `<section class="card hubcard" id="hub-${k}"><h2><button class="lnk" data-tab="${k}">${esc(label[k])}</button></h2>
-    <p class="small mute">${esc(HUB_WHAT[k])}</p>${now[k] ? `<div class="small hubnow">${now[k]}</div>` : ''}</section>`).join('')}</div>`;
-}
-function workHub(d) {
-  const o = d.overview, needs = o.needs || [], n = t => needs.filter(i => i.type === t).length, run = o.running;
-  return hub('work', {
-    lanes: `${chip(run.lanes.length ? 'running' : 'idle', `${int(run.lanes.length)} running`)}${n('parked') ? ' ' + chip('parked', `${int(n('parked'))} parked`) : ''}`,
-    runs: `${chip(run.claude.n + run.codex.n ? 'running' : 'idle', `${int(run.claude.n)} Claude · ${int(run.codex.n)} Codex running`)}${n('unreviewed') ? ' ' + chip('warn', `${int(n('unreviewed'))} unreviewed`) : ''}`,
-    plan: chip(d.queue.length ? 'idle' : 'ok', `${int(d.queue.length)} queued`) });
-}
-function healthHub(d) {
-  const u = d.overview.burn.usage, s = d.slop;
-  const use = u.billing?.type === 'api' ? chip('idle', 'API billing: see the daily cap') : u.guard === 'STOP' ? chip('bad', 'guard tripped: no new Claude worker')
-    : fin(u.weeklyUsed) ? chip(u.guard === 'ok' ? 'ok' : 'idle', `${pct(u.weeklyUsed)} of the ${pct(u.weeklyStopPct, 0)} weekly guard`) : chip('idle', 'usage unknown');
-  return hub('health', { usage: `${use}${u.rateOK === false ? ' ' + chip('bad', 'over the hourly cap') : ''}`,
-    slop: s ? `${chip(s.total ? 'warn' : 'ok', plural(s.total ?? 0, 'open finding'))}${s.new ? ' ' + chip('needs', `${int(s.new)} new`) : ''}` : '' });
-}
-function historyHub(d) {
-  const r = d.records, act = (r.directives || []).filter(x => x.state === 'active').length;
-  return hub('history', { records: `${chip(act ? 'active' : 'idle', plural(act, 'active directive'))} ${chip('idle', plural((r.decisions || []).length, 'decision'))}` });
-}
-
-// RM-34: the Runs page's Lane cell - the lane (a link to its row on Lanes, every filter on so it shows) and the stage beside it;
-// a check-in reads "check-in", a run with no lane (a talk session) a dash
-const LANES_ALL = LANE_SHOW.map(([k]) => k).join(',');
-export const runLane = n => n.kind === 'checkin' ? 'check-in' : !n.lane ? dash
-  : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&lanes=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
-// ---------- the Runs page (owner 2026-11-19): running first, then queued, then ended; filter chips for state, kind and project, a lane
-// box and the window, all kept in the URL (index.html: S.runsView, runsViewOf / runsViewQs); 'ran' and 'ended' time columns ----------
-export const RUNS_STATES = [['running', 'running'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];
-export const RUNS_KINDS = [['worker', 'worker'], ['checkin', 'check-in'], ['helper', 'helper'], ['talk', 'talk']];
-export const RUNS_WINDOWS = [['2h', '2 h'], ['12h', '12 h'], ['24h', '24 h'], ['today', 'all today']];   // the server's RUN_WINDOWS
-const RUN_FAILED = ['crash', 'stopped', 'no-result', 'limit', 'auth'];   // an end outcome that did not finish the work
-/** a tree root's (or a queue entry's) state chip: running / queued / failed (lost, killed or a failed outcome) / finished */
-export const runStateOf = n => n.state === 'queued' ? 'queued' : n.state === 'running' || n.state === 'alive' ? 'running'
-  : n.state === 'lost' || n.state === 'killed' || RUN_FAILED.includes(n.outcome) ? 'failed' : 'finished';
-/** its kind chip: a helper (norn delegate), a check-in, a talk session (an interactive run too), else a worker (any executor) */
-export const runKindOf = n => n.kind === 'helper' || n.role === 'helper' ? 'helper' : n.kind === 'checkin' ? 'checkin' : n.kind === 'talk' || n.kind === 'interactive' ? 'talk' : 'worker';
-const isoMs = x => { const v = Date.parse(x ?? ''); return Number.isFinite(v) ? v : null; };
-/**
- * A node's times in minutes: ran = start to end (start to now while running), ended = now minus its end (null while running),
- * queued = now minus its queue time (queue entries only). A run's start / end are its own start and end events (agentsTree);
- * a subagent's are its first and last transcript lines. An ended node with no end time has no ran either.
- */
-export function runTimes(n, now) {
-  if (n.state === 'queued') { const q = isoMs(n.queued); return { ran_min: null, ended_min: null, queued_min: q === null ? null : Math.max(0, (now - q) / 60000) }; }
-  const live = runStateOf(n) === 'running', s = isoMs(n.started ?? n.first), e = live ? null : isoMs(n.ended ?? n.last);
-  return { ran_min: s === null || (!live && e === null) ? null : Math.max(0, ((e ?? now) - s) / 60000), ended_min: e === null ? null : Math.max(0, (now - e) / 60000), queued_min: null };
-}
-/** the default order: running (newest start first), then queued (longest waiting first: the fill order), then ended (latest end first) */
-export function runsOrder(roots) {
-  const g = n => ({ running: 0, queued: 1 })[runStateOf(n)] ?? 2, t = x => isoMs(x) ?? 0;
-  const key = n => g(n) === 0 ? -t(n.started ?? n.first) : g(n) === 1 ? t(n.queued) : -t(n.ended ?? n.last ?? n.started);
-  return [...roots].sort((a, b) => g(a) - g(b) || key(a) - key(b));
-}
-const allOf = l => new Set(l.map(x => x[0]));
-/** the page's view from the URL: &state= &kind= (a missing key = every chip on), &proj= (none = every project), &lane=, &window= */
-export function runsViewOf(qs) {
-  const set = (k, l) => { const v = qs.get(k); return v == null ? allOf(l) : new Set(v.split(',').filter(x => l.some(c => c[0] === x))); };
-  return { state: set('state', RUNS_STATES), kind: set('kind', RUNS_KINDS), proj: new Set((qs.get('proj') ?? '').split(',').filter(Boolean)), lane: qs.get('lane') ?? '',
-    window: RUNS_WINDOWS.some(w => w[0] === qs.get('window')) ? qs.get('window') : '2h' };
-}
-/** the view as URL params ('&state=running,queued...'): only what differs from the default, so a plain Runs link stays plain */
-export function runsViewQs(v) {
-  const full = (x, l) => x.size === l.length && l.every(c => x.has(c[0])), p = [];
-  if (!full(v.state, RUNS_STATES)) p.push(['state', [...v.state].join(',')]);
-  if (!full(v.kind, RUNS_KINDS)) p.push(['kind', [...v.kind].join(',')]);
-  if (v.proj.size) p.push(['proj', [...v.proj].join(',')]);
-  if (v.lane) p.push(['lane', v.lane]);
-  if (v.window !== '2h') p.push(['window', v.window]);
-  return p.map(([k, x]) => `&${k}=${encodeURIComponent(x)}`).join('');
-}
-/** the roots the view shows (children travel with their root) */
-export const runsFilter = (roots, v) => roots.filter(n => v.state.has(runStateOf(n)) && v.kind.has(runKindOf(n)) && (!v.proj.size || v.proj.has(n.project))
-  && (!v.lane || String(n.lane ?? '').toLowerCase().includes(v.lane.toLowerCase())));
-const queueNode = q => ({ id: q.id, name: q.name, kind: q.kind, role: q.role, state: 'queued', lane: q.lane, stage: q.stage, executor: q.executor, model: q.model, queued: q.queued, project: q.project, children: [] });
-const RUNS_HEAD = [['session', ''], ['lane', '', 'lanecol'], ['model · effort', ''], ['state', ''],
-  ['ran', 'How long the run ran: its start to its end, or to now while it runs. A queued run shows how long it has waited in the queue.'],
-  ['ended', 'How long ago the run ended. Empty while it runs.'], ['tokens', ''], ['context now (tick = hand-off, bar end = hard max)', ''], ['burn', '']];
-function runs(d, ctx) {
-  const top = Object.fromEntries((d.top || []).map(t => [t.id, t]));
-  const v = ctx.runsView ?? runsViewOf(new URLSearchParams());
-  // RM-34: Session = what identifies the session (its id + name); the rest of the old line (class, question, outcome, helpers) is its
-  // title, and the lane it works for has its own column
-  const name = n => n.kind === 'subagent' ? esc(n.agentType ?? 'subagent') : n.kind === 'talk' ? esc(n.id) : `<span class="id">${esc(n.id)}</span>${aname(n.name)}${n.kind === 'helper' ? ' helper' : ''}`;
-  const more = n => (n.kind === 'subagent' ? [n.description] : [n.kind === 'helper' && 'helper', n.class, n.q && `"${n.q}"`, n.lane && [n.lane, n.stage].filter(Boolean).join(' · '),
-    n.outcome && String(n.outcome).toUpperCase(), n.helpers && `helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok`]).filter(Boolean).join(' · ');
-  const tok = n => n.tokens === '-' ? '-' : fin(n.tokens) ? `${int(n.tokens)}${n.tokens_src ? ` (${esc(n.tokens_src)})` : ''}` : fin(n.cacheR) ? `${mTok(n.cacheR)} cacheR` : String(n.executor ?? '').startsWith('codex') ? 'at end' : '-';
-  const times = n => { const t = runTimes(n, ctx.now);
-    return `<div class="small run-ran">${fin(t.queued_min) ? `queued for ${fmtMin(t.queued_min)}` : fmtMin(t.ran_min)}</div><div class="small run-ended">${fin(t.ended_min) ? `${fmtMin(t.ended_min)} ago` : ''}</div>`; };
-  const one = (n, lvl, kids, pid) => {
-    const b = top[n.id];
-    const feed = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(n.id) && n.state !== 'queued' && !n.readonly ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
-    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t" title="${esc(more(n))}">${projTag(ctx, n.project)}${name(n)}</span>${homeChip(n)}${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${n.pause ? ` ${pauseAct(n.pause, n.project, n.id)}` : ''}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
-     <div class="lanecol small">${lvl ? '' : laneCard(n.lane_card, runLane(n))}${progLine(n.progress)}${speedLine(n.speed)}</div><div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div>${times(n)}<div class="mono small">${tok(n)}</div>
-     <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
-  };
-  // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it
-  const refusedRows = n => (n.refused || []).map(x => `<div class="node lvl1 refusedrow" data-p="p-${esc(n.id)}"><div class="small" style="grid-column:1/-1">${chip('refused', `refused: ${x.words}`)} ${esc([x.lane, x.stage ?? x.answers].filter(Boolean).join(' '))} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div></div>`).join('');
-  const tree = d.tree || [], all = [...tree, ...(d.queue || []).map(queueNode)], win = (RUNS_WINDOWS.find(w => w[0] === (d.window ?? v.window)) ?? RUNS_WINDOWS[0])[1];
-  const rows = runsOrder(runsFilter(all, v)).map(n => one(n, 0, (n.children || []).length || (n.refused || []).length, 'p-' + n.id) + refusedRows(n) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
-    || `<div class="node"><div class="mute">${all.length ? 'No runs under these filters.' : `No running, queued or recent (${esc(win)}) sessions.`}</div></div>`;
-  const by = k => tree.filter(n => exClass(n.executor) === k).length, projs = [...new Set(all.map(n => n.project).filter(Boolean))].sort();
-  const chips = (group, l, has, of) => `<span class="lane-show" role="group" aria-label="${esc(group)}">${l.map(([k, t]) => `<button class="hf" data-act="runs-show" data-group="${group}" data-show="${esc(k)}" aria-pressed="${has(k)}">${esc(t)} <b>${all.filter(n => of(n) === k).length}</b></button>`).join('')}</span>`;
-  const filters = `<div class="filters runs-filters">${chips('state', RUNS_STATES, k => v.state.has(k), runStateOf)}${chips('kind', RUNS_KINDS, k => v.kind.has(k), runKindOf)}${projs.length > 1 ? chips('proj', projs.map(p => [p, p]), k => v.proj.has(k), n => n.project) : ''}
-    <span class="lane-show" role="group" aria-label="window">${RUNS_WINDOWS.map(([k, t]) => `<button class="hf" data-act="runs-window" data-window="${k}" aria-pressed="${k === v.window}" title="ended runs from the last ${esc(t)}">${esc(t)}</button>`).join('')}</span>
-    <input type="search" data-runs-lane placeholder="filter by lane" value="${esc(v.lane)}"></div>`;
-  return `<div class="legend small mute"><span>Running first (newest start first), then queued, then ended (latest end first). Tree = every run running, queued or ended in the last ${esc(win)} (workers, check-ins, Codex, own-account executors), talk sessions and their subagents. Click a run for its live feed.</span>
-    <span>Sources: RUN records + transcript <span class="mono">&lt;session&gt;.jsonl</span>, <span class="mono">subagents/agent-*.meta.json</span>, Codex log banner / rollout.</span></div>
-   ${filters}
-   <div class="tree"><div class="node head">${RUNS_HEAD.map(([h, t, c]) => `<div${c ? ` class="${c}"` : ''}${t ? ` title="${esc(t)}"` : ''}>${esc(h)}</div>`).join('')}</div>${rows}</div>
-   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>
-   ${d.counts ? `<p class="small" id="runs-counts">${esc(d.counts.scope)}: ${esc(d.counts.text)}</p>` : ''}`;
-}
-// ---------- META-TEND P6: the Guard (REPORT s.5.0-5.1) - every open advisory across types, a query that owns no data ----------
-// Chips in place: guardOn(guard, pick) = the rows of one owning thing; guardChip = ONE chip shape on every tab (severity colour, the
-// count, a title with the worst line). The Guard page: SloppaChoppa's section (his portrait, his line, call him up, Mute), counts per
-// type (bars), the trend (lines), the rule ledger (stack), and every row with the tab that fixes it.
-export const guardOn = (g, pick) => (g?.rows || []).filter(pick);
-export function guardChip(rows, go = null) {
-  if (!rows?.length) return '';
-  const cls = rows.some(r => r.severity === 'high') ? 'bad' : rows.some(r => r.severity === 'medium') ? 'warn' : 'idle';
-  const t = `${rows.length} Slop finding${rows.length === 1 ? '' : 's'}`, title = esc(`${t}: ${rows[0].why}`);
-  return go ? ` <button class="lnk gchip" ${goAttrs(go)} title="${title}">${chip(cls, t)}</button>` : ` <span class="gchip" title="${title}">${chip(cls, t)}</span>`;
-}
-/** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
-export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="${esc(go.sub)}"` : '', go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
-  go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
 const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
@@ -1014,130 +604,10 @@ function guard(d, ctx) {
   const numbers = [{ n: int(total), label: `open · ${int(fresh)} new${K.count ? ` · ${int(K.count)} only count` : ''}`, cls: fresh ? 'warn' : '' }, { n: int(K.ready ?? 0), label: 'ready: the text is known', cls: K.ready ? 'ok' : '' },
     { n: int(K.drafts ?? 0), label: 'to draft: a worker writes it' }, { n: int(K.call ?? 0), label: 'your call: two ways' }];
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
-  return `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}
-   ${him}${cards}
-   ${subviewPage('slop', { numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P })}`;
+  return subviewPage('slop', { title: 'Slop', lead: `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}${him}${cards}`, numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P });
 }
 
-// ---------- the Plan tab (META-PLAN R1, norn DIR-13): what happens next, and when - /api/plan = engine/lib/plan.mjs per project ----------
-// Up next (the queue in fill order, hold-ups in plain words; it moved here from Agents), Chains (one line per dependency chain), Landing
-// next (heading to main), Forecast (usage now vs the cap and the weekly stop). Status shapes: check / play / ring / pause / stop / !
-// (text + colour, as every chip).
-const PL_SHAPE = { check: ['done', '✓'], play: ['running', '▶'], ring: ['idle', '○'], pause: ['parked', '‖'], stop: ['stopped', '■'], '!': ['needs', '!'] };
-const PL_STATUS = { ready: ['ok', 'ready'], waiting: ['idle', 'waiting'], held: ['parked', 'held'], offered: ['idle', 'offered'], ruling: ['needs', 'needs a ruling'] };
-// R2: one day-aware clock, the same as engine/lib/plan.mjs dayClock ("today 21:41", "Fri 02:13", farther "Fri 11-20 02:13"), drawn here in
-// the VIEWER's zone from the model's ISO times (named once at the top of the tab)
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-export function dayClock(ms, now = Date.now()) {
-  const p = n => String(n).padStart(2, '0'), d = new Date(ms), n = new Date(now), hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
-  const mid = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(), days = Math.round(Math.abs(mid(d) - mid(n)) / 86400000);
-  return days === 0 ? `today ${hm}` : days < 7 ? `${DAY_NAMES[d.getDay()]} ${hm}` : `${DAY_NAMES[d.getDay()]} ${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`;
-}
-const viewerZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'your local time'; } catch { return 'your local time'; } };
-const plAt = (iso, now) => (Number.isFinite(Date.parse(iso ?? '')) ? dayClock(Date.parse(iso), now) : null);
-// one shape per step: the glyph is the classic look's; the norn look draws its status token instead (norn.css hides .pl-g)
-const plShape = (cls, g, word) => `<span class="chip ${esc(cls)}" aria-label="${esc(word)}"><span class="pl-g" aria-hidden="true">${esc(g)}</span></span>`;
-const plSection = (id, title, note, body) => `<div class="tablecard pl-sec" id="${id}"><h3>${esc(title)} <span class="mute small">${esc(note)}</span></h3>${body}</div>`;
-const plEmpty = t => `<p class="pl-empty mute">${esc(t)}</p>`;
-const plBasis = e => (e.basis === 'history' ? `median of ${e.n} finished runs` : e.basis === 'budget' ? 'its time budget' : 'no basis');
-function planPart(p, ctx) {
-  const now = ctx.now ?? Date.now(), head = ctx.project === 'all' ? `<h2 class="pl-proj">${esc(p.project)}</h2>` : '';
-  if (p.pending) return `${head}<div class="card pl-sec"><p class="mute">Working out the plan for ${esc(p.project)} ...</p></div>`;
-  if (p.error) return `${head}<div class="card pl-sec"><p class="mute">The plan could not be worked out: ${esc(p.error)}</p></div>`;
-  const up = (p.upnext || []).map(u => {
-    const [c, w] = PL_STATUS[u.status] ?? ['idle', u.status];
-    const prio = (p.priorities || []).length ? ` <select class="pl-prio" data-act="prio" data-project="${esc(p.project)}" data-run="${esc(u.id)}" aria-label="priority of ${esc(u.id)}" title="re-queue at this priority (its conditions are kept)">${p.priorities.map(x => `<option${x === (u.priority ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
-    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${aname(u.name)}${prio}</span>
-      ${chip(c, w)}<span class="small pl-est" title="${esc(plBasis(u.estimate))}">${esc(u.estimate.word)}</span><span class="small pl-start"${u.start.why ? ` title="${esc(u.start.why)}"` : ''}>start ${esc(u.start.at && u.start.word !== 'now' ? `~${plAt(u.start.at, now)}` : u.start.word)}</span>
-      <span class="pl-holds small">${u.holds.map((h, i) => esc(u.holdAt?.[i] ? `not before ${plAt(u.holdAt[i], now)}` : h)).join('<br>')}</span></div>`;
-  }).join('');
-  const step = st => {
-    const [cls, g] = PL_SHAPE[st.shape] ?? PL_SHAPE.ring;
-    return `<span class="pl-step s-${st.shape === '!' ? 'bang' : esc(st.shape)}" title="${esc(`${st.id}${st.now ? ` (now ${st.now})` : ''}: ${st.word}`)}">${plShape(cls, g, st.word)} ${esc(st.label)}</span>`;
-  };
-  const chains = (p.chains || []).map(c => `<div class="pl-chain">${c.steps.map(step).join('<span class="pl-sep mute">›</span>')}
-    <div class="small pl-meta">${c.broken ? `${plShape('needs', '!', 'broken')} <b>${esc(c.broken)}</b>` : c.finished ? esc(`finished ${plAt(c.finish.at, now) ?? ''}`) : `finish ${esc(c.finish.at ? `~${plAt(c.finish.at, now)}${c.finish.note ? ` ${c.finish.note}` : ''}` : c.finish.word)}`}${c.rm ? ` · ${chip('idle', c.rm.id)} ${esc(c.rm.title)}` : ''}</div></div>`).join('');
-  const landCls = w => (/^blocked/.test(w) ? 'bad' : w === 'merging now' ? 'running' : w === 'ready to merge' ? 'ok' : 'idle');
-  const land = (p.landing || []).map((l, i) => `<div class="pl-row"><span class="mono pl-pos">${i + 1}.</span><span class="pl-what"><b>${esc(l.label)}</b> <span class="id">${esc(l.id)}</span>${l.what ? ` <span class="small mute">${esc(l.what)}</span>` : ''}</span>${chip(landCls(l.word), l.word)}</div>`).join('');
-  const f = p.forecast || {};
-  const fc = f.api ? `<div class="pl-fc" id="pl-fc-api"><p><b>${esc(f.line)}</b><br><span class="small mute">API billing: no weekly limit to run out of.</span></p></div>`
-    : !fin(f.weekly) ? `${plEmpty('Usage not measured yet.')}` : `<div class="pl-fc"><div class="kv">
-    <span class="small mute">rate now</span><span>${meter(f.rate, Math.max(f.cap ?? 0, f.rate ?? 0) || 1, f.cap, f.over ? 'hot' : '')} <span class="small">${pct(f.rate, 2)}/h of the ${pct(f.cap, 1)}/h cap</span></span>
-    <span class="small mute">this week</span><span>${meter(f.weekly, 100, f.stop, fin(f.stop) && f.weekly >= f.stop ? 'hot' : '')} <span class="small">~${pct(f.weekly)}${fin(f.stop) ? ` of the ${pct(f.stop, 0)} stop` : ''}</span></span>
-    <span class="small mute">reset</span><span class="small">${f.reset ? esc(plAt(f.reset, now)) : '-'}</span></div>
-    <p><b>${esc(f.lineAt ? `${f.linePre}${plAt(f.lineAt, now)}${f.linePost}` : f.line)}</b>${f.costLine ? `<br><span class="small">${esc(f.costLine)}</span>` : ''}</p></div>`;
-  return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
-    ${plSection('pl-chains', 'Chains', 'runs that wait for other runs', chains || plEmpty('No queued run waits for another run.'))}
-    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', backlogLine(p.backlog) + (land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`)))}
-    ${plSection('pl-fc', 'Forecast', 'usage', fc)}<p class="small mute pl-method">${esc(p.method ?? '')}</p>`;
-}
-function plan(d, ctx) {
-  const parts = d.parts || [];
-  return `<div class="plan"><p class="small mute pl-zone">times in ${esc(viewerZone())}</p>${parts.map(p => planPart(p, ctx)).join('') || '<p class="mute">No project.</p>'}</div>`;
-}
 
-// ---------- Map (LANE-MAP-DESIGN 1): the server's graph + layout drawn as inline SVG; pan = scroll, zoom = 3 fixed steps ----------
-export const ZOOMS = [0.75, 1, 1.25];
-const cut = (t, n) => { t = String(t ?? ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-const MAP_LEGEND = [['owns', 'lane -> run'], ['resumes', 'HANDOFF -> next run (dashed)'], ['delegates', 'run -> helper / subagent'],
-  ['dispatched', 'check-in started it'], ['reviewed', 'check-in reviewed it'], ['asks', 'open question parks the lane']];
-function edgePath(a, b, kind) {
-  const ya = a.y + a.h / 2, yb = b.y + b.h / 2;
-  if (a.x === b.x && kind === 'resumes') { const x = a.x, k = 18 + Math.min(30, Math.abs(yb - ya) / 8); return `M${x} ${ya} C${x - k} ${ya} ${x - k} ${yb} ${x} ${yb}`; }
-  if (a.x === b.x) { const x = a.x + a.w, k = 14 + Math.min(44, Math.abs(yb - ya) / 12); return `M${x} ${ya} C${x + k} ${ya} ${x + k} ${yb} ${x} ${yb}`; }
-  const x1 = a.x + a.w, x2 = b.x, m = (x1 + x2) / 2;
-  return `M${x1} ${ya} C${m} ${ya} ${m} ${yb} ${x2} ${yb}`;
-}
-function mapNode(n, project) {
-  if (n.critique) n = { ...n, sub: `${n.id} · ${critiqueWord(n.critique)[1]}` };   // META-DOD 3: a plan run shows its review
-  // the live hand-off state (lanes.mjs handoffOf): its words take the sub line, a pulsing dot sits before them
-  const ho = n.handoff?.text ? `<circle class="pulse ho-${n.handoff.phase === 'resumed' ? 'resumed' : 'pending'}" cx="18" cy="${n.h - (n.h < 46 ? 11 : 16)}" r="4"/>` : '';
-  if (ho) n = { ...n, sub: n.handoff.short ?? n.handoff.text, hoX: 26, hoTip: n.handoff.text };
-  const small = n.h < 46, feed = n.feed ? ` data-feed="${esc(n.feed)}" data-project="${esc(project)}" role="button" tabindex="0"` : '';
-  const tip = [n.label, n.hoTip ?? n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
-  const more = n.type === 'lane' && (n.more > 0 || n.expanded)
-    ? `<text class="more" x="12" y="${n.h + 14}" data-act="map-more" data-lane="${esc(n.lane)}">${n.expanded ? `${n.capped ? 'latest 30 · ' : ''}show last 3` : `+${n.more} more`}</text>` : '';
-  const room = Math.max(6, Math.floor((n.w - 30 - String(n.word ?? '').length * 7) / 7.6)); // label chars beside the state word
-  return `<g class="mn t-${n.type} c-${esc(n.cls)}${n.faded ? ' faded' : ''}${n.needs ? ' needs' : ''}" id="mn-${esc(n.id)}" transform="translate(${n.x} ${n.y})"${feed}><title>${esc(tip)}</title>
-    <rect class="box" width="${n.w}" height="${n.h}" rx="8"/><rect class="st" width="5" height="${n.h}" rx="2"/>
-    <text class="nl" x="14" y="${small ? 16 : 22}">${esc(cut(n.label, Math.min(room, small ? 22 : 24)))}</text><text class="nw" x="${n.w - 10}" y="${small ? 16 : 22}" text-anchor="end">${esc(n.word)}</text>
-    ${ho}<text class="ns${ho ? ' ho-w' : ''}" x="${n.hoX ?? 14}" y="${n.h - (small ? 8 : 12)}">${esc(cut(n.sub, 40))}</text>${more}</g>`;
-}
-// ---------- Map in the Norn look (META-VISUAL-B S2): the Well (default) or the Tapestry (the dense view) - a three.js stage the
-// page mounts into #map-host (norn/mapview.mjs), live from the state stream. This is only its frame: view switch, archived-lanes
-// toggle, zoom, legend. The classic look keeps the SVG map below. ----------
-export const MAP_VIEWS = [['well', 'The Well'], ['tapestry', 'The Tapestry']];
-const MAP_STATES = [['running', 'running'], ['done', 'DONE'], ['handoff', 'HANDOFF'], ['stopped', 'STOPPED'], ['parked', 'parked'], ['needs', 'needs you'], ['idle', 'idle']];
-function nornMap(d, ctx) {
-  const view = MAP_VIEWS.some(v => v[0] === ctx.mapView) ? ctx.mapView : 'well', nz = ctx.nornZoom || 1;
-  const views = MAP_VIEWS.map(([k, w]) => `<button data-act="map-view" data-view="${k}" aria-pressed="${k === view}"${k === view ? ' class="strong"' : ''}>${w}</button>`).join('');
-  const zoom = [1, 1.5, 2].map(z => `<button data-act="map-nz" data-z="${z}" aria-pressed="${z === nz}"${z === nz ? ' class="strong"' : ''}>${z}x</button>`).join('');
-  const lanes = (d.nodes || []).filter(n => n.type === 'lane' && n.lane !== 'checkin').length;
-  const say = view === 'well' ? 'Every lane is a thread spun from the Well of Urd to its stake (running lanes face you); runs are beads, the newest by the well; the Norns hold the check-ins.'
-    : 'Every lane is a weft row, its runs are knots along it (the newest at the right edge); the band of the Norns holds the check-ins.';
-  return `<div class="filters"><span class="small mute">${say} Click a bead or its label for the live feed.</span>
-    <span class="spacer"></span><span class="views" role="group" aria-label="Map view">${views}</span><label class="small"><input type="checkbox" data-act="map-all"${ctx.mapAll ? ' checked' : ''}> done / archived lanes</label><span class="zoom">${zoom}</span></div>
-   <div class="norn-map" data-view="${view}" role="img" aria-label="${esc(MAP_VIEWS.find(v => v[0] === view)[1])}: ${lanes} lanes"><div class="map-host" id="map-host"></div><div class="map-hud small" id="map-hud"></div></div>
-   <div class="legend small">${MAP_STATES.map(([c, w]) => chip(c, w)).join(' ')} <span class="mute">· pulse + motes = a record from the run · shuttle = dispatch / review / delegation · a bright thread = its run just acted</span></div>`;
-}
-function map(d, ctx) {
-  if (ctx.look === 'norn') return nornMap(d, ctx);
-  const z = ZOOMS.includes(ctx.mapZoom) ? ctx.mapZoom : 1, N = Object.fromEntries((d.nodes || []).map(n => [n.id, n]));
-  const bands = (d.bands || []).map((b, i) => `<rect class="band${i % 2 ? ' alt' : ''}" x="0" y="${b.y}" width="${d.width}" height="${b.h}" rx="6"/>`).join('');
-  const edges = (d.edges || []).filter(e => N[e.from] && N[e.to]).map(e => `<path class="me e-${e.kind}" d="${edgePath(N[e.from], N[e.to], e.kind)}" marker-end="url(#arr)"><title>${esc(`${e.word}: ${e.from} -> ${e.to}`)}</title></path>`).join('');
-  const nodes = (d.nodes || []).map(n => mapNode(n, d.project)).join('');
-  const pills = (d.bands || []).map(b => dlvPill(b, d.project)).join('');
-  const zoom = ZOOMS.map(v => `<button data-act="map-zoom" data-z="${v}"${v === z ? ' class="strong" aria-pressed="true"' : ''}>${Math.round(v * 100)} %</button>`).join('');
-  const legend = MAP_LEGEND.map(([k, w]) => `<span><svg width="34" height="10" aria-hidden="true"><path class="me e-${k}" d="M2 5 L32 5"/></svg> <b>${k}</b> ${esc(w)}</span>`).join('');
-  const states = [['running', 'running'], ['done', 'DONE'], ['handoff', 'HANDOFF'], ['stopped', 'STOPPED'], ['parked', 'parked'], ['needs', 'needs you'], ['idle', 'idle']].map(([c, w]) => chip(c, w)).join(' ');
-  return `<div class="filters"><span class="small mute">Lanes as bands (running > parked > idle), the controller's check-ins on top; last 3 runs per lane (latest large). Click a run, helper or check-in for its live feed.</span>
-    <span class="spacer"></span><label class="small"><input type="checkbox" data-act="map-all"${ctx.mapAll ? ' checked' : ''}> done / archived lanes</label><span class="zoom">${zoom}</span></div>
-   <div class="mapwrap"><svg class="map" xmlns="http://www.w3.org/2000/svg" width="${Math.round(d.width * z)}" height="${Math.round(d.height * z)}" viewBox="0 0 ${d.width} ${d.height}" role="img" aria-label="Lane to agent map">
-    <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z"/></marker></defs>${bands}${edges}${nodes}${pills}</svg></div>
-   <div class="legend small mute">${legend}</div><div class="legend small">${states}</div>`;
-}
-
-// ---------- deliverables (DELIVERABLES-SPEC 3): "Done, not installed" card (Overview + Inbox), the drawer, the Map band pill ----------
 const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed', unknown: 'cannot tell if merged' };
 const dlvChip = r => r.record_state === 'parked'
   ? chip('parked', `parked ${Math.floor(r.park?.days ?? 0)} d${r.park?.expired ? ' (expired)' : ''}`)
@@ -1193,70 +663,6 @@ norn deliverables ask ${esc(r.id)}      (the check-in: one question per delivera
 norn deliverables resolve ${esc(r.id)}  (${esc(r.resolve.why)}; native = door work)` : ''}</div>
    <div class="small mute" style="margin-top:8px">MERGED comes from the PR on GitHub, else git, else the change itself found on main (equivalent); INSTALLED from the last install receipt. Only a 'cannot tell' asks you.</div></div>`;
 }
-function dlvPill(b, project) {
-  const r = b.deliverables?.[0];
-  if (!r) return '';
-  const word = r.record_state === 'parked' ? 'parked' : r.state;
-  const txt = `${r.id} ${word} ${fin(r.days) ? r.days.toFixed(1) + ' d' : ''}${fin(r.behind) ? ` · ${r.behind} behind` : ''}${r.native ? ' · native' : ''}${b.deliverables.length > 1 ? ` · +${b.deliverables.length - 1}` : ''}`;
-  const tip = `${r.branch}: ${word}${r.park_why ? ` (${r.park_why})` : ''}${r.due ? ' · question due' : ''} · click: open the deliverable`;
-  return `<g class="dlv ${esc(r.state)}${r.record_state === 'parked' ? ' parked' : ''}${r.due ? ' due' : ''}" data-dlv="${esc(r.id)}" data-project="${esc(r.project ?? project)}" role="button" tabindex="0" transform="translate(16 ${b.y + b.h - 32})"><title>${esc(tip)}</title>
-    <rect width="${Math.min(260, 16 + txt.length * 6.6).toFixed(0)}" height="20" rx="10"/><text x="9" y="14">${esc(txt)}</text></g>`;
-}
-
-// ---------- live feed drawer (LANE-MAP-DESIGN 2): head + one line per normalised event; index.html streams /api/feed into it ----------
-const OUTCOME = { done: 'DONE', stopped: 'STOPPED', handoff: 'HANDOFF' };
-const MARK = { DONE: 'done', STOPPED: 'stopped', HANDOFF: 'handoff' };
-export function renderFeedHead(h, now = Date.now()) {
-  const st = h.state === 'exited' ? `exited: ${OUTCOME[h.outcome] ?? h.outcome ?? 'no-result'}` : h.state;
-  const [cls, word] = stateOf(st);
-  const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
-  const c = h.commit;
-  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
-   <div class="fh-ex">${exChip(h.executor, h.model, h.effort)}${h.role === 'helper' ? ' <span class="tag">helper</span>' : ''}</div>
-   <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? meter(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
-   <span class="mute">context</span><span>${fin(h.ctx) ? ctxMeter(h) : kTok(h.ctx)}${fin(h.ctx_window) ? ` <span class="small mute">(window ${kTok(h.ctx_window)})</span>` : ''}</span>
-   <span class="mute">last commit</span><span>${c ? `<span class="mono">${esc(c.sha)}</span> ${esc(c.subject)} <span class="mute">${fmtMin(c.age_min)} ago</span>` : dash}</span></div>`;
-}
-const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };
-const FEED_KINDS = ['tool', 'text', 'step', 'marker', 'error'];
-// RM-36: an Edit / Write line opens to its diff (old -> new; a Write: its content as added lines), drawn by the shared diff component (RM-35)
-const editDiff = i => (i && (typeof i.new_string === 'string' || typeof i.content === 'string')
-  ? diffBlock({ before: i.old_string ?? '', after: i.new_string ?? i.content ?? '' }, { title: String(i.file_path ?? '').split(/[\\/]/).pop(), sub: typeof i.new_string === 'string' ? 'edit' : 'write', cls: 'fxdiff' }) : '');
-export function renderFeedEvent(e) {
-  const k = FEED_KINDS.includes(e.kind) ? e.kind : 'text', diff = k === 'tool' && (e.name === 'Edit' || e.name === 'Write') ? editDiff(e.input) : '';
-  const tid = k === 'tool' && e.id ? ` data-tid="${esc(e.id)}"` : '', line = `<span class="ts">${hms(e.ts)}</span><span class="fk">${esc(k === 'tool' ? e.name ?? 'tool' : k)}</span><span class="fs">${esc(e.summary)}</span><span class="dur"></span>`;
-  return diff ? `<details class="fl fl-x k-${k}"${tid}><summary>${line}</summary>${diff}</details>` : `<div class="fl k-${k}"${tid}>${line}</div>`;
-}
-
-// RM-36: the activity view (activity.mjs activityView) - Now (the open call as a sentence, how long, the worker's latest words),
-// Plan, Files (Read / Edited / Created; a file opens in the Docs reader, an edited one shows its edits), Commands (duration,
-// outcome, test counts), Commits. A component: the feed drawer paints it, a lane's page can embed it. <details data-k> keep their
-// open state across repaints (the page restores them by key).
-const CMD_CHIP = { ok: ['ok', 'ok'], error: ['bad', 'failed'], background: ['idle', 'background'] };
-const testWords = t => `${int(t.pass ?? 0)} pass, ${int(t.fail)} fail${t.failed?.length ? ` - ${t.failed[0]}${t.failed.length > 1 ? ` (+${t.failed.length - 1})` : ''}` : ''}`;
-export function renderActivity(v, o = {}) {
-  const n = v.now, sec = (k, open, head, body) => `<details class="fa-sec" data-k="${k}"${open ? ' open' : ''}><summary>${head}</summary>${body}</details>`;
-  const now = `<section class="fa-now" id="fa-now">${n ? `<div><b>Now</b> <span class="fa-sent">${esc(n.text)}</span>${n.since && !o.ended ? ` <span class="mute" id="fa-dur" data-since="${esc(n.since)}">${esc(fmtDur(n.secs))}</span>` : ''}${n.more > 0 ? ` <span class="small mute">+${int(n.more)} more running</span>` : ''}</div>` : '<div class="mute">nothing yet</div>'}
-    ${v.words?.text ? `<div class="fa-words small" title="its latest own words, ${esc(hms(v.words.ts))} UTC">${esc(v.words.text)}</div>` : ''}</section>`;
-  const p = v.plan, pdone = p.items.filter(i => i.state === 'done').length;
-  const plan = p.items.length ? sec('plan', true, `<b>Plan</b> <span class="small mute">${int(pdone)} of ${int(p.items.length)} done · ${p.source === 'todos' ? 'its todo list' : "the brief's items (done = named in its NOTES or a commit)"}</span>`,
-    `<ol class="fa-plan small">${p.items.map(i => `<li class="fa-p-${i.state}">${chip(i.state === 'done' ? 'ok' : i.state === 'current' ? 'run' : 'idle', i.state)} ${esc(i.text)}</li>`).join('')}</ol>`) : '';
-  const f = v.files, nf = f.read.length + f.edited.length + f.created.length;
-  const fileRow = r => `<li><button class="ghost fa-file" data-act="feed-doc" data-path="${esc(r.path)}" title="${esc(r.path)}">${esc(r.rel)}</button>
-    <span class="small mute">${[r.reads ? plural(r.reads, 'read') : '', r.edits ? plural(r.edits, 'edit') : '', r.writes ? plural(r.writes, 'write') : ''].filter(Boolean).join(' · ')} · ${esc(hms(r.last))}</span>
-    ${r.diffs.length ? `<details class="fa-diff" data-k="d:${esc(r.path)}"><summary class="small">${r.group === 'created' ? 'content' : plural(r.diffs.length, 'edit')}</summary>${r.diffs.map(d => `<div class="small mute">${esc(hms(d.ts))}${d.all ? ' · every match' : ''}${d.lines ? ` · ${int(d.lines)} lines` : ''}</div>${editDiff(d.write ? { content: d.new } : { old_string: d.old, new_string: d.new })}`).join('')}</details>` : ''}</li>`;
-  const grp = (k, label, rows) => (rows.length ? `<h4 class="small" id="fa-g-${k}">${label} <span class="mute">${int(rows.length)}</span></h4><ul class="fa-files">${rows.slice(0, 60).map(fileRow).join('')}</ul>${rows.length > 60 ? `<p class="small mute">+${int(rows.length - 60)} more</p>` : ''}` : '');
-  const files = sec('files', true, `<b>Files</b> <span class="small mute">${int(nf)} touched this run · tap one to open it in Docs</span>`,
-    nf ? grp('edited', 'Edited', f.edited) + grp('created', 'Created', f.created) + grp('read', 'Read', f.read) : '<p class="small mute">none yet</p>');
-  const tests = v.cmds.filter(c => c.tests), cmdRow = c => { const [cls, word] = CMD_CHIP[c.outcome] ?? ['idle', c.outcome];
-    return `<li class="fa-cmd">${chip(cls, word)}${c.tests ? ` ${chip(c.tests.fail ? 'bad' : 'ok', testWords(c.tests))}` : ''} <code class="fa-c">${esc(c.cmd)}</code> <span class="small mute">${esc(hms(c.ts))}${fin(c.secs) ? ` · ${esc(fmtDur(c.secs))}` : ''}</span></li>`; };
-  const cmds = sec('cmds', false, `<b>Commands and tests</b> <span class="small mute">${int(v.cmds.length)} commands · ${int(tests.length)} test runs${tests[0] ? ` · last: ${esc(testWords(tests[0].tests))}` : ''}</span>`,
-    v.cmds.length ? `<ul class="fa-cmds">${v.cmds.slice(0, 40).map(cmdRow).join('')}</ul>${v.cmds.length > 40 ? `<p class="small mute">+${int(v.cmds.length - 40)} older</p>` : ''}` : '<p class="small mute">none yet</p>');
-  const commits = sec('commits', true, `<b>Commits</b> <span class="small mute">${int(v.commits.length)} this run</span>`,
-    v.commits.length ? `<ul class="fa-commits small">${v.commits.map(c => `<li>${c.sha ? `<span class="mono">${esc(c.sha)}</span> ` : ''}${esc(c.subject)} <span class="mute">${esc(hms(c.ts))}</span></li>`).join('')}</ul>` : '<p class="small mute">none yet</p>');
-  return `<div class="fa" id="fa">${now}${plan}${files}${cmds}${commits}</div>`;
-}
-
 function history(r, ctx) {
   return `<details><summary class="small mute">history (${(r.history || []).length})</summary><div class="small mono">${(r.history || []).map(h => `${esc(h.seq)} ${fmtTime(h.ts, ctx.now)} ${esc(h.ev)} by ${esc(h.by)}${h.data?.text && h.ev !== 'create' ? ': ' + esc(h.data.text) : ''}`).join('<br>')}</div></details>`;
 }
@@ -1330,8 +736,7 @@ function context(d, ctx) {
   const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growing' ? insTrend(d.measured) || none('no measured session in the last 30 days')
     : d.sub === 'checkins' ? insCheckins(d.checkins) || none('no check-in recorded yet') : `${insLoads(d)}${ctxRoles(d)}`;
   const n = d.counts || {}, checks = (n.findings ?? 0) + (n.advisories ?? 0) + (n.hints ?? 0) + (n.suggest ?? 0);
-  return `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>
-   ${subviewPage('context', { numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
+  return `${subviewPage('context', { title: 'Context', lead: `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>`, numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
    <div class="small mute" id="context-links">Read the files in <button class="lnk" data-tab="docs">Docs</button> · their checks (findings, rules, audits, memory): <button class="lnk" data-act="sub" data-sub="checks">open the checks</button> · every finding, hint and tightening candidate, in batches: <button class="lnk" data-go="slop" data-gosub="fix">Slop</button> (${int(checks)})</div>`;
 }
 // Per file: the count card, the file map + most tokens per day, the files (capped, show more); a name opens the Docs reader
@@ -1826,8 +1231,6 @@ export function usageGroup(rows, keys) {
   return [...m.values()].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || b.codex - a.codex || String(keys.map(x => a[x])).localeCompare(String(keys.map(x => b[x]))));
 }
 const pct2 = n => (fin(n) ? `${n < 0.1 && n > 0 ? n.toFixed(3) : n.toFixed(2)} %` : '-');
-// NAME-W2 item 5: '1 run' / '2 runs'; a share of the week that is not known says so (never '- of week')
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const ofWeek = n => (fin(n) ? `${pct2(n)} of week` : '% of week not known');
 const fmtS = s => (fin(s) ? (s < 90 ? `${Math.round(s)} s` : `${(s / 60).toFixed(1)} min`) : '-');
 function usageTable(id, title, note, rows, keys, maxPct) {
@@ -1988,7 +1391,7 @@ function usage(d, ctx) {
   const parts = d.parts || [];
   return `<div class="banner">How much of your Claude plan the work used. "% of week" = the share of your weekly Claude usage limit, estimated from token counts (the scale below). Token types: input (new text sent to the model), output (text it wrote), cache write (context stored for reuse), cache read (stored context re-read on every turn, usually the biggest). k = thousand, M = million tokens. Codex has its own plan: only its token totals are shown.
    ${d.cached ? 'Updated every 15 s.' : `Counted in ${fin(d.ms) ? d.ms.toFixed(0) : '-'} ms.`}</div>
-   ${parts.map(p => usagePart(p, { ...ctx, refresh: d.account_refresh })).join('') || '<p class="mute">No project.</p>'}`;
+   ${parts.map(p => usagePart(p, { ...ctx, refresh: d.account_refresh }) + forecastCard((d.forecasts || {})[p.project], ctx.now)).join('') || '<p class="mute">No project.</p>'}`;
 }
 
 // ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17): the tree with a NOW line ----------
@@ -2097,9 +1500,8 @@ function rmRow(i, ctx, win, compact) {
     : `<div class="rmw small">${why} ${rmLinks(i, ctx)}</div>${rmStages(i)}${(i.flags?.drift || []).length || (i.flags?.gone || []).length ? `<div class="rmdrift">${i.flags.drift.map(d => `<div>Drift: ${esc(d)}</div>`).join('')}${(i.flags.gone || []).map(g => `<div>Link gone: ${esc(g)}</div>`).join('')}</div>` : ''}`;
   return `<div class="rmi${compact ? ' c' : ''} ph-${esc(i.phase)}${hit}" id="rm-${esc(i.id)}" data-rm-row>${head}${rmTime(i, win)}${body}</div>`;   // desktop: the time line in its own column; phone: under the title
 }
-const rmPlural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const rmFoldText = (items, phase) => (phase === 'past' ? [['shipped', 'shipped'], ['dropped', 'dropped']] : [['queued', 'queued'], ['planned', 'planned'], ['idea', 'idea']])
-  .map(([k, w]) => [items.filter(i => i.status === k).length, w]).filter(([n]) => n).map(([n, w]) => (w === 'idea' ? rmPlural(n, 'idea') : `${n} ${w}`)).join(' · ');
+  .map(([k, w]) => [items.filter(i => i.status === k).length, w]).filter(([n]) => n).map(([n, w]) => (w === 'idea' ? plural(n, 'idea') : `${n} ${w}`)).join(' · ');
 const rmFutOrder = i => ['queued', 'planned', 'idea'].indexOf(i.status) * 10 + ({ now: 0, next: 1, later: 3 }[i.horizon] ?? 2);
 const RM_SORT = { past: (a, b) => String(b.last || '').localeCompare(String(a.last || '')), present: (a, b) => ((b.live || []).length - (a.live || []).length) || String(b.last || '').localeCompare(String(a.last || '')),
   future: (a, b) => rmFutOrder(a) - rmFutOrder(b) };
@@ -2114,7 +1516,7 @@ function rmTheme(t, d, ctx, nThemes) {
   const live = all.filter(i => (i.live || []).length).length, c = t.counts || {}, tot = Math.max(1, all.length);
   const open = filtered || deep(f.item) >= 0 || live > 0 || (nThemes <= 5 && (c.present || 0) > 0);
   const rows = (xs, compact) => xs.map(i => rmRow(i, ctx, win, compact)).join('');
-  const fold = (xs, ph, isOpen) => (xs.length ? `<details class="rmfold f-${ph}"${isOpen ? ' open' : ''}><summary>${rmFoldText(xs, ph) || rmPlural(xs.length, 'item')}${ph === 'past' ? `<span class="mute small"> · latest ${rmAgo(xs[0].last, now) || 'n/a'}</span>` : ''}</summary>${rows(xs, true)}</details>` : '');
+  const fold = (xs, ph, isOpen) => (xs.length ? `<details class="rmfold f-${ph}"${isOpen ? ' open' : ''}><summary>${rmFoldText(xs, ph) || plural(xs.length, 'item')}${ph === 'past' ? `<span class="mute small"> · latest ${rmAgo(xs[0].last, now) || 'n/a'}</span>` : ''}</summary>${rows(xs, true)}</details>` : '');
   const winText = win ? `time line ${rmDay(new Date(win.t0).toISOString())} to now` : 'no run yet';
   return `<details class="rmth" id="rmt-${esc(t.id)}"${open ? ' open' : ''}><summary><span class="tw"></span><b>${esc(t.title)}</b><span class="id">${esc(t.id)}</span>${t.state === 'dropped' ? '<span class="chip idle">dropped</span>' : ''}${rmEditBtn(t)}
     <span class="rmthread mini" aria-hidden="true"><i class="th-past" style="flex:${(c.past || 0) / tot}"></i><i class="th-present" style="flex:${(c.present || 0) / tot}"></i><i class="th-future" style="flex:${(c.future || 0) / tot}"></i></span>

@@ -20,13 +20,16 @@ function bigGuard() {
     ledger: { prose: 7, repeated: 1, enforced: 2, retired: 0 }, trend: { days: ['2026-11-13', '2026-11-14'], series: [{ key: 'rules', label: 'rules', points: [{ x: '2026-11-13', y: 1 }, { x: '2026-11-14', y: 12 }] }] } };
 }
 
-test('the shared pattern: at most 4 numbers, 3-4 sub-views, the chosen one marked, its part or a loading line; lists capped with their count', () => {
+test('the shared pattern: the view switch on the page title line (aria-pressed buttons, no tablist), at most 4 numbers, 3-4 sub-views, its part or a loading line; lists capped with their count', () => {
   const views = [['a', 'Alpha', 3], ['b', 'Beta', null], ['c', 'Gamma', 9]];
-  const html = subviewPage('kx', { numbers: [{ n: 3, label: 'open' }, { n: 1, label: 'new', cls: 'warn' }], views, active: 'c', body: '<ol id="kx-list"></ol>' });
+  const html = subviewPage('kx', { title: 'Kx', lead: '<p id="kx-lead"></p>', numbers: [{ n: 3, label: 'open' }, { n: 1, label: 'new', cls: 'warn' }], views, active: 'c', body: '<ol id="kx-list"></ol>' });
+  assert.match(html, /^<div class="phead pagehead" id="kx-head"><h2 class="ptitle">Kx<\/h2><div class="subnav" id="kx-subs" role="group" aria-label="Kx views">/, 'the switch sits in the page header, on the title line');
+  assert.ok(!/role="tab/.test(html), 'buttons with aria-pressed, not a tablist (A-10)');
+  assert.ok(html.indexOf('id="kx-head"') < html.indexOf('id="kx-lead"') && html.indexOf('id="kx-lead"') < html.indexOf('id="kx-sum"'), 'the header first, then the lead, then the numbers');
   assert.match(html, /id="kx-sum"/);
   assert.equal((html.match(/class="subnum/g) || []).length, 2);
-  assert.match(html, /id="kx-sub-c"[^>]*data-act="sub" data-sub="c"[^>]*aria-selected="true"/);
-  assert.match(html, /id="kx-sub-a"[^>]*aria-selected="false"[^>]*>Alpha <span class="mute">3<\/span>/);
+  assert.match(html, /id="kx-sub-c"[^>]*data-act="sub" data-sub="c"[^>]*aria-pressed="true"/);
+  assert.match(html, /id="kx-sub-a"[^>]*aria-pressed="false"[^>]*>Alpha <span class="mute">3<\/span>/);
   assert.ok(html.indexOf('id="kx-subs"') < html.indexOf('id="kx-list"'), 'the sub-view row sits above the part');
   assert.match(subviewPage('kx', { numbers: [], views, active: 'a', loading: true }), /id="kx-sub-loading"/);
   assert.throws(() => subviewPage('kx', { numbers: n(5).map(i => ({ n: i, label: 'x' })), views, active: 'a' }), /at most 4 numbers/);
@@ -119,17 +122,17 @@ test('GET /api/guard?part=: the summary + one part; no part = the full view the 
 
 // RM-18 S1 moved `const nav` into paintNav() and left render()'s scroll-into-view on the bare name: the FIRST visit to each tab threw
 // "Refresh failed: nav is not defined" (S.navTab was already set, so a second click worked). Every nav tab, first visit, no error.
-test('every nav tab paints on its first visit: no "Refresh failed" (the selected tab scrolls into view from #tabs)', { skip: skipWhy, timeout: 180000 }, async () => {
+test('every page of the bar and the More sheet paints on its first visit: no "Refresh failed"', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([1280, 900]);
   try {
-    await pg.go(`${f.url}/?project=kestrel&tab=home`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'home'`, 60000), 'home painted');
-    const tabs = JSON.parse(await pg.ev(`JSON.stringify([...document.querySelectorAll('#tabs [data-tab]')].map(b => b.dataset.tab).filter(t => t !== 'home'))`));
+    await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes'`, 60000), 'lanes painted');
+    const tabs = JSON.parse(await pg.ev(`JSON.stringify([...document.querySelectorAll('#tabs [data-tab], #more-sheet [data-tab]')].map(b => b.dataset.tab).filter(t => t !== 'lanes'))`));
     assert.ok(tabs.length >= 3, `nav tabs found: ${tabs}`);
     for (const t of tabs) {
       const was = await pg.ev(`document.body.dataset.tab`);
       if (was === t) continue;
-      await pg.ev(`document.querySelector('#tabs [data-tab="${t}"]').click()`);
+      await pg.ev(`document.querySelector('#tabs [data-tab="${t}"], #more-sheet [data-tab="${t}"]').click()`);
       assert.ok(await pg.until(`document.body.dataset.tab !== '${was}' && (document.body.dataset.ready === document.body.dataset.tab || document.body.dataset.ready === 'error')`, 60000), `${t}: painted or failed`);
       assert.notEqual(await pg.ev(`document.body.dataset.ready`), 'error', `${t}: ${await pg.ev(`document.querySelector('#error').textContent`)}`);
       assert.equal(await pg.ev(`document.querySelector('#error').textContent`), '', `${t}: no error line`);
@@ -142,8 +145,8 @@ test('the chosen sub-view lives in the URL: a shared link lands on it, a tap pus
   try {
     pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });   // the phone, as the Instructions phone test
-    const sel = () => pg.ev(`document.querySelector('#slop-subs [aria-selected=true]')?.dataset.sub ?? null`);
-    const painted = sub => pg.until(`document.querySelector('#slop-sub[data-sub=${sub}]') && !document.querySelector('#slop-sub-loading') && document.querySelector('#slop-subs [aria-selected=true]')?.dataset.sub === '${sub}'`, 60000);
+    const sel = () => pg.ev(`document.querySelector('#slop-subs [aria-pressed=true]')?.dataset.sub ?? null`);
+    const painted = sub => pg.until(`document.querySelector('#slop-sub[data-sub=${sub}]') && !document.querySelector('#slop-sub-loading') && document.querySelector('#slop-subs [aria-pressed=true]')?.dataset.sub === '${sub}'`, 60000);
     await pg.go(`${f.url}/?project=kestrel&tab=slop&sub=rules`);
     assert.ok(await painted('rules'), 'a shared link lands on its sub-view');
     assert.equal(await sel(), 'rules');
