@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { listProcs } from './strays.mjs';
+import { writeReceipts } from './kills.mjs';
 
 const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -60,17 +61,20 @@ const answers = url => fetch(url, { signal: AbortSignal.timeout(2000) }).then(r 
 const until = async (f, ms) => { const end = Date.now() + ms; for (;;) { if (await f()) return true; if (Date.now() > end) return false; await new Promise(r => setTimeout(r, 150)); } };
 
 /**
- * o: { root, port, bind, env, procs (listProcs), holder (portHolder), timeoutMs }. Resolves { pid, url, stopped (old pid | null) };
- * throws DashError (the port taken by another process, the new dashboard not answering).
+ * o: { root, port, bind, env, procs (listProcs), holder (portHolder), timeoutMs, keep }. Resolves { pid, url, stopped (old pid | null),
+ * running (keep: the recorded dashboard answered, nothing started) }; throws DashError (the port taken by another process, the new
+ * dashboard not answering). keep = `norn dash --background` (proc-hygiene 7): a dashboard started from a shell opens no console window.
  */
-export async function dashRestart({ root, port, bind = '127.0.0.1', env = process.env, procs = listProcs, holder = portHolder, timeoutMs = 30000 }) {
+export async function dashRestart({ root, port, bind = '127.0.0.1', env = process.env, procs = listProcs, holder = portHolder, timeoutMs = 30000, keep = false }) {
   const rec = readDash(root);
+  if (keep && rec && pidAlive(rec.pid) && rec.port === port && await answers(`http://${bind}:${port}/`)) return { pid: rec.pid, url: `http://${bind}:${port}/`, stopped: null, running: true };
   let stopped = null;
   if (rec && pidAlive(rec.pid)) {
     const list = procs();
     const p = list.find(x => x.pid === rec.pid);
     // pid reuse guard: the recorded pid is stopped only while it still is a `norn dash` (a failed listing trusts the record)
     if (!list.length || (p && isDashCmd(p.cmd))) {
+      try { writeReceipts([p || { pid: rec.pid }], { killer: `norn dash restart pid ${process.pid}`, reason: `restart: the recorded dashboard of ${root}` }); } catch { /* the restart goes on */ }   // DEC-1088
       try { process.kill(rec.pid); } catch { /* gone meanwhile */ }
       if (!await until(() => !pidAlive(rec.pid), 10000)) throw new DashError(`the recorded dashboard pid ${rec.pid} did not stop`);
       stopped = rec.pid;

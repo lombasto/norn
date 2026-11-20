@@ -207,7 +207,9 @@ node engine/bin/norn.mjs dash
 ```
 
 It serves on http://127.0.0.1:8737 (`dash.port` in machine.json; `--port 0` picks a free port) and opens your browser when started
-from a terminal; from a script it prints the URL only (`--open` / `--no-open` decide).
+from a terminal; from a script it prints the URL only (`--open` / `--no-open` decide). It runs in that terminal until you stop it.
+To keep it running without a window, start it with `node engine/bin/norn.mjs dash --background`. That starts the dashboard
+detached and hidden, or reports the one already running. `norn dash restart` restarts it the same way.
 
 ### Get a ping when Norn needs you
 
@@ -286,6 +288,12 @@ project has its own rules, roadmap, merge gate, lanes and check-ins, and several
   projects on one repo never share a branch or a scratch worktree.
 
 Workers still get a worktree of the whole repo, and Claude Code still loads the top-level CLAUDE.md as well as the folder's.
+
+### Two or more machines on one project
+
+To let a second machine build the same project without duplicate work, set up multi-home sync: the first machine cuts as the bare
+home (`norn sync cut --bare`), each other machine joins with `norn sync join --home <id> --ledger <remote>`. The ledger repo must
+be private. [docs/MULTI-HOME.md](docs/MULTI-HOME.md) walks it end to end.
 
 ## 10. Never
 

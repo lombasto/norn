@@ -131,7 +131,7 @@ test('lanes: no lane without a LANE record; archived only with all; exited / los
   assert.deepEqual(v.map(l => l.name).sort(), ['gen', 'idle', 'parkd', 'render']);
   const by = Object.fromEntries(v.map(l => [l.name, `${l.status.state}: ${l.status.why}`]));   // RM-21 S1: laneState
   assert.equal(by.gen, 'stopped: handed off; the auto-resume was refused (cap 8/8)');
-  assert.equal(by.idle, 'stopped: not responding, no heartbeat for 10 min');
+  assert.equal(by.idle, 'stopped: not responding, no heartbeat for 10 min', 'a stale beat with no evidence of life (runs.hbLate) is not responding');
   assert.equal(by.parkd, 'parked: Q-7 needs your answer');
   assert.equal(by.render, 'idle: no run yet');
   assert.ok(lanesView(st, { all: true }).some(l => l.name === 'gone'));

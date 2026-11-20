@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readdirS, readdirA, existsS, existsA } from '../fsnap.mjs';
-import { prompt, modeOf, readText, EMPTY, jsonObject, detectExe, HEADLESS_CORE, feedFiles, logLine, oneLine, argSummary, located, slimInput, clip, cut } from './common.mjs';
+import { prompt, modeOf, readText, EMPTY, jsonObject, detectExe, HEADLESS_CORE, feedFiles, logLine, oneLine, argSummary, located, promptArg, slimInput, clip, cut } from './common.mjs';
 // a read-only helper (norn delegate, design sec. 3): no project agent file, no shell / edit / subagent tools, no MCP servers
 export const CLAUDE_RO_NOPE = ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit', 'Agent'];
 const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'flag', output: 'final', usage: 'tokens+cost', skills: 'claude',
@@ -16,12 +16,15 @@ const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'fl
  */
 function command(o) {
   const mode = modeOf(o, 'claude', caps), ro = mode !== 'write', remote = !!o.remote;
-  const mcp = o.mcp ? ['--mcp-config', JSON.stringify({ mcpServers: { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } })] : [];
+  // proc-hygiene (4): the servers the project / lane names (profile.mcp_servers, launchpolicy.mcpServersOf) join Norn's own in one config
+  const servers = { ...(o.profile?.mcp_servers || {}), ...(o.mcp ? { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } : {}) };
+  const mcp = Object.keys(servers).length ? ['--mcp-config', JSON.stringify({ mcpServers: servers })] : [];
   const tools = mode === 'read-only' ? ['--disallowedTools', CLAUDE_RO_NOPE.join(','), ...mcp, '--strict-mcp-config']
     : mode === 'no-tools' ? ['--tools', '', ...mcp, '--strict-mcp-config'] : mcp.length ? [...mcp, '--strict-mcp-config'] : [];
   const extra = mergeArgs(tools, profileArgs(o.profile));   // META-STANDING-CONTEXT R1: before `tools` is spread (it may merge into it)
-  return { exe: o.exe, stdin: null, stdout: 'final', parse: 'claude', args: [
-    '-p', o.promptText || prompt(o), ...(o.agent && !ro ? ['--agent', o.agent] : []),
+  const p = promptArg(o.promptText || prompt(o));   // a long prompt: `claude -p` with no prompt argument reads it from stdin
+  return { exe: o.exe, stdin: null, stdout: 'final', parse: 'claude', ...p.fields, args: [
+    '-p', ...p.arg, ...(o.agent && !ro ? ['--agent', o.agent] : []),
     ...tools, '--model', o.model, '--effort', o.effort, ...(o.resumeSid && !o.fork_of ? ['--resume', o.resumeSid] : ['--session-id', o.session_id]), ...(o.fork_of ? ['--resume', o.fork_of, '--fork-session'] : []),
     '--permission-mode', 'bypassPermissions', ...(remote ? ['--remote-control', `${o.project || 'norn'}-${o.lane}`] : []), '--output-format', 'json',
     ...(o.headless ? ['--append-system-prompt', o.headless] : []), ...[o.worktree, ...(o.addDirs || []), ...(o.scope && o.notes ? [path.dirname(path.resolve(o.notes))] : []), ...(o.scope && o.resultDir ? [o.resultDir] : [])].flatMap(d => ['--add-dir', d]),

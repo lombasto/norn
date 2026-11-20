@@ -69,7 +69,8 @@ export const KINDS = {
   } },
   run: { prefix: 'RUN-', file: 'runs', events: {
     start: { from: null, to: 'running', roles: ['launcher'] },
-    end: { from: ['running'], to: 'exited', roles: ['launcher'] },
+    // from lost too: a stalled supervisor that ends after the sweep called it lost, and the sweep's own end of a dead lost run (runs.mjs endLost)
+    end: { from: ['running', 'lost'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
     // a run lost for a STALE heartbeat (a stall, never a certain death) whose heartbeat came back with its supervisor alive: running
     // again (sweepLost). Without it the run's own `end` (from running only) was refused - no result, no deliverable, no hand-off resume
@@ -291,9 +292,12 @@ export function fold(events) {
   for (const e of [...events].sort((a, b) => a.seq - b.seq)) { acc.seq = Math.max(acc.seq, e.seq); applyEv(acc, e); }
   return acc;
 }
+// MAIL-28 (1): an event this table does not know (a newer writer's) still moves the state it names (its stamped `to`): a
+// supervisor started before `alive` existed dropped it, read the run lost and refused its own end. No `from`: this reader cannot check it
+const defOf = e => KINDS[e.kind]?.events[e.ev] ?? (KINDS[e.kind] && typeof e.to === 'string' ? { to: e.to } : null);
 // one event onto { next, items } (fold's step; foldHomes applies the same step, so one stream folds exactly as fold() does)
 function applyEv({ items, next }, e) {
-  const def = KINDS[e.kind]?.events[e.ev];
+  const def = defOf(e);
   if (!def) return;
   const h = { seq: e.seq, ts: e.ts, ev: e.ev, by: e.by, run: e.run ?? null, ...(e.via ? { via: e.via } : {}), ...(e.from_home ? { from_home: e.from_home } : {}), data: e.data ?? {} };
   if (def.from === null) {
@@ -346,7 +350,7 @@ export function foldHomes(streams, { bare_home = null, own = streams[0]?.home ??
     const e = s.evs[s.i++], h = s.home;
     if (h === own) acc.seq = Math.max(acc.seq, e.seq);
     newest[h] = Math.max(newest[h] ?? 0, Date.parse(e.ts) || 0);
-    const def = KINDS[e.kind]?.events[e.ev];
+    const def = defOf(e);
     if (!def) continue;
     if (def.from === null) {
       const w = homeOfId(e.id, bare_home);
@@ -355,7 +359,7 @@ export function foldHomes(streams, { bare_home = null, own = streams[0]?.home ??
       const it = acc.items[e.id];
       if (!it) continue;   // as fold(): a transition on no record
       if (primaryOf(it, bare_home) !== h) { (pending[e.id] ||= []).push({ ...e, home: h }); continue; }
-      if (!def.from.includes(it.state)) { integrity.push({ home: h, seq: e.seq, id: e.id, why: `${e.id} is ${it.state}; ${e.ev} needs ${def.from.join(' | ')} (skipped)` }); continue; }
+      if (def.from && !def.from.includes(it.state)) { integrity.push({ home: h, seq: e.seq, id: e.id, why: `${e.id} is ${it.state}; ${e.ev} needs ${def.from.join(' | ')} (skipped)` }); continue; }
       if (e.from_home) relayed.add(`${e.from_home.home}:${e.from_home.seq}`);
     }
     applyEv(acc, e);
@@ -678,7 +682,8 @@ function validateData(kind, ev, d, target, st, by, home = null) {
     if (ev === 'fill') str(d.next, 'next');
     if (ev === 'claim') str(d.node, 'node');
     if (ev === 'release') str(d.why, 'why');
-    if (ev === 'withdraw' && by === 'checkin') str(d.why, 'why');   // META-AUTONOMY R1: a check-in withdraw names its ruling
+    // META-AUTONOMY R1 + OVERVIEW-TRUTH (6a): every withdraw names its reason (21 queue entries were dropped with none recorded)
+    if (ev === 'withdraw') str(d.why, 'why');
     if (ev === 'rewire') { str(d.why, 'why'); if (!(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string')))) fail('after must be a list of {kind, id, state}'); }
     if (ev === 'hold' && !d.cleared) str(d.why, 'why');
     if (ev === 'landed') { str(d.why, 'why'); str(d.sha, 'sha', { req: false }); }
@@ -1041,13 +1046,14 @@ function recordCtx(stateDir, evIn, opts) {
       // SPEC 3.8: each home's check-ins (and controller) act only on its own lanes
       const ln = home && CK.includes(e.by) ? laneOfEvent(e, st, home.id) : null, lh = ln ? homePart(ln) : null;
       if (lh && lh !== home.id) fail(`L:${ln} belongs to home ${lh}: a ${e.by} acts only on the lanes of its own home (${home.id})`);
-      const c = check(st, e, ids);
+      const c = check(st, e, ids), def = KINDS[c.kind].events[c.ev], to = typeof def.to === 'function' ? def.to(c.data) : def.to;
       const p = hs && c.ev !== createEv(c.kind) ? primaryOf(st.items[c.id], home.bare_home) : home?.id;
       if (hs && p !== home.id) {
         const twin = (st.pending[c.id] || []).find(x => x.ev === c.ev);
         if (twin) fail(`${c.id} already has a pending ${c.ev} from home ${twin.home} (seq ${twin.seq}), waiting for home ${p} to commit it - nobody ${c.ev}s twice`);
       }
-      const env = { v: 1, seq: st.seq + 1, ts: hs ? stamp() : isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, by: c.by, run, ...(via ? { via } : {}),
+      // `to`: the state the event moves its item to, for a reader whose table does not know the event (fold, MAIL-28)
+      const env = { v: 1, seq: st.seq + 1, ts: hs ? stamp() : isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, ...(to ? { to } : {}), by: c.by, run, ...(via ? { via } : {}),
         ...(opts.from_home ? { from_home: opts.from_home } : {}), data: c.data };
       if (hs && p !== home.id) pend.add(env);
       batch.push(env);

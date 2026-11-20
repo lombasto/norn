@@ -79,7 +79,9 @@ test('a fill with two eligible MERGE runs and one slot starts one; the other wai
   const d = sandbox();
   const goA = path.join(d.t, 'go-a'), goB = path.join(d.t, 'go-b');
   const wtC = path.join(d.t, 'wt-c'); fs.mkdirSync(wtC, { recursive: true });
-  const blocker = startRun(d.opts('x', d.wtA, d.staged('x', d.wtA, path.join(d.t, 'go-x')), { stage: 'S1' }));   // holds wt-a only
+  // the blocker is a plain S1 worker that holds wt-a only (a merge brief under S1 is refused: MAIL-10)
+  const bx = path.join(d.t, 'x-brief.md'); fs.writeFileSync(bx, `mode: done\nuntil: ${fwd(path.join(d.t, 'go-x'))}\n`);
+  const blocker = startRun(d.opts('x', d.wtA, bx, { stage: 'S1' }));
   const after = [{ kind: 'run', id: blocker.run, state: 'ended' }];
   const qa = startRun(d.opts('a', d.wtB, d.staged('a', d.wtB, goA), { after }));
   const qb = startRun(d.opts('b', wtC, d.staged('b', wtC, goB), { after }));

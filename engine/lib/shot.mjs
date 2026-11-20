@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { listProcs } from './strays.mjs';
+import { writeReceipts } from './kills.mjs';
 
 export class ShotError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 
@@ -193,6 +194,8 @@ export async function killProfileProcs(profile, { platform = process.platform, l
     const l = left(), live = l.filter(p => exists(p.pid, probe));
     if (!l.length) return 0;
     if (live.length ? round++ >= 5 : performance.now() - t0 > RUNDOWN_GUARD_MS) return l.length;
+    // DEC-1088: a kill matched by command line (the unique temp profile) is receipted first, once per pid
+    try { writeReceipts(live.filter(p => !killed.has(p.pid)), { killer: `shot pid ${process.pid}`, reason: `browser profile ${profile} left alive` }); } catch { /* the cleanup goes on */ }
     for (const p of live) { killed.add(p.pid); try { kill(p.pid); } catch { /* gone */ } }
     await sleep(300);
   }

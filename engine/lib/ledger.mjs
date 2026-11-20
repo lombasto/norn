@@ -100,7 +100,7 @@ function gitEnv(cfg, index) {
   return env;
 }
 function git(cfg, args, { input, ok = [0], index, git: exe = 'git' } = {}) {
-  const r = spawnSync(exe, args, { cwd: cfg.root, env: gitEnv(cfg, index), input, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
+  const r = spawnSync(exe, args, { cwd: cfg.root, env: gitEnv(cfg, index), input, encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 256 * 1024 * 1024 });
   if (r.error) throw r.error;
   if (!ok.includes(r.status)) throw new Error(`git ${args[0]} failed (${r.status}): ${(r.stderr || '').trim().split('\n').pop()}`);
   return { out: r.stdout, status: r.status };
@@ -110,7 +110,7 @@ function git(cfg, args, { input, ok = [0], index, git: exe = 'git' } = {}) {
 export function ensureLedger(cfg, o = {}) {
   if (!fs.existsSync(path.join(cfg.dir, 'HEAD'))) {
     fs.mkdirSync(cfg.dir, { recursive: true });
-    const r = spawnSync(o.git || 'git', ['init', '-q', '--bare', cfg.dir], { encoding: 'utf8', windowsHide: true });
+    const r = spawnSync(o.git || 'git', ['init', '-q', '--bare', cfg.dir], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
     if (r.status !== 0) throw new Error(`git init failed: ${(r.stderr || '').trim()}`);
     git(cfg, ['config', 'core.autocrlf', 'false'], o);
     git(cfg, ['config', 'gc.auto', '256'], o);

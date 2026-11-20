@@ -17,6 +17,7 @@ import { harnessOf } from './harness/index.mjs';
 import { loadState } from './records.mjs';
 import { threadFile } from './chatact.mjs';
 import { profileOf, PROFILE_ROLES } from './launchpolicy.mjs';
+import { isTest } from './testcmd.mjs';
 // the launch profiles / memory switch live in launchpolicy.mjs (no import cycle with runs.mjs: META-QUEUE-SPEC R1)
 
 export const STANDING_METHOD = 'standing context = the first API call of a session (input + cache create + cache read, from its transcript); '
@@ -198,10 +199,9 @@ const KEY = '\u0000standing:';
 // META-GUARD R1: the one transcript reader also keeps the run's TRACE - per API message [ts, cache_read, input, cache_create, output]
 // and each piece of text appended to the context ([after call #, source, chars]: tool:<key> = a tool result, model = the model's own
 // text / thinking / tool inputs, injected = user / hook / mail text) - for the runaway watch and the context-growth split (guard.mjs).
-const TEST_RUNNER = /\b(?:pytest|cargo\s+(?:test|nextest)|node\s+(?:[^|;&]*\s)?--test|npm\s+(?:run\s+)?test|npx\s+(?:jest|vitest)|vitest|jest|go\s+test|ctest|dotnet\s+test|meta(?:\.mjs)?\s+smoke)\b/;
 /** a tool use -> its producer key: Bash / PowerShell running tests = 'test runner'; mcp__* = 'MCP'; else the tool name */
 export function toolKey(name, input) {
-  if ((name === 'Bash' || name === 'PowerShell') && TEST_RUNNER.test(String(input?.command ?? ''))) return 'test runner';
+  if ((name === 'Bash' || name === 'PowerShell') && isTest(input?.command)) return 'test runner';
   return /^mcp__/.test(name || '') ? 'MCP' : name || 'tool';
 }
 const clen = c => (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((n, b) => n + (b?.type === 'text' ? String(b.text ?? '').length

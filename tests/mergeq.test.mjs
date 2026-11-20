@@ -372,6 +372,23 @@ test('auto-update: merges main into an idle branch and pushes (a fast-forward, n
 });
 
 // ---------- piece 5: the tick ----------
+// solve-shack RUN-128: the queue merged main into run-efficiency while that lane's MERGE run was testing its merge (its suite ran 18 min)
+test('auto-update: a lane whose MERGE run is live is not updated (its tested merge would race the branch); the CLI pass says so', () => {
+  const f = remoteFixture();
+  const state = remoteState(f, ['feat/a']), locks = path.join(path.dirname(state), 'locks');
+  const m = liveRun(state, path.join(locks, 'merge-slot'), { lane: 'a', worktree: path.join(path.dirname(f.repo), 'mq-merge-a'), stage: 'MERGE' });
+  const project = { name: 't', root: fwd(f.repo), deliverables: { receipts: [] } };
+  const row = mergeQueue({ stateDir: state, project, now: NOW }).rows.find(r => r.branch === 'feat/a');
+  assert.ok(row.behind > 0);
+  const tipBefore = g(f.origin, 'rev-parse', 'feat/a');
+  const pj = path.join(tmp('pj'), 'project.json');
+  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 't', title: 't', root: fwd(f.repo), deliverables: { receipts: [] } }));
+  const c = cli(['mergeq', '--update', '--project', pj, '--state', state, '--locks', locks]);
+  assert.equal(c.code, 0, c.err);
+  assert.match(c.out, new RegExp(`DLV-1 feat/a update skip: lane a has a live MERGE run ${m}: no update under its tested merge`));
+  assert.equal(g(f.origin, 'rev-parse', 'feat/a'), tipBefore, 'the branch untouched');
+});
+
 test('the tick starts `norn mergeq --run` right after the fill (detached, one pass per state dir); every project with a file (it lands its work)', async () => {
   const t = tmp('tick');
   const root = path.join(t, 'root'), state = path.join(t, 'state', 'norn');
