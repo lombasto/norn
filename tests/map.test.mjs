@@ -90,4 +90,3 @@ test('map: subagents of a run (from the agents tree) are children; run nodes car
   assert.ok(m.edges.some(e => e.kind === 'delegates' && e.to === `${rs[4]}/a178`));
   assert.equal(N[rs[4]].feed, rs[4]); assert.equal(N['L:render'].feed, undefined);
 });
-

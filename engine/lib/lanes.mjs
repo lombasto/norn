@@ -169,9 +169,9 @@ export function prStep(rows) {
   return { step, pr: r.merge_pr ?? r.pr?.number ?? null, url: /^https:\/\//.test(r.pr?.url ?? '') ? r.pr.url : null, branch: r.branch ?? null };
 }
 // The board groups (ids; labels and page order: pages/lanes.mjs LANE_SHOW). Needs you = an Inbox row names the lane (the server's `needs`, terms.mjs isNeed: never
-// counted here); Stopped = the last run ended without DONE in the last OLD_DAYS and nothing asks the owner; Old = that, longer ago
+// counted here); Stopped = the last run ended without DONE in the last STOPPED_DAYS and nothing asks the owner; Old = that, longer ago
 // (SPEC Q6), or done before today; To land = done with its deliverable not on main yet.
-export const OLD_DAYS = 7;
+export const STOPPED_DAYS = 7;
 /** a lanesView row + its needs count -> its board group id */
 export function boardOf(l, now = Date.now()) {
   if (l.state === 'archived') return 'archived';
@@ -181,5 +181,5 @@ export function boardOf(l, now = Date.now()) {
   if (l.state === 'parked' || l.ruled) return 'parked';
   const age = l.ended ? now - Date.parse(l.ended) : Infinity;
   if (l.group === 'done' || l.outcome === 'done') return ['done', 'pr'].includes(l.dlv?.step) ? 'land' : age < 864e5 ? 'today' : 'old';
-  return age <= OLD_DAYS * 864e5 ? 'stopped' : 'old';
+  return age <= STOPPED_DAYS * 864e5 ? 'stopped' : 'old';
 }

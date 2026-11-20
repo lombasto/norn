@@ -144,7 +144,7 @@ const LEGEND = `<div class="llegend small" aria-label="Strip legend"><span class
   <span class="lg-i"><span class="ltrack" aria-hidden="true"><i class="on"></i><i class="on at"></i><i></i><i></i></span> done → PR → merged → installed</span></div>`;
 
 export function lanes(d, ctx) {
-  const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), undo = ctx.laneUndo, now = ctx.now ?? Date.now();
+  const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), undo = ctx.laneUndo;
   const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => l.board === k).length;
   // MAIL-29: the type filter - one type at a time (none = all); its chips count the types of the rows the groups show ("no type" once, here)
   const kind = ctx.laneType ?? null, typeOf = l => l.lane_type?.type ?? 'no type', shown = all.filter(l => show.has(l.board));
