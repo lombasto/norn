@@ -29,7 +29,7 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
 import { SHARE_KEY, RESERVE, shareOf } from '../lib/share.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
-import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
+import { mergeBacklog, backlogMax, loadDeliverables } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
@@ -40,6 +40,7 @@ import { listProcsAsync } from '../lib/strays.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
+import { branchesFile, branchesView, prUrl, spawnRefresh, BRANCH_STATES } from '../lib/branches.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
 import { homeDir, realPath } from '../lib/config.mjs';
@@ -752,6 +753,15 @@ export function createDashboard(o) {
     if (apply && !r.refused.length && !syncL) { try { startSyncLoop(JSON.parse(await fs.promises.readFile(machineFile, 'utf8'))); } catch { /* the tick syncs every 15 min */ } }
     return { ok: !r.refused.length, refused: r.refused, lines: r.lines, noop: !!r.noop, dry: !!r.dry };
   }
+  // the Lanes page's Branches / Worktrees sub-views (branches.mjs): the cached git facts (<state>/branches.json, written by the tick's
+  // detached `norn branches --refresh`) + the records as they are now (lanes, runs, live heartbeats, deliverables). No git in a poll.
+  async function branchesOf(p) {
+    let facts = null; try { facts = JSON.parse(await readA(branchesFile(p.state), 'null')); } catch { facts = null; }
+    const items = st(p).items, runs = runsOf(st(p)).filter(r => r.state === 'running');
+    await prime({ stats: Object.values(items).filter(i => i.kind === 'lane' && i.state !== 'archived' && i.data?.worktree).map(i => i.data.worktree) });
+    const v = branchesView({ facts, items, live: new Set(runs.filter(r => hbAge(p)(r.id) < STALE_MS).map(r => r.id)), dlvs: Object.values(loadDeliverables(p.state)), project: p.name, exists: existsS });
+    return { ...v, project: p.name, rows: v.rows.map(r => ({ ...r, project: p.name, ...(r.acts.includes('pr') ? { pr_new: prUrl(v.github, v.main, r.name) } : {}) })) };
+  }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
   // Never waits on git: before the first answer it returns { rows: [], pending: true } (the stream's derived event re-renders).
@@ -1264,9 +1274,10 @@ export function createDashboard(o) {
   const streamSource = p => ({ project: p.name, hbDir: path.join(p.state, 'hb'),
     files: Object.fromEntries(RECORD_FILES.map(f => [f, path.join(p.state, f + '.jsonl')])),
     flags: () => fresh(async () => { const [a, b, quiet, tick_locked] = await Promise.all([...pausedFiles(p).map(existsA), existsA(quietFlag(p)), lockFreshA(p)]); return { paused: a || b, quiet, tick_locked }; }),
-    // what the tabs show besides records: the ledger, STATUS.md (burn), live usage, the docs, and the async caches (git-derived
-    // deliverables, account usage) - one stat per file + two timestamps per poll; kick() keeps the caches fresh while watched
-    sig: () => fresh(async () => (await Promise.all([p.ledger, path.join(p.state, 'STATUS.md'), o.liveUsage, ...(p.docs || []).map(d => d.path)].map(f => (f ? statSig(f) : '-'))))
+    // what the tabs show besides records: the ledger, STATUS.md (burn), live usage, the docs, the branch scan (a landed Scan now /
+    // tick refresh repaints the Branches view), and the async caches (git-derived deliverables, account usage) - one stat per file +
+    // two timestamps per poll; kick() keeps the caches fresh while watched
+    sig: () => fresh(async () => (await Promise.all([p.ledger, path.join(p.state, 'STATUS.md'), o.liveUsage, branchesFile(p.state), ...(p.docs || []).map(d => d.path)].map(f => (f ? statSig(f) : '-'))))
       .concat([dlv.get(p.name)?.sig ?? '-', acct.sig ?? '-', rm.get(p.name)?.hash ?? '-', plans.get(p.name)?.hash ?? '-']).join('|')),   // cache CONTENT hashes: an unchanged refresh is no event
     // DEC-341: a new instruction view / the end of a rebuild a page shows as "refreshing" goes out at once, outside the pulse window
     // (bounded: one change per rebuild, a rebuild at most one per insTtlMs)
@@ -1757,6 +1768,18 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
+    // the Branches sub-view's row actions: `norn branches <verb>` in a child (git never blocks the loop); each answer carries its Undo
+    if (route === '/api/branches/refresh') return { ok: true, started: spawnRefresh(p, p.state) };
+    if (route === '/api/branches/act') {
+      const verb = String(data.act ?? ''), arg = verb === 'rmwt' ? data.path : data.branch;
+      if (!['delete', 'rmwt', 'adopt', 'undo'].includes(verb)) throw fail(400, 'act must be delete | rmwt | adopt | undo');
+      if (verb !== 'undo' && (typeof arg !== 'string' || !arg || arg.startsWith('-'))) throw fail(400, verb === 'rmwt' ? 'path is required' : 'branch is required');
+      if (!p.file) throw fail(400, 'the project has no project.json');
+      const args = [META_CLI, 'branches', ...(verb === 'undo' ? ['undo', '--undo', JSON.stringify(data.undo ?? {})] : [verb, arg]), ...(verb === 'adopt' && data.lane ? ['--lane', String(data.lane)] : []), '--json', '--project', p.file, '--state', p.state];
+      let o; try { o = await run(process.execPath, args, { timeout: 120000 }); } catch (e) { throw fail(409, String(e.message).replace(/^Process exited \d+: /, '').replace(/^error: /, '').split('\n')[0]); }
+      const r = JSON.parse(String(o).trim().split('\n').pop());
+      return { ok: true, act: verb, ...r, undo: verb === 'delete' || verb === 'rmwt' ? r : verb === 'adopt' ? { lane: r.lane } : null };
+    }
     if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: laneId(String(data.lane), p.state), by: 'dashboard', data: data.override ? { override: String(data.override) } : {} });   // item 9: work not on main needs the owner's override (records.mjs)
     if (route === '/api/handedit') {   // GAP-8: "Let Norn take it back" (a .bak of the hand text, then the views rewritten) or "Keep my version"
       if (!['takeback', 'keep'].includes(data.choice)) throw fail(400, 'choice must be takeback or keep');
@@ -2034,6 +2057,11 @@ data: ${JSON.stringify(l)}
           const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
           const tree = (await Promise.all(ps.map(p => agents(p, win, { homes: true, part })))).flat();
           return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: (await Promise.all(ps.map(async p => queueOf(runsOf(st(p)), await lanePinsAsync(p.state)).map(q => ({ ...q, project: p.name }))))).flat() }) });
+        }
+        if (route === '/api/branches') {
+          const vs = await Promise.all(pick(url, { all: true }).map(branchesOf)), counts = {};
+          for (const v of vs) for (const [k, n] of Object.entries(v.counts)) counts[k] = (counts[k] || 0) + n;
+          return send(200, { rows: vs.flatMap(v => v.rows), counts, states: BRANCH_STATES, scans: vs.map(v => ({ project: v.project, at: v.at, error: v.error })) });
         }
         if (route === '/api/deliverables') {
           const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)

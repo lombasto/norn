@@ -30,6 +30,7 @@ import { closeLandedQuestions, latchMerged } from './deliverables.mjs';
 import { sweepAsks, applyRulings } from './runasks.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { tickTests } from './testscli.mjs';
+import { tickBranches } from './branches.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
 import { projectOverlap } from './overlap.mjs';
@@ -321,6 +322,8 @@ function tickPass(o, g = {}) {
     if (o.slop !== false && (!o.dry || o.spawnSlop)) { try { const s = tickSlop(p, state, { metaCmd: META_CMD, spawnFn: o.spawnSlop }); if (s) tickLog(state, `${tag}: ${s}`); } catch (e) { tickLog(state, `${tag}: slop daily: ${e.message}`); } }
     // the Tests tab's charts: a detached `norn tests history` (git only) once a day (a dry tick only with o.spawnTests)
     if (o.tests !== false && (!o.dry || o.spawnTests)) { try { const t = tickTests(p, state, { metaCmd: META_CMD, spawnFn: o.spawnTests }); if (t) tickLog(state, `${tag}: ${t}`); } catch (e) { tickLog(state, `${tag}: tests history: ${e.message}`); } }
+    // the Branches view: a detached `norn branches --refresh` (git for-each-ref + cherry, cached) at most every 10 min (a dry tick only with o.spawnBranches)
+    if (o.branches !== false && (!o.dry || o.spawnBranches)) { try { const b = tickBranches(p, state, { spawnFn: o.spawnBranches }); if (b) tickLog(state, `${tag}: ${b}`); } catch (e) { tickLog(state, `${tag}: branches: ${e.message}`); } }
     const running = liveRuns(state, { staleMs }).find(r => r.state_dir === path.resolve(state) && r.data.kind === 'checkin');
     if (running) return { code: 0, msg: `${tag}: check-in ${running.id} running - exit` };
     const B = projectBudget(p, o.budget || {}), machine = o.machine || {}, cp = checkinPolicy(p.policy), nowMs = o.now ? o.now().getTime() : Date.now();

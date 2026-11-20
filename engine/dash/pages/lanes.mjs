@@ -1,10 +1,11 @@
 // The Lanes page (stage LANES, SPEC 4.2: "the attention board"): one list grouped by what the owner must do. Each row: a state
 // tile, name, the now line, progress and pace, the run strip (the retired Map's lane band as beads), the PR track and at most 3
 // actions; the chevron opens the lane's flow and brief in place (S.laneOpen keeps it open through a stream repaint). No timer:
-// the elapsed bar is a CSS animation, rows redraw on stream events only.
-import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime } from '../cells.mjs';
+// the elapsed bar is a CSS animation, rows redraw on stream events only. Its Branches / Worktrees sub-views list every branch and worktree.
+import { esc, fin, dash, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime } from '../cells.mjs';
 import { capStrip } from '../widgets.mjs';
 import { renderMarkdown } from '../docs.mjs';
+import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
 
 // GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
 // a PR one links to the PR; the shared files are its tooltip
@@ -215,4 +216,56 @@ export function lanes(d, ctx) {
     ${kinds.length > 1 || kind ? `<span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span>` : ''}</div>
    ${ctx.laneDetail ? laneDetail(ctx.laneDet, ctx, ctx.laneFile) : ''}
    <div class="lboard" data-rows="lanes">${groups || `<p class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</p>`}</div>${all.length ? LEGEND : ''}`;
+}
+
+// owner ask 2026-11-19 ("see what lane they belong to, if it's stale or in progress, merged, lost, unknown, not part of a lane"): the
+// Lanes page has 3 sub-views (subviews.mjs): Lanes (the lane table above), Branches (every local / origin branch of the repo, one row each)
+// and Worktrees (every worktree, detached merge worktrees too). The rows and their state come from branches.mjs (the tick's cached scan +
+// the records now); filters (state chips, local / origin, lane) are the page's own (index.html S.br). Row actions only on a click, with Undo.
+export const LANES_SUBS = [['lanes', 'Lanes'], ['branches', 'Branches'], ['worktrees', 'Worktrees']];
+export const BRANCH_CHIP = { 'in progress': 'running', 'awaiting merge': 'needs', unknown: 'warn', lost: 'lost', stale: 'idle', merged: 'done' };
+export const BR_WHERE = [['all', 'All'], ['local', 'Local only'], ['remote', 'Origin only'], ['both', 'Both']];
+const brOf = (d, sub) => (d.rows || []).filter(r => (sub === 'worktrees' ? !!r.worktree : r.kind === 'branch'));
+export function lanesPage(d, ctx) {
+  const sub = d.sub ?? 'lanes', n = k => (sub === 'lanes' ? (k === 'lanes' ? (d.lanes || []).length : undefined) : k === 'lanes' ? undefined : brOf(d, k).length);
+  const c = d.counts || {}, nums = sub === 'lanes' ? [] : [{ n: c['in progress'] ?? 0, label: 'in progress' }, { n: c['awaiting merge'] ?? 0, label: 'awaiting merge', cls: c['awaiting merge'] ? 'warn' : '' },
+    { n: (c.unknown ?? 0) + (c.lost ?? 0), label: 'unknown / lost', cls: c.lost ? 'bad' : '' }, { n: (c.stale ?? 0) + (c.merged ?? 0), label: 'merged / stale' }];
+  return subviewPage('lanes', { title: 'Lanes', numbers: nums, views: LANES_SUBS.map(([k, l]) => [k, l, n(k)]), active: sub, body: sub === 'lanes' ? lanes(d, ctx) : branchesPart(d, ctx, sub) });
+}
+const brAge = (ms, now) => (fin(ms) ? laneAge(now - ms) : '-');
+function branchesPart(d, ctx, sub) {
+  const now = ctx.now ?? Date.now(), f = ctx.br ?? {}, states = f.states?.size ? f.states : null, where = f.where ?? 'all', lane = f.lane ?? '', limit = d.limit || SUB_CAP, undo = ctx.brUndo;
+  const scans = (d.scans || []).map(x => `${projTag(ctx, x.project)}${x.at ? `scanned ${esc(brAge(Date.parse(x.at), now))} ago` : 'not scanned yet'}${x.error ? ' ' + chip('bad', x.error) : ''}`).join(' · ');
+  const one = ctx.project && ctx.project !== 'all';
+  const base = brOf(d, sub), lanesIn = [...new Set(base.map(r => r.lane?.name).filter(Boolean))].sort();
+  const pass = r => (!states || states.has(r.state)) && (where === 'all' || r.where === where) && (!lane || (lane === '-' ? !r.lane : r.lane?.name === lane));
+  const shown = base.filter(pass), rows = shown.slice(0, limit);
+  const stChips = (d.states || []).map(k => `<button class="hf" data-act="br-state" data-state="${esc(k)}" aria-pressed="${!states || states.has(k)}">${esc(k)} <b>${base.filter(r => r.state === k).length}</b></button>`).join('');
+  const whChips = sub === 'worktrees' ? '' : `<span class="lane-show" role="group" aria-label="Local or origin">${BR_WHERE.map(([k, t]) => `<button class="hf" data-act="br-where" data-where="${k}" aria-pressed="${where === k}">${esc(t)}</button>`).join('')}</span>`;
+  const laneSel = `<select data-br="lane" aria-label="Lane"><option value="">every lane</option><option value="-"${lane === '-' ? ' selected' : ''}>not part of a lane</option>${lanesIn.map(l => `<option value="${esc(l)}"${lane === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  const P = r => `data-project="${esc(r.project)}"`;
+  const acts = r => [r.acts?.includes('delete') ? `<button class="ghost" data-act="br-delete" ${P(r)} data-branch="${esc(r.name)}" title="delete ${r.where === 'both' ? 'the local and origin copies' : r.where === 'remote' ? 'the origin copy' : 'the local branch'} (its work is on main; Undo puts it back)">Delete branch</button>` : '',
+    r.acts?.includes('rmwt') ? `<button class="ghost" data-act="br-rmwt" ${P(r)} data-path="${esc(r.worktree.path)}" title="git worktree remove (clean: nothing uncommitted; the branch stays; Undo adds it back)">Remove worktree</button>` : '',
+    r.pr_new ? `<a class="btn ghost" href="${esc(r.pr_new)}" target="_blank" rel="noopener" title="GitHub's new pull request page for this branch">Open PR</a>` : '',
+    r.acts?.includes('adopt') ? `<button class="ghost" data-act="br-adopt" ${P(r)} data-branch="${esc(r.name)}" title="a LANE record for this branch (Undo archives it)">Adopt into a lane</button>` : ''].filter(Boolean).join(' ');
+  const wt = r => !r.worktree ? dash : `<span class="mono small brpath" title="${esc(r.worktree.path)}">${esc(r.worktree.path.split('/').slice(-2).join('/'))}</span> ${r.worktree.missing ? chip('bad', 'missing') : r.worktree.dirty ? chip('warn', `${r.worktree.dirty} uncommitted`) : r.worktree.dirty === 0 ? chip('ok', 'clean') : ''}${r.worktree.primary ? ' ' + chip('idle', 'main checkout') : ''}`;
+  const pr = r => !r.pr ? dash : r.pr.url ? `<a href="${esc(r.pr.url)}" target="_blank" rel="noopener">#${esc(r.pr.number ?? '?')}</a> ${chip(r.pr.state === 'open' ? 'needs' : r.pr.state === 'merged' ? 'done' : 'idle', r.pr.state)}` : chip('idle', r.pr.state);
+  const dlv = r => (r.dlv ? `<div class="small"><span class="id">${esc(r.dlv.id)}</span>${r.dlv.via !== 'branch' ? ` <span class="mute">tracked as ${esc(r.dlv.branch)}</span>` : ''}</div>` : '');
+  const run = r => (r.run ? `<div class="small"><span class="id">${esc(r.run.id)}</span> <span class="mute">${esc(r.run.outcome ? String(r.run.outcome).toUpperCase() : r.run.state)}</span></div>` : '');
+  const tr = r => `<tr id="br-${esc(r.project)}-${esc(r.name.replace(/[^\w.-]/g, '_'))}" data-state="${esc(r.state)}"><td data-label="branch" class="brname"><b>${projTag(ctx, r.project)}${esc(r.name)}</b>${r.subject ? `<div class="small mute brsubj">${esc(r.subject)}</div>` : ''}${dlv(r)}</td>
+    <td data-label="state">${chip(BRANCH_CHIP[r.state] ?? 'idle', r.state)}<div class="small mute brwhy">${esc(r.why)}</div></td>
+    <td data-label="where">${r.kind === 'worktree' ? chip('idle', 'detached') : esc(r.where === 'remote' ? 'origin' : r.where)}${r.diverged ? ' ' + chip('warn', 'local and origin differ') : ''}</td>
+    <td data-label="lane">${r.lane ? `${esc(r.lane.name)} ${chip(r.lane.state === 'gone' ? 'lost' : r.lane.state, r.lane.state)}` : '<span class="mute">not part of a lane</span>'}${run(r)}</td>
+    <td data-label="worktree">${wt(r)}</td>
+    <td data-label="ahead / behind" class="mono">${r.ahead === null || r.ahead === undefined ? dash : `+${int(r.ahead)} / -${int(r.behind)}`}${r.how === 'patches on main' ? '<div class="small mute">patches on main</div>' : ''}</td>
+    <td data-label="last commit" class="small">${esc(brAge(r.last, now))}${r.author ? ` · ${esc(r.author)}` : ''}</td>
+    <td data-label="PR">${pr(r)}</td><td><div class="rowacts">${acts(r)}</div></td></tr>`;
+  const scanned = (d.scans || []).some(x => x.at);
+  const empty = !scanned ? 'Not scanned yet: the tick scans every 10 minutes, or press Scan now.' : base.length ? 'Nothing under these filters.' : sub === 'worktrees' ? 'No worktree.' : 'No branch besides main.';
+  return `<div class="banner">Every ${sub === 'worktrees' ? 'git worktree' : 'local and origin branch'} of the repo, from the last scan (git, refreshed by the tick): its lane, its state, ahead / behind main, its PR and deliverable. Nothing here is cleaned up by itself.</div>
+   ${undo ? `<div class="banner" id="br-undo">${esc(undo.text)} <button data-act="br-undo" data-project="${esc(undo.project)}">Undo</button></div>` : ''}
+   <div class="filters brfilters"><span class="small mute">${scans || 'not scanned yet'}</span>${one ? ` <button class="ghost" data-act="br-scan" data-project="${esc(ctx.project)}">Scan now</button>` : ''}</div>
+   <div class="filters brfilters"><span class="lane-show" role="group" aria-label="States">${stChips}</span>${whChips}${laneSel}</div>
+   <div class="tablecard"><table class="brtab" data-rows="branches"><thead><tr><th>${sub === 'worktrees' ? 'worktree / branch' : 'branch'}</th><th>state</th><th>where</th><th>lane</th><th>worktree</th><th>ahead / behind</th><th>last commit</th><th>PR</th><th></th></tr></thead>
+   <tbody>${rows.map(tr).join('') || `<tr><td colspan="9" class="mute">${esc(empty)}</td></tr>`}</tbody></table>${subMore(rows.length, shown.length)}</div>`;
 }
