@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadRules, slopCheck } from '../engine/lib/slop/check.mjs';
+import { loadRules, effectiveRules, slopCheck, explainOf, EXPLAIN, RULES_DIR } from '../engine/lib/slop/check.mjs';
+import { slopPrompt } from '../engine/lib/slop/runend.mjs';
 import { hostWrite, openBlocks, slopHolds } from '../engine/lib/slop/host.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { loadState } from '../engine/lib/records.mjs';
@@ -45,17 +46,64 @@ function fixtureRepo({ base, head }) {
 }
 const recordedTool = rec => (rule, side) => (rec?.[side] === undefined ? null : typeof rec[side] === 'string' ? rec[side] : JSON.stringify(rec[side]));
 
-for (const rule of loadRules().filter(r => r.level === 'BLOCK')) {
-  test(`${rule.id} (${rule.title}): the fixture's hit blocks, its near-miss does not`, () => {
+// every built-in rule and the synthetic project rules (tests/fixtures/slop-project): the hit has new findings at the rule's level, the near-miss none
+const PROJECT_RULES = path.join(import.meta.dirname, 'fixtures', 'slop-project', 'rules', 'slop');
+const projectRules = fs.readdirSync(PROJECT_RULES).filter(f => /^P-.*\.json$/.test(f)).map(f => JSON.parse(fs.readFileSync(path.join(PROJECT_RULES, f), 'utf8')));
+for (const rule of [...loadRules(), ...projectRules]) {
+  test(`${rule.id} (${rule.title}): the fixture's hit fires at ${rule.level}, its near-miss does not`, () => {
     for (const [which, want] of [['hit', true], ['miss', false]]) {
       const fx = rule.fixture[which];
       const repo = fixtureRepo(fx);
-      const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: [rule.id], tool: recordedTool(fx.recorded) });
-      assert.equal(r.blocks.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
-      for (const b of r.blocks) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
+      const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
+      const at = r.findings.filter(f => f.new && f.level === rule.level);
+      assert.deepEqual(r.skipped, [], `${rule.id} ${which} ran`);
+      assert.equal(at.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
+      assert.equal(r.blocks.length > 0, want && rule.level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
+      for (const b of at) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
     }
   });
 }
+
+// RM-27: every finding explains itself - the rule's what / why / fix sits beside the rule, and a rule without it does not load
+test('every rule explains itself in plain words: what was found, why the rule exists, what to do; a rule without it does not load', () => {
+  const projectDir = path.dirname(path.dirname(PROJECT_RULES)), rules = effectiveRules({ projectDir });
+  assert.ok(rules.length >= 21 && rules.some(r => r.id.startsWith('P-')), 'the built-ins and the project rules');
+  for (const r of rules) for (const k of EXPLAIN) {
+    assert.equal(typeof r.explain?.[k], 'string', `${r.id}: explain.${k}`);
+    assert.ok(r.explain[k].length >= 20 && r.explain[k].length <= 300, `${r.id}: explain.${k} is a short sentence or three`);
+    assert.deepEqual(explainOf(r.id, projectDir), r.explain);
+  }
+  assert.equal(explainOf('K99'), null);
+  assert.equal(explainOf('P-hide'), null, 'a project rule is read from its project folder');
+  const own = mkTmp('meta-slop-prule-'), p = JSON.parse(fs.readFileSync(path.join(PROJECT_RULES, 'P-hide.json'), 'utf8'));
+  delete p.explain; fs.mkdirSync(path.join(own, 'rules', 'slop'), { recursive: true }); fs.writeFileSync(path.join(own, 'rules', 'slop', 'P-hide.json'), JSON.stringify(p));
+  assert.throws(() => effectiveRules({ projectDir: own }), /P-hide.json: a rule explains itself/, 'a project rule without explain does not load either');
+  for (const k of EXPLAIN) {
+    const dir = mkTmp('meta-slop-rules-'), r = JSON.parse(fs.readFileSync(path.join(RULES_DIR, 'K2.json'), 'utf8'));
+    delete r.explain[k];
+    fs.writeFileSync(path.join(dir, 'K2.json'), JSON.stringify(r));
+    assert.throws(() => loadRules(dir), new RegExp(`K2.json: a rule explains itself`), `no explain.${k}: the rule does not load`);
+  }
+});
+
+test('norn slop check: each finding names what / why / fix once per rule and the waiver path with its fingerprint; --json blocks carry explain', () => {
+  const fx = { base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 1;\n', 'a.mjs.orig': 'x\n', 'b.mjs.rej': 'y\n' } };
+  const repo = fixtureRepo(fx);
+  const c = spawnSync(process.execPath, [NORN, 'slop', 'check', '--diff', 'main..HEAD'], { cwd: repo, encoding: 'utf8', env: { ...process.env, META_ROOT: mkTmp('meta-slop-root-') } });
+  assert.equal(c.status, 1, c.stdout + c.stderr);
+  const x = explainOf('K15'), out = c.stdout;
+  assert.match(out, /^BLOCK K15 `a\.mjs\.orig` /m);
+  for (const s of [`what: ${x.what}`, `why:  ${x.why}`, `fix:  ${x.fix}`]) assert.equal(out.split(s).length - 1, 1, `once per rule: ${s}`);
+  const fp = /^BLOCK K15 `a\.mjs\.orig` .*\[([0-9a-f]{16})\]$/m.exec(out)[1];
+  assert.ok(out.includes(`norn rec add waiver --rule K15 --scope ${fp} --why`), 'the waiver path names the finding');
+  const j = spawnSync(process.execPath, [NORN, 'slop', 'check', '--diff', 'main..HEAD', '--json'], { cwd: repo, encoding: 'utf8', env: { ...process.env, META_ROOT: mkTmp('meta-slop-root-') } });
+  const blocks = JSON.parse(j.stdout).blocks;
+  assert.equal(blocks.length, 2);
+  for (const b of blocks) assert.deepEqual(b.explain, x);
+  const p = slopPrompt(blocks);
+  assert.match(p, /\n- K15 `a\.mjs\.orig` [^\n]*\n  what: /, 'the resume prompt explains the rule under its first finding');
+  assert.equal(p.split(`why:  ${x.why}`).length - 1, 1);
+});
 
 test('only new: a finding the base already had never blocks, even in a renamed file; the fingerprint follows the rename', () => {
   const body = 'export function old(f) {\n  try { f(); } catch (e) {}\n}\n';
@@ -74,12 +122,12 @@ test('only new: a finding the base already had never blocks, even in a renamed f
   assert.equal(r2.blocks[0].line, 17);
 });
 
-test('waiver WVR-n: owner or controller (never a check-in), why required, scope = a fingerprint or a glob; it clears an open block until it ends', () => {
+test('waiver WVR-n: owner or controller (a check-in only applying an answered Q, tests/ruled.test.mjs), why required, scope = a fingerprint or a glob; it clears an open block until it ends', () => {
   const state = mkTmp('meta-slop-w-');
   const block = { rule: 'K2', level: 'BLOCK', file: 'engine/lib/a.mjs', line: 3, fp: 'a1b2c3d4e5f60718', new: true, msg: 'empty catch' };
-  hostWrite(state, { type: 'check', branch: 'feat/x', lane: 'x', run: 'RUN-1', base: 'b', head: 'h', blocks: [block], findings: [block] });
+  hostWrite(state, { type: 'check', branch: 'feat/x', lane: 'x', run: 'RUN-1', base: 'b', head: 'h', hash: 'r1', blocks: [block], findings: [block] });
   assert.equal(openBlocks(state, 'feat/x').length, 1);
-  assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'checkin', data: { rule: 'K2', scope: block.fp, why: 'x y' } }), /role/);
+  assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'checkin', data: { rule: 'K2', scope: block.fp, why: 'x y' } }), /owner answer: pass --q Q-n/);
   assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp } }), /why/);
   const cli = spawnSync(process.execPath, [NORN, 'rec', 'add', 'waiver', '--state', state, '--as', 'controller', '--rule', 'K2', '--scope', 'engine/lib/*.mjs',
     '--why', 'the owner asked for this fallback (DIR-9)', '--until', '2999-01-01T00:00:00Z'], { encoding: 'utf8' });
@@ -91,7 +139,7 @@ test('waiver WVR-n: owner or controller (never a check-in), why required, scope 
   assert.equal(openBlocks(state, 'feat/x').length, 1, 'a revoked waiver no longer counts');
   record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp, why: 'reviewed: the caller retries' } });
   assert.deepEqual(openBlocks(state, 'feat/x'), [], 'a fingerprint waiver clears it');
-  hostWrite(state, { type: 'check', branch: 'feat/x', base: 'b', head: 'h2', blocks: [], findings: [] });
+  hostWrite(state, { type: 'check', branch: 'feat/x', base: 'b', head: 'h2', hash: 'r1', blocks: [], findings: [] });
   assert.equal(slopHolds(state)['feat/x'], undefined, 'a clean check drops the hold');
 });
 
@@ -109,14 +157,14 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   const next = await waitFor(() => loadState(state).items[id]?.resume?.next, { what: 'the slop resume' });
   await waitFor(() => settled(loadState(state).items[next]) && fs.existsSync(path.join(state, 'slop', 'holds.json')) && slopHolds(state)['feat/x']?.run === next, { what: 'the resumed run ends' });
   assert.equal(loadState(state).items[id].resume.slop, 1);
-  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 a\.txt\.orig /, 'the resume carries the list');
+  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 `a\.txt\.orig` /, 'the resume carries the list (the path in backticks)');
   assert.equal(loadState(state).items[next].resume, undefined, 'a second BLOCK is not resumed again: the check-in decides');
   assert.deepEqual(openBlocks(state, 'feat/x').map(b => b.rule), ['K15']);
-  const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha', 'abc1234'];
-  const mb = () => spawnSync(process.execPath, [NORN, ...brief2], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
+  const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha'];
+  const mb = () => spawnSync(process.execPath, [NORN, ...brief2, git(wt, 'rev-parse', 'HEAD')], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
   let r = mb();
   assert.equal(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout, /REFUSED: merge-brief feat\/x: 1 open slop BLOCK/);
-  assert.deepEqual(pickBatch([{ id: 'DLV-1', gate: 'batch', word: 'clean', tip: 'abc', lane: 'x', branch: 'feat/x', slop: 1 }], { cfg: { batch_max: 4 }, mq: { red: {} }, writer: () => null }), []);
+  assert.deepEqual(pickBatch([{ id: 'DLV-1', gate: 'batch', word: 'clean', tip: 'abc', lane: 'x', branch: 'feat/x', slop: 1 }], { cfg: { batch_max: 4 }, mq: { red: {} }, writer: () => null, door: () => 1 }), []);
   record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K15', scope: '*.orig', why: 'kept on purpose: the merge test reads it' } });
   r = mb(); assert.equal(r.status, 0, r.stdout + r.stderr);
   record(state, { kind: 'waiver', ev: 'revoke', id: 'WVR-1', by: 'owner', data: {} });

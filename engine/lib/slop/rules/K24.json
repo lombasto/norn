@@ -1,0 +1,50 @@
+{
+  "id": "K24",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "a debug leftover: console.log / debug / trace / dir, or debugger",
+  "how": "in code (not comments or strings) of modules that are not CLI printers",
+  "explain": {
+    "what": "A debug left-over is in the code: console.log, console.debug, console.trace, console.dir or debugger.",
+    "why": "Debug output clutters what the user sees and can leak data. A debugger statement stops the program when dev tools are open.",
+    "fix": "Delete it. If the output is wanted, use the module's logger or print from a CLI module under engine/bin."
+  },
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "tests/**",
+    "engine/bin/**",
+    "engine/lib/testscli.mjs",
+    "**/make-palette.mjs",
+    "**/vendor/**"
+  ],
+  "in": [
+    "code"
+  ],
+  "patterns": [
+    "\\bconsole\\.(?:log|debug|trace|dir)\\s*\\(",
+    "\\bdebugger\\b"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "engine/lib/a.mjs": "export const f = x => x;\n"
+      },
+      "head": {
+        "engine/lib/a.mjs": "export const f = x => { console.log(x); debugger; return x; };\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "engine/lib/a.mjs": "export const f = x => x;\n"
+      },
+      "head": {
+        "engine/lib/a.mjs": "// console.log(x) prints it\nexport const s = 'console.log(1); debugger';\nexport const f = x => { console.error(x); return x; };\nexport const out = console.log;\n",
+        "engine/bin/tool.mjs": "console.log('hi');\n"
+      }
+    }
+  }
+}

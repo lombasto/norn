@@ -76,8 +76,8 @@ test('agentsTree: one root per RUN (running + ended < 2 h), children = subagents
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'old' } });
   record(state, { kind: 'run', ev: 'end', id: 'RUN-4', by: 'launcher', data: { exit: 0, outcome: 'done' } });
   const runs = Object.values(loadState(state).items).filter(i => i.kind === 'run');
-  // RUN-4 ended "3 h ago": shift its updated stamp back
-  runs.find(r => r.id === 'RUN-4').updated = new Date(now - 3 * 3600000).toISOString();
+  // RUN-4 ended "3 h ago": shift its end event back (the window counts from the run's own end, not its last record)
+  runs.find(r => r.id === 'RUN-4').history.find(h => h.ev === 'end').ts = new Date(now - 3 * 3600000).toISOString();
   const tree = agentsTree(runs, { projectsDir: d.projects, codexDir: d.codex, cache: new Map(), now, policy: { context: { implementer: { handoff_k: 110 } } } });
   assert.deepEqual(tree.map(r => r.id), ['RUN-1', 'RUN-2', 'RUN-3']);
   const [w, c, g] = tree;

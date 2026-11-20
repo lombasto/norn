@@ -1,12 +1,13 @@
 // META-GTP-MERGEQ (GT-PARITY-PLAN sec. 2.4; Bors / the GitHub merge queue; Gas Town refinery - cited, not ported): the merge
 // queue of DONE-not-merged deliverables. Code only, no LLM: the tick runs it after the fill.
 //  1. MR score (Gas Town internal/refinery/score.go:43-51, 81-87): 1000 + epic_hours*10 + (4 - priority)*100
-//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P3; none = P2, the DAG default), retries = its
+//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P4; none = P2, the DAG default), retries = its
 //     resolve / fix rounds, the DLV's age since DONE.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile } from './records.mjs';
-import { deliverablesView, deliverableConfig, rehearsalWord } from './deliverables.mjs';
+import { deliverablesView, rehearsalWord } from './deliverables.mjs';
+import { fwd } from './dlvmerge.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
@@ -14,25 +15,21 @@ import { pathKey } from './config.mjs';
 import { acquireLock, laneWriter, killTree } from './runs.mjs';
 import { renderBatchBrief, suiteMode, briefMarker } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
-import { openBlocks } from './slop/host.mjs';
+import { findingLine } from './slop/host.mjs';
+import { doorCheck, storedCheck } from './slop/door.mjs';
+import { rulesHash } from './slop/check.mjs';
+import { projectSlop } from './slop/runend.mjs';
 import { slopOn } from './policy.mjs';
-import { subdirOf, inDir, gateText } from './monorepo.mjs';
+import { inDir, gateText } from './monorepo.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { rowLookItems, lookHold } from './look.mjs';
+import { landPass } from './landing.mjs';
+import { mergeConfig } from './mergecfg.mjs';
 
 const H = 3600e3;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const pad = (s, n) => String(s ?? '').padEnd(n);
-export const MQ_DEFAULTS = { batch_max: 4 };
-export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
-/** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
-// a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own
-export function mergeConfig(project = {}) {
-  const m = project.merge || {}, d = deliverableConfig(project), sub = subdirOf(project);
-  const gate = m.gate ? { ...m.gate, ...(m.gate.dir === undefined && sub ? { dir: sub } : {}) } : null;
-  return { ...MQ_DEFAULTS, ...m, gate, ui: m.ui || [], scratch: fwd(m.scratch || (sub ? `${d.repo}-mq-${project.name}` : `${d.repo}-mq`)), repo: d.repo, main: d.main, remote: d.remote, native: d.native };
-}
 /** the gate kind of a queue row: door (native: the install path, the door flow), batch (a FAST gate is declared: batched + bisected),
  *  stage (one MERGE stage per branch) */
 export const gateKind = (row, cfg) => (row.native ? 'door' : cfg.gate?.fast ? 'batch' : 'stage');
@@ -61,7 +58,7 @@ function retriesOf(runs, stateDir, row, since) {
  *   held: [{ id, branch, why }] (META-CATCH S2: a look item's row without its picture proof or a newer pass verdict stays out) }
  */
 export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = makeGit(), view = null } = {}) {
-  const cfg = mergeConfig(project), slop = slopOn(project.policy);
+  const cfg = mergeConfig(project), slop = slopOn(project.policy), hash = slop ? rulesHash(projectSlop({ projectDir: project.project_dir }).rules) : null;
   const v = view || deliverablesView({ stateDir, project, now, git });
   const epics = (() => { try { return loadEpics(stateDir); } catch { return {}; } })();
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
@@ -90,16 +87,19 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
     rows.push({ ...r, score: mrScore({ epicHours: epic_hours, priority, retries, dlvHours: dlv_hours }), priority, epic: ep?.id ?? null,
       epic_hours: +epic_hours.toFixed(1), dlv_hours: +dlv_hours.toFixed(1), retries, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
       into, red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null,
-      slop: slop ? openBlocks(stateDir, r.branch).length : 0 });   // META-SLOP-A: open BLOCK findings hold the branch out of a batch (META-BETA-PREP: not while off)
+      slop: slop ? storedSlop(stateDir, r, hash) : 0 });   // RM-44 D1: the stored check of its tip (null = unchecked; the pick checks it) - not while off (META-BETA-PREP)
   }
   rows.sort((a, b) => b.score - a.score || Number(a.id.slice(4)) - Number(b.id.slice(4)));
   return { rows, cfg, held };
 }
 
+// the BLOCK findings of a row's stored check at its tip with this rule set (a waiver applied), or null: not checked yet
+const storedSlop = (stateDir, r, hash) => { const c = r.tip ? storedCheck(stateDir, { branch: r.branch, head: r.tip, hash }) : null; return c ? c.findings.filter(f => f.level === 'BLOCK' && !f.shadow).length : null; };
+
 /** one `norn mergeq` line: id, score, priority / epic, gate kind, rehearsal, behind, target, branch, what it delivers */
 export function formatMq(r) {
   return [r.id, pad(r.score, 5), pad(r.priority + (r.epic ? ' ' + r.epic : ''), 8), pad(r.gate, 5), pad(r.word, 18), pad(r.behind === null ? '' : `-${r.behind}`, 5),
-    r.into === 'main' ? '' : `-> ${r.into}`, r.red ? 'RED' : '', r.slop ? `SLOP ${r.slop}` : '', pad(r.branch, 30), String(r.delivers || '').slice(0, 70)].filter(x => x !== '').join(' ').trimEnd();
+    r.into === 'main' ? '' : `-> ${r.into}`, r.red ? 'RED' : '', r.slop === null ? 'SLOP ?' : r.slop ? `SLOP ${r.slop}` : '', pad(r.branch, 30), String(r.delivers || '').slice(0, 70)].filter(x => x !== '').join(' ').trimEnd();
 }
 
 // ---------- 2. auto-UPDATE (not rebase; GitHub merge queue "update branch" / Gas Town done_rebase.go:28-46 aborts on conflict) ----------
@@ -215,14 +215,14 @@ export const batchFile = (stateDir, n) => path.join(mqDir(stateDir), `batch-${n}
 export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
-/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state) */
+/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state), then adds gate.env */
 export function runGate(gate, { cwd, log }) {
   cwd = inDir(cwd, gate.dir);
   return new Promise(resolve => {
     const t0 = Date.now();
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const fd = fs.openSync(log, 'w');
-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_')));
+    const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_'))), ...(gate.env || {}) };
     let child, timedOut = false, done = false;
     const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
     const timer = setTimeout(() => { timedOut = true; killTree(child?.pid); }, (gate.timeout_min ?? 30) * 60e3);
@@ -235,14 +235,17 @@ export function runGate(gate, { cwd, log }) {
 
 // the candidates of the next batch: batch-gated, clean rehearsal, not red at this sha, one target (the top row's), up to batch_max.
 // The sha merged = the pushed tip, or the tip recorded at DONE while the lane has a live writer (the staged rule of piece 0).
-export function pickBatch(rows, { cfg, mq, stateDir, locksDir, writer = laneWriter }) {
+// RM-44 D1: the door - door(row, sha) -> its open BLOCK count (the stored check of that sha, or the check run now); a door that
+// throws (no main, an unreadable sha) leaves the row out. Slop off (META-BETA-PREP): the caller passes () => 0.
+export function pickBatch(rows, { cfg, mq, stateDir, locksDir, writer = laneWriter, door = (r, sha) => doorCheck({ state: stateDir, repo: r.repo || cfg.repo, branch: r.branch, head: sha }).open.length }) {
   const pick = [];
   for (const r of rows) {
-    if (r.gate !== 'batch' || r.word !== 'clean' || r.slop) continue;
+    if (r.gate !== 'batch' || r.word !== 'clean') continue;
     const live = writer({ state: stateDir, locksDir, lane: r.lane, worktree: null });
     const sha = live ? r.done_tip : r.tip;
     if (!sha || mq.red[r.id] === sha) continue;
     if (pick.length && r.into !== pick[0].into) continue;
+    try { if (door(r, sha)) continue; } catch { continue; }
     pick.push({ id: r.id, branch: r.branch, lane: r.lane, sha, into: r.into, staged: !!live });
     if (pick.length >= cfg.batch_max) break;
   }
@@ -335,6 +338,12 @@ function fixAsk(stateDir, rec, res, { cfg, git }) {
     run: ['run', '--executor', 'claude', '--lane', c.lane || c.branch.split('/').pop(), '--stage', 'fix-mq', '--brief', brief, '--notes', notes, '--worktree', wtPath || '<the lane worktree>', '--queue'] };
 }
 
+// RM-44 D7: the batch's merged result checked against its base at the door - a cycle, an unused name or a second copy of a helper
+// can exist only in the combination of clean branches. -> the open BLOCK findings (a waiver applied) of mq/batch-<n> at merge_tip
+export function batchSlop(stateDir, rec, { repo, tool, projectDir = null } = {}) {
+  return doorCheck({ state: stateDir, repo, branch: `mq/batch-${rec.n}`, head: rec.merge_tip, base: rec.base, projectDir, ...(tool ? { tool } : {}) }).open;
+}
+
 // a green prefix of k members -> the ONE MERGE stage brief for main (piece 4: an integration branch is pushed instead)
 function finish(stateDir, rec, k, { cfg, project, git }) {
   rec.merge_members = rec.members.slice(0, k);
@@ -350,6 +359,8 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
     if (p.code !== 0) rec.why = `push ${cfg.remote} ${rec.into} refused (it moved since the batch was built): rebuilt next pass`;
     return;
   }
+  const held = slopOn(project.policy) ? batchSlop(stateDir, rec, { repo: cfg.repo, projectDir: project.project_dir }) : [];
+  if (held.length) { rec.status = 'slop'; rec.slop = held.map(findingLine); return; }   // no MERGE brief: the combination is held
   rec.notes = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-NOTES.md`));
   rec.brief = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-brief.md`));
   const gl = [...rec.runs].reverse().find(r => r.ok && (r.prefix === rec.members.length || r.prefix === k));
@@ -363,7 +374,7 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
 
 // META-SLOP-A (Fable: Norn's own mess is fixed in Norn): a batch that landed or was abandoned leaves no mq/batch-<n> behind
 // (31 were left on 11-14). The scratch worktree is detached first: git refuses to delete a branch a worktree has checked out.
-const BATCH_OVER = new Set(['merged', 'stale', 'red', 'main-red', 'empty']);
+const BATCH_OVER = new Set(['merged', 'stale', 'red', 'main-red', 'empty', 'slop']);
 function dropBatchBranch(stateDir, rec, { cfg, git }) {
   if (!BATCH_OVER.has(rec?.status) || rec.branch_deleted) return;
   git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach'], { allowFail: true });
@@ -396,12 +407,16 @@ export async function mergeqRun(o = {}) {
     return r;
   } finally { clearInterval(hb); run.release(); }
 }
-async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), now = Date.now(), acquire = acquireLock, gateRunner = runGate, hbMs = 30000 } = {}) {
+async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), now = Date.now(), acquire = acquireLock, gateRunner = runGate, hbMs = 30000, cli = null, gh = null } = {}) {
   const skip = suiteMode(project) === 'skip';   // DIR-24: policy.merge.suite = skip -> no gate run (a bad value is refused here)
   locksDir ||= path.join(path.dirname(path.resolve(stateDir)), 'locks');
-  const out = { updates: updatePass({ stateDir, project, locksDir, git, now, acquire }), batch: null, fix: null, why: '' };
+  // auto-update pushes main into idle lane branches: only where the project opted into the merge queue (deliverables / merge set)
+  const out = { updates: project.deliverables || project.merge ? updatePass({ stateDir, project, locksDir, git, now, acquire }) : [], batch: null, fix: null, land: null, why: '' };
   const cfg = mergeConfig(project);
-  if (!cfg.gate?.fast) return { ...out, why: 'no fast merge gate declared (merge.gate.fast): no batch - one MERGE stage per branch, door work stays door work' };
+  if (!cfg.gate?.fast) {   // MERGE-FIRST (3): no batch - each stage-gated row lands by code (landing.mjs); a failure queues its MERGE
+    const land = await landPass({ stateDir, project, locksDir, rows: mergeQueue({ stateDir, project, now, git }).rows, cfg, git, gateRunner, cli, gh, now, hbMs });
+    return { ...out, land, why: `no fast merge gate declared (merge.gate.fast): no batch; land: ${land.why}` };
+  }
   const mq = loadMq(stateDir);
   if (mq.batching.off) return { ...out, why: `batching OFF since ${mq.batching.at}: ${mq.batching.why}` };
   const open = mq.n ? loadBatch(stateDir, mq.n) : null;
@@ -428,9 +443,12 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
         fixers = fixesMain(rows, { files: mainRedsOf(redBase).map(t => t.file), base: redBase.base, into: redBase.into, cfg, git });
         rows = [...rows.filter(r => fixers.includes(r.id)), ...rows.filter(r => !fixers.includes(r.id))];
       }
-      const pick = pickBatch(rows, { cfg, mq, stateDir, locksDir });
-      if (!pick.length) return { ...out, why: 'no batchable row (clean, fast-gated, not red at its sha)' };
+      const pick = pickBatch(rows, { cfg, mq, stateDir, locksDir, ...(slopOn(project.policy) ? {} : { door: () => 0 }) });
+      if (!pick.length) return { ...out, why: 'no batchable row (clean, fast-gated, slop-checked clean, not red at its sha)' };
       const key = ms => ms.map(m => `${m.id}@${m.sha}`).sort().join(' ');
+      // D7: the same members on the same base whose merged result slop held: not rebuilt (nor re-gated) while the hold stands
+      if (last?.status === 'slop' && key(pick) === key(last.members) && intoSha(cfg, last.into, git) === last.base && batchSlop(stateDir, last, { repo: cfg.repo, projectDir: project.project_dir }).length)
+        return { ...out, why: `batch-${last.n}'s merged result is held by slop (${last.slop.length} BLOCK): not rebuilt - fix a member or waive each finding (norn rec add waiver)` };
       if (redBase && !pick.some(p => fixers.includes(p.id)) && key(pick) === key(redBase.members)) {
         const files = [...new Set(mainRedsOf(redBase).map(t => t.file))];
         return { ...out, why: `${redBase.into} ${redBase.base.slice(0, 7)} is red under the gate (batch-${redBase.n}: ${files.join(', ') || 'the base gate log names no failing test file'}) and no queued row's diff touches those files: batch-${redBase.n}'s members are not rebuilt at the same base - fix ${redBase.into} or queue the branch that does` };
@@ -472,10 +490,12 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       writeJ(mqStateFile(stateDir), m2);
       if (res.green_prefix > 0) finish(stateDir, rec, res.green_prefix, { cfg, project, git });
       else rec.status = res.status === 'main-red' ? 'main-red' : 'red';
+      const slopHeld = rec.status === 'slop';
       rec.done_at = new Date().toISOString();   // the gate probe dates its facts by this
       writeJ(batchFile(stateDir, n), rec);
       dropBatchBranch(stateDir, rec, { cfg, git });   // red / main-red with no green prefix, or an integration push: over now
-      return { ...out, batch: rec, why: WHY[res.status](rec, m2) + (m2.batching.off ? `; batching now OFF: ${m2.batching.why}` : '') };
+      const why = slopHeld ? `batch-${n} gated green, its merged result HELD by slop: ${rec.slop.join('; ')}` : WHY[res.status](rec, m2);
+      return { ...out, batch: rec, why: why + (m2.batching.off ? `; batching now OFF: ${m2.batching.why}` : '') };
     } finally { clearInterval(hb); }
   } finally { slock.release(); }
 }
@@ -527,11 +547,14 @@ export function takeRunLock(stateDir) {
 }
 
 /**
- * The tick's step (tick.mjs, right after the fill): start `norn mergeq --run` detached for a project that follows deliverables, unless a
- * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests) }. Returns the tick-log words or null.
+ * The tick's step (tick.mjs, right after the fill): start `norn mergeq --run` detached for every project (MERGE-FIRST: each lands its work), unless a
+ * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests), leader (tick.mjs claimsPass: a synced home's merge
+ * leader state; none = not synced, the queue runs) }. RM-46 S6a: only the merge leader runs the queue. Returns the tick-log words or null.
  */
-export function tickMergeq(p, state, { metaCmd, spawnFn } = {}) {
-  if (!p?.file || !(p.deliverables || p.merge)) return null;
+export const mergeqOn = p => !!p?.file;
+export function tickMergeq(p, state, { metaCmd, spawnFn, leader } = {}) {
+  if (!mergeqOn(p)) return null;
+  if (leader && !leader.leader) return `mergeq: refused - ${leader.why}`;
   const live = mqRunning(state);
   if (live) return `mergeq: pass pid ${live.pid} running`;
   const args = [metaCmd, 'mergeq', '--run', '--project', p.file, '--state', state];

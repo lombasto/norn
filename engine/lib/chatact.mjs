@@ -13,8 +13,10 @@ import { loadState } from './records.mjs';
 import { realPath } from './config.mjs';
 
 export const APPROVAL_MS = 30 * 60000;   // SPEC sec. 3 tier 2: waits 30 min, then denies and pings you
-export const outboxDir = state => path.join(state, 'chat', 'outbox');
-export const approvalsDir = state => path.join(state, 'chat', 'approvals');
+export const chatDir = state => path.join(state, 'chat');
+export const threadFile = state => path.join(chatDir(state), 'thread.jsonl');
+export const outboxDir = state => path.join(chatDir(state), 'outbox');
+export const approvalsDir = state => path.join(chatDir(state), 'approvals');
 export class ActError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 
 // ---------- tiers ----------
@@ -26,7 +28,7 @@ export function tierOf(tool, a = {}) {
   if (READ.has(tool)) return 0;   // norn_approve is the tap itself: it decides nothing, the owner does
   if (tool === 'norn_run_show') return a.ask !== undefined ? 1 : 0;   // an ask is a paid run, as a check-in may start
   if (tool === 'norn_settings') return a.set && !a.dry_run ? 2 : 0;
-  if (tool === 'norn_pause') return 2;
+  if (tool === 'norn_pause') return a.half ? 0 : 2;   // RM-37: pause half's pick only reads
   if (tool === 'norn_cli') return cliPlan(a.args).tier;
   return ACT.has(tool) ? 1 : 3;
 }

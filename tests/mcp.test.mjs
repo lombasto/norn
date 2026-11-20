@@ -213,9 +213,9 @@ test('prompts: controller + checkin packs; norn_boot returns the pack and a stat
   assert.deepEqual(boot.structuredContent.digest.running, []);
   assert.equal(boot.structuredContent.digest.digest.questions.length, 1, 'NORN-WATCH S1: the resume digest beside needs_you');
   assert.match(text(boot), /Ended without a clean successor/);
-  await m.tool('norn_pause', { on: true });
+  await m.tool('norn_pause', { mode: 'all' });
   assert.ok(fs.existsSync(path.join(s, 'PAUSED')));
-  await m.tool('norn_pause', { on: false });
+  await m.tool('norn_pause', { resume: 'all' });
   assert.ok(!fs.existsSync(path.join(s, 'PAUSED')));
   await m.close();
   const c = server(['--state', s, '--profile', 'checkin']); await c.init();

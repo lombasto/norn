@@ -1,0 +1,44 @@
+{
+  "id": "K17",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "a new TODO / FIXME / HACK / XXX comment",
+  "how": "the upper-case markers in comments (the word todo as data or a status is not one)",
+  "explain": {
+    "what": "A new comment has a TODO, FIXME, HACK or XXX marker.",
+    "why": "A marker in the code is a task that no list tracks. It stays in the code long after anyone remembers it.",
+    "fix": "Do the work now, or record it (`norn road add` or a record) and delete the marker."
+  },
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ],
+  "in": [
+    "comment"
+  ],
+  "patterns": [
+    "\\b(?:TODO|FIXME|HACK|XXX)\\b"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// TODO: wire the retry\nexport const a = 1; /* FIXME later */\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "export const state = 'TODO';\n// the todo list is read from the board\nexport const a = 1;\n"
+      }
+    }
+  }
+}

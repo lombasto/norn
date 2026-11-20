@@ -1,0 +1,46 @@
+{
+  "id": "K11",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "a new compatibility shim, by its words",
+  "how": "phrases (not single words) that describe keeping an old form alive, in comments and strings: old name, keeps resolving, still accepted, for old links, folds into, falls back to. CLAUDE.md: change every caller and delete the old form",
+  "explain": {
+    "what": "A comment or a string uses words that describe keeping an old form alive: old name, still accepted, falls back to, for old links.",
+    "why": "A compatibility shim keeps old behaviour working after a rename. It is tech debt: two ways stay alive, and nobody knows when the old one may go (CLAUDE.md, No compatibility shims).",
+    "fix": "Change every caller, link, test and doc to the new form, and delete the old one. If the words describe something else, reword them."
+  },
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "tests/**",
+    "**/vendor/**"
+  ],
+  "in": [
+    "comment",
+    "string"
+  ],
+  "patterns": [
+    "\\b(?:[Oo]ld names?|keeps? resolving|still accepted|for old links|folds? into|falls? back to)\\b"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// the old name keeps resolving for old links\nexport const MSG = 'the --tab flag is still accepted';\nexport const a = 1;\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// a rename changes every caller\nexport const oldName = 1;\n// \"falls back to\" is a phrase this rule reads\nexport const a = 1;\n"
+      }
+    }
+  }
+}

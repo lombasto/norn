@@ -1,6 +1,6 @@
 // The detached run SUPERVISOR (META-GENERAL-DESIGN D7): `node supervisor.mjs <spec.json>`, started by runs.startRun.
 // Spawns the executor, refreshes heartbeat + worktree lock every hbMs, records exit + outcome + usage, does the HANDOFF
-// auto-resume (policy cadence auto_resume_handoff / auto_resume_max, PAUSED, weekly guard), classifies usage-limit exits (outcome
+// auto-resume (policy cadence auto_resume_handoff / auto_resume_max, weekly guard; a pause holds it queued, a paused hand-off waits for the owner), classifies usage-limit exits (outcome
 // limit, re-queued after the reset; META-GT12), fills the run queue, triggers the tick on exit.
 // Port of meta/worker-run.ps1 + the launch half of codex-impl.sh. Never prompts; every failure ends as a recorded event.
 import fs from 'node:fs';
@@ -22,14 +22,18 @@ import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
+import { syncStep } from './sync.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
 import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
+import { pauseOf } from './pause.mjs';
+import { readPause, holdsStarts } from './pausemode.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
+import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
@@ -189,6 +193,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (outcome === 'stopped') data.why = byResult?.why;
   if (nudging) data.nudge = nudging.mail.id;
   if (ctxForced) data.ctx_forced = ctxForced;
+  // RM-37: a HANDOFF after the owner's pause order (to this run, or to the session its nudge resumed) is a paused hand-off: never auto-resumed
+  if (outcome === 'handoff') { try { const pz = pauseOf(state, run, spec); if (pz) data.paused = { mail: pz.mail, ...(pz.why ? { why: pz.why } : {}) }; } catch (e) { logLine(`pause order not read: ${e.message}`); } }
   if (signal) data.signal = signal;
   if (error) data.error = error;
   // NORN-WATCH S5 evidence: an exit no `norn stop` explains, the worktree's uncommitted state, the branch + head it ended on
@@ -208,6 +214,12 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
         if (fs.existsSync(t)) { data.transcript = t.replace(/\\/g, '/'); break; }
       }
     } catch { /* no projects dir */ }
+  }
+  // RM-44 D1: every lane run end that leaves commits is checked (stopped and hand-off too) - slop before the Done check
+  const slopOpen = slopEnd();
+  // WORK-SIZING S1: the session's size on its end record, so the run stays judged after its transcript is gone (sizing.mjs)
+  if (data.transcript && cmd?.parse === 'claude') {
+    try { const s = sizeOfRun(data.transcript, { notesDir: spec.notes ? path.dirname(spec.notes) : null }); if (s) data.ctx = s; } catch (e) { logLine(`session size: ${e.message}`); }
   }
   // META-DOD 1 (DIR-68): a DONE counts only on Norn's own green Done check (dod.mjs) - the agent's words are never the evidence.
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
@@ -242,6 +254,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // GTP-LEDGER: the run end (after its `end` record) is a ledger commit; a failure is logged, never the run's
   if (spec.git_ledger) { try { const n = ledgerStep(spec.git_ledger, `run end ${run} (${outcome})`); if (n) logLine(n); } catch (e) { logLine(`ledger: failed: ${e.message}`); } }
+  // RM-46 S1c (SPEC 4.1): the run end publishes home/<id> too (sync off = null; syncStep never throws)
+  if (spec.git_ledger) { const n = syncStep(spec.git_ledger, `run end ${run}`); if (n) logLine(n); }
   try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
   for (const lf of lockFiles) releaseLock(lf, run);
   try { const gone = stopOrphans(state); if (gone.length) logLine(`helpers stopped with the parent: ${gone.join(', ')}`); } catch (e) { logLine(`helper stop failed: ${e.message}`); }
@@ -250,10 +264,9 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (auth) authExit(auth, data);
   if (spec.kind === 'checkin' && spec.fallback && (outcome !== 'done' || !(read(spec.final) || '').trim())) fallback(outcome === 'done' ? 'no final' : outcome);
   let resumed = false;
-  if (outcome === 'handoff') resumed = autoResume(data.handoff);
+  if (outcome === 'handoff') resumed = data.paused ? pausedEnd() : autoResume(data.handoff);
   else if (outcome === 'nudged') resumed = nudgeResume();
-  else if (outcome === 'done') resumed = slopEnd();
-  else if (data.dod?.ok === false) resumed = dodEnd(data.dod);
+  else if (outcome === 'done' || data.dod?.ok === false) resumed = fixEnd(slopOpen, data.dod);
   if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
   if (!resumed) dropMergeWt(outcome);
   try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
@@ -343,50 +356,66 @@ function fallback(why) {
   } catch (e) { logLine(`gate baseline not moved: ${e.message}`); }
 }
 
+// RM-37: the owner paused this run - its hand-off waits for `norn resume RUN-n`: no verdict here (a run takes ONE resume verdict, and the
+// owner's resume records it: pause.mjs resumeRun); the end record's `paused` says why it waits
+function pausedEnd() {
+  logLine(`paused hand-off: not auto-resumed (norn resume ${run})`);
+  return false;
+}
+
 function autoResume(handoff) {
   let { refused, count, max } = autoResumeRefusal(spec, state);   // one home with the lost relaunch (runs.mjs)
-  let next = null, spawned = null;
+  let next = null, spawned = null, held = null;
   if (!refused) {
     try {
       // a HANDOFF is a fresh agent on the same brief: never the nudged session or its mail prompt (META-GTP-MAIL)
       const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, resumeSid: _rs, nudge: _n, ...rest } = spec;
       if (spec.nudge) delete rest.promptText;
-      ({ run: next, spawned } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));
+      ({ run: next, spawned, why: held } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));   // a pause holds it queued (held = why)
     } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   }
-  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, count: count + 1, max } : { refused, count, max } }); }
+  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, count: count + 1, max, ...(held ? { held } : {}) } : { refused, count, max } }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
-  logLine(next ? `auto-resume -> ${next} (${count + 1}/${max}) ${spawned}` : `auto-resume refused: ${refused}`);
+  logLine(next ? `auto-resume -> ${next} (${count + 1}/${max}) ${held ? `queued, ${held}` : spawned}` : `auto-resume refused: ${refused}`);
   if (next && spec.ledger) {
     const utc = new Date().toISOString().replace(/:\d\d\.\d+Z$/, 'Z');
-    try { fs.appendFileSync(spec.ledger, `- auto ${utc}: lane ${spec.lane} HANDOFF -> auto-resumed (${count + 1}/${max}, same brief, ${spec.executor} ${spec.model ?? '-'} ${spec.effort ?? '-'}) ${next}\n`); }
+    try { fs.appendFileSync(spec.ledger, `- auto ${utc}: lane ${spec.lane} HANDOFF -> auto-resumed (${count + 1}/${max}, same brief, ${spec.executor} ${spec.model ?? '-'} ${spec.effort ?? '-'}) ${next}${held ? ` (queued, ${held})` : ''}\n`); }
     catch (e) { logLine(`ledger append failed: ${e.message}`); }
   }
   return !!next;
 }
 
-// META-SLOP-A (REVIEW-FABLE 3): the run-end backstop. A lane run ending DONE is checked on its branch's diff against main; open
-// BLOCK findings (no waiver) hold the branch's merge and go back to the SAME lane once, as a resume with the list (the same session
-// where the executor resumes by flag). The resumed run is never resumed again for slop: a second BLOCK is the check-in's to decide.
+// META-SLOP-A (REVIEW-FABLE 3) + RM-44 D1: the run-end check. Every lane run end whose branch has commits past main is checked on its
+// diff, whatever the outcome (an unchecked end read as clean and let PR #11's cycle through); the check is stored (checks.jsonl) and
+// its open BLOCK findings (no waiver) hold the branch's merge. -> the open findings ([] = none, or not checked)
 function slopEnd() {
-  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return false;
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
   let c;
-  try { c = checkBranch({ repo: spec.worktree, state }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return false; }
-  if (!c) return false;   // no lane branch (on main, detached, no main to diff against)
-  const write = resumed => hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, blocks: c.result.blocks, findings: c.result.findings, resumed });
-  const open = write(null).open;
+  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
+  if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
+  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
   logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
-  if (!open.length) return false;
-  if (spec.slopOf) { logLine(`slop: BLOCK again after the slop resume of ${spec.slopOf}: no second resume, the check-in decides`); return false; }
+  return open;
+}
+
+// a DONE with open slop findings and / or a red Done check goes back to the SAME lane ONCE, as one resume carrying both lists (slop
+// first, the order they ran; the same session where the executor resumes by flag). A list its own resume already carried is not
+// sent again: a second BLOCK / a second red is the check-in's to decide.
+function fixEnd(open, d) {
+  const slop = open.length && !spec.slopOf ? open : [], dod = d?.ok === false && !spec.dodOf ? d : null;
+  if (open.length && spec.slopOf) logLine(`slop: BLOCK again after the slop resume of ${spec.slopOf}: no second resume, the check-in decides`);
+  if (d?.ok === false && spec.dodOf) logLine(`dod: red again after the Done resume of ${spec.dodOf}: no second resume, the check-in decides`);
+  if (!slop.length && !dod) return false;
   let next = null, refused = null;
   try {
     const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
-    next = startRun({ ...rest, resumeOf: run, slopOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: slopPrompt(open, spec.brief) }).run;
+    const promptText = [...(slop.length ? [slopPrompt(slop, null)] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
+    next = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText }).run;
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
-  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, slop: open.length } : { refused, slop: open.length } }); }
+  const what = { ...(slop.length ? { slop: slop.length } : {}), ...(dod ? { dod: dod.why } : {}) };
+  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, ...what } : { refused, ...what } }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
-  if (next) write(next);
-  logLine(next ? `slop: resumed ${next} with ${open.length} BLOCK finding(s)` : `slop: resume refused: ${refused}`);
+  logLine(next ? `resumed ${next} with ${slop.length ? `${slop.length} slop BLOCK finding(s)` : ''}${slop.length && dod ? ' and ' : ''}${dod ? "the Done check's evidence" : ''}` : `resume refused: ${refused}`);
   return !!next;
 }
 
@@ -403,20 +432,6 @@ function critiqueEnd() {
 // META-DOD 1: the Done check applies to a lane work run whose brief passed the Ready gate (spec.dod.ready, norn run)
 function dodOn() {
   return !!spec.dod?.ready && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly && !killedByMeta();
-}
-// a red Done check goes back to the SAME lane once, as a resume with the evidence (the slopEnd pattern); the resumed run is never
-// resumed again for it: a second red stays STOPPED and is the check-in's to decide
-function dodEnd(d) {
-  if (spec.dodOf) { logLine(`dod: red again after the Done resume of ${spec.dodOf}: no second resume, the check-in decides`); return false; }
-  let next = null, refused = null;
-  try {
-    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
-    next = startRun({ ...rest, resumeOf: run, dodOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: dodPrompt(d, spec.brief) }).run;
-  } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
-  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, dod: d.why } : { refused, dod: d.why } }); }
-  catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
-  logLine(next ? `dod: resumed ${next} with the Done check's evidence` : `dod: resume refused: ${refused}`);
-  return !!next;
 }
 
 // ---------- META-GTP-MAIL piece 3: NUDGE (GT-PARITY-PLAN 2.7; Gas Town internal/cmd/nudge.go:49-68,267-291, internal/nudge/queue.go:68-92
@@ -437,7 +452,7 @@ function nudgeCheck() {
   try { due = nudgeDue(state, { run, afterMin: afterMin(), quiet: spec.quiet, gpuLock: spec.gpu_lock }); }
   catch (e) { nudgeWait(`mail not readable: ${e.message}`); return; }
   if (!due) return;
-  const why = due.wait || ((spec.paused || []).some(f => fs.existsSync(f)) ? 'paused' : null) || usageRefusal(spec, state, { rate: false });
+  const why = due.wait || (holdsStarts(readPause(spec.paused)) ? 'paused' : null) || usageRefusal(spec, state, { rate: false });
   if (why) { nudgeWait(`${why} (${due.mail.id})`); return; }
   try { record(state, { kind: 'mail', ev: 'nudge', id: due.mail.id, by: 'launcher', data: { run } }, { run }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`nudge ${due.mail.id} not claimed: ${e.message}`); return; }   // acked meanwhile

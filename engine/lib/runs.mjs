@@ -7,13 +7,13 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runSteps, runStepsAsync } from './steps.mjs';
-import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal } from './records.mjs';
+import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId, homeOf } from './records.mjs';
 import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
-import { writeQueueView } from './views.mjs';
+import { writeQueueView, sleepMs } from './views.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
 import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
@@ -24,13 +24,18 @@ import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
 import { scopeHookOf, scopeSettings, scopeOnFor } from './scope.mjs';
-import { specPolicy } from './ctxlimit.mjs';
+import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
 import { withCrew, pickDwarf, readCrew, crewState, projectOf, CrewError } from './crew.mjs';
+import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
+import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
+import { ClaimsError } from './claimsref.mjs';
+import { parseReady } from './ready.mjs';
+import { syncPolicy, POLICY_DEFAULTS } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -93,14 +98,13 @@ export function renameRetry(t, f, tries = 40) {
 // Windows sharing / delete-pending errors on a lock or flag file are transient (graceful-fs's EPERM practice, as renameRetry): retried
 // on the monotonic clock up to STALE_MS, then thrown - a caller logs it; never a silent lost wakeup (META-OOTB-FIX FLOW-STALL)
 const TRANSIENT = ['EPERM', 'EACCES', 'EBUSY'];
-const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function retryTransient(fn, what) {
   const t0 = performance.now();
   for (;;) {
     try { return fn(); } catch (e) {
       if (!TRANSIENT.includes(e.code)) throw e;
       if (performance.now() - t0 > STALE_MS) throw new RunError(`${what}: ${e.code} for ${STALE_MS} ms`);
-      sleepSync(25);
+      sleepMs(25);
     }
   }
 }
@@ -241,6 +245,18 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
   const lost = [];
   const t = now().getTime(), bt = boot();
   for (const it of runsOf(state)) {
+    // a stall swept as lost (cause stale) whose heartbeat is fresh again and whose supervisor lives: alive, so its own end is accepted
+    // (2026-11-18: a machine busy starting processes let heartbeats fall 210-297 s behind; five live runs read lost and would have
+    // lost their end records). Certain deaths (DEAD_CAUSES) are never revived here.
+    if (it.state === 'lost' && it.lost?.cause === 'stale' && it.data.kind !== 'interactive') {
+      const { age, has } = hbAge(state, it, t), hb = has ? readJson(hbPath(state, it.id)) : null;
+      const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
+      if (has && age <= staleMs && t - age > lostAt && hb && !gone(hb.supervisor_pid)) {
+        try { record(state, { kind: 'run', ev: 'alive', id: it.id, by, data: { why: `heartbeat ${Math.round(age / 1000)} s old again (lost for a stale heartbeat at ${new Date(lostAt).toISOString().slice(11, 19)}Z); supervisor pid ${hb.supervisor_pid} alive` } }); }
+        catch (e) { if (!(e instanceof RecordError)) throw e; }
+      }
+      continue;
+    }
     if (it.state !== 'running' || it.data.kind === 'interactive') continue;
     const { age, has } = hbAge(state, it, t);
     const hb = has ? readJson(hbPath(state, it.id)) : null;
@@ -255,10 +271,11 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
   }
   return lost;
 }
-/** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, PAUSED, the weekly guard) for a run's spec -> { refused | null, count, max } */
+/** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, the weekly guard) for a run's spec -> { refused | null, count, max }.
+ * RM-37: a pause never refuses it - startRun queues the resume while a pause holds starts (pausemode.mjs), and the fill starts it on release */
 export function autoResumeRefusal(spec, state) {
   const pol = spec.policy || {}, count = spec.resumes || 0, max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
-  const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}` : (spec.paused || []).some(f => fs.existsSync(f)) ? 'paused'
+  const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}`
     : usageRefusal(spec, state, { rate: false });   // the weekly guard (one home with the queue fill: usageguard.mjs)
   return { refused: refused || null, count, max };
 }
@@ -377,7 +394,8 @@ export function laneWriter({ state, locksDir, lane, worktree, staleMs = STALE_MS
 
 // a check-in is not a worker: it never counts against (or is refused by) the worker caps
 // the first full cap of run spec o as a refusal message, or null (room in every cap)
-function capFull(o, staleMs, extra = []) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
+// reserve (MERGE-FIRST, policy.fill.merge_reserve): the slots of each cap a non-landing run must leave free while a landing run waits
+function capFull(o, staleMs, extra = [], reserve = 0) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
   if (o.kind === 'checkin') return null;
   const typed = !EXECUTORS[o.executor];
   const capOf = k => (Number.isInteger(o.budget?.[k]) ? o.budget[k] : typed ? capDefault(o.provider) : null);  // a typed executor always has a cap
@@ -387,6 +405,7 @@ function capFull(o, staleMs, extra = []) {   // extra: run data that would start
   for (const k of caps) {
     const n = live.filter(it => capsOfRun(it.data).includes(k)).length;
     if (n >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}`;
+    if (reserve > 0 && n + reserve >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}: ${reserve} slot(s) kept for the queued merges (fill.merge_reserve)`;
   }
   return null;
 }
@@ -465,6 +484,23 @@ function withEpic(o) {
   if (!o.epic || !isNew(o)) return o;
   try { return { ...o, priority: o.priority ?? openEpic(o.state, o.epic).data.priority }; } catch (e) { if (e instanceof EpicError) throw new RunError(e.message); throw e; }
 }
+// MERGE-FIRST (owner 11-19: "prioritize merging so we don't end up with some huge backlog of finished but unmerged work"; 11 merges
+// waited at the default P2 while P0 / P1 build work passed them): a LANDING run - a MERGE, or the resolve run that brings a branch up
+// to main - runs at the priority of the work it lands (the newest other run of its lane; none = the default P2), never below P1.
+// A priority given (--priority, a re-queue's) is raised to P1 the same way: no landing run waits behind the default.
+export const LANDING_FLOOR = 'P1';
+export const isLandingStage = stage => isMergeStage(stage) || String(stage ?? '').toLowerCase() === 'resolve';
+const higher = (a, b) => PRIORITIES[Math.min(PRIORITIES.indexOf(a), PRIORITIES.indexOf(b))];
+/** the priority of the work a landing run of lane lands: its newest non-landing run's (no priority = the default) */
+export function workPriority(runs, lane) {
+  const w = runs.filter(r => r.kind === 'run' && r.data.lane === lane && r.data.kind !== 'checkin' && !isLandingStage(r.data.stage))
+    .sort((a, b) => Number(b.id.slice(4)) - Number(a.id.slice(4)))[0];
+  return PRIORITIES.includes(w?.data.priority) ? w.data.priority : DEFAULT_PRIORITY;
+}
+export function landingPriority(o) {
+  if (!isLandingStage(o.stage) || o.kind === 'checkin') return o;
+  return { ...o, priority: higher(o.priority ?? (o.state ? workPriority(runsOf(o.state), o.lane) : DEFAULT_PRIORITY), LANDING_FLOOR) };
+}
 
 // META-ONBOARD cut-over: <state root>/SWAP.lock (written by onboard-cutover.mjs --apply for its swap steps, < 2 min) holds NEW starts:
 // a start waits while it is fresh (swapWaitMs, default 5 min), then refuses with code 4 (a --queue start queues). A lock older than
@@ -486,7 +522,7 @@ function swapWait(o) {
 // before the hold is the launcher's, not the check-in's, and goes on
 export function heldRefusal(state, lane, caller, now = Date.now()) {
   if (caller !== 'checkin' || !lane) return;
-  const h = holdOf(fold(readEvents(recordsFile(state, 'lane'))).items['L:' + lane], now);
+  const h = holdOf(fold(readEvents(recordsFile(state, 'lane'))).items[laneId(lane, state)], now);
   if (h) throw new RunRefused(holdMessage(h), HELD_EXIT);
 }
 // META-CHECKIN-GUARDS R1 guard A (checkinguards.busyRefusal, the replay grader's too): a check-in's new run (start or --queue) on a
@@ -503,10 +539,83 @@ export function busyDoor(o) {
 }
 // the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
 const noCaller = ({ caller: _c, ...o }) => o;
+
+// ---------- RM-46 S2b (multi-home SPEC 4.4): the work claim at dispatch ----------
+// Every dispatch path (norn run, the fill, check-in stage runs, relaunchLost, resumes) passes startRun, so claimDoor is the one hook:
+// after the cheap local refusals, before the worktree lock. Only a synced project (home.json) with a ledger remote claims, and only a
+// lane run that writes. Exempt: check-ins, helpers (the parent's claim covers them), audits, talks, plan reviews, read-only runs, and
+// MERGE stages (leaderDoor: the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
+// and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
+export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
+const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
+const gitOut = (cwd, args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }); return r.status === 0 ? r.stdout.trim() : null; };
+/** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main) */
+export function touchedOf(worktree) {
+  const wt = worktree && fs.existsSync(worktree) ? worktree : null, base = wt && gitOut(wt, ['merge-base', 'HEAD', 'origin/main']);
+  return base ? (gitOut(wt, ['diff', '--name-only', base]) || '').split('\n').filter(Boolean) : [];
+}
+// the open roadmap items linking one of `links`, from the item events (roadmap.mjs imports runs.mjs: its fold here would close a cycle)
+function laneItems(events, links) {
+  const L = {}, open = {};
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.kind !== 'item') continue;
+    const d = e.data || {};
+    if (e.ev === 'create') { L[e.id] = new Set(d.links || []); open[e.id] = true; }
+    if (!L[e.id]) continue;
+    if (e.ev === 'link') for (const x of d.links || []) L[e.id].add(x);
+    if (e.ev === 'unlink') for (const x of d.links || []) L[e.id].delete(x);
+    if (e.ev === 'drop' || e.ev === 'reopen') open[e.id] = e.ev === 'reopen';
+  }
+  return Object.keys(L).filter(id => open[id] && links.some(l => L[id].has(l)));
+}
+/** the work claim of a launch: branch + touched from its worktree (merge-base with origin/main), scope from its brief's Scope: line
+ *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others) */
+export function workOf(o, home, project) {
+  const wt = o.worktree && fs.existsSync(o.worktree) ? o.worktree : null, br = wt && gitOut(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), touched = touchedOf(wt);
+  let scope = [], items = [];
+  try { scope = parseReady(fs.readFileSync(o.brief, 'utf8')).scope; } catch { /* no brief file: the whole repo */ }
+  const links = [`lane:${home}/${o.lane}`, `lane:${o.lane}`];
+  try { items = laneItems(readEvents(recordsFile(o.state, 'item')), links); } catch { /* no roadmap yet: no items to claim */ }
+  return { project, home, lane: o.lane, branch: br && br !== 'HEAD' ? br : null, items, scope, touched, run: o.resumeOf ?? null };
+}
+/** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
+export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
+/** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else RunRefused 3 */
+function leaderDoor(o) {
+  const f = homeOf(o.state) ? fedOf(o.git_ledger) : null;
+  if (!f) return;
+  const why = leaderWhy(o.state, f, { project: path.basename(path.resolve(o.state)), now: o.now ?? Date.now(), pol: syncPolicy(specPolicy({ ctx_from: policySource(o) })) });
+  if (why) throw new RunRefused(`MERGE: ${why} - this home only opens PRs`, 3);
+}
+/** the claim of launch o: null (exempt / not synced) | { key, n } (won) - throws RunRefused 3 (item / branch) or ClaimHeld (wait queued) */
+export function claimDoor(o) {
+  if (o.stage === 'MERGE') leaderDoor(o);
+  if (claimExempt(o)) return null;
+  const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
+  if (!f) return null;
+  const now = o.now ?? Date.now(), project = path.basename(path.resolve(o.state)), pol = syncPolicy(specPolicy({ ctx_from: policySource(o) }));
+  const me = workOf(o, home, project), key = workKey(project, home, me.lane), opts = { lease_s: pol.lease_s, now };
+  let r;
+  try {
+    r = claimWork(f, me, opts);
+    // an unchanged own claim starts without network only while it is not fenced (a renew landed within fence_s on this clock); else
+    // one renew confirms it - or finds it taken over, and this dispatch claims afresh
+    const mine = readSync(o.state, 'own')[key];
+    if (r.won && r.again && !(mine?.nonce === r.claim.nonce && now - mine.confirmed_ms <= pol.fence_s * 1000)) {
+      const rn = renewWork(f, { [key]: { nonce: r.claim.nonce } }, { now });
+      r = !rn.ok ? { queued: true, why: rn.why } : rn.renewed[key] ? { won: true, key, n: rn.renewed[key], claim: { ...r.claim, n: rn.renewed[key] } } : claimWork(f, me, { ...opts, precheck: false });
+    }
+  } catch (e) { if (e instanceof ClaimsError) throw new RunRefused(`claim: ${e.message}`, 3); throw e; }
+  if (r.refused) throw new RunRefused(`claim: ${r.why}`, 3);
+  if (!r.won) throw new ClaimHeld(`claim: ${r.why}`, r.hit?.home ?? null);
+  updateSync(o.state, 'own', m => ({ ...m, [key]: { project, home, lane: me.lane, nonce: r.claim.nonce, n: r.n, confirmed_ms: r.again ? m[key]?.confirmed_ms ?? now : now } }));
+  if (o.fromQueue) noteClaimHold(o.state, o.fromQueue, null);
+  return { key, n: r.n };
+}
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = mergeSpec(withFloor(withEpic(noCaller(o))));
+  o = mergeSpec(withFloor(landingPriority(withEpic(noCaller(o)))));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
@@ -516,6 +625,12 @@ export function startRun(o) {
   if (o.labels?.length && !o.fromQueue && !o.claim_of) {   // META-GTP-FED piece 1: a labelled run always queues; the fill here or a node serving its labels starts it (a node's claimed run starts in place)
     const { queue: _q, ...rest } = o;
     return { ...queueRun(rest), queued: true, why: `labels ${o.labels.join(',')}: started by a machine that serves them` };
+  }
+  // RM-37: while a pause holds starts (Hold the queue / Pause everything) new work and hand-off resumes wait queued, never refused;
+  // a resume (a continuation) goes ahead of new work, merges first (pausemode.mjs heldPriority). A check-in and a helper are not held here.
+  if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {
+    const ph = readPause(o.paused);
+    if (holdsStarts(ph)) { const { queue: _q, ...rest } = o; return { ...queueRun(o.resumeOf ? { ...rest, priority: heldPriority(rest) } : rest), queued: true, why: `held: ${ph.label} (${ph.file})` }; }
   }
   if (o.queue) {   // META-GT12: a full cap queues the run instead of refusing it (a held worktree still refuses: exit 3)
     const { queue: _q, ...rest } = o;
@@ -544,6 +659,13 @@ export function startRun(o) {
   sweepLost(o.state, { staleMs, by: 'launcher' });
   const mr = mergeStageRefusal(o, staleMs);
   if (mr) throw new RunRefused(mr, 3);
+  let claim;   // RM-46 S2b: the work claim, last before the worktree lock; a direct dispatch it holds waits queued, a fill's stays queued
+  try { claim = claimDoor(o); } catch (e) {
+    if (!(e instanceof ClaimHeld) || o.fromQueue) throw e;
+    const q = queueRun(o);
+    noteClaimHold(o.state, q.run, e);
+    return { ...q, queued: true, why: e.message };
+  }
   if (o.lock === false && o.kind !== 'checkin') helperLockCheck(o);
   let lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
   try {
@@ -556,7 +678,9 @@ export function startRun(o) {
     const session_id = o.resumeSid || (info.harness === 'claude' || info.harness === 'fake' ? crypto.randomUUID() : null);
     const resumes = o.resumes || 0;
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
-    const ev = withDwarf(o, info, staleMs, dwarf => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), dwarf, log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined }) }));
+    // WORK-SIZING S1: the context marks the run starts under, on its record (enforcement still reads the live policy: ctxlimit.mjs)
+    const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
+    const ev = withDwarf(o, info, staleMs, dwarf => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), dwarf, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
@@ -634,7 +758,7 @@ export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
   o = { ...o, budget_file: path.resolve(o.budget_file ?? machineBudgetFile()) };   // GAP-2: the fill reads this file, never a copy
-  o = mergeSpec(withFloor(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) }))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
+  o = mergeSpec(withFloor(landingPriority(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) })))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
@@ -651,13 +775,16 @@ export function queueRun(o) {
 }
 // META-GTP-DAG piece 4: the fill order is priority (P0 first), then FIFO. A run with no priority ranks as P2 - the beads default
 // (Gas Town `bd create`, priorities 0-4, default 2) - so a queue with no priorities keeps exactly the old FIFO order.
+// MERGE-FIRST: land before start - a landing run outranks the other runs of its own priority and of one level above (a P1 MERGE
+// goes before a P0 build, a P0 MERGE before everything), so finished work reaches main before new work takes the slot.
 export const DEFAULT_PRIORITY = 'P2';
 const rank = r => PRIORITIES.indexOf(PRIORITIES.includes(r.data.priority) ? r.data.priority : DEFAULT_PRIORITY);
-/** The queued runs of a fold's run items in fill order (priority, then oldest first), with their 1-based position in it (pure).
+const fillKey = r => 2 * rank(r) - (isLandingStage(r.data.stage) ? 3 : 0);
+/** The queued runs of a fold's run items in fill order (priority, landing first, then oldest first), with their 1-based position in it (pure).
  * pins (crew.mjs lanePins): a pinned lane's row names the dwarf who takes it; no other queued row has a dwarf (it is picked at the start) */
 export function queueOf(runs, pins = {}) {
-  return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => rank(a) - rank(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
-    .map((r, i) => ({ id: r.id, dwarf: pins[r.data.lane] ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null,
+  return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => fillKey(a) - fillKey(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
+    .map((r, i) => ({ id: r.id, dwarf: pins[r.data.lane] ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
       executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
       after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null, labels: r.data.labels ?? [] }));
 }
@@ -699,7 +826,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
       if (h === 'live') return false;   // another filler is at it
       if (h === 'stale') { try { io.unlinkSync(lockFile); } catch { /* another breaker / pending: the next read says */ } }
       if (performance.now() - t0 > STALE_MS) throw new RunError(`queue fill: ${fwd(lockFile)} not acquired in ${STALE_MS} ms (${h})`);
-      if (h === 'pending') sleepSync(25);
+      if (h === 'pending') sleepMs(25);
     }
   };
   // FLOW-STALL window (iii): a swallowed unlink failure left a holder-less fresh lock - every filler lost for STALE_MS
@@ -729,7 +856,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
         started.push(...fillPass(state, at, res, authProbe));
         onPass?.();
       } while (flagged());
-      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
+      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
     } finally { release(); }
     if (!flagged()) return started;
   }
@@ -755,7 +882,10 @@ function fillPass(state, now, resources, authProbe) {
   walkQueue(state, { now, resources, authProbe, act: {
     withdraw,
     hold,
-    start: (q, spec) => { homeClaim(state, q, spec); return startRun({ ...atFill(spec), fromQueue: q.id }).run; },
+    start: (q, spec) => {
+      homeClaim(state, q, spec);
+      try { return startRun({ ...atFill(spec), fromQueue: q.id }).run; } catch (e) { if (e instanceof ClaimHeld) noteClaimHold(state, q.id, e); throw e; }   // RM-46 S2b: stays queued, the digest names the holder
+    },
     started(q, next) {
       record(state, { kind: 'run', ev: 'fill', id: q.id, by: 'launcher', data: { next } });
       started.push({ queued: q.id, next });
@@ -817,7 +947,9 @@ function homeClaim(state, q, spec) {
 // META-GTP-DAG piece 5 (Gas Town internal/daemon/pressure.go:31-91 - a no-op on Windows there, pressure_windows.go:3-9; ours works on
 // Windows): a run whose spec carries policy.fill (the CLI resolves project policy.fill over FILL_DEFAULTS into every run) waits while free
 // RAM < min_free_gb or CPU busy > max_cpu_pct. CPU busy = 1 - idle / total of the os.cpus() time deltas over 1 s (sync).
-export const FILL_DEFAULTS = { min_free_gb: 4, max_cpu_pct: 90 };
+// merge_reserve (MERGE-FIRST): while a landing run is queued and could start (no unmet after:, no future not_before), the other
+// runs leave this many slots of each cap free for it
+export const FILL_DEFAULTS = { min_free_gb: 4, max_cpu_pct: 90, merge_reserve: POLICY_DEFAULTS.fill.merge_reserve };
 /** { free_gb, cpu_pct } now: os.freemem() and the os.cpus() deltas over ms; env META_FILL_SAMPLE (that JSON) pins it (tests, a drill) */
 export function sampleResources({ ms = 1000 } = {}) {
   const pin = process.env.META_FILL_SAMPLE;
@@ -850,7 +982,11 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
   let E = null, R, L;
   const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
-  for (const q of queueOf(runsOf(state))) {
+  const queue = queueOf(runsOf(state));
+  // MERGE-FIRST: the landing runs that hold the merge reserve - queued, and not waiting on a condition or a clock (those may wait for hours)
+  const landing = new Set(queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now)
+    && !(q.after.length && !evalAll(q.after, (E ??= makeEval(state))).conds.every(c => c.met))).map(q => q.id));
+  for (const q of queue) {
     const row = { id: q.id, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
     rows.push(row);
     const gone = why => { row.withdraw = why; row.terms.push(`withdraw: ${why}`); act?.withdraw(q.id, why); };
@@ -866,8 +1002,8 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     let spec = readJson(queueSpecPath(state, q.id));
     if (!spec) { gone('queue spec missing'); continue; }
     try { spec = { ...spec, budget: liveBudget(spec) }; } catch (e) { row.terms.push(e.message); continue; }   // GAP-2: caps, usage guard, floor of NOW
-    const paused = (spec.paused || []).find(f => fs.existsSync(f));
-    if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
+    const paused = readPause(spec.paused);   // RM-37: Hold the queue / Pause everything hold every queued run; Pause check-ins none
+    if (holdsStarts(paused)) row.terms.push(pauseTerm(paused));
     const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;
     row.account = onAccount(info);   // GAP-1 (holds.mjs): "every queued Claude run held" counts the rows the usage guard applies to
     const usage = row.account ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)
@@ -888,14 +1024,15 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const served = spec.node_labels ?? [osLabel()], miss = unserved(q.labels, served);
     if (miss.length) { if (!row.terms.length) row.offer = true; row.terms.push(`labels ${miss.join(',')}: not served here (serves ${served.join(',')}) - a node serving them claims it`); continue; }
     if (row.terms.length) continue;   // the terms above wait without holding a cap for younger runs
-    const full = capFull(spec, staleMs, pending);
-    if (full) { row.terms.push(`cap: ${full}`); for (const k of caps) blocked.set(k, q.id); continue; }
+    const reserve = !isLandingStage(q.stage) && landing.size ? Math.max(0, Number({ ...FILL_DEFAULTS, ...(spec.policy?.fill || {}) }.merge_reserve) || 0) : 0;
+    const full = capFull(spec, staleMs, pending, reserve);
+    if (full) { row.terms.push(`cap: ${full}`); if (!full.includes('fill.merge_reserve')) for (const k of caps) blocked.set(k, q.id); continue; }   // a reserve refusal holds no cap
     const rr = resourceGate(spec, res);   // piece 5: machine pressure is global, so it holds no cap for later rows
     if (rr) { row.terms.push(rr); continue; }
     // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)
     { const a = authGate(spec, { now, probe: authProbe, dry: !act }); if (a) { row.terms.push(a); continue; } }
     row.ready = true;
-    if (!act) { pending.push(startFields(spec, info)); continue; }
+    if (!act) { pending.push(startFields(spec, info)); landing.delete(q.id); continue; }
     let next;
     try { next = act.start(q, spec); }
     catch (e) {
@@ -904,6 +1041,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
       gone(`error: ${e.message}`); continue;
     }
     act.started(q, next);
+    landing.delete(q.id);
   }
   return rows;
 }
@@ -998,20 +1136,23 @@ function* stopSteps({ state, locksDir, run, by, why }) {
 // Roles: owner / dashboard / controller / checkin; --why required; never a RUNNING run (exit 3). -> { run, next, rewired: [ids] }
 export const REQUEUE_ROLES = ['owner', 'dashboard', 'controller', 'checkin'];
 // notBefore: undefined keeps the old run's not_before, null clears it (DEC-337: a limit clock the early reopen left behind), an ISO sets it.
-export function requeueRun({ state, run, after = [], by, why, notBefore }) {
+// MERGE-FIRST: priority undefined keeps the old run's, after undefined keeps its after: conditions (`norn requeue RUN-n --priority P0`).
+export function requeueRun({ state, run, after, by, why, notBefore, priority }) {
   if (!REQUEUE_ROLES.includes(by)) throw new RunError(`role ${by ?? '(none)'} may not re-queue a run (allowed: ${REQUEUE_ROLES.join(', ')})`);
   if (!why || !String(why).trim()) throw new RunError('norn requeue needs --why (the ruling, e.g. DEC-n)');
   if (notBefore && Number.isNaN(Date.parse(notBefore))) throw new RunError(`--not-before ${notBefore}: an ISO time or none`);
+  if (priority !== undefined && !PRIORITIES.includes(priority)) throw new RunError(`--priority ${JSON.stringify(priority)}: want ${PRIORITIES.join(' | ')}`);
   const cur = runsOf(state).find(r => r.id === run);
   if (!cur) throw new RunError(`${run} does not exist in ${state}`);
   if (cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: only a QUEUED run is re-queued (a kill stays owner / controller: norn stop)`, 3);
   heldRefusal(state, cur.data.lane, by);
   const spec = readJson(queueSpecPath(state, run));
   if (!spec) throw new RunError(`${run}: its queue spec is missing (${fwd(queueSpecPath(state, run))})`);
+  after ??= cur.data.after ?? [];
   if (after.some(c => c.kind === 'run' && c.id === run)) throw new RunError(`--after names ${run} itself`);
   const { replaces: _r, ...keep } = spec;
   const nb = notBefore === undefined ? cur.data.not_before : notBefore === null ? undefined : new Date(Date.parse(notBefore)).toISOString();
-  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: nb }).run;
+  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: nb, priority: priority ?? cur.data.priority ?? keep.priority }).run;
   try { record(state, { kind: 'run', ev: 'withdraw', id: run, by, data: { why: String(why), next } }); } catch (e) {
     if (!(e instanceof RecordError)) throw e;   // the fill started it meanwhile: undo the re-queue
     record(state, { kind: 'run', ev: 'withdraw', id: next, by: 'launcher', data: { why: `re-queue of ${run} lost a race: ${e.message}` } });
@@ -1025,7 +1166,7 @@ export function requeueRun({ state, run, after = [], by, why, notBefore }) {
     if (s) fs.writeFileSync(f, JSON.stringify({ ...s, after: swapped }, null, 1));
     rewired.push(q.id);
   }
-  return { run, next, rewired };
+  return { run, next, rewired, priority: runsOf(state).find(r => r.id === next)?.data.priority ?? null };
 }
 
 // Children are stopped with the parent (metadelegate sec. 2): a running helper whose parent run is no longer running is

@@ -6,7 +6,7 @@
 // allowed work classes (policy.allowed_classes.<name>, the rank) and a class -> executor pairing it does not allow is refused (400).
 import { PROVIDER_CLASSES, PROVIDER_CAP_DEFAULT, capKey, BUILTIN } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
-import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank } from './floor.mjs';
+import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank, CHECKIN_FLOOR_TEXT, checkinBelow } from './floor.mjs';
 import { BILLING_NAMES, isApi, usdCap } from './billing.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +38,7 @@ export const POLICY_DEFAULTS={
   ask:{max_per_day:10},
   fixer:{batch:40},   // META-UX-BUILD S7: the findings one fixer run (docs class) takes; a Send approves ceil(n / batch) runs (fixer.mjs)
   mail:{nudge_after_min:10},   // META-GTP-MAIL: an urgent mail not acked this long nudges the run (0 = off)
+  pause:{clean_min:20,near_end_min:10},   // RM-37 safe pause (pause.mjs): report a run not at a clean point after clean_min; pause half leaves a run near_end_min from its end alone
   executors:{implementation:ex('auto','',''),critical_implementation:ex('implementer','claude-opus-5-5','high'),review:ex('codex-sol','gpt-6.1-sol','medium'),
     diagnosis:ex('codex-sol','gpt-6.1-sol','medium'),planning:ex('planner','claude-opus-5-5','xhigh'),chores:ex('auto','',''),passfail:ex('auto','',''),
     images:ex('codex-sol','gpt-6.1-sol','medium'),docs:ex('runner','claude-sonnet-5-5','medium')},
@@ -46,14 +47,18 @@ export const POLICY_DEFAULTS={
   fallbacks:{claude_over_guard:'codex-astra',codex_down:'implementer',fable_unavailable:'opus-xhigh'},
   context:{implementer:{no_new_step_k:90,handoff_k:110,hard_max_k:150},planner:{no_new_step_k:90,handoff_k:150,hard_max_k:150},
     runner:{no_new_step_k:90,handoff_k:110,hard_max_k:150},controller:{no_new_step_k:90,handoff_k:110,hard_max_k:150},
-    checkin:{no_new_step_k:90,handoff_k:110,hard_max_k:150}},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
+    checkin:{no_new_step_k:90,handoff_k:110,hard_max_k:150},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
+    implementer_1m:{no_new_step_k:450,handoff_k:500,hard_max_k:560},runner_1m:{no_new_step_k:450,handoff_k:500,hard_max_k:560},
+    planner_1m:{no_new_step_k:800,handoff_k:900,hard_max_k:950}},   // NORN-CTX-1M (DIR-100): the row of a run whose model has a 1M window ([1m]; ctxRole)
+  sizing:{thrash_startup_pct:60,loose_pct:40},   // WORK-SIZING S1 (sizing.mjs verdict): a first edit at this share of the no-new-step mark in hand-off sessions = thrashing; every peak under loose_pct of the hand-off mark = loose
   iteration:{round_estimate_default:2,escalation_multiplier:2,escalation_action:'raise effort',escalation_effort:'xhigh',wall_time_multiplier:2},   // escalation_effort: META-TEND P2 (owner Q3) - the effort 'raise effort' goes to
   cadence:{checkin_interval_min:15,trigger_on_exit:true},
   // META-CHECKIN-DIET R1 (checkins.mjs): routine ends handled by code, the end debounce, per-lane check-in levels, the staged-merge run
   checkin:{routine:['merge_done','worker_done_stage'],debounce_min:5,auto_stage:[],none_lanes:[],on_end_lanes:[],merge_agent:'',merge_model:'claude-sonnet-5-5',merge_effort:'medium'},
   speed_mode:{A:true,B:true,C:true,D:true},
   instructions:{stale_days:30},
-  done_lanes:{old_days:2},   // RM-19 S1: a lane done longer ago than this is Old on the Lanes page - faded, says stopped (lanes.mjs laneGroup)
+  done_lanes:{old_days:2,archive_days:7},   // RM-19 S1: a lane done longer ago than old_days is Old on the Lanes page - faded, says stopped (lanes.mjs laneGroup); archive_days: lifecycle.mjs - the tick archives a done, merged lane that long after its end (0 = never)
+  idle_lanes:{hours:6},   // lifecycle.mjs: an active lane with no run (or none ended) this long is idle - a check-in finding (start, park or archive it)
   dod:{ready:'off',scope:'off',critique:'off',critique_filter:'',test_cmd:'',timeout_min:20},   // META-DOD 1 (DIR-68): the Ready gate of norn run (off | warn | refuse) + the Done check's test runner (dod.mjs); META-DOD 2: the scope guard (off | on, scope.mjs); META-DOD 3: the plan review (off | on, critique.mjs)
   slop:{enabled:true},   // META-BETA-PREP (DIR-52): ONE switch for all of SloppaChoppa (slopOn)
   overlap:{enabled:true},   // GAP-12: the overlap check of running lanes against the remote's branches and open PRs (overlap.mjs overlapOn)
@@ -66,7 +71,13 @@ export const POLICY_DEFAULTS={
   // META-CATCH S1 (stuck.mjs): an item past one threshold since its last merge is STUCK - a MAJOR wake, one notice, further rounds refused until an approach review; 0 = that threshold off
   stuck:{stopped_rounds:3,runs_without_merge:8,days_without_merge:3},
   // META-CATCH S2 (look.mjs): a look item's brief needs a Look: line from this round on and in every brief of these stages (first word, any case)
-  look:{stages:['MERGE','INSTALL'],min_round:2}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
+  look:{stages:['MERGE','INSTALL'],min_round:2},
+  // RM-46 S2b (multi-home SPEC 4.5): the work-claim lease - renew past renew_s, the holder fences its run past fence_s unconfirmed, an observer calls a claim stale after lease_s + stale_grace_s unchanged (claims.mjs)
+  sync:{lease_s:3600,renew_s:600,fence_s:3000,stale_grace_s:300},
+  // MERGE-FIRST (merge-first lane): the queue fill keeps merge_reserve slots of each cap for a queued MERGE / resolve run (runs.mjs FILL_DEFAULTS);
+  // more than backlog_max finished-not-landed deliverables tell the check-in to land work before it starts new lanes (digest row 0c)
+  fill:{merge_reserve:1},
+  merge:{backlog_max:3}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
 
 // META-OOTB F-2 + FOLLOWUP R1: the routing `project new` writes, derived in ONE place from the executors setup found AND the caps in
 // force (local/budget.json; an unset cap = no limit). A Codex executor is allowed only when the Codex total and its own cap
@@ -107,6 +118,8 @@ export const SETTINGS=[
   S('agents','policy.dod.critique','Plan review (fresh eyes before the build)',en(['off','on']),'on: when a planning run ends DONE, Norn queues ONE review run itself: the review executor of the policy table, a fresh session, read-only, given the plan (the run NOTES) and the request it answers (its brief and the directive ids in it), asked for real problems only (the filter below). The findings sit beside the plan (<plan>-CRITIQUE.md). A build run whose brief names the plan waits for the review: a clean review releases it, findings wait until the check-in has read them (it reviews the review run). off: no review.','on','One review run per plan (the review executor, read-only).',['the run supervisor (a planning run end)','norn run (the build waits)',CHECKIN]),
   S('agents','policy.dod.critique_filter','Plan review filter file',{type:'text'},'The file the review is held to (what counts as a real problem). Blank = the built-in filter: a concrete scenario on real data giving wrong output, a crash, nondeterminism, a test that passes while broken, a contract that forces a breaking change, a measurable performance bug, or over-engineering.','the project review filter file','—',['norn critique (the review brief)']),
   S('agents','policy.mail.nudge_after_min','Nudge after (min)',int(0,240),'An URGENT mail (meta mail send --urgent) a running run has not acked within this many minutes stops its tree and resumes its session with the mail as the prompt. Never while the project quiet flag is set or its machine lock is held. 0 = off.','10','A nudge cuts the run at its current tool call; shorter = faster replies, more cut work.',['the run supervisor (engine/lib/supervisor.mjs nudge)']),
+  S('agents','policy.pause.clean_min','Safe pause: report after (min)',int(1,240),'A run the owner paused (norn pause RUN-n, the Pause row action, Pause half) is mailed an urgent order to finish its step, commit and hand off. If it still runs this many minutes later, Norn sends one notice. It never kills the run: wait, mail it, or stop it.','20','Lower = earlier notices for a run in a long step.',['the tick (pause notice)','engine/lib/pause.mjs']),
+  S('agents','policy.pause.near_end_min','Pause half: skip runs this close to their end (min)',int(0,240),'Pause half never picks a run whose time budget ends within this many minutes: it is left to finish. It never picks a merge either.','10','Higher = fewer runs picked; a picked run near its end loses less if this is low.',['norn pause --half','the dashboard Pause half']),
   S('workers','policy.guard.k','Runaway alarm at (x the median of its peers)',num(1.5,20),'A live run whose cache reads (or turns) pass this many times the median of its peers (ended runs of the same kind + agent + effort, last 14 days, at least 3) raises a GRD alarm the check-in rules: let it run, mail it, stop it. Norn never stops a run by itself.','3','Lower = earlier alarms, more false ones; higher = a runaway burns longer unseen.',['norn guard','the tick (digest row 8)','dashboard Agents chip']),
   S('workers','policy.guard.floor_m','Runaway alarm floor (M cache reads)',num(0,1000),'No runaway alarm below this many million cache reads, whatever the ratio.','5','Lower = small runs alarm too.',['norn guard']),
   S('workers','policy.guard.tool_share_pct','Tool-spam hint at (% of the cache reads of a run)',int(5,100),'A live run whose tool output (test logs, file reads, greps) causes this share of its cache reads (above 2M) gets a tool-spam hint; so does one tool result over 20k tokens.','40','Lower = more hints.',['norn guard','norn guard sources']),
@@ -114,12 +127,16 @@ export const SETTINGS=[
   S('agents','policy.stuck.stopped_rounds','Stuck: stopped rounds in a row',int(0,50),'A roadmap item whose rounds end STOPPED this many times in a row (no DONE, no merge between) is stuck: the check-in wakes with the last three stop reasons, you get one notice, and norn run refuses a further round on the item until an approach review is recorded (by you, or by a run of another executor or model). A merge resets it. 0 = off.','3','Lower = an earlier alarm, more reviews for items that would have converged.',['norn tick (stuck.mjs)','norn run (refuses a stuck item)','norn road show',CHECKIN]),
   S('agents','policy.stuck.runs_without_merge','Stuck: runs without a merge',int(0,200),'A roadmap item that has started this many runs since its last merge is stuck (same alarm and refusal as above). 0 = off.','8','Lower = an earlier alarm on long items.',['norn tick (stuck.mjs)','norn run (refuses a stuck item)','norn road show',CHECKIN]),
   S('agents','policy.stuck.days_without_merge','Stuck: days without a merge',int(0,90),'A roadmap item whose first run since its last merge is this many days old, with no merge since, is stuck (same alarm and refusal as above). 0 = off.','3','Lower = an earlier alarm; long planned items may need a higher value.',['norn tick (stuck.mjs)','norn run (refuses a stuck item)','norn road show',CHECKIN]),
+  S('workers','policy.fill.merge_reserve','Slots kept for merges',int(0,8),'While a MERGE or resolve run is queued and could start (no condition or clock it waits on), other queued runs leave this many slots of each worker cap free for it, so finished work lands before new work starts. Merges also start first in the queue order: a merge goes before build and plan runs of its own priority and of one priority above. 0 = no slot kept.','1','A kept slot may stand empty for a while when the merge waits on something else (a merge slot, its lane worktree).',['the queue fill (runs.mjs)','norn ready','Plan > Up next']),
+  S('workers','policy.merge.backlog_max','Merge backlog before new lanes',int(0,100),'The merge backlog is the finished work not on its way to main yet: every deliverable that is DONE, not merged, not parked and has no pull request. The Lanes, Plan and Overview pages show it. Over this many, the check-in is told to land work before it starts new lanes. 0 = always land first.','3','Higher = new lanes start while more finished work waits; lower = new work waits on merges more often.',['digest row 0c (the check-in)','Lanes / Plan / Overview',CHECKIN]),
   S('workers','policy.holds.notice_min','Tell me when everything is held (min)',int(0,1440),'When every queued run (or every queued Claude run) has waited this long on the same machine-level hold - the usage guard (weekly usage unknown or at the stop, the hourly rate cap, the API daily cap) or a PAUSED file - Norn puts ONE item in the Inbox with the fix, one row in the check-in digest and sends one notice. It leaves by itself when the hold clears.','60','Lower = earlier word of a stall, more items for short holds (the hourly rate cap often clears within 2 h).',['norn tick (holds.mjs)','dashboard Inbox',CHECKIN]),
   S('voice','policy.slop.enabled','SloppaChoppa',bool,'On: SloppaChoppa checks a lane branch when its run ends DONE, holds its merge while a BLOCK finding is open, lists his findings in the Guard and sits in the header. Off: all of that stops for this project - no run-end check, no merge hold, no code rows in the Guard, no SloppaChoppa in the header, the Guard or a pop-up (the Guard stays a plain list with a count). Turn him back on and his findings show again from the next check; nothing recorded is lost while off.','on','Off = a lane branch merges without the slop check: leftovers (merge debris, empty catches) can reach main unseen.',['the run supervisor (run-end check)','norn merge-brief + the merge queue (the hold)','dashboard header + Guard page']),
   S('voice','policy.voice.popups','SloppaChoppa pop-ups',en(['off','on','quiet']),'He pops up bottom-right by himself only for a NEW finding at warn level or above, once per finding: on = animated, quiet = still frames, off = never (the header badge and the Guard page work either way; a click on him always calls him up).','off','On = an interruption per new finding, up to the daily cap; never while you type, never over Send.',['dashboard header + Guard page']),
   S('voice','policy.voice.daily_cap','SloppaChoppa pop-ups per day',int(0,10),'At most this many unprompted appearances a day (this browser); 0 = none.','3','Higher = more interruptions.',['dashboard header']),
   S('agents','policy.instructions.stale_days','Instruction paragraph stale after (days)',int(1,365),'An instruction paragraph older than this (its stated date, else its last commit / first-seen date) and never confirmed (meta instructions confirm) is flagged STALE on the Instructions tab and in meta instructions suggest.','30','Shorter = more paragraphs to re-read or confirm; longer = old rules linger.',['meta instructions suggest','dashboard Instructions']),
   S('agents','policy.done_lanes.old_days','Done lane old after (days)',int(1,365),'A lane done longer ago than this is Old on the Lanes page: its row is faded, says it is stopped, and sits under the Old filter instead of Done recently.','2','Display only: shorter = fewer lanes under Done recently.',['dashboard Lanes']),
+  S('agents','policy.done_lanes.archive_days','Archive a done lane after (days)',int(0,365),'A done lane whose work is merged on main (or ruled landed), with no open deliverable or pull request and no queued or running run, is archived by the tick this many days after its last run ended - recorded as an Archive by the tick with its reason; Unarchive on the Lanes page undoes it. Its worktree is removed only when it is clean and fully on main; otherwise it stays and the check-in digest lists it as work at risk. 0 = never.','7','Shorter = a tidier Lanes page; an archived lane needs an Unarchive before a new round.',['norn tick (lifecycle.mjs)','dashboard Lanes']),
+  S('agents','policy.idle_lanes.hours','Idle lane after (hours)',int(1,168),'An active lane with no queued or running run - none at all, or none ended for this many hours - is idle: the Lanes page says so and the check-in must start it, park it with a reason, or archive it in its next pass.','6','Shorter = the check-in is woken sooner for a lane nobody works on.',['norn tick (gate wake, digest section 13)','dashboard Lanes',CHECKIN]),
   ...['worker','merge','checkin','chat'].map(r=>S('agents',`policy.launch.roles.${r}`,`Launch profile: ${{worker:'workers',merge:'merge runs',checkin:'check-ins',chat:'the chat'}[r]}`,en(['full','lean']),"full = today's launch (everything the user setup loads). lean = only Norn's MCP server, no user-level settings (plugins with their hooks and skills; ~/.claude/skills stay), no dynamic system-prompt sections, no Artifact / Workflow / ScheduleWakeup / ReportFindings tools (Claude Code flags; never --bare; calibrated 46.6k -> 20.5k turn 1). The doctor lists what lean drops that a brief or agent file names.",'full','lean cuts the standing context every turn re-reads (see NOTES / meta instructions suggest); a role that needs a skill or MCP server it drops loses it.',['meta run / meta tick / the chat (harness adapter flags)'])),
   S('agents','policy.overlap.enabled','Overlap check (upstream work on the same files)',bool,'On: when a lane starts and at each check-in, Norn fetches the project origin (at most every 10 min; offline = the last fetched refs) and lists the remote branches and open pull requests (gh, GitHub only) that change the same files as a running lane: a row in the check-in digest and a chip on the lane in Lanes. Off: no fetch, no gh call, no rows.','on','One git fetch and one gh call per 10 min per project, plus a git diff per new remote branch tip; nothing while no lane runs.',['the run supervisor (lane start)','norn tick (digest row overlap)','norn overlap','dashboard Lanes']),
   S('agents','policy.agents.max_lane_writers','Max writers per lane',int(1,1),'One writer per worktree; meta run refuses a second.','1','Fixed at 1: two writers in one tree corrupt each other.',['worker.ps1 (worktree refusal)'],{readonly:true}),
@@ -132,10 +149,12 @@ export const SETTINGS=[
   S('executors','policy.fallbacks.claude_over_guard','Fallback: Claude over the weekly guard',en(FALLBACK),'Who takes Claude work once the weekly guard trips.','codex-astra','"wait" stalls lanes until reset.',[CHECKIN]),
   S('executors','policy.fallbacks.codex_down','Fallback: Codex down',en(FALLBACK),'Who takes Codex work when Codex is unavailable.','implementer','Moves load onto Claude weekly usage.',[CHECKIN]),
   S('executors','policy.fallbacks.fable_unavailable','Fallback: fable executor unavailable',en(FALLBACK),'Who takes the work routed to the fable executor when it is unavailable.','opus-xhigh','Opus xhigh is slower on genuinely hard proofs.',[CHECKIN]),
-  ...Object.keys(POLICY_DEFAULTS.context).flatMap(a=>[
-    S('context',`policy.context.${a}.no_new_step_k`,`${a}: no new step past (k tokens)`,int(30,400),'Past this context the agent starts no new step.',String(POLICY_DEFAULTS.context[a].no_new_step_k),'Higher = fewer hand-offs but costlier, less reliable late turns.',[`the ${a} agent file (policy:context.${a})`]),
-    S('context',`policy.context.${a}.handoff_k`,`${a}: hand-off at (k tokens)`,int(30,400),'At this context the agent stops at a clean point and hands off (norn done --outcome handoff).',String(POLICY_DEFAULTS.context[a].handoff_k),'Higher = each turn re-reads a bigger context (cost grows per turn).',[`the ${a} agent file (policy:context.${a})`]),
-    S('context',`policy.context.${a}.hard_max_k`,`${a}: hard max (k tokens)`,int(30,400),'Never run past this context.','150','Near the window limit quality drops and compaction may kick in.',[`the ${a} agent file (policy:context.${a})`])]),
+  ...Object.keys(POLICY_DEFAULTS.context).map(a=>[a,int(30,a.endsWith('_1m')?1000:400)]).flatMap(([a,kI])=>[   // a 200k-window model cannot use more than 400k; a [1m] row up to 1000k
+    S('context',`policy.context.${a}.no_new_step_k`,`${a}: no new step past (k tokens)`,kI,'Past this context the agent starts no new step.',String(POLICY_DEFAULTS.context[a].no_new_step_k),'Higher = fewer hand-offs but costlier, less reliable late turns.',[`the ${a} agent file (policy:context.${a})`]),
+    S('context',`policy.context.${a}.handoff_k`,`${a}: hand-off at (k tokens)`,kI,'At this context the agent stops at a clean point and hands off (norn done --outcome handoff).',String(POLICY_DEFAULTS.context[a].handoff_k),'Higher = each turn re-reads a bigger context (cost grows per turn).',[`the ${a} agent file (policy:context.${a})`]),
+    S('context',`policy.context.${a}.hard_max_k`,`${a}: hard max (k tokens)`,kI,'Never run past this context.',String(POLICY_DEFAULTS.context[a].hard_max_k),'Near the window limit quality drops and compaction may kick in.',[`the ${a} agent file (policy:context.${a})`])]),
+  S('context','policy.sizing.thrash_startup_pct','Sizing: thrashing at first edit (% of no-new-step mark)',int(30,95),'The verdict of norn size on a lane stage: sessions that handed off after using this share of the no-new-step mark before their first edit are thrashing; a stage whose every peak stayed under the second share of the hand-off mark could have a lower mark.',String(POLICY_DEFAULTS.sizing.thrash_startup_pct),'Lower = a stage is called thrashing sooner; the verdict changes no mark by itself.',['norn size']),
+  S('context','policy.sizing.loose_pct','Sizing: could be lower, every peak under (% of hand-off mark)',int(5,90),'A lane stage whose every session peaked under this share of the hand-off mark reads "could be lower" (norn size).',String(POLICY_DEFAULTS.sizing.loose_pct),'Display only: unused context costs nothing; a loose mark only catches a runaway late.',['norn size']),
   S('iteration','policy.iteration.round_estimate_default','Default round estimate per stage',int(1,10),'Rounds a stage is expected to take when its plan gives none.','2','Higher hides grinding stages longer.',[CHECKIN]),
   S('iteration','policy.iteration.escalation_multiplier','Escalate past (x round estimate)',num(1,5),'A stage past this multiple of its round estimate is escalated (rule switch D).','2','Higher = more rounds burned before escalation.',['DECISION-RULES.md (policy:iteration)',CHECKIN]),
   S('iteration','policy.iteration.escalation_action','Escalation does',en(ESCALATE),'What escalation does first.','raise effort','A stronger model / higher effort costs more per round; re-scope costs planning time.',['DECISION-RULES.md (policy:iteration)']),
@@ -154,19 +173,19 @@ export const SETTINGS=[
   S('cadence','policy.cadence.checkin_interval_min','Check-in interval (min)',int(5,120),'Repetition of the scheduled tick (norn sched); Save updates the scheduler.','15','Each check-in is one Opus turn; shorter = more usage, faster reaction.',['the scheduled tick (norn sched)']),
   S('cadence','policy.cadence.trigger_on_exit','Check-in on worker / Codex exit',bool,'A finished worker or Codex run triggers a check-in at once.','on','Off = idle lanes wait for the next scheduled check-in.',['worker-run.ps1','codex-impl.sh']),
   // META-CHECKIN-DIET R1: no model for a routine end; ends folded; a check-in level per lane (engine/lib/checkins.mjs)
-  S('cadence','policy.checkin.routine','Routine ends handled by code',{type:'classes',options:['merge_done','worker_done_stage']},'Run ends the tick handles itself, no check-in: merge_done = a MERGE run ended DONE (its NOTES marker) is reviewed; worker_done_stage = a worker DONE with a pushed head on an auto-stage lane gets the standard staged merge (merge-brief --sha, queued in the merge line). Each is a run review record by the launcher with its why. STOPPED, HANDOFF, no marker, an unpushed head or a question still wake a check-in.','merge_done, worker_done_stage','Empty = every end wakes a check-in (one Opus turn each, ~0.6M cache reads).',['norn tick (engine/lib/checkins.mjs)']),
+  S('cadence','policy.checkin.routine','Routine ends handled by code',{type:'classes',options:['merge_done','worker_done_stage']},'Run ends the tick handles itself, no check-in: merge_done = a MERGE run ended DONE (its NOTES marker) is reviewed; worker_done_stage = a worker DONE with a pushed head on an auto-stage lane is reviewed; mergeq lands its work by code (a conflict, a red quick check or a slop block queues its MERGE run). Each is a run review record by the launcher with its why. STOPPED, HANDOFF, no marker, an unpushed head or a question still wake a check-in.','merge_done, worker_done_stage','Empty = every end wakes a check-in (one Opus turn each, ~0.6M cache reads).',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.debounce_min','Fold run ends within (min)',int(0,60),'Run ends within this window wake ONE check-in, at the oldest new end + the window; a question, owner words, a stall or a forced tick still wake at once. 0 = every end at once.','5','Higher = fewer check-ins on busy hours; a slower reaction to an end.',['norn tick (engine/lib/checkins.mjs)']),
-  S('cadence','policy.checkin.auto_stage','Auto-stage lanes (worker DONE = merge)',{type:'list',glob:true},'Lanes (globs: meta-*) whose worker DONE with a pushed head is staged for merge by code (routine worker_done_stage) instead of a check-in.','none (lanes whose every DONE is the last stage)','A lane with more stages here would be merged before its next stage is ruled.',['norn tick (engine/lib/checkins.mjs)']),
+  S('cadence','policy.checkin.auto_stage','Auto-stage lanes (worker DONE = merge)',{type:'list',glob:true},'Lanes (globs: meta-*) whose worker DONE with a pushed head is reviewed by code (routine worker_done_stage) instead of a check-in; mergeq lands the work.','none (lanes whose every DONE is the last stage)','A lane with more stages here would be merged before its next stage is ruled.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.on_end_lanes','Check-in level on-end (lanes)',{type:'list',glob:true},'Lanes (globs) whose runs wake a check-in only when they end or pass their time budget: no wake on start or on a progress stall while they run.','long design / planning lanes','A run that hangs inside its budget is seen at its budget, not after 30 idle min.',['norn tick (engine/lib/gate.mjs)']),
   S('cadence','policy.checkin.none_lanes','Check-in level none (lanes)',{type:'list',glob:true},'Lanes (globs) whose runs never wake a check-in (merge-line-only lanes: the merge queue drives them). Forced quiet check-ins still read STATUS.','none','A STOPPED run there waits for the next forced check-in.',['norn tick (engine/lib/gate.mjs)']),
-  S('cadence','policy.checkin.merge_model','Staged-merge run model',en(MODELS),'Model of the MERGE run a routine worker_done_stage queues.','claude-sonnet-5-5','Opus costs ~5x Sonnet per merge run.',['norn tick (engine/lib/checkins.mjs)']),
+  S('cadence','policy.checkin.merge_model','Staged-merge run model',en(MODELS),'Model of the MERGE run a failed mechanical landing queues (a conflict, a red quick check or a slop block).','claude-sonnet-5-5','Opus costs ~5x Sonnet per merge run.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_effort','Staged-merge run effort',en(EFFORTS),'Effort of that MERGE run.','medium','Higher effort per merge multiplies with merges.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_agent','Staged-merge run agent',{type:'text',pattern:'^[A-Za-z0-9._-]{0,60}$'},'Agent of that MERGE run (blank = none).','the project runner agent','—',['norn tick (engine/lib/checkins.mjs)']),
-  S('cadence','checkin_model','Check-in model',en(MODELS),'Model of the scheduled check-in and the Talk controller.','claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_model','Check-in model',en(MODELS),`Model of the scheduled check-in and the Talk controller. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
   // CHECKIN-V2 piece 2 (GT-3 ruling): a MINOR wake (gate.mjs wakeClass) runs this model / effort on the reduced prompt CHECKIN-MINOR.md
   S('cadence','checkin_minor_model','Minor check-in model',en(['',...MODELS]),'Model of a MINOR check-in (a forced quiet tick, a run start by another, the guard band): the reduced prompt engine/prompts/CHECKIN-MINOR.md; it escalates with MAJOR NEEDED. Empty = every tick is the full check-in.','claude-sonnet-5-5','Opus on minor ticks costs ~5x Sonnet for ticks that mostly act on nothing.',['norn tick (engine/lib/tick.mjs)']),
   S('cadence','checkin_minor_effort','Minor check-in effort',en(EFFORTS),'Effort of a MINOR check-in.','medium','Higher effort per minor tick multiplies with their count.',['norn tick (engine/lib/tick.mjs)']),
-  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),'Effort of the check-in.','medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),`Effort of the check-in. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
   // META-CHECKIN-GATE: norn tick wakes the LLM check-in only on a material change (engine/lib/gate.mjs); a slow forced check-in stays
   S('cadence','checkin_gate','Check-in gate (wake on change only)',bool,'A tick (scheduled or run exit) starts the LLM check-in only when the material state changed since the last one: run starts / ends / kills / stalls, owner records, questions, ready lanes, guard band, quiet flag / pause. No change = a logged skip.','on','Off = every tick is one Opus check-in (~0.9M cache-read tokens each), about half of them with nothing to do.',['norn tick (engine/lib/gate.mjs)']),
   S('cadence','checkin_max_quiet_min','Forced check-in after (min quiet)',int(15,1440),'With the gate on, a check-in still runs once the last real one is older than this, change or not.','60','Lower = more no-change check-ins (one Opus turn each); higher = slower reaction to what the gate does not see (time-only rules).',['norn tick (engine/lib/gate.mjs)']),
@@ -207,13 +226,13 @@ export const SECTIONS=[
     {id:'routing',label:'Work-class routing',help:'One line per work class: executor, model, effort (blank = the executor default).',inline:true,
       subs:Object.entries(WORK_CLASSES).map(([id,label])=>({id,label}))},
     {id:'defaults',label:'Default model & effort',help:'Launcher defaults when the check-in passes none.'},
-    {id:'floor',label:'Minimum for workers',help:'No worker run below this model and effort: lower settings are refused, lower runs are raised.'},
+    {id:'minimum',label:'Minimum for workers',help:'No worker run below this model and effort: lower settings are refused, lower runs are raised.'},
     {id:'critical',label:'Critical path',help:'Lanes blocking the next release get the critical effort.'},
     {id:'fallbacks',label:'Fallbacks',help:'Who takes the work when an executor is unavailable or over its guard.'}]},
   {id:'agents',label:'Agents & context',help:'Context hand-off limits per agent role, rounds and escalation.',subs:[
     {id:'context',label:'Context limits (k tokens)',help:'No new step past / hand-off at / hard max - generated into each agent file.',inline:true,
-      subs:Object.entries(ROLES).map(([id,label])=>({id,label}))},
-    {id:'iteration',label:'Rounds & escalation',help:'When a stage counts as grinding and what happens then.'}]},
+      subs:[...Object.entries(ROLES).map(([id,label])=>({id,label})),{id:'sizing',label:'Sizing verdict'}]},
+    {id:'rounds',label:'Rounds & escalation',help:'When a stage counts as grinding and what happens then.'}]},
   {id:'checkins',label:'Check-ins & scheduling',help:'When the scheduled check-in runs and on which model.',subs:[
     {id:'schedule',label:'Schedule',help:'Task Scheduler repetition and exit triggers.'},
     {id:'model',label:'Check-in model',help:'The check-in and the dashboard Talk controller.'}]},
@@ -221,17 +240,17 @@ export const SECTIONS=[
     {id:'session',label:'Session',help:'Harness, model, effort and idle stop of the chat process (the next message obeys a change).'},
     {id:'acting',label:'Acting',help:'How long a chat act holds a lane, and whether shell / file edits are off, ask, or on.'}]},
   {id:'rules',label:'Rule switches',help:'Project rule switches (DECISION-RULES) and the house rule line.',subs:[
-    {id:'speed',label:'Rule switches A-D',help:'An OFF item does not apply (generated into DECISION-RULES.md).'},
-    {id:'gpu',label:'House rule line (read-only)',help:'Line 1 of the project rules file, edited by hand.'}]},
+    {id:'switches',label:'Rule switches A-D',help:'An OFF item does not apply (generated into DECISION-RULES.md).'},
+    {id:'house',label:'House rule line (read-only)',help:'Line 1 of the project rules file, edited by hand.'}]},
   {id:'advanced',label:'Advanced',help:'Rarely changed: executor permissions, harness wiring, fixed and dangerous values.',subs:[
-    {id:'ranks',label:'Allowed work classes',help:'Which classes each executor may be given; routing offers only allowed executors.'},
+    {id:'classes',label:'Allowed work classes',help:'Which classes each executor may be given; routing offers only allowed executors.'},
     {id:'harness',label:'Harness',help:'Only claude is wired today (H5 / H7 open the others).'},
     {id:'danger',label:'Danger zone',help:'A wrong value here skews the usage gate or breaks the one-writer rule.',danger:true}]},
   {id:'voice',label:'Slop voice',help:'SloppaChoppa on the Slop page: his pop-ups and how often (DEC-264).',subs:[
-    {id:'switch',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
+    {id:'onoff',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
     {id:'popups',label:'Pop-ups',help:'Off by default until the owner review of SloppaChoppa (DIR-36).'}]},
   {id:'notify',label:'Notifications',basic:true,help:'A phone or desktop ping when Norn needs you (machine.json notify; norn setup --notify).',info:true,subs:[
-    {id:'ping',label:'Phone / desktop ping'},{id:'remote',label:'Reach Norn from your phone'}]},
+    {id:'ping',label:'Phone / desktop ping'},{id:'phone',label:'Reach Norn from your phone'}]},
   {id:'files',label:'Project & files',help:'Where each setting is stored and the generated policy lines.',info:true,subs:[
     {id:'sources',label:'Source files'},{id:'targets',label:'Policy targets'}]}];
 export const SECTION_RULES=[
@@ -243,18 +262,21 @@ export const SECTION_RULES=[
   [/^(max_[a-z0-9_-]+|policy\.delegate\.max_per_parent|policy\.ask\.max_per_day)$/,'workers/helpers'],
   [/^policy\.executors\.([a-z_]+)\.(executor|model|effort)$/,'executors/routing/$1'],
   [/^(claude_model|claude_effort|codex_astra_effort|codex_sol_effort)$/,'executors/defaults'],
-  [/^worker_min_(model|effort)$/,'executors/floor'],
+  [/^worker_min_(model|effort)$/,'executors/minimum'],
   [/^policy\.critical_(lanes|effort)$/,'executors/critical'],
   [/^policy\.fallbacks\./,'executors/fallbacks'],
   [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
-  [/^policy\.iteration\./,'agents/iteration'],
-  [/^policy\.stuck\./,'agents/iteration'],
-  [/^policy\.mail\./,'agents/iteration'],
-  [/^policy\.dod\./,'agents/iteration'],
-  [/^policy\.overlap\./,'agents/iteration'],
-  [/^policy\.instructions\./,'agents/iteration'],
-  [/^policy\.done_lanes\./,'agents/iteration'],
-  [/^policy\.slop\./,'voice/switch'],
+  [/^policy.sizing./,'agents/context/sizing'],
+  [/^policy\.iteration\./,'agents/rounds'],
+  [/^policy\.stuck\./,'agents/rounds'],
+  [/^policy\.mail\./,'agents/rounds'],
+  [/^policy\.pause\./,'agents/rounds'],
+  [/^policy\.dod\./,'agents/rounds'],
+  [/^policy\.overlap\./,'agents/rounds'],
+  [/^policy\.instructions\./,'agents/rounds'],
+  [/^policy\.done_lanes\./,'agents/rounds'],
+  [/^policy\.idle_lanes\./,'agents/rounds'],
+  [/^policy\.slop\./,'voice/onoff'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
   [/^policy\.holds\./,'workers/usage'],
@@ -267,9 +289,9 @@ export const SECTION_RULES=[
   [/^(checkin_executor|checkin_executor_trial)$/,'advanced/harness'],
   [/^chat_(executor|model|effort|idle_min)$/,'chat/session'],
   [/^chat_(hold_min|raw_shell)$/,'chat/acting'],
-  [/^policy\.speed_mode\./,'rules/speed'],
-  [/^rules\./,'rules/gpu'],
-  [/^policy\.allowed_classes\./,'advanced/ranks']];
+  [/^policy\.speed_mode\./,'rules/switches'],
+  [/^rules\./,'rules/house'],
+  [/^policy\.allowed_classes\./,'advanced/classes']];
 /** [category, sub-category(, sub-sub-category)] of a setting row, or null (an orphan: tests/settings-ia fails). */
 export function sectionOf(s){for(const [re,at] of SECTION_RULES){const m=s.key.match(re);if(m)return at.replace('$1',m[1]??'').split('/');}return null;}
 const ALL_CLASSES=Object.keys(WORK_CLASSES);
@@ -334,6 +356,8 @@ function merge(d,v){if(d===null||typeof d!=='object'||Array.isArray(d))return v=
 const foldSlop=pol=>{const s=pol?.slop;if(!s||typeof s!=='object'||!('run_end' in s))return pol;const {run_end,...rest}=s;return {...pol,slop:{enabled:run_end!==false,...rest}};};
 export const slopOn=pol=>foldSlop(pol)?.slop?.enabled!==false;
 export function withDefaults(b){return {...MACHINE_DEFAULTS,...b,policy:merge(POLICY_DEFAULTS,foldSlop(b.policy))};}
+/** RM-46 S2b: policy.sync with its defaults (the lease numbers live here, never in claims.mjs) */
+export const syncPolicy=pol=>withDefaults({policy:pol||{}}).policy.sync;
 
 export function settingsView(b,extra={}){const f=withDefaults(b),pv=extra.providers||[];
   // the machinery default = the value the same key takes with no budget / policy entry (UI marker only; never written)
@@ -396,6 +420,9 @@ export function belowFloor(m){const f=floorOf(m);if(!f)return [];const v=withDef
   for(const [k,e] of Object.entries(p.executors)){model(`policy.executors.${k}.model`,e.model);effort(`policy.executors.${k}.effort`,e.effort,e.model,e.executor);}
   effort('policy.critical_effort',p.critical_effort);effort('policy.iteration.escalation_effort',p.iteration.escalation_effort);
   return out;}
+/** the check-in settings of merged view `m` below CHECKIN_FLOOR (floor.mjs checkinBelow): [{ key, kind, value, to, text }] */
+export function checkinBelowFloor(m){const v=withDefaults(m),text=`below ${CHECKIN_FLOOR_TEXT}: a check-in decides and delegates on its own`;
+  return checkinBelow({model:v.checkin_model,effort:v.checkin_effort}).map(r=>({key:'checkin_'+r.kind,...r,text}));}
 /**
  * The changes of a Settings save with the floor's raises added: every worker setting the save leaves below the floor in force after it
  * (a new or raised floor) is raised to the floor, unless the save sets that key itself (then applySettings refuses it, naming it).
@@ -407,14 +434,15 @@ export function floorChanges(b,changes,extra={}){
   return {changes:{...changes,...Object.fromEntries(raised.map(r=>[r.key,r.to]))},raised};}
 
 const onoff=v=>v?'on':'OFF';
+const t1m=r=>` (a [1m] run: ~${r.no_new_step_k}k / ${r.handoff_k}k)`;   // NORN-CTX-1M: an agent file names both tiers (no new step / hand-off)
 export function generatedLines(b,extra={}){const f=withDefaults(b),p=f.policy,c=p.context,it=p.iteration,pv=extra.providers||[];
   const narrow=rankNames(pv,extra).map(n=>[n,allowedClasses(p,n,pv)]).filter(([,a])=>a.length!==ALL_CLASSES.length||!ALL_CLASSES.every(x=>a.includes(x)));
   const ranks=` Allowed classes: ${narrow.map(([n,a])=>`${n} ${a.join('+')||'none'}`).join('; ')}${narrow.length?'; others all':'all executors all'}.`;
   const exs=Object.entries(p.executors).map(([k,e])=>`${k} -> ${[e.executor,e.model,e.effort].filter(Boolean).join(' ')}`).join('; ');
   return {
-    'context.implementer':`HANDOFF: start NO new step past ~${c.implementer.no_new_step_k}k; at ~${c.implementer.handoff_k}k (even mid-wait) stop at a clean point (work committed), hand off: \`norn done --outcome handoff --handoff-file F\``,
-    'context.planner':`HANDOFF (OWNER 2026-10-29): start NO new step (probe, bake, investigation) past ~${c.planner.no_new_step_k}k. Past ${c.planner.no_new_step_k}k you MAY run to ~${c.planner.handoff_k}k to FINISH`,
-    'context.runner':`- Long runs via run_in_background; read log tails, never whole logs. HANDOFF at ~${c.runner.handoff_k}k: clean point, then \`norn done --outcome handoff --handoff-file F\`.`,
+    'context.implementer':`HANDOFF: start NO new step past ~${c.implementer.no_new_step_k}k; at ~${c.implementer.handoff_k}k${t1m(c.implementer_1m)} (even mid-wait) stop at a clean point (work committed), hand off: \`norn done --outcome handoff --handoff-file F\``,
+    'context.planner':`HANDOFF (OWNER 2026-10-29): start NO new step (probe, bake, investigation) past ~${c.planner.no_new_step_k}k${t1m(c.planner_1m)}. Past ${c.planner.no_new_step_k}k you MAY run to ~${c.planner.handoff_k}k to FINISH`,
+    'context.runner':`- Long runs via run_in_background; read log tails, never whole logs. HANDOFF at ~${c.runner.handoff_k}k${t1m(c.runner_1m)}: clean point, then \`norn done --outcome handoff --handoff-file F\`.`,
     'context.controller':`Controller hand-off: start no new step past ~${c.controller.no_new_step_k}k; hand off at ~${c.controller.handoff_k}k; never past ~${c.controller.hard_max_k}k.`,
     'iteration':`D. Controller: a stage past ~${it.escalation_multiplier}x its round estimate is escalated (first: ${it.escalation_action}${it.escalation_action==='raise effort'?` to ${it.escalation_effort}`:''}; Opus xhigh / Fable) or re-scoped, never left to grind.`,
     'speed_mode':`SPEED MODE switches (dashboard Settings): A ${onoff(p.speed_mode.A)}, B ${onoff(p.speed_mode.B)}, C ${onoff(p.speed_mode.C)}, D ${onoff(p.speed_mode.D)} - an OFF item does not apply.`,

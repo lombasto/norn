@@ -16,8 +16,8 @@ import { notify } from '../engine/lib/notify.mjs';
 import { validate, MACHINE_SCHEMA } from '../engine/lib/config.mjs';
 import { readEvents, recordsFile } from '../engine/lib/records.mjs';
 import { context, handle } from '../engine/lib/mcp.mjs';
-import { approvalsDir } from '../engine/lib/chatact.mjs';
-import { readThread, threadFile } from '../engine/lib/chat.mjs';
+import { approvalsDir, threadFile } from '../engine/lib/chatact.mjs';
+import { readThread } from '../engine/lib/chat.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -165,7 +165,7 @@ test('dash, remote on: every remote write needs the pairing + token + Origin and
     fs.mkdirSync(path.dirname(threadFile(s)), { recursive: true });
     fs.appendFileSync(threadFile(s), JSON.stringify({ ts: new Date().toISOString(), seg: 1, kind: 'owner', text: 'keep the night quiet' }) + '\n');
     const ctx = context({ state: s, project: null, profile: 'chat', client: 'chat', env: {}, cli: () => 0, approvalMs: 60000, pollMs: 10, notifyFn: () => {} });
-    const pending = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_pause', arguments: { on: true } } }, ctx);
+    const pending = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_pause', arguments: { mode: 'all' } } }, ctx);
     let id = null;
     for (let i = 0; i < 500 && !id; i++) { id = fs.existsSync(approvalsDir(s)) && fs.readdirSync(approvalsDir(s)).find(x => /^AP-[0-9a-f]{8}\.json$/.test(x))?.slice(0, 11); if (!id) await new Promise(r => setTimeout(r, 10)); }
     assert.ok(id, 'an approval card is open');
@@ -228,7 +228,7 @@ test('Settings: the "Reach Norn from your phone" pane - off says how to start; o
   const base = { project: 'kestrel', version: 'v', settings: [], profiles: [], files: { machine: 'm', project: 'p' }, targets: [], notify: { backend: 'none' },
     sections: [{ id: 'notify', label: 'Notifications', help: 'h', info: true, subs: [{ id: 'ping', label: 'Phone / desktop ping' }, { id: 'remote', label: 'Reach Norn from your phone' }] }] };
   const off = renderTab('settings', { ...base, remote: null }, { setCat: 'notify' });
-  assert.match(off, /id="sub-notify-remote"/); assert.match(off, /norn remote setup/); assert.ok(!off.includes('data-act="remote-pair"'));
+  assert.match(off, /id="sub-notify-phone"/); assert.match(off, /norn remote setup/); assert.ok(!off.includes('data-act="remote-pair"'));
   const on = { on: true, trust: 'tailscale', url: `https://${HOST}/`, hosts: [HOST], logins: [LOGIN], viewer: null,
     devices: [{ id: 'dev-0a1b2c3d', name: 'Pixel 9', login: LOGIN, created: '2026-11-13T10:00:00Z', last_seen: '2026-11-13T11:00:00Z' }] };
   const desk = renderTab('settings', { ...base, remote: on }, { setCat: 'notify' });

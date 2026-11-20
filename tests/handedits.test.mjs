@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { writeViews, VIEW_FILES } from '../engine/lib/views.mjs';
-import { handEdits, takeBack, keepEdit } from '../engine/lib/handedits.mjs';
+import { handEdits, takeBack, keepEdit, handEditDiff } from '../engine/lib/handedits.mjs';
+import crypto from 'node:crypto';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
@@ -86,4 +87,72 @@ test('one file named c:\\... by one writer and C:\\... by another is one key: ne
   assert.deepEqual(writeViews(lower(state), loadState(state)).refused, [], 'and back again');
   assert.deepEqual(await handEdits(lower(state)), [], 'no notice');
   assert.equal(Object.keys(JSON.parse(fs.readFileSync(path.join(state, 'views', 'hashes.json'), 'utf8'))).length, 3, 'one key per view');
+});
+
+// RM-35: the notice says what changed and who probably did it, from the write record views.mjs keeps per file (views/last/), and
+// offers the diff (last written by Norn vs now). One case each: a person's edit, an older Norn snapshot, a foreign writer, a lost hash.
+const setup = () => {
+  const state = path.join(mkTmp('meta-handedit-who-'), 'state', 'demo');
+  fs.mkdirSync(state, { recursive: true });
+  record(state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'first', via: 'chat' } });
+  writeViews(state, loadState(state));   // record() writes the views itself: these two calls find them unchanged
+  const f = path.resolve(state, 'views', VIEW_FILES.directives), v1 = fs.readFileSync(f, 'utf8');
+  record(state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'second', via: 'chat' } });
+  writeViews(state, loadState(state));
+  return { state, f, v1, v2: fs.readFileSync(f, 'utf8') };
+};
+const notice = e => renderTab('inbox', { items: [{ type: 'handedit', id: 'edit-x', project: 'demo', file: e.file.split(path.sep).join('/'), created: e.edited, generated: e.generated, verdict: e.verdict, recommend: e.recommend, why: e.why, lines: e.lines, diff: e.diff, title: 'x changed outside Norn' }] }, { project: 'demo', now: Date.now() });
+
+test('a person\'s edit (the header removed): said as a person or a tool, no recommendation, the diff is last written vs now', async () => {
+  const { state, f, v2 } = setup();
+  fs.writeFileSync(f, v2.replace(/^<!--.*-->\n/, '') + 'my note\n');
+  const [e] = await handEdits(state);
+  assert.equal(e.verdict, 'person'); assert.equal(e.recommend, null); assert.equal(e.diff, true);
+  assert.match(e.lines[0], /^Norn last wrote it at \d\d:\d\dZ \([^,]+, pid \d+/, 'Norn\'s last write: when, which role, which process');
+  assert.ok(e.lines.some(l => /GENERATED header is gone, so a person or another tool edited it/.test(l)));
+  const d = await handEditDiff(state, f);
+  assert.equal(d.before, v2, 'before = the text Norn last wrote'); assert.match(d.after, /my note/);
+  const html = notice(e);
+  assert.match(html, /data-act="diff-open" data-dv-url="\/api\/handedit\/diff\?project=demo&amp;file=[^"]+"[^>]*>View diff/);
+  assert.doesNotMatch(html, /Recommended/); assert.match(html, /Let Norn take it back/); assert.match(html, /Keep my version/);
+});
+
+test('an older Norn snapshot written back: "an older Norn copy wrote this (stale), not a person" and take it back is recommended with the reason', async () => {
+  const { state, f, v1 } = setup();
+  fs.writeFileSync(f, v1);   // a stale writer: Norn's own earlier text
+  const [e] = await handEdits(state);
+  assert.equal(e.verdict, 'stale'); assert.equal(e.recommend, 'takeback');
+  assert.ok(e.lines.some(l => /Norn wrote exactly this at \d\d:\d\dZ \([^,]+, pid \d+.*An older Norn copy wrote this \(stale\), not a person\./.test(l)), e.lines.join(' | '));
+  assert.match(notice(e), /<b>Recommended: Let Norn take it back<\/b> - it is an older copy of Norn&#39;s own text\./);
+});
+
+test('a foreign writer: Norn\'s header on a text Norn never wrote, and a lane worktree\'s engine among the writers - said, without a guess', async () => {
+  const { state, f, v2 } = setup();
+  const lf = fs.readdirSync(path.join(state, 'views', 'last')).find(x => x.startsWith(VIEW_FILES.directives) && x.endsWith('.json')), lp = path.join(state, 'views', 'last', lf);
+  const log = JSON.parse(fs.readFileSync(lp, 'utf8'));
+  for (const w of log.writes) Object.assign(w, { engine: path.join('C:', 'norn'), branch: 'main' });   // the install's engine ...
+  Object.assign(log.writes[0], { engine: path.join('C:', 'norn', 'state', 'norn', 'wt', 'old-lane'), branch: 'norn/old-lane' });   // ... and once a lane worktree's
+  fs.writeFileSync(lp, JSON.stringify(log));
+  fs.writeFileSync(f, v2.replace('second', 'second, as another program wrote it'));
+  const [e] = await handEdits(state);
+  assert.equal(e.verdict, 'header'); assert.equal(e.recommend, null);
+  assert.ok(e.lines.some(l => /A Norn engine from a lane worktree also writes this file \([^,]+, pid \d+, engine on norn\/old-lane in .*old-lane/.test(l)), e.lines.join(' | '));
+  assert.ok(e.lines.some(l => /GENERATED header, but Norn has no record of writing this text: most likely not edited by a person/.test(l)));
+  assert.match(notice(e), /most likely not edited by a person/);
+});
+
+test('a lost hash (the file is Norn\'s last text, its hash record missed it): said so, take it back recommended; no record = said too', async () => {
+  const { state, f, v1 } = setup();
+  const hf = path.join(state, 'views', 'hashes.json'), h = JSON.parse(fs.readFileSync(hf, 'utf8'));
+  h[Object.keys(h).find(k => k.endsWith(VIEW_FILES.directives))] = crypto.createHash('sha256').update(v1).digest('hex');
+  fs.writeFileSync(hf, JSON.stringify(h));
+  const [e] = await handEdits(state);
+  assert.equal(e.verdict, 'lost-hash'); assert.equal(e.recommend, 'takeback');
+  assert.ok(e.lines.some(l => /exactly what Norn last wrote; only Norn's hash record missed that write/.test(l)));
+  fs.rmSync(path.join(state, 'views', 'last'), { recursive: true });
+  fs.appendFileSync(f, 'x\n');
+  const [n] = await handEdits(state);
+  assert.equal(n.diff, false, 'no kept text: no diff offered');
+  assert.match(n.lines[0], /no record of its last write here/);
+  assert.doesNotMatch(notice(n), /View diff/);
 });

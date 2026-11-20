@@ -5,13 +5,15 @@
 // Project-agnostic: every project fact comes from project.json (deliverables target / receipts, root, views.roadmap).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, loadState } from './records.mjs';
+import { readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn, laneNameIn, homeOfId, copyItems } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
 import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
-import { lookWords } from './look.mjs';
+
+// the `road show` line of a look item, or null (here, not in look.mjs: look reads roadmap links, so roadmap may not import look - K10)
+const lookWords = n => (n.proof ? `proof: ${n.proof}; views ${(n.views || []).join(', ') || '-'}; verdict: ${n.verdict ? `${n.verdict.verdict} by ${n.verdict.by} ${n.verdict.ts} ${n.verdict.image}` : 'none'}` : null);
 
 export class RoadmapError extends Error {}
 
@@ -19,7 +21,7 @@ export class RoadmapError extends Error {}
 /** events -> { items: { RM-n: node }, kids: { parentId | '': [ids in order] } }; node = { id, kind, title, note, horizon, stages,
  *  links, parent, caveat {text, by, ts} | null, legacy | null, state open | dropped, dropped {why, ref, by, ts} | null, by, created, updated, history,
  *  proof look | null, views [name], verdict {verdict, image, by, ts} | null (META-CATCH S2: the latest look verdict) } */
-export function foldRoadmap(events) {
+export function foldRoadmap(events, { ordered = false } = {}) {   // ordered: the events are in fold order already (foldHomes)
   const items = {}, kids = { '': [] };
   const unplace = id => { const l = kids[items[id].parent || '']; const i = l ? l.indexOf(id) : -1; if (i >= 0) l.splice(i, 1); };
   const place = (id, after) => {
@@ -27,7 +29,7 @@ export function foldRoadmap(events) {
     const j = after === undefined ? -1 : after === null ? -2 : l.indexOf(after);
     if (j === -2) l.unshift(id); else if (j < 0) l.push(id); else l.splice(j + 1, 0, id);
   };
-  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+  for (const e of ordered ? events : [...events].sort((a, b) => a.seq - b.seq)) {
     if (e.kind !== 'item') continue;
     const d = e.data || {};
     if (e.ev === 'create') {
@@ -55,7 +57,23 @@ export function foldRoadmap(events) {
   }
   return { items, kids };
 }
-export const loadRoadmap = stateDir => foldRoadmap(readEvents(recordsFile(stateDir, 'item')));
+// RM-46 S1d: a synced dir folds the own roadmap + the copies (records.mjs foldHomes: one order on every home)
+// a synced dir's fold also carries the pending item events (another home's, or this home's on another home's item: SPEC 3.7)
+export const loadRoadmap = stateDir => (homeOf(stateDir) ? (v => ({ ...foldRoadmap(v.events, { ordered: true }), pending: v.pending }))(loadShared(stateDir, 'item')) : foldRoadmap(readEvents(recordsFile(stateDir, 'item'))));
+/**
+ * RM-46 S3: the fold as this home reads it. Another home's item names its lanes as that home types them (lane:x = its own x): here they
+ * read lane:b/x, so derive() finds b's copied runs and DLVs; such a node carries home (its "on b" chip). A pending event on an item =
+ * pending [{ ev, home, ts, primary }]. A solo dir: R as is.
+ */
+export function hereLinks(R, home) {
+  if (!home) return R;
+  const items = Object.fromEntries(Object.entries(R.items).map(([id, n]) => {
+    const h = homeOfId(id, home.bare_home), pd = (R.pending?.[id] || []).map(e => ({ ev: e.ev, home: e.home, ts: e.ts, primary: h }));
+    const own = h === home.id ? n : { ...n, home: h, links: (n.links || []).map(t => (/^lane:/.test(t) ? 'lane:' + laneNameIn(laneIdIn(t.slice(5), h), home.id) : t)) };
+    return [id, pd.length ? { ...own, pending: pd } : own];
+  }));
+  return { ...R, items };
+}
 /** the ordered child ids of a node (null = the root: the themes) */
 export const childrenOf = (R, id) => [...(R.kids[id || ''] || [])];
 
@@ -87,12 +105,13 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : w.endsWith('h') ? 'es' : 's'
  *   docs: [paths] | fn(path) -> bool, hasInstall (the target is an install: deliverables receipts set), epics: { EP-n: { state, title, members } },
  *   idle: { days (default 7), now (default 3) } }
  */
-export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {}, policy = {} } = {}) {
+// home = the state dir's home id (RM-46 S1a): a lane link x names L:<home>/x there
+export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {}, policy = {}, home = null } = {}) {
   const fnOf = (v, miss) => typeof v === 'function' ? v : Array.isArray(v) ? (k => v.includes(k)) : (k => (k in v ? v[k] : miss));
   // OOTB-R2 N-4: a fake-executor run is a rehearsal - never evidence for the derived status (as deliverables' NOT_DELIVERING)
   const runs = Object.values(items).filter(i => i.kind === 'run' && i.data?.kind !== 'checkin' && i.data?.executor !== 'fake');
   const group = key => { const m = {}; for (const d of dlv) if (d[key]) (m[d[key]] ||= []).push(d); return m; };
-  return { now, items, runs, dlv, dlvById: Object.fromEntries(dlv.map(d => [d.id, d])), dlvByBranch: group('branch'), dlvByLane: group('lane'),
+  return { now, home, lane: n => laneIdIn(n, home), items, runs, dlv, dlvById: Object.fromEntries(dlv.map(d => [d.id, d])), dlvByBranch: group('branch'), dlvByLane: group('lane'),
     branch: fnOf(branches, null), sha: fnOf(shas, null), doc: fnOf(docs, false), hasInstall, epics, idle: { days: 7, now: 3, ...idle }, stuck: stuckPolicy(policy) };   // META-CATCH S1: policy.stuck
 }
 
@@ -107,7 +126,7 @@ export function reach(node, W) {
   for (const l of L.lane) for (const d of W.dlvByLane[l] || []) dlvs.add(d);
   const br = new Map();
   for (const d of dlvs) {
-    const sup = !!d.superseded || d.record_state === 'superseded', onMain = sup || d.state !== 'done';
+    const sup = !!d.superseded || d.record_state === 'superseded', onMain = sup || d.state === 'merged' || d.state === 'installed';   // unknown = cannot tell: not on main
     const tgtInstall = W.hasInstall && d.target !== 'main';
     br.set(d.branch, { name: d.branch, dlv: d.id, state: sup ? 'superseded' : d.state, on_main: onMain, at_target: sup || (tgtInstall ? d.state === 'installed' : onMain),
       days: d.days ?? null, ts: Date.parse(d.done_utc || '') || null });
@@ -141,7 +160,7 @@ export function derive(node, W) {
   const stages = [...ran, ...planned];
   const B = branches.filter(b => b.state !== 'gone');
   const qOpen = L.q.filter(id => W.items[id]?.state === 'open');
-  const parked = L.lane.filter(l => W.items['L:' + l]?.state === 'parked');
+  const parked = L.lane.filter(l => W.items[W.lane(l)]?.state === 'parked');
   const shaOk = L.sha.filter(s => W.sha(s) === true);
   const ago = ts => Math.round((now - ts) / DAY);
   const ids = xs => xs.map(r => r.id).join(', ');
@@ -150,14 +169,14 @@ export function derive(node, W) {
   else if (live.length) { row = 2; status = 'building'; why = `${plural(live.length, 'run')} live: ${ids(live)}`; }
   else if (qOpen.length || parked.length) {
     row = 3; status = 'waiting';
-    why = [qOpen.length ? `open ${qOpen.join(', ')}` : null, ...parked.map(l => `L:${l} parked${W.items['L:' + l].park?.why ? ': ' + W.items['L:' + l].park.why : ''}`)].filter(Boolean).join('; ');
+    why = [qOpen.length ? `open ${qOpen.join(', ')}` : null, ...parked.map(l => `${W.lane(l)} parked${W.items[W.lane(l)].park?.why ? ': ' + W.items[W.lane(l)].park.why : ''}`)].filter(Boolean).join('; ');
   }
   else if (B.length && B.every(b => b.at_target)) { row = 4; status = 'shipped'; why = `${plural(B.length, 'branch')} on main${W.hasInstall ? ' and installed' : ''}`; }
   else if (B.length && B.every(b => b.on_main)) { row = 5; status = 'merged'; why = `${plural(B.length, 'branch')} on main, not installed`; }
   else if (queued.length && !started.length) { row = 6; status = 'queued'; why = `queued: ${ids(queued)}`; }
   else if (queued.length) { row = 7; status = 'building'; why = `queued: ${ids(queued)}; ${plural(started.length, 'earlier run')}`; }
-  else if (B.some(b => b.dlv && b.state === 'done')) {
-    const d = B.filter(b => b.dlv && b.state === 'done'); row = 8; status = 'built';
+  else if (B.some(b => b.dlv && (b.state === 'done' || b.state === 'unknown'))) {
+    const d = B.filter(b => b.dlv && (b.state === 'done' || b.state === 'unknown')); row = 8; status = 'built';
     why = `${d.map(b => b.dlv).join(', ')} DONE, not on main (${Math.max(...d.map(b => b.days || 0)).toFixed(0)} d)`;
   }
   else if (B.some(b => b.state === 'unmerged')) {
@@ -198,7 +217,7 @@ export function goneLinks(links, W) {
   return (links || []).filter(t => {
     const { kind, id } = parseLink(t);
     if (['dir', 'dec', 'q', 'run'].includes(kind)) return !W.items[id];
-    if (kind === 'lane') return !W.items['L:' + id] && !W.runs.some(r => r.data?.lane === id);
+    if (kind === 'lane') return !W.items[W.lane(id)] && !W.runs.some(r => r.data?.lane === id);
     if (kind === 'dlv') return !W.dlvById[id];
     if (kind === 'ep') return !W.epics[id];
     if (kind === 'branch') { if (W.dlvByBranch[id]) return false; const g = W.branch(id); return !g || (!g.exists && !g.merged); }
@@ -238,8 +257,8 @@ export function unplacedOf(nodes, W) {
     if (r.state === 'running' || QUEUED.includes(r.state) || W.now - runTs(r) < 3 * DAY) (byLane[r.data.lane] ||= []).push(r);
   }
   for (const [l, rs] of Object.entries(byLane)) if (!lanes.has(l))
-    out.push({ kind: 'lane', id: 'L:' + l, why: `${plural(rs.length, 'run')} in 3 d${rs.some(r => r.state === 'running') ? ', live now' : ''}` });
-  for (const d of W.dlv) if (d.state === 'done' && !d.superseded && d.record_state !== 'superseded' && !dlvs.has(d.id) && !brs.has(d.branch) && !(d.lane && lanes.has(d.lane)))
+    out.push({ kind: 'lane', id: W.lane(l), why: `${plural(rs.length, 'run')} in 3 d${rs.some(r => r.state === 'running') ? ', live now' : ''}` });
+  for (const d of W.dlv) if ((d.state === 'done' || d.state === 'unknown') && !d.superseded && d.record_state !== 'superseded' && !dlvs.has(d.id) && !brs.has(d.branch) && !(d.lane && lanes.has(d.lane)))
     out.push({ kind: 'dlv', id: d.id, why: `${d.branch} DONE ${Number(d.days ?? 0).toFixed(0)} d, not on main` });
   for (const i of Object.values(W.items)) if (i.kind === 'directive' && i.state === 'active' && !L.dir.includes(i.id))
     out.push({ kind: 'dir', id: i.id, why: String(i.data?.text ?? '').replace(/\s+/g, ' ').slice(0, 90) });
@@ -251,10 +270,15 @@ export function unplacedOf(nodes, W) {
 /** the install is the target only when the project names install receipts (SPEC sec. 2 "Target"); else main */
 export const hasInstallTarget = project => { const c = deliverableConfig(project || {}); return c.target === 'install' && (c.receipts || []).length > 0; };
 
+/** RM-46 S3 (SPEC 3.3): another home's deliverable (records.mjs copyItems) as a read-only deliverables row. Its git facts are that
+ * home's: the record says only that a DONE run delivered it (state done, never merged / installed from here). */
+export const dlvCopyRow = it => ({ id: it.id, home: it.home, readonly: true, record_state: it.state, state: 'done', target: 'main', at_target: it.state === 'superseded',
+  ...(it.state === 'superseded' ? { superseded: true } : {}), repo: it.data.repo ?? null, branch: it.data.branch ?? null, lane: it.data.lane ?? null, run: it.data.run ?? null,
+  delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created });
 /** worldOf() filled from the state dir, the deliverables view and git (the engine's scanRepo; branch / sha facts asked lazily) */
 export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle } = {}) {
   project = project || {};
-  const st = loadState(stateDir);
+  const st = loadState(stateDir), away = copyItems(stateDir, 'run');   // RM-46 S3: + the other homes' runs and DLVs (read-only copies)
   let rows = [];
   try { rows = deliverablesView({ stateDir, project, now, git, questions: Object.values(st.items).filter(i => i.kind === 'question') }).rows; } catch { rows = []; }
   const cfg = deliverableConfig(project), hasInstall = hasInstallTarget(project);
@@ -276,7 +300,8 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
     return (shaMemo[x] = !full ? null : git(cfg.repo, ['merge-base', '--is-ancestor', full, s.mainSha], { allowFail: true }) !== null);
   };
   const docs = p => fs.existsSync(path.isAbsolute(p) ? p : path.join(project.root || path.dirname(path.resolve(stateDir)), p));
-  const W = worldOf({ now, items: st.items, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy });
+  rows = [...rows, ...copyItems(stateDir, 'deliverable').map(dlvCopyRow)];
+  const W = worldOf({ now, items: { ...st.items, ...Object.fromEntries(away.map(r => [r.id, r])) }, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy, home: homeOf(stateDir)?.id });
   W.repo = cfg.repo || null;
   return W;
 }
@@ -287,9 +312,9 @@ function epicsOf(stateDir) {
 
 /** META-ROADMAP S3: the audit's Unplaced list (D3) for the digest - no git (lanes, DLV rows, directives, epics); null = no roadmap yet */
 export function unplacedNow(stateDir, { now = Date.now(), items, dlv = [] } = {}) {
-  const nodes = Object.values(loadRoadmap(stateDir).items);
+  const nodes = Object.values(hereLinks(loadRoadmap(stateDir), homeOf(stateDir)).items);
   if (!nodes.length) return null;
-  return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, epics: epicsOf(stateDir) }));
+  return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, epics: epicsOf(stateDir), home: homeOf(stateDir)?.id }));
 }
 
 /** refuse links to what does not exist (SPEC sec. 1: the checkRefs rule epics use); a branch / sha needs the project's repo */
@@ -332,7 +357,7 @@ export function buildTree({ stateDir, project = {}, now, git, memo = null, maxAg
   if (memo && memo.sig === sig && Date.now() - memo.at < maxAgeMs) { memo.hits = (memo.hits || 0) + 1; return memo.tree; }
   project = project || {};
   const W = world({ stateDir, project, now: now ?? Date.now(), git, idle });
-  const tree = treeOf(loadRoadmap(stateDir), W, { project: project.name ?? path.basename(path.resolve(stateDir)), title: project.title || project.name || path.basename(path.resolve(stateDir)) });
+  const tree = treeOf(hereLinks(loadRoadmap(stateDir), homeOf(stateDir)), W, { project: project.name ?? path.basename(path.resolve(stateDir)), title: project.title || project.name || path.basename(path.resolve(stateDir)) });
   if (memo) Object.assign(memo, { sig, at: Date.now(), tree });
   return tree;
 }
@@ -346,7 +371,8 @@ const head = tr => `${tr.title}: ${tr.counts.items} items - past ${tr.counts.pas
 /** one item (and its children) as text lines */
 export function renderItem(n, depth = 0) {
   const pad = '  '.repeat(depth), out = [];
-  out.push(`${pad}${n.id}  ${n.status.padEnd(8)}  ${n.progress.done}/${n.progress.total}  ${n.title}${n.horizon ? ` [${n.horizon}]` : ''}`);
+  out.push(`${pad}${n.id}  ${n.status.padEnd(8)}  ${n.progress.done}/${n.progress.total}  ${n.title}${n.horizon ? ` [${n.horizon}]` : ''}${n.home ? `  (on ${n.home})` : ''}`);
+  for (const e of n.pending || []) out.push(`${pad}      pending: ${e.ev} on ${e.home}, not yet committed on ${e.primary}`);   // RM-46 S3
   out.push(`${pad}      ${n.why}`);
   if (n.proof) out.push(`${pad}      ${lookWords(n)}`);   // META-CATCH S2
   if (n.stuck?.runs) out.push(`${pad}      ${stuckWords(n.stuck)}${n.stuck.flag ? ` - STUCK since ${n.stuck.flag.ts.slice(0, 16)}Z: ${n.stuck.flag.why.join(', ')}` : ''}`);
@@ -449,4 +475,4 @@ export const writeRoadmapView = (stateDir, tree, file = roadmapViewPath(stateDir
   writeGuarded(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));
 /** META-DASH-ASYNC R1: the dash server's form (fs.promises); the CLI and adopt keep writeRoadmapView */
 export const writeRoadmapViewAsync = (stateDir, tree, file = roadmapViewPath(stateDir)) =>
-  writeGuardedAsync(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));
+  writeGuardedAsync(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree), { role: 'dashboard' });

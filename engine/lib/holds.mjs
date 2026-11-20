@@ -1,6 +1,7 @@
 // GAP-1: a blocked Norn says so. The usage guard once held every queued run and merge for ~20 h ("usage: weekly unknown") and said
 // it only as one STATUS digest line. Now: when EVERY queued run of a project (or every queued run on the Claude account) waits on the
-// same machine-level term of the fill walk (runs.mjs walkQueue: a usage term of usageguard.mjs / billing.mjs, or a PAUSED file) for
+// same machine-level term of the fill walk (runs.mjs walkQueue: a usage term of usageguard.mjs / billing.mjs, or a pause that holds
+// starts: `PAUSED <mode> (<file>)`, pausemode.mjs - Hold the queue / Pause everything; Pause check-ins holds nothing) for
 // policy.holds.notice_min (default 60) minutes, the project gets ONE needs-you item (dashboard Inbox), ONE digest row (the check-in
 // reports it) and ONE owner notice per episode (tick -> norn notify, class alert). Level-triggered like the digest: <state>/hold.json
 // keeps only the episode (term, since, notified); the tick deletes it once the walk no longer holds, and the item and the row leave.
@@ -9,6 +10,7 @@ import path from 'node:path';
 import { billingOf } from './billing.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { queueSpecPath, liveBudget } from './runs.mjs';
+import { PAUSE_MODES } from './pausemode.mjs';
 
 export const NOTICE_MIN = 60;
 /** the minutes a whole hold lasts before it is surfaced: project policy.holds.notice_min (a Settings row), else NOTICE_MIN */
@@ -74,8 +76,8 @@ export function holdWords(term, { billing = null, status = '' } = {}) {
     clears: reset ? `by itself at the weekly reset (${hhmm(reset)})` : 'by itself at the weekly reset', fix: 'wait for the reset, or raise the weekly stop (Settings)' };
   if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return { reason: `API spend ($${m[1]} in the last 24 h) reached the $${m[2]} daily cap`, setting: 'api_usd_per_day',
     clears: 'by itself as the last 24 h of spend falls under the cap', fix: 'wait, or raise or clear the API daily cap (Settings)' };
-  if ((m = t.match(/^PAUSED \((.+)\)$/))) return { reason: `Norn is paused: the file ${m[1]} exists`, clears: null, file: m[1], resume: true,
-    fix: `delete ${m[1]} (the header's Resume button deletes the project's own PAUSED file)` };
+  if ((m = t.match(/^PAUSED (\w+) \((.+)\)$/))) return { reason: `Norn is paused (${PAUSE_MODES[m[1]]?.label ?? m[1]}): the file ${m[2]} holds every start`, clears: null, file: m[2], resume: true,
+    fix: `resume all (the header's pause menu, or norn resume --all) - it deletes the project's own PAUSED file; a machine-level ${m[2]} is deleted by hand` };
   if ((m = t.match(/^dwarf: (.+) is busy on (RUN-\d+)$/))) return { reason: `the lane is pinned to ${m[1]}, who is busy on ${m[2]}`, clears: `by itself when ${m[2]} ends`,   // DWARVES 1.3 rule 1
     fix: 'wait, or unpin the dwarf: norn crew unpin <id>', command: 'norn crew unpin <id>' };
   if (t.startsWith('crew store ')) return { reason: t, clears: null, fix: 'repair or move the crew store file: no worker run starts without a dwarf' };

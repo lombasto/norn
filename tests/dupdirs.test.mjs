@@ -12,7 +12,7 @@ import { record, loadState } from '../engine/lib/records.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { handle, context } from '../engine/lib/mcp.mjs';
-import { threadFile } from '../engine/lib/chat.mjs';
+import { threadFile } from '../engine/lib/chatact.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 

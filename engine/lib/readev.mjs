@@ -7,7 +7,7 @@ import path from 'node:path';
 import { advisory } from './advisory.mjs';
 import { runTranscript } from './standing.mjs';
 import { findTranscript } from './harness/claude.mjs';
-import { threadFile } from './chat.mjs';
+import { threadFile } from './chatact.mjs';
 
 export const READ_DAYS = 30;
 const DAY = 86400000;

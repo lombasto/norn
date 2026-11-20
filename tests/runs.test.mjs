@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, stopRun, RunRefused, hbPath } from '../engine/lib/runs.mjs';
+import { parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, stopRun, RunRefused, hbPath, fillQueue } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { resolveShim } from '../engine/lib/paths.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
@@ -145,7 +145,7 @@ test('auto-resume: HANDOFF restarts the lane (resume_of, count), the last run en
   assert.match(fs.readFileSync(ledger, 'utf8'), new RegExp(`lane demo HANDOFF -> auto-resumed \\(1/2, same brief, fake [^)]*\\) ${second.id}$`, 'm'));
 });
 
-test('auto-resume cap: refusal is a run event naming "cap n/n"; PAUSED refuses too', async () => {
+test('auto-resume cap: refusal is a run event naming "cap n/n"', async () => {
   const d = sandbox();
   const r = startRun(d.opts({ brief: d.brief('mode: handoff\n'), policy: { auto_resume_max: 1 } }));
   await d.ended(r.run);
@@ -155,13 +155,23 @@ test('auto-resume cap: refusal is a run event naming "cap n/n"; PAUSED refuses t
   assert.deepEqual(it.resume, { refused: 'cap 1/1', count: 1, max: 1 });
   assert.equal(d.runs().length, 2);
   await waitFor(() => fs.existsSync(d.tickFile));
+});
 
+// RM-37: a pause HOLDS a hand-off resume (queued, ahead of new work), never refuses it - it starts on release (it sat for ever before)
+test('PAUSED holds a hand-off resume queued, never refuses it: it starts once the pause is released', async () => {
   const p = sandbox();
-  const paused = path.join(p.t, 'PAUSED'); fs.writeFileSync(paused, '');
-  const q = startRun(p.opts({ brief: p.brief('mode: handoff\n'), policy: { auto_resume_max: 5 }, paused: [paused] }));
+  const paused = path.join(p.t, 'PAUSED'), gate = path.join(p.t, 'go');
+  const q = startRun(p.opts({ brief: p.brief(`mode: handoff\nuntil: ${gate}\n`), policy: { auto_resume_max: 5 }, paused: [paused] }));
+  fs.writeFileSync(paused, ''); fs.writeFileSync(gate, '');
   const qi = await waitFor(() => { const x = p.item(q.run); return x.resume && x; });
-  assert.deepEqual(qi.resume, { refused: 'paused', count: 0, max: 5 });
-  assert.equal(p.runs().length, 1);
+  assert.equal(qi.resume.refused, undefined, 'a pause never refuses a hand-off resume');
+  const held = p.item(qi.resume.next);
+  assert.equal(held.state, 'queued'); assert.equal(held.data.resume_of, q.run); assert.equal(held.data.priority, 'P1', 'ahead of new work');
+  assert.deepEqual(fillQueue(p.state), [], 'nothing starts while paused');
+  fs.unlinkSync(paused);
+  const [f] = fillQueue(p.state);
+  assert.equal(f.queued, held.id);
+  await p.ended(f.next);
 });
 
 test('norn run CLI: second writer on the same worktree exits 3; worker cap exits 4; norn stop kills the whole tree', async () => {

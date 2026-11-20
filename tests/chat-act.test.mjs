@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { handle, context, TOOLS, refusal } from '../engine/lib/mcp.mjs';
-import { tierOf, promptTier, cliPlan, drain, approvalsDir, readVerdict } from '../engine/lib/chatact.mjs';
-import { createChat, readThread, threadFile } from '../engine/lib/chat.mjs';
+import { tierOf, promptTier, cliPlan, drain, approvalsDir, readVerdict, threadFile } from '../engine/lib/chatact.mjs';
+import { createChat, readThread } from '../engine/lib/chat.mjs';
 import { homeEvents, renderThread } from '../engine/dash/home.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { adapterFor } from '../engine/lib/harness/index.mjs';
@@ -42,7 +42,7 @@ test('C3 role and tier table: profile chat = controller tools + norn_show, norn_
     [1, ...cli(['run', '--queue', '--lane', 'x'])], [1, ...cli(['requeue', 'RUN-1', '--after', 'none', '--why', 'w'])], [1, ...cli(['mail', 'send', '--to', 'role:checkin'])],
     [1, ...cli(['notify', '--title', 't'])], [1, ...cli(['lane', 'new', 'x'])], [1, ...cli(['rec', 'add', 'decision'])], [1, ...cli(['mergeq', '--update'])],
     [1, ...cli(['deliverables', 'resolve', 'DLV-1'])],
-    [2, 'norn_pause', { on: true }], [2, 'norn_settings', { set: { key: 'a', value: 1 } }], [2, ...cli(['mergeq', '--run'])], [2, ...cli(['mergeq', '--batching', 'off', '--why', 'w'])],
+    [2, 'norn_pause', { mode: 'all' }], [0, 'norn_pause', { half: true }], [2, 'norn_settings', { set: { key: 'a', value: 1 } }], [2, ...cli(['mergeq', '--run'])], [2, ...cli(['mergeq', '--batching', 'off', '--why', 'w'])],
     [3, 'meta_shell', {}],
   ];
   for (const [tier, tool, a] of TABLE) assert.equal(tierOf(tool, a), tier, `${tool} ${JSON.stringify(a)}`);
@@ -111,7 +111,7 @@ test('C3 norn_cli: a non-listed subcommand is refused (nothing runs); a listed o
 test('C3 approval card round trip on a fixture thread: tier 2 waits for the tap; Approve once runs it, Deny refuses it; the thread shows card + verdict', async () => {
   const s = mkTmp('meta-c3-', 'p'), ctx = ctxOf(s), chat = createChat({ project: { name: 'p', state: s }, executor: 'fake', model: 'm', effort: 'e' });
   own(s, 'pause the project please');
-  const p1 = call(ctx, 'norn_pause', { on: true });
+  const p1 = call(ctx, 'norn_pause', { mode: 'all' });
   const card = await until(() => { chat.drain(); return readThread(s).items.find(l => l.kind === 'approval'); });
   assert.equal(fs.existsSync(path.join(s, 'PAUSED')), false, 'nothing happens before the tap');
   assert.match(card.title, /pause/i); assert.equal(card.timeout_min, 1);
@@ -127,7 +127,7 @@ test('C3 approval card round trip on a fixture thread: tier 2 waits for the tap;
   ev = homeEvents({ thread: readThread(s).items }).find(e => e.kind === 'approval');
   assert.deepEqual([ev.state, ev.cat], ['approved', 'chat']); assert.doesNotMatch(renderThread([ev], { project: 'p' }), /data-act="approve"/);
   // Deny: refused, nothing written
-  const p2 = call(ctx, 'norn_pause', { on: false });
+  const p2 = call(ctx, 'norn_pause', { resume: 'all' });
   const c2 = await until(() => { chat.drain(); return readThread(s).items.filter(l => l.kind === 'approval')[1]; });
   chat.decide(c2.id, 'deny');
   const r2 = await p2;
@@ -137,7 +137,7 @@ test('C3 approval card round trip on a fixture thread: tier 2 waits for the tap;
 
 test('C3 timeout = deny + notify: no tap in time denies, pings the owner once, and a late tap is refused', async () => {
   const s = mkTmp('meta-c3-'), pings = [], ctx = ctxOf(s, { ms: 80, notifyFn: x => pings.push(x) });
-  const r = await call(ctx, 'norn_pause', { on: true });
+  const r = await call(ctx, 'norn_pause', { mode: 'all' });
   assert.ok(r.isError); assert.match(txt(r), /no tap|timeout/i);
   assert.equal(fs.existsSync(path.join(s, 'PAUSED')), false);
   assert.equal(pings.length, 1); assert.match(pings[0].title, /denied/);
@@ -184,7 +184,7 @@ test('C3 endpoints: POST /api/chat/approve and /api/chat/undo - token-guarded bu
   try {
     const s = f.pa.state, P = f.pa.name, ctx = ctxOf(s);
     own(s, 'keep the night quiet');
-    const pending = call(ctx, 'norn_pause', { on: true });
+    const pending = call(ctx, 'norn_pause', { mode: 'all' });
     const id = await until(() => fs.existsSync(approvalsDir(s)) && fs.readdirSync(approvalsDir(s)).find(x => /^AP-[0-9a-f]{8}\.json$/.test(x))?.slice(0, 11));
     assert.equal((await f.post('/api/chat/approve', { project: P, id, verdict: 'approve' }, { 'x-dash-token': 'wrong' })).status, 403);
     assert.equal((await f.post('/api/chat/approve', { project: P, id: 'AP-00000000', verdict: 'approve' })).status, 404);

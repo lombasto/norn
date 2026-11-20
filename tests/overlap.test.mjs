@@ -116,6 +116,12 @@ test('overlap: the digest row (running lanes only, level-triggered), the Lanes c
   c.lanes.feat.overlaps = [{ kind: 'pr', ref: 'feat/same-thing', number: 12, title: 'Same feature', url: 'https://github.com/someone/proj/pull/12', n: 3, files: ['src/a.js'] }];
   const html = renderTab('lanes', { lanes: [{ name: 'feat', id: 'L-feat', state: 'active', data: {}, run, dwarf: null, kind_word: null, executor: 'fake', run_state: 'running', text: 'running fake for 1 min', project: 'k', overlap: c.lanes.feat.overlaps }] }, {});
   assert.match(html, /<a [^>]*href="https:\/\/github\.com\/someone\/proj\/pull\/12"[^>]*>[^<]*overlaps upstream: PR #12 \(3 files\)/);
+  // owner 2026-11-18: two or more overlaps fold into ONE summary chip that opens to the per-branch chips (the row keeps its height)
+  const two = [c.lanes.feat.overlaps[0], { kind: 'branch', ref: 'norn/slop-gate', n: 2, files: ['a', 'b'] }];
+  const html2 = renderTab('lanes', { lanes: [{ name: 'feat', id: 'L-feat', state: 'active', data: {}, run, dwarf: null, kind_word: null, executor: 'fake', run_state: 'running', text: 'running fake for 1 min', project: 'k', overlap: two }] }, {});
+  assert.match(html2, /<details class="lane-overlap"><summary class="chip warn"[^>]*>overlaps 2 upstream: 5 files<\/summary>/);
+  assert.equal((html2.match(/class="chip warn"/g) || []).length, 3, 'the summary + the two chips inside it');
+  assert.match(html2, /<div class="rowacts">/, 'the row actions sit in one spaced group');
   // the lane stops: the row leaves
   record(f.state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data: { outcome: 'done', exit: 0 } });
   const rows = digest(f.state, project, { dlv: [], ready: [], evalAfter: () => ({ met: true }) }).sections.overlap ?? [];
@@ -130,9 +136,9 @@ test('overlap: the digest row (running lanes only, level-triggered), the Lanes c
 });
 
 test('githubRepo: https / ssh / scp forms; anything else null', () => {
-  assert.equal(githubRepo('https://github.com/lombasto/norn.git'), 'lombasto/norn');
-  assert.equal(githubRepo('https://github.com/lombasto/norn'), 'lombasto/norn');
-  assert.equal(githubRepo('git@github.com:lombasto/norn-public.git'), 'lombasto/norn-public');
+  assert.equal(githubRepo('https://github.com/kestrel/prism.git'), 'kestrel/prism');
+  assert.equal(githubRepo('https://github.com/kestrel/prism'), 'kestrel/prism');
+  assert.equal(githubRepo('git@github.com:kestrel/prism-public.git'), 'kestrel/prism-public');
   assert.equal(githubRepo('ssh://git@github.com/a/b.git'), 'a/b');
   assert.equal(githubRepo('https://gitlab.com/a/b.git'), null);
   assert.equal(githubRepo('C:/x/origin.git'), null);

@@ -13,7 +13,8 @@ import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { startRun, lockPath, readiness } from '../engine/lib/runs.mjs';
 import { deliverablesView, askDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
 import { main } from '../engine/bin/norn.mjs';
-import { mrScore, mergeQueue, formatMq, autoUpdate, mergeConfig, mergeqRun, loadBatch, loadMq, setBatching, mqProbe, intoSha, mainShaOf } from '../engine/lib/mergeq.mjs';
+import { mrScore, mergeQueue, formatMq, autoUpdate, mergeqRun, intoSha, mainShaOf } from '../engine/lib/mergeq.mjs';
+import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { tick, gateProbes } from '../engine/lib/tick.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
@@ -82,7 +83,7 @@ function nornProject(t, extra = {}) {
 
 test('merge-brief refuses a lane whose worktree holds a live run unless --sha (exit 3); --sha needs no worktree write', () => {
   const t = tmp('mb');
-  const pj = nornProject(t);
+  const pj = nornProject(t, { policy: { slop: { enabled: false } } });   // no repo behind 03f9b94: the slop door (slop-gate.test) would refuse it
   const state = path.join(t, 'state', 'norn'), locks = path.join(t, 'state', 'locks'), wt = path.join(t, 'wt-vis');
   fs.mkdirSync(wt, { recursive: true });
   const run = liveRun(state, locks, { lane: 'meta-vis', worktree: wt });
@@ -234,7 +235,7 @@ test('MR score = Gas Town score.go: 1000 + epic_h*10 + (4-P)*100 - min(retries*5
     ['DLV-4', 1230, 'P2', null, 0, 'door', 'clean'],
     ['DLV-3', 1122, 'P2', null, 3, 'batch', 'clean'],
   ]);
-  assert.match(formatMq(rows[0]), /^DLV-2 +1524 +P0 EP-1 +batch +clean +-1 +feat\/b/);
+  assert.match(formatMq(rows[0]), /^DLV-2 +1524 +P0 EP-1 +batch +clean +-1 +SLOP \? +feat\/b/);   // SLOP ?: no stored check of its tip yet
   // no fast gate declared (kestrel): every non-native row is its own MERGE stage
   assert.deepEqual(mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW }).rows.map(r => r.gate), ['stage', 'stage', 'door', 'stage']);
   // parked / superseded / merged rows are not queued
@@ -371,7 +372,7 @@ test('auto-update: merges main into an idle branch and pushes (a fast-forward, n
 });
 
 // ---------- piece 5: the tick ----------
-test('the tick starts `norn mergeq --run` right after the fill (detached, one pass per state dir); none without deliverables', async () => {
+test('the tick starts `norn mergeq --run` right after the fill (detached, one pass per state dir); every project with a file (it lands its work)', async () => {
   const t = tmp('tick');
   const root = path.join(t, 'root'), state = path.join(t, 'state', 'norn');
   fs.mkdirSync(root, { recursive: true }); fs.mkdirSync(state, { recursive: true });
@@ -394,7 +395,9 @@ test('the tick starts `norn mergeq --run` right after the fill (detached, one pa
   fs.unlinkSync(path.join(state, 'mq', 'run.lock'));
   const { deliverables: _d, ...bare } = p;
   tick({ project: bare, budget: {}, dry: true, spawnMergeq, reason: 'test' });
-  assert.equal(calls.length, 1, 'no deliverables, no merge: no merge queue');
+  assert.equal(calls.length, 2, 'no deliverables, no merge: the pass still runs (MERGE-FIRST: mechanical landing; no auto-update there)');
+  tick({ project: { ...bare, file: undefined }, budget: {}, dry: true, spawnMergeq, reason: 'test' });
+  assert.equal(calls.length, 2, 'no project file: no pass');
 });
 
 test('auto-update leaves native code to the door: no update of a native branch, nor one that would pull main native changes into a lane worktree', () => {
