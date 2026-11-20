@@ -43,17 +43,17 @@ test('rows, chips and pending: Inbox, Lanes, Runs, Records, Roadmap and Delivera
     const inbox = (await f.get('/api/inbox?project=kestrel')).data, q = inbox.items.find(i => i.id === 'Q-b-1');
     assert.equal(q?.home, 'b', 'the foreign question is in the inbox with its home');
     assert.equal(inbox.items.find(i => i.id === 'Q-1')?.home ?? null, null, 'an own (bare) question has no home chip');
-    has(renderTab('inbox', inbox, { now: Date.now() }), /id="q-Q-b-1"[\s\S]*?class="chip home"[^>]*>on b</, 'the inbox card shows "on b"');
+    has(renderTab('inbox', inbox, { now: Date.now() }), /id="q-Q-b-1"[\s\S]*?class="chip onhome"[^>]*>on b</, 'the inbox card shows "on b"');
 
     const lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes, l = lanes.find(x => x.id === 'L:b/slop');
     assert.equal(l?.home, 'b', JSON.stringify(lanes.map(x => [x.id, x.home])));
-    has(renderTab('lanes', { lanes }, { now: Date.now(), laneShow: ['needs', 'running', 'stopped', 'waiting', 'land', 'parked', 'today', 'old', 'archived'] }), /class="chip home"[^>]*>on b</, 'the lane row shows "on b"');
+    has(renderTab('lanes', { lanes }, { now: Date.now(), laneShow: ['needs', 'running', 'stopped', 'waiting', 'land', 'parked', 'today', 'old', 'archived'] }), /class="chip onhome"[^>]*>on b</, 'the lane row shows "on b"');
 
     const ag = (await f.get('/api/agents?project=kestrel&window=24h')).data, r = ag.tree.find(n => n.id === 'RUN-b-1');
     assert.ok(r, 'the foreign run is in the Runs tree: ' + JSON.stringify(ag.tree.map(n => n.id)));
     assert.deepEqual([r.home, r.readonly, r.state, r.lane], ['b', true, 'running', 'b/slop']);
     const runsHtml = renderTab('runs', ag, { now: Date.now() });
-    has(runsHtml, /id="node-RUN-b-1"[\s\S]*?class="chip home"[^>]*>on b</, 'the run row shows "on b"');
+    has(runsHtml, /id="node-RUN-b-1"[\s\S]*?class="chip onhome"[^>]*>on b</, 'the run row shows "on b"');
     assert.doesNotMatch(runsHtml.match(/<div class="rrow [^"]*" id="node-RUN-b-1"[^>]*>/)[0], /data-feed/, 'a foreign run opens no live feed (read-only)');
 
     const dl = (await f.get('/api/deliverables?project=kestrel')).data, d = dl.rows.find(x => x.id === 'DLV-b-1');
@@ -62,12 +62,12 @@ test('rows, chips and pending: Inbox, Lanes, Runs, Records, Roadmap and Delivera
     record_dir_b(f);
     const rec = (await f.get('/api/records?project=kestrel')).data, dir = rec.directives.find(x => x.id === 'DIR-b-1');
     assert.equal(dir?.home, 'b', JSON.stringify(rec.directives.map(x => x.id)));
-    has(renderTab('records', rec, { now: Date.now() }), /class="chip home"[^>]*>on b</, 'the records row shows "on b"');
+    has(renderTab('records', rec, { now: Date.now() }), /class="chip onhome"[^>]*>on b</, 'the records row shows "on b"');
 
     const rm = (await f.get('/api/roadmap?project=kestrel')).data, it = rm.themes.flatMap(t => t.children).find(n => n.id === 'RM-b-2');
     assert.equal(it?.home, 'b', JSON.stringify(rm.themes.map(t => t.id)));
     assert.equal(it.status, 'building', `derive() reads b's copied run (live on b/slop): ${it.status} - ${it.why}`);
-    has(renderTab('roadmap', rm, { now: Date.now(), project: 'kestrel' }), /class="chip home"[^>]*>on b</, 'the roadmap row shows "on b"');
+    has(renderTab('roadmap', rm, { now: Date.now(), project: 'kestrel' }), /class="chip onhome"[^>]*>on b</, 'the roadmap row shows "on b"');
   } finally { await f.done(); }
 });
 // a directive written on b (DIR-b-1), copied as the fetch does: Records lists it
@@ -135,8 +135,10 @@ test('the browser: Roadmap, Inbox, Runs and Ledger show "on b" and do not scroll
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     for (const tab of ['roadmap', 'inbox', 'runs', 'ledger', 'lanes']) {
       await pg.go(`${f.url}/?project=kestrel&tab=${tab}`);
-      assert.ok(await pg.until(`document.body.dataset.ready === '${tab}' && [...document.querySelectorAll('.chip.home')].some(x => x.textContent === 'on b')`, 90000), `${tab} shows "on b"`);
+      assert.ok(await pg.until(`document.body.dataset.ready === '${tab}' && [...document.querySelectorAll('.chip.onhome')].some(x => x.textContent === 'on b')`, 90000), `${tab} shows "on b"`);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `no sideways scroll on ${tab} at 390 px`);
+      // the chip once shared the class "home" with the Home page grid, which made every chip (and its row) a screen tall
+      assert.ok(await pg.ev(`Math.max(...[...document.querySelectorAll('.chip.onhome')].map(x => x.getBoundingClientRect().height))`) < 40, `the "on b" chip is one line high on ${tab}`);
     }
   } finally { await pg.close(); await f.done(); }
 });

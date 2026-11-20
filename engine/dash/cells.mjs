@@ -55,7 +55,7 @@ export function stateOf(text) {
 }
 export const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
 export const projTag = (ctx, p) => ctx.project === 'all' && p ? `<span class="id">${esc(p)}</span> ` : '';
-export const homeChip = x => (x?.home ? `<span class="chip home" title="${esc(`written on home ${x.home}: home ${x.home} commits its changes`)}">on ${esc(x.home)}</span> ` : '');
+export const homeChip = x => (x?.home ? `<span class="chip onhome" title="${esc(`written on home ${x.home}: home ${x.home} commits its changes`)}">on ${esc(x.home)}</span> ` : '');
 export const pendingChips = x => (x?.pending || []).map(e => `<span class="chip pending" title="written here, applied once home ${esc(e.primary)} relays it">${esc(`${PAST[e.ev] ?? e.ev} on ${e.home}, pending ${e.primary}`)}</span>`).join(' ');
 /** the worst of { page: 'ok'|'warn'|'bad'|null } states; null when none is known */
 export const worstState = st => Object.values(st || {}).filter(v => v in RANK).reduce((w, v) => (w === null || RANK[v] > RANK[w] ? v : w), null);
