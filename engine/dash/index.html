@@ -1255,7 +1255,7 @@ document.addEventListener('click', e => {
     act(async () => { const r = await post('/api/branches/act', { project: p, act: verb, ...(verb === 'rmwt' ? { path: d.path } : { branch: d.branch }) });
       S.brUndo = { project: p, verb, undo: r.undo, text: verb === 'delete' ? `Deleted ${what}.` : verb === 'rmwt' ? `Removed the worktree ${what}.` : `Adopted ${what} into lane ${r.lane}.` }; });
     return; }
-  if (d.act === 'br-undo') { const u = S.brUndo; S.brUndo = null; if (u) act(() => (u.verb === 'adopt' ? post('/api/lane/archive', { project: u.project, lane: u.undo.lane }) : post('/api/branches/act', { project: u.project, act: 'undo', undo: u.undo }))); return; }
+  if (d.act === 'br-undo') { const u = S.brUndo; S.brUndo = null; if (u) act(() => (u.verb === 'adopt' ? post('/api/lane/archive', { project: u.project, lane: u.undo.lane, override: 'Undo of Adopt into a lane: the branch stays as it was' }) : post('/api/branches/act', { project: u.project, act: 'undo', undo: u.undo }))); return; }
   if (d.act === 'lane-show') { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); return; }
   if (d.act === 'revoke' && confirm(`Revoke ${d.id}?`)) act(() => post('/api/directive/revoke', { project: p, id: d.id }));
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
