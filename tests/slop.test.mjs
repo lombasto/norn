@@ -56,7 +56,7 @@ for (const rule of [...loadRules(), ...projectRules]) {
       const repo = fixtureRepo(fx);
       const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
       const at = r.findings.filter(f => f.new && f.level === rule.level);
-      assert.deepEqual(r.skipped, [], `${rule.id} ${which} ran`);
+      assert.deepEqual(r.ran, [rule.id], `${rule.id} ${which} ran`);
       assert.equal(at.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
       assert.equal(r.blocks.length > 0, want && rule.level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
       for (const b of at) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
@@ -64,7 +64,28 @@ for (const rule of [...loadRules(), ...projectRules]) {
   });
 }
 
-// RM-27: every finding explains itself - the rule's what / why / fix sits beside the rule, and a rule without it does not load
+// S1a (SPEC 1.3 F5 / F6, 3.4): the check fails closed - a rule that could not run and a file the linter cannot parse are BLOCK findings
+const LINT = loadRules().filter(r => r.kind === 'eslint' || r.kind === 'ast');
+test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could not run: <why>", fingerprint rule + could-not-run); the result has no skipped list', () => {
+  const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n' } });
+  const down = () => { throw new Error('npx not found on PATH'); };
+  const r = slopCheck({ repo, base: 'main', rules: LINT, tool: down });
+  assert.equal('skipped' in r, false, 'skipped leaves the result shape');
+  assert.deepEqual(r.ran, []);
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.level, b.msg]), LINT.map(x => [x.id, 'BLOCK', 'could not run: npx not found on PATH']), 'every lint rule, the WARN one too');
+  assert.equal(new Set(r.blocks.map(b => b.fp)).size, LINT.length, 'one fingerprint per rule');
+  assert.deepEqual(slopCheck({ repo, base: 'main', rules: LINT, tool: down }).blocks.map(b => b.fp), r.blocks.map(b => b.fp), 'stable: a waiver can name it');
+});
+test('F6: a file ESLint cannot parse is ONE BLOCK finding with the parser\'s message (not one per lint rule); the same error at base is not new', () => {
+  const bad = { filePath: 'a.mjs', messages: [{ ruleId: null, fatal: true, severity: 2, message: 'Parsing error: Unexpected token )', line: 2, column: 11 }] };
+  const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 0;\nconst b = );\n' }, head: { 'a.mjs': 'export const a = 1;\nconst b = );\n' } });
+  const r = slopCheck({ repo, base: 'main', rules: LINT, tool: recordedTool({ base: [], head: [bad] }) });
+  assert.deepEqual(r.blocks.map(b => [b.file, b.line, b.level]), [['a.mjs', 2, 'BLOCK']], JSON.stringify(r.findings));
+  assert.match(r.blocks[0].msg, /does not parse: Parsing error: Unexpected token \)/);
+  assert.deepEqual(slopCheck({ repo, base: 'main', rules: LINT, tool: recordedTool({ base: [bad], head: [bad] }) }).blocks, [], 'already broken at base');
+});
+
+// RM-27: every finding explains itself -the rule's what / why / fix sits beside the rule, and a rule without it does not load
 test('every rule explains itself in plain words: what was found, why the rule exists, what to do; a rule without it does not load', () => {
   const projectDir = path.dirname(path.dirname(PROJECT_RULES)), rules = effectiveRules({ projectDir });
   assert.ok(rules.length >= 21 && rules.some(r => r.id.startsWith('P-')), 'the built-ins and the project rules');
