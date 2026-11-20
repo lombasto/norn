@@ -26,7 +26,7 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { checkBranch, slopPrompt, slopList } from './slop/runend.mjs';
+import { checkBranch, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
 import { procStartAsync, running } from './legacy.mjs';
 import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
@@ -451,10 +451,18 @@ function slopEnd() {
   // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
   let brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
-  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
+  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) {
+    // SPEC 1.3 F7: a check that threw is no "no findings" - the branch is held "could not check" (the dashboard and the digest show it);
+    // no resume: the worker cannot fix the check, and the door runs its own
+    const why = e.message.split('\n')[0];
+    logLine(`slop: could not check: ${why}`);
+    try { const p = couldNotCheck(spec.worktree, why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e2) { logLine(`slop: the could-not-check hold was not stored: ${e2.message.split('\n')[0]}`); }
+    return [];
+  }
   if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
-  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
-  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
+  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings }).open;
+  const unrun = c.result.findings.filter(f => f.unrun).map(f => f.rule);
+  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
   return open;
 }
 
