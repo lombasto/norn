@@ -39,12 +39,12 @@ function recordResolver(state) {
   return id => (id.startsWith('RM-') ? rm[id] : items[id]?.state) ?? null;
 }
 
-/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop */
-export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null } = {}) {
+/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop; brief: the run's brief text */
+export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null, brief = null } = {}) {
   const bb = base ? { branch: branchBase(repo)?.branch ?? null, base } : branchBase(repo);
   if (!bb) return null;
   const ps = projectSlop({ state, projectDir });
-  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules }) };
+  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules, brief }) };
 }
 
 // the resume prompt names at most SLOP_GROUPS (rule, file) groups and SLOP_FIRST lines of each: a BLOCK list of thousands of hits

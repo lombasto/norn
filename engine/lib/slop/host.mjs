@@ -4,6 +4,7 @@
 //   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends)
 //   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level) } - the door reads it
 //   REPORT.md + report.json - the daily report and its one digest line; daily.started / daily.missed - a daily start, the ones that wrote nothing
+//   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (RM-43: the second voice's precision; the last one counts)
 // Waivers are records (WVR-n, waivers.jsonl); a block is open while no active waiver covers it.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,10 +15,11 @@ import { explainOf } from './check.mjs';
 
 export const slopDir = state => path.join(state, 'slop');
 const readJ = (f, dflt) => { const t = readText(f); return t === null ? dflt : JSON.parse(t); };   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
-export const slopFiles = state => [holdsFile(state), path.join(slopDir(state), 'report.json'), path.join(slopDir(state), 'series.json')];
+export const slopFiles = state => [holdsFile(state), path.join(slopDir(state), 'report.json'), path.join(slopDir(state), 'series.json'), checksFile(state), ratingsFile(state)];
 function writeJ(f, v) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(v, null, 1)); fs.renameSync(f + '.tmp', f); }
 const holdsFile = state => path.join(slopDir(state), 'holds.json');
 const checksFile = state => path.join(slopDir(state), 'checks.jsonl');
+const ratingsFile = state => path.join(slopDir(state), 'ratings.jsonl');
 
 export const slopHolds = state => readJ(holdsFile(state), {});
 export const slopReport = state => readJ(path.join(slopDir(state), 'report.json'), null);
@@ -39,11 +41,35 @@ export function openBlocks(state, branch, { now = Date.now() } = {}) {
 /** every stored check, oldest first: { branch, base, head, hash, lane, run, at, findings (the new ones, every level), skipped } */
 export const slopChecks = state => (readText(checksFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l));
 
+// ---------- RM-43: the second voice's ratings (audit REPORT sec. 5 "Level") ----------
+// a model rule may be set to BLOCK at 90 % precision over 20 rated findings and drops to TREND under 50 % (over as many): the
+// precision view says so; the change itself is a record the owner or the controller makes (overrides.json), never automatic
+export const RATING = { rated: 20, block: 0.9, trend: 0.5 };
+/** fp -> its last rating { fp, rule, up, by, at } */
+export const slopRatings = state => new Map((readText(ratingsFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l)).map(r => [r.fp, r]));
+const modelFinding = (state, fp) => slopChecks(state).flatMap(c => c.findings).find(f => f.fp === fp && f.voice) || null;
+/** the unrated model findings of each branch's last check: [{ branch, run, findings }] */
+export function voiceFindings(state) {
+  const rated = slopRatings(state), last = new Map();
+  for (const c of slopChecks(state)) if (c.branch) last.set(c.branch, c);
+  return [...last.values()].map(c => ({ branch: c.branch, run: c.run, findings: c.findings.filter(f => f.voice && !rated.has(f.fp)) })).filter(b => b.findings.length);
+}
+/** per model rule: { rule, title, level, shadow, rated, up, precision (null: none rated), suggest: 'BLOCK' | 'TREND' | null } */
+export function voicePrecision(state, rules) {
+  const all = [...slopRatings(state).values()];
+  return rules.map(r => {
+    const mine = all.filter(x => x.rule === r.id), up = mine.filter(x => x.up).length, precision = mine.length ? up / mine.length : null;
+    const suggest = mine.length < RATING.rated ? null : precision >= RATING.block ? 'BLOCK' : precision < RATING.trend ? 'TREND' : null;
+    return { rule: r.id, title: r.title, level: r.level, shadow: !!r.shadow, rated: mine.length, up, precision, suggest };
+  });
+}
+
 /**
  * The one host write. payload.type:
  *  check  { branch, lane?, run?, base, head, hash (the rule set's), blocks, findings, skipped? } -> one line in checks.jsonl
  *         (the new findings of every level) + the branch's hold set (blocks) or dropped (none); -> { open, check }
  *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }) } -> the report files
+ *  rating { fp, up (true: the finding is right), by } -> one line in ratings.jsonl; only a stored model finding is rated -> { rating }
  */
 export function hostWrite(state, payload) {
   if (payload.type === 'check') {
@@ -69,6 +95,15 @@ export function hostWrite(state, payload) {
     s.days[payload.day] = payload.point;
     writeJ(path.join(dir, 'series.json'), s);
     return { file: path.join(dir, 'REPORT.md') };
+  }
+  if (payload.type === 'rating') {
+    if (typeof payload.up !== 'boolean') throw new Error('hostWrite rating: up is true or false');
+    const f = modelFinding(state, payload.fp);
+    if (!f) throw new Error(`hostWrite rating: no model finding ${payload.fp} in the stored checks`);
+    const rating = { fp: f.fp, rule: f.rule, up: payload.up, by: payload.by || null, at: new Date().toISOString() };
+    fs.mkdirSync(slopDir(state), { recursive: true });
+    fs.appendFileSync(ratingsFile(state), JSON.stringify(rating) + '\n');
+    return { rating };
   }
   throw new Error(`hostWrite: unknown payload type ${payload.type}`);
 }
