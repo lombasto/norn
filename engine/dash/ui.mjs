@@ -244,7 +244,7 @@ const shortT = t => String(t ?? '').replace(/^(\S+\.test\.mjs) :: /, '<span clas
 const none = '<p class="mute" style="padding:0 12px">none measured</p>';
 const notYet = (what, src) => `<p class="small mute tnotyet" style="padding:0 12px"><span class="chip idle">not measured yet</span> ${what}${src ? ` <span class="mute">(${src})</span>` : ''}</p>`;
 const SUITE_NAME = { 'node:test': 'node:test', pytest: 'pytest' };
-const nodeOnly = d => (d.suite === 'pytest' ? `<p class="small mute tscope" style="padding:0 12px">${chip('idle', 'node:test only')} reads node:test suites only for now: this project's suite is pytest, so nothing fills here.</p>` : '');
+const nodeOnly = d => (d.suite === 'pytest' ? `<p class="small mute tscope" style="padding:0 12px">${chip('idle', 'node:test only')} reads node:test suites only: this project's suite is pytest, so nothing fills here.</p>` : '');
 // a test's file:line opens the code viewer; the test's row names it
 const srcBtn = (file, line, label) => `<button class="lnk mono small" data-act="test-src" data-file="${esc(file)}" data-line="${esc(line ?? '')}" title="open ${esc(file)}${line ? ` at line ${esc(line)}` : ''} (read-only)">${esc(label ?? `${file}${line ? `:${line}` : ''}`)}</button>`;
 function testsWhen(t, ctx) {

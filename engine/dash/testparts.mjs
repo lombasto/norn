@@ -2,9 +2,9 @@
 // (/testparts.mjs) and in node --test. The viewer highlights a test file with the vendored, pinned highlight.js (vendor/VENDOR.md),
 // numbers every line and marks the test's own line; it only shows text the server let through its repo guard (lib/testtimes.repoFile).
 import hljs from './vendor/highlight.min.js';
+import { esc } from './docs.mjs';
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-/** the Tests tab's sub-views [id, label] (subviews.mjs: 3-4; the governance views fold into Costs and health and Trends) */
+/** the Tests tab's sub-views [id, label] (subviews.mjs: 3-4; the governance views are part of Costs and health and Trends) */
 export const TESTS_SUBS = [['suite', 'Suite'], ['costs', 'Costs and health'], ['impact', 'Impact'], ['trends', 'Trends']];
 const MAX_HL = 400000;   // a file above this many characters is shown unhighlighted
 const LANG = { mjs: 'javascript', cjs: 'javascript', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', json: 'json',
