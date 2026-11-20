@@ -8,7 +8,7 @@ import path from 'node:path';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { handoffOf, handoffWords } from '../engine/lib/lanes.mjs';
 import { sceneSig } from '../engine/dash/norn/live.mjs';
-import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, loadParts } from '../engine/dash/ui.mjs';
 import { renderFeedHead } from '../engine/dash/cells.mjs';
 import { hoChip } from '../engine/dash/widgets.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -98,8 +98,8 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
     fs.writeFileSync(path.join(S, 'hb', `${b}.hb`), '{}');
     const tree = (await f.get('/api/agents?project=kestrel')).data.tree;
     assert.deepEqual([a, b].map(id => tree.find(n => n.id === id)?.handoff?.text), Array(2).fill('hand-off in progress - session 2 starting'));
-    const runs = renderTab('runs', await loadTab('runs', 'kestrel', ui), ctx);
-    assert.match(runs, new RegExp(`id="node-${b}"[^]*?<div class="horow"><span class="ho pending"[^]*?session 2 starting`));
+    const r0 = await loadTab('runs', 'kestrel', ui), runs = renderTab('runs', { ...r0, ...await loadParts('runs', 'kestrel', r0, ui), parts_loading: false }, ctx);   // the ended run is in the history part
+    assert.match(runs, new RegExp(`id="node-${b}"[^]*?<div class="rline small rho"><span class="ho pending"[^]*?session 2 starting`));
     assert.match(runs, new RegExp(`id="node-${a}"[^]*?session 2 starting <span class="id">${b}</span>`), 'the old run names the run its work went on in');
     const map = await loadTab('map', 'kestrel', ui);
     assert.equal(map.nodes.find(n => n.id === 'L:relay').handoff.step, 'starting');

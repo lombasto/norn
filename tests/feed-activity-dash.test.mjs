@@ -1,6 +1,6 @@
-// The feed drawer's activity view on the dashboard (RM-36): the renderer (ui.mjs renderActivity), /api/feed?full=1 replaying a run
+// The run feed's activity view on the dashboard (RM-36): the renderer (ui.mjs renderActivity), /api/feed?full=1 replaying a run
 // past the backlog window, the head's plan fields (the brief's items, the ones NOTES name done, the worktree), a touched file in the
-// Docs reader by its path, and the drawer in a real browser at 390 px - live (a call appended opens the Now line) and replayed.
+// Docs reader by its path, and the run document's feed in a real browser at 390 px - live (a call appended opens the Now line) and replayed.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -105,7 +105,7 @@ test('Docs opens a file a run touched by its path (code as one block); a path ou
   } finally { await f.done(); }
 });
 
-test('the browser at 390 px: the drawer opens on the activity view (raw events behind a toggle), a live call shows in Now, a file opens in Docs; replayed once ended', { skip: skipWhy, timeout: 240000 }, async () => {
+test('the browser at 390 px: the run document feed opens on the activity view (raw events behind the kind filters), a live call shows in Now, a file opens in Docs; replayed once ended', { skip: skipWhy, timeout: 240000 }, async () => {
   const f = await fixture({ dash: DASH }), pg = await openPage([390, 844]);
   try {
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
@@ -114,22 +114,22 @@ test('the browser at 390 px: the drawer opens on the activity view (raw events b
     assert.ok(await pg.until(`!!document.querySelector('[data-feed="${run.id}"]')`, 60000), 'the run row');
     await pg.ev(`document.querySelector('[data-feed="${run.id}"]').click()`);
     assert.ok(await pg.until(`!!document.querySelector('#feed-act #fa-now') && /policy\\.mjs/.test(document.querySelector('#feed-act').textContent)`, 30000), 'the activity view');
-    assert.equal(await pg.ev(`document.querySelector('#feed-list').hidden`), true, 'a phone: the raw list behind the toggle');
+    assert.equal(await pg.ev(`document.querySelector('#feed-list').hidden`), true, 'a phone: the raw list folded (no kind pressed)');
     assert.match(await pg.ev(`document.querySelector('#fa-now').textContent`), /Thinking \/ writing/);
-    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (drawer)');
-    await pg.ev(`document.querySelector('#feed-raw-tog').click()`);
-    assert.equal(await pg.ev(`document.querySelector('#feed-list').hidden`), false, 'the toggle shows the raw list');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (the run screen)');
+    await pg.ev(`document.querySelector('[data-feed-kind=tools]').click()`);
+    assert.equal(await pg.ev(`document.querySelector('#feed-list').hidden`), false, 'the tools filter shows the raw list');
     assert.ok(await pg.ev(`!!document.querySelector('#feed-list details.fl-x')`), 'an Edit line opens to its diff');
     // live: a Read call starts (no result yet) -> Now says what it reads
     fs.appendFileSync(run.file, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_live', name: 'Read', input: { file_path: run.wt + '/engine/lib/views.mjs', offset: 100, limit: 51 } }] } }) + '\n');
     assert.ok(await pg.until(`/Reading engine\\/lib\\/views\\.mjs, lines 100-150/.test(document.querySelector('#fa-now').textContent)`, 20000), 'the live call in Now');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (raw list open)');
-    // a file opens in the Docs reader (the phone: the drawer closes)
+    // a file opens in the Docs reader (the run screen and its feed go)
     await pg.ev(`document.querySelector('#fa-g-edited + ul [data-act="feed-doc"]').click()`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'docs' && !!document.querySelector('#docs-head') && /policy\\.mjs/.test(document.querySelector('#docs-head').textContent)`, 60000), 'the file in Docs');
     assert.match(await pg.ev('location.search'), /tab=docs&doc=path%3A/);
-    assert.equal(await pg.ev(`document.querySelector('#feed').hidden`), true);
-    // replayed: the run ends; reopened, the drawer shows the whole run and says it ended
+    assert.equal(await pg.ev(`!!document.querySelector('#run-feed')`), false);
+    // replayed: the run ends; reopened, the feed shows the whole run and says it ended
     record(f.pa.state, { kind: 'run', ev: 'end', id: run.id, by: 'launcher', data: { exit: 0, outcome: 'done' } });
     await pg.go(`${f.url}/?project=kestrel&tab=runs`);
     assert.ok(await pg.until(`!!document.querySelector('[data-feed="${run.id}"]')`, 60000));

@@ -33,7 +33,7 @@ import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
+import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { listProcsAsync } from '../lib/strays.mjs';
 import { loadMail } from '../lib/mail.mjs';
@@ -548,21 +548,21 @@ export function createDashboard(o) {
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
-  async function agents(p, win, { homes = false } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own)
+  async function agents(p, win, { homes = false, part = null } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own); part: RUN_PARTS
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
     const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
     // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
-    await primeAgents(runs, { projectsDir, codexDir, cache, window: win });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
-    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
+    await primeAgents(runs, { projectsDir, codexDir, cache, window: win, part });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
+    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, part, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
     // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
     // RM-46 S3: the other homes' runs from their read-only copies - running, queued, or ended inside the window; no feed, no actions
-    const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => r.state === 'running' || r.state === 'queued' || !win || now - Date.parse(r.updated) <= win)
+    const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => (r.state === 'running' || r.state === 'queued' ? part !== 'history' : part !== 'live' && (!win || now - Date.parse(r.updated) <= win)))
       .map(r => ({ id: r.id, name: r.data.name ?? null, kind: r.data.kind ?? 'worker', role: r.data.role ?? null, executor: r.data.executor ?? null, model: r.data.model ?? null, effort: r.data.effort ?? null,
         lane: r.data.lane ?? null, stage: r.data.stage ?? null, state: r.state, outcome: r.state === 'exited' ? r.history.findLast(h => h.ev === 'end')?.data?.outcome ?? null : null,
         started: r.created, ended: r.state === 'running' || r.state === 'queued' ? null : r.updated, project: p.name, home: r.home, readonly: true, children: [] }));
@@ -1879,12 +1879,15 @@ data: ${JSON.stringify(l)}
           const need = new Map(); for (const i of (await Promise.all(ps.map(inbox))).flat().filter(isNeed)) if (i.lane) need.set(`${i.project}|${i.lane}`, (need.get(`${i.project}|${i.lane}`) ?? 0) + 1);
           return send(200, { lanes: rows.map(l => ({ ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 })), backlog: backlogOf(ps) }); }
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
+          // NORN-UI-RUNS: ?part=live (running runs + the queue: the Runs page's first paint) | history (the ended runs in the window) | none: all
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
+          const part = url.searchParams.get('part'); if (part !== null && !RUN_PARTS.includes(part)) throw fail(400, `part must be one of ${RUN_PARTS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
           // OVERVIEW-TRUTH (6): the window's runs counted by the one rule (runcount.mjs): bookkeeping apart, hand-off chains as one piece
           const inWin = ps.flatMap(p => runsOf(st(p)).filter(r => ['queued', 'claimed', 'running'].includes(r.state) || Date.now() - Date.parse(r.updated) <= win));
           const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
-          return send(200, { window: w, counts, tree: (await Promise.all(ps.map(p => agents(p, win, { homes: true })))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+          const tree = (await Promise.all(ps.map(p => agents(p, win, { homes: true, part })))).flat();
+          return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }) });
         }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
