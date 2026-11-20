@@ -37,6 +37,8 @@ import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { listProcsAsync } from '../lib/strays.mjs';
+import { agentSessions } from '../lib/agentprocs.mjs';
+import { testOwner } from '../lib/derelict.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
@@ -549,6 +551,22 @@ export function createDashboard(o) {
   // of the dash uses it (null at first, like the CPU sample)
   let procsAt = 0, procsNow = null, procsBusy = false;
   const procsSample = () => { if (!procsBusy && Date.now() - procsAt >= 30000) { procsBusy = true; listProcsAsync().then(ps => { procsNow = ps; procsAt = Date.now(); procsBusy = false; }); } return procsNow; };
+  // the header's worker pool (UI redesign item 1): the Claude Code / Codex CLI sessions on this machine, Norn's and the others
+  // (agentprocs.mjs), from a listing taken in the background at most once a minute (it also refreshes procsSample's); a request
+  // reads the last count (null until the first lands). Norn's pids: every project's live run heartbeats + this dashboard. A test
+  // never lists the machine's real processes (its fixture injects o.listProcs)
+  const listAgents = o.listProcs ?? (testOwner(o.env ?? process.env) ? null : listProcsAsync);
+  let agentsAt = 0, agentsNow = null, agentsBusy = false;
+  const hbPids = async p => { const dir = path.join(p.state, 'hb'), names = await fs.promises.readdir(dir).catch(() => []);
+    return (await Promise.all(names.map(n => fs.promises.readFile(path.join(dir, n), 'utf8').then(x => { const h = JSON.parse(x); return [h.pid, h.supervisor_pid]; }, () => [])))).flat().filter(Number.isInteger); };
+  const agentsSample = () => {
+    if (listAgents && !agentsBusy && Date.now() - agentsAt >= 60000) {
+      agentsBusy = true;
+      Promise.all([listAgents(), Promise.all(projects.map(hbPids))]).then(([ps, pids]) => { agentsNow = agentSessions(ps, { norn: new Set([process.pid, ...pids.flat()]) }); if (ps.length) { procsNow = ps; procsAt = Date.now(); } })
+        .catch(() => {}).finally(() => { agentsAt = Date.now(); agentsBusy = false; });
+    }
+    return agentsNow;
+  };
   const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
   const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
   /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
@@ -883,12 +901,19 @@ export function createDashboard(o) {
     const lanesRunning = ps.flatMap(p => lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running')));
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needs,
       running: { claude: { n: live.filter(claudeR).length, cap: m.max_claude_workers ?? null }, codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
+      pool: await poolOf(),
       usage: usage(ps[0], m), checkin: stripOf(ps, lanesRunning, m).checkin, strip: stripOf(ps, lanesRunning, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
       setup: ps.length === 1 ? setupOf(ps[0]) : null };
   }
   // end statusStrip
+  // the header's worker pool, machine-wide (never the page's projects): the Claude worker slots in use of the cap (capacityOf, every
+  // project) + the agent CLI sessions on this computer (agentsSample: null = not counted yet)
+  async function poolOf() {
+    const c = await capacityOf();
+    return { claude: { using: c.rows.reduce((a, r) => a + r.using, 0), cap: c.cap }, sessions: agentsSample() };
+  }
   async function overview(ps) {
     const m = withDefaults(settingsState(ps[0]).view);
     let needs = [], running = [], tree = [];
