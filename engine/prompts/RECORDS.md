@@ -9,9 +9,10 @@ Every rule home (CHECKIN, DECISION-RULES, agent files, skills, ASK) points here 
 
 ## 3.2 Event envelope (one line)
 ```json
-{"v":1,"seq":412,"ts":"2026-10-31T02:10:07Z","id":"Q-7","kind":"question","ev":"create","by":"checkin","run":"RUN-311","data":{...}}
+{"v":1,"seq":412,"ts":"2026-10-31T02:10:07Z","id":"Q-7","kind":"question","ev":"create","to":"open","by":"checkin","run":"RUN-311","data":{...}}
 ```
-`seq` monotonic per file (under the lock), `by` = role (owner | controller | checkin | launcher | dashboard | migration), `run` = the
+`seq` monotonic per file (under the lock), `to` = the state the event moves its item to (absent when it moves none; a reader
+whose table does not know the event still applies it), `by` = role (owner | controller | checkin | launcher | dashboard | migration), `run` = the
 writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of events by id in seq order (pure function, tested).
 
 ## 3.2a Id formats: solo, fed node, synced home

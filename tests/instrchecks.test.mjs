@@ -10,7 +10,8 @@ import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { discover, matches, instructionsView, sessionsOn } from '../engine/lib/instructions.mjs';
 import { staticChecks, CHECKS, memoryDir } from '../engine/lib/instrchecks.mjs';
 import { memoryOf, MEMORY_DEFAULT, memoryEnv } from '../engine/lib/launchpolicy.mjs';
-import { renderTab, NAV } from '../engine/dash/ui.mjs';
+import { renderTab } from '../engine/dash/ui.mjs';
+import { MORE } from '../engine/dash/shell.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { TIERS } from '../engine/lib/advisory.mjs';
 
@@ -195,8 +196,8 @@ test('Context sits in Health beside Usage; the tab draws what one session loads,
     worker: { run: 'RUN-1', method: 'request', total: 1000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 700 }, { key: 'claude_md', label: 'CLAUDE.md / AGENTS.md chain', ours: true, tokens: 300 }, { key: 'memory', label: 'memory index', ours: true, tokens: 0 }] },
     chat: { run: 'chat', method: 'request', total: 2000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 1500 }, { key: 'memory', label: 'memory index', ours: true, tokens: 500 }] } } };
   const v = instructionsView(p, { home, git: false, standing, now: Date.parse('2026-11-14T12:00:00Z') });
-  assert.deepEqual(NAV.find(d => d[0] === 'health')[2], ['usage', 'slop', 'tests', 'context'], 'Context in Health beside Usage, Slop and Tests (UX review 2)');
-  assert.ok(!NAV.find(d => d[0] === 'history')[2].includes('context'));
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['usage', 'slop', 'tests', 'context'], 'Context in Health beside Usage, Slop and Tests (UX review 2)');
+  assert.ok(!MORE.find(g => g[0] === 'History')[1].includes('context'));
   // file map data: every row has loads per day and one state of four
   assert.ok(v.rows.every(r => typeof r.loads_day === 'number' && ['fresh', 'stale', 'conflict', 'generated-stale'].includes(r.map_state)));
   assert.equal(v.rows.find(r => r.name === 'AGENTS.md' && /repo\/AGENTS\.md$/.test(r.path)).map_state, 'conflict', 'a memory line restates it (check 6)');

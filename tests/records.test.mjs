@@ -144,12 +144,12 @@ test('legal supersede citations: newer Q, answered Q, owner DEC, any DIR; owner 
   assert.equal(st.items[q1].superseded_by, q2);
 });
 
-test('envelope: v, seq, ts, id, kind, ev, by, run from META_RUN_ID; ids per kind sequential and never reused', () => {
+test('envelope: v, seq, ts, id, kind, ev, to (the state it moves to), by, run from META_RUN_ID; ids per kind sequential and never reused', () => {
   const d = tmp();
   process.env.META_RUN_ID = 'RUN-311';
   try {
     const e = rec(d, { kind: 'question', ev: 'create', by: 'checkin', data: qData });
-    assert.deepEqual(Object.keys(e), ['v', 'seq', 'ts', 'id', 'kind', 'ev', 'by', 'run', 'data']);
+    assert.deepEqual(Object.keys(e), ['v', 'seq', 'ts', 'id', 'kind', 'ev', 'to', 'by', 'run', 'data']); assert.equal(e.to, 'open');
     assert.equal(e.v, 1); assert.equal(e.seq, 1); assert.equal(e.id, 'Q-1'); assert.equal(e.run, 'RUN-311');
     assert.match(e.ts, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
   } finally { delete process.env.META_RUN_ID; }
@@ -195,6 +195,27 @@ test('fold is a pure, deterministic function of the events in seq order', () => 
   assert.equal(JSON.stringify(fold(shuffled)), a, 'fold orders by seq, not by array position');
   assert.equal(JSON.stringify(fold(JSON.parse(frozen))), a, 'round-trips through JSON');
   assert.equal(fold(evs).seq, evs.length);
+});
+
+// MAIL-28 (1): a supervisor started before the `alive` event existed replayed lost -> alive with its old table, dropped the alive,
+// read lost and refused its own end (norn RUN-80, RUN-89, RUN-104). A writer stamps the state an event moves to; a reader that does
+// not know the event still applies that state.
+test('a newer writer never makes an older reader drop a state change: each event line names its `to`, and fold applies the `to` of an event it does not know', () => {
+  const d = tmp();
+  const id = rec(d, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'x' } }).id;
+  rec(d, { kind: 'run', ev: 'lost', id, by: 'status', data: { why: 'heartbeat 300 s old', cause: 'stale' } });
+  rec(d, { kind: 'run', ev: 'alive', id, by: 'status', data: { why: 'beating again' } });
+  const evs = readEvents(recordsFile(d, 'run'));
+  assert.deepEqual(evs.map(e => e.to), ['running', 'lost', 'running'], 'the writer stamps each event with the state it moves to');
+  // an older reader: the same lines with an event its table does not know (here a renamed alive)
+  const older = evs.map(e => (e.ev === 'alive' ? { ...e, ev: 'revive-from-the-future' } : e));
+  const it = fold(older).items[id];
+  assert.equal(it.state, 'running', 'the unknown event still moves the state');
+  assert.deepEqual(it.history.map(h => h.ev), ['start', 'lost', 'revive-from-the-future']);
+  // an unknown event with no `to` (a note) changes no state, an unknown event on no item makes none
+  const note = { ...evs[0], seq: 9, ev: 'note-from-the-future', to: undefined, data: {} };
+  assert.equal(fold([...older, note]).items[id].state, 'running');
+  assert.equal(fold([{ ...note, id: 'RUN-99' }]).items['RUN-99'], undefined);
 });
 
 test('readEvents refuses a torn (unterminated) last line and a non-JSON line', () => {

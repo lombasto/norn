@@ -176,7 +176,8 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   fs.writeFileSync(path.join(d, 'mutation.json'), JSON.stringify({ files: [{ file: 'engine/lib/drift.mjs', mutants: 256, killed: 154, survived: 102, timeout: 0, score: 60.2, ms: 390000 }], trials: [{ label: 'drift' }], tests: {}, mutants: {} }));
   fs.writeFileSync(path.join(d, 'waves.jsonl'), JSON.stringify({ at: '2026-11-14T11:00:00Z', base: 'main', head: 'def456', ok: true, removed: ['a.test.mjs :: small'], before: { tests: 805, cov: { pct: 90 } }, after: { tests: 804, cov: { pct: 90 } }, score: { before: 60.2, after: 60.2 }, lost_lines: 0, restored: [], ms_before: 9000, ms_after: 8000 }) + '\n');
   const { createDashboard } = await import('../engine/dash/server.mjs');
-  const { loadTab, loadParts, renderTab, renderNav } = await import('../engine/dash/ui.mjs');
+  const { loadTab, loadParts, renderTab } = await import('../engine/dash/ui.mjs');
+  const { renderMore } = await import('../engine/dash/shell.mjs');
   const app = createDashboard({ projects: [{ name: 'kestrel', state: st }], machine: {}, budgetFile: path.join(st, 'budget.json'), platform: {}, sessionsDir: path.join(st, 'sessions') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
@@ -191,7 +192,7 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   assert.match(costs, /kills 0/); assert.match(costs, /inside: <span class="mute">a\.test\.mjs<\/span> big/);
   assert.match(trends, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
   assert.match(trends, /gate passed/);
-  assert.match(renderNav('tests', {}), /id="tab-health"[^>]*aria-selected="true"[^]*id="pages-health"[^]*data-tab="usage"[^]*data-tab="tests"/, 'beside Usage under Health (UX review 2)');
+  assert.match(renderMore('tests', {}), /<h3>Health<\/h3><ul>[^]*data-tab="usage"[^]*data-tab="tests" aria-current="page"/, 'beside Usage under Health in More (stage NAV)');
   const empty = renderTab('tests', { history: [], git: null, times: null, commands: { measure: 'norn tests measure', history: 'norn tests history' }, sub: 'suite', breakdown: null, tests: { rows: [], n: 0 } }, {});
   assert.match(empty, /not measured yet/); assert.match(empty, /norn tests measure/);
   assert.match(empty, /id="tests-scope"[^>]*>Nothing measured yet\. The tick fills/, 'an empty page says why and what fills it');

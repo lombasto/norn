@@ -191,9 +191,9 @@ test('F-1 dashboard first run: Overview offers "Give Norn its first task" with t
   const get = async r => (await fetch(url + r)).json();
   const post = async (r, b) => { const x = await fetch(url + r, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': app.token }, body: JSON.stringify(b) }); return { status: x.status, data: await x.json() }; };
   try {
-    const ov = await get('/api/overview?project=my-app');
+    const ov = await get('/api/strip?project=my-app');
     assert.deepEqual(ov.first_run, { project: 'my-app', lane: 'first', caps: { max_claude_workers: 1, max_codex: 0, weekly_stop_pct: 50, usage_rate_cap_pct_per_h: 0.3 } });
-    const html = renderTab('overview', await loadTab('overview', 'my-app', get), { now: Date.now() });
+    const html = renderTab('lanes', await loadTab('lanes', 'my-app', get), { now: Date.now(), strip: ov });
     assert.match(html, /id="first-task"/); assert.match(html, /Give Norn its first task/);
     assert.match(html, /<input[^>]+id="first-task-text"/); assert.match(html, /data-act="first-task"/);
     assert.match(html, /Caps in force: <b>1<\/b> Claude worker.*<b>0<\/b> Codex.*weekly stop <b>50 %<\/b>.*rate cap <b>0\.3 %\/h<\/b>/);
@@ -204,7 +204,8 @@ test('F-1 dashboard first run: Overview offers "Give Norn its first task" with t
     assert.equal(gitOut(path.join(s.state, 'wt', 'first'), 'rev-parse', '--abbrev-ref', 'HEAD'), 'norn/first');
     const dir = s.recs().find(e => e.kind === 'directive');
     assert.equal(dir.by, 'dashboard'); assert.equal(dir.data.via, 'dashboard'); assert.equal(dir.data.text, 'Add a usage line to the README');
-    assert.equal((await get('/api/overview?project=my-app')).first_run, null, 'the box goes once the project has records');
-    assert.doesNotMatch(renderTab('overview', await loadTab('overview', 'my-app', get), { now: Date.now() }), /id="first-task"/);
+    const ov2 = await get('/api/strip?project=my-app');
+    assert.equal(ov2.first_run, null, 'the box goes once the project has records');
+    assert.doesNotMatch(renderTab('lanes', await loadTab('lanes', 'my-app', get), { now: Date.now(), strip: ov2 }), /id="first-task"/);
   } finally { await app.close(); }
 });

@@ -14,7 +14,7 @@ import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOT
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
-import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
+import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief, fixerSigs, sigsFile } from '../lib/fixer.mjs';
 import { resultDir, writeResult, ResultError } from '../lib/result.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
@@ -47,7 +47,7 @@ import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn, syncPolicy } from '../lib/policy.mjs';
 import { CLASS_LABELS } from '../lib/workclass.mjs';
-import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
+import { adapterFor, schedState, liveName, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
 import { installPlan, applyPlan, FAMILIES } from '../lib/harness.mjs';
 import { writeDash, clearDash, dashRestart, DashError } from '../lib/dashlive.mjs';
@@ -672,10 +672,9 @@ function s5Cmd(argv, env, out, err) {
     const m = machineOf(flags, env);
     if (cmd === 'sched') {
       if (!m.machine) throw new RunError('no machine.json: run norn setup first');
-      // META-NAME-W2: a recorded pre-rename name runs as this install's norn-tick name; install / remove record it (schedApply removes the old task)
       const sc = { ...m.machine.scheduler, name: liveName(m.machine.scheduler.name, m.root) }, a = adapterFor(sc.kind);
       const o = { name: sc.name, interval_min: sc.interval_min, node: m.machine.node, meta: m.root.replace(/\\/g, '/'), home: m.machine.home };
-      if (pos[0] === 'show' || !pos.length) { const p = a.plan(o); for (const f of p.files) out(`=== ${f.path}\n${f.content}`); for (const c of p.install) out('$ ' + c.join(' ')); const s = schedState(a, o); out(`installed: ${s.installed && !s.foreign ? 'yes' : s.foreign ? `no (task '${sc.name}' belongs to the install at ${s.owner})` : 'no'}`); for (const n of oldTasks(a, o)) out(`old task '${n}' still installed: norn sched install moves it`); return 0; }
+      if (pos[0] === 'show' || !pos.length) { const p = a.plan(o); for (const f of p.files) out(`=== ${f.path}\n${f.content}`); for (const c of p.install) out('$ ' + c.join(' ')); const s = schedState(a, o); out(`installed: ${s.installed && !s.foreign ? 'yes' : s.foreign ? `no (task '${sc.name}' belongs to the install at ${s.owner})` : 'no'}`); return 0; }
       // OOTB F-4: never install over / remove the task of ANOTHER install (schtasks /F would overwrite it)
       if (['install', 'remove'].includes(pos[0])) { const s = schedState(a, o); if (s.foreign) throw new RunError(`task '${sc.name}' belongs to the install at ${s.owner}, not this one (${o.meta}): rerun norn setup to derive this install's own task name`); }
       if (pos[0] === 'install' && !m.machine.projects.length) throw new RunError('no project registered: add a project first (norn project new --root <repo>)');
@@ -1084,7 +1083,6 @@ function harnessCmd(argv, env, out, err) {
     const f = h1Flags(argv.slice(1), ['family', 'project', 'state', 'profile', 'scope', 'codex-config', 'opencode-config', 'dry-run!']);
     const plan = installPlan({ family: f.family, node: fwd(process.execPath), meta: fwd(fileURLToPath(import.meta.url)), project: f.project && fwd(path.resolve(f.project)), state: f.state && fwd(path.resolve(f.state)),
       profile: f.profile || 'controller', scope: f.scope, codexConfig: f['codex-config'], opencodeConfig: f['opencode-config'], home: env.USERPROFILE || env.HOME || '',
-      claudeJson: path.join(env.CLAUDE_CONFIG_DIR || env.USERPROFILE || env.HOME || '', '.claude.json'), cwd: fwd(process.cwd()),
       executors: f.project && !FAMILIES.includes(f.family) ? loadProject(f.project).executors : undefined });
     applyPlan(plan, { dry: !!f['dry-run'], out });
     out(`${f['dry-run'] ? 'would register' : 'registered'} MCP server "${plan.name}" (${f.profile || 'controller'}) for ${plan.family}`);
@@ -1888,6 +1886,7 @@ function fixCmd(argv, env, out, err) {
     if (hold) throw new RunRefused(`${id}: fixer ${hold.id} is ${hold.state} (one fixer run at a time): this one starts after it`, 3);
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
+    fs.writeFileSync(sigsFile(brief), JSON.stringify(fixerSigs(rows)));   // each finding's fingerprint as briefed: a decline holds while it matches (fixDeclines)
     const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
     const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: fixerPrompt(brief), ...(flags.queue ? { queue: true } : {}) });
     const msg = { run: r.run, queued: !!r.queued, directive: id, batch: rows.length, left: plan.left.length - rows.length, brief: brief.replace(/\\/g, '/') };

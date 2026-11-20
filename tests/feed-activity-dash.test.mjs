@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { record } from '../engine/lib/records.mjs';
 import { transcriptEvents } from '../engine/lib/harness/claude.mjs';
 import { activityOf } from '../engine/dash/activity.mjs';
-import { renderActivity, renderFeedEvent } from '../engine/dash/ui.mjs';
+import { renderActivity, renderFeedEvent } from '../engine/dash/cells.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 

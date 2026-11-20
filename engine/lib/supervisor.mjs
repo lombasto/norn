@@ -13,7 +13,7 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
+import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
@@ -24,7 +24,7 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { checkBranch, slopPrompt } from './slop/runend.mjs';
+import { checkBranch, slopPrompt, slopList } from './slop/runend.mjs';
 import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
@@ -83,12 +83,10 @@ function siblingSweep() {
     if (lost.length) logLine(`sibling sweep: ${lost.join(', ')} lost`);
   } catch { /* next window */ }
 }
+// hbWriter: a blocked rename is retried, then written in place; the first failure of a streak and the recovery go to the run log
+const writeHb = hbWriter(hbPath(state, run), { log: logLine });
 const beat = () => {
-  try {
-    const f = hbPath(state, run), t = `${f}.${process.pid}.tmp`;
-    fs.writeFileSync(t, JSON.stringify({ run, pid: childPid, supervisor_pid: process.pid, ...(supStarted !== null ? { supervisor_started: supStarted } : {}), ts: iso() }));
-    fs.renameSync(t, f);
-  } catch { /* next beat */ }
+  writeHb({ run, pid: childPid, supervisor_pid: process.pid, ...(supStarted !== null ? { supervisor_started: supStarted } : {}), ts: iso() });
   for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
   siblingSweep();
 };
@@ -109,6 +107,11 @@ Object.assign(env, { META_RUN_ID: run, META_RUN_STATE: path.resolve(state), META
 
 let cmd;
 try { cmd = buildCommand({ ...spec, result: RESULT, resultDir: RESULT_DIR }); } catch (e) { finish(null, null, String(e.message)); }
+// a prompt too long for the command line (common.mjs PROMPT_ARG_MAX): the executor reads it on stdin, from a file in the run's result dir
+if (cmd?.input !== undefined) {
+  try { const f = path.join(RESULT_DIR, 'prompt.md'); fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(f, cmd.input); cmd.stdin = f; }
+  catch (e) { finish(null, null, `prompt file not written: ${e.message}`); cmd = null; }
+}
 // NORN-WATCH S5 (DEC-683): the whole tree ends with the run - Windows: this supervisor enters a job before the executor is born
 // (jobguard.mjs); POSIX: the executor leads its own process group. Check-ins are not guarded (they dispatch the workers: a worker
 // must never hang on its dispatcher's job), nor is policy reap "off".
@@ -244,7 +247,11 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // META-DOD 3: a plan review's end names its findings file and count (critique.mjs: 0 = clean, the build it holds goes)
   if (spec.critique) data.critique = { ...spec.critique, file: String(spec.notes).replace(/\\/g, '/'), findings: findingsCount(read(spec.notes)) };
-  try { record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data }); }
+  // MAIL-28: the end data goes to END_FILE first - an end that does not land (refused, or this process dies) is recorded from it by
+  // the sweep (sweepLost / endLost), never read as a run that never started; recordEnd revives a run that reads lost before its end
+  const endFile = endFilePath(state, run);
+  try { fs.mkdirSync(path.dirname(endFile), { recursive: true }); fs.writeFileSync(endFile, JSON.stringify({ run, data })); } catch (e) { logLine(`end data not kept: ${e.message}`); }
+  try { recordEnd(state, run, data); try { fs.unlinkSync(endFile); } catch { /* not written */ } }
   catch (e) {   // killed meanwhile: `norn stop` owns the cleanup
     logLine(`end not recorded: ${e.message}`);
     // CIRED-7b3d67d: swept lost meanwhile (a stall, not a death): nobody else frees its locks or fills the queue - this exit does
@@ -422,7 +429,10 @@ function fixEnd(open, d) {
   let next = null, refused = null;
   try {
     const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
-    const promptText = [...(slop.length ? [slopPrompt(slop, null)] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
+    // the full slop list goes to a file; the prompt carries a summary that names it (solve-shack RUN-140)
+    const list = slop.length ? path.join(RESULT_DIR, 'slop-blocks.md') : null;
+    if (list) { fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(list, slopList(slop)); }
+    const promptText = [...(slop.length ? [slopPrompt(slop, null, { listFile: fwdPath(list) })] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
     next = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText }).run;
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   const what = { ...(slop.length ? { slop: slop.length } : {}), ...(dod ? { dod: dod.why } : {}) };

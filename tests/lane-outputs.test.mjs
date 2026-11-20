@@ -9,7 +9,7 @@ import path from 'node:path';
 import { groupOf, groupOutputs, walkOutputs, writerOf, insideDir, ownerSummary, summaryLine, ownerAsks, cutoffOf, laneNext, laneNow, lanePrs, stageWhere, notesDirOf } from '../engine/lib/laneout.mjs';
 import { postRunAsks, sweepAsks, applyRulings, askedAlready } from '../engine/lib/runasks.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
-import { laneDetail, fileViewer } from '../engine/dash/ui.mjs';
+import { laneDetail, fileViewer } from '../engine/dash/pages/lanes.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const NOTES = `# audit / plan (RUN-1)

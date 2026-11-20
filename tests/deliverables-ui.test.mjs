@@ -1,4 +1,4 @@
-// META-DELIVERABLES 6 (DELIVERABLES-SPEC 3): the "Done, not installed" card on Overview + Inbox, the deliverable drawer, the Map
+// META-DELIVERABLES 6 (DELIVERABLES-SPEC 3): the "Done, not installed" card on Inbox, the deliverable drawer, the Map
 // band state. Temp-dir dashboards + fixture git repos only (never the live dash / state).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,7 +50,7 @@ test('map: a lane band carries its deliverable state; the SVG draws it with an o
   assert.match(html, /DLV-1 done 10\.8 d · 1002 behind · native/);
 });
 
-test('server: /api/deliverables (git-derived, cached child CLI) feeds the Overview + Inbox cards and the Map bands', async () => {
+test('server: /api/deliverables (git-derived, cached child CLI) feeds the Inbox card and the Map bands', async () => {
   const f = await dash();
   try {
     const repo = f.pa.root;
@@ -70,8 +70,6 @@ test('server: /api/deliverables (git-derived, cached child CLI) feeds the Overvi
     assert.equal(r.data.rows.length, 1); assert.equal(r.data.rows[0].branch, 'feat/a'); assert.equal(r.data.rows[0].state, 'done'); assert.equal(r.data.rows[0].project, 'kestrel');
     assert.equal((await f.get('/api/deliverables?project=all')).data.rows.length, 1);
     const get = async u => (await f.get(u)).data;
-    const ov = renderTab('overview', await loadTab('overview', 'kestrel', get), { project: 'kestrel' });
-    assert.match(ov, /id="deliverables"[\s\S]*feat\/a[\s\S]*the a layer/);
     const ib = renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' });
     assert.match(ib, /id="deliverables"[\s\S]*feat\/a/);
     const m = (await f.get('/api/map?project=kestrel')).data;
