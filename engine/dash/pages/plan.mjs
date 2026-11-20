@@ -1,4 +1,4 @@
-// The Plan page (moved verbatim from ui.mjs, stage NAV): up next, chains, landing next and the forecast (/api/plan).
+// The Plan page (moved verbatim from ui.mjs, stage NAV): up next, chains, landing next (/api/plan); its usage forecast renders on Usage (forecastCard).
 import { esc, fin, pct, aname, chip, backlogLine } from '../ui.mjs';
 import { meter } from '../widgets.mjs';
 
@@ -42,17 +42,20 @@ function planPart(p, ctx) {
     <div class="small pl-meta">${c.broken ? `${plShape('needs', '!', 'broken')} <b>${esc(c.broken)}</b>` : c.finished ? esc(`finished ${plAt(c.finish.at, now) ?? ''}`) : `finish ${esc(c.finish.at ? `~${plAt(c.finish.at, now)}${c.finish.note ? ` ${c.finish.note}` : ''}` : c.finish.word)}`}${c.rm ? ` · ${chip('idle', c.rm.id)} ${esc(c.rm.title)}` : ''}</div></div>`).join('');
   const landCls = w => (/^blocked/.test(w) ? 'bad' : w === 'merging now' ? 'running' : w === 'ready to merge' ? 'ok' : 'idle');
   const land = (p.landing || []).map((l, i) => `<div class="pl-row"><span class="mono pl-pos">${i + 1}.</span><span class="pl-what"><b>${esc(l.label)}</b> <span class="id">${esc(l.id)}</span>${l.what ? ` <span class="small mute">${esc(l.what)}</span>` : ''}</span>${chip(landCls(l.word), l.word)}</div>`).join('');
-  const f = p.forecast || {};
+  return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
+    ${plSection('pl-chains', 'Chains', 'runs that wait for other runs', chains || plEmpty('No queued run waits for another run.'))}
+    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', backlogLine(p.backlog) + (land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`)))}<p class="small mute pl-method">${esc(p.method ?? '')}</p>`;
+}
+/** the usage forecast (/api/plan forecast), shown on the Usage page; '' when the project has none */
+export function forecastCard(f, now = Date.now()) {
+  if (!f) return '';
   const fc = f.api ? `<div class="pl-fc" id="pl-fc-api"><p><b>${esc(f.line)}</b><br><span class="small mute">API billing: no weekly limit to run out of.</span></p></div>`
     : !fin(f.weekly) ? `${plEmpty('Usage not measured yet.')}` : `<div class="pl-fc"><div class="kv">
     <span class="small mute">rate now</span><span>${meter(f.rate, Math.max(f.cap ?? 0, f.rate ?? 0) || 1, f.cap, f.over ? 'hot' : '')} <span class="small">${pct(f.rate, 2)}/h of the ${pct(f.cap, 1)}/h cap</span></span>
     <span class="small mute">this week</span><span>${meter(f.weekly, 100, f.stop, fin(f.stop) && f.weekly >= f.stop ? 'hot' : '')} <span class="small">~${pct(f.weekly)}${fin(f.stop) ? ` of the ${pct(f.stop, 0)} stop` : ''}</span></span>
     <span class="small mute">reset</span><span class="small">${f.reset ? esc(plAt(f.reset, now)) : '-'}</span></div>
     <p><b>${esc(f.lineAt ? `${f.linePre}${plAt(f.lineAt, now)}${f.linePost}` : f.line)}</b>${f.costLine ? `<br><span class="small">${esc(f.costLine)}</span>` : ''}</p></div>`;
-  return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
-    ${plSection('pl-chains', 'Chains', 'runs that wait for other runs', chains || plEmpty('No queued run waits for another run.'))}
-    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', backlogLine(p.backlog) + (land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`)))}
-    ${plSection('pl-fc', 'Forecast', 'usage', fc)}<p class="small mute pl-method">${esc(p.method ?? '')}</p>`;
+  return plSection('pl-fc', 'Forecast', 'usage', fc);
 }
 export function plan(d, ctx) {
   const parts = d.parts || [];

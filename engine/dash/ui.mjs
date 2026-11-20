@@ -19,7 +19,7 @@ import { fmtDur } from './activity.mjs';
 import { diffBlock } from './diffview.mjs';
 import { lanes, map } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
-import { plan } from './pages/plan.mjs';
+import { plan, forecastCard } from './pages/plan.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
 export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
   ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
@@ -161,7 +161,8 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const [d, remote, guard] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null), guardGet(get, q, all)]);
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
-  if (tab === 'usage') return get(`/api/usage?${q}`);
+  // Usage carries the forecast (moved from Plan, stage NAV): /api/plan's forecast per project, beside the usage parts
+  if (tab === 'usage') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])) }; }
   if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
     const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
     const have = partsHave(ctx, 'tests', project, d);
@@ -180,11 +181,15 @@ export async function loadTab(tab, project, get, ctx = {}) {
 }
 
 // ---------- tabs ----------
+/** the cards that read the status strip (/api/strip, ctx.strip), not the page's endpoint - the Overview's onboarding on Lanes (the first
+ *  task, the setup gaps) and the API spend on Usage. index.html repaints #strip-cards when a newer strip lands. */
+export const stripCards = (tab, s) => `<div id="strip-cards">${!s ? '' : tab === 'lanes' ? firstTask(s.first_run) + setupGaps(s.setup)
+  : tab === 'usage' && s.usage?.billing?.type === 'api' ? `<section class="card" id="usage-burn" style="margin-bottom:12px"><h2>Last 24 h <span class="mute small">API billing, against the daily cap</span></h2>${apiBurn(s.usage.billing)}</section>` : ''}</div>`;
 export function renderTab(tab, d, ctx = {}) {
   if (tab === 'adopt') return panel(tab, renderAdopt(adoptStep(d, ctx.adoptAsk), d, ctx));
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
-  if (tab === 'usage') return panel(tab, usage(d, { ...ctx, now }));
+  if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanes(d, { ...ctx, now })));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
   return panel(tab, ({ inbox, lanes, runs, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
@@ -374,23 +379,6 @@ export function adviceRow(i, ctx) {
     <div class="small">Change: <span class="mono">${esc(ch)}</span> <span class="mute">- ${esc(i.trial ?? '')}</span></div></div>
     <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="advice-apply" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Apply</button><button class="ghost" data-act="advice-keep" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Keep as is</button></div></div>`;
 }
-function needItem(i, ctx) {
-  const ago = fmtMin(minsSince(i.created, ctx.now));
-  if (i.type === 'question') {
-    const rec = i.recommend ? (i.options || []).find(o => (o.key ?? o.k) === (i.recommend.key ?? i.recommend.k)) : null;
-    return `<div class="item">${chip('open', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${esc(i.lane ?? '-')} · asked ${ago} ago${i.class ? ` · class ${esc(i.class)}` : ''}</div>
-      ${rec ? `<div class="small">Recommended <b>(${esc(rec.key ?? rec.k)})</b> ${esc(rec.text ?? rec.t)}</div>` : ''}</div><span class="spacer"></span><button class="primary" data-tab="inbox">Answer</button></div>`;
-  }
-  if (i.type === 'setup') return setupRow(i, ctx);
-  if (i.type === 'login') return loginRow(i, ctx);
-  if (i.type === 'hold') return holdRow(i, ctx);
-  if (i.type === 'handedit') return editRow(i, ctx);
-  if (i.type === 'parked' && i.ruled) return `<div class="item">${chip('answered', i.id)}<div><b>lane ${esc(i.lane)}: waiting - your ruling is being applied</b><div class="small mute">${projTag(ctx, i.project)}${esc(rulingWords(i.ruled, ctx))}</div></div></div>`;
-  if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.lane)} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
-  const [cls] = stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state);
-  return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${aname(i.name)} unreviewed - no review event yet</div></div></div>`;
-}
-
 // META-ADOPT A3: ONE needs-you row while a drafted setup waits (Review / Not now = a close with the reason)
 const setupRow = (i, ctx) => `<div class="item">${chip('open', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}drafted ${fmtMin(minsSince(i.created, ctx.now))} ago · nothing is applied before you approve it</div></div><span class="spacer"></span><button class="primary" data-act="adopt-review" data-project="${esc(i.project)}">Review</button><button data-act="adopt-notnow" data-project="${esc(i.project)}">Not now</button></div>`;
 // META-ADOPT A3 (SPEC sec. 5): the setup gaps of one project - each names what is missing in one line and offers the next action
@@ -433,7 +421,7 @@ export function ctxMeter(n, { codexNote = false } = {}) {
   const peak = fin(n.ctx_peak) && n.ctx_peak > n.ctx ? ` · peak ${kTok(n.ctx_peak)}` : '';
   return `<span class="ctxm${over ? ' ' + over : ''}">${meter(n.ctx, Math.max(hard ?? 150000, n.ctx), lim, over)}<span class="small mute">${kTok(n.ctx)} ctx${lim ? ` / hand-off ${kTok(lim)}${/_1m$/.test(n.ctx_role ?? '') ? ' (1M tier)' : ''}` : ''}${hard ? ` · max ${kTok(hard)}` : ''}${peak}</span>${flag}</span>`;
 }
-// API billing (lib/billing.mjs): no weekly limit - the Burn card shows the last 24 h of spend against the daily $ cap instead
+// API billing (lib/billing.mjs): no weekly limit - the Spend card (Usage) shows the last 24 h of spend against the daily $ cap instead
 function apiBurn(b) {
   const $ = v => `$${(Number(v) || 0).toFixed(2)}`, cap = fin(b.cap) && b.cap > 0 ? b.cap : null, over = cap !== null && b.usd >= cap;
   const c = over ? chip('bad', 'daily cap reached: no new Claude work') : cap === null ? chip('warn', 'no daily cap') : chip('ok', 'under the daily cap');
@@ -1549,7 +1537,7 @@ function usage(d, ctx) {
   const parts = d.parts || [];
   return `<div class="banner">How much of your Claude plan the work used. "% of week" = the share of your weekly Claude usage limit, estimated from token counts (the scale below). Token types: input (new text sent to the model), output (text it wrote), cache write (context stored for reuse), cache read (stored context re-read on every turn, usually the biggest). k = thousand, M = million tokens. Codex has its own plan: only its token totals are shown.
    ${d.cached ? 'Updated every 15 s.' : `Counted in ${fin(d.ms) ? d.ms.toFixed(0) : '-'} ms.`}</div>
-   ${parts.map(p => usagePart(p, { ...ctx, refresh: d.account_refresh })).join('') || '<p class="mute">No project.</p>'}`;
+   ${parts.map(p => usagePart(p, { ...ctx, refresh: d.account_refresh }) + forecastCard((d.forecasts || {})[p.project], ctx.now)).join('') || '<p class="mute">No project.</p>'}`;
 }
 
 // ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17): the tree with a NOW line ----------
