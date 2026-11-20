@@ -16,10 +16,10 @@ import { createStreams } from './stream.mjs';
 import { createChat, readThread, threadFlushed, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
 import { ActError, showRoots, insideRoots, outboxDir, threadFile } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
-import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
+import { profileChoices, profileChanges, profileBudget, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy } from '../lib/policy.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy, REQUIRED_CAPS } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
@@ -48,7 +48,8 @@ import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
 import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
 import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
-import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, laneNameOf } from '../lib/adopt.mjs';
+import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, AGENT_FILES, laneNameOf } from '../lib/adopt.mjs';
+import { subdirOf } from '../lib/monorepo.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
@@ -1320,14 +1321,33 @@ data: ${JSON.stringify(l)}
     if (P?.facts_file) { try { return JSON.parse(read(path.join(p.state, P.facts_file))); } catch { /* moved: the cache */ } }
     return (p.root && scans.get(keyOf(p.root))?.facts) || null;
   }
+  /** the repo's own agent rules files (CLAUDE.md, AGENTS.md ...) at its root and its subdir: every worker's own tool reads them, so they ARE rules */
+  const agentFilesIn = p => !p.root ? [] : [...new Set(['', subdirOf(p)])].flatMap(d => AGENT_FILES.filter(f => existsS(path.join(p.root, d, f))).map(f => (d ? d + '/' : '') + f));
+  /** where the caps were chosen: a caps profile decision, else a cap in budget.json (Settings writes it) that is not the starter cap
+   *  `norn setup` wrote unasked (the default profile's), else null - nobody chose them */
+  function capsChosen(p, s, items) {
+    if (items.some(capsRec)) return 'decision';
+    const prof = loadProfiles().profiles.find(x => x.default), starter = prof ? profileBudget(prof, { found: profileFor(p, s).found }) : {};
+    return REQUIRED_CAPS.some(k => Number.isFinite(s.budget[k]) && s.budget[k] !== starter[k]) ? 'budget' : null;
+  }
   /** the setup gaps of one project (SPEC sec. 5 empty states): rules, caps chosen, the merge gate, the roadmap */
   function setupOf(p) {
-    const items = Object.values(st(p).items), facts = factsKnown(p);
+    const items = Object.values(st(p).items), facts = factsKnown(p), s = settingsState(p), view = withDefaults(s.view);
     let roadmap = 0; try { roadmap = Object.values(loadRoadmap(p.state).items).filter(i => i.state === 'open').length; } catch { /* no roadmap */ }
-    return { project: p.name, rules: !!(p.rules_read_whole || []).length || existsS(rulesFile(p)),
-      caps_chosen: items.some(i => i.kind === 'decision' && /caps profile$/.test(i.data?.question ?? '')), gate: p.merge?.gate?.cmd ?? null,
-      found_gate: facts?.commands?.find(c => c.id === 'test')?.cmd ?? null, roadmap, agent_files: facts ? facts.agent_files.map(a => a.file) : null,
-      caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct'].map(k => [k, withDefaults(settingsState(p).view)[k] ?? null])), profile_now: profileNow(p) };
+    const agentFiles = agentFilesIn(p), rulesFrom = [...((p.rules_read_whole || []).length || existsS(rulesFile(p)) ? [RULES_FILE] : []), ...agentFiles];
+    const caps = capsChosen(p, s, items);
+    return { project: p.name, rules: rulesFrom.length > 0, rules_from: rulesFrom, caps_chosen: !!caps, caps_from: caps, gate: p.merge?.gate?.cmd ?? null,
+      found_gate: facts?.commands?.find(c => c.id === 'test')?.cmd ?? null,
+      roadmap, agent_files: agentFiles, version: s.version, caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct'].map(k => [k, view[k] ?? null])), profile_now: profileNow(p, s) };
+  }
+  /** "Set it": merge.gate.cmd into project.json on the Settings write path (the version the page saw, one atomic write) */
+  async function saveGate(p, cmd, version) {
+    const s = settingsState(p);
+    if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and set the gate again.');
+    const merge = s.proj.merge || {};
+    await atomicA(p.file, JSON.stringify({ ...s.proj, merge: { ...merge, gate: { ...(merge.gate || {}), cmd } } }, null, 2) + '\n');
+    reloadProjects(true);
+    return { ok: true, gate: cmd, written: [p.file] };
   }
   async function adoptView(p) {
     const P = existsS(p.state) ? proposalOf(p.state) : null;
@@ -1443,6 +1463,10 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/adopt/caps') {   // "Keep the starter caps": a choice, recorded like a profile pick (the scheduler stays off)
       return rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'adopt', question: 'caps profile', choice: 'the starter caps (kept)', why: 'kept from the dashboard' } });
+    }
+    if (route === '/api/adopt/gate') {   // the Overview merge gate step's one click: the proposed command -> merge.gate.cmd
+      if (typeof data.version !== 'string' || !data.version) throw fail(400, 'version is required: the settings version the page saw');
+      return saveGate(p, str(data.cmd, 'cmd', 1000), data.version);
     }
     if (route === '/api/adopt/rehearse') {   // the first lane on the fake executor: spends nothing, shows the whole path
       const name = String(data.lane ?? ''), at = adoptCall(() => lanePaths(p, name));
