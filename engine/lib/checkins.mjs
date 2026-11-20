@@ -17,7 +17,7 @@ import { readEvents, recordsFile, fold, record, homeOf, roleAddrIn } from './rec
 import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
 import { isMergeStage } from './usageguard.mjs';
-import { POLICY_DEFAULTS } from './policy.mjs';
+import { POLICY_DEFAULTS, laneMatch } from './policy.mjs';
 
 export const ROUTINE_KINDS = ['merge_done', 'worker_done_stage'];   // = the policy.checkin.routine row's options
 export const LEVELS = ['none', 'on-end', 'full'];
@@ -25,8 +25,6 @@ export const LEVELS = ['none', 'on-end', 'full'];
 export const CHECKIN_DEFAULTS = POLICY_DEFAULTS.checkin;   // one home: policy.mjs (the Settings rows)
 export const checkinPolicy = policy => ({ ...CHECKIN_DEFAULTS, ...(policy?.checkin || {}) });
 
-const globRe = g => new RegExp('^' + String(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
-export const laneMatch = (list, lane) => lane != null && (list || []).some(g => globRe(g).test(String(lane)));
 /** the check-in level of a lane: none | on-end | full (a lane in both lists = none, the narrower promise) */
 export const laneLevel = (cp, lane) => (laneMatch(cp.none_lanes, lane) ? 'none' : laneMatch(cp.on_end_lanes, lane) ? 'on-end' : 'full');
 export const isMergeRun = d => isMergeStage(d?.stage) || /(^|[-_])merge$|^mq$/i.test(String(d?.lane || ''));

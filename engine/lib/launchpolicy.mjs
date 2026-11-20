@@ -5,9 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadProject } from './config.mjs';
-import { withDefaults, merged } from './policy.mjs';
+import { withDefaults, merged, laneMatch } from './policy.mjs';
 import { isTyped } from './executors.mjs';
-import { laneMatch } from './checkins.mjs';
 
 // ---------- lean launch profiles (policy.launch: { roles: { worker | merge | checkin | chat: name }, profiles: { name: overrides } }) ----------
 // harness-agnostic switches; each adapter maps them to its flags (profileArgs) or states a gap (profileGap)
