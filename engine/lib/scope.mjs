@@ -6,6 +6,10 @@
 // So a guarded run gets, in its one --settings: the deny rules (the fixed spellings: a backstop if the hook itself is gone), the
 // write block, and this file's hook `norn scope check` for the rest: Scope narrowing, any spelling of a refused command and every
 // cwd-dependent rule. Every refusal is recorded (<state>/scope/refusals.jsonl): the run's feed and the Slop list read it.
+// TEST-GOVERNANCE S1 (DIR-23, owner Q-26 / Q-28): the same hook denies a FULL test suite (testcmd.mjs classify) in every claude run - a
+// worker, a MERGE, a check-in, a resumed run whose hand-off says "then one full suite" - while policy.tests.budget.full_suite = deny
+// (the default). A run whose project has the scope guard off still gets the hook for that one check (guardSettings). The full suite
+// runs in CI (GitHub) and `norn tests measure`, neither of which is a claude run, so no run kind needs an exemption.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +18,9 @@ import { spawnSync } from 'node:child_process';
 import { parseReady, inScope } from './ready.mjs';
 import { feedFiles, oneLine } from './harness/common.mjs';
 import { META_BIN } from './mail.mjs';
+import { classify, fullSuiteDeny } from './testcmd.mjs';
+import { specPolicy } from './ctxlimit.mjs';
+import { POLICY_DEFAULTS } from './policy.mjs';
 
 export const SCOPE_TOOLS = 'Bash|PowerShell|Edit|Write|NotebookEdit';
 /** a refusal stays in the Slop list this long: the Slop trend window (guardView days) */
@@ -44,6 +51,21 @@ export function scopeSettings(spec, hook) {
   const rules = [...RULES, ...(mayPushMain(spec) ? [] : MAIN_RULES)];
   return { permissions: { deny: ['Bash', 'PowerShell'].flatMap(t => rules.map(r => `${t}(${r})`)), blockWritesOutsideWorkingDirectories: true },
     hooks: { PreToolUse: [{ matcher: SCOPE_TOOLS, hooks: [{ type: 'command', command: hook, timeout: 30 }] }] } };
+}
+/** policy.tests.budget.full_suite of a project policy (deny | allow; default deny) */
+export const fullSuiteRule = policy => policy?.tests?.budget?.full_suite ?? POLICY_DEFAULTS.tests.budget.full_suite;
+/** the guard part of a run's --settings from its project's CURRENT policy: the whole scope guard (scopeOnFor), else the hook alone for
+ *  the full-suite deny (shell tools only), else undefined */
+export function guardSettings(policy, spec, hook) {
+  if (scopeOnFor(policy, spec)) return scopeSettings(spec, hook);
+  return fullSuiteRule(policy) === 'deny' ? { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: hook, timeout: 30 }] }] } } : undefined;
+}
+/** a shell call that runs a full test suite -> the deny reason (testcmd.mjs fullSuiteDeny), else null */
+export function suiteCheck(p) {
+  const t = p?.tool_name, cmd = p?.tool_input?.command;
+  if ((t !== 'Bash' && t !== 'PowerShell') || typeof cmd !== 'string') return null;
+  const r = classify(cmd);
+  return r.kind === 'full' ? fullSuiteDeny(r) : null;
 }
 /** the working directories a guarded run gets beyond its worktree and addDirs: the NOTES folder (its shots sit there too) */
 export const notesDir = spec => (spec.notes ? path.dirname(path.resolve(spec.notes)) : null);
@@ -216,10 +238,15 @@ export function checkTool(p, c, env = process.env) {
 // ---------- the hook, the record, the readers ----------
 const readSpec = (state, run) => JSON.parse(fs.readFileSync(path.join(state, 'runs', run + '.spec.json'), 'utf8'));
 /** norn scope check: payload -> { deny: reason | null }; a refusal is appended to refusals.jsonl. A spec that cannot be read refuses
- * (the guard fails closed): the run then has no known worktree to keep it in. */
+ * (the guard fails closed): the run then has no known worktree to keep it in. The project's CURRENT policy (spec.ctx_from) says
+ * whether the full-suite deny and the scope guard apply; a spec with no project file gets both (its hook was installed for the guard). */
 export function scopeCheck({ state, run, payload, env = process.env }) {
   let why, spec = null;
-  try { spec = readSpec(state, run); why = checkTool(payload, scopeOf(spec), env); }
+  try {
+    spec = readSpec(state, run);
+    const pol = spec.ctx_from ? specPolicy(spec) : null;
+    why = (fullSuiteRule(pol) === 'deny' ? suiteCheck(payload) : null) ?? (pol === null || scopeOnFor(pol, spec) ? checkTool(payload, scopeOf(spec), env) : null);
+  }
   catch (e) { why = `Norn's scope hook cannot read this run's spec (${run}: ${e.code || e.message}), so it cannot tell what you may touch: end with \`norn done --outcome stopped --why "scope hook cannot read the run spec"\``; }
   if (!why) return { deny: null };
   const tool = String(payload?.tool_name ?? '?'), target = oneLine(payload?.tool_input?.file_path ?? payload?.tool_input?.notebook_path ?? payload?.tool_input?.command ?? '', 200);

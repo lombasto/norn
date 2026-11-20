@@ -7,7 +7,7 @@ import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
 import { idNum as runNum, laneNameIn } from './records.mjs';
 
 
-function runText(r, { now, hbAge, staleMs, items = {} }) {
+function runText(r, { now, hbAge, hbLate, staleMs, items = {} }) {
   const d = r.data || {}, end = r.end || {};
   // OOTB-R2 N-5: a queued run is queued (it has no end), and one re-queued after an auth exit says it waits for the login
   if (r.state === 'queued' || r.state === 'claimed') {
@@ -16,10 +16,12 @@ function runText(r, { now, hbAge, staleMs, items = {} }) {
     return prev?.end?.outcome === 'auth' ? `queued: held for login (${prev.id} exited: auth) - run ${loginCommand(d.executor)}` : r.state;
   }
   if (r.state === 'running') {
-    if (hbAge && hbAge(r.id, r) > staleMs) return 'lost';
+    // a stale .hb is 'lost' only without the second signal (runs.hbLate: supervisor alive + output advancing): else 'heartbeat late'
+    const age = hbAge ? hbAge(r.id, r) : 0, late = age > staleMs ? hbLate?.(r.id, r) : null;
+    if (age > staleMs && !late) return 'lost';
     const min = Math.max(0, Math.round((now - Date.parse(r.created)) / 60000));
     const who = [d.executor, d.model, d.effort].filter(Boolean).join(' ');
-    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '');
+    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '') + (late ? ` - heartbeat late (${Math.round(age / 1000)} s)` : '');
   }
   if (r.state === 'lost') return 'lost';
   if (r.state === 'killed') return 'killed' + (r.kill?.why ? `: ${r.kill.why}` : '');
@@ -89,13 +91,13 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
 /**
  * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
  * executor, text, handoff, group, created, ended, at, old, rule, path }.
- * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs, oldDays (policy.done_lanes.old_days),
+ * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, hbLate (runId, run) -> truthy when a stale one is only late, staleMs, oldDays (policy.done_lanes.old_days),
  *   talked / wrote (handoffOf's hooks: the row's `handoff`), idleH / archiveDays / landed / merged (lifecycle.mjs laneRules: the row's
  *   `rule` { rule, act, at, text } = which rule acts on it and when; landed / merged default to the rulings: the tick's git answer
  *   comes in from lane-rules.json), path (lane, now) -> the row's `path` { state, text, red, ... } = its path to main (lane-paths.json) }.
  * A lane idle by its rule reads "idle: no run" and sits under needs you, not queued.
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote,
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbLate = null, staleMs = STALE_MS, oldDays = 2, talked, wrote,
   idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, home = null } = {}) {
   const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged, home }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
   const items = Object.values(st.items);
@@ -112,7 +114,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, sta
     const text = ap ? `Applied by ${ap.run ?? ap.by}: your ruling on ${aq.id} (${aq.answer?.choice ?? aq.answer?.text ?? '?'}) -> ${(ap.data?.refs || []).join(', ') || 'no refs'}`
       : ruled ? `waiting: your ruling is being applied (you ruled: ${ruled.answer?.choice ?? ruled.answer?.text ?? '?'}, ${ruled.updated}; the next check-in applies ${ruled.id})`
       : park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
-      : r ? runText(r, { now, hbAge, staleMs, items: st.items }) : rules.get(name)?.rule === 'idle' ? rules.get(name).text : 'no runs';
+      : r ? runText(r, { now, hbAge, hbLate, staleMs, items: st.items }) : rules.get(name)?.rule === 'idle' ? rules.get(name).text : 'no runs';
     const group = ruled ? 'queued' : rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;

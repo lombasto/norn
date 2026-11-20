@@ -148,6 +148,7 @@ tr:last-child td{border-bottom:0}
 .codeview .ln{text-align:right;user-select:none;width:1%;font-size:12px}.codeview .lt code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;background:none;padding:0}.codeview tr.focus{background:var(--soft);outline:2px solid var(--accent)}
 .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px;padding:6px 12px 10px}.tlist{margin:6px 0;padding:0 12px 0 28px}.tlist li{margin:5px 0;overflow-wrap:anywhere}.seg-tests{background:var(--codex)}.seg-code{background:var(--ok)}
 .fxres{list-style:none;margin:0;padding:0 14px}.fxcard{padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;min-width:0}.fxcard:last-child{border-bottom:0}.fxtop{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.fxfile{margin:8px 0;min-width:0}.fxfile.fxoff .fxdiff{opacity:.4;text-decoration:line-through}.fxfilehead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.fxcard .fxbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.fxmisfit{margin:4px 0}.fxmisfit+.fxdiff{opacity:.55}
+.gdecl{margin-top:4px;overflow-wrap:anywhere;min-width:0}.gdecl .fxbtns{margin-top:4px;align-items:center}.gscope{flex:1 1 12em;min-width:0;max-width:100%}
 .tablecard>h3{margin:0;padding:10px 14px;font-size:13px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
 .big{font-size:26px;font-weight:650;line-height:1.1}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center}
@@ -1250,6 +1251,9 @@ document.addEventListener('click', e => {
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
   if (d.act === 'fx-skip') { const k = (S.fxSkip ??= {})[d.run] ??= new Set(); if (k.has(d.file)) k.delete(d.file); else k.add(d.file); fxPaint(); return; }   // META-UX-BUILD S7
   if (d.act === 'fixresult' && (d.choice === 'discard' || confirm('Apply: a decision + a directive ask the check-in to apply these hunks. Norn edits nothing itself.'))) act(() => post('/api/fixresult', { project: d.project || p, run: d.run, choice: d.choice, skip: [...(S.fxSkip?.[d.run] || [])] }));
+  if (d.act === 'fixdecline') { const scope = d.verdict === 'rescope' ? ($(`#gscope-${CSS.escape(d.id)}`)?.value ?? '').trim() : null;
+    if (d.verdict === 'rescope' && !scope) { err('Type the new fix first (for example: trim it in place).'); return; }
+    act(() => post('/api/fixdecline', { project: d.project || p, id: d.id, verdict: d.verdict, ...(scope ? { scope } : {}) })); }
   if (d.act === 'fixall-rest') act(() => post('/api/fixall', { project: d.project || p, rest: d.dir }));
   if (d.act === 'audit-decline') act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'decline' }));
   if (d.act === 'advice-keep') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'keep' }));

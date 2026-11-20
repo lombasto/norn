@@ -32,7 +32,7 @@ export const CLASSES = {
   sol: { executor: 'codex-sol', effort: 'medium' },
   astra: { executor: 'codex-astra', effort: 'medium' },
 };
-export const BUILTIN_VARS = ['flow', 'epic', 'step', 'briefs_dir', 'norn', 'meta', 'project', 'state'];   // meta = the old name of norn (META-NAME-W3)
+export const BUILTIN_VARS = ['flow', 'epic', 'step', 'briefs_dir', 'norn', 'project', 'state'];
 const BUILTINS = {
   // wraps `norn merge-brief` (mergebrief.mjs): the MERGE stage brief of a lane
   merge: (p, a) => renderMergeBrief(p, { lane: a.lane, branch: a.branch, worktree: a.worktree || undefined, notes: a.notes, ui: !!a.ui && !/^(0|no|false)$/i.test(a.ui), sha: a.sha || undefined }),
@@ -157,11 +157,11 @@ const fill = (s, v) => String(s).replace(PH_RE, (_, k) => v[k] ?? '');
 
 /**
  * renderFlow(f, given, ctx) -> { title, priority, vars, steps: [{ ...step fields rendered, needs: [{ step, state } | { term }], brief }] }
- * in dependency order. ctx: { epic, briefs_dir, norn (meta = its old name), project (a loaded project.json or null), state } = the builtin vars.
+ * in dependency order. ctx: { epic, briefs_dir, norn, project (a loaded project.json or null), state } = the builtin vars.
  */
 export function renderFlow(f, given = {}, ctx = {}) {
   const vars = flowVars(f, given);
-  const base = { flow: f.name, epic: ctx.epic ?? '', briefs_dir: ctx.briefs_dir ?? '', norn: ctx.norn ?? ctx.meta ?? '', meta: ctx.norn ?? ctx.meta ?? '', project: ctx.project?.name ?? '', state: ctx.state ?? '', ...vars };
+  const base = { flow: f.name, epic: ctx.epic ?? '', briefs_dir: ctx.briefs_dir ?? '', norn: ctx.norn ?? '', project: ctx.project?.name ?? '', state: ctx.state ?? '', ...vars };
   const by = Object.fromEntries(f.steps.map(s => [s.id, s]));
   const steps = f.order.map(id => {
     const s = by[id], v = { ...base, step: id };

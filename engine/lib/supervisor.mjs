@@ -13,7 +13,7 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, hbPath, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
+import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
@@ -81,12 +81,10 @@ function siblingSweep() {
     if (lost.length) logLine(`sibling sweep: ${lost.join(', ')} lost`);
   } catch { /* next window */ }
 }
+// hbWriter: a blocked rename is retried, then written in place; the first failure of a streak and the recovery go to the run log
+const writeHb = hbWriter(hbPath(state, run), { log: logLine });
 const beat = () => {
-  try {
-    const f = hbPath(state, run), t = `${f}.${process.pid}.tmp`;
-    fs.writeFileSync(t, JSON.stringify({ run, pid: childPid, supervisor_pid: process.pid, ...(supStarted !== null ? { supervisor_started: supStarted } : {}), ts: iso() }));
-    fs.renameSync(t, f);
-  } catch { /* next beat */ }
+  writeHb({ run, pid: childPid, supervisor_pid: process.pid, ...(supStarted !== null ? { supervisor_started: supStarted } : {}), ts: iso() });
   for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
   siblingSweep();
 };
