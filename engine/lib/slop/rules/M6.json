@@ -1,0 +1,52 @@
+{
+ "id": "M6",
+ "level": "WARN",
+ "shadow": true,
+ "kind": "model",
+ "title": "a new number the owner would tune, or one idea under two names",
+ "question": "Is a new number a limit or timeout the owner would tune (a setting), or one idea written twice under two names?",
+ "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
+ "explain": {
+  "what": "A model read the diff and found a new number the owner would tune, or one idea written under two names.",
+  "why": "A buried limit cannot be tuned without a code change; two names for one idea drift apart.",
+  "fix": "Move the number to a setting with one name, or use one name for the idea everywhere. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
+ },
+ "files": [
+  "**/*.mjs",
+  "**/*.js",
+  "**/*.cjs",
+  "**/*.ts",
+  "**/*.py",
+  "**/*.rs",
+  "**/*.md"
+ ],
+ "on": [
+  "code"
+ ],
+ "hits": [],
+ "context": [],
+ "fixture": {
+  "hit": {
+   "base": {
+    "src/net.mjs": "export const get = u => fetch(u);\n"
+   },
+   "head": {
+    "src/net.mjs": "export const get = u => fetch(u);\nexport const wait = () => new Promise(r => setTimeout(r, 45000));\n"
+   },
+   "recorded": {
+    "head": "{\"findings\":[{\"rule\":\"M6\",\"file\":\"src/net.mjs\",\"quote\":\"export const wait = () => new Promise(r => setTimeout(r, 45000));\",\"why\":\"a 45 s wait is a timeout the owner would tune: a setting\"}]}"
+   }
+  },
+  "miss": {
+   "base": {
+    "src/net.mjs": "export const get = u => fetch(u);\n"
+   },
+   "head": {
+    "src/net.mjs": "export const get = u => fetch(u);\nexport const wait = () => new Promise(r => setTimeout(r, 45000));\n"
+   },
+   "recorded": {
+    "head": "{\"findings\":[{\"rule\":\"M6\",\"file\":\"src/net.mjs\",\"quote\":\"export const get = u => fetch(u);\",\"why\":\"not an added line\"}]}"
+   }
+  }
+ }
+}
