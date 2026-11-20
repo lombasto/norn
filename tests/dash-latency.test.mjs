@@ -14,7 +14,7 @@ const wrap = (slow, ms) => `(() => { window.__req = []; const of = window.__of ?
 const tap = id => `(() => { document.body.dataset.ready = ''; document.querySelector('#tab-${id}').click(); return true; })()`;
 
 // the server's own timing log: Server-Timing on every answer; a slow request and a loop stall (with the requests in its window) in
-// GET /api/timing and <norn>/local/dash-timing.jsonl
+// GET /api/timing and <norn>/local/dash-timing-<port>.jsonl (A-21: one file per port, so a second dashboard never mixes into the live one's)
 test('timing log: Server-Timing on every answer, slow requests and loop stalls in /api/timing and the jsonl', async () => {
   const f = await fixture({ dash: { slowMs: 0, stallMs: 200 } });
   try {
@@ -31,8 +31,10 @@ test('timing log: Server-Timing on every answer, slow requests and loop stalls i
     assert.ok(st, JSON.stringify(d.stalls));
     assert.ok(st.requests.includes('GET /api/records?project=kestrel'), JSON.stringify(st));
     assert.deepEqual([d.file_lost, d.file_error], [0, null], 'every entry reached the jsonl');
+    const file = path.join(f.root, 'local', `dash-timing-${new URL(f.url).port}.jsonl`);
+    assert.equal(path.resolve(d.file), path.resolve(file));
     await f.app.close();
-    const lines = fs.readFileSync(path.join(f.root, 'local', 'dash-timing.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l));
     assert.ok(lines.some(l => l.kind === 'slow') && lines.some(l => l.kind === 'stalls' && l.ms >= 400), JSON.stringify(lines));
   } finally { await f.done(); }
 });
