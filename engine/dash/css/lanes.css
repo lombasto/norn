@@ -15,7 +15,7 @@
 .lrow{display:grid;grid-template-columns:32px minmax(0,2fr) minmax(0,1fr) auto auto auto 32px;gap:4px 14px;align-items:center;padding:10px 14px;border-top:1px solid var(--line)}
 .lgh+.lrow{border-top:0}.lrow:hover{background:var(--zebra)}.lrow:has(>.lopen[aria-expanded=true]){background:var(--soft)}
 .lmain{min-width:0}.lhead{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;min-width:0}.lrow .lname{font-size:14.5px;font-weight:650;overflow-wrap:anywhere}
-.ltype{color:var(--mute)}.waits{padding:0 6px;border:1px solid var(--line);border-radius:4px;color:var(--mute);white-space:nowrap}
+.ltype{color:var(--mute)}.waits{padding:0 6px;border:1px solid var(--line);border-radius:6px;color:var(--mute);white-space:nowrap}
 .lnow{margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}
 /* the state tile and the beads: the shape in currentColor on its token's tint */
 .ltile,.bd{display:inline-grid;place-items:center;flex:none;color:var(--mute);background:var(--soft)}
@@ -24,12 +24,12 @@
 .t-stopped{color:var(--bad);background:var(--bad-bg)}.t-needs{color:var(--accent);background:var(--accent-bg)}.t-idle{color:var(--mute);background:var(--soft)}
 /* progress and pace: the brief line, pace as a word on a tint, the elapsed-vs-budget bar */
 .lprog{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}.pline{color:var(--mute);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pace{padding:0 7px;border-radius:4px;font-weight:600;white-space:nowrap}.p-ok{background:var(--ok-bg);color:var(--ok)}.p-warn{background:var(--warn-bg);color:var(--warn)}
+.pace{padding:0 7px;border-radius:6px;font-weight:600;white-space:nowrap}.p-ok{background:var(--ok-bg);color:var(--ok)}.p-warn{background:var(--warn-bg);color:var(--warn)}
 .p-bad{background:var(--bad-bg);color:var(--bad)}.p-idle{background:var(--soft);color:var(--mute)}
 .ebar{display:inline-block;width:72px;height:6px;border-radius:3px;background:var(--soft);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}.ebar i{display:block;height:100%;width:var(--from);background:var(--run)}
 /* the run strip: beads oldest left; a hand-off bead is joined to the one before it, a fresh start keeps a gap */
 .lstrip{display:flex;align-items:center;gap:6px;list-style:none;margin:0;padding:0}.lstrip.none{display:block}
-.bd{position:relative;width:20px;height:20px;border-radius:4px}.bd svg{width:14px;height:14px}
+.bd{position:relative;width:20px;height:20px;border-radius:6px}.bd svg{width:14px;height:14px}
 .lstrip .bd.cont{margin-left:-6px}.bd.cont::before{content:'';position:absolute;right:100%;top:50%;width:6px;height:2px;margin-top:-1px;background:var(--warn)}
 .lstrip>.bd:first-child.cont::before,.lstrip>.bmore+.bd.cont::before{display:none}
 .bd .hc{position:absolute;right:-7px;top:-7px;min-width:13px;padding:0 2px;font-size:10px;line-height:13px;text-align:center;border-radius:7px;background:var(--panel);color:var(--ink);border:1px solid var(--line)}
