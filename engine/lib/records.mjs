@@ -15,7 +15,7 @@ import { checkinBelow } from './floor.mjs';
 // worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
 // tick archiving a lane by its rules - only the lane archive allows it
 export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker', 'tick'];
-const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
+export const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
 const CK = ['controller', 'checkin'];
 const MAILERS = ['worker', ...CK];
 
