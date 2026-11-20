@@ -111,12 +111,12 @@ test('/api/projects carries each project\'s needs-you count (the pick order read
 });
 
 test('threadOnly: chat lines alone repaint only the thread (no /api/overview, no page); anything else renders the page', () => {
-  assert.equal(threadOnly(['chat'], 'home'), true);
-  assert.equal(threadOnly(['chat', 'again'], 'home'), true, 'a queued repeat of chat lines');
-  assert.equal(threadOnly(['chat', 'visible'], 'home'), true, 'chat lines that arrived while hidden');
-  assert.equal(threadOnly(['chat', 'rec'], 'home'), false);
-  assert.equal(threadOnly(['chat'], 'overview'), false);
-  assert.equal(threadOnly([], 'home'), false); assert.equal(threadOnly(['again'], 'home'), false);
+  assert.equal(threadOnly(['chat'], 'talk'), true);
+  assert.equal(threadOnly(['chat', 'again'], 'talk'), true, 'a queued repeat of chat lines');
+  assert.equal(threadOnly(['chat', 'visible'], 'talk'), true, 'chat lines that arrived while hidden');
+  assert.equal(threadOnly(['chat', 'rec'], 'talk'), false);
+  assert.equal(threadOnly(['chat'], 'lanes'), false);
+  assert.equal(threadOnly([], 'talk'), false); assert.equal(threadOnly(['again'], 'talk'), false);
   const idx = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
   const fn = idx.slice(idx.indexOf('async function render('), idx.indexOf('await header();', idx.indexOf('async function render(')));
   assert.match(fn, /if \(threadOnly\(why, S\.tab\) && \$\('#thread'\)\) \{ await paintThread\(\); return; \}/, 'render() takes the thread-only path before header()');

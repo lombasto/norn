@@ -133,31 +133,21 @@ function pngIndices(b) {
   return out;
 }
 
-test('the Norn tab bar (UX review 2, was META-NAV R2): the plain destinations + the open one\'s pages, the active one filled with the accent in inverse ink, hover / focus distinct, wraps (no sideways scroll); no switch left', async () => {
-  const { renderNav } = await import('../engine/dash/ui.mjs');
+test('the Norn page bar (stage NAV): one row of 4 links + More, the open one filled with the accent in inverse ink, hover / focus distinct; no switch left', async () => {
+  const { renderBar } = await import('../engine/dash/shell.mjs');
   assert.ok(!/navgroups/.test(html), 'the R1 ?navgroups switch is gone'); assert.ok(!/data-navgroups/.test(css), 'the R1 variant blocks are gone');
-  const nav = renderNav('records', {});
-  assert.ok(!/class="ng /.test(nav) && !/nav \.ng\b/.test(css), 'the Norn group frames are gone');
-  assert.match(nav, /id="tab-history"[^>]*aria-selected="true"[^]*<div class="pages[^"]*" id="pages-history"[^]*id="tab-records"[^>]*aria-selected="true"/, 'the active page sits on its destination\'s row');
+  const nav = renderBar('records', {});
+  assert.ok(!/class="ng /.test(nav) && !/class="pages/.test(nav), 'one row: no group frames, no pages row');
+  assert.match(nav, /id="tab-more"[^>]*aria-current="page"/, 'a More page marks More');
   const nr = rules(css.replace(/@media[^{]*\{/g, '')), body = sel => nr.filter(r => r.sel.split(',').map(s => s.trim()).includes(sel)).map(r => r.body).join(';');
   const n = (s, v) => assert.match(body(s), v, s);
   for (const g of ['dark', 'light']) for (const v of ['--nv', '--nu', '--ns', '--ninv']) assert.match(body(`:root.norn[data-ground=${g}]`), new RegExp(`${v}\\s*:\\s*#`), `${g} ${v}`);
-  n(':root.norn nav', /--g\s*:\s*var\(--accent\)/); n(':root.norn nav .pages', /border-top\s*:[^;]*solid var\(--line\)/);
-  const act = ':root.norn nav button[aria-selected=true]';
-  n(act, /background\s*:\s*var\(--g\)/); n(act, /color\s*:\s*var\(--ninv\)/);
-  n(':root.norn nav button:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/var\(--g\)/.test(body(':root.norn nav button:hover')), 'hover is not the active fill');
-  n(':root.norn nav button:focus-visible', /outline\s*:[^;]*solid var\(--ink\)/); n(`${act}:focus-visible`, /outline-color\s*:\s*var\(--ninv\)/);
-  // the bar wraps at every width, after (so over) the older phone overflow-x:auto on the Norn nav
-  const navRules = rules(css).filter(r => r.sel.split(',').map(s => s.trim()).includes(':root.norn nav'));
-  const last = navRules.filter(r => /overflow-x/.test(r.body)).at(-1);
-  assert.match(last.body, /overflow-x\s*:\s*visible/); assert.ok(navRules.some(r => /flex-wrap\s*:\s*wrap/.test(r.body)), 'nav wraps');
-  assert.match(dashCss(), /nav \.dests,nav \.pages\{display:flex;flex-wrap:wrap;[^}]*max-width:100%/, 'both rows wrap inside the bar');
-  // RM-18 S1: the tones - the three time colours and the Health states, a thin underline, the open one filled in the inverse ink
+  const act = ':root.norn .pagebar>[aria-current=page]';
+  n(act, /background\s*:\s*var\(--accent\)/); n(act, /color\s*:\s*var\(--ninv\)/);
+  n(':root.norn .pagebar>a:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/accent/.test(body(':root.norn .pagebar>a:hover')), 'hover is not the active fill');
+  n(':root.norn .pagebar>a:focus-visible', /outline\s*:[^;]*solid var\(--ink\)/); n(`${act}:focus-visible`, /outline-color\s*:\s*var\(--ninv\)/);
+  // RM-18 S1: the tones stay the three time colours and the Health states (the status strip's parts, the More dot)
   for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['ok', 'ok'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));
-  const tb = ':root nav button[class*=tone-]', ts = `${tb}[aria-selected=true]`;
-  n(tb, /border-bottom-color\s*:\s*var\(--t\)/); n(tb, /--g\s*:\s*var\(--t\)/);
-  n(ts, /background\s*:\s*var\(--t\)/); n(ts, /color\s*:\s*var\(--rm-inv\)/);
-  n(':root nav .pages[class*=tone-]', /border-top-color\s*:\s*var\(--t\)/);
 });
 
 // META-TEND P6: SloppaChoppa's vendored art (norn-art-orc/out, ORC-1 round 5 + 6) under the asset map's names: each file its exact

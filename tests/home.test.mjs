@@ -6,8 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { homeEvents, renderThread, renderHome, renderBottomBar, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
-import { TABS, NAV, renderNav, renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { homeEvents, renderThread, renderHome, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
+import { TABS, renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { BAR, renderBar } from '../engine/dash/shell.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { threadFile } from '../engine/lib/chatact.mjs';
@@ -95,8 +96,8 @@ const HOME = {
 };
 
 test('C2 renderHome (Look 3): the side columns, the thread header (harness, context vs hand-off), the filters with the needs count, the composer', () => {
-  const html = renderTab('home', HOME, { project: 'kestrel', look: 'norn', now: Date.parse(T(60)) });
-  assert.match(html, /id="panel-home"/);
+  const html = renderTab('talk', HOME, { project: 'kestrel', look: 'norn', now: Date.parse(T(60)) });
+  assert.match(html, /id="panel-talk"/);
   for (const h of ['Now', 'Held by this chat', 'Usage this week', 'Next check-in', 'Waiting for you', 'Ruled for you today', 'Your standing orders']) assert.ok(html.includes(`>${h}<`), h);
   assert.match(html, /class="home-l"/); assert.match(html, /class="home-r"/); assert.match(html, /class="home-c"/);
   const text = html.replace(/<[^>]+>/g, '');
@@ -107,22 +108,18 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   assert.match(html, /<textarea id="chat-text"[^>]*maxlength="8000"/); assert.match(html, /data-act="chat-send"/);
   assert.match(html, /data-rid="DEC-112"/); assert.match(html, /data-rid="DIR-15"/); assert.match(html, /RUN-411/);
   assert.match(html, /38 % of the weekly guard/); assert.match(html, /every 15 min/);
-  assert.match(renderTab('home', HOME, { project: 'kestrel', homeFilter: 'run' }), /data-filter="run" aria-pressed="true"/);
-  assert.match(renderTab('home', { one: true }, { project: 'all' }), /belongs to one project/);
+  assert.match(renderTab('talk', HOME, { project: 'kestrel', homeFilter: 'run' }), /data-filter="run" aria-pressed="true"/);
+  assert.match(renderTab('talk', { one: true }, { project: 'all' }), /belongs to one project/);
 });
 
-test('C2 nav: Home is the first tab, alone in the Norn group (the thread); the phone bottom bar Home / Inbox / Runs / Plan / More (UX review 4: the same names as the top bar)', async () => {
-  assert.deepEqual(TABS[0], ['home', 'Home']); assert.equal(SERVER_TABS[0], 'home');
-  assert.deepEqual(NAV[0], ['home', 'Home', []]);
-  assert.match(renderNav('home', {}), /^<div class="dests"[^>]*><button role="tab" id="tab-home"[^>]*aria-selected="true"/);   // UX review 2: Home first in the bar
-  const bar = renderBottomBar('home', { inbox: 2 });
-  assert.deepEqual([...bar.matchAll(/data-tab="(\w+)"/g)].map(m => m[1]), ['home', 'inbox', 'runs', 'plan']);
-  assert.match(bar, /data-act="more"/); assert.match(bar, /Home/); assert.match(bar, /Runs/); assert.match(bar, /aria-label="2 need you">2</);
-  assert.match(bar, /data-tab="home"[^>]*aria-current="page"/);
+test('C2 nav: the thread is Talk, the 4th page on the one bar (stage NAV: Lanes is the landing; the same bar on desktop and phone)', async () => {
+  assert.deepEqual(TABS[3], ['talk', 'Talk']); assert.equal(SERVER_TABS[3], 'talk'); assert.deepEqual(BAR[3], ['talk', 'Talk']);
+  const bar = renderBar('talk', { project: 'kestrel', needs: 2 });
+  assert.match(bar, /data-tab="talk" aria-current="page"/); assert.match(bar, /aria-label="2 need you">2</); assert.match(bar, /data-act="more"/);
   const seen = [];
-  const d = await loadTab('home', 'kestrel', async p => { seen.push(p); return p.startsWith('/api/home') ? { project: 'kestrel', events: [] } : {}; });
+  const d = await loadTab('talk', 'kestrel', async p => { seen.push(p); return p.startsWith('/api/home') ? { project: 'kestrel', events: [] } : {}; });
   assert.deepEqual(seen, ['/api/home?project=kestrel']); assert.equal(d.project, 'kestrel');
-  assert.deepEqual(await loadTab('home', 'all', async () => assert.fail('no fetch for all')), { one: true });
+  assert.deepEqual(await loadTab('talk', 'all', async () => assert.fail('no fetch for all')), { one: true });
 });
 
 test('C2 /api/home on the fixture state: the thread file, runs, needs, the side columns and the chat status (no process started)', async () => {
@@ -182,7 +179,7 @@ const css = () => dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
 // the 600 s cap. The shared openPage: every wait bounded, a timeout fails naming the page's state, pg.close in the finally.
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 import { dashCss } from './helpers/dash-css.mjs';
-test('C2 the Home tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
+test('C2 the Talk tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
   skip: skipWhy, timeout: 120000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
@@ -194,20 +191,20 @@ test('C2 the Home tab at 390 x 844 (phone, both grounds): document scrollWidth =
       await pg.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
       await pg.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: ground }] });
       // read only the NEW page, and only once it says it painted (go: the load event, then body data-ready = the tab or 'error')
-      const ready = await pg.go(`${f.url}/?project=kestrel&tab=home&theme=${ground}`);
+      const ready = await pg.go(`${f.url}/?project=kestrel&tab=talk&theme=${ground}`);
       return { ready, ...await pg.ev(`new Promise(r => setTimeout(() => r({ error: document.querySelector('#error')?.textContent || null,
-        sw: document.documentElement.scrollWidth, w: innerWidth, ev: document.querySelectorAll('#panel-home .ev').length,
-        bar: getComputedStyle(document.querySelector('.bbar')).display, l: document.querySelector('.home-l') && getComputedStyle(document.querySelector('.home-l')).display,
+        sw: document.documentElement.scrollWidth, w: innerWidth, ev: document.querySelectorAll('#panel-talk .ev').length,
+        bar: getComputedStyle(document.querySelector('#tabs')).position, l: document.querySelector('.home-l') && getComputedStyle(document.querySelector('.home-l')).display,
         cols: [...document.querySelectorAll('.home > *')].filter(e => getComputedStyle(e).display !== 'none').map(e => Math.round(e.getBoundingClientRect().left)) }), 300))`) };
     };
     for (const ground of ['dark', 'light']) {
       const m = await measure(390, 844, ground, true);
-      assert.equal(m.ready, 'home', `${ground}: the page painted the Home tab (${JSON.stringify(m)})`);
+      assert.equal(m.ready, 'talk', `${ground}: the page painted the Talk tab (${JSON.stringify(m)})`);
       assert.ok(m.ev >= 3, `${ground}: the thread rendered (${JSON.stringify(m)})`);
       assert.equal(m.sw, m.w, `${ground}: no sideways scroll at 390 (${JSON.stringify(m)})`); assert.equal(m.w, 390);
-      assert.equal(m.bar, 'flex'); assert.equal(m.l, 'none');
+      assert.equal(m.bar, 'fixed', 'the page bar at the bottom'); assert.equal(m.l, 'none');
     }
     const d = await measure(1440, 900, 'dark', false);
-    assert.equal(d.sw, 1440); assert.equal(d.bar, 'none'); assert.equal(d.cols.length, 3, JSON.stringify(d)); assert.ok(d.cols[0] < d.cols[1] && d.cols[1] < d.cols[2]);
+    assert.equal(d.w, 1440); assert.ok(d.sw <= d.w, `no sideways scroll at 1440 (a vertical scrollbar may take its width): ${JSON.stringify(d)}`); assert.equal(d.bar, 'static', 'the page bar under the header'); assert.equal(d.cols.length, 3, JSON.stringify(d)); assert.ok(d.cols[0] < d.cols[1] && d.cols[1] < d.cols[2]);
   } finally { await pg.close(); await f.done(); }
 });
