@@ -26,7 +26,8 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
+import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
+import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
@@ -475,7 +476,7 @@ export function createDashboard(o) {
   const cpuNow = () => {
     if (cpuPrev && Date.now() - cpuPrev.at < 15000) return cpuPct;
     const t = os.cpus().reduce((s, c) => { const x = c.times; s.idle += x.idle; s.all += x.user + x.nice + x.sys + x.idle + x.irq; return s; }, { idle: 0, all: 0, at: Date.now() });
-    if (cpuPrev && t.all > cpuPrev.all) cpuPct = 100 * (1 - (t.idle - cpuPrev.idle) / (t.all - cpuPrev.all));
+    if (cpuPrev && t.all > cpuPrev.all) { cpuPct = 100 * (1 - (t.idle - cpuPrev.idle) / (t.all - cpuPrev.all)); if (metaRootDir) noteCpu(cpuPct, 'dash', { file: cpuLogFile(metaRootDir) }); }
     cpuPrev = t;
     return cpuPct;
   };
@@ -526,8 +527,11 @@ export function createDashboard(o) {
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
-    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
-      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}),
+    // worker-speed: a worker run's tok/s and wall split (a live one: its last 10 min) - the same transcript tail, its own cache key
+    const now = Date.now(), sp = new Map(await Promise.all(tree.filter(n => isWorker(byId.get(n.id))).map(async n => [n.id, await runSpeedA(byId.get(n.id), { projectsDir, cache, now })])));
+    const speedOf = id => { const s = sp.get(id), w = s?.last10 ?? s; return s?.requests ? { line: speedWords(w), rolling: !!s.last10, tok_s: w.tok_s, pct: w.pct } : null; };
+    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null, v = speedOf(n.id);
+      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}), ...(v ? { speed: v } : {}),
         ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);

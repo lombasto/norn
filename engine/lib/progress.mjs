@@ -68,7 +68,7 @@ export function briefPlan(text) {
 }
 
 // ---------- the transcript fold: the tool calls with their time, the commits, the tests ----------
-const TEST_RE = /\bnode\s+(?:[^|;&\n]*\s)?--test\b|\bpytest\b|\bci-suite\.mjs\b|\bnpm\s+(?:run\s+)?test\b|\bvitest\b|\bjest\b/;
+export const TEST_RE = /\bnode\s+(?:[^|;&\n]*\s)?--test\b|\bpytest\b|\bci-suite\.mjs\b|\bnpm\s+(?:run\s+)?test\b|\bvitest\b|\bjest\b/;
 const COMMIT_RE = /\bgit\s+(?:-C\s+\S+\s+)?commit\b/;
 const resultText = b => typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(x => x?.text ?? '').join('\n') : '';
 const testFiles = cmd => [...new Set([...String(cmd).matchAll(/[\w./\\-]*?([\w-]+\.test\.[cm]?[jt]s|test_[\w-]+\.py|[\w-]+_test\.py)\b/g)].map(m => m[1]))];

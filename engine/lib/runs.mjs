@@ -891,8 +891,27 @@ export function sampleResources({ ms = 1000 } = {}) {
   const tot = () => os.cpus().reduce((s, c) => { const t = c.times; s.idle += t.idle; s.all += t.user + t.nice + t.sys + t.idle + t.irq; return s; }, { idle: 0, all: 0 });
   const a = tot();
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  const b = tot(), all = b.all - a.all;
-  return { free_gb: os.freemem() / 2 ** 30, cpu_pct: all > 0 ? 100 * (1 - (b.idle - a.idle) / all) : 0 };
+  const b = tot(), all = b.all - a.all, cpu = all > 0 ? 100 * (1 - (b.idle - a.idle) / all) : 0;
+  noteCpu(cpu, 'fill');
+  return { free_gb: os.freemem() / 2 ** 30, cpu_pct: cpu };
+}
+// worker-speed: every real CPU sample Norn takes (this gate's, the dash's 15 s one) is kept in <norn>/local/cpu.jsonl, so `norn speed`
+// can say how busy the machine was while a run ran - no sampler of its own. One machine, one file; past CPU_LOG_MAX bytes it keeps its
+// newer half. A failed write never fails the caller.
+const CPU_LOG_MAX = 1 << 20;
+export const cpuLogFile = (meta = metaRoot()) => path.join(meta, 'local', 'cpu.jsonl');
+export function noteCpu(pct, src, { file = cpuLogFile(), now = Date.now() } = {}) {
+  if (!Number.isFinite(pct)) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, JSON.stringify({ ts: new Date(now).toISOString(), cpu: Math.round(pct * 10) / 10, src }) + '\n');
+    if (fs.statSync(file).size > CPU_LOG_MAX) { const t = fs.readFileSync(file, 'utf8'); fs.writeFileSync(file, t.slice(t.indexOf('\n', t.length >> 1) + 1)); }
+  } catch { /* a sample log never fails a fill or a page */ }
+}
+/** the samples in [from, to] (ms): [{ t, cpu, src }] */
+export function readCpu({ file = cpuLogFile(), from = -Infinity, to = Infinity } = {}) {
+  let text = ''; try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
+  return text.split('\n').flatMap(l => { try { const j = JSON.parse(l), t = Date.parse(j.ts); return t >= from && t <= to && Number.isFinite(j.cpu) ? [{ t, cpu: j.cpu, src: j.src }] : []; } catch { return []; } });
 }
 /** null = room; else the reason (the words norn ready prints after "resources: ") */
 export function resourceRefusal(res, fill = {}) {
