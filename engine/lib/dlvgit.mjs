@@ -40,7 +40,7 @@ export function globToRe(glob) {
 const branchRe = globs => globs.map(globToRe);
 
 /**
- * scanRepo(repo, { main, remote, cache, git, native, installed, history }) -> { mainSha, refs, branches(globs), tipOf(branch), info(branch, fallbackTip),
+ * scanRepo(repo, { main, remote, cache, git, native, installed, history }) -> { mainSha, refs, branches(globs), tipOf(branch), info(branch, fallbackTip), onBase(commit, base),
  *   rehearse(tip), rehearseMany(tips) (one merge-tree for every uncached tip; then rehearse() reads the cache), installed, history }
  * cache: a plain object (persisted by the caller), mutated in place. native: path globs (null = unknown). installed: commit ids.
  * history: commit-ish of EARLIER main lines (a repo whose main was restarted, e.g. moved to a new repo without its old history): a
@@ -163,7 +163,7 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const res = branchRe(globs), pre = `refs/remotes/${remote}/`;
     return [...refs.keys()].filter(k => k.startsWith(pre)).map(k => k.slice(pre.length)).filter(b => res.some(re => re.test(b))).sort();
   };
-  return { mainSha, refs, branches, tipOf, info, rehearse, rehearseMany, installed: inst, history: hist };
+  return { mainSha, refs, branches, tipOf, info, onBase, rehearse, rehearseMany, installed: inst, history: hist };
 }
 
 // keep the cache small: merged sets of the current main + installed / history bases, behind counts of the current main, native by live tips
@@ -177,6 +177,7 @@ export function pruneCache(c, { mainSha, keepBases = [], tips = [] }) {
   for (const k of Object.keys(c.native || {})) if (!live.has(k)) delete c.native[k];
   for (const k of Object.keys(c.hist || {})) if (!live.has(k.split(':')[0])) delete c.hist[k];   // workOnMain answers against deliverables.history lines
   for (const k of Object.keys(c.anc || {})) if (!keep.has(k.split(':')[1])) delete c.anc[k];
+  for (const k of Object.keys(c.equiv || {})) if (!keep.has(k.split(':')[1]) || !live.has(k.split(':')[0])) delete c.equiv[k];   // contentOnMain answers
   return c;
 }
 
@@ -189,4 +190,93 @@ export function refTip(repo, branch, { remote = 'origin', git = makeGit() } = {}
     if (out && out.trim()) return out.trim();
   }
   return null;
+}
+
+/**
+ * META-AUTONOMY R1 cause 1: is the WORK of `head` on main (local main, else origin's)? The one home of "merged" for run conditions.
+ * Industry standard, as git itself decides it (git rebase / `git cherry` / `git log --cherry-pick` skip a commit whose patch is already
+ * upstream; squash detection as git-trim / git-delete-merged-branches do it):
+ *  1. head is an ancestor of main (a fast-forward or a merge commit);
+ *  2. else every commit of merge-base..head has a patch-id equal to a commit on main (`git cherry`: all '-') - a rebase, a merge-queue
+ *     rebase, a cherry-pick, a rebase + --no-ff merge;
+ *  3. else the branch's WHOLE diff (one synthetic commit: head's tree on the merge-base, `git commit-tree`) has the patch-id of a commit
+ *     on main - a squash merge;
+ *  4. (META-DLV-LANDED) else head's tree IS its merge-base's tree: the branch adds nothing to main - merged, then the merge queue's update
+ *     step merged main into it (a merge commit that no patch-id matches; DLV-45 11-13);
+ *  5. else every commit of main..head is a merge and each one is CLEAN (its tree = git's own merge of its parents: no edits of its
+ *     own) - the branch landed, then the merge queue merged main into it, and main has moved on since (so 4's trees differ).
+ * A rebase that resolved a conflict changes that commit's patch: git cannot see it, so the condition is held for a ruling (norn runs
+ * landed). Not used: "a merge commit naming the branch" (a branch name is reused across rounds - R1 / R2 of meta-plan - so it would
+ * count an older round's merge).
+ */
+// rule 5: main..head holds merge commits only, each with exactly the tree git's merge of its two parents gives (no conflict, no edit)
+function onlyCleanMerges(repo, head, base, git) {
+  const own = git(repo, ['rev-list', '--no-merges', '--count', `${base}..${head}`], { allowFail: true });
+  if (own === null || Number(own.trim()) !== 0) return false;
+  const merges = String(git(repo, ['rev-list', '--merges', '--parents', `${base}..${head}`], { allowFail: true }) ?? '').split('\n').filter(Boolean);
+  if (!merges.length) return false;
+  return merges.every(l => {
+    const [m, ...ps] = l.trim().split(/\s+/);
+    if (ps.length !== 2) return false;   // an octopus: not judged
+    const r = git(repo, ['merge-tree', '--write-tree', ps[0], ps[1]], { status: true });
+    return r.code === 0 && r.out.split('\n')[0].trim() === git(repo, ['rev-parse', `${m}^{tree}`], { allowFail: true })?.trim();
+  });
+}
+
+export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) {
+  const lines = out => String(out ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+  for (const base of [main, `refs/remotes/origin/${main}`]) {
+    if (isAncestor(repo, head, base, git)) return true;
+    if (onlyCleanMerges(repo, head, base, git)) return true;
+    const mb = git(repo, ['merge-base', base, head], { allowFail: true })?.trim();
+    if (!mb) continue;
+    const tree = git(repo, ['rev-parse', `${head}^{tree}`], { allowFail: true })?.trim();
+    if (tree && tree === git(repo, ['rev-parse', `${mb}^{tree}`], { allowFail: true })?.trim()) return true;
+    const own = lines(git(repo, ['cherry', base, head, mb], { allowFail: true }));
+    if (own.length && own.every(l => l.startsWith('-'))) return true;
+    const synth = tree && git(repo, ['commit-tree', tree, '-p', mb, '-m', 'norn: the branch as one patch (squash check)'], { allowFail: true,
+      env: { GIT_AUTHOR_NAME: 'norn', GIT_AUTHOR_EMAIL: 'norn@localhost', GIT_COMMITTER_NAME: 'norn', GIT_COMMITTER_EMAIL: 'norn@localhost' } })?.trim();
+    const sq = synth ? lines(git(repo, ['cherry', base, synth, mb], { allowFail: true })) : [];
+    if (sq.length === 1 && sq[0].startsWith('-')) return true;
+  }
+  return false;
+}
+
+/**
+ * DLV-MERGED-TRUTH: is the deliverable's own CHANGE on main, whatever happened to its commits? For a landing git's rules above cannot
+ * see: a rebase that resolved a conflict (new patch-ids), a squash of a branch that later took more commits, a hand landing.
+ * The change = the diff merge-base(main, tip)..tip. It is on main when, for every file it touched, main's file equals the tip's, or
+ * (a text file) every line it added is on main at least as many times as it added it (blank lines aside; line ends ignored). A file
+ * the branch deleted must be gone from main; a binary file must equal main's.
+ * -> { on: true | false, why } | { on: null, why } (cannot tell: the tip is gone from the repo)
+ */
+export function contentOnMain(repo, tip, main = 'main', { git = makeGit(), maxFiles = 200 } = {}) {
+  const short = String(tip).slice(0, 9);
+  if (git(repo, ['cat-file', '-e', `${tip}^{commit}`], { allowFail: true }) === null) return { on: null, why: `the tip ${short} recorded at DONE is gone from the repo` };
+  const show = (rev, f) => git(repo, ['show', `${rev}:${f}`], { allowFail: true });
+  const count = text => { const m = new Map(); for (const l of String(text).split('\n')) { const k = l.trimEnd(); if (k.trim()) m.set(k, (m.get(k) || 0) + 1); } return m; };
+  let seen = false;
+  for (const base of [main, `refs/remotes/origin/${main}`]) {
+    const b = git(repo, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { allowFail: true })?.trim();
+    const mb = b && git(repo, ['merge-base', b, tip], { allowFail: true })?.trim();
+    if (!mb) continue;
+    seen = true;
+    const st = String(git(repo, ['diff', '--no-renames', '--name-status', '-z', mb, tip], { allowFail: true }) ?? '').split('\0').filter(Boolean);
+    const touched = new Map();
+    for (let i = 0; i + 1 < st.length; i += 2) touched.set(st[i + 1], st[i][0]);
+    if (!touched.size) return { on: true, why: 'the branch changes nothing against main' };
+    const differ = String(git(repo, ['diff', '--no-renames', '--name-only', '-z', b, tip, '--', ...touched.keys()], { allowFail: true }) ?? '').split('\0').filter(Boolean);
+    if (differ.length > maxFiles) continue;
+    const bin = new Set(String(git(repo, ['diff', '--no-renames', '--numstat', '-z', mb, tip], { allowFail: true }) ?? '').split('\0').filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)));
+    const fileOn = f => {
+      if (touched.get(f) === 'D' || bin.has(f)) return false;   // differs from main: the deletion / the binary is not there
+      const onMain = show(b, f), atTip = show(tip, f);
+      if (onMain === null || atTip === null) return false;
+      const was = count(show(mb, f) ?? ''), now = count(atTip), have = count(onMain);
+      for (const [l, n] of now) { const added = n - (was.get(l) || 0); if (added > 0 && (have.get(l) || 0) < added) return false; }
+      return true;
+    };
+    if (differ.every(fileOn)) return { on: true, why: differ.length ? `every line it added is on ${base}` : `its files equal ${base}'s` };
+  }
+  return { on: false, why: seen ? 'its change is not on main' : 'it shares no history with main' };
 }
