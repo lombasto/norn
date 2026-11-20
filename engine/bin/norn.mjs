@@ -14,13 +14,13 @@ import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOT
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
-import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
+import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief, fixerSigs, sigsFile } from '../lib/fixer.mjs';
 import { resultDir, writeResult, ResultError } from '../lib/result.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, crewLoad } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
@@ -47,7 +47,7 @@ import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn, syncPolicy } from '../lib/policy.mjs';
 import { CLASS_LABELS } from '../lib/workclass.mjs';
-import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
+import { adapterFor, schedState, liveName, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
 import { installPlan, applyPlan, FAMILIES } from '../lib/harness.mjs';
 import { writeDash, clearDash, dashRestart, DashError } from '../lib/dashlive.mjs';
@@ -66,10 +66,10 @@ import { mergeConfig } from '../lib/mergecfg.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
-import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs } from '../lib/sync.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -82,6 +82,7 @@ import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_A
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { stageSizes, verdict, sizingThresholds } from '../lib/sizing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
+import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
@@ -671,10 +672,9 @@ function s5Cmd(argv, env, out, err) {
     const m = machineOf(flags, env);
     if (cmd === 'sched') {
       if (!m.machine) throw new RunError('no machine.json: run norn setup first');
-      // META-NAME-W2: a recorded pre-rename name runs as this install's norn-tick name; install / remove record it (schedApply removes the old task)
       const sc = { ...m.machine.scheduler, name: liveName(m.machine.scheduler.name, m.root) }, a = adapterFor(sc.kind);
       const o = { name: sc.name, interval_min: sc.interval_min, node: m.machine.node, meta: m.root.replace(/\\/g, '/'), home: m.machine.home };
-      if (pos[0] === 'show' || !pos.length) { const p = a.plan(o); for (const f of p.files) out(`=== ${f.path}\n${f.content}`); for (const c of p.install) out('$ ' + c.join(' ')); const s = schedState(a, o); out(`installed: ${s.installed && !s.foreign ? 'yes' : s.foreign ? `no (task '${sc.name}' belongs to the install at ${s.owner})` : 'no'}`); for (const n of oldTasks(a, o)) out(`old task '${n}' still installed: norn sched install moves it`); return 0; }
+      if (pos[0] === 'show' || !pos.length) { const p = a.plan(o); for (const f of p.files) out(`=== ${f.path}\n${f.content}`); for (const c of p.install) out('$ ' + c.join(' ')); const s = schedState(a, o); out(`installed: ${s.installed && !s.foreign ? 'yes' : s.foreign ? `no (task '${sc.name}' belongs to the install at ${s.owner})` : 'no'}`); return 0; }
       // OOTB F-4: never install over / remove the task of ANOTHER install (schtasks /F would overwrite it)
       if (['install', 'remove'].includes(pos[0])) { const s = schedState(a, o); if (s.foreign) throw new RunError(`task '${sc.name}' belongs to the install at ${s.owner}, not this one (${o.meta}): rerun norn setup to derive this install's own task name`); }
       if (pos[0] === 'install' && !m.machine.projects.length) throw new RunError('no project registered: add a project first (norn project new --root <repo>)');
@@ -799,11 +799,12 @@ function s5Cmd(argv, env, out, err) {
 }
 
 // ---------- S8: norn dash / norn smoke (long-running: they return undefined and set process.exitCode themselves) ----------
-const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
+const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash --background    (the live dashboard of this install, started detached with no window unless it already answers; the way to start it from a shell)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
 // OOTB F-15: a browser tab only for a human at a terminal, or when asked; a script / agent gets the URL alone. --no-open always wins.
 export const dashOpens = (open, tty) => (open === null ? !!tty : open);
 function dashCmd(argv, env, out, err) {
   if (argv[0] === 'restart') return dashRestartCmd(argv.slice(1), env, out, err);
+  if (argv[0] === '--background') return dashRestartCmd(argv.slice(1), env, out, err, { keep: true });
   const o = { projects: [], open: null, port: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -865,15 +866,17 @@ function remoteCmd(argv, env, out, err) {
   try { machine = loadMachine(mf, { meta: root }); } catch (e) { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; }
   return sub === 'setup' ? remoteSetup({ machineFile: mf, machine, ...o, env, out }) : remoteOff({ machineFile: mf, machine, apply: o.apply, env, out });
 }
-function dashRestartCmd(argv, env, out, err) {
+// keep = `norn dash --background`: the recorded dashboard answering stays; else it starts as restart starts it (detached, hidden)
+function dashRestartCmd(argv, env, out, err, { keep = false } = {}) {
   if (argv.length) { err('error: unexpected ' + argv[0]); err(DASH_USAGE); return 2; }
   const root = metaRoot(env), mf = path.join(root, 'local', 'machine.json');
   if (!fs.existsSync(mf)) { err('error: no machine.json: run norn setup'); return 1; }
   let machine;
   try { machine = loadMachine(mf, { meta: root }); } catch (e) { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; }
   const port = machine.dash?.port ?? 8737, bind = machine.dash?.bind || '127.0.0.1';
-  dashRestart({ root, port, bind, env }).then(r => {
-    out(`dash restarted: pid ${r.pid} on ${r.url}${r.stopped ? ` (stopped pid ${r.stopped})` : ' (no recorded dashboard was running)'}`);
+  dashRestart({ root, port, bind, env, keep }).then(r => {
+    out(r.running ? `dash running: pid ${r.pid} on ${r.url} (already up; norn dash restart restarts it)`
+      : `dash ${keep ? 'started in the background' : 'restarted'}: pid ${r.pid} on ${r.url}${r.stopped ? ` (stopped pid ${r.stopped})` : keep ? '' : ' (no recorded dashboard was running)'}`);
     process.exitCode = 0;
   }, e => { err('error: ' + (e instanceof DashError ? e.message : e.stack)); process.exitCode = 1; });
   return undefined;
@@ -1080,7 +1083,6 @@ function harnessCmd(argv, env, out, err) {
     const f = h1Flags(argv.slice(1), ['family', 'project', 'state', 'profile', 'scope', 'codex-config', 'opencode-config', 'dry-run!']);
     const plan = installPlan({ family: f.family, node: fwd(process.execPath), meta: fwd(fileURLToPath(import.meta.url)), project: f.project && fwd(path.resolve(f.project)), state: f.state && fwd(path.resolve(f.state)),
       profile: f.profile || 'controller', scope: f.scope, codexConfig: f['codex-config'], opencodeConfig: f['opencode-config'], home: env.USERPROFILE || env.HOME || '',
-      claudeJson: path.join(env.CLAUDE_CONFIG_DIR || env.USERPROFILE || env.HOME || '', '.claude.json'), cwd: fwd(process.cwd()),
       executors: f.project && !FAMILIES.includes(f.family) ? loadProject(f.project).executors : undefined });
     applyPlan(plan, { dry: !!f['dry-run'], out });
     out(`${f['dry-run'] ? 'would register' : 'registered'} MCP server "${plan.name}" (${f.profile || 'controller'}) for ${plan.family}`);
@@ -1388,6 +1390,7 @@ Plan and land work:
                                    (suggest: ranked tightening candidates; confirm <file>#<anchor>: "still true"; apply <S-id>: the owner's tap)
   norn usage                        where the week's tokens went: per lane + stage, top 5 spenders (--sources: what fills the contexts)
   norn guard                        the usage guard: live runs vs their peers, open alarms (watch / rule / sources)
+  norn speed                        worker speed: tok/s, model / tools / tests / idle per ended run, by workers running (the cap's data)
   norn size                         the sessions of a lane stage: floor, first edit, peak against the marks they ran under, a verdict
   norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
   norn deliverables                follow finished work to main and to an install
@@ -1512,6 +1515,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
   if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {
     if (argv[0] !== 'rec') { err(`error: unknown command ${argv[0]} - see norn help`); return 2; }
     let rest = argv.slice(1);
@@ -1882,6 +1886,7 @@ function fixCmd(argv, env, out, err) {
     if (hold) throw new RunRefused(`${id}: fixer ${hold.id} is ${hold.state} (one fixer run at a time): this one starts after it`, 3);
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
+    fs.writeFileSync(sigsFile(brief), JSON.stringify(fixerSigs(rows)));   // each finding's fingerprint as briefed: a decline holds while it matches (fixDeclines)
     const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
     const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: fixerPrompt(brief), ...(flags.queue ? { queue: true } : {}) });
     const msg = { run: r.run, queued: !!r.queued, directive: id, batch: rows.length, left: plan.left.length - rows.length, brief: brief.replace(/\\/g, '/') };
@@ -2680,6 +2685,37 @@ function usageCmd(argv, env, out, err) {
   }
 }
 
+// ---------- worker-speed: norn speed - tok/s and the wall split of each ended worker run, by the number of workers running beside it ----------
+const SPEED_USAGE = 'usage: norn speed [--hours N] [--json] [--project project.json | --state D] [--machine F] [--now UTC]    (read-only; default the last 24 h; no --project / --state = every project in machine.json)';
+function speedCmd(argv, env, out, err) {
+  try {
+    const flags = {};
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--json') { flags.json = true; continue; }
+      if (!['--hours', '--project', '--state', '--machine', '--now'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    const hours = flags.hours === undefined ? 24 : Number(flags.hours);
+    if (!(hours > 0)) throw new RunError(`--hours ${flags.hours}: want a number > 0`);
+    const now = flags.now ? Date.parse(flags.now) : Date.now();
+    if (!Number.isFinite(now)) throw new RunError(`--now ${flags.now} is not a date`);
+    const m = machineOf(flags, env);
+    let targets;
+    if (flags.project || flags.state) { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    else if (m.machine?.projects?.length) targets = m.machine.projects.map(p => { const project = loadProject(p.config, { meta: m.root }); return { project, state: project.state }; });
+    else { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    const parts = targets.map(t => ({ project: t.project?.name || path.basename(path.resolve(t.state)), items: Object.values(loadState(t.state).items) }));
+    const rep = speedReport(parts, { now, hours, projectsDir: projectsDirOf(m.machine, env), cpu: readCpu({ file: cpuLogFile(m.root), from: now - (hours + 48) * 3600000, to: now }) });
+    out(flags.json ? JSON.stringify(rep, null, 1) : formatSpeed(rep));
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err(SPEED_USAGE); return 2; }
+    throw e;
+  }
+}
+
 // ---------- META-GUARD R1: norn guard - the live usage guard (runaway / over the hand-off line / tool spam), alarms as GRD records ----------
 const GUARD_USAGE = 'usage: norn guard [--json]    (read-only: every live run vs its peers + the open GRD alarms)\n'
   + '       norn guard watch [--json]    (the tick runs it: raise a GRD record per new alarm, close those of ended runs)\n'
@@ -2836,6 +2872,7 @@ const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'a
 function mailCmd(argv, env, out, err) {
   const [sub, ...rest] = argv;
   const inject = sub === 'check' && rest.includes('--inject');
+  if (inject) hookWatchdog();   // proc-hygiene: the hook ends in bounded time (mail.mjs)
   try {
     const flags = {}, pos = [];
     for (let i = 0; i < rest.length; i++) {
@@ -2985,10 +3022,37 @@ function syncCutCmd(argv, env, out, err) {
   } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
+// ---------- RM-46 S6b: norn sync join (multi-home SPEC 8 S6b; engine/lib/sync.mjs syncJoin calls the cut, register, publish + fetch stages) ----------
+const SYNC_JOIN_USAGE = 'norn sync join --home <id> --ledger <remote> [--doorbell-topic t] [--i-checked-private] [--machine F]    (this machine joins the synced projects of the ledger remote as home <id>, in order: check access, check the ledger repo is private (a public one is refused; when gh cannot say, --i-checked-private), register the home, write machine.json ledger { remote, home_id, doorbell.topic }, cut each local project the ledger names (the dry run shown, then applied; the projects must be paused), the first publish + fetch, then print the collaborator step for the ledger owner. A taken id is refused; a re-join is a no-op)';
+function syncJoinCmd(argv, env, out, err) {
+  const f = {}, rest = argv.slice(1);
+  const usage = msg => { err('error: ' + msg); err('usage: ' + SYNC_JOIN_USAGE); return 2; };
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--i-checked-private') { f.checked = true; continue; }
+    const k = { '--home': 'home', '--ledger': 'ledger', '--doorbell-topic': 'topic', '--machine': 'machine' }[rest[i]];
+    if (!k) return usage(`unexpected ${rest[i]}`);
+    if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
+    f[k] = rest[++i];
+  }
+  if (!f.home || !f.ledger) return usage('sync join needs --home <id> and --ledger <remote>');
+  if (!HOME_RE.test(f.home)) return usage(`--home ${f.home}: want [a-z][a-z0-9]{0,7}`);
+  try {
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    if (!fs.existsSync(mf)) { err(`error: no machine.json at ${fwd(mf)}: install Norn first (SETUP.md)`); return 1; }
+    const projects = [];
+    for (const p of loadMachine(mf, { meta: root }).projects || []) { try { projects.push(loadProject(p.config, { meta: root })); } catch (e) { err(`warning: project ${p.name} skipped: ${e.message}`); } }
+    const r = syncJoin({ home: f.home, remote: f.ledger, topic: f.topic || null, machineFile: mf, metaRoot: root, projects, iCheckedPrivate: !!f.checked });
+    for (const l of r.lines) out(l);
+    for (const w of r.refused) err('refused: ' + w);
+    return r.refused.length ? 1 : 0;
+  } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
 // ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE;
+const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE + '\n       ' + SYNC_JOIN_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
+  if (argv[0] === 'join') return syncJoinCmd(argv, env, out, err);
   const [sub, ...rest] = argv, f = {};
   for (let i = 0; i < rest.length; i++) {
     if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }

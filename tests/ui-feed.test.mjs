@@ -5,24 +5,25 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderFeedHead, renderFeedEvent, loadTab, renderTab } from '../engine/dash/ui.mjs';
+import { loadTab, loadParts, renderTab } from '../engine/dash/ui.mjs';
+import { renderFeedHead, renderFeedEvent } from '../engine/dash/cells.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const DASH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'dash');
 const clean = (html, where) => assert.ok(!/undefined|NaN|\[object Object\]/.test(html.replace(/<[^>]*>/g, m => m.replace(/"[^"]*"/g, '""'))), `${where}: undefined / NaN in text`);
-const NOW = Date.parse('2026-11-08T12:00:00Z');
 
 test('drawer head: the dwarf, run id, lane, executor chip, state word, elapsed vs budget bar, context vs hand-off bar, last commit, marker', () => {
   const h = { run: 'RUN-7', dwarf: { id: 'oin', name: 'Óin' }, project: 'kestrel', lane: 'gen', executor: 'claude', model: 'claude-opus-5-5', effort: 'high', state: 'running',
     elapsed_min: 75, budget_min: 240, ctx: 96000, ctx_limit: 110000, commit: { sha: 'bafe528', subject: 'feat(dash): <feed>', age_min: 3 }, marker: 'HANDOFF' };
-  const html = renderFeedHead(h, NOW);
+  const html = renderFeedHead(h);
   clean(html, 'head');
   assert.ok(html.includes('<b class="aname" data-dwarf="oin">Óin</b>'), 'the dwarf, by its display name');
   for (const s of ['RUN-7', 'gen', 'running', '1 h 15', '4 h 00', '96k', '110k', 'bafe528', 'feat(dash): &lt;feed&gt;', 'HANDOFF']) assert.ok(html.includes(s), s);
   assert.equal((html.match(/class="bar/g) || []).length, 2, 'two bars: time and context');
-  const bare = renderFeedHead({ run: 'RUN-8', state: 'exited', outcome: 'done' }, NOW);
+  const bare = renderFeedHead({ run: 'RUN-8', state: 'exited', outcome: 'done' });
   clean(bare, 'bare head'); assert.match(bare, /RUN-8/); assert.match(bare, /DONE/); assert.doesNotMatch(bare, /aname/, 'no dwarf: no name');
-  assert.ok(renderFeedHead({ run: 'RUN-9', kind_word: 'check-in', state: 'running' }, NOW).includes('RUN-9</span> <span class="mute">check-in</span>'), 'no dwarf: the kind word');
+  assert.ok(renderFeedHead({ run: 'RUN-9', kind_word: 'check-in', state: 'running' }).includes('RUN-9</span> <span class="mute">check-in</span>'), 'no dwarf: the kind word');
 });
 
 test('drawer lines: one line per event, tool = name + summary, ids for the duration pairing, text escaped', () => {
@@ -37,18 +38,18 @@ test('Agents rows of runs open the feed (data-feed); subagents and talk sessions
   const f = await fixture();
   try {
     const get = async p => (await f.get(p)).data;
-    const html = renderTab('runs', await loadTab('runs', 'kestrel', get), { project: 'kestrel' });
+    const d = await loadTab('runs', 'kestrel', get), html = renderTab('runs', { ...d, ...await loadParts('runs', 'kestrel', d, get), parts_loading: false }, { project: 'kestrel' });   // the live part + its history part (the ended RUN-1)
     assert.match(html, /id="node-RUN-1"[^>]*data-feed="RUN-1"/); assert.match(html, /data-feed="RUN-2"/);
     assert.ok(!/data-feed="(?!RUN-)/.test(html), 'only runs');
   } finally { await f.done(); }
 });
 
-test('shell: the drawer sits outside #main, one EventSource on /api/feed, closed on end / close; follow toggle; Esc closes', () => {
-  const html = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8');
-  const main = html.indexOf('<main id="main">'), drawer = html.indexOf('id="feed"');
-  assert.ok(drawer > 0 && !html.slice(main, html.indexOf('</main>', main)).includes('id="feed"'), 'not re-rendered by the 15 s tick');
+test('shell: the feed is one section the module owns, mounted into the run document slot after each paint; one EventSource on /api/feed, closed on end; follow toggle', () => {
+  const page = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8'), mod = fs.readFileSync(path.join(DASH, 'pages', 'runs-feed.mjs'), 'utf8'), html = page + mod + dashCss();
+  assert.ok(mod.includes("box.id = 'run-feed'") && mod.includes('slot.replaceWith(box)') && !page.includes('id="feed"') && !page.includes('id="run-feed"'), 'the section lives outside the page markup: a re-render of #main never rebuilds it');
+  assert.ok(page.includes('mountFeed()'), 'paintMain mounts it');
   assert.match(html, /new EventSource\(`\/api\/feed\?/);
   assert.match(html, /addEventListener\('end'/); assert.match(html, /\.close\(\)/);
-  assert.match(html, /id="feed-follow"/); assert.match(html, /Escape/);
+  assert.match(html, /id="feed-follow"/);
   assert.ok(!/animation\s*:|transition\s*:|@keyframes/.test(html), 'no animation');
 });

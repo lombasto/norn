@@ -118,17 +118,15 @@ async function apiFixture() {
   return { f, id, now };
 }
 
-test('the dash in API mode: Running shows each running run\'s $ so far, Lanes each lane\'s $ to date, Usage the $ per lane today / 7 days + chats', async () => {
+test('the dash in API mode: the strip carries the 24 h spend (running runs as an estimate), Usage shows it, Lanes each lane\'s $ to date, Usage the $ per lane today / 7 days + chats', async () => {
   resetLiveCost();
   const { f, id, now } = await apiFixture();
   try {
     const ui = async r => (await f.get(r)).data;
-    const ov = (await f.get('/api/overview?project=kestrel')).data, b = ov.burn.usage.billing;
+    const ov = (await f.get('/api/strip?project=kestrel')).data, b = ov.usage.billing;
     assert.equal(b.live_usd, 0.14); assert.equal(b.live_runs, 1); assert.equal(b.chat_usd, 0.4);
     assert.deepEqual(b.live.map(x => [x.id, x.usd]), [[id, 0.14]]);
-    let html = renderTab('overview', await loadTab('overview', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.match(html, /<th><span title="[^"]*">\$ so far<\/span><\/th>/);
-    assert.match(html, new RegExp(`id="run-${id}"[\\s\\S]*?class="mono run-burn">~\\$0\\.14<`));
+    let html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel', strip: ov });
     assert.match(html, /id="burn-api-parts"[^>]*>\$0\.00 from 0 Claude runs ended in the last 24 h · \$0\.14 running \(1 run, estimate\) · \$0\.40 dashboard chats/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
     assert.match(html, />\$ to date<\/th>/);
@@ -141,12 +139,16 @@ test('the dash in API mode: Running shows each running run\'s $ so far, Lanes ea
   } finally { await f.done(); }
 });
 
-test('the dash in plan mode keeps the %/h burn column and no $ columns', async () => {
+test('the dash in plan mode keeps the burn (the run document\'s facts, tokens / 30 min) and no $ figures', async () => {
   const f = await fixture();
   try {
     const ui = async r => (await f.get(r)).data, now = Date.now();
-    let html = renderTab('overview', await loadTab('overview', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.match(html, /<th>context<\/th><th>burn<\/th>/);
+    let html = renderTab('runs', await loadTab('runs', 'kestrel', ui), { now, project: 'kestrel' });
+    assert.doesNotMatch(html, /\$ so far/);
+    // stage RUNS: the %/h column left with /api/overview; the burn is the picked run's own, in its facts
+    const burning = { id: 'RUN-9', kind: 'worker', state: 'running', started: new Date(now - 6e5).toISOString(), project: 'kestrel', burn30: 2.5e6, children: [] };
+    html = renderTab('runs', { tree: [burning], ended: [] }, { now, project: 'kestrel', run: 'RUN-9' });
+    assert.match(html, /<span class="mute">burn<\/span><span>2\.5M \/ 30 min<\/span>/); assert.doesNotMatch(html, /\$ so far/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
     assert.doesNotMatch(html, /\$ to date|lane-usd/);
     html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel' });
@@ -154,13 +156,13 @@ test('the dash in plan mode keeps the %/h burn column and no $ columns', async (
   } finally { await f.done(); }
 });
 
-test('phone width unchanged: Overview, Lanes and Usage in API mode at 390 px have no sideways scroll', { skip: skipWhy, timeout: 420000 }, async () => {
+test('phone width unchanged: Lanes and Usage in API mode at 390 px have no sideways scroll', { skip: skipWhy, timeout: 420000 }, async () => {
   resetLiveCost();
   const { f } = await apiFixture(); let pg;
   try {
     pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-    for (const [tab, sel] of [['overview', '.run-burn'], ['lanes', '.lane-usd'], ['usage', '#usage-spend']]) {
+    for (const [tab, sel] of [['lanes', '.lane-usd'], ['usage', '#usage-burn'], ['usage', '#usage-spend']]) {
       await pg.go(`${f.url}/?project=kestrel&tab=${tab}`, 60000);
       assert.ok(await pg.until(`!!document.querySelector('${sel}')`, 60000), `${tab}: ${sel} painted`);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `${tab}: no sideways scroll on a phone`);

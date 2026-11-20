@@ -1,6 +1,6 @@
 // RM-39 on the dashboard: a run's progress line on its Runs row and its lane's Lanes row ("1 of 4 items done", the pace chip), and
-// the lane overview card (objective, type, the stage's checklist, pace, why slow, alarms, last / next) on the lane name and on the
-// Runs page's Lane cell: focus opens it, Esc closes it, a bottom sheet at 390 px with no sideways scroll. Sandbox only: the shared dash
+// the lane overview card (objective, type, the stage's checklist, pace, why slow, alarms, last / next) on a Runs row's lane;
+// on Lanes the checklist is in the open row (the chevron opens it, Esc closes it), with no sideways scroll at 390 px. Sandbox only: the shared dash
 // fixture (temp dirs) and a private headless browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,17 +39,28 @@ test('the API: a Lanes row and a Runs node carry the run\'s progress and the lan
     assert.equal(gen.card.stage, `S1 · ${id}`);
     assert.equal(gen.card.progress.run, id);
     assert.match(gen.card.last ?? 'no stage finished yet', /./);
-    const html = renderTab('lanes', data, { project: 'kestrel', now: Date.now() }), row = html.match(/<tr id="lane-gen"[^]*?<\/tr>/)[0];
-    assert.match(row, /<span class="lhov"><button class="lnk lname" aria-haspopup="dialog"><b>gen<\/b><\/button><div class="lcard" role="dialog" aria-label="Lane gen">/);
-    assert.match(row, /<div class="prog small" title="[^"]*">.*1 of 4 items done/);
+    const html = renderTab('lanes', data, { project: 'kestrel', now: Date.now() }), row = html.match(/id="lane-gen"[^]*?<\/article>/)[0];
+    assert.match(row, /<div class="lprog small">[^]*?<span class="pline">1 of 4 items done/, 'the closed row: the brief line');
+    assert.match(row, /<div class="lexp" id="lx-gen" hidden>/, 'the checklist waits in the open row');
     assert.match(row, /<ol class="prog-items small"><li class="prog-done">.*Relief shading/);
     assert.match(row, /<b>Pace<\/b> (on track|slow|stalled)/);
     const runs = await f.get('/api/agents?project=kestrel'), node = runs.data.tree.find(n => n.id === id);
     assert.match(node.progress.line, /^1 of 4 items done/);
     assert.equal(node.lane_card.lane, 'gen');
     const rhtml = renderTab('runs', { tree: runs.data.tree }, { project: 'kestrel', now: Date.now() }), rnode = rhtml.split('id="node-').find(x => x.startsWith(`${id}"`));
-    assert.match(rnode, /<div class="lanecol small"><span class="lhov"><a class="lanelink" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
-    assert.match(rnode, /<div class="prog small"[^>]*>.*1 of 4 items done/);
+    assert.match(rnode, /<span class="rlane"><span class="lhov"><a class="lanelink" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
+    assert.match(rnode, /<div class="rline small">1 of 4 items done/, 'the live row: the brief line');
+    // worker-speed: a worker run with model requests shows its tok/s line; a live one its last 10 min
+    const now = Date.now(), ts = s => new Date(now - s * 1000).toISOString(), sid = 'aaaaaaaa-2222-4333-8444-555555555555';
+    const lines = [{ type: 'user', timestamp: ts(130), message: { role: 'user', content: 'go' } }, { type: 'api-request', id: 'r1', timestamp: ts(120) },
+      { type: 'assistant', timestamp: ts(110), requestId: 'q1', requestRef: 'r1', message: { id: 'm1', model: 'claude-opus-5-5', usage: { output_tokens: 500 }, content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'node --test tests/a.test.mjs' } }] } },
+      { type: 'user', timestamp: ts(50), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }];
+    fs.writeFileSync(path.join(f.root, 'claude-projects', 'C--fx-wt', sid + '.jsonl'), lines.map(j => JSON.stringify(j)).join('\n') + '\n');
+    const sp = record(f.pa.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'render', session_id: sid } }, { now: () => new Date(now - 140000) }).id;
+    const snode = (await f.get('/api/agents?project=kestrel')).data.tree.find(n => n.id === sp);
+    assert.equal(snode.speed.rolling, true); assert.equal(snode.speed.tok_s, 50, '500 tokens in 10 s');
+    assert.match(snode.speed.line, /^tok\/s 50 · model \d+ % · tests \d+ %$/);
+    assert.match(renderTab('runs', { tree: [snode] }, { project: 'kestrel', now }), /<div class="speed small mute"[^>]*>tok\/s 50 · model \d+ % · tests \d+ % \(10 min\)<\/div>/);
   } finally { await f.done(); }
 });
 
@@ -60,43 +71,46 @@ test('a runaway alarm on the card in words: the ratio, its numbers and the owner
       act: ['mail it', 'stop it', 'nothing needed - let it run'], ruled: null }] };
   const html = renderTab('runs', { tree: [{ id: 'RUN-5', name: 'x', kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [],
     progress: g, lane_card: { lane: 'gen', objective: 'relief maps', type: 'build', stage: 'S1 · RUN-5', progress: g, last: null, next: 'MERGE queued (RUN-6)' } }] }, { project: 'kestrel', now: Date.now() });
-  assert.match(html, /<span class="chip warn">slow<\/span> 2 of 5 items done, testing item 3/);
-  assert.match(html, /title="slow: 70 % of the last hour in test runs; the machine is at 98 % CPU; the same file re-run 6 times \(a\.test\.mjs\)"/);
+  assert.match(html, /<div class="rhead">[^]*?<span class="chip warn">slow<\/span><\/div>/, 'the pace chip on the live row');
+  assert.match(html, /<b>S1 · RUN-5<\/b>: 2 of 5 items done, testing item 3/);
+  assert.match(html, /<div class="rline small warn">slow: 70 % of the last hour in test runs; the machine is at 98 % CPU; the same file re-run 6 times \(a\.test\.mjs\)<\/div>/);
   assert.match(html, /runaway<\/span> uses 4\.2x the tokens of similar runs - most of it re-reading a long context while waiting on tests/);
   assert.match(html, /You can: mail it \/ stop it \/ nothing needed - let it run/);
   assert.match(html, /no stage finished yet · next: MERGE queued \(RUN-6\)/);
 });
 
-test('the browser: focus opens the lane card, Esc closes it; at 390 px it is a bottom sheet and nothing scrolls sideways', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser: the chevron opens the lane in place (the checklist), Esc closes it; a stream repaint keeps it open; at 390 px nothing scrolls sideways', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([1280, 900]);
   try {
     genRun(f);
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen .lname')`, 90000), 'Lanes shows the lane name button');
-    const shown = `getComputedStyle(document.querySelector('#lane-gen .lcard')).display !== 'none'`;
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen .lopen')`, 90000), 'Lanes shows the open chevron');
+    const shown = `!document.querySelector('#lx-gen').hidden && getComputedStyle(document.querySelector('#lx-gen')).display !== 'none'`, exp = `document.querySelector('#lane-gen .lopen').getAttribute('aria-expanded')`;
     assert.equal(await pg.ev(shown), false, 'closed at first');
-    await pg.ev(`document.querySelector('#lane-gen .lname').focus()`);
-    assert.equal(await pg.ev(shown), true, 'focus opens it');
-    const clear = await pg.ev(`(() => { const c = document.querySelector('#lane-gen .lcard').getBoundingClientRect(); return [...document.querySelectorAll('#lane-gen td:last-child button')]
-      .every(b => { const r = b.getBoundingClientRect(); return r.right <= c.left || r.left >= c.right || r.bottom <= c.top || r.top >= c.bottom; }); })()`);
-    assert.equal(clear, true, 'the card never covers the row\'s buttons');
+    assert.equal(await pg.ev(exp), 'false');
+    await pg.ev(`document.querySelector('#lane-gen .lopen').click()`);
+    assert.equal(await pg.ev(shown), true, 'the chevron opens it');
+    assert.equal(await pg.ev(exp), 'true', 'aria-expanded follows');
+    assert.match(await pg.ev(`document.querySelector('#lx-gen .prog-items')?.textContent ?? ''`), /Relief shading/, 'the brief checklist is in the open row');
+    await pg.ev(`document.querySelector('#lx-gen .rowacts button').focus()`);
+    assert.equal(await pg.ev(`!!document.activeElement.closest('#lx-gen')`), true, 'the focus is inside the open row');
     await pg.ev(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     assert.equal(await pg.ev(shown), false, 'Esc closes it');
+    assert.equal(await pg.ev(`document.activeElement === document.querySelector('#lane-gen .lopen')`), true, 'the focus goes back to the chevron');
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen .lname')`, 90000));
-    await pg.ev(`document.querySelector('#lane-gen .lname').focus()`);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen .lopen')`, 90000));
+    await pg.ev(`document.querySelector('#lane-gen .lopen').click()`);
     assert.equal(await pg.ev(shown), true);
-    // a stream repaint (a new record; the stream's hello does the same after the first paint) keeps the open card open
-    await pg.ev(`window.__oldCard = document.querySelector('#lane-gen .lcard')`);
+    // a stream repaint (a new record; the stream's hello does the same after the first paint) keeps the open row open (S.laneOpen)
+    await pg.ev(`window.__oldRow = document.querySelector('#lane-gen')`);
     record(f.pa.state, { kind: 'mail', ev: 'create', by: 'controller', data: { from: 'role:controller', to: 'lane:gen', subject: 'Owner: a north arrow', body: 'a north arrow' } });
-    assert.ok(await pg.until(`!document.contains(window.__oldCard) && document.body.dataset.ready === 'lanes'`, 90000), 'the stream repaints Lanes');
-    assert.equal(await pg.ev(shown), true, 'the repaint keeps the focused lane card open');
-    const sheet = await pg.ev(`(() => { const r = document.querySelector('#lane-gen .lcard').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(r.bottom)]; })()`);
-    assert.deepEqual(sheet, [0, 390, 844], 'a bottom sheet the width of the phone');
-    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Lanes with the card open');
+    assert.ok(await pg.until(`!document.contains(window.__oldRow) && document.body.dataset.ready === 'lanes'`, 90000), 'the stream repaints Lanes');
+    assert.equal(await pg.ev(shown), true, 'the repaint keeps the open row open');
+    assert.equal(await pg.ev(`document.querySelector('#lane-gen .lopen').getBoundingClientRect().height >= 44`), true, 'the chevron is a 44 px target on the phone');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Lanes with the row open');
     await pg.go(`${f.url}/?project=kestrel&tab=runs`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'runs' && !!document.querySelector('.lanecol .prog')`, 90000), 'Runs shows the progress line');
+    assert.ok(await pg.until(`document.body.dataset.ready === 'runs' && !!document.querySelector('.rrow .rline')`, 90000), 'Runs shows the progress line');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Runs at 390 px');
   } finally { await pg.close(); await f.done(); }
 });

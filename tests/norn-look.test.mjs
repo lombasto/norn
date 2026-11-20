@@ -13,11 +13,12 @@ import { HEX, artScale, glyphPixels, GLYPHS, RAMP } from '../engine/dash/norn/pi
 import { ASSETS, ART_FILES, TOKENS, EMPTIES, CHIP_TOKEN } from '../engine/dash/norn/assets.mjs';
 import { createScheduler, motionAllowed } from '../engine/dash/norn/motion.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const N = path.join(ENGINE, 'dash', 'norn'), DASH = path.join(ENGINE, 'dash');
 const css = fs.readFileSync(path.join(N, 'norn.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 const html = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8');
-const classic = html.slice(html.indexOf('<style>') + 7, html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+const classic = dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
 const rules = text => [...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => ({ sel: m[1].trim(), body: m[2] }));
 const PAL = new Set(HEX);
 
@@ -50,7 +51,7 @@ test('palette lock on all tabs: every classic colour variable is redefined on bo
   }
   // every classic fade (opacity < 1) is redrawn solid under the Norn look
   const fades = rules(classic).filter(r => /opacity\s*:\s*\.?\d*\.?\d+/.test(r.body) && Number(r.body.match(/opacity\s*:\s*([\d.]+)/)[1]) < 1);
-  assert.ok(fades.length >= 5);
+  assert.ok(fades.length >= 4);   // the old lane table's and the Map's fades left with them (stage LANES)
   const nr = rules(css);
   for (const f of fades) for (const sel of f.sel.split(',').map(x => x.trim())) {
     assert.ok(nr.some(r => r.sel.split(',').map(x => x.trim()).includes(`:root.norn ${sel}`) && /opacity\s*:\s*1\b/.test(r.body)), `fade ${sel} not redrawn`);
@@ -88,9 +89,9 @@ test('QUIET holds a static frame and reduced motion is honoured: motion only whe
   assert.match(html, /setQuiet\(/, 'the stream QUIET flag drives the motion class');
 });
 
-test('served: the Norn modules + sheet by allowlist, three + the font pinned, fonts / styles allowed by the CSP, art drops in with no code change', async () => {
+test('served: the Norn modules + sheet by allowlist, the font pinned, three.js gone, fonts / styles allowed by the CSP, art drops in with no code change', async () => {
   const V = path.join(DASH, 'vendor'), md = fs.readFileSync(path.join(V, 'VENDOR.md'), 'utf8');
-  for (const f of ['three.module.js', 'three.core.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2']) {
+  for (const f of ['silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2']) {
     const sha = md.match(new RegExp('`' + f.replace(/\./g, '\\.') + '` sha256 `([0-9a-f]{64})`'))[1];
     assert.equal(createHash('sha256').update(fs.readFileSync(path.join(V, f))).digest('hex'), sha, f);
   }
@@ -99,13 +100,13 @@ test('served: the Norn modules + sheet by allowlist, three + the font pinned, fo
     const csp = (await fetch(f.url + '/')).headers.get('content-security-policy');
     assert.match(csp, /font-src 'self'/); assert.match(csp, /style-src 'self'/);
     for (const [p, ty] of [['/norn/norn.css', /text\/css/], ['/norn/look.mjs', /javascript/], ['/norn/pixel.mjs', /javascript/], ['/norn/palette.mjs', /javascript/],
-      ['/norn/assets.mjs', /javascript/], ['/norn/motion.mjs', /javascript/], ['/vendor/three.module.js', /javascript/], ['/vendor/three.core.js', /javascript/],
+      ['/norn/assets.mjs', /javascript/], ['/norn/motion.mjs', /javascript/],
       ['/vendor/silkscreen-latin-400-normal.woff2', /font\/woff2/]]) {
       const r = await fetch(f.url + p); assert.equal(r.status, 200, p); assert.match(r.headers.get('content-type'), ty, p);
     }
     const w = Buffer.from(await (await fetch(f.url + '/vendor/silkscreen-latin-400-normal.woff2')).arrayBuffer());
     assert.ok(w.equals(fs.readFileSync(path.join(DASH, 'vendor', 'silkscreen-latin-400-normal.woff2'))), 'binary served intact');
-    for (const p of ['/norn/make-palette.mjs', '/norn/palette.hex', '/norn/art/evil.png', '/norn/art/token-running-16.png', '/vendor/LICENSE.three', '/norn/../server.mjs']) assert.equal((await fetch(f.url + p)).status, 404, p);
+    for (const p of ['/norn/make-palette.mjs', '/norn/palette.hex', '/norn/art/evil.png', '/norn/art/token-running-16.png', '/vendor/LICENSE.three', '/vendor/three.module.js', '/vendor/three.core.js', '/norn/../server.mjs']) assert.equal((await fetch(f.url + p)).status, 404, p);
     assert.deepEqual((await f.get('/norn/assets.json')).data.present, []);
     fs.mkdirSync(path.dirname(art), { recursive: true }); fs.writeFileSync(art, Buffer.from('89504e470d0a1a0a', 'hex'));
     assert.deepEqual((await f.get('/norn/assets.json')).data.present, ['token-running-16'], 'a dropped-in file is listed');
@@ -132,31 +133,22 @@ function pngIndices(b) {
   return out;
 }
 
-test('the Norn tab bar (UX review 2, was META-NAV R2): the plain destinations + the open one\'s pages, the active one filled with the accent in inverse ink, hover / focus distinct, wraps (no sideways scroll); no switch left', async () => {
-  const { renderNav } = await import('../engine/dash/ui.mjs');
+test('the Norn page bar (stage NAV): one row of 4 links + More, the open one filled with the accent in inverse ink, hover / focus distinct; no switch left', async () => {
+  const { renderBar } = await import('../engine/dash/shell.mjs');
   assert.ok(!/navgroups/.test(html), 'the R1 ?navgroups switch is gone'); assert.ok(!/data-navgroups/.test(css), 'the R1 variant blocks are gone');
-  const nav = renderNav('records', {});
-  assert.ok(!/class="ng /.test(nav) && !/nav \.ng\b/.test(css), 'the Norn group frames are gone');
-  assert.match(nav, /id="tab-history"[^>]*aria-selected="true"[^]*<div class="pages[^"]*" id="pages-history"[^]*id="tab-records"[^>]*aria-selected="true"/, 'the active page sits on its destination\'s row');
+  const nav = renderBar('records', {});
+  assert.ok(!/class="ng /.test(nav) && !/class="pages/.test(nav), 'one row: no group frames, no pages row');
+  assert.match(nav, /id="tab-more"[^>]*aria-current="page"/, 'a More page marks More');
   const nr = rules(css.replace(/@media[^{]*\{/g, '')), body = sel => nr.filter(r => r.sel.split(',').map(s => s.trim()).includes(sel)).map(r => r.body).join(';');
   const n = (s, v) => assert.match(body(s), v, s);
   for (const g of ['dark', 'light']) for (const v of ['--nv', '--nu', '--ns', '--ninv']) assert.match(body(`:root.norn[data-ground=${g}]`), new RegExp(`${v}\\s*:\\s*#`), `${g} ${v}`);
-  n(':root.norn nav', /--g\s*:\s*var\(--accent\)/); n(':root.norn nav .pages', /border-top\s*:[^;]*solid var\(--line\)/);
-  const act = ':root.norn nav button[aria-selected=true]';
-  n(act, /background\s*:\s*var\(--g\)/); n(act, /color\s*:\s*var\(--ninv\)/);
-  n(':root.norn nav button:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/var\(--g\)/.test(body(':root.norn nav button:hover')), 'hover is not the active fill');
-  n(':root.norn nav button:focus-visible', /outline\s*:[^;]*solid var\(--ink\)/); n(`${act}:focus-visible`, /outline-color\s*:\s*var\(--ninv\)/);
-  // the bar wraps at every width, after (so over) the older phone overflow-x:auto on the Norn nav
-  const navRules = rules(css).filter(r => r.sel.split(',').map(s => s.trim()).includes(':root.norn nav'));
-  const last = navRules.filter(r => /overflow-x/.test(r.body)).at(-1);
-  assert.match(last.body, /overflow-x\s*:\s*visible/); assert.ok(navRules.some(r => /flex-wrap\s*:\s*wrap/.test(r.body)), 'nav wraps');
-  assert.match(html, /nav \.dests,nav \.pages\{display:flex;flex-wrap:wrap;[^}]*max-width:100%/, 'both rows wrap inside the bar');
-  // RM-18 S1: the tones - the three time colours and the Health states, a thin underline, the open one filled in the inverse ink
+  const act = ':root.norn .pagebar>[aria-current=page]';
+  n(act, /background\s*:\s*var\(--accent\)/); n(act, /color\s*:\s*var\(--ninv\)/);
+  n(':root.norn .pagebar>a:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/accent/.test(body(':root.norn .pagebar>a:hover')), 'hover is not the active fill');
+  n(':root.norn .pagebar>button', /border\s*:\s*0/);   // More reads as one of the bar's items, not a framed button (the norn button rule)
+  n(':root.norn .pagebar>a:focus-visible', /outline\s*:[^;]*solid var\(--ink\)/); n(`${act}:focus-visible`, /outline-color\s*:\s*var\(--ninv\)/);
+  // RM-18 S1: the tones stay the three time colours and the Health states (the status strip's parts, the More dot)
   for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['ok', 'ok'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));
-  const tb = ':root nav button[class*=tone-]', ts = `${tb}[aria-selected=true]`;
-  n(tb, /border-bottom-color\s*:\s*var\(--t\)/); n(tb, /--g\s*:\s*var\(--t\)/);
-  n(ts, /background\s*:\s*var\(--t\)/); n(ts, /color\s*:\s*var\(--rm-inv\)/);
-  n(':root nav .pages[class*=tone-]', /border-top-color\s*:\s*var\(--t\)/);
 });
 
 // META-TEND P6: SloppaChoppa's vendored art (norn-art-orc/out, ORC-1 round 5 + 6) under the asset map's names: each file its exact

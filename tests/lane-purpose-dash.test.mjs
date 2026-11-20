@@ -1,13 +1,14 @@
 // RM-34 on the dashboard: each Lanes row says why the lane exists (its objective + source links, or the 'no recorded driver' chip),
-// the Docs reader opens a lane's brief, and the Runs page has a Lane column (lane · stage; "check-in" for a check-in) with the
-// Session column cut to the session's id + name. MAIL-29: each row's type chip (its tooltip = the deciding signal) and output words,
-// and the type filter beside Active / Done / Old (URL &type=). Sandbox only: the shared dash fixture (temp dirs) and a private headless browser.
+// the Docs reader opens a lane's brief, and each Runs row carries its lane (lane · stage; "check-in" for a check-in) on the line
+// under the session's id + name. MAIL-29: each row's type word (its tooltip = the deciding signal), the output words in
+// the open row, and the type filter beside the groups (URL &type=). Sandbox only: the shared dash fixture (temp dirs) and a private headless browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { record } from '../engine/lib/records.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
+import { LANE_SHOW } from '../engine/dash/pages/lanes.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -33,7 +34,7 @@ test('the Lanes rows: an RM source, a DIR source and none (the finding); the bri
     assert.deepEqual(by('render').driver.sources.map(s => s.kind + ':' + s.id), [`dir:${dir}`]);
     assert.equal(by('render').driver.objective, 'Render the seabed in colour');
     assert.deepEqual(by('seabed').driver, { objective: null, sources: [], finding: 'no recorded driver' });
-    const html = renderTab('lanes', data, { project: 'kestrel', now: Date.now() }), row = n => html.match(new RegExp(`<tr id="lane-${n}"[^]*?</tr>`))[0];
+    const html = renderTab('lanes', data, { project: 'kestrel', now: Date.now() }), row = n => html.match(new RegExp(`id="lane-${n}"[^]*?</article>`))[0];
     assert.match(row('gen'), /<details class="lane-why"><summary title="Relief maps for every survey">Relief maps for every survey<\/summary>/);
     assert.match(row('gen'), new RegExp(`<a class="lane-src" data-rid="${rm}" href="\\?project=kestrel&amp;tab=roadmap#rm-${rm}"`));
     assert.match(row('gen'), /data-go="docs" data-goins="brief:task-gen-S1-brief.md"[^>]*>brief</);
@@ -64,48 +65,52 @@ test('the Lanes rows: a type chip naming its signal and the output in words; the
     assert.match(by('gen').output.text, /^code → PR to .+ · no PR yet$/);
     assert.equal(by('seabed').lane_type.type, null, 'a run with no stage, brief, item or commit: no type');
     // a code lane whose PR is open (the deliverables cache's row), rendered
-    const lanes = data.lanes.map(l => l.name !== 'gen' ? l : { ...l, output: { kind: 'code', text: 'code → PR to lombasto/norn · PR #18 open', href: 'https://github.com/lombasto/norn/pull/18' } });
-    const html = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['active', 'done', 'old', 'archived'] }), row = n => html.match(new RegExp(`<tr id="lane-${n}"[^]*?</tr>`))?.[0];
-    assert.match(row('gen'), /<div class="lane-kind small"><span class="chip idle" title="type from RUN-\d+: stage S1">build<\/span> <a class="lane-out" href="https:\/\/github.com\/lombasto\/norn\/pull\/18" target="_blank" rel="noopener">code → PR to lombasto\/norn · PR #18 open<\/a><\/div>/);
-    assert.match(row('sketch'), /title="type from RUN-\d+: agent planner">design<\/span> <span class="lane-out">documents → [^<]*notes\/sketch\/ \(not in git; backed up only if the ledger is on\)<\/span>/);
-    assert.match(row('seabed'), /<span class="chip warn" title="type from RUN-\d+: no stage, brief, item or commit names a type">no type<\/span>/);
+    const lanes = data.lanes.map(l => l.name !== 'gen' ? l : { ...l, output: { kind: 'code', text: 'code → PR to example/kestrel · PR #18 open', href: 'https://github.com/example/kestrel/pull/18' } });
+    const ALL = LANE_SHOW.map(g => g[0]), html = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ALL }), row = n => html.match(new RegExp(`id="lane-${n}"[^]*?</article>`))?.[0];
+    // the type is a quiet word by the name (its signal the title); "no type" shows once, as a filter count (SPEC 4.2 item 4)
+    assert.match(row('gen'), /<span class="ltype small mute" title="type from RUN-\d+: stage S1">build<\/span>/);
+    assert.match(row('gen'), /<div class="lane-kind small"><a class="lane-out" href="https:\/\/github.com\/example\/kestrel\/pull\/18" target="_blank" rel="noopener">code → PR to example\/kestrel · PR #18 open<\/a><\/div>/);
+    assert.match(row('sketch'), /title="type from RUN-\d+: agent planner">design<\/span>[^]*<span class="lane-out">documents → [^<]*notes\/sketch\/ \(not in git; backed up only if the ledger is on\)<\/span>/);
+    assert.doesNotMatch(row('seabed'), /no type/, 'no amber "no type" chip on the row');
+    assert.match(html, /data-type="no type" aria-pressed="false">no type <b>2<\/b>/, 'seabed and render, counted once in the filter');
     assert.match(html, /aria-label="Lane type"><button class="hf" data-act="lane-type" data-type="build" aria-pressed="false">build <b>1<\/b><\/button><button class="hf" data-act="lane-type" data-type="design" aria-pressed="false">design <b>1<\/b>/);
-    const only = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['active', 'done', 'old', 'archived'], laneType: 'design' });
+    const only = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ALL, laneType: 'design' });
     assert.ok(only.includes('id="lane-sketch"') && !only.includes('id="lane-gen"') && !only.includes('id="lane-seabed"'), 'the filter keeps one type');
     assert.match(only, /data-type="design" aria-pressed="true">design <b>1<\/b>/);
-    const none = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['active'], laneType: 'audit' });
+    const none = renderTab('lanes', { lanes }, { project: 'kestrel', now: Date.now(), laneShow: ['needs'], laneType: 'audit' });
     assert.match(none, /data-type="audit" aria-pressed="true">audit <b>0<\/b>/, 'a picked type with no row keeps its chip, so a tap can clear it');
     assert.match(none, /No lanes under these filters\./);
   } finally { await f.done(); }
 });
 
-test('the Runs page: a Lane column - a worker (lane · stage, linked to its row), a MERGE, a check-in; Session is the id + the dwarf (else the kind word), the rest its title', () => {
+test('the Runs page: a row\'s lane - a worker (lane · stage, linked to its row), a MERGE, a check-in; the row heads with the id + the dwarf (else the kind word)', () => {
   const tree = [
     { id: 'RUN-7', dwarf: { id: 'oin', name: 'Óin' }, kind_word: null, kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [], helpers: { n: 1, running: 0, tokens: 1200 } },
     { id: 'RUN-8', dwarf: null, kind_word: 'merge', kind: 'worker', state: 'exited', outcome: 'done', executor: 'claude', lane: 'gen', stage: 'MERGE', project: 'kestrel', started: new Date().toISOString(), children: [] },
     { id: 'RUN-9', dwarf: null, kind_word: 'check-in', kind: 'checkin', state: 'exited', outcome: 'done', executor: 'claude', lane: 'checkin', project: 'kestrel', started: new Date().toISOString(), children: [] },
   ];
   const html = renderTab('runs', { tree }, { project: 'kestrel', now: Date.now() }), node = id => html.split('id="node-').find(x => x.startsWith(`${id}"`));
-  assert.match(html, /<div class="node head"><div>session<\/div><div class="lanecol">lane<\/div>/);
-  assert.match(node('RUN-7'), /<div class="lanecol small"><a class="lanelink" data-rid="L:gen" href="\?project=kestrel&tab=lanes&lanes=active,done,old,archived">gen<\/a> · S1<\/div>/);
-  assert.match(node('RUN-7'), /<span class="t" title="gen · S1 · helpers 1, 1,200 tok"><span class="id">RUN-7<\/span> <b class="aname" data-dwarf="oin">Óin<\/b><\/span>/);
-  assert.match(node('RUN-8'), /<span class="id">RUN-8<\/span> <span class="mute">merge<\/span><\/span>/, 'no dwarf: the kind word');
-  assert.match(node('RUN-8'), />gen<\/a> · MERGE<\/div>/);
-  assert.match(node('RUN-8'), /title="gen · MERGE · DONE"/);
-  assert.match(node('RUN-9'), /<div class="lanecol small">check-in<\/div>/);
+  assert.match(node('RUN-7'), /<span class="rlane"><a class="lanelink" data-rid="L:gen" href="\?project=kestrel&tab=lanes&show=needs,running,stopped,waiting,land,parked,today,old,archived">gen<\/a> · S1<\/span>/);
+  assert.match(node('RUN-7'), /<span class="rwho"><span class="id">RUN-7<\/span> <b class="aname" data-dwarf="oin">Óin<\/b><\/span>/);
+  assert.match(node('RUN-8'), /<span class="rwho"><span class="id">RUN-8<\/span> <span class="mute">merge<\/span><\/span>/, 'no dwarf: the kind word');
+  assert.match(html, /id="run-doc" data-run="RUN-7"[^]*?<span class="mute">helpers<\/span><span>1, 1,200 tok<\/span>/, 'the helpers in the run document');
+  assert.match(node('RUN-8'), /<span class="chip done">done<\/span>[^]*?<span class="rlane">[^<]*<a [^>]*>gen<\/a> · MERGE<\/span>/);
+  assert.match(node('RUN-9'), /<span class="rlane">check-in<\/span>/);
 });
 
-test('the browser at 390 px: Lanes (objective + links, type + output, the type filter) and Runs (the Lane column on the second line) never scroll sideways', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser at 390 px: Lanes (objective + links, type + output, the type filter) and Runs (the lane on a row\'s second line) never scroll sideways', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
     drivers(f);
     record(f.pa.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'a very long objective that keeps going and going so that the row would be far wider than a phone if it did not truncate on the page', scope: ['seabed'], via: 'cli' } });
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-seabed .lane-why summary')`, 90000), 'Lanes shows the objective');
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-seabed .lane-why summary')`, 90000), 'the open row holds the objective');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Lanes at 390 px');
-    const cut = await pg.ev(`(() => { const s = document.querySelector('#lane-seabed .lane-why summary'); return s.scrollWidth > s.clientWidth; })()`);
-    assert.equal(cut, true, 'the long objective is truncated');
+    assert.equal(await pg.ev(`document.querySelector('#lx-seabed').hidden`), true, 'the objective waits in the closed row (A-08: rows stay short)');
+    await pg.ev(`document.querySelector('#lane-seabed .lopen').click()`);
+    assert.ok(await pg.until(`document.querySelector('#lx-seabed')?.hidden === false && document.querySelector('#lane-seabed .lopen').getAttribute('aria-expanded') === 'true'`, 30000), 'the chevron opens it');
+    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll with the row open');
     await pg.ev(`document.querySelector('#lane-seabed .lane-why summary').click()`);
     assert.equal(await pg.ev(`document.querySelector('#lane-seabed .lane-why').open`), true, 'a tap opens it in full');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'still no sideways scroll with the objective open');
@@ -115,9 +120,9 @@ test('the browser at 390 px: Lanes (objective + links, type + output, the type f
     assert.ok(await pg.until(`location.search.includes('&type=build') && !document.querySelector('#lane-seabed') && !!document.querySelector('#lane-gen .lane-kind')`, 30000), 'the filter keeps build lanes, in the URL');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll with the type line and the filter');
     await pg.go(`${f.url}/?project=kestrel&tab=runs`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'runs' && !!document.querySelector('#node-RUN-3 .lanecol a')`, 90000), 'Runs shows the Lane column');
+    assert.ok(await pg.until(`document.body.dataset.ready === 'runs' && !!document.querySelector('#node-RUN-3 .rlane a')`, 90000), 'a Runs row shows its lane');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Runs at 390 px');
-    const below = await pg.ev(`(() => { const n = document.querySelector('#node-RUN-3'); return n.querySelector('.lanecol').getBoundingClientRect().top >= n.querySelector('.name').getBoundingClientRect().bottom - 1; })()`);
+    const below = await pg.ev(`(() => { const n = document.querySelector('#node-RUN-3'); return n.querySelector('.rlane').getBoundingClientRect().top >= n.querySelector('.rwho').getBoundingClientRect().bottom - 1; })()`);
     assert.equal(below, true, 'the lane sits on the row\'s second line on the phone');
   } finally { await pg.close(); await f.done(); }
 });

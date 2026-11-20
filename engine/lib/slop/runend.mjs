@@ -47,9 +47,22 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
   return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules }) };
 }
 
-/** the resume prompt: the list and what to do with it */
-export function slopPrompt(open, brief, { projectDir = null } = {}) {
-  return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds:`, ...open.flatMap((f, i) => ['- ' + findingLine(f), ...(open.findIndex(g => g.rule === f.rule) === i ? explainLines(f, { pad: '  ', projectDir }) : [])]),   // RM-27: the rule's what / why / fix, once per rule
+// the resume prompt names at most SLOP_GROUPS (rule, file) groups and SLOP_FIRST lines of each: a BLOCK list of thousands of hits
+// (one fixture's trailing whitespace) once made a prompt too long to start the resume (solve-shack RUN-140)
+export const SLOP_GROUPS = 20, SLOP_FIRST = 3;
+/** the full BLOCK list, one finding a line (the file the resume prompt names) */
+export const slopList = open => open.map(f => '- ' + findingLine(f)).join('\n') + '\n';
+/** the resume prompt: per rule and file a count and the first lines, the rule's what / why / fix under its first shown finding (RM-27),
+ *  the full list in listFile, and what to do with it */
+export function slopPrompt(open, brief, { listFile = null, projectDir = null } = {}) {
+  const groups = new Map(), told = new Set();
+  for (const f of open) { const k = `${f.rule} \`${f.file}\``; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }   // the path in backticks, as findingLine
+  const shown = [...groups].slice(0, SLOP_GROUPS), rest = groups.size - shown.length;
+  const lines = f => ['  - ' + findingLine(f), ...(told.has(f.rule) ? [] : (told.add(f.rule), explainLines(f, { pad: '    ', projectDir })))];
+  return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds, in ${groups.size} rule / file group(s):`,
+    ...shown.flatMap(([k, fs_]) => [`- ${k}: ${fs_.length}`, ...fs_.slice(0, SLOP_FIRST).flatMap(lines), ...(fs_.length > SLOP_FIRST ? [`  - ... ${fs_.length - SLOP_FIRST} more`] : [])]),
+    ...(rest > 0 ? [`- ... ${rest} more group(s)`] : []),
+    ...(listFile ? [`The full list: ${listFile}`] : []),
     'Fix each one in this worktree and commit; run `norn slop check` until it lists none; then end with `norn done` as before.',
     'A finding that must stay needs a waiver from the owner or the controller: say so and end with `norn done --outcome stopped --why "slop waiver needed"`.',
     ...(brief ? [`Your brief: ${brief}`] : [])].join('\n');

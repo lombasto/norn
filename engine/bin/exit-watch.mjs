@@ -41,7 +41,7 @@ const timer = setInterval(() => {
   ended = true;
   clearInterval(timer);
   process.stderr.write(`exit watch: result ${outcome} written, ${exe} idle ${after} s - ended its process tree\n`);
-  killTree(child.pid);
+  killTree(child.pid, { killer: `exit-watch pid ${process.pid}${process.env.META_RUN_ID ? ` (${process.env.META_RUN_ID})` : ''}`, reason: `result ${outcome} written, ${exe} idle ${after} s` });   // receipted in META_RUN_STATE
 }, tickMs);
 child.on('error', e => { clearInterval(timer); process.stderr.write(`exit watch: ${e.message}\n`); process.exit(127); });
 child.on('exit', (code, signal) => {

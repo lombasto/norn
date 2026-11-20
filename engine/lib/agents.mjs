@@ -147,6 +147,13 @@ export const endedAt = r => ended(r) ? [...(r.history || [])].reverse().find(h =
 const QUEUE_STATES = ['queued', 'claimed', 'filled', 'withdrawn'];   // claimed: a node runs it under its own id
 // a queue entry is no session: the Runs page lists the queued ones apart (META-GT12); ended runs stay `win` ms (RECENT_MS)
 const shown = (r, now, win = RECENT_MS) => !QUEUE_STATES.includes(r.state) && !(ended(r) && now - Date.parse(endedAt(r)) > win);
+// NORN-UI-RUNS: the Runs page asks its live runs first (part 'live') and the ended ones after (part 'history'); no part = both
+export const RUN_PARTS = ['live', 'history'];
+// a helper goes with its parent run (it nests under it), so a live run keeps its ended helpers
+const inPart = (r, part, items) => { const p = r.data?.role === 'helper' && items[r.data.parent]; return !part || (part === 'live') === !ended(p || r); };
+/** why run r ended: its last end / lost / kill event as { ev, by, why } (who stopped it and the reason); null while running */
+export const stopOf = r => { const h = ended(r) ? [...(r.history || [])].reverse().find(x => x.ev === 'end' || x.ev === 'lost' || x.ev === 'kill') : null;
+  return h ? { ev: h.ev, by: h.by ?? null, why: h.data?.why ?? null } : null; };
 /** The run ids the Runs tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
 export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(r => r.kind === 'run' && shown(r, now)).map(r => r.id));
 
@@ -169,11 +176,12 @@ export async function primeAgents(runs, o = {}) {
       await Promise.all(names.flatMap(n => [readTextA(path.join(dir, n.replace(/\.jsonl$/, '.meta.json'))).catch(() => null), tailA(path.join(dir, n), cache, tInit, onTranscript)]));
     }
   };
-  await Promise.all([...runs].filter(x => x.kind === 'run' && shown(x, now, o.window)).map(one));
+  const items = Object.fromEntries([...runs].map(x => [x.id, x]));
+  await Promise.all([...runs].filter(x => x.kind === 'run' && shown(x, now, o.window) && inPart(x, o.part, items)).map(one));
 }
 /**
  * Agents tree (design 6): one root per RUN (running, or ended within o.window ms, default 2 h) + one root per talk session.
- * o: { projectsDir, codexDir, cache (Map, kept by the server), now, window, policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
+ * o: { projectsDir, codexDir, cache (Map, kept by the server), now, window, part ('live' | 'history' | none: RUN_PARTS), policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
  * Times: started = the start event, ended = endedAt (null while running), ran_min = start to end (start to now while running).
  * META-CTX-ENFORCE R1: ctx = the run's CURRENT context (its last request), ctx_peak beside it, ctx_limit / ctx_hard = its role's policy lines.
  */
@@ -183,10 +191,10 @@ export function agentsTree(runs, o = {}) {
   // the live hand-off state (lanes.mjs handoffOf): o.wrote(id) = the run's result says HANDOFF; talked from the same tail cache
   const ho = { now, wrote: o.wrote, talked: id => runTalked(items[id], { ...o, cache }) };
   for (const r of [...runs].filter(x => x.kind === 'run').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)))) {
-    if (!shown(r, now, o.window)) continue;
+    if (!shown(r, now, o.window) || !inPart(r, o.part, items)) continue;
     const d = r.data || {}, end = r.end || {};
     const node = { id: r.id, ...doerOf(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
-      model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null,
+      model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, stop: stopOf(r),
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
       dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log }) => ({ name, code, counts, log })) } : null,   // META-DOD 1
       started: r.created, ended: endedAt(r), ran_min: Math.max(0, Math.round(((ended(r) ? Date.parse(endedAt(r)) : now) - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null,
@@ -231,7 +239,7 @@ export function agentsTree(runs, o = {}) {
     const h = p.helpers ??= { n: 0, running: 0, tokens: 0 };
     h.n++; if (n.state === 'running') h.running++; if (Number.isFinite(n.tokens)) h.tokens += n.tokens;
   }
-  for (const s of o.sessions || []) roots.push({ id: `talk:${s.name}`, kind: 'talk', executor: 'claude', lane: null, model: s.model ?? null,
+  for (const s of o.part === 'history' ? [] : o.sessions || []) roots.push({ id: `talk:${s.name}`, kind: 'talk', executor: 'claude', lane: null, model: s.model ?? null,
     effort: s.effort ?? null, state: s.alive ? 'alive' : 'stopped', started: s.created ?? null, ctx: s.context ?? null, children: [] });
   return roots;
 }
