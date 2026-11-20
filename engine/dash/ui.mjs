@@ -1157,6 +1157,47 @@ function remotePane(r) {
     <span class="help">Open the address on a phone signed in to the same private network and pair it once with a code from here. Approvals and every other write from a phone count only on a paired device, and each is stamped with it.</span>
     <ul class="small devices">${r.devices.length ? r.devices.map(dev).join('') : '<li class="mute">No paired device yet.</li>'}</ul>`, pair);
 }
+// NORN-UI-SYNC: Settings > Sync's pane subs (policy.mjs SECTIONS sync, pane:true) from the server's sync block (server.mjs syncInfo).
+// home = the state + the ledger form (the topic is write-only: the page only knows on / off); setup = the guided cut --bare / join
+// (Check = the dry run, Apply = pause, cut, publish + fetch, resume); reconcile = Find duplicates (dry) / Write the cards. The buttons
+// post /api/sync/* (index.html); the answers land in the role=status <pre> below each.
+const ago = s => (s == null ? 'never' : s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`);
+function syncPane(x, d, said = {}) {
+  const s = d.sync || {}, id = `sub-sync-${x.id}`, out = k => `<pre class="small sync-out" id="sync-${k}-out" role="status">${esc(said[k] ?? '')}</pre>`;
+  const head = `<h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>`, wrap = (body, search) => `<div class="ssub" id="${id}">${head}<div class="srow" data-search="${esc(search)}" data-mod="0">${body}</div></div>`;
+  if (x.id === 'home') {
+    const st = s.home ? chip('ok', `home ${s.home}`) : chip('idle', 'solo');
+    const pub = s.stopped ? chip('bad', `stopped: ${s.stopped}`) : s.head ? `published ${esc(String(s.head).slice(0, 8))}${s.pushed ? ' · pushed' : ' · not pushed yet'}` : 'nothing published yet';
+    const fetched = s.fetch_error ? chip('bad', `fetch failed: ${s.fetch_error}`) : s.fetched_at ? `fetched ${esc(fmtTime(s.fetched_at))}` : 'not fetched yet';
+    const lag = (s.homes || []).map(h => `<li>home <b>${esc(h.home)}</b> <span class="mute">last record ${esc(ago(h.lag_s))} ago${h.ahead_s ? ` · ${esc(ago(h.ahead_s))} not merged here yet` : ''}</span></li>`).join('');
+    return wrap(`<div class="sl"><b>This machine</b> <span class="tag">machine</span> ${st} ${s.doorbell ? chip('ok', 'doorbell on') : chip('idle', 'doorbell off')}
+      <span class="help">${s.home ? `${pub} · ${fetched}` : 'Solo: this project is built on this machine only. Set up / join below makes it a home.'}</span>
+      ${lag ? `<ul class="small">${lag}</ul>` : ''}</div>
+     <div class="sc sync-form"><label>Ledger remote <input type="text" id="sync-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"${s.home_id ? ' disabled title="one ledger repo: move it by hand (docs/MULTI-HOME.md)"' : ''}></label>
+      <label>Doorbell topic <input type="password" id="sync-topic" placeholder="${s.doorbell ? 'set (hidden)' : 'not set'}" autocomplete="off"></label>
+      <button class="ghost" data-act="sync-ledger" data-version="${esc(s.version ?? '')}">Save</button>${out('ledger')}</div>`, 'sync home ledger remote doorbell topic publish fetch lag solo');
+  }
+  if (x.id === 'setup') {
+    if (s.home) return wrap(`<div class="sl"><b>Set up</b> ${chip('ok', `home ${s.home}`)}<span class="help">This project is home ${esc(s.home)} of its ledger. Another machine joins with its own home id (docs/MULTI-HOME.md).</span></div>`, 'sync set up join home');
+    return wrap(`<div class="sl"><b>Set up or join</b> <span class="tag">machine</span> ${chip('idle', 'solo')}
+      <span class="help">Check runs the dry run: access, that the ledger repo is PRIVATE, the home id, the renames. Apply pauses the project, cuts, publishes + fetches, then resumes it.</span></div>
+     <div class="sc sync-form"><label>Home id <input type="text" id="sync-home" placeholder="a, b, laptop" maxlength="8" autocomplete="off" spellcheck="false"></label>
+      <label>Ledger remote <input type="text" id="sync-setup-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"></label>
+      <label>Doorbell topic <input type="password" id="sync-setup-topic" placeholder="optional" autocomplete="off"></label>
+      <label><input type="checkbox" id="sync-bare"> The first home (this project starts the ledger)</label>
+      <label><input type="checkbox" id="sync-checked"> I checked the ledger repo is private</label>
+      <span><button class="ghost" data-act="sync-plan">Check</button> <button class="strong" data-act="sync-apply">Apply</button></span>${out('setup')}</div>`, 'sync set up join first home cut bare private');
+  }
+  return wrap(`<div class="sl"><b>Duplicates across homes</b> <span class="help">${s.home ? 'Find shows the likely pairs; Write puts one owner card per pair in the Inbox.' : 'Solo: nothing to reconcile.'}</span></div>
+   <div class="sc">${s.home ? '<button class="ghost" data-act="sync-reconcile" data-dry="1">Find duplicates</button> <button class="ghost" data-act="sync-reconcile" data-dry="0">Write the cards</button>' : ''}${out('reconcile')}</div>`, 'sync reconcile duplicates pairs cards');
+}
+/** the answer of a /api/sync/* post as lines (index.html shows them in the pane's <pre>) */
+export function syncLines(r) {
+  if (r.pairs) return [`${r.pairs.length} likely duplicate pair(s)${r.carded ? `, ${r.carded} carded before` : ''}${r.written?.length ? `: ${r.written.length} card(s) written to the Inbox` : ''}`, ...r.pairs.map(p => `${p.kind} ${p.a} ~ ${p.b}: ${p.why}`)];
+  if (r.off) return ['Solo: nothing to reconcile.'];
+  if (r.changed !== undefined) return [r.changed ? `Saved. Doorbell ${r.doorbell ? 'on' : 'off'}.` : 'No change.'];
+  return [...(r.lines || []), ...(r.refused || []).map(x => `REFUSED: ${x}`), r.noop ? 'Nothing to do: already a home.' : r.refused?.length ? '' : r.dry ? 'Dry run: nothing written. Apply to do it.' : 'Done.'].filter(Boolean);
+}
 // META-OOTB-POLISH F-6: start from a profile (fills the form only: Review + Save stay the human step) and a basic / all split
 // (basic = the rows flagged by policy.mjs BASIC_KEYS; the browser hides the rest, setFilter)
 // META-PROFILE-BUG R1: the profile in force in words (Overview line + the top of Settings), from the latest caps profile decision
@@ -1207,6 +1248,7 @@ function settings(d, ctx) {
   }).join('');
   const panes = sections.map(c => {
     const subs = c.info ? (c.id === 'notify' ? notifyPane(d) + remotePane(d.remote) : filesPane(d)) : c.subs.map(x => {
+      if (x.pane) return syncPane(x, d, ctx.syncOut);
       const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
       const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'usage', jump: 'usage-advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
       return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${body}</div>`;

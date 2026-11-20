@@ -627,6 +627,7 @@ export function createDashboard(o) {
     const js = async f => { try { return JSON.parse(await readA(f, 'null')) || {}; } catch { return {}; } };
     const [man, ft, stopped, blocks] = cfg ? await Promise.all([js(path.join(cfg.dir, 'home-manifest.json')), js(path.join(cfg.dir, 'sync-fetch.json')),
       readA(path.join(cfg.dir, 'home-stopped.txt'), null), h && cfg.remote ? syncBlocks(p) : {}]) : [{}, {}, null, {}];
+    await Promise.all(projects.map(x => readA(path.join(x.state, 'home.json'), null)));   // primes each project's home id (homeIdOf below)
     return { version: hash(raw), home: h?.id ?? null, bare_home: h?.bare_home ?? null, remote: typeof L.remote === 'string' ? L.remote : null, home_id: L.home_id ?? null,
       doorbell: !!L.doorbell?.topic, head: man.head ?? null, pushed: man.pushed ?? null, stopped: stopped?.trim() || null,
       fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, homes: blocks.homes?.rows ?? [],
