@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { listProcs } from './strays.mjs';
+import { writeReceipts } from './kills.mjs';
 
 const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -71,6 +72,7 @@ export async function dashRestart({ root, port, bind = '127.0.0.1', env = proces
     const p = list.find(x => x.pid === rec.pid);
     // pid reuse guard: the recorded pid is stopped only while it still is a `norn dash` (a failed listing trusts the record)
     if (!list.length || (p && isDashCmd(p.cmd))) {
+      try { writeReceipts([p || { pid: rec.pid }], { killer: `norn dash restart pid ${process.pid}`, reason: `restart: the recorded dashboard of ${root}` }); } catch { /* the restart goes on */ }   // DEC-1088
       try { process.kill(rec.pid); } catch { /* gone meanwhile */ }
       if (!await until(() => !pidAlive(rec.pid), 10000)) throw new DashError(`the recorded dashboard pid ${rec.pid} did not stop`);
       stopped = rec.pid;
