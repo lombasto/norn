@@ -59,7 +59,7 @@ const tileToken = l => l.board === 'old' ? (l.outcome === 'done' ? 'done' : 'sto
 const groupWord = id => LANE_SHOW.find(g => g[0] === id)?.[1] ?? id;
 
 // ---------- the now line (one plain sentence with numbers and times) ----------
-const hm = iso => (iso ? `${String(iso).slice(11, 16)}Z` : '');
+const hm = iso => (iso ? fmtTime(iso) : '');
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 export function nowLine(l, now) {
   const t = String(l.text ?? ''), at = l.ended ? ` at ${hm(l.ended)}` : '', ago = l.ended ? `, ${laneAge(now - Date.parse(l.ended))} ago` : '';

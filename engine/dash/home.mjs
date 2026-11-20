@@ -6,10 +6,10 @@
 // mounts the same list); renderHome is the Look 3 page around it. C3: approval cards (Approve once / Deny -> POST /api/chat/approve)
 // and done cards (Undo -> POST /api/chat/undo) come from the chat profile's outbox lines; a card without a verb keeps its button disabled.
 import { dodChips, hoChip } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips; the live hand-off chip
-import { dwarfName, runWho } from './cells.mjs';   // DWARVES 3.3: who ran a run
+import { dwarfName, runWho, fmtTime } from './cells.mjs';   // DWARVES 3.3: who ran a run
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fin = v => typeof v === 'number' && Number.isFinite(v);
-const hhmm = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 16) : ''; };
+const hhmm = iso => (iso ? fmtTime(iso) : '');   // local wall time (cells.mjs fmtTime, bug 2)
 const ago = (iso, now) => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return ''; const m = Math.max(0, (now - t) / 60000);
   return m < 60 ? `${Math.round(m)} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 const kTok = n => (fin(n) ? `${Math.round(n / 1000)}k` : '-');

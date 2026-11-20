@@ -6,6 +6,7 @@ import { parseLedgerLine, splitClauses, ledgerInline, parseLedger } from '../eng
 import { shownRunIds } from '../engine/lib/agents.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
+process.env.TZ = 'UTC';   // the dash prints local time (cells.mjs fmtTime): pin the zone these expectations are written in
 
 test('ledgerInline: ids link (records rows / inbox / agents only when shown / deliverables), shas + code, all escaped', () => {
   const h = ledgerInline('DEC-3 DIR-4 Q-5 RUN-6 RUN-7 DLV-8 EP-9 at 53a3f65 and `x<y>`', { runs: new Set(['RUN-6']), project: 'demo' });
@@ -33,7 +34,7 @@ test('the Ledger tab: newest first, one row per entry, time + kind chip, search 
   const html = renderTab('ledger', { file: 'L.md', ledger: lines, total: 120, count: 100, offset: 0, more: true, runs: [] }, { project: 'demo', now });
   const rows = [...html.matchAll(/<tr id="led-(\d+)" data-state="([\w-]+)"/g)].map(m => [m[1], m[2]]);
   assert.deepEqual(rows.map(r => r[1]), ['minor', 'auto', 'check-in', 'other'], 'newest first, kind in data-state');
-  assert.match(html, /03:00Z/); assert.match(html, /02:14Z/); assert.match(html, /01-01 22:20Z/);
+  assert.match(html, />03:00</); assert.match(html, />02:14</); assert.match(html, />01-01 22:20</);
   assert.match(html, /<span class="chip [^"]*">check-in<\/span>/); assert.match(html, /<span class="chip [^"]*">auto<\/span>/);
   assert.match(html, /data-filter="ledger"/); assert.match(html, /data-filter-state="ledger"/); assert.match(html, /data-rows="ledger"/);
   assert.match(html, /data-act="ledger-more"/, 'more lines exist: a show-older button');
