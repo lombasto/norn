@@ -18,11 +18,11 @@ import { liveRuns } from './runs.mjs';
 import { deliverableConfig, loadDeliverables } from './deliverables.mjs';
 import { githubRepo } from './overlap.mjs';
 import { pathKey } from './config.mjs';
+import { fwd } from './dlvmerge.mjs';
 
 export const BRANCHES_TTL_MS = 10 * 60000;
 export const STALE_DAYS = 14;
 const DAY = 864e5;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const lines = s => String(s ?? '').split(/\r?\n/).filter(Boolean);
 const runNum = id => Number(String(id).replace(/^\D+-/, '')) || 0;
 export const branchesFile = state => path.join(state, 'branches.json');
