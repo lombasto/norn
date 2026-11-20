@@ -8,7 +8,7 @@ import { LANE_SHOW } from './lanes.mjs';
 // a check-in reads "check-in", a run with no lane (a talk session) a dash
 const LANES_ALL = LANE_SHOW.map(([k]) => k).join(',');
 export const runLane = n => n.kind === 'checkin' ? 'check-in' : !n.lane ? dash
-  : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&lanes=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
+  : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&show=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
 // ---------- the Runs page (owner 2026-11-19): running first, then queued, then ended; filter chips for state, kind and project, a lane
 // box and the window, all kept in the URL (index.html: S.runsView, runsViewOf / runsViewQs); 'ran' and 'ended' time columns ----------
 export const RUNS_STATES = [['running', 'running'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];

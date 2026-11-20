@@ -92,14 +92,14 @@ test('the browser: the filter chips survive a live re-render and a reload (the U
     assert.equal(await pg.ev(`document.querySelector('[data-show=old]').getAttribute('aria-pressed')`), 'false');
     await pg.ev(`document.querySelector('[data-act=lane-show][data-show=old]').click()`);
     assert.ok(await pg.until(`document.querySelector('[data-show=old]')?.getAttribute('aria-pressed') === 'true'`, 30000), 'the tap turns Old on');
-    assert.match(await pg.ev('location.search'), /lanes=active%2Cdone%2Cold|lanes=active,done,old/);
+    assert.match(decodeURIComponent(await pg.ev('location.search')), /show=needs,running,stopped,waiting,land,old(&|$)/, 'the groups are in the URL');
     record(f.pa.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'poke the stream', via: 'chat' } });
     assert.ok(await repainted(pg, 'seabed'), 'the stream re-renders the page');
     assert.equal(await pg.ev(`document.querySelector('[data-show=old]').getAttribute('aria-pressed')`), 'true', 'Old is still on after a re-render');
     await pg.ev('location.reload()');
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && document.querySelector('[data-show=old]')?.getAttribute('aria-pressed') === 'true'`, 90000), 'Old is still on after a reload');
-    await pg.ev(`document.querySelector('[data-act=lane-show][data-show=active]').click()`);
-    assert.ok(await pg.until(`document.querySelector('[data-show=active]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-seabed')`, 30000), 'Active off hides the active lanes');
+    await pg.ev(`document.querySelector('[data-act=lane-show][data-show=needs]').click()`);
+    assert.ok(await pg.until(`document.querySelector('[data-show=needs]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-seabed')`, 30000), 'Needs you off hides its lanes');
   } finally { await pg.close(); await f.done(); }
 });
 
