@@ -71,7 +71,9 @@ export function lines(series, { days = [], fmt = String, id = '', title = '', un
 
 // META-DOD 1 (DIR-68): a run's Definition of Ready (its brief's Scope / Tests / Done lines at norn run) and Definition of Done (Norn's
 // own run-end check) as two chips with the evidence; ready = the start record's dod_ready, done = the end record's dod (null = not checked)
-export const dodTest = x => `${x.name} exit ${x.code}${x.counts ? `, ${x.counts.pass} pass ${x.counts.fail} fail` : ''}`;
+// a gate job also names its suite mode, files and time (lib/dod.mjs testLine: "gate: changed, 6 files, 41 s"; a cut run "209/227 files")
+const dodSuite = (s, ms) => `gate: ${s.mode}${s.files == null ? '' : `, ${s.done < s.files ? `${s.done}/` : ''}${s.files} file${s.files === 1 ? '' : 's'}`}${ms != null ? `, ${Math.round(ms / 1000)} s` : ''}`;
+export const dodTest = x => `${x.name} exit ${x.code}${x.counts ? `, ${x.counts.pass} pass ${x.counts.fail} fail` : ''}${x.suite ? ` (${dodSuite(x.suite, x.ms)})` : ''}`;
 export function dodEvidence(ready, done) {
   const r = ready ? (ready.ok ? 'Ready: Scope / Tests / Done lines present' : `Ready: the brief lacks ${(ready.missing || []).join(', ')} (policy ${ready.mode})`) : null;
   const d = done ? `Done: ${done.ok ? 'green' : done.why}${(done.tests || []).length ? ` · ${done.tests.map(dodTest).join(' · ')}` : ''}` : null;

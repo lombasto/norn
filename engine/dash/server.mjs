@@ -29,18 +29,17 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
-import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
+import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
+import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { listProcsAsync } from '../lib/strays.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
 import { ctxView } from '../lib/ctxlimit.mjs';
-import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
 import { homeDir, realPath } from '../lib/config.mjs';
 import { executorExtra } from '../lib/executors.mjs';
@@ -102,15 +101,15 @@ const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
 const EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5'];
-const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'three.module.js', 'three.core.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2'];
+const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2'];
 // the Norn look (META-VISUAL-B): its modules + stylesheet, served from norn/ by allowlist; art files only by the asset map
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
-  'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
+  'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
 const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'map', 'settings'];
+export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -464,12 +463,13 @@ export function createDashboard(o) {
     }
     return { lanes, repo: await repoSlug(p), docs };
   }
-  // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
+  // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here;
+  // NORN-UI-SYNC (S6b follow-up #2): a lane's predicted cross-home conflicts (running or an open deliverable) ride along for its chip
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
     const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
     const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
-    return lanesView(s, { all, hbAge: hbAge(p), hbLate: hbLateOf(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
+    return lanesView(s, { all, hbAge: hbAge(p), hbLate: hbLateOf(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(ov[l.name]?.conflicts?.length ? { conflicts: ov[l.name].conflicts } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -489,7 +489,7 @@ export function createDashboard(o) {
   function withDriver(p, rows) {
     const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name }, dl = deliverablesOf(p).rows || [];
     return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
-      return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
+      return { ...l, driver: laneDriver(l.name, o), lane_type, dlv: prStep(dv), output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
   }
   // RM-39: each run's progress against its brief, pace, why slow and alarms in words (progress.mjs). The files are read on
   // fs.promises first (the brief, NOTES, every session's transcript - tailed into the shared cache under its own key), then the
@@ -548,21 +548,21 @@ export function createDashboard(o) {
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
-  async function agents(p, win, { homes = false } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own)
+  async function agents(p, win, { homes = false, part = null } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own); part: RUN_PARTS
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
     const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
     // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
-    await primeAgents(runs, { projectsDir, codexDir, cache, window: win });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
-    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
+    await primeAgents(runs, { projectsDir, codexDir, cache, window: win, part });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
+    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, part, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
     // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
     // RM-46 S3: the other homes' runs from their read-only copies - running, queued, or ended inside the window; no feed, no actions
-    const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => r.state === 'running' || r.state === 'queued' || !win || now - Date.parse(r.updated) <= win)
+    const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => (r.state === 'running' || r.state === 'queued' ? part !== 'history' : part !== 'live' && (!win || now - Date.parse(r.updated) <= win)))
       .map(r => ({ id: r.id, name: r.data.name ?? null, kind: r.data.kind ?? 'worker', role: r.data.role ?? null, executor: r.data.executor ?? null, model: r.data.model ?? null, effort: r.data.effort ?? null,
         lane: r.data.lane ?? null, stage: r.data.stage ?? null, state: r.state, outcome: r.state === 'exited' ? r.history.findLast(h => h.ev === 'end')?.data?.outcome ?? null : null,
         started: r.created, ended: r.state === 'running' || r.state === 'queued' ? null : r.updated, project: p.name, home: r.home, readonly: true, children: [] }));
@@ -617,10 +617,64 @@ export function createDashboard(o) {
       if (c?.kind === 'work') work.push({ key: e.key, home: c.home, lane: c.lane, n: c.n, run: c.run ?? null, items: c.items || [], renewed_at: c.renewed_at, stale: c.home !== home && isStale(seen[e.key], c, now, pol) }); });
     return { homes: { home, fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, rows }, claims: { work, leader } };
   }
-  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
-  async function map(p, url) {
-    const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
-    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows, home: homeIdOf(p.state)?.id }) };
+  // NORN-UI-SYNC: Settings > Sync's state - this project solo or a home (home.json), machine.json ledger (the remote; the doorbell only as
+  // on / off: the topic is a secret and never leaves the server), the last publish / fetch (the ledger dir's sync files, sync.mjs syncStatus's),
+  // the other homes' lag (the Ledger page's Homes rows). version = machine.json's hash: the ledger form refuses a stale one (409). Async reads only.
+  async function syncInfo(p) {
+    const raw = machineFile ? await readA(machineFile, '') : '';
+    let m = {}; try { m = JSON.parse(raw || '{}') || {}; } catch { m = {}; }
+    const L = m.ledger || {}, h = homeIdOf(p.state), cfg = metaRootDir ? ledgerConfig(m, { metaRoot: metaRootDir, machineFile }) : null;
+    const js = async f => { try { return JSON.parse(await readA(f, 'null')) || {}; } catch { return {}; } };
+    const [man, ft, stopped, blocks] = cfg ? await Promise.all([js(path.join(cfg.dir, 'home-manifest.json')), js(path.join(cfg.dir, 'sync-fetch.json')),
+      readA(path.join(cfg.dir, 'home-stopped.txt'), null), h && cfg.remote ? syncBlocks(p) : {}]) : [{}, {}, null, {}];
+    await Promise.all(projects.map(x => readA(path.join(x.state, 'home.json'), null)));   // primes each project's home id (homeIdOf below)
+    return { version: hash(raw), home: h?.id ?? null, bare_home: h?.bare_home ?? null, remote: typeof L.remote === 'string' ? L.remote : null, home_id: L.home_id ?? null,
+      doorbell: !!L.doorbell?.topic, head: man.head ?? null, pushed: man.pushed ?? null, stopped: stopped?.trim() || null,
+      fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, homes: blocks.homes?.rows ?? [],
+      projects: projects.map(x => ({ name: x.name, home: homeIdOf(x.state)?.id ?? null })) };
+  }
+  // the heavy steps (join check / apply, reconcile) run the library in a worker (syncwork.mjs); tests pass o.syncWork (in-process, a fake gh)
+  const syncWork = o.syncWork ?? ((op, args) => new Promise((ok, no) => {
+    const w = new Worker(new URL('./syncwork.mjs', import.meta.url), { workerData: { op, o: JSON.parse(JSON.stringify(args)) } });
+    w.once('message', r => (r.error ? no(new Error(r.error)) : ok(r.ok))); w.once('error', no);
+    w.once('exit', c => no(new Error(`sync worker exit ${c}`)));   // after a message the promise is settled: a late reject is a no-op
+  }));
+  const HOME_ID = /^[a-z][a-z0-9]{0,7}$/, TOPIC = /^[A-Za-z0-9_-]{1,64}$/;
+  const remoteArg = v => { const r = str(v, 'ledger remote', 500); if (/\s/.test(r) || r.startsWith('-')) throw fail(400, 'ledger remote must be one URL or path (no spaces, no leading -)'); return r; };
+  // POST /api/sync/{plan,apply,ledger,reconcile} (owner actions, by: dashboard)
+  async function syncPost(p, route, data) {
+    const raw = machineFile ? await readA(machineFile, '') : '';
+    if (!machineFile || !raw) throw fail(409, 'No machine.json: install Norn first (SETUP.md)');
+    const m = JSON.parse(raw), L = m.ledger || {};
+    if (route === '/api/sync/ledger') {   // the ledger remote and the doorbell topic (write-only: never echoed)
+      if (data.version !== hash(raw)) throw fail(409, 'machine.json changed elsewhere. Reload and try again.');
+      const next = { ...L };
+      if (data.remote !== undefined) {
+        const r = remoteArg(data.remote);
+        if (L.home_id && L.remote && r !== L.remote) throw fail(409, `This machine is home ${L.home_id} of its ledger: one ledger repo. To move it, edit machine.json ledger.remote by hand (docs/MULTI-HOME.md).`);
+        next.remote = r;
+      }
+      if (data.topic !== undefined) {
+        const t = String(data.topic);
+        if (t && !TOPIC.test(t)) throw fail(400, 'doorbell topic: 1-64 letters, digits, _ or -');
+        const { topic: _old, ...rest } = L.doorbell || {};
+        if (t) next.doorbell = { ...rest, topic: t }; else if (Object.keys(rest).length) next.doorbell = rest; else delete next.doorbell;
+      }
+      if (JSON.stringify(next) === JSON.stringify(L)) return { ok: true, changed: false, doorbell: !!next.doorbell?.topic };
+      await atomicA(machineFile, JSON.stringify({ ...m, ledger: next }, null, 2) + '\n');
+      return { ok: true, changed: true, doorbell: !!next.doorbell?.topic, remote: next.remote ?? null };
+    }
+    if (route === '/api/sync/reconcile') return { ok: true, ...(await syncWork('reconcile', { state: p.state, machine: m, metaRoot: metaRootDir, machineFile, by: 'dashboard', dry: data.dry !== false })) };
+    // plan / apply: the guided set up (bare: this project as the first home) or join (every registered project the ledger names), as norn sync join
+    if (typeof data.home !== 'string' || !HOME_ID.test(data.home)) throw fail(400, 'home id: a letter, then up to 7 letters or digits (a-z, 0-9)');
+    const remote = data.remote === undefined || data.remote === '' ? L.remote : remoteArg(data.remote);
+    if (!remote) throw fail(400, 'ledger remote is required: the URL of your PRIVATE ledger repo');
+    const topic = data.topic === undefined || data.topic === '' ? null : String(data.topic);
+    if (topic && !TOPIC.test(topic)) throw fail(400, 'doorbell topic: 1-64 letters, digits, _ or -');
+    const bare = data.bare === true, apply = route === '/api/sync/apply';
+    const r = await syncWork('join', { home: data.home, remote, topic, machineFile, metaRoot: metaRootDir, projects: bare ? [p] : projects, bare, dry: !apply, by: 'dashboard', iCheckedPrivate: data.checked === true });
+    if (apply && !r.refused.length && !syncL) { try { startSyncLoop(JSON.parse(await fs.promises.readFile(machineFile, 'utf8'))); } catch { /* the tick syncs every 15 min */ } }
+    return { ok: !r.refused.length, refused: r.refused, lines: r.lines, noop: !!r.noop, dry: !!r.dry };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
@@ -1578,6 +1632,10 @@ data: ${JSON.stringify(l)}
       if (r.code) throw cliFail(r);
       return { ok: true, line: r.out.trim() };
     }
+    if (route.startsWith('/api/sync/')) {   // NORN-UI-SYNC: Settings > Sync
+      if (!['/api/sync/plan', '/api/sync/apply', '/api/sync/ledger', '/api/sync/reconcile'].includes(route)) throw fail(404, 'Not found');
+      return syncPost(p, route, data);
+    }
     if (route === '/api/answer') {
       if (data.from !== undefined) {   // META-Q-RECONCILE R1: "already answered in DEC-m" - the owner words the DEC recorded
         if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
@@ -1877,16 +1935,19 @@ data: ${JSON.stringify(l)}
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
           const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           const need = new Map(); for (const i of (await Promise.all(ps.map(inbox))).flat().filter(isNeed)) if (i.lane) need.set(`${i.project}|${i.lane}`, (need.get(`${i.project}|${i.lane}`) ?? 0) + 1);
-          return send(200, { lanes: rows.map(l => ({ ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 })), backlog: backlogOf(ps) }); }
+          const now = Date.now();   // stage LANES: the board group needs the Inbox's needs count (boardOf)
+          return send(200, { lanes: rows.map(l => { const r = { ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 }; return { ...r, board: boardOf(r, now) }; }), backlog: backlogOf(ps) }); }
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
+          // NORN-UI-RUNS: ?part=live (running runs + the queue: the Runs page's first paint) | history (the ended runs in the window) | none: all
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
+          const part = url.searchParams.get('part'); if (part !== null && !RUN_PARTS.includes(part)) throw fail(400, `part must be one of ${RUN_PARTS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
           // OVERVIEW-TRUTH (6): the window's runs counted by the one rule (runcount.mjs): bookkeeping apart, hand-off chains as one piece
           const inWin = ps.flatMap(p => runsOf(st(p)).filter(r => ['queued', 'claimed', 'running'].includes(r.state) || Date.now() - Date.parse(r.updated) <= win));
           const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
-          return send(200, { window: w, counts, tree: (await Promise.all(ps.map(p => agents(p, win, { homes: true })))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+          const tree = (await Promise.all(ps.map(p => agents(p, win, { homes: true, part })))).flat();
+          return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }) });
         }
-        if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
           const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)
           const away = (await Promise.all(ps.map(async p => (await copyItemsAsync(p.state, 'deliverable')).map(it => ({ ...dlvCopyRow(it), project: p.name }))))).flat();
@@ -1907,7 +1968,7 @@ data: ${JSON.stringify(l)}
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
         if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
-        if (route === '/api/settings') return send(200, settingsInfo(one(url)));
+        if (route === '/api/settings') { const p = one(url); return send(200, { ...settingsInfo(p), sync: await syncInfo(p) }); }
         if (route === '/api/feed') return await openFeed(req, res, url);
         if (route === '/api/stream') return await openStream(req, res, url);
         if (route === '/api/sessions') return send(200, { sessions: await sessions.list() });
@@ -2012,9 +2073,11 @@ data: ${JSON.stringify(l)}
   // that removes the state after close (the test fixtures' temp dirs) never races them (ENOTEMPTY under load)
   // RM-46 S4 (multi-home SPEC 4.3): the sync loop - ls-remote every 30 s + the optional doorbell; its publish and pass run as norn CLI
   // children (metaCli), so this event loop never blocks. Off without machine.json ledger.remote; the loop itself idles until a project is synced
-  const syncCfg = machineFile ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null;
-  const syncL = syncCfg?.remote ? loopOf(syncCfg, { cli: args => metaCli(args) }) : null;
-  syncL?.start();
+  let syncL = null;
+  // NORN-UI-SYNC: also after a set up / join applied from Settings (m = the machine.json it wrote): the loop starts at once
+  const startSyncLoop = (m = machine) => { const cfg = machineFile ? ledgerConfig(m, { metaRoot: metaRootDir, machineFile }) : null;
+    if (cfg?.remote) { syncL = loopOf(cfg, { cli: args => metaCli(args) }); syncL.start(); } };
+  startSyncLoop();
   const close = async () => { syncL?.stop(); sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
     for (const r of chatStreams) r.end();
     await Promise.all([...chats.values()].map(c => c.close())); if (acct.worker) await acct.worker.terminate().catch(() => {});

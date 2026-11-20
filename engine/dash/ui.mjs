@@ -17,14 +17,14 @@ import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
 import { esc, fin, dash, int, mTok, fmtMin, pct, plural, aname, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
-import { lanes, map } from './pages/lanes.mjs';
+import { lanes } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
 import { plan, forecastCard } from './pages/plan.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
 export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
   ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
-  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['map', 'Map'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['talk', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
+  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
 const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
@@ -56,12 +56,16 @@ const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve
 // META-UX-BUILD S4: Context (the Instructions view's cost half) - the parts its sub-view needs (contextParts), of one view (project + scan
 // time + sub); its route stays /api/instructions (the Norn vocabulary rule: routes stay, labels and the URL tab move).
 // TESTS-RUNTIME: Tests - the chosen sub-view's part; Impact's pick rides in batch ('files:a,b' | 'lane:<name>')
-const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub] };
-const PART_API = { context: 'instructions', slop: 'guard' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
-export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
+// Stage RUNS: Runs paints the live part (running + queue) first; its one part is the history (the ended runs in the window), keyed by
+// the live answer's time so a stream repaint fetches it afresh
+const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub], runs: () => ['history'] };
+const PART_API = { context: 'instructions', slop: 'guard', runs: 'agents' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
+const runsWin = w => (w && w !== '2h' ? `&window=${w}` : '');
+export const partsKey = (tab, project, d) => (tab === 'runs' ? `${project}|${d.window}|${d.at}` : tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
 export async function loadParts(tab, project, d, get) {
   const pick = b => (b.startsWith('lane:') ? `&lane=${encodeURIComponent(b.slice(5))}` : `&files=${encodeURIComponent(b.slice(6))}`);
   const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}` : '';
+  if (tab === 'runs') return { ended: (await get(`/api/agents?${q}&part=history${runsWin(d.window)}`)).tree };   // the Ended band (its own key: `tree` is the live part's)
   const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
 }
@@ -79,8 +83,10 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return get(`/api/lanes?${q}`);
-  if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
-  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}${ctx.runsWindow && ctx.runsWindow !== '2h' ? '&window=' + ctx.runsWindow : ''}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
+  if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (Plan's up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
+    const [a, plan, guard] = await Promise.all([get(`/api/agents?${q}&part=live${runsWin(ctx.runsWindow)}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null), guardGet(get, q, all)]);
+    const old = ctx.parts?.runs, ended = old && old.key.startsWith(`${project}|${a.window}|`) ? old.data.ended : undefined;
+    return { ...a, plan, guard, ended, parts_loading: true }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
     const d = await get(`/api/roadmap?${q}`);
@@ -138,7 +144,7 @@ export function renderTab(tab, d, ctx = {}) {
   if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanes(d, { ...ctx, now })));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ inbox, lanes, runs, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
@@ -1151,6 +1157,47 @@ function remotePane(r) {
     <span class="help">Open the address on a phone signed in to the same private network and pair it once with a code from here. Approvals and every other write from a phone count only on a paired device, and each is stamped with it.</span>
     <ul class="small devices">${r.devices.length ? r.devices.map(dev).join('') : '<li class="mute">No paired device yet.</li>'}</ul>`, pair);
 }
+// NORN-UI-SYNC: Settings > Sync's pane subs (policy.mjs SECTIONS sync, pane:true) from the server's sync block (server.mjs syncInfo).
+// machine = the state + the ledger form (the topic is write-only: the page only knows on / off); setup = the guided cut --bare / join
+// (Check = the dry run, Apply = pause, cut, publish + fetch, resume); duplicates = Find duplicates (dry) / Write the cards. The buttons
+// post /api/sync/* (index.html); the answers land in the role=status <pre> below each.
+const ago = s => (s == null ? 'never' : s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`);
+function syncPane(x, d, said = {}) {
+  const s = d.sync || {}, id = `sub-sync-${x.id}`, out = k => `<pre class="small sync-out" id="sync-${k}-out" role="status">${esc(said[k] ?? '')}</pre>`;
+  const head = `<h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>`, wrap = (body, search) => `<div class="ssub" id="${id}">${head}<div class="srow" data-basic="1" data-search="${esc(search)}" data-mod="0">${body}</div></div>`;
+  if (x.id === 'machine') {
+    const st = s.home ? chip('ok', `home ${s.home}`) : chip('idle', 'solo');
+    const pub = s.stopped ? chip('bad', `stopped: ${s.stopped}`) : s.head ? `published ${esc(String(s.head).slice(0, 8))}${s.pushed ? ' · pushed' : ' · not pushed yet'}` : 'nothing published yet';
+    const fetched = s.fetch_error ? chip('bad', `fetch failed: ${s.fetch_error}`) : s.fetched_at ? `fetched ${esc(fmtTime(s.fetched_at))}` : 'not fetched yet';
+    const lag = (s.homes || []).map(h => `<li>home <b>${esc(h.home)}</b> <span class="mute">last record ${esc(ago(h.lag_s))} ago${h.ahead_s ? ` · ${esc(ago(h.ahead_s))} not merged here yet` : ''}</span></li>`).join('');
+    return wrap(`<div class="sl"><b>This machine</b> <span class="tag">machine</span> ${st} ${s.doorbell ? chip('ok', 'doorbell on') : chip('idle', 'doorbell off')}
+      <span class="help">${s.home ? `${pub} · ${fetched}` : 'Solo: this project is built on this machine only. Set up / join below makes it a home.'}</span>
+      ${lag ? `<ul class="small">${lag}</ul>` : ''}</div>
+     <div class="sc sync-form"><label>Ledger remote <input type="text" id="sync-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"${s.home_id ? ' disabled title="one ledger repo: move it by hand (docs/MULTI-HOME.md)"' : ''}></label>
+      <label>Doorbell topic <input type="password" id="sync-topic" placeholder="${s.doorbell ? 'set (hidden)' : 'not set'}" autocomplete="off"></label>
+      <button class="ghost" data-act="sync-ledger" data-version="${esc(s.version ?? '')}">Save</button>${out('ledger')}</div>`, 'sync home ledger remote doorbell topic publish fetch lag solo');
+  }
+  if (x.id === 'setup') {
+    if (s.home) return wrap(`<div class="sl"><b>Set up</b> ${chip('ok', `home ${s.home}`)}<span class="help">This project is home ${esc(s.home)} of its ledger. Another machine joins with its own home id (docs/MULTI-HOME.md).</span></div>`, 'sync set up join home');
+    return wrap(`<div class="sl"><b>Set up or join</b> <span class="tag">machine</span> ${chip('idle', 'solo')}
+      <span class="help">Check runs the dry run: access, that the ledger repo is PRIVATE, the home id, the renames. Apply pauses the project, cuts, publishes + fetches, then resumes it.</span></div>
+     <div class="sc sync-form"><label>Home id <input type="text" id="sync-home" placeholder="a, b, laptop" maxlength="8" autocomplete="off" spellcheck="false"></label>
+      <label>Ledger remote <input type="text" id="sync-setup-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"></label>
+      <label>Doorbell topic <input type="password" id="sync-setup-topic" placeholder="optional" autocomplete="off"></label>
+      <label><input type="checkbox" id="sync-bare"> The first home (this project starts the ledger)</label>
+      <label><input type="checkbox" id="sync-checked"> I checked the ledger repo is private</label>
+      <span><button class="ghost" data-act="sync-plan">Check</button> <button class="strong" data-act="sync-apply">Apply</button></span>${out('setup')}</div>`, 'sync set up join first home cut bare private');
+  }
+  return wrap(`<div class="sl"><b>Duplicates across homes</b> <span class="help">${s.home ? 'Find shows the likely pairs; Write puts one owner card per pair in the Inbox.' : 'Solo: nothing to reconcile.'}</span></div>
+   <div class="sc">${s.home ? '<button class="ghost" data-act="sync-reconcile" data-dry="1">Find duplicates</button> <button class="ghost" data-act="sync-reconcile" data-dry="0">Write the cards</button>' : ''}${out('reconcile')}</div>`, 'sync reconcile duplicates pairs cards');
+}
+/** the answer of a /api/sync/* post as lines (index.html shows them in the pane's <pre>) */
+export function syncLines(r) {
+  if (r.pairs) return [`${r.pairs.length} likely duplicate pair(s)${r.carded ? `, ${r.carded} carded before` : ''}${r.written?.length ? `: ${r.written.length} card(s) written to the Inbox` : ''}`, ...r.pairs.map(p => `${p.kind} ${p.a} ~ ${p.b}: ${p.why}`)];
+  if (r.off) return ['Solo: nothing to reconcile.'];
+  if (r.changed !== undefined) return [r.changed ? `Saved. Doorbell ${r.doorbell ? 'on' : 'off'}.` : 'No change.'];
+  return [...(r.lines || []), ...(r.refused || []).map(x => `REFUSED: ${x}`), r.noop ? 'Nothing to do: already a home.' : r.refused?.length ? '' : r.dry ? 'Dry run: nothing written. Apply to do it.' : 'Done.'].filter(Boolean);
+}
 // META-OOTB-POLISH F-6: start from a profile (fills the form only: Review + Save stay the human step) and a basic / all split
 // (basic = the rows flagged by policy.mjs BASIC_KEYS; the browser hides the rest, setFilter)
 // META-PROFILE-BUG R1: the profile in force in words (Overview line + the top of Settings), from the latest caps profile decision
@@ -1201,6 +1248,7 @@ function settings(d, ctx) {
   }).join('');
   const panes = sections.map(c => {
     const subs = c.info ? (c.id === 'notify' ? notifyPane(d) + remotePane(d.remote) : filesPane(d)) : c.subs.map(x => {
+      if (x.pane) return syncPane(x, d, ctx.syncOut);
       const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
       const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'usage', jump: 'usage-advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
       return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${body}</div>`;

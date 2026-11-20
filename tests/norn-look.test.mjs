@@ -51,7 +51,7 @@ test('palette lock on all tabs: every classic colour variable is redefined on bo
   }
   // every classic fade (opacity < 1) is redrawn solid under the Norn look
   const fades = rules(classic).filter(r => /opacity\s*:\s*\.?\d*\.?\d+/.test(r.body) && Number(r.body.match(/opacity\s*:\s*([\d.]+)/)[1]) < 1);
-  assert.ok(fades.length >= 5);
+  assert.ok(fades.length >= 4);   // the old lane table's and the Map's fades left with them (stage LANES)
   const nr = rules(css);
   for (const f of fades) for (const sel of f.sel.split(',').map(x => x.trim())) {
     assert.ok(nr.some(r => r.sel.split(',').map(x => x.trim()).includes(`:root.norn ${sel}`) && /opacity\s*:\s*1\b/.test(r.body)), `fade ${sel} not redrawn`);
@@ -89,9 +89,9 @@ test('QUIET holds a static frame and reduced motion is honoured: motion only whe
   assert.match(html, /setQuiet\(/, 'the stream QUIET flag drives the motion class');
 });
 
-test('served: the Norn modules + sheet by allowlist, three + the font pinned, fonts / styles allowed by the CSP, art drops in with no code change', async () => {
+test('served: the Norn modules + sheet by allowlist, the font pinned, three.js gone, fonts / styles allowed by the CSP, art drops in with no code change', async () => {
   const V = path.join(DASH, 'vendor'), md = fs.readFileSync(path.join(V, 'VENDOR.md'), 'utf8');
-  for (const f of ['three.module.js', 'three.core.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2']) {
+  for (const f of ['silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2']) {
     const sha = md.match(new RegExp('`' + f.replace(/\./g, '\\.') + '` sha256 `([0-9a-f]{64})`'))[1];
     assert.equal(createHash('sha256').update(fs.readFileSync(path.join(V, f))).digest('hex'), sha, f);
   }
@@ -100,13 +100,13 @@ test('served: the Norn modules + sheet by allowlist, three + the font pinned, fo
     const csp = (await fetch(f.url + '/')).headers.get('content-security-policy');
     assert.match(csp, /font-src 'self'/); assert.match(csp, /style-src 'self'/);
     for (const [p, ty] of [['/norn/norn.css', /text\/css/], ['/norn/look.mjs', /javascript/], ['/norn/pixel.mjs', /javascript/], ['/norn/palette.mjs', /javascript/],
-      ['/norn/assets.mjs', /javascript/], ['/norn/motion.mjs', /javascript/], ['/vendor/three.module.js', /javascript/], ['/vendor/three.core.js', /javascript/],
+      ['/norn/assets.mjs', /javascript/], ['/norn/motion.mjs', /javascript/],
       ['/vendor/silkscreen-latin-400-normal.woff2', /font\/woff2/]]) {
       const r = await fetch(f.url + p); assert.equal(r.status, 200, p); assert.match(r.headers.get('content-type'), ty, p);
     }
     const w = Buffer.from(await (await fetch(f.url + '/vendor/silkscreen-latin-400-normal.woff2')).arrayBuffer());
     assert.ok(w.equals(fs.readFileSync(path.join(DASH, 'vendor', 'silkscreen-latin-400-normal.woff2'))), 'binary served intact');
-    for (const p of ['/norn/make-palette.mjs', '/norn/palette.hex', '/norn/art/evil.png', '/norn/art/token-running-16.png', '/vendor/LICENSE.three', '/norn/../server.mjs']) assert.equal((await fetch(f.url + p)).status, 404, p);
+    for (const p of ['/norn/make-palette.mjs', '/norn/palette.hex', '/norn/art/evil.png', '/norn/art/token-running-16.png', '/vendor/LICENSE.three', '/vendor/three.module.js', '/vendor/three.core.js', '/norn/../server.mjs']) assert.equal((await fetch(f.url + p)).status, 404, p);
     assert.deepEqual((await f.get('/norn/assets.json')).data.present, []);
     fs.mkdirSync(path.dirname(art), { recursive: true }); fs.writeFileSync(art, Buffer.from('89504e470d0a1a0a', 'hex'));
     assert.deepEqual((await f.get('/norn/assets.json')).data.present, ['token-running-16'], 'a dropped-in file is listed');

@@ -41,9 +41,9 @@ test('the browser: a refused Archive keeps its reason on the row through a live 
 });
 
 // owner 2026-11-18: the Lanes row's Log opened /log (the supervisor's plain-text tail, a line with a file path) in a new browser
-// tab. The row's Feed opens the run in the same live feed drawer a Runs row opens. Stage NAV (SPEC: one run URL): every Feed link
-// goes to ?tab=runs&run=RUN-n, so the drawer opens on Runs and Back returns to Lanes.
-test('the browser: a lane row\'s Feed opens its run in the live feed drawer at the run URL (no new tab, no /log link)', { skip: skipWhy, timeout: 180000 }, async () => {
+// tab. Stage NAV (SPEC: one run URL): every Feed link goes to ?tab=runs&run=RUN-n; stage RUNS: the run's document and its live feed
+// open there, and Back returns to Lanes.
+test('the browser: a lane row\'s Feed opens its run\'s document and live feed at the run URL (no new tab, no /log link)', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage();
   try {
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
@@ -51,7 +51,7 @@ test('the browser: a lane row\'s Feed opens its run in the live feed drawer at t
     assert.equal(await pg.ev(`document.querySelectorAll('#main a[href^="/log"]').length`), 0, 'no /log link left on the page');
     const run = await pg.ev(`document.querySelector('[data-act=lane-feed]').dataset.run`);
     await pg.ev(`document.querySelector('[data-act=lane-feed]').click()`);
-    assert.ok(await pg.until(`!document.querySelector('#feed').hidden && document.querySelector('#feed-head')?.textContent.includes('${run}')`, 30000), `the drawer shows ${run}`);
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.run === '${run}' && !!document.querySelector('#run-feed #feed-head')?.textContent.includes('${run}')`, 30000), `the run document shows ${run}`);
     assert.equal(await pg.ev(`document.body.dataset.tab`), 'runs', 'the run URL is a Runs page');
     assert.equal(await pg.ev(`new URL(location.href).searchParams.get('run')`), run, 'the URL names the run, so a reload keeps it open');
   } finally { await pg.close(); await f.done(); }
@@ -92,14 +92,14 @@ test('the browser: the filter chips survive a live re-render and a reload (the U
     assert.equal(await pg.ev(`document.querySelector('[data-show=old]').getAttribute('aria-pressed')`), 'false');
     await pg.ev(`document.querySelector('[data-act=lane-show][data-show=old]').click()`);
     assert.ok(await pg.until(`document.querySelector('[data-show=old]')?.getAttribute('aria-pressed') === 'true'`, 30000), 'the tap turns Old on');
-    assert.match(await pg.ev('location.search'), /lanes=active%2Cdone%2Cold|lanes=active,done,old/);
+    assert.match(decodeURIComponent(await pg.ev('location.search')), /show=needs,running,stopped,waiting,land,old(&|$)/, 'the groups are in the URL');
     record(f.pa.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'poke the stream', via: 'chat' } });
     assert.ok(await repainted(pg, 'seabed'), 'the stream re-renders the page');
     assert.equal(await pg.ev(`document.querySelector('[data-show=old]').getAttribute('aria-pressed')`), 'true', 'Old is still on after a re-render');
     await pg.ev('location.reload()');
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && document.querySelector('[data-show=old]')?.getAttribute('aria-pressed') === 'true'`, 90000), 'Old is still on after a reload');
-    await pg.ev(`document.querySelector('[data-act=lane-show][data-show=active]').click()`);
-    assert.ok(await pg.until(`document.querySelector('[data-show=active]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-seabed')`, 30000), 'Active off hides the active lanes');
+    await pg.ev(`document.querySelector('[data-act=lane-show][data-show=needs]').click()`);
+    assert.ok(await pg.until(`document.querySelector('[data-show=needs]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-seabed')`, 30000), 'Needs you off hides its lanes');
   } finally { await pg.close(); await f.done(); }
 });
 
