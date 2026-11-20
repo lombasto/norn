@@ -2,7 +2,7 @@
    now line, progress and pace, the run strip, the PR track, actions, the open chevron), the in-place expand and the strip legend.
    Colour carries state only through the tinted tile and beads (one hue per state token); pace is a word on a tint. Under 700 px a
    row becomes a card. The elapsed bar's growth is in norn/norn.css under :root.motion (this sheet holds no animation). */
-.lfilters{gap:8px 12px}.lane-show{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.lane-show b{font-variant-numeric:tabular-nums}
+.lfilters{gap:8px 12px}
 .lfilters input[type=search]{width:220px;max-width:100%}.lane-links{font-size:13px;color:var(--mute)}.lane-links .lnk{font-weight:400;color:var(--run)}
 .lane-types{border-left:1px solid var(--line);padding-left:8px}
 .lhelp{position:relative}.lhelp>summary{list-style:none;cursor:pointer;display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid var(--field-line);border-radius:50%;font-weight:700;color:var(--mute)}

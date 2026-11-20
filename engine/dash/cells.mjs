@@ -17,6 +17,10 @@ export function fmtMin(m) {
   // past 48 h the hours stop reading at a glance: days + hours (stage NAV item 5)
   return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}` : `${Math.floor(m / 1440)} d ${Math.floor((m % 1440) / 60)} h`;
 }
+// ---------- the one filter-chip row every page uses (Lanes, Runs, Slop, Context, Ledger, Spend ...) ----------
+// label = the group's aria-label; bs = [{ act, data: { show: 'x', ... }, text, n?, on, title? }]: a pressed chip filters, its <b> is the count.
+// A page handles its own data-act; the look (.fchips, button.hf[aria-pressed]) lives once, in base.css.
+export const filterChips = (label, bs, cls = '') => `<span class="fchips${cls ? ` ${cls}` : ''}" role="group" aria-label="${esc(label)}">${bs.map(b => `<button class="hf" data-act="${esc(b.act)}"${Object.entries(b.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('')} aria-pressed="${!!b.on}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.text)}${fin(b.n) ? ` <b>${int(b.n)}</b>` : ''}</button>`).join('')}</span>`;
 // UTC times with a Z, ids and dates as the records carry them: today "02:14Z", older "10-30 22:20Z".
 export function fmtTime(iso, now = Date.now()) {
   const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';

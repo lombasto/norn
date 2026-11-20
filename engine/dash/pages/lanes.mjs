@@ -212,9 +212,9 @@ export function lanes(d, ctx) {
   return `${backlogLine(d.backlog)}
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
    ${d.capacity?.rows?.length ? `<div class="card" id="lanes-cap" style="margin-bottom:12px">${capStrip(d.capacity, { id: 'lanes-capstrip', mine: ctx.project })}</div>` : ''}
-   <div class="filters lfilters"><span class="lane-show" role="group" aria-label="Show lane groups">${LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(gbtn).join('')}</span>
-    <input type="search" data-filter="lanes" placeholder="filter lanes" aria-label="Filter lanes"><span class="lane-show lane-links">${LANE_SHOW.filter(g => LINKS.includes(g[0])).map(gbtn).join(' · ')}</span>${help}
-    ${kinds.length > 1 || kind ? `<span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span>` : ''}</div>
+   <div class="filters lfilters"><span class="fchips" role="group" aria-label="Show lane groups">${LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(gbtn).join('')}</span>
+    <input type="search" data-filter="lanes" placeholder="filter lanes" aria-label="Filter lanes"><span class="fchips lane-links">${LANE_SHOW.filter(g => LINKS.includes(g[0])).map(gbtn).join(' · ')}</span>${help}
+    ${kinds.length > 1 || kind ? `<span class="fchips lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span>` : ''}</div>
    ${ctx.laneDetail ? laneDetail(ctx.laneDet, ctx, ctx.laneFile) : ''}
    <div class="lboard" data-rows="lanes">${groups || `<p class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</p>`}</div>${all.length ? LEGEND : ''}`;
 }
@@ -242,7 +242,7 @@ function branchesPart(d, ctx, sub) {
   const pass = r => (!states || states.has(r.state)) && (where === 'all' || r.where === where) && (!lane || (lane === '-' ? !r.lane : r.lane?.name === lane));
   const shown = base.filter(pass), rows = shown.slice(0, limit);
   const stChips = (d.states || []).map(k => `<button class="hf" data-act="br-state" data-state="${esc(k)}" aria-pressed="${!states || states.has(k)}">${esc(k)} <b>${base.filter(r => r.state === k).length}</b></button>`).join('');
-  const whChips = sub === 'worktrees' ? '' : `<span class="lane-show" role="group" aria-label="Local or origin">${BR_WHERE.map(([k, t]) => `<button class="hf" data-act="br-where" data-where="${k}" aria-pressed="${where === k}">${esc(t)}</button>`).join('')}</span>`;
+  const whChips = sub === 'worktrees' ? '' : `<span class="fchips" role="group" aria-label="Local or origin">${BR_WHERE.map(([k, t]) => `<button class="hf" data-act="br-where" data-where="${k}" aria-pressed="${where === k}">${esc(t)}</button>`).join('')}</span>`;
   const laneSel = `<select data-br="lane" aria-label="Lane"><option value="">every lane</option><option value="-"${lane === '-' ? ' selected' : ''}>not part of a lane</option>${lanesIn.map(l => `<option value="${esc(l)}"${lane === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const P = r => `data-project="${esc(r.project)}"`;
   const acts = r => [r.acts?.includes('delete') ? `<button class="ghost" data-act="br-delete" ${P(r)} data-branch="${esc(r.name)}" title="delete ${r.where === 'both' ? 'the local and origin copies' : r.where === 'remote' ? 'the origin copy' : 'the local branch'} (its work is on main; Undo puts it back)">Delete branch</button>` : '',
@@ -266,7 +266,7 @@ function branchesPart(d, ctx, sub) {
   return `<div class="banner">Every ${sub === 'worktrees' ? 'git worktree' : 'local and origin branch'} of the repo, from the last scan (git, refreshed by the tick): its lane, its state, ahead / behind main, its PR and deliverable. Nothing here is cleaned up by itself.</div>
    ${undo ? `<div class="banner" id="br-undo">${esc(undo.text)} <button data-act="br-undo" data-project="${esc(undo.project)}">Undo</button></div>` : ''}
    <div class="filters brfilters"><span class="small mute">${scans || 'not scanned yet'}</span>${one ? ` <button class="ghost" data-act="br-scan" data-project="${esc(ctx.project)}">Scan now</button>` : ''}</div>
-   <div class="filters brfilters"><span class="lane-show" role="group" aria-label="States">${stChips}</span>${whChips}${laneSel}</div>
+   <div class="filters brfilters"><span class="fchips" role="group" aria-label="States">${stChips}</span>${whChips}${laneSel}</div>
    <div class="tablecard"><table class="brtab" data-rows="branches"><thead><tr><th>${sub === 'worktrees' ? 'worktree / branch' : 'branch'}</th><th>state</th><th>where</th><th>lane</th><th>worktree</th><th>ahead / behind</th><th>last commit</th><th>PR</th><th></th></tr></thead>
    <tbody>${rows.map(tr).join('') || `<tr><td colspan="9" class="mute">${esc(empty)}</td></tr>`}</tbody></table>${subMore(rows.length, shown.length)}</div>`;
 }
