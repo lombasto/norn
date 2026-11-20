@@ -20,13 +20,14 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
+import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
@@ -43,6 +44,7 @@ import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
 import { running } from '../lib/legacy.mjs';
 import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
+import { refreshBranches, projectBranches, branchLines, deleteBranch, restoreBranch, removeWorktree, restoreWorktree, adoptBranch, BranchActError } from '../lib/branches.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn, syncPolicy } from '../lib/policy.mjs';
@@ -512,7 +514,7 @@ function runCmd(argv, env, out, err) {
         notBefore: nb === 'none' ? null : nb, priority: flags.priority });
       const what = [flags.after !== undefined ? `after ${flags.after}` : 'its after: kept', ...(nb ? [`not before: ${nb}`] : []), ...(flags.priority ? [`priority ${r.priority}`] : [])];
       out(`REQUEUED ${r.run} -> ${r.next} (${what.join('; ')})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
-      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // met now = starts now (as norn run --after)
+      for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // met now = starts now (as norn run --after)
       return 0;
     }
     if (cmd === 'stop') {
@@ -555,7 +557,7 @@ function runCmd(argv, env, out, err) {
     if (r.queued) {
       out(`QUEUED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} position ${r.position} (${r.why})`);
       for (const c of holds) out(`WAITS ${r.run} for the plan review ${c.id} (after run:${c.id}:reviewed: a clean review releases it, findings wait for the check-in's review)`);
-      if (o.after?.length || o.labels?.length) for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // S4: met now = starts now; FED: served here = starts now
+      if (o.after?.length || o.labels?.length) for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // S4: met now = starts now; FED: served here = starts now
       return 0;
     }
     out(`STARTED ${r.run} lane ${o.lane} ${ex}${o.model === ex ? '' : ' ' + o.model} ${o.effort} supervisor pid ${r.pid} log ${r.log}`);
@@ -622,10 +624,11 @@ const S5_USAGE = {
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
   runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--homes (+ the runs of the other homes of a synced project, read-only: their fetched copies, each "on <home>")] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
   overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
+  branches: 'norn branches [--project P] [--state D] [--refresh] [--json] | delete <branch> | rmwt <path> | adopt <branch> [--lane L] | undo --undo <json>    (every worktree, local and origin branch of the repo: its lane, state, ahead / behind main, PR, deliverable; --refresh = scan git now (the tick does every 10 min); the verbs are the dashboard row actions: only a merged branch / a clean worktree, never by itself)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'homes!', 'why', 'sha', 'at'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'homes!', 'why', 'sha', 'at', 'refresh!', 'undo'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -732,7 +735,7 @@ function s5Cmd(argv, env, out, err) {
     const { project, state } = where(flags, env);
     if (cmd === 'status') {
       if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
-      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // a slot a kill / lost run freed (META-GT12)
+      for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // a slot a kill / lost run freed (META-GT12)
       const s = writeStatus({ state, project: project?.name, providers: providersOf(project), budget: m.budget, projectsDir: projectsDirOf(m.machine, env), usageJson: m.machine?.usage || {}, ci: project?.ci,
         cacheFile: path.join(state, 'usage-cache.json'), digest: tryDigest(state, project || {}) }, flags.out || path.join(state, 'STATUS.md'));
       out(s.line);
@@ -752,6 +755,29 @@ function s5Cmd(argv, env, out, err) {
         for (const o of l.overlaps) out(`${l.lane}: ${overlapText(o)}: ${o.files.join(', ')}${o.n > o.files.length ? ', ...' : ''}${o.url ? ` ${o.url}` : ''}`);
       }
       return 0;
+    }
+    if (cmd === 'branches') {   // owner ask 2026-11-19: the branch / worktree view (branches.mjs); the verbs are the page's row actions
+      if (!project) throw new RunError('branches needs --project (the repo to list)');
+      const p = { ...project, state }, [verb, arg] = pos, say = x => out(flags.json ? JSON.stringify(x) : Object.entries(x).map(([k, v]) => `${k} ${v ?? '-'}`).join(' · '));
+      try {
+        if (verb === 'delete') return say(deleteBranch(p, arg)), 0;
+        if (verb === 'rmwt') return say(removeWorktree(p, arg)), 0;
+        if (verb === 'adopt') return say(adoptBranch(p, arg, { lane: flags.lane || null, by: 'owner' })), 0;
+        if (verb === 'undo') {
+          let u; try { u = JSON.parse(flags.undo || ''); } catch { throw new RunError('--undo needs the JSON a delete / rmwt printed'); }
+          return say(u.path ? restoreWorktree(p, u) : restoreBranch(p, u)), 0;
+        }
+      } catch (e) { if (e instanceof BranchActError) { err(`error: ${e.message}`); return e.code === 400 ? 2 : 1; } throw e; }
+      if (verb) throw new RunError(`branches: unknown verb ${verb} (delete | rmwt | adopt | undo)`);
+      const show = () => {
+        const v = projectBranches(p);
+        if (flags.json) { out(JSON.stringify(v)); return 0; }
+        if (!v.at) { out(`branches ${project.name}: not scanned yet - run norn branches --refresh`); return 0; }
+        out(`branches ${project.name}: ${v.rows.length} rows, scanned ${v.at} · ${Object.entries(v.counts).filter(([, k]) => k).map(([k, x]) => `${x} ${k}`).join(' · ')}`);
+        for (const l of branchLines(v)) out(l);
+        return 0;
+      };
+      return flags.refresh ? refreshBranches(p).then(c => { if (c.error) err(`branches ${project.name}: ${c.error}`); return show(); }) : show();
     }
     if (cmd === 'digest') {
       if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
@@ -1384,6 +1410,7 @@ Plan and land work:
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
   norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
+  norn asks                        post the rulings a lane's notes ask of the owner as Inbox questions (the run end does it by itself)
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
   norn plan                        what happens next, and when (up next, chains, landing, forecast)
   norn instructions                every file that steers the agents: load, ~tokens, cost today, hints, the measured standing context
@@ -1432,7 +1459,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1473,7 +1500,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     return evalCmd(argv.slice(1), { out, err, liveStates: [...live, ...(env.META_STATE ? [env.META_STATE] : [])] });
   }
   if (['run', 'stop', 'requeue', 'hook'].includes(argv[0])) return runCmd(argv, env, out, err);
-  if (['status', 'tick', 'runs', 'sched', 'digest', 'overlap'].includes(argv[0])) return s5Cmd(argv, env, out, err);
+  if (['status', 'tick', 'runs', 'sched', 'digest', 'overlap', 'branches'].includes(argv[0])) return s5Cmd(argv, env, out, err);
   if (argv[0] === 'migrate') return migrateCmd(argv.slice(1), env, out, err);
   if (['setup', 'doctor', 'project', 'gen'].includes(argv[0])) return setupCmd(argv, env, out, err);
   if (argv[0] === 'dash') return dashCmd(argv.slice(1), env, out, err);
@@ -1494,6 +1521,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'asks') return asksCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'pause') return pauseCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'resume') return pauseCmd(argv.slice(1), env, out, err, { resume: true });
   if (argv[0] === 'adopt') return adoptCmd(argv.slice(1), env, out, err);
@@ -1961,7 +1989,7 @@ function flowCmd(argv, env, out, err) {
       return startRun(after.length ? o : { ...o, queue: true });   // no need = starts at once (a full cap / the usage guard queues it)
     };
     const row = s => `  ${s.id}  ${s.run ?? '-'}  ${s.run ? (s.queued ? `QUEUED (${s.why})` : 'STARTED') : 'dry'}${s.after.length ? `  after ${s.after.join(',')}` : ''}  ${fwd(s.brief)}`;
-    const fills = () => { if (!flags['dry-run']) for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`); };
+    const fills = () => { if (!flags['dry-run']) for (const q of fillAll(state)) out(fillWords(q, path.basename(state))); };
     if (sub === 'start') {
       const by = flags.as || env.META_ROLE;
       if (!by && !flags['dry-run']) throw new RunError('no role: pass --as <role> or set META_ROLE');
@@ -2155,13 +2183,13 @@ function pauseCmd(argv, env, out, err, { resume = false } = {}) {
         out(r.cleared ? `RELEASED ${r.cleared.label}` : 'no pause of this project to release');
         if (r.still) out(`still paused: ${r.still.label} (${r.still.file}) - the machine-level file; delete it to release every project`);
         for (const x of r.resumed) out(x.next ? `RESUME ${x.run} queued as ${x.next}` : `${x.run}: ${x.error}`);
-        for (const q of r.started) out(`queue: ${q.queued} -> STARTED ${q.next}`);
+        for (const q of r.started) out(fillWords(q, path.basename(state)));
         return 0;
       }
       if (pos.length !== 1) throw new RunError('resume needs one RUN id, or --all');
       const r = resumeRun(state, { run: pos[0], by, priority: flags.priority || 'P0' });
       out(`RESUME ${r.run} queued as ${r.next} (${flags.priority || 'P0'})`);
-      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);
+      for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));
       return 0;
     }
     if (flags.half) {
@@ -2225,6 +2253,34 @@ function stuckCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + STUCK_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// lane-outputs item 9 (runasks.mjs): a run's end posts its notes' owner asks by itself; this posts them for runs that ended before
+// (the sweep starts its clock when it first runs) - one question per ask, an ask already asked (same lane + title) skipped
+const ASKS_USAGE = 'norn asks scan (--lane L | --run RUN-n) [--dry] [--as checkin|controller]    [--project F | --state D]';
+function asksCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if (k === 'dry') { flags.dry = true; continue; }
+      if (!['project', 'state', 'as', 'lane', 'run'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    if (pos[0] !== 'scan' || pos.length > 1) throw new RunError(pos.length ? `unknown subcommand ${pos[0]}` : 'a subcommand is required');
+    if (!flags.lane === !flags.run) throw new RunError('pass one of --lane L or --run RUN-n');
+    const { state } = where(flags, env);
+    const xs = scanAsks(state, { lane: flags.lane ?? null, run: flags.run ?? null, dry: !!flags.dry, by: flags.as || env.META_ROLE || 'checkin' });
+    for (const x of xs) for (const q of x.posted) out(`${x.run} ${q.id ?? (flags.dry ? 'would ask' : 'REFUSED')}: ${q.title}${q.refused ? ` (${q.refused})` : ''}`);
+    if (!xs.length) out('nothing new to ask');
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + ASKS_USAGE); return 2; }
+    if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
     throw e;
   }
 }

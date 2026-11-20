@@ -13,7 +13,7 @@ import { providerEnv, limitPatterns, authPatterns, executorInfo } from './execut
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
 import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
-import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillQueue, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
+import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillAll, fillWords, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
@@ -25,7 +25,8 @@ import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
 import { checkBranch, slopPrompt, slopList } from './slop/runend.mjs';
-import { procStartAsync } from './legacy.mjs';
+import { procStartAsync, running } from './legacy.mjs';
+import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
@@ -36,6 +37,8 @@ import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxli
 import { findTranscript } from './harness/claude.mjs';
 import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
+import { cutoffOf } from './laneout.mjs';
+import { postRunAsks } from './runasks.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -148,6 +151,36 @@ if (cmd) {
   } catch (e) { finish(null, null, String(e.message)); }
 }
 
+// fair-slots 6a: a supervisor started under a test (META_TEST_OWNER, derelict.mjs) exits once that test process is gone - a test file
+// killed at ci-suite's cap runs no teardown, and its detached supervisors polled for days - and EVERY supervisor exits once its run's
+// state is deleted (its spec file goes with it; on Windows a deleted state dir keeps the folders an open log holds). No end record, no
+// queue fill: the executor's tree is killed and the process leaves. Owner pid each beat; its start time every OWNER_PROBE_MS (pid reuse).
+const owner = testOwner(process.env), specFile = path.resolve(process.argv[2]);
+let ownerStart, ownerProbeAt = Date.now(), ownerProbing = false, leaving = false;
+function derelictWhy() {
+  if (!fs.existsSync(specFile)) return `its state is deleted (${fwdPath(specFile)} is gone)`;
+  if (!owner) return null;
+  if (!ownerProbing && Date.now() - ownerProbeAt >= OWNER_PROBE_MS) {
+    ownerProbing = true; ownerProbeAt = Date.now();
+    procStartAsync(owner.pid).then(t => { if (t !== null) ownerStart = t; ownerProbing = false; });   // null = a failed probe too: the pid check decides
+  }
+  return ownerGoneWhy(owner, { alive: running(owner.pid), start: ownerStart });
+}
+async function leave(why) {
+  if (leaving) return;
+  leaving = true; finished = true;   // the executor's exit now runs no finish()
+  for (const t of [timer, nudgeTimer, ctxTimer, watchTimer]) if (t) clearInterval(t);
+  if (capTimer) clearTimeout(capTimer);
+  logLine(`supervisor exits: ${why}; the executor's tree is killed`);
+  // the job / process group holds the whole tree; a tree kill (taskkill /T: seconds on a loaded box) only where neither did it
+  const r = job ? reapJob(job, process.pid) : guard && process.platform !== 'win32' && childPid ? reapGroup(childPid) : null;
+  if ((!r || r.error) && childPid) killTree(childPid);
+  for (const lf of lockFiles) releaseLock(lf, run);
+  await holdGone(job);
+  process.exit(0);
+}
+const watchTimer = setInterval(() => { const why = derelictWhy(); if (why) leave(why); }, spec.hbMs);
+
 async function finish(code, signal, error) {
   if (finished) return;
   finished = true;
@@ -201,6 +234,10 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (outcome === 'handoff') { try { const pz = pauseOf(state, run, spec); if (pz) data.paused = { mail: pz.mail, ...(pz.why ? { why: pz.why } : {}) }; } catch (e) { logLine(`pause order not read: ${e.message}`); } }
   if (signal) data.signal = signal;
   if (error) data.error = error;
+  // lane-outputs item 10b: the CLI stopped the run's background work after its last turn ("Background tasks still running ... stopping
+  // them"): the task names on the end, so the run and its lane say what was cut off
+  const cutoff = cutoffOf(tail(spec.log));
+  if (cutoff) data.cutoff = cutoff;
   // NORN-WATCH S5 evidence: an exit no `norn stop` explains, the worktree's uncommitted state, the branch + head it ended on
   if ((code === 143 || signal === 'SIGTERM') && !killedByMeta()) data.external_term = true;
   if (spec.worktree && spec.role !== 'helper') Object.assign(data, gitEvidence(spec.worktree));
@@ -233,7 +270,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {
     const hb = setInterval(beat, spec.hbMs);
-    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run }); }
+    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks') }); }
     catch (e) { data.dod = { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
     finally { clearInterval(hb); }
     logLine(`dod: Done ${data.dod.ok ? 'green' : 'RED: ' + data.dod.why}${data.dod.tests.length ? ' (' + data.dod.tests.map(testLine).join('; ') + ')' : ''}`);
@@ -253,12 +290,14 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
       try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
       for (const lf of lockFiles) releaseLock(lf, run);
       dropMergeWt(outcome);
-      try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
+      try { for (const f of fillAll(state)) logLine(fillWords(f, path.basename(state))); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
     }
     await holdGone(job); process.exit(0);
   }
   // DELIVERABLES-SPEC 1: a DONE run's branch becomes (or refreshes) its deliverable; never fails the exit
   if (outcome === 'done') { try { const d = onRunDone(state, run); if (d) logLine(`deliverable ${d.id} ${d.ev}`); } catch (e) { logLine(`deliverable not recorded: ${e.message}`); } }
+  // lane-outputs items 7, 9, 10a: every ruling the run's notes ask of the owner becomes an Inbox question, whatever the outcome
+  if (spec.notes && spec.role !== 'helper' && spec.kind !== 'checkin') { try { for (const q of postRunAsks(state, run)) logLine(q.id ? `asked the owner: ${q.id} ${q.title}` : `ask not posted: ${q.title} (${q.refused})`); } catch (e) { logLine(`owner asks not posted: ${e.message}`); } }
   // META-ADOPT A2: the adopt read's final becomes its proposal's draft (or one retry, or the facts-only draft); a norn stop ingests nothing
   if (spec.adopt && !killedByMeta()) {
     try { const a = ingestRead(state, spec, { capped }); logLine(`adopt ${a.id}: ${a.ev}${a.ev === 'retry' ? ' ' + a.run : ''}${a.why ? ` (${a.why})` : ''}`); }
@@ -281,7 +320,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   else if (outcome === 'done' || data.dod?.ok === false) resumed = fixEnd(slopOpen, data.dod);
   if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
   if (!resumed) dropMergeWt(outcome);
-  try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
+  try { for (const f of fillAll(state)) logLine(fillWords(f, path.basename(state))); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
   if (!resumed && spec.tick && spec.policy?.trigger_on_exit !== false) {
     // CI-RED-319CAF8: born inside this run's job, the tick died with this exit whenever the supervisor had spawned a console child
     // before holdJob (the jobguard compile in a fresh TEMP - every ci-suite file's first run): it breaks away like a queue-filled run

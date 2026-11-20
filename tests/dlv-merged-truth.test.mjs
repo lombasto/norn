@@ -53,7 +53,7 @@ test('a rebased-and-merged PR deliverable reads merged (PR #n) with its merge co
   assert.equal(row(state, repo).state, 'unknown', 'git and the content check cannot see it: cannot tell, not done');
   const calls = [];
   const out = latchMerged(state, { project: project(repo, state), gh: fakeGh({ state: 'MERGED', mergedAt: at(-2).toISOString(), mergeCommit: { oid: landed } }, calls), now: () => at(0), nowMs: NOW });
-  assert.deepEqual(calls[0], ['pr', 'view', 'https://github.com/o/r/pull/34', '--json', 'state,mergedAt,mergeCommit']);
+  assert.deepEqual(calls[0], ['pr', 'view', 'https://github.com/o/r/pull/34', '--json', 'state,mergedAt,mergeCommit,reviewDecision,closedAt']);
   assert.ok(out.some(c => c.dlv === id && c.ev === 'merged'));
   const r = row(state, repo);
   assert.equal(r.state, 'merged'); assert.equal(r.merged_how, 'pr'); assert.equal(r.merge_pr, 34);

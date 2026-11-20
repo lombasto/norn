@@ -135,6 +135,8 @@ test('stream: a change the tabs show that is not a record (ledger, STATUS.md) ar
     await c.wait(x => x.events.some(e => e.event === 'derived'));
     await settle(250);
     assert.equal(c.events.filter(e => e.event === 'derived').length, 1, 'two file changes in one window -> one event');
+    fs.writeFileSync(path.join(f.pa.state, 'branches.json'), '{}');   // a branch scan landing (Scan now / the tick) repaints the Branches view
+    await c.wait(x => x.events.filter(e => e.event === 'derived').length === 2);
   } finally { c.close(); await f.done(); }
 });
 

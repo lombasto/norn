@@ -15,6 +15,7 @@ import { mergeQueue } from './mergeq.mjs';
 import { deliverablesView, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { lanePins } from './crew.mjs';
+import { landState, LAND_WORDS } from './lanes.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -243,8 +244,13 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     if (row.offer) return 'offered';
     return 'waiting';
   };
+  // fair-slots item 2: a lane's finished work on its way to main, in the Lanes table's words (lanes.mjs landState); its open PR = the
+  // merge queue row's (the deliverable merge-land recorded it on, its branch not on main yet)
+  const prOf = lane => (lane && (merges?.rows || []).find(d => d.lane === lane && d.pr)?.pr) || null;
+  const laneLand = lane => { if (!lane) return null; const ls = runs.filter(r => r.data.lane === lane).sort((a, b) => idn(b.id) - idn(a.id));
+    return landState(ls[0], ls.find(r => !isMergeStage(r.data.stage)), prOf(lane)); };
   // the run that will merge a lane's work: its queued / running MERGE-stage run
-  const mergeRunOf = lane => runs.filter(r => LIVE.includes(r.state) && r.data.lane === lane && isMergeStage(r.data.stage)).sort((a, b) => idn(b.id) - idn(a.id))[0] ?? null;
+  const mergeRunOf =lane => runs.filter(r => LIVE.includes(r.state) && r.data.lane === lane && isMergeStage(r.data.stage)).sort((a, b) => idn(b.id) - idn(a.id))[0] ?? null;
   // start / finish estimates (ms | null) with the reason in words when null; memoised; a cycle = no estimate
   const fin = new Map(), sta = new Map(), why = new Map();
   const no = (m, id, w) => { if (!why.has(`${m}${id}`)) why.set(`${m}${id}`, w); return null; };
@@ -318,7 +324,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     const holds = row ? (row.ready ? ['ready to start'] : row.terms.map(words)) : ['not checked yet'];
     const holdAt = row && !row.ready ? row.terms.map(t => { const m = String(t).match(/^not_before (\S+)$/); return m && Number.isFinite(Date.parse(m[1])) ? new Date(Date.parse(m[1])).toISOString() : null; }) : holds.map(() => null);
     return { id: q.id, dwarf: q.dwarf, label: label({ ...r.data, id: q.id }), position: q.position, lane: q.lane, stage: q.stage, executor: q.executor,
-      priority: q.priority, status: qStatus(q.id), holds, holdAt, estimate: e,
+      priority: q.priority, status: qStatus(q.id), land: laneLand(q.lane), holds, holdAt, estimate: e,
       start: s === null ? { at: null, word: 'no estimate', why: why.get(`s${q.id}`) ?? null } : s <= now ? { at: new Date(now).toISOString(), word: 'now' } : at(s) };
   });
 
@@ -388,7 +394,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     if (r.state === 'withdrawn') { status = 'withdrawn'; word = 'withdrawn'; }
     else if (['running', 'claimed'].includes(f.state)) { status = 'running'; word = 'running'; }
     else if (f.state === 'queued') { status = qStatus(f.id); word = status === 'ready' ? 'ready to start' : (rowOf.get(f.id)?.terms || []).map(words)[0] ?? 'waiting'; if (status === 'ready') status = 'waiting'; }
-    else if (f.state === 'exited' && f.end?.outcome === 'done') { const pend = ids.some(unmetMerge); status = 'done'; word = pend ? 'done, not merged yet' : 'done'; }
+    else if (f.state === 'exited' && f.end?.outcome === 'done') { const pend = ids.some(unmetMerge), ld = laneLand(r.data.lane); status = 'done'; word = ld ? LAND_WORDS[ld] : pend ? 'done, not merged yet' : 'done'; }
     else { status = 'stopped'; word = f.state === 'exited' ? `ended ${f.end?.outcome ?? '?'}` : f.state; }
     return { id, now: f.id !== id ? f.id : null, label: lbl, lane: r.data.lane ?? null, stage: r.data.stage ?? null, epic: r.data.epic ?? null, status, shape: SHAPE[status], word };
   };
@@ -446,11 +452,13 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     if (d.lane && live.some(r => r.data.lane === d.lane)) continue;
     const q = d.lane ? qm.find(x => x.lane === d.lane && !used.has(x.id)) : null;
     if (q) used.add(q.id);
-    const word = ciRed ? 'blocked: CI red on main' : d.red ? 'blocked: its last merge test was red' : q ? mergeRunWord(q.id)
+    const pr = !q && d.pr ? d.pr : null;   // fair-slots item 2: merge-land opened its PR - the owner's approval is what it waits for
+    const word = pr ? `${LAND_WORDS['awaiting-pr']} (PR #${pr.number ?? '?'})` : ciRed ? 'blocked: CI red on main' : d.red ? 'blocked: its last merge test was red' : q ? mergeRunWord(q.id)
       : String(d.word || '').startsWith('conflict') ? 'needs a conflict fix first' : d.word === 'clean' ? 'ready to merge' : 'not checked against main yet';
-    landing.push({ kind: 'work', id: d.id, run: q?.id ?? null, label: d.lane ? label({ lane: d.lane }) : String(d.branch ?? d.id).replace(SHA, ''), branch: d.branch ?? null, what: d.delivers ?? null, word });
+    landing.push({ kind: 'work', id: d.id, run: q?.id ?? null, label: d.lane ? label({ lane: d.lane }) : String(d.branch ?? d.id).replace(SHA, ''), branch: d.branch ?? null, what: d.delivers ?? null, word,
+      land: pr ? 'awaiting-pr' : q && laneLand(d.lane) === 'awaiting-merge' ? 'awaiting-merge' : null, pr });
   }
-  for (const q of qm) if (!used.has(q.id)) landing.push({ kind: 'run', id: q.id, label: label({ ...map[q.id].data, id: q.id }), word: mergeRunWord(q.id) });
+  for (const q of qm) if (!used.has(q.id)) landing.push({ kind: 'run', id: q.id, label: label({ ...map[q.id].data, id: q.id }), word: mergeRunWord(q.id), land: laneLand(q.lane) === 'awaiting-merge' ? 'awaiting-merge' : null, pr: null });
 
   // 4. Forecast: usage now + the queued Claude work's rough cost
   const qc = upnext.filter(u => onClaude(map[u.id].data));
@@ -484,7 +492,7 @@ export const GLYPH = { check: '✓', play: '▶', ring: '○', pause: '‖', sto
 export function formatPlan(p) {
   const L = [`Plan - ${p.project ?? '-'}   (times in ${p.zone ?? 'local time'})`, '', 'Up next'];
   if (!p.upnext.length) L.push('  nothing is waiting to start');
-  for (const u of p.upnext) L.push(`  ${u.position}. ${u.label} (${u.id})  ${u.estimate.word}  start ${u.start.word}${u.start.why ? ` (${u.start.why})` : ''}  - ${u.holds.join('; ')}`);
+  for (const u of p.upnext) L.push(`  ${u.position}. ${u.label} (${u.id})${u.land ? ` [${LAND_WORDS[u.land]}]` : ''}  ${u.estimate.word}  start ${u.start.word}${u.start.why ? ` (${u.start.why})` : ''}  - ${u.holds.join('; ')}`);
   L.push('', 'Chains');
   if (!p.chains.length) L.push('  no queued run waits for another');
   for (const c of p.chains) {

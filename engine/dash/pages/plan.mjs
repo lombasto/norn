@@ -1,5 +1,5 @@
 // The Plan page (moved verbatim from ui.mjs, stage NAV): up next, chains, landing next (/api/plan); its usage forecast renders on Usage (forecastCard).
-import { esc, fin, pct, dwarfName, chip, backlogLine } from '../cells.mjs';
+import { esc, fin, pct, dwarfName, chip, backlogLine, landChip } from '../cells.mjs';
 import { meter } from '../widgets.mjs';
 
 // ---------- the Plan tab (META-PLAN R1, norn DIR-13): what happens next, and when - /api/plan = engine/lib/plan.mjs per project ----------
@@ -30,7 +30,7 @@ function planPart(p, ctx) {
   const up = (p.upnext || []).map(u => {
     const [c, w] = PL_STATUS[u.status] ?? ['idle', u.status];
     const prio = (p.priorities || []).length ? ` <select class="pl-prio" data-act="prio" data-project="${esc(p.project)}" data-run="${esc(u.id)}" aria-label="priority of ${esc(u.id)}" title="re-queue at this priority (its conditions are kept)">${p.priorities.map(x => `<option${x === (u.priority ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
-    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${u.dwarf ? `${dwarfName(u.dwarf)} takes it` : ''}${prio}</span>
+    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${u.dwarf ? `${dwarfName(u.dwarf)} takes it` : ''}${u.land ? ` ${landChip(u)}` : ''}${prio}</span>
       ${chip(c, w)}<span class="small pl-est" title="${esc(plBasis(u.estimate))}">${esc(u.estimate.word)}</span><span class="small pl-start"${u.start.why ? ` title="${esc(u.start.why)}"` : ''}>start ${esc(u.start.at && u.start.word !== 'now' ? `~${plAt(u.start.at, now)}` : u.start.word)}</span>
       <span class="pl-holds small">${u.holds.map((h, i) => esc(u.holdAt?.[i] ? `not before ${plAt(u.holdAt[i], now)}` : h)).join('<br>')}</span></div>`;
   }).join('');
@@ -41,7 +41,7 @@ function planPart(p, ctx) {
   const chains = (p.chains || []).map(c => `<div class="pl-chain">${c.steps.map(step).join('<span class="pl-sep mute">›</span>')}
     <div class="small pl-meta">${c.broken ? `${plShape('needs', '!', 'broken')} <b>${esc(c.broken)}</b>` : c.finished ? esc(`finished ${plAt(c.finish.at, now) ?? ''}`) : `finish ${esc(c.finish.at ? `~${plAt(c.finish.at, now)}${c.finish.note ? ` ${c.finish.note}` : ''}` : c.finish.word)}`}${c.rm ? ` · ${chip('idle', c.rm.id)} ${esc(c.rm.title)}` : ''}</div></div>`).join('');
   const landCls = w => (/^blocked/.test(w) ? 'bad' : w === 'merging now' ? 'running' : w === 'ready to merge' ? 'ok' : 'idle');
-  const land = (p.landing || []).map((l, i) => `<div class="pl-row"><span class="mono pl-pos">${i + 1}.</span><span class="pl-what"><b>${esc(l.label)}</b> <span class="id">${esc(l.id)}</span>${l.what ? ` <span class="small mute">${esc(l.what)}</span>` : ''}</span>${chip(landCls(l.word), l.word)}</div>`).join('');
+  const land = (p.landing || []).map((l, i) => `<div class="pl-row"><span class="mono pl-pos">${i + 1}.</span><span class="pl-what"><b>${esc(l.label)}</b> <span class="id">${esc(l.id)}</span>${l.what ? ` <span class="small mute">${esc(l.what)}</span>` : ''}</span>${l.land === 'awaiting-pr' ? landChip(l) : `${l.land ? landChip(l) + ' ' : ''}${chip(landCls(l.word), l.word)}`}</div>`).join('');
   return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
     ${plSection('pl-chains', 'Chains', 'runs that wait for other runs', chains || plEmpty('No queued run waits for another run.'))}
     ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', backlogLine(p.backlog) + (land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`)))}<p class="small mute pl-method">${esc(p.method ?? '')}</p>`;

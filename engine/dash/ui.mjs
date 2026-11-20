@@ -7,7 +7,7 @@ import { renderProse } from './prose.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter, capStrip } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
@@ -17,7 +17,7 @@ import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
 import { esc, fin, dash, int, mTok, fmtMin, pct, plural, runWho, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
-import { lanes } from './pages/lanes.mjs';
+import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
 import { plan, forecastCard } from './pages/plan.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
@@ -82,7 +82,10 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
   if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
-  if (tab === 'lanes') return get(`/api/lanes?${q}`);
+  if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table, or every branch / worktree of the repo (branches.mjs, the cached scan)
+    const sub = pickSub(LANES_SUBS, ctx.sub), limit = ctx.limit || SUB_CAP;
+    return { ...(await get(sub === 'lanes' ? `/api/lanes?${q}` : `/api/branches?${q}`)), sub, limit };
+  }
   if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (Plan's up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
     const [a, plan, guard] = await Promise.all([get(`/api/agents?${q}&part=live${runsWin(ctx.runsWindow)}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null), guardGet(get, q, all)]);
     const old = ctx.parts?.runs, ended = old && old.key.startsWith(`${project}|${a.window}|`) ? old.data.ended : undefined;
@@ -141,10 +144,10 @@ export function renderTab(tab, d, ctx = {}) {
   if (tab === 'adopt') return panel(tab, renderAdopt(adoptStep(d, ctx.adoptAsk), d, ctx));
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
-  if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanes(d, { ...ctx, now })));
+  if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanesPage(d, { ...ctx, now })));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ inbox, lanes, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
@@ -1229,6 +1232,9 @@ function profileBar(d, level) {
     ${billingBar(d)}
     <span class="lvl">Show ${lv('basic', 'Basic')}${lv('all', 'All')}</span></div>`;
 }
+// fair-slots item 8: Settings > Capacity - the pool as it is now (every project, widgets.mjs capStrip) above the reserve + ceiling rows
+// of every project, and the Undo of the last capacity change while its values are still in force (server.mjs capUndoOf)
+const capPane = d => `${d.capacity?.rows?.length ? `<div class="srow" id="set-capstrip-row" data-search="capacity pool reserve ceiling ${esc(d.capacity.rows.map(r => r.project).join(' '))}" data-mod="0" data-basic="1"><div class="sl">${capStrip(d.capacity, { id: 'set-capstrip', mine: d.project })}</div></div>` : ''}${d.capacity_undo ? `<div class="banner" id="cap-undo">Last capacity change <span class="id">${esc(d.capacity_undo.id)}</span>: ${esc(d.capacity_undo.choice)}. <button data-act="cap-undo" data-project="${esc(d.project)}" data-id="${esc(d.capacity_undo.id)}">Undo</button></div>` : ''}`;
 // RM-26 the mark "below floor": a decision a check-in recorded while its run's model / effort was below the check-in floor
 // (records.mjs made_under.below_floor). A record without made_under is unmarked.
 const BELOW_FLOOR = '<span class="chip warn below-floor">below floor</span>';
@@ -1251,7 +1257,7 @@ function settings(d, ctx) {
       if (x.pane) return syncPane(x, d, ctx.syncOut);
       const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
       const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'usage', jump: 'usage-advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
-      return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${body}</div>`;
+      return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${x.id === 'capacity' ? capPane(d) : ''}${body}</div>`;
     }).join('');
     return `<section class="scat" id="cat-${esc(c.id)}" data-cat="${esc(c.id)}"${c.id === sel ? '' : ' hidden'}><h2>${esc(c.label)}</h2><p class="small mute">${esc(c.help)}</p>${subs}</section>`;
   }).join('');

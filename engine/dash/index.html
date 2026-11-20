@@ -77,7 +77,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
+const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, laneDetail: null, laneDet: null, laneFile: null, br: { states: new Set(), where: 'all', lane: '' }, brUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
   quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -283,7 +283,7 @@ function paintMain(d) {
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
   const rs = S.tab === 'runs' ? ['.runs-list', '#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run's panes keep their scroll (the same run's document only), a focused row its focus
-  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, narrow: runsNarrow(), strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, narrow: runsNarrow(), strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, laneDetail: S.laneDetail, laneDet: S.laneDet, laneFile: S.laneFile, br: S.br, brUndo: S.brUndo });
   draftsRestore(keep);
   mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
@@ -347,7 +347,7 @@ function pickDirty() {
 }
 const pickNow = () => post('/api/chat/pick', { project: S.project, model: $('#pick-model').value, effort: $('#pick-effort').value });
 document.addEventListener('input', e => { if (e.target.id === 'chat-text') slashShow(); });
-document.addEventListener('change', e => { if (e.target.id === 'pick-model' || e.target.id === 'pick-effort') pickDirty(); });
+document.addEventListener('change', e => { if (e.target.id === 'pick-model' || e.target.id === 'pick-effort') pickDirty(); if (e.target.matches?.('select[data-br=lane]')) { S.br.lane = e.target.value; lanesRepaint(); } });
 document.addEventListener('focusin', e => { if (e.target.id === 'chat-text') slashShow(); });
 document.addEventListener('focusout', e => { if (e.target.id === 'chat-text') setTimeout(() => { if (!document.activeElement?.closest?.('#slash-menu')) { const m = $('#slash-menu'); if (m) m.hidden = true; } }, 150); });
 document.addEventListener('toggle', e => { if (e.target.classList?.contains('hpick')) S.pickOpen = e.target.open; }, true);
@@ -480,7 +480,7 @@ const runsNarrow = () => matchMedia('(max-width:1100px)').matches;
 matchMedia('(max-width:1100px)').addEventListener('change', () => { if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
 const ACTS = { ...laneActs, ...runActs };
-const C = { S, render: () => render(), post, $, go: g => goTo(g), act, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r) };
+const C = { S, render: () => render(), get, post, $, go: g => goTo(g), act, err, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r) };
 // ---- roadmap edit drawer (META-ROADMAP S3): a row's / theme's "..." or + Add opens it; each action = one POST /api/roadmap/<op>
 // (the page token, one record by dashboard). The reply's tree repaints the tab and the drawer at once; every other tab gets the
 // append through the state stream. A 409 (the item or the order moved on) says so and offers Reload: nothing was written. ----
@@ -730,8 +730,9 @@ document.addEventListener('click', e => {
       const flagged = r.lines.filter(l => l.flags.length).length;
       box.innerHTML = `<div class="card" id="settings-review" style="margin-top:10px">${S.setProfile ? `<p class="small">From the profile <b>${esc(S.setProfile.name)}</b> (${esc(S.setProfile.cost)}); Save records the pick.</p>` : ''}<ul class="small">${r.lines.map(l => `<li>${l.flags.length ? '<span class="chip warn">check</span> ' : ''}${esc(l.text)}${l.flags.map(x => `<div class="mute">${esc(x)}</div>`).join('')}</li>`).join('')}</ul>${flagged ? `<p class="small"><b>${flagged} change${flagged === 1 ? '' : 's'} to check</b> before you Save.</p>` : ''}</div><button class="primary" id="settings-save" style="margin-top:8px">Save</button>`;
       $('#settings-save').onclick = () => act(async () => { await post('/api/settings', { project: p, version: d.version, changes, ...(S.setProfile ? { profile: S.setProfile } : {}) }); S.setDirty = 0; S.setVersion = null; S.setProfile = null; });
-    }, e => err(e.message));
+    }, e => { box.innerHTML = `<p class="small lane-refused" id="settings-refused" role="alert">Not saved: ${esc(e.message)}</p>`; err(e.message); });   // fair-slots 8a: e.g. the reserves overflow the cap, named
   }
+  if (d.act === 'cap-undo') act(() => post('/api/settings/capacity-undo', { project: p, id: d.id }));   // fair-slots 8d: the before-values, through the save path
 });
 $('#pause').onclick = () => { S.pauseOpen = !S.pauseOpen; S.half = null; pausePaint(); };
 // RM-37: the pause menu paints from the last overview (header() repaints it, so an open menu follows the live state)
