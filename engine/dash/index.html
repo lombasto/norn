@@ -54,7 +54,7 @@
 import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, matchText, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import { fmtTime, esc } from '/cells.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards, syncLines } from '/ui.mjs';
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
@@ -77,7 +77,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
   quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -283,7 +283,7 @@ function paintMain(d) {
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
   const rs = S.tab === 'runs' ? ['.runs-list', '#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run's panes keep their scroll (the same run's document only), a focused row its focus
-  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, narrow: runsNarrow(), strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, narrow: runsNarrow(), strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
   draftsRestore(keep);
   mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
@@ -431,6 +431,20 @@ function applyFilters() {
     for (const tr of document.querySelectorAll(`[data-rows="${box.dataset.filter}"] tbody tr, [data-rows="${box.dataset.filter}"] .lrow`))
       tr.style.display = (!t || tr.textContent.toLowerCase().includes(t)) && (!states || states.includes(tr.dataset.state)) ? '' : 'none';
   }
+}
+// NORN-UI-SYNC: Settings > Sync's buttons (owner actions, by: dashboard); Apply asks first, a done Apply / Save re-renders the page
+function syncAct(d) {
+  const v = id => $(id)?.value.trim() ?? '', box = id => !!$(id)?.checked, k = d.act === 'sync-ledger' ? 'ledger' : d.act === 'sync-reconcile' ? 'reconcile' : 'setup', o = $(`#sync-${k}-out`);
+  const show = (r, again) => { o.textContent = S.syncOut[k] = syncLines(r).join('\n'); if (again) render(true); };   // kept in S: a re-render shows it again
+  if (d.act === 'sync-ledger') { const body = { project: S.project, version: d.version, remote: v('#sync-remote') || undefined }, t = v('#sync-topic'); if (t) body.topic = t;
+    if ($('#sync-remote')?.disabled) delete body.remote;
+    o.textContent = 'Saving ...'; post('/api/sync/ledger', body).then(r => show(r, r.changed), e => { o.textContent = e.message; }); return; }
+  if (d.act === 'sync-reconcile') { const dry = d.dry === '1'; if (!dry && !confirm('Write one owner card per likely duplicate pair into the Inbox?')) return;
+    o.textContent = dry ? 'Looking ...' : 'Writing ...'; post('/api/sync/reconcile', { project: S.project, dry }).then(r => show(r), e => { o.textContent = e.message; }); return; }
+  const apply = d.act === 'sync-apply', body = { project: S.project, home: v('#sync-home'), remote: v('#sync-setup-remote'), topic: v('#sync-setup-topic'), bare: box('#sync-bare'), checked: box('#sync-checked') };
+  if (apply && !confirm(`Make this machine home ${body.home}? Norn pauses the project, cuts, publishes and resumes it.`)) return;
+  o.textContent = apply ? 'Applying: pause, cut, publish, fetch, resume ...' : 'Checking ...';
+  post(apply ? '/api/sync/apply' : '/api/sync/plan', body).then(r => show(r, apply && r.ok), e => { o.textContent = e.message; });
 }
 const act = async (fn, okMsg) => { try { await fn(); if (okMsg) err(''); await render(); } catch (e) { err(e.message); } };
 // ---- state stream (META-VISUAL-B S1, the #4 push channel): the page re-renders when the project's records / flags change,
@@ -662,6 +676,8 @@ document.addEventListener('click', e => {
     if (el) { el.value = Array.isArray(v) ? v.join(', ') : String(v ?? ''); dirty(); el.focus(); } return; }
   if (d.act === 'notify-test') { const o = $('#notify-test-out'); o.textContent = 'Sending...';
     post('/api/notify-test', { project: p }).then(r => { o.textContent = r.sent ? `Sent via ${r.backend}: check your phone / desktop.` : 'Not sent.'; }, e => { o.textContent = e.message; }); return; }
+  // NORN-UI-SYNC: Settings > Sync - each button posts /api/sync/* and shows the answer's lines (ui.mjs syncLines) in its pane's <pre>
+  if (d.act?.startsWith('sync-')) { syncAct(d); return; }
   if (d.act === 'remote-pair') { const o = $('#remote-code'); o.textContent = 'Making a code ...';   // C6: a single-use code for one phone
     post('/api/remote/pair', {}).then(r => { o.innerHTML = `<div class="rc mono">${esc(r.code)}</div><div class="small mute">On your phone open the address above and type this code. It works once, until ${esc(new Date(r.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}.</div>`; }, e => { o.textContent = e.message; }); return; }
   if (d.act === 'remote-revoke' && confirm(`Revoke ${d.name}? It must be paired again to open Norn.`)) { post('/api/remote/revoke', { id: d.id }).then(() => render(true), e => err(e.message)); return; }
