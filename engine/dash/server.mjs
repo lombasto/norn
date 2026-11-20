@@ -27,6 +27,7 @@ import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
+import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
@@ -61,6 +62,8 @@ import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, rea
 import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
+import { ledgerConfig } from '../lib/ledger.mjs';
+import { loopOf } from '../lib/sync.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
@@ -557,6 +560,13 @@ export function createDashboard(o) {
     }
     return c.val ? { ...c.val, pending: false } : { rows: [], pending: true };
   }
+  // MERGE-FIRST (4): the merge backlog of the projects shown, from the cached deliverables (pending until the first answer); over = any
+  // project past its own policy.merge.backlog_max
+  function backlogOf(ps) {
+    const parts = ps.map(p => ({ p, d: deliverablesOf(p) }));
+    const all = mergeBacklog(parts.flatMap(x => x.d.rows), { max: Math.min(...ps.map(p => backlogMax(p.policy))) });
+    return { ...all, over: parts.some(x => mergeBacklog(x.d.rows, { max: backlogMax(x.p.policy) }).over), pending: parts.some(x => x.d.pending) };
+  }
   // META-PLAN R1: the plan = `norn plan --json` in a child process (the fill walk samples the CPU for 1 s and asks git: never on a
   // poll), per project, cached o.planTtlMs (30 s; then stale while it refreshes); before the first answer { pending: true }. R2: with
   // the dashboard's own budget file, so the Plan's weekly stop is the one every other tab shows (one source)
@@ -670,6 +680,7 @@ export function createDashboard(o) {
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
+      backlog: backlogOf(ps),   // MERGE-FIRST (4)
       setup: ps.length === 1 ? setupOf(ps[0]) : null };   // META-ADOPT A3: the setup gaps (rules, caps nobody chose, no merge gate)
   }
   function records(p, url) {
@@ -1467,6 +1478,15 @@ data: ${JSON.stringify(l)}
     }
     // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
     if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
+    if (route === '/api/requeue') {   // MERGE-FIRST: Plan > Up next's priority control - the queued run re-queued at that priority, its after: kept
+      const r = st(p).items[String(data.run)];
+      if (!r || r.kind !== 'run' || r.state !== 'queued') throw fail(409, 'Run is not queued any more. Refresh.');
+      let out;
+      try { out = requeueRun({ state: p.state, run: r.id, by: 'dashboard', why: `priority ${data.priority} set on the Plan page`, priority: data.priority }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
+      await viewsA(p);
+      if (plans.has(p.name)) plans.get(p.name).at = 0;   // the next Plan read asks again
+      return { ok: true, ...out };
+    }
     if (route === '/api/stop') {
       if (data.confirm !== true) throw fail(400, 'confirm must be true');
       const r = st(p).items[String(data.run)];
@@ -1672,7 +1692,7 @@ data: ${JSON.stringify(l)}
           return send(200, { items, needs_you: needsYou(items), prose }); }
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
           const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
-          return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)) }); }
+          return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)), backlog: backlogOf(ps) }); }
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
@@ -1800,7 +1820,12 @@ data: ${JSON.stringify(l)}
   server.requestTimeout = 300000; server.headersTimeout = 15000;
   // close also stops a running account refresh and instructions rebuilds: their workers write the state-dir cache, so a caller
   // that removes the state after close (the test fixtures' temp dirs) never races them (ENOTEMPTY under load)
-  const close = async () => { sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
+  // RM-46 S4 (multi-home SPEC 4.3): the sync loop - ls-remote every 30 s + the optional doorbell; its publish and pass run as norn CLI
+  // children (metaCli), so this event loop never blocks. Off without machine.json ledger.remote; the loop itself idles until a project is synced
+  const syncCfg = machineFile ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null;
+  const syncL = syncCfg?.remote ? loopOf(syncCfg, { cli: args => metaCli(args) }) : null;
+  syncL?.start();
+  const close = async () => { syncL?.stop(); sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
     for (const r of chatStreams) r.end();
     await Promise.all([...chats.values()].map(c => c.close())); if (acct.worker) await acct.worker.terminate().catch(() => {});
     await Promise.all([...insWorkers].map(w => w.terminate()));

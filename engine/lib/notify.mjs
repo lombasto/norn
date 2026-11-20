@@ -59,6 +59,13 @@ export function subscribeLink(n) { return ntfyServer(n.server) + n.topic; }
 export const defaultTransport = {
   post: async (url, { headers, body }) => { const r = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) }); return { status: r.status, text: await r.text() }; },
   put: async (url, { headers, body }) => { const r = await fetch(url, { method: 'PUT', headers, body, signal: AbortSignal.timeout(60000) }); return { status: r.status, text: await r.text() }; },
+  // RM-46 S4: a long-lived GET read line by line (ntfy's JSON stream); ends when the server drops it, throws on a refusal or the abort
+  stream: async function* (url, { signal }) {
+    const r = await fetch(url, { signal });
+    if (!r.ok) throw new Error(`answered ${r.status}`);
+    const dec = new TextDecoder(); let buf = '';
+    for await (const c of r.body) { buf += dec.decode(c, { stream: true }); let i; while ((i = buf.indexOf('\n')) >= 0) { yield buf.slice(0, i); buf = buf.slice(i + 1); } }
+  },
   // META-DASH-ASYNC R1: a child on its own (the dashboard's test ping is a request path): { status, stderr, error } like spawnSync's, never blocking the loop
   run: (cmd, args, { env }) => new Promise(ok => execFile(cmd, args, { env, windowsHide: true, encoding: 'utf8', timeout: 15000 }, (e, _out, stderr) =>
     ok({ status: e ? (Number.isInteger(e.code) ? e.code : null) : 0, stderr, error: e && !Number.isInteger(e.code) ? e : undefined }))),
@@ -173,3 +180,16 @@ async function send({ title, body, priority = 'default', cls, file, machine, sta
   if (!ok) throw new NotifyError(`${backend} answered ${r.status}`, 1);
   return { backend, sent: true, ok: true, status: r.status };
 }
+
+// RM-46 S4 (multi-home SPEC 4.3, 7): the doorbell - machine.json ledger.doorbell { server?, topic }, a topic of its own (DEC-421), never in the
+// ledger (secretsOf scans the topic key). It carries no data: a ring is { h, sha } at ntfy priority min, and git stays the truth.
+const DOORBELL_PRIO = 1;   // ntfy "min": no sound, no phone banner
+/** ring the doorbell once: POST { topic, message: '{"h","sha"}', priority: 1 }; throws NotifyError (2 = config, 1 = the server failed) */
+export async function ringDoorbell(d, { h, sha }, { transport = defaultTransport } = {}) {
+  if (!d?.topic) throw new NotifyError('ledger.doorbell.topic is required');
+  const r = await transport.post(ntfyServer(d.server), { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: d.topic, message: JSON.stringify({ h, sha }), priority: DOORBELL_PRIO }) });
+  if (!(r.status >= 200 && r.status < 300)) throw new NotifyError(`doorbell answered ${r.status}`, 1);
+  return { status: r.status };
+}
+/** the doorbell's ntfy JSON stream (GET <server>/<topic>/json): an async iterable of its lines */
+export const doorbellStream = (d, { signal, transport = defaultTransport } = {}) => transport.stream(`${ntfyServer(d.server)}${encodeURIComponent(d.topic)}/json`, { signal });

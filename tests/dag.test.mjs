@@ -126,14 +126,14 @@ test('run:RUN-n:merged follows a HANDOFF successor to the run that ended DONE an
 });
 
 // ---------- piece 2: epics (EP-n, epics.jsonl) ----------
-test('epic records: own file, create / add / remove / close, P0-P3, members are RUN-n / DLV-n; loadState unchanged', () => {
+test('epic records: own file, create / add / remove / close, P0-P4, members are RUN-n / DLV-n; loadState unchanged', () => {
   const d = sandbox();
   const rec = (ev, data, id, by = 'controller') => record(d.state, { kind: 'epic', ev, id, by, data }, { views: false });
   const ep = rec('create', { title: 'water picture', priority: 'P1', members: [], integration_branch: 'int/water' }).id;
   assert.equal(ep, 'EP-1');
   assert.ok(fs.existsSync(path.join(d.state, 'epics.jsonl')), 'its own file');
   assert.equal(loadState(d.state).items[ep], undefined, 'loadState stays as is');
-  assert.throws(() => rec('create', { title: 'x', priority: 'P4' }), /priority/);
+  assert.throws(() => rec('create', { title: 'x', priority: 'P5' }), /priority/);
   assert.throws(() => rec('create', { priority: 'P1' }), /title/);
   assert.throws(() => rec('add', { members: ['Q-1'] }, ep), /members/);
   rec('add', { members: ['RUN-3', 'DLV-2'] }, ep, 'launcher');
@@ -316,7 +316,7 @@ test('resource gate: norn run --queue with a free slot queues when resources are
   const q = meta(['run', '--executor', 'fake', '--lane', 'cli', '--brief', d.brief('mode: done\n'), '--worktree', d.wt(2), '--locks', d.locks, '--after', `dir:${dir}`, '--state', d.state]);
   const id = q.out.match(/QUEUED (RUN-\d+)/)[1];
   const spec = JSON.parse(fs.readFileSync(path.join(d.state, 'runs', `${id}.queue.json`), 'utf8'));
-  assert.deepEqual(spec.policy.fill, { min_free_gb: 4, max_cpu_pct: 90 }, 'no project policy.fill: the defaults');
+  assert.deepEqual(spec.policy.fill, { min_free_gb: 4, max_cpu_pct: 90, merge_reserve: 1 }, 'no project policy.fill: the defaults');
   // the CLI's own fill (met now = starts now) samples the real box: with RAM to spare it starts the queued run. Every run this test
   // caused settles here - left to the exit reap, its supervisor outlived the file on Linux (CI 43540726632 LEAK RED, RUN-3).
   await waitFor(() => !stateBusy(d.state)(), { what: 'every run the CLI fill started settled' });
