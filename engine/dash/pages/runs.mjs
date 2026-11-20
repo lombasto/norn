@@ -111,13 +111,13 @@ function row(n, d, ctx, sel) {
   const now = ctx.now, s = runStateOf(n), band = s === 'running' ? 'live' : s === 'queued' ? 'queued' : 'ended';
   const at = feedable(n) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" tabindex="0" title="Open ${esc(n.id)}"` : '';
   const head = `<div class="rhead">${stateChip(n)}<span class="rwho">${projTag(ctx, n.project)}${who(n)}</span>${band === 'live' ? paceChip(n) : ''}${homeChip(n)}${guardChips(n, d)}</div>`;
-  const meta = `<div class="rmeta small"><span class="rlane">${laneCard(n.lane_card, runLane(n))}</span>${exChip(n.executor, n.model, n.effort)}${kids(n)}</div>`;
+  const sub = `<div class="rmeta small"><span class="rlane">${laneCard(n.lane_card, runLane(n))}</span>${exChip(n.executor, n.model, n.effort)}${kids(n)}</div>`;
   let body = '';
   if (band === 'live') body = `<div class="rtimes small">${timeBar(n, now)}${rtime(n, now)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}`;
   else if (band === 'ended') { const e = runTimes(n, now).ended_min;
     body = `<div class="rtimes small">${rtime(n, now)}${fin(e) ? `<span>ended ${fmtMin(e)} ago</span>` : ''}${items(n)}</div>${whyEnded(n) ? `<div class="rline small">${whyEnded(n)}</div>` : ''}`; }
   else body = queuedBody(n, d, ctx);
-  return `<div class="rrow ${band}${sel ? ' sel' : ''}" id="node-${esc(n.id)}"${at}${sel ? ' aria-current="true"' : ''}>${head}${meta}${body}</div><!--/row-->`;
+  return `<div class="rrow ${band}${sel ? ' sel' : ''}" id="node-${esc(n.id)}"${at}${sel ? ' aria-current="true"' : ''}>${head}${sub}${body}</div><!--/row-->`;
 }
 // a queued row: what it waits for (Plan's holds, in words), how long it has waited, its estimate and start, and Plan's priority control
 function queuedBody(n, d, ctx) {
@@ -130,7 +130,7 @@ function queuedBody(n, d, ctx) {
   return `<div class="rtimes small">${fin(w) ? `<span>waited ${fmtMin(w)}</span>` : ''}${u?.estimate?.word ? `<span>${esc(u.estimate.word)}</span>` : ''}${start && !holds.includes(u.start.word) ? `<span>${esc(start)}</span>` : ''}${prio}</div>
     ${holds.length ? `<div class="rline small">${holds.map(esc).join(' · ')}</div>` : ''}`;
 }
-// check-ins (ended, more than one) fold into one row: how many, the last one, how they went; "show them" opens them in place
+// check-ins (ended, more than one) collapse to one row: how many, the last one, how they went; "show them" opens them in place
 function checkinFold(cks, ctx) {
   const e = runTimes(cks[0], ctx.now).ended_min, bad = cks.filter(n => runStateOf(n) === 'failed').length;
   return `<button class="rfold small" data-act="runs-checkins" aria-expanded="false">${cks.length} check-ins · last ${fmtMin(e)} ago · ${bad ? `${bad} failed` : 'all done'} · show them</button>`;
@@ -179,7 +179,7 @@ const missingDoc = (id, d, ctx, win) => `<article class="rdoc card" id="run-doc"
   ${RUN_ID.test(id) && ctx.project && ctx.project !== 'all' ? `<section id="run-feed-slot" data-project="${esc(ctx.project)}" data-run="${esc(id)}"></section>` : ''}</article>`;
 
 export function runs(d, ctx) {
-  const v = ctx.runsView ?? runsViewOf(new URLSearchParams()), now = ctx.now;
+  const v = ctx.runsView ?? runsViewOf(new URLSearchParams());
   // the live part (running + queue) and the history part (the ended runs in the window) may both name a run: history wins
   const seen = new Map(); for (const n of [...(d.tree || []), ...(d.ended || [])]) seen.set(`${n.project}|${n.id}`, n);
   const all = [...seen.values(), ...(d.queue || []).map(queueNode)], win = (RUNS_WINDOWS.find(w => w[0] === (d.window ?? v.window)) ?? RUNS_WINDOWS[0])[1];
