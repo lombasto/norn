@@ -398,9 +398,31 @@ export function loadShared(stateDir, kind) {
   return { ...v, integrity: [...integrity, ...v.integrity] };
 }
 
+// RM-46 S3 (SPEC 3.3): the read-only copies of the other homes' local kinds that publish one (run, deliverable) - homes/<h>/copy/<file>.jsonl,
+// each folded alone (its home is its only writer). An item carries `home` and its lane as this home types it (b/x); a copy that does not parse is skipped.
+const otherHomes = (stateDir, home) => readdirS(path.join(stateDir, 'homes')).filter(d => d.isDirectory() && HOME_RE.test(d.name) && d.name !== home.id).map(d => d.name).sort();
+export const copyFile = (stateDir, h, kind) => path.join(stateDir, 'homes', h, 'copy', KINDS[kind].file + '.jsonl');
+/** [item + home] of `kind` from every other home's copy; a solo dir has none */
+export function copyItems(stateDir, kind) {
+  const home = homeOf(stateDir), out = [];
+  if (!home) return out;
+  for (const h of otherHomes(stateDir, home)) {
+    let f; try { f = fold(readEvents(copyFile(stateDir, h, kind))); } catch { continue; }
+    for (const it of Object.values(f.items)) if (it.kind === kind) out.push({ ...it, home: h, data: { ...it.data, ...(typeof it.data?.lane === 'string' ? { lane: laneNameIn(laneIdIn(it.data.lane, h), home.id) } : {}) } });
+  }
+  return out;
+}
+/** copyItems on fs.promises: the copies primed into the request snapshot first (the dash server's GETs) */
+export async function copyItemsAsync(stateDir, kind) {
+  if (await readTextA(path.join(stateDir, 'home.json')) === null) return [];
+  const hs = (await readdirA(path.join(stateDir, 'homes'))).filter(d => d.isDirectory() && HOME_RE.test(d.name)).map(d => d.name);
+  await prime({ files: hs.map(h => copyFile(stateDir, h, kind)) });
+  return copyItems(stateDir, kind);
+}
+
 // a synced dir's view carries its pending events, conflicts and integrity rows (SPEC 3.7)
 const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items },
-  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity } : {}) });
+  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity, newest: a.newest } : {}) });
 // META-DASH-ASYNC R1: inside a primed dash request the snapshot's fold (lib/fsnap.mjs) - a lib that folds again (limitgate, ...) reads nothing
 export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(loadShared(stateDir, 'question'), fold(readEvents(recordsFile(stateDir, 'run'))));
 /** META-DASH-ASYNC R1: loadState on fs.promises (the two records files read concurrently on the threadpool; the same fold) */
