@@ -1,6 +1,7 @@
 // A project's merge settings (project.json `merge` over the defaults): their own module, below mergeq.mjs and mergeland.mjs, so
 // merge-land can read them without importing the merge queue (mergeq -> landing -> mergeland -> mergeq was a K10 cycle).
-import { deliverableConfig, fwd } from './deliverables.mjs';
+import { deliverableConfig } from './deliverables.mjs';
+import { fwd } from './dlvmerge.mjs';
 import { subdirOf } from './monorepo.mjs';
 
 const MQ_DEFAULTS = { batch_max: 4 };
