@@ -21,11 +21,13 @@ export function shotsMode(p) {
   return m;
 }
 
-// DIR-24: policy.merge.suite - full (default: the ci-suite step) | skip (no ci-suite; a merge with conflicts runs only the test
-// files of the conflicted areas, a red there = STOPPED; a clean merge runs none; the smoke always stays). The batch gate obeys it too.
-export const SUITE_MODES = ['full', 'skip'];
+// DIR-24 + TEST-GOVERNANCE S1 (owner Q-26): policy.merge.suite - changed (default: the test files of the files the branch changes and of
+// any conflicted area, plus the smoke; the full suite runs in CI, and the scope hook denies it in a run: Q-28) | skip (no test file
+// unless a merge had conflicts: then those areas' test files only; a clean merge runs none; the smoke always stays). The batch gate and
+// the landing check obey skip too.
+export const SUITE_MODES = ['changed', 'skip'];
 export function suiteMode(p) {
-  const m = p?.policy?.merge?.suite ?? 'full';
+  const m = p?.policy?.merge?.suite ?? 'changed';
   if (!SUITE_MODES.includes(m)) throw new Error(`${p?.name ?? 'project'}: policy.merge.suite must be one of ${SUITE_MODES.join(', ')} (got ${m})`);
   return m;
 }
@@ -33,26 +35,32 @@ export function suiteMode(p) {
 // copy-paste, suite time vs the last merge) - a finding never blocks the merge. Mutation score is not part of it: the trial measured
 // 390-1225 s of test-process CPU for ONE 66-line file, far over the ~2 min a merge may spend (META-TEND TESTS NOTES).
 const testsCheck = (p, dir, base, metaRoot) => `\n   Then the TESTS CHECK (advisory, never a merge block): \`node "${metaRoot}/engine/bin/norn.mjs" tests check --project ${p.name} --base ${base} --repo ${dir}\`;\n   copy its lines into NOTES and go on whatever it finds.`;
-/** the suite step of MERGE.md (rebase) / MERGE-SHA.md (staged) + what ran (the notify body and NOTES line); full = today's text */
+/** the suite step of MERGE.md (rebase) / MERGE-SHA.md (staged) + what ran (the notify body and NOTES line) */
 function suiteStep(p, rebase, dir, metaRoot) {
   const st = suiteText(p, rebase, dir);
   return { ...st, step: st.step + testsCheck(p, dir, rebase ? `origin/${p.deliverables?.main || 'main'}` : 'HEAD', metaRoot) };
 }
-// the full suite: the project's own merge gate (project.json merge.gate.cmd, run from its subdir in a monorepo - the gate merge-land
-// and the merge queue run) when it declares one; Norn's ci-suite otherwise. A pytest project told to run ci-suite.mjs had no such file.
-const suiteCmd = p => {
-  const g = p?.merge?.gate, sub = subdirOf(p);
-  return g?.cmd ? `\`${gateText(g.dir === undefined && sub ? { ...g, dir: sub } : g)}\` (the project's merge gate, project.json merge.gate.cmd)`
-    : '`node engine/bin/ci-suite.mjs` (smoke.test.mjs runs alone after the rest)';
+// how a MERGE run runs one test file, and the whole suite it never runs: a project with a merge gate (project.json merge.gate.cmd, from
+// its monorepo subdir) - pytest with its python, another runner its own way - else Norn's node --test and ci-suite
+const runner = p => {
+  const g = p?.merge?.gate, dir = g?.dir ?? subdirOf(p), cd = dir ? `cd ${dir} && ` : '';
+  if (!g?.cmd) return { one: '`node --test tests/<file>.test.mjs` each, with META_ROOT set', whole: '`node engine/bin/ci-suite.mjs` without --changed' };
+  const py = (String(g.cmd).match(/^\s*("[^"]+"|\S+)\s+-m\s+pytest\b/) || [])[1], whole = `the project's merge gate \`${gateText(g.dir === undefined && dir ? { ...g, dir } : g)}\``;
+  return { one: py ? `\`${cd}${py} -m pytest <test_x.py>\` each` : `the project's own runner on one test file at a time${dir ? ` in ${dir}` : ''}`, whole };
 };
 function suiteText(p, rebase, dir) {
-  if (suiteMode(p) === 'full') return { ran: 'suite', step: rebase
-    ? `Suite in ${dir}: ${suiteCmd(p)}. Only the known reds of the project's known-red list may be\n   red; a load red must pass alone (run it alone, name it). Any other red = STOPPED, nothing merged.`
-    : `Suite in ${dir} on the uncommitted merge: ${suiteCmd(p)}. Only the known reds of\n   the project's known-red list may be red; a load red must pass alone (run it alone, name it). Any other red =\n   \`git -C ${dir} merge --abort\`, STOPPED, nothing merged.` };
   const [what, where, abort, smoke] = rebase ? ["step 1's rebase", dir, '', 4] : ["step 2's merge", `${dir} on the uncommitted merge`, `\`git -C ${dir} merge --abort\`, `, 5];
+  const r = runner(p), never = `never the full suite (${r.whole}): it runs in CI and after a merge batch, and Norn refuses it in a run`;
+  if (suiteMode(p) === 'changed') {
+    const list = rebase ? `\`git -C ${dir} diff --name-only origin/${p.deliverables?.main || 'main'}...HEAD\`` : `\`git -C ${dir} diff --name-only --cached HEAD\``;
+    return {
+      ran: 'changed-file tests <the test files run>',
+      step: `CHANGED-FILE TESTS (project policy merge.suite = changed): ${never}. In ${where}, run only the test files of the\n   files the branch changes (${list}) and of any area ${what} had conflicts in: ${r.one}; name them.\n   Only the known reds of the project's known-red list may be red; a load red must pass alone (run it alone once, name it). Any\n   other red = ${abort}\`norn done --outcome stopped --why "red in <file>"\`, nothing merged. The smoke of step ${smoke} always runs.`,
+    };
+  }
   return {
     ran: 'suite skipped (policy merge.suite = skip), conflicted-area tests <the test files run, or none>',
-    step: `SUITE SKIPPED (project policy merge.suite = skip): never \`node engine/bin/ci-suite.mjs\`. If ${what} had conflicts, run\n   only the test files of the conflicted areas in ${where} (\`node --test <file>\` each: the tests/*.test.mjs of the conflicted\n   code; name them); a red there = ${abort}\`norn done --outcome stopped --why "red in a conflicted area"\`, nothing merged. A clean ${rebase ? 'rebase' : 'merge'} runs no test\n   (the smoke of step ${smoke} always runs).`,
+    step: `SUITE SKIPPED (project policy merge.suite = skip): ${never}. If ${what} had conflicts, run\n   only the test files of the conflicted areas in ${where} (${r.one}; name them); a red there = ${abort}\`norn done --outcome stopped --why "red in a conflicted area"\`, nothing merged. A clean ${rebase ? 'rebase' : 'merge'} runs no test\n   (the smoke of step ${smoke} always runs).`,
   };
 }
 
@@ -130,7 +138,7 @@ export function renderBatchBrief(p, b) {
   if (!b.members?.length) throw new Error('batch brief: no members');
   const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), mainCo = fwd(p.deliverables?.repo || p.root), batch = `batch-${b.n}`;
   const wt = mergeWt(p, {}, `mq-${batch}`), at = wt.wt;
-  const full = suiteMode(p) === 'full';   // skip: mergeq ran no gate (its members merge clean: no conflicted area to test)
+  const gated = suiteMode(p) !== 'skip';   // skip: mergeq ran no gate (its members merge clean: no conflicted area to test)
   const shotsDir = fwd(path.join(path.dirname(b.notes), 'shots'));
   const shots = !b.ui ? 'Shots: no dash / UI change in the batch: no screenshots (the notice names the merge only).'
     : mode === 'after'
@@ -139,9 +147,9 @@ export function renderBatchBrief(p, b) {
   const v = {
     batch, count: String(b.members.length), project: p.name, main: p.deliverables?.main || 'main', main_checkout: mainCo, meta_root: metaRoot,
     norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`,   // meta = the old name (META-NAME-W3)
-    suite: full ? `The gate \`${b.gate}\` ran GREEN${b.retried ? ' on its one retry (the first run was red: a flaky gate; recorded)' : ''} on`
+    suite: gated ? `The gate \`${b.gate}\` ran GREEN${b.retried ? ' on its one retry (the first run was red: a flaky gate; recorded)' : ''} on`
       : 'No gate ran (project policy merge.suite = skip: every branch below merged clean, so no test file ran; "gated" below = built) on',
-    suite_ran: full ? 'gate' : 'gate skipped (policy merge.suite = skip)',
+    suite_ran: gated ? 'gate' : 'gate skipped (policy merge.suite = skip)',
     tip: b.tip, base: b.base, base_short: String(b.base).slice(0, 7), gate_log: fwd(b.gate_log || '-'), scratch: fwd(b.scratch), notes: fwd(b.notes), shots,
     members: b.members.map(m => `- ${m.id} ${m.branch} (lane ${m.lane ?? '-'}) at ${String(m.sha).slice(0, 7)}: merge commit ${m.merge}`).join('\n'),
     shot_flag: b.ui && mode === 'after' ? `; then send up to 3 key shots (the changed views, dark first) as attachments, one \`node "${metaRoot}/engine/bin/norn.mjs" notify --class merge --title "<view>" --file <shot>\` each` : '',
