@@ -64,7 +64,7 @@ import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching, me
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
-import { publishHome, fetchHomes, syncStatus, homeIdOf } from '../lib/sync.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf } from '../lib/sync.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
@@ -2890,8 +2890,8 @@ function syncCutCmd(argv, env, out, err) {
   } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
-// ---------- RM-46 S1c: norn sync status | publish | fetch | cut (home/<id> on the ledger remote; the loop is S4's) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote, fetch every other home\'s into <state>/<project>/homes/<h>/; on with machine.json ledger.remote and a synced project: home.json { id } names the home)' + '\n       ' + SYNC_CUT_USAGE;
+// ---------- RM-46 S1c + S4: norn sync status | publish | fetch | watch | ring | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
+const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home)' + '\n       ' + SYNC_CUT_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
   const [sub, ...rest] = argv, f = {};
@@ -2899,7 +2899,7 @@ function syncCmd(argv, env, out, err) {
     if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
     f.machine = rest[++i];
   }
-  if (!['status', 'publish', 'fetch'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
+  if (!['status', 'publish', 'fetch', 'watch', 'ring'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
     const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
@@ -2918,9 +2918,17 @@ function syncCmd(argv, env, out, err) {
       const r = publishHome(cfg);
       if (r.error || r.refused || r.stopped || r.rejected) { err('error: ' + (r.error || r.stopped || r.rejected || `refused: a machine.json secret value in ${r.refused.join(', ')}`)); return 1; }
       out(r.noop ? 'nothing to publish' : `published home/${id}${r.sha ? ' ' + r.sha.slice(0, 10) : ''}, ${r.pushed ? 'pushed' : `not pushed (${r.offline}): the next pass retries`}`);
-      return 0;
+      return r.pushed ? ringCli(cfg, out).then(() => 0) : 0;   // SPEC 4.3: after each push
     }
-    const r = fetchHomes(cfg);
+    if (sub === 'ring') return ringCli(cfg, out).then(r => (r.error ? 1 : 0));
+    if (sub === 'watch') {   // long-running like norn dash: the same loop the dashboard server runs; Ctrl+C stops it
+      const loop = loopOf(cfg, { log: s => out(`${new Date().toISOString()} ${s}`), timers: { setTimeout, clearTimeout } });
+      out(`sync watch: home ${id}, ls-remote every ${LOOP.poll_s} s, doorbell ${doorbellOf(cfg) ? 'on' : 'off (poll only)'} (Ctrl+C stops)`);
+      for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => { loop.stop(); process.exitCode = 130; });
+      loop.start();
+      return undefined;
+    }
+    const r = syncPass(cfg);
     if (r.error) { err(`error: fetch failed, the last copies stay: ${r.error}`); return 1; }
     out(`fetched ${r.homes.length} home${r.homes.length === 1 ? '' : 's'} (${r.homes.join(' ') || '-'}), ${r.written.length} copies written`);
     if (r.gone.length) out(`gone (copies kept): ${r.gone.join(' ')}`);
@@ -2929,6 +2937,13 @@ function syncCmd(argv, env, out, err) {
     err('error: ' + e.message);
     return e instanceof ConfigError ? 2 : 1;
   }
+}
+
+// the doorbell ring of the CLI: one line, never a failed publish (the other homes poll)
+async function ringCli(cfg, out) {
+  const r = await ringHome(cfg);
+  if (r.rung) out(`doorbell rung (${r.rung.slice(0, 10)})`); else if (r.error) out(`doorbell not rung (the other homes poll): ${r.error}`); else if (r.nothing) out('doorbell: nothing pushed yet');
+  return r;
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------

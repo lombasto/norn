@@ -61,6 +61,8 @@ import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, rea
 import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
+import { ledgerConfig } from '../lib/ledger.mjs';
+import { loopOf } from '../lib/sync.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
@@ -1800,7 +1802,12 @@ data: ${JSON.stringify(l)}
   server.requestTimeout = 300000; server.headersTimeout = 15000;
   // close also stops a running account refresh and instructions rebuilds: their workers write the state-dir cache, so a caller
   // that removes the state after close (the test fixtures' temp dirs) never races them (ENOTEMPTY under load)
-  const close = async () => { sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
+  // RM-46 S4 (multi-home SPEC 4.3): the sync loop - ls-remote every 30 s + the optional doorbell; its publish and pass run as norn CLI
+  // children (metaCli), so this event loop never blocks. Off without machine.json ledger.remote; the loop itself idles until a project is synced
+  const syncCfg = machineFile ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null;
+  const syncL = syncCfg?.remote ? loopOf(syncCfg, { cli: args => metaCli(args) }) : null;
+  syncL?.start();
+  const close = async () => { syncL?.stop(); sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
     for (const r of chatStreams) r.end();
     await Promise.all([...chats.values()].map(c => c.close())); if (acct.worker) await acct.worker.terminate().catch(() => {});
     await Promise.all([...insWorkers].map(w => w.terminate()));
