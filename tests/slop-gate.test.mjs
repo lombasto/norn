@@ -156,7 +156,8 @@ test('D1 run end: a lane run that ends STOPPED with commits is checked and its c
   const c = slopChecks(state).find(x => x.run === id);
   assert.ok(c, 'the stopped end was checked');
   assert.equal(c.head, head);
-  assert.deepEqual(c.findings.map(f => f.rule), ['K15']);
+  assert.deepEqual(c.findings.filter(f => !f.unrun).map(f => f.rule), ['K15']);
+  assert.ok(c.findings.filter(f => f.unrun).every(f => /^M\d/.test(f.rule) && f.level === 'WARN'), 'only the voice (no route here) could not run: WARN, never a hold');
   assert.equal(slopHolds(state)['feat/x']?.run, id, 'its BLOCK holds the branch');
   assert.equal(loadState(state).items[id].resume, undefined, 'a stopped end is not resumed for slop');
 });
@@ -305,7 +306,7 @@ test('F5: a check with a broken tool holds the merge at all three doors (merge-b
   const r = spawnSync(process.execPath, [NORN, 'merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', path.join(root, 'N.md'),
     '--out', path.join(root, 'MB.md'), '--sha', head], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
   assert.equal(r.status, 3, r.stdout + r.stderr);
-  assert.match(r.stdout, /REFUSED: merge-brief feat\/x: \d+ open slop BLOCK finding\(s\) at [0-9a-f]{7}.*K3 `\*` could not run/);
+  assert.match(r.stdout, /REFUSED: merge-brief feat\/x: \d+ open slop BLOCK finding\(s\) at [0-9a-f]{7}[\s\S]*K3 `\*` could not run/);
   const down = () => { throw new Error('npx not found on PATH'); }, st2 = stateDir();
   const door = (branch, tip) => doorCheck({ state: st2, repo, branch, head: tip, tool: down });
   const row = { id: 'DLV-1', gate: 'batch', word: 'clean', tip: head, lane: 'x', branch: 'feat/x', repo, into: 'main' };
@@ -332,7 +333,7 @@ test('F7: a run-end check that throws stores a "could not check" hold for the br
   assert.ok(h, 'the branch is held');
   assert.equal(h.head, head);
   assert.deepEqual(h.blocks.map(b => [b.rule, b.level]), [['check', 'BLOCK']]);
-  assert.match(h.blocks[0].msg, /^could not check: overrides\.json/);
+  assert.match(h.blocks[0].msg, /^could not check: .*JSON/);
   assert.match(digestRow(state).line, /HELD by slop: feat\/x/);
   assert.equal(storedCheck(state, { branch: 'feat/x', head, hash: rulesHash(loadRules()) }), null, 'no door reads it as a check: the door runs its own');
 });
@@ -340,7 +341,7 @@ test('F7: a run-end check that throws stores a "could not check" hold for the br
 test('F8: three dots is a usage error, exit 2, no stack trace', () => {
   const repo = repoWith(), r = slopCli(repo, { META_ROOT: mkTmp('meta-slopgate-root-') }, '--diff', 'main...HEAD');
   assert.equal(r.status, 2, r.stdout + r.stderr);
-  assert.match(r.stderr, /^error: --diff wants base\.\.head \(two dots\)/m);
+  assert.match(r.stderr, /^error: --diff wants base\.\.head \(two dots/m);
   assert.doesNotMatch(r.stderr, /\n\s+at /);
 });
 

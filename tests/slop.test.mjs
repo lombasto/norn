@@ -193,7 +193,7 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   git(wt, 'rm', '-q', 'a.txt.orig'); git(wt, 'commit', '-q', '-m', 'fix');
   const c = spawnSync(process.execPath, [NORN, 'slop', 'check', '--state', state], { cwd: wt, encoding: 'utf8' });
   assert.equal(c.status, 0, c.stdout + c.stderr);
-  assert.match(c.stdout, /slop check: 0 BLOCK/);
+  assert.match(c.stdout, /slop check: nothing to check: /, 'the fix leaves the branch with no net change (SPEC 1.3 F3); the clean check is stored');
   assert.equal(mb().status, 0, 'fixed: the merge may be staged');
 });
 
