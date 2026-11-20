@@ -196,7 +196,7 @@ export function agentsTree(runs, o = {}) {
     const node = { id: r.id, name: runName(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
       model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, stop: stopOf(r),
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
-      dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log }) => ({ name, code, counts, log })) } : null,   // META-DOD 1
+      dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log, ms, suite }) => ({ name, code, counts, log, ms, suite })) } : null,   // META-DOD 1; ms + suite: the gate text (DOD-GATE-FAST)
       started: r.created, ended: endedAt(r), ran_min: Math.max(0, Math.round(((ended(r) ? Date.parse(endedAt(r)) : now) - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null,
       ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [],
       handoff: d.role === 'helper' ? null : handoffOf(r, items, ho) };

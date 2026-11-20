@@ -65,6 +65,9 @@ if (changed) {
   if (!p.run.length) { console.log('ci-suite: no test file to run'); process.exit(0); }
   files = p.run;
 }
+// NORN-DOD-GATE-FAST: the files to run and one `done` line per finished file (lib/dod.mjs gateProgress: a timed-out Done check names
+// how far it got, e.g. 209/227)
+console.log(`ci-suite: ${files.length} test file(s) to run`);
 const parFiles = files.filter(f => !SERIAL.has(path.basename(f))), serFiles = files.filter(f => SERIAL.has(path.basename(f)));
 // a ci-suite started from inside a test must run its files (no NODE_TEST_CONTEXT), and a calling run's identity stays out (suiteEnv)
 const childEnv = suiteEnv(process.env);
@@ -98,6 +101,7 @@ const runFile = (name, f, i) => new Promise(resolve => {
   const end = (status, signal) => {
     if (ended) return; ended = true; clearTimeout(cap);
     process.stdout.write(Buffer.concat(buf));
+    console.log(`ci-suite: done ${f}`);
     const hang = hung ? { file: f, name: `no exit within the ${capS} s per-file cap (killed)` } : null;
     const fails = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
       .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;

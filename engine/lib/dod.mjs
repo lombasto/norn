@@ -10,6 +10,7 @@ import { gitRun } from './slop/check.mjs';
 import { branchBase } from './slop/runend.mjs';
 import { runGate } from './mergeq.mjs';
 import { parseReady, inScope, clean } from './ready.mjs';
+import { suiteMode } from './mergebrief.mjs';
 
 // The paths CI's ci.yml ignores (its push paths-ignore; tests/dod.test.mjs pins the lists equal): a change only here is docs.
 export const DOCS_ONLY = ['**/*.md', 'docs/**', '**/docs/**', '**/*.png', '**/*.html'];
@@ -20,7 +21,8 @@ const fwd = p => String(p).replace(/\\/g, '/');
 const modeOf = policy => { const m = policy?.dod?.ready ?? 'off'; return READY_MODES.includes(m) ? m : 'off'; };
 /**
  * The Ready gate of `norn run`: { refused: reason | null, warning: text | null, dod: the spec's dod part | null }. A MERGE stage
- * brief is Norn's own (merge-brief) and exempt. dod = { mode, ok, missing, ready, gate, test_cmd, timeout_min } (null when off).
+ * brief is Norn's own (merge-brief) and exempt. dod = { mode, ok, missing, ready, gate, test_cmd, timeout_min } (null when off);
+ * gate.suite = the project's suiteMode (policy.merge.suite: changed | skip), which the Done check's gate follows.
  */
 export function readyGate({ brief, policy, stage, gate = null }) {
   const mode = modeOf(policy);
@@ -30,7 +32,7 @@ export function readyGate({ brief, policy, stage, gate = null }) {
   const ready = parseReady(text), ok = text !== null && !ready.missing.length;
   const why = text === null ? `brief ${fwd(brief ?? '-')} is not readable` : `brief ${fwd(brief)} lacks ${ready.missing.join(', ')}`;
   const msg = `${why} (policy.dod.ready = ${mode}): add the lines Scope: / Tests: / Done: (the paths the run may change, the tests that prove it, what done means)`;
-  const dod = { mode, ok, missing: ready.missing, ...(ok ? { ready } : {}), ...(gate?.cmd ? { gate: { cmd: gate.cmd, timeout_min: gate.timeout_min, ...(gate.dir ? { dir: gate.dir } : {}) } } : {}),
+  const dod = { mode, ok, missing: ready.missing, ...(ok ? { ready } : {}), ...(gate?.cmd ? { gate: { cmd: gate.cmd, timeout_min: gate.timeout_min, suite: suiteMode({ policy }), ...(gate.dir ? { dir: gate.dir } : {}) } } : {}),
     ...(policy?.dod?.test_cmd ? { test_cmd: policy.dod.test_cmd } : {}), timeout_min: policy?.dod?.timeout_min ?? 20, ...(ok ? {} : { why: msg }) };
   if (ok) return { refused: null, warning: null, dod };
   return mode === 'refuse' ? { refused: msg, warning: null, dod } : { refused: null, warning: msg, dod };
@@ -57,6 +59,23 @@ function testCmds(tests, worktree, testCmd) {
   return { cmds: [testCmd.includes('{files}') ? testCmd.replace('{files}', files.join(' ')) : `${testCmd} ${files.join(' ')}`] };
 }
 
+// NORN-DOD-GATE-FAST (test governance #73, DIR-23: never the full suite in a worker run): the Done check's gate follows the project's
+// suiteMode, as mergeq and landing do. changed: a ci-suite gate runs on the change only (`--changed <the branch's merge base>`, ci-suite's
+// pickTests; RUN-1491 timed out at file 209/227 of the full suite); skip: no gate; a gate that is not ci-suite runs as configured.
+const CI_SUITE = /\bci-suite\.mjs\b/;
+function gateJob(gate, base) {
+  if (gate.suite === 'skip') return { skipped: 'policy merge.suite = skip: the Done check runs no gate (as the batch gate and the landing check)' };
+  if (!CI_SUITE.test(gate.cmd)) return { cmd: gate.cmd, mode: 'as-configured' };
+  if (/\s--changed\b/.test(gate.cmd)) return { cmd: gate.cmd, mode: 'changed' };
+  if (!base) return { skipped: 'no merge base to run the changed-file tests from (never the full suite in a run)' };
+  return { cmd: `${gate.cmd} --changed ${base}`, mode: 'changed' };
+}
+/** a ci-suite log -> { files: the test files it runs, done: the files finished } (null, null when the log has no suite lines) */
+export function gateProgress(text) {
+  const s = String(text ?? ''), m = s.match(/^ci-suite: (\d+) test file\(s\) to run/m), none = /^ci-suite: no test file to run/m.test(s);
+  return m || none ? { files: m ? Number(m[1]) : 0, done: (s.match(/^ci-suite: done /gm) || []).length } : { files: null, done: null };
+}
+
 /**
  * Norn's Done check on the worktree's branch. dod = the spec's dod part ({ ready, gate, test_cmd, timeout_min, notes }); logDir
  * gets one log per command (<run>-dod-<name>.log). -> { ok, why, at, branch, base, head, dirty: [path], changed: [path],
@@ -81,23 +100,28 @@ export async function doneCheck({ worktree, dod, logDir, run }) {
   // a docs-only branch runs no gate: CI ignores such a push and its MERGE runs no suite (RUN-1063 / RUN-1072 timed out on README + pictures)
   const docs = bb && out.changed.length > 0 && out.changed.every(p => inScope(p, DOCS_ONLY));
   if (docs && dod.gate?.cmd) out.gate_skipped = `docs-only branch (every changed path in the CI paths-ignore: ${DOCS_ONLY.join(' ')})`;
+  const g = docs || !dod.gate?.cmd ? null : gateJob(dod.gate, bb?.base);
+  if (g?.skipped) out.gate_skipped = g.skipped;
   const jobs = [...(t.cmds || []).map((cmd, i) => ({ name: t.cmds.length > 1 ? `tests-${i + 1}` : 'tests', cmd, timeout_min: dod.timeout_min ?? 20 })),
-    ...(dod.gate?.cmd && !docs ? [{ name: 'gate', cmd: dod.gate.cmd, dir: dod.gate.dir, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20 }] : [])];
+    ...(g?.cmd ? [{ name: 'gate', cmd: g.cmd, mode: g.mode, dir: dod.gate.dir, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20 }] : [])];
   for (const j of jobs) {
     const log = path.join(logDir, `${run}-dod-${j.name}.log`), r = await runGate({ cmd: j.cmd, timeout_min: j.timeout_min, ...(j.dir ? { dir: j.dir } : {}) }, { cwd: worktree, log });
     let text = '';
     try { text = fs.readFileSync(log, 'utf8'); } catch { /* no log */ }
-    out.tests.push({ name: j.name, cmd: j.cmd, code: r.code, ok: r.ok, ms: r.ms, counts: testCounts(text), log: fwd(log), ...(r.timedOut ? { timed_out: true } : {}) });
+    out.tests.push({ name: j.name, cmd: j.cmd, code: r.code, ok: r.ok, ms: r.ms, counts: testCounts(text), log: fwd(log),
+      ...(j.mode ? { suite: { mode: j.mode, ...gateProgress(j.mode === 'as-configured' ? '' : text) } } : {}), ...(r.timedOut ? { timed_out: true, timeout_min: j.timeout_min } : {}) });
   }
   const why = [out.dirty.length ? `${out.dirty.length} uncommitted / untracked file(s)` : null, out.out_of_scope.length ? `${out.out_of_scope.length} changed path(s) outside Scope` : null,
-    ...out.tests.filter(x => !x.ok).map(x => `${x.name} exit ${x.code}${x.timed_out ? ' (timed out)' : ''}`), ...out.problems].filter(Boolean);
+    ...out.tests.filter(x => !x.ok).map(x => `${x.name} exit ${x.code}${x.timed_out ? ` (timed out after ${x.timeout_min} min${x.suite ? `: ${x.suite.mode}${x.suite.files != null ? `, ${x.suite.done}/${x.suite.files} files done` : ''}` : ''})` : ''}`), ...out.problems].filter(Boolean);
   out.ok = !why.length;
   out.why = why.length ? why.join('; ') : null;
   return out;
 }
 
 /** one line of a Done check's evidence (Agents, the feed, the resume prompt) */
-export const testLine = x => `${x.name} exit ${x.code}${x.counts ? `, ${x.counts.pass} pass ${x.counts.fail} fail` : ''}`;
+export const testLine = x => `${x.name} exit ${x.code}${x.counts ? `, ${x.counts.pass} pass ${x.counts.fail} fail` : ''}${x.suite ? ` (${suiteLine(x)})` : ''}`;
+/** a gate job's mode, files and time: "gate: changed, 6 files, 41 s" (a cut run: "209/227 files"); dash/widgets.mjs dodTest says the same */
+const suiteLine = x => `gate: ${x.suite.mode}${x.suite.files == null ? '' : `, ${x.suite.done < x.suite.files ? `${x.suite.done}/` : ''}${x.suite.files} file${x.suite.files === 1 ? '' : 's'}`}${x.ms != null ? `, ${Math.round(x.ms / 1000)} s` : ''}`;
 
 /** the resume prompt of a failed Done check: the evidence and what to do with it */
 export function dodPrompt(d, brief) {
