@@ -207,7 +207,7 @@ test('policy.dod.scope: off (and the default) launches a claude run with no deny
   fs.writeFileSync(on, fs.readFileSync(off));
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: on }), undefined);
   const row = SETTINGS.find(r => r.key === 'policy.dod.scope');
-  assert.deepEqual([row.type, row.options, sectionOf(row).join('/')], ['enum', ['off', 'on'], 'agents/iteration']);
+  assert.deepEqual([row.type, row.options, sectionOf(row).join('/')], ['enum', ['off', 'on'], 'agents/rounds']);
   assert.equal(SETTINGS.indexOf(row), SETTINGS.findIndex(r => r.key === 'policy.dod.ready') + 1, 'the row sits beside dod.ready');
 });
 

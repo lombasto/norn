@@ -1,0 +1,66 @@
+# META-PR-FAST (RM-29): the fast check of a pull request, target < 3 min wall: three jobs side by side on one Linux runner each -
+# slop (`norn slop check` of the PR's diff: exit 1 = an open BLOCK finding), norn smoke, and the tests of the files the PR changes
+# (`ci-suite --changed`: lib/cisuite.mjs pickTests). The full suite runs after the merge (ci.yml: push to main + nightly), never here.
+name: pr
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: slop check of the PR's diff
+        shell: bash
+        run: node engine/bin/norn.mjs slop check --diff "origin/${{ github.base_ref }}..HEAD"
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: norn smoke
+        shell: bash
+        run: node engine/bin/norn.mjs smoke
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Chromium's Linux SUID sandbox: the dash tests start a browser; see ci.yml for the why.
+      - name: configure the browsers' SUID sandbox helper
+        shell: bash
+        run: |
+          for b in microsoft-edge microsoft-edge-stable google-chrome google-chrome-stable chromium chromium-browser; do
+            exe=$(command -v "$b") || continue
+            dir=$(dirname "$(readlink -f "$exe")")
+            for h in msedge-sandbox chrome-sandbox chrome_sandbox; do
+              [ -f "$dir/$h" ] || continue
+              sudo chown root:root "$dir/$h" && sudo chmod 4755 "$dir/$h"
+              ls -l "$dir/$h"
+            done
+          done
+      - name: the tests of the changed files (fails only on a red not in tests/KNOWN-REDS.txt)
+        shell: bash
+        run: node engine/bin/ci-suite.mjs --changed "origin/${{ github.base_ref }}" --concurrency 4

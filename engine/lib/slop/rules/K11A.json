@@ -5,6 +5,11 @@
   "tool": "eslint",
   "title": "a new compatibility shim, by its shape: an alias map, or x.new ?? x.oldName",
   "how": "a variable named ALIAS / REDIRECT / OLD_... holding an object of literal values; x.a ?? x.oldA (a ?? whose right side is an old / legacy / deprecated key of the same object; a plain default between two keys is no finding: replay 8 of 50)",
+  "explain": {
+    "what": "The code has the shape of a shim: a map from old names to new ones, or x.newKey ?? x.oldKey.",
+    "why": "An alias map or an old-key fallback keeps an old name working after a rename. It is tech debt: the old form never goes away (CLAUDE.md, No compatibility shims).",
+    "fix": "Change every caller and every stored file to the new name, and delete the map or the fallback."
+  },
   "files": [
     "**/*.mjs",
     "**/*.js",

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // META-GTP-CI 1: run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt (GT-PARITY-PLAN 2.11).
-// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--measure OUT [--coverage]] [--cpu-prof DIR] [glob ...]
-//   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, "tests/*.test.mjs"). META-TEND TESTS: --measure writes OUT (JSON): per file its wall ms and
+// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--measure OUT [--coverage]] [--cpu-prof DIR]
+//   [--changed BASE [--max N]] [glob ...]   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, "tests/*.test.mjs", --max 20).
+//   META-PR-FAST (RM-29): --changed BASE runs only the matched files the change BASE...HEAD touches (lib/cisuite.mjs pickTests: the
+//   fast PR job; the full suite runs after the merge and nightly); --max N caps the files picked only for importing a changed file. META-TEND TESTS: --measure writes OUT (JSON): per file its wall ms and
 //   per test its ms; --coverage adds Node's built-in line coverage of engine/ per test file (engine/lib/testlean.mjs reads it).
 // The suite is one `node --test` per matched file, N at a time, plus a reporter that writes the reds; smoke.test.mjs
 // then runs alone (DEC-78). CI and the merge lanes call this script: it is the one home of the suite command.
@@ -9,11 +11,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseKnown, judge, suiteEnv } from '../lib/cisuite.mjs';
-import { procsNaming } from '../lib/testprocs.mjs';
+import { parseKnown, judge, suiteEnv, pickTests } from '../lib/cisuite.mjs';
+import { procsNaming, leakText } from '../lib/testprocs.mjs';
 import { killTree } from '../lib/runs.mjs';
+import { listProcs } from '../lib/strays.mjs';
 import { measureFile } from '../lib/testlean.mjs';
 
 const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib');
@@ -23,9 +26,11 @@ const argv = process.argv.slice(2), globs = [];
 // CI-HANG-B7F6833: the per-file wall cap - a file that has not exited by then is a hang: its process tree is killed, its output so
 // far printed and the suite fails naming it (a watchdog that turns a hang into a named red, well under the CI job's 60 min)
 const FILE_CAP_S = 600;
-let known = 'tests/KNOWN-REDS.txt', conc = '3', measure = null, coverage = false, capS = FILE_CAP_S, cpuProf = null;
+let known = 'tests/KNOWN-REDS.txt', conc = '3', measure = null, coverage = false, capS = FILE_CAP_S, cpuProf = null, changed = null, max = null;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--known') known = argv[++i];
+  else if (argv[i] === '--changed') changed = argv[++i];
+  else if (argv[i] === '--max') max = Number(argv[++i]);
   else if (argv[i] === '--measure') measure = argv[++i];
   else if (argv[i] === '--coverage') coverage = true;
   else if (argv[i] === '--concurrency') conc = argv[++i];
@@ -37,14 +42,29 @@ for (let i = 0; i < argv.length; i++) {
 if (!globs.length) globs.push('tests/*.test.mjs');
 if (!(capS > 0)) { console.error('ci-suite: --file-cap needs a number of seconds > 0'); process.exit(2); }
 if (coverage && !measure) { console.error('ci-suite: --coverage needs --measure OUT'); process.exit(2); }
+if (max != null && !changed) { console.error('ci-suite: --max needs --changed BASE'); process.exit(2); }
+if (max != null && !(max >= 0)) { console.error('ci-suite: --max needs a number of files >= 0'); process.exit(2); }
+if (changed === undefined || changed?.startsWith('--')) { console.error('ci-suite: --changed needs a base ref'); process.exit(2); }
 
 let list;
 try { list = parseKnown(fs.readFileSync(known, 'utf8')); } catch (e) { console.error(`ci-suite: ${e.message}`); process.exit(2); }
 // DEC-78: smoke.test.mjs has a < 60 s wall-clock budget that picked up contention from the parallel set, so it is left out of
 // the parallel run and runs alone (concurrency 1) after it. Both phases feed ONE red report and ONE exit code.
 const SERIAL = new Set(['smoke.test.mjs']);
-const files = [...new Set(globs.flatMap(g => fs.globSync(fwd(g))).map(fwd))].sort();
+let files = [...new Set(globs.flatMap(g => fs.globSync(fwd(g))).map(fwd))].sort();
 if (!files.length) { console.error(`ci-suite: no test file matches ${globs.join(' ')}`); process.exit(2); }
+if (changed) {
+  let diff;
+  try { diff = execFileSync('git', ['diff', '--name-only', '--relative', `${changed}...HEAD`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+  catch (e) { console.error(`ci-suite: git diff ${changed}...HEAD failed: ${String(e.stderr || e.message).trim()}`); process.exit(2); }
+  const paths = diff.split('\n').map(fwd).filter(Boolean);
+  const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+  const p = pickTests(paths, files, read, max ?? 20);
+  console.log(`ci-suite: ${paths.length} file(s) changed since ${changed}: ${p.run.length} test file(s) picked`);
+  if (p.left.length) console.log(`ci-suite: ${p.left.length} more import a changed file, left to the full suite after the merge: ${p.left.join(' ')}`);
+  if (!p.run.length) { console.log('ci-suite: no test file to run'); process.exit(0); }
+  files = p.run;
+}
 const parFiles = files.filter(f => !SERIAL.has(path.basename(f))), serFiles = files.filter(f => SERIAL.has(path.basename(f)));
 // a ci-suite started from inside a test must run its files (no NODE_TEST_CONTEXT), and a calling run's identity stays out (suiteEnv)
 const childEnv = suiteEnv(process.env);
@@ -56,7 +76,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
 // META-CI-WORKCLASS R4 (DEC-336): --cpu-prof DIR - a browser test file (it imports shot.mjs or helpers/cdp.mjs) runs with
 // NODE_OPTIONS --cpu-prof into DIR/<file>, so its node processes leave a sampling profile that names a sync call blocking the loop
 // by its JS caller (tests/helpers/profgap.mjs reads them; the Windows CI job)
-const profEnv = f => !cpuProf || !/shot\.mjs|helpers\/cdp\.mjs/.test(fs.readFileSync(f, 'utf8')) ? {}
+const isBrowserTest = f => /shot\.mjs|helpers\/cdp\.mjs/.test(fs.readFileSync(f, 'utf8'));
+const profEnv = f => !cpuProf || !isBrowserTest(f) ? {}
   : { NODE_OPTIONS: `${childEnv.NODE_OPTIONS ?? ''} --cpu-prof --cpu-prof-dir="${fwd(path.resolve(cpuProf, path.basename(f, '.mjs')))}"`.trim() };
 const runFile = (name, f, i) => new Promise(resolve => {
   const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`), mout = path.join(tmp, `${name}-${i}.measure.jsonl`);
@@ -70,7 +91,8 @@ const runFile = (name, f, i) => new Promise(resolve => {
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;
-  const cap = setTimeout(() => { hung = true; killTree(child.pid); }, capS * 1000);
+  // DEC-1088: its kills are receipted (kills.mjs: the calling run's state, else <tmp>/norn-kills.jsonl)
+  const cap = setTimeout(() => { hung = true; killTree(child.pid, { killer: `ci-suite pid ${process.pid}`, reason: `${f}: no exit within the ${capS} s per-file cap` }); }, capS * 1000);
   // a killed file ends at its exit even if a stray grandchild still holds its pipes
   child.on('exit', () => { if (hung) setTimeout(() => end(null, 'killed'), 5000).unref(); });
   const end = (status, signal) => {
@@ -79,9 +101,9 @@ const runFile = (name, f, i) => new Promise(resolve => {
     const hang = hung ? { file: f, name: `no exit within the ${capS} s per-file cap (killed)` } : null;
     const fails = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
       .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;
-    const left = procsNaming([ft]);
-    for (const p of left) killTree(p.pid);
-    const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${left.map(p => `pid ${p.pid} (${p.cmd})`).join('; ')}` } : null;
+    const procs = listProcs(), left = procsNaming([ft], procs);
+    for (const p of left) killTree(p.pid, { killer: `ci-suite pid ${process.pid}`, reason: `${f}: left alive after the file (its command line names ${fwd(ft)})` });
+    const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${leakText(left, procs)}` } : null;
     const ms = Date.now() - t0, lines = measure && fs.existsSync(mout) ? fs.readFileSync(mout, 'utf8') : '';
     resolve({ f, status, signal, fails, leak, hang, ...(measure ? { measured: measureFile(f, ms, lines, process.cwd()) } : {}) });
   };
@@ -100,6 +122,15 @@ const phase = async (name, c, files) => {
   return { name, status, quiet, fails: res.flatMap(r => r.fails), leaks: res.map(r => r.leak).filter(Boolean), hangs: res.map(r => r.hang).filter(Boolean), ms: Date.now() - t0,
     measured: res.map(r => r.measured).filter(Boolean) };
 };
+// CI 44335427788: a fresh runner's first browser launch is slow (ubuntu: 25-36 s; two at once passed the 30 s DevTools wait). With a
+// browser test in the run, one launch to the DevTools port and down goes first: the one-time cost lands here, measured, not on a
+// test's clock. A failed warm-up is logged and the suite goes on: the browser tests then fail with their own message.
+if (files.some(isBrowserTest)) {
+  const { findBrowser, warmBrowser } = await import('../lib/shot.mjs'), browser = findBrowser();
+  if (browser) { const w = await warmBrowser({ browser, tmp });
+    console.log(`ci-suite: browser warm-up ${w.ms} ms (${browser.exe})${w.error ? `, failed: ${w.error}` : ''}`);
+    if (w.ms > 5000 && !w.error && w.stderr) console.log(`ci-suite: the slow warm-up's browser stderr ends:\n${w.stderr}`); }
+}
 const runs = [];
 if (parFiles.length) runs.push(await phase('parallel', conc, parFiles));
 if (serFiles.length) runs.push(await phase('serial', '1', serFiles));

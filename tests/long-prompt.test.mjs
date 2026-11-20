@@ -49,12 +49,12 @@ test('slop resume prompt: 5 000 BLOCK hits render in a few KB - per rule and fil
   const open = [];
   for (let i = 0; i < 5000; i++) open.push({ rule: 'K1', file: i < 4900 ? 'tests/fixtures/huge.txt' : `src/f${i % 7}.mjs`, line: i + 1, msg: 'trailing whitespace', fp: 'fp' + i });
   open.push({ rule: 'K14', file: 'src/a.mjs', line: 3, msg: 'a shim', fp: 'k14' });
-  const p = slopPrompt(open, '/b/brief.md', '/s/results/RUN-1/slop-blocks.md');
+  const p = slopPrompt(open, '/b/brief.md', { listFile: '/s/results/RUN-1/slop-blocks.md' });
   assert.ok(p.length < 4096, `prompt is ${p.length} chars`);
   assert.match(p, /5001 BLOCK finding/);
-  assert.match(p, /K1 tests\/fixtures\/huge\.txt: 4900/);
-  assert.match(p, /K14 src\/a\.mjs: 1/);
-  assert.match(p, /K1 tests\/fixtures\/huge\.txt:1 trailing whitespace/, 'the first lines are listed');
+  assert.match(p, /K1 `tests\/fixtures\/huge\.txt`: 4900/);
+  assert.match(p, /K14 `src\/a\.mjs`: 1/);
+  assert.match(p, /K1 `tests\/fixtures\/huge\.txt:1` trailing whitespace/, 'the first lines are listed');
   assert.ok(!p.includes('huge.txt:4 '), 'not every line');
   assert.match(p, /\/s\/results\/RUN-1\/slop-blocks\.md/, 'names the full list');
   assert.match(p, /Your brief: \/b\/brief\.md/);

@@ -4,7 +4,7 @@
 import { gitRun, slopCheck, effectiveRules } from './check.mjs';
 import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
-import { findingLine } from './host.mjs';
+import { findingLine, explainLines } from './host.mjs';
 
 /** the merge base of a commit with main (the remote's main first: it is the fresher), or null (no main, or no common history) */
 export function mainBase(repo, head = 'HEAD', { main = 'main', remote = 'origin' } = {}) {
@@ -52,13 +52,15 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
 export const SLOP_GROUPS = 20, SLOP_FIRST = 3;
 /** the full BLOCK list, one finding a line (the file the resume prompt names) */
 export const slopList = open => open.map(f => '- ' + findingLine(f)).join('\n') + '\n';
-/** the resume prompt: per rule and file a count and the first lines, the full list in listFile, and what to do with it */
-export function slopPrompt(open, brief, listFile) {
-  const groups = new Map();
-  for (const f of open) { const k = `${f.rule} ${f.file}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
+/** the resume prompt: per rule and file a count and the first lines, the rule's what / why / fix under its first shown finding (RM-27),
+ *  the full list in listFile, and what to do with it */
+export function slopPrompt(open, brief, { listFile = null, projectDir = null } = {}) {
+  const groups = new Map(), told = new Set();
+  for (const f of open) { const k = `${f.rule} \`${f.file}\``; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }   // the path in backticks, as findingLine
   const shown = [...groups].slice(0, SLOP_GROUPS), rest = groups.size - shown.length;
+  const lines = f => ['  - ' + findingLine(f), ...(told.has(f.rule) ? [] : (told.add(f.rule), explainLines(f, { pad: '    ', projectDir })))];
   return [`Norn's slop check found ${open.length} BLOCK finding(s) your branch adds, in ${groups.size} rule / file group(s):`,
-    ...shown.flatMap(([k, fs_]) => [`- ${k}: ${fs_.length}`, ...fs_.slice(0, SLOP_FIRST).map(f => '  - ' + findingLine(f)), ...(fs_.length > SLOP_FIRST ? [`  - ... ${fs_.length - SLOP_FIRST} more`] : [])]),
+    ...shown.flatMap(([k, fs_]) => [`- ${k}: ${fs_.length}`, ...fs_.slice(0, SLOP_FIRST).flatMap(lines), ...(fs_.length > SLOP_FIRST ? [`  - ... ${fs_.length - SLOP_FIRST} more`] : [])]),
     ...(rest > 0 ? [`- ... ${rest} more group(s)`] : []),
     ...(listFile ? [`The full list: ${listFile}`] : []),
     'Fix each one in this worktree and commit; run `norn slop check` until it lists none; then end with `norn done` as before.',

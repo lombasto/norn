@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { loadState } from '../engine/lib/records.mjs';
-import { claudeRank, modelBelow, effortBelow, raiseToFloor, floorOf, floorText } from '../engine/lib/floor.mjs';
-import { applySettings, floorChanges, belowFloor, merged, settingsView, onlyChanged, split, sectionOf, SETTINGS, generatedLines } from '../engine/lib/policy.mjs';
+import { claudeRank, modelBelow, effortBelow, raiseToFloor, floorOf, floorText, CHECKIN_FLOOR } from '../engine/lib/floor.mjs';
+import { applySettings, floorChanges, belowFloor, checkinBelowFloor, merged, settingsView, onlyChanged, split, sectionOf, SETTINGS, generatedLines } from '../engine/lib/policy.mjs';
 import { profilePolicy, profileBudget, getProfile } from '../engine/lib/profiles.mjs';
 import { queueRun } from '../engine/lib/runs.mjs';
 import { policyLine } from '../engine/lib/tick.mjs';
@@ -88,7 +88,7 @@ test('Settings: a worker setting saved below the floor is refused; raising the f
   assert.ok(!row('policy.executors.review.model').options.includes('claude-sonnet-5-5'));
   assert.ok(row('policy.executors.review.model').options.includes('claude-opus-5-5'));
   assert.deepEqual(row('claude_effort').options, ['medium', 'high', 'xhigh']);
-  for (const k of ['worker_min_model', 'worker_min_effort']) assert.deepEqual(sectionOf(SETTINGS.find(s => s.key === k)), ['executors', 'floor']);
+  for (const k of ['worker_min_model', 'worker_min_effort']) assert.deepEqual(sectionOf(SETTINGS.find(s => s.key === k)), ['executors', 'minimum']);
   assert.match(generatedLines(under).executors, /Worker minimum: claude-opus-5-5/);
 });
 
@@ -104,4 +104,16 @@ test('profiles are raised to the floor in force; the check-in prompt names it', 
   assert.equal(profilePolicy(getProfile('try-it')).executors.docs.model, 'claude-sonnet-5-5', 'no floor: the profile as written');
   assert.match(policyLine(FLOOR), /WORKER MINIMUM: .*claude-opus-5-5.*medium/);
   assert.doesNotMatch(policyLine({}), /WORKER MINIMUM/);
+});
+
+test('the check-in floor (policy CHECKIN_FLOOR): a check-in model or effort below it is listed, never refused or raised', () => {
+  assert.deepEqual(CHECKIN_FLOOR, { model: 'claude-opus-5-5', effort: 'medium' });
+  assert.deepEqual(checkinBelowFloor(merged({}, {})), [], 'the defaults (Opus 5.5, medium) meet it');
+  assert.deepEqual(checkinBelowFloor(merged({ checkin_model: 'claude-fable-5-2', checkin_effort: 'high' }, {})), []);
+  const low = merged({ checkin_model: 'claude-sonnet-5-5', checkin_effort: 'low' }, {});
+  assert.deepEqual(checkinBelowFloor(low).map(r => [r.key, r.value, r.to]), [['checkin_model', 'claude-sonnet-5-5', 'claude-opus-5-5'], ['checkin_effort', 'low', 'medium']]);
+  assert.ok(applySettings(merged({}, {}), { checkin_model: 'claude-sonnet-5-5', checkin_effort: 'low' }), 'a save below it goes through (the review warns)');
+  assert.deepEqual(floorChanges(merged({}, {}), { checkin_model: 'claude-sonnet-5-5' }).raised, [], 'the worker floor does not raise it');
+  assert.deepEqual(belowFloor(merged({ ...FLOOR, checkin_model: 'claude-sonnet-5-5' }, {})).map(r => r.key).filter(k => k.startsWith('checkin_')), [], 'not a worker setting');
+  for (const k of ['checkin_model', 'checkin_effort']) assert.match(SETTINGS.find(s => s.key === k).help, /check-in floor \(claude-opus-5-5, effort medium\)/);
 });

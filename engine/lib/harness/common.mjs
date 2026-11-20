@@ -68,8 +68,10 @@ export function detectExe(exe) {
 // (gap #3: the only source of its outcome); its NOTES are its free-form log
 // META-BETA-PREP (DIR-52): the slop sentence on its own - a pack of a project whose SloppaChoppa switch is off leaves it out (setup.mjs)
 export const HEADLESS_SLOP = ' Before you end with `norn done`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
+// proc-hygiene (6): 84 `tail -f <log> | grep --line-buffered` watchers outlived the workers that started them (tail -f never exits)
+export const HEADLESS_WATCH = 'Wait on a command\'s exit, never on `tail -f | grep`; a watcher you start must end by itself (`timeout N`, `grep -m1`). ';
 export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
-  + "brief's DECISION-RULES or stop. Write your log to your NOTES file. " + DONE_LINE
+  + "brief's DECISION-RULES or stop. Write your log to your NOTES file. " + HEADLESS_WATCH + DONE_LINE
   + HEADLESS_SLOP;
 // META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
 export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP norn_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (norn_mail ack / norn mail ack MAIL-n).';
@@ -136,6 +138,30 @@ export function argSummary(input) {
   for (const k of ARG_KEYS) if (typeof input[k] === 'string' && input[k].trim()) return oneLine(input[k], 80);
   const e = Object.entries(input).find(([, v]) => typeof v === 'string' && v.trim()) || Object.entries(input)[0];
   return e ? oneLine(typeof e[1] === 'string' ? e[1] : `${e[0]} ${JSON.stringify(e[1])}`, 80) : '';
+}
+
+// RM-36: the activity view (dash/activity.mjs) reads a tool call's own fields and its result, not only the one-line summary; both
+// ride the event cut to a size the SSE stream carries for a whole run (a Read result is the file: only its head + tail + error lines)
+export const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+const INPUT_MAX = 3000;
+/** A tool call's input for the feed: its string (cut), number and boolean fields; a todo list as { content, status, activeForm }. */
+export function slimInput(input) {
+  if (!input || typeof input !== 'object') return {};
+  const o = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (typeof v === 'string') { o[k] = cut(v, INPUT_MAX); if (k === 'content') o.content_lines = v.split('\n').length; }
+    else if (typeof v === 'number' || typeof v === 'boolean') o[k] = v;
+    else if (k === 'todos' && Array.isArray(v)) o.todos = v.filter(t => t && typeof t === 'object').slice(0, 50).map(t => ({ content: cut(String(t.content ?? ''), 300), status: String(t.status ?? ''), activeForm: cut(String(t.activeForm ?? ''), 300) }));
+  }
+  return o;
+}
+const NOTABLE = /\bnot ok\b|\bfail(?:ed|ing|ure)?\b|\berror\b|✖|^FAILED |^(?:NEW|LEAK|HANG) RED:/i;
+/** A tool result's text for the feed: whole up to 4000 chars, else its head, its failure / error lines (30 at most) and its tail. */
+export function clip(text) {
+  const t = String(text ?? '');
+  if (t.length <= 4000) return t;
+  const head = t.slice(0, 1200), tail = t.slice(-2400), mid = t.slice(1200, -2400).split('\n').filter(l => NOTABLE.test(l)).slice(0, 30).map(l => cut(l, 300));
+  return [head, '…', ...mid, ...(mid.length ? ['…'] : []), tail].join('\n');
 }
 
 /** A plain-text log line -> a text event; blank lines -> nothing. */

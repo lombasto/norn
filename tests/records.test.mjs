@@ -22,7 +22,7 @@ const SPEC = {
   question: { create: [...C, ...K], answer: O, apply: [...C, ...K], supersede: [...C, ...K], withdraw: [...C, ...K], reopen: O },
   decision: { create: [...C, ...K, ...O], overrule: O, supersede: [...C, ...K] },
   directive: { create: O, done: [...C, ...K], supersede: [...C, ...K, ...O], revoke: O },
-  lane: { create: [...O, ...C, ...K], park: [...C, ...K], unpark: [...C, ...K], done: [...C, ...K], archive: [...O, ...C], unarchive: [...O, ...C] },   // META-OOTB F-1: the owner opens a lane (norn lane new, the dashboard's first task) - additive
+  lane: { create: [...O, ...C, ...K], park: [...C, ...K], unpark: [...C, ...K], done: [...C, ...K], archive: [...O, ...C, ...K, 'tick'], unarchive: [...O, ...C] },   // META-OOTB F-1: the owner opens a lane (norn lane new, the dashboard's first task) - additive; lifecycle.mjs: the check-in archives an idle / stopped lane, the tick by its rules
   run: { start: L, end: L, lost: [...L, ...S], kill: [...O, ...C], review: [...K, ...C, ...L] },   // META-CHECKIN-DIET R1: the launcher reviews a routine end (checkins.mjs)
 };
 
@@ -82,7 +82,7 @@ test('role table: every kind x event x role is allowed or refused exactly as SPE
 });
 
 test('every role in the enum is one of the design roles (+ status pass)', () => {
-  assert.deepEqual([...ROLES].sort(), ['checkin', 'controller', 'dashboard', 'launcher', 'migration', 'owner', 'status', 'worker']);
+  assert.deepEqual([...ROLES].sort(), ['checkin', 'controller', 'dashboard', 'launcher', 'migration', 'owner', 'status', 'tick', 'worker']);
 });
 
 // Illegal transitions (from-state wrong, or citation wrong) - each refused with exit code 2 and nothing appended.

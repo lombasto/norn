@@ -7,11 +7,12 @@
 // one day-aware clock ("today 21:41", "Fri 02:13") with the zone named once, plain names (lane title, else the lane humanized).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, fold, recordsFile } from './records.mjs';
+import { readEvents, fold, recordsFile, laneNameIn, homeOf, PRIORITIES } from './records.mjs';
 import { queueOf, readiness } from './runs.mjs';
 import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { mergeQueue } from './mergeq.mjs';
+import { deliverablesView, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
@@ -33,7 +34,7 @@ export const approx = min => (min < 60 ? `~${Math.max(5, Math.round(min / 5) * 5
 const cap1 = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const evTs = (r, ev) => { const h = [...(r.history || [])].reverse().find(x => x.ev === ev); return h ? Date.parse(h.ts) : null; };
 const endTs = r => evTs(r, 'end');
-const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
+export const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 const onClaude = d => !d?.executor || ['claude', 'fake'].includes(d.executor);
 const idn = id => Number(String(id).slice(4)) || 0;
 
@@ -154,10 +155,10 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   const t = String(term), byId = id => runs.find(r => r.id === id);
   const name = id => { const r = byId(id); return r ? label({ ...r.data, id }) : id; };
   let m;
-  if ((m = t.match(/^after run:(RUN-\d+):(\w+) unmet$/))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
-  if ((m = t.match(/^after q:(Q-\d+):(\w+) unmet$/))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
-  if ((m = t.match(/^after dlv:(DLV-\d+):\w+ unmet$/))) return `waits for finished work ${m[1]} to reach main`;
-  if ((m = t.match(/^after dir:(DIR-\d+):\w+ unmet$/))) return `waits for instruction ${m[1]} to be done`;
+  if ((m = t.match(/^after run:(RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
+  if ((m = t.match(/^after q:(Q-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
+  if ((m = t.match(/^after dlv:(DLV-(?:[a-z][a-z0-9]{0,15}-)?\d+):\w+ unmet$/))) return `waits for finished work ${m[1]} to reach main`;
+  if ((m = t.match(/^after dir:(DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+):\w+ unmet$/))) return `waits for instruction ${m[1]} to be done`;
   if ((m = t.match(/^not_before (\S+)$/))) return `not before ${dayClock(Date.parse(m[1]), now)}`;
   if (t.startsWith('PAUSED')) return 'held: paused';
   if (t === 'usage: RATE_OK=0') return 'held: usage over the hourly cap';
@@ -166,8 +167,8 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return `held: API spend $${m[1]} in 24 h reached the $${m[2]} daily cap`;
   if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`;
   if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
-  if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
+  if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${/^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
+  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${/^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
   if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
@@ -220,7 +221,7 @@ const LIVE = ['queued', 'running', 'claimed'];
  *   merges: { rows (mergeQueue order), error? }, roadmap: [{ id, title, links }], lanes: [{ name, title }], now, zone })
  *   -> { upnext, chains, landing, forecast, method, zone }
  */
-export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
+export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, backlog = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
   runs = runs.filter(r => r.kind === 'run');
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
@@ -260,7 +261,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     return mergeMin === null ? no('c', c.id, `${name} waits for a merge and no merge has been timed yet`) : v + mergeMin * MIN;
   };
   // a walk term that waits for another run to END: its folder held by a live run, a MERGE held while its lane has a live writer
-  const writerOf = t => String(t).match(/^worktree held by (RUN-\d+)/)?.[1] ?? String(t).match(/^MERGE .*\blive run (RUN-\d+)/)?.[1] ?? null;
+  const writerOf = t => String(t).match(/^worktree held by (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/)?.[1] ?? String(t).match(/^MERGE .*\blive run (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/)?.[1] ?? null;
   const startOf = id => {
     if (sta.has(id)) return sta.get(id);
     sta.set(id, null);
@@ -453,22 +454,26 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
   const costed = qc.filter(u => u.estimate.cost !== null);
   const forecast = forecastOf({ status, budget, now, queuedCost: { pct: costed.reduce((s, u) => s + u.estimate.cost, 0), n: costed.length, of: qc.length, rough: costed.some(u => u.estimate.costBasis === 'rough') } });
 
-  return { project, now: new Date(now).toISOString(), zone, upnext, chains, landing, landing_error: merges?.error ?? null, forecast, method: ESTIMATE_METHOD };
+  // MERGE-FIRST: the merge backlog line and the priorities a queued run may be re-queued at (the Up next priority control)
+  return { project, now: new Date(now).toISOString(), zone, upnext, chains, landing, landing_error: merges?.error ?? null, backlog, priorities: PRIORITIES, forecast, method: ESTIMATE_METHOD };
 }
 
 /** gather the inputs from a state dir and build the plan. o: { state, project (loaded project.json), budget, now, git } */
 export function loadPlan({ state, project = null, budget = {}, now = Date.now(), git } = {}) {
   const runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
   let lanes = [];
-  try { lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: l.data?.name ?? String(l.id).slice(2), title: l.data?.title ?? null })); } catch { /* none */ }
+  try { const home = homeOf(state)?.id; lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null })); } catch { /* none */ }
   const ready = readiness(state, { now });
   let status = '';
   try { status = fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'); } catch { /* not written yet */ }
-  let merges = null;
-  if (project) { try { merges = mergeQueue({ stateDir: state, project, now, ...(git ? { git } : {}) }); } catch (e) { merges = { rows: [], error: String(e.message).slice(0, 300) }; } }
+  let merges = null, backlog = null;
+  if (project) {
+    try { const view = deliverablesView({ stateDir: state, project, now, ...(git ? { git } : {}) }); backlog = mergeBacklog(view.rows, { now, max: backlogMax(project.policy) }); merges = mergeQueue({ stateDir: state, project, now, view, ...(git ? { git } : {}) }); }
+    catch (e) { merges = { rows: [], error: String(e.message).slice(0, 300) }; }
+  }
   let roadmap = [];
   try { roadmap = Object.values(loadRoadmap(state).items).filter(i => i.state !== 'dropped').map(i => ({ id: i.id, title: i.title, links: i.links })); } catch { /* none */ }
-  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, roadmap, lanes, now });
+  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, backlog, roadmap, lanes, now });
 }
 
 // ---------- text (norn plan, norn_plan) ----------
@@ -483,7 +488,7 @@ export function formatPlan(p) {
     L.push(`  ${c.steps.map(s => `${GLYPH[s.shape]} ${s.label}`).join(' > ')}   ${c.finished ? c.finish.word : `finish ${c.finish.word}${c.finish.note ? ` ${c.finish.note}` : ''}`}${c.rm ? `   [${c.rm.id} ${c.rm.title}]` : ''}`);
     if (c.broken) L.push(`    ! ${c.broken}`);
   }
-  L.push('', 'Landing next');
+  L.push('', `Landing next${p.backlog ? ` (${p.backlog.text})` : ''}`);
   if (!p.landing.length) L.push(`  nothing is heading to main${p.landing_error ? ` (${p.landing_error})` : ''}`);
   p.landing.forEach((l, i) => L.push(`  ${i + 1}. ${l.label} (${l.id})  ${l.word}`));
   const f = p.forecast;

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, recordAsync, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, nodePrefix } from './records.mjs';
+import { record, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, idPrefix } from './records.mjs';
 import { loadRoadmap, world, goneLinks, planEvents, checkLinks, buildTree, writeRoadmapView, writeRoadmapViewAsync, roadmapViewPath } from './roadmap.mjs';
 import { laneSteps, LANE_IO } from './lanenew.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';
@@ -26,7 +26,7 @@ const ASYNC_IO = { ...LANE_IO.async, write: (f, t) => fs.promises.writeFile(f, t
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const sh = (cwd, args) => {
-  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20 });
+  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 64 << 20 });
   return r.status === 0 ? r.stdout.replace(/\r\n/g, '\n').trimEnd() : null;
 };
 export const slugOf = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -310,7 +310,7 @@ export function importLegacy(stateDir, { project = {}, file, sections = [], git 
   const ok = term => !goneLinks([term], W).length;
   let refs = [];
   if (W.repo) {
-    const r = spawnSync('git', ['-C', W.repo, 'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'], { encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
+    const r = spawnSync('git', ['-C', W.repo, 'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'], { encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 1 << 26 });
     refs = [...new Set(String(r.stdout || '').split(/\r?\n/).map(s => s.trim().replace(/^origin\//, '')).filter(s => s && !/HEAD$/.test(s)))];
   }
   // a doc is looked up under the root, beside the file, then beside the root (notes kept in sibling dirs of the checkout)
@@ -507,7 +507,7 @@ function openFor(stateDir, { project, by, answers = {} }) {
   fs.mkdirSync(stateDir, { recursive: true });
   let p = proposalOf(stateDir), created = false;
   if (!p || p.state !== 'open') {
-    const pfx = nodePrefix(stateDir), n = Math.max(0, ...proposals(stateDir).map(x => num(x.id))) + 1;
+    const pfx = idPrefix(stateDir), n = Math.max(0, ...proposals(stateDir).map(x => num(x.id))) + 1;
     const dir = path.join(stateDir, 'adopt', `ADP-${pfx ? pfx + '-' : ''}${n}`);
     fs.mkdirSync(dir, { recursive: true });
     const text = JSON.stringify(facts, null, 1) + '\n', file = path.join(dir, 'facts.json');

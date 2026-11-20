@@ -62,11 +62,11 @@ test('the demo fixture project.json validates and expands with no unresolved var
   assert.deepEqual([...new Set(left)].filter(v => !v.startsWith('${env:')), ['${lane}']);
 });
 
-test('machine.json: schema checked, ${meta} / ${home} expanded in project configs', () => {
+test('machine.json: schema checked, ${norn} / ${home} expanded in project configs', () => {
   const d = tmp(), f = path.join(d, 'machine.json');
   const m = { schema: 1, home: H, claude: { exe: '/bin/claude', version: null, projects_dir: H + '/.claude/projects', config_dir: H + '/.claude' },
     node: '/bin/node', scheduler: { kind: 'cron', name: 'norn-tick', interval_min: 15 }, dash: { port: 8737, bind: '127.0.0.1' },
-    projects: [{ name: 'demo', config: '${meta}/projects/demo/project.json' }] };
+    projects: [{ name: 'demo', config: '${norn}/projects/demo/project.json' }] };
   fs.writeFileSync(f, JSON.stringify(m));
   assert.equal(loadMachine(f, { meta: M }).projects[0].config, '/mm/meta/projects/demo/project.json');
   fs.writeFileSync(f, JSON.stringify({ ...m, dash: { port: 'x', bind: '127.0.0.1' } }));
@@ -94,7 +94,7 @@ test('META-ONBOARD S3: machine.json may carry projects_home (${home} expands)', 
 test('META-ONBOARD cut-over expand: local/compat.json maps an old project.json to its new home (loadProject follows it)', () => {
   const meta = tmp(), oldD = path.join(meta, 'projects', 'demo'), newD = path.join(tmp(), 'demo');
   fs.mkdirSync(oldD, { recursive: true }); fs.mkdirSync(newD);
-  const oldF = write(oldD, proj({ rules_read_whole: ['${meta}/projects/demo/R.md'] })), newF = write(newD, proj({ rules_read_whole: ['${project_dir}/R.md'] }));
+  const oldF = write(oldD, proj({ rules_read_whole: ['${norn}/projects/demo/R.md'] })), newF = write(newD, proj({ rules_read_whole: ['${project_dir}/R.md'] }));
   const fw = p => path.resolve(p).split(path.sep).join('/');
   assert.equal(loadProject(oldF, { home: H, meta }).file, fw(oldF), 'no compat: the file as given');
   const c = { swap: '2026-11-11T17:00:00.000Z', runs: ['demo RUN-1'], paths: [{ from: process.platform === 'win32' ? fw(oldF).toUpperCase() : fw(oldF), to: fw(newF) }], retained: [fw(oldF)] };

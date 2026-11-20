@@ -11,23 +11,33 @@ import { resultPath } from '../lib/result.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { createSessions } from './sessions.mjs';
 import { createFeeds, decodeCursor } from './feed.mjs';
+import { briefItems, namedDone } from './activity.mjs';
 import { createStreams } from './stream.mjs';
 import { createChat, readThread, threadFlushed, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
-import { ActError, showRoots, outboxDir, threadFile } from '../lib/chatact.mjs';
+import { ActError, showRoots, insideRoots, outboxDir, threadFile } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
-import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
+import { profileChoices, profileChanges, profileBudget, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy, REQUIRED_CAPS } from '../lib/policy.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
+import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS } from '../lib/runs.mjs';
+import { hbPath, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
+import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
+import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
-import { overlapFile, overlapOn } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
+import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
+import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
+import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
+import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
+import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
+import { loadMail } from '../lib/mail.mjs';
+import { findTranscriptA } from '../lib/harness/claude.mjs';
+import os from 'node:os';
 import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
@@ -37,14 +47,15 @@ import { loginHolds, authFile } from '../lib/authguard.mjs';
 import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
 import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
-import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
-import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, laneNameOf } from '../lib/adopt.mjs';
+import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
+import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
+import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, AGENT_FILES, laneNameOf } from '../lib/adopt.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
 import { runName } from '../lib/names.mjs';
 import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
-import { handEdits, takeBack, keepEdit } from '../lib/handedits.mjs';
+import { handEdits, takeBack, keepEdit, handEditDiff } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
 import { costRollup, accountUsage, weekStart, nextReset, parseReset } from '../lib/cost.mjs';
 import { Worker } from 'node:worker_threads';
@@ -52,19 +63,25 @@ import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, rea
 import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
+import { ledgerConfig } from '../lib/ledger.mjs';
+import { loopOf } from '../lib/sync.mjs';
+import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
 import { isNeed, needsYou } from './terms.mjs';
-import { docsList as docsListOf } from './docparts.mjs';
+import { docsList as docsListOf, docKey } from './docparts.mjs';
+import { pathsIn } from './prose.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
-import { openCardsAsync } from '../lib/rules.mjs';
+import { enforceCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
-import { testsView, testsFiles, suiteOf } from '../lib/testscli.mjs';
+import { testsView, testsFiles, suiteOf, testsPart } from '../lib/testscli.mjs';
+import { repoFile } from '../lib/testtimes.mjs';
+import { projectHome, subdirOf, inDir } from '../lib/monorepo.mjs';
 import { guardChips } from '../lib/guard.mjs';
 import { usageWeek } from '../lib/usageweek.mjs';
 import { classCost } from '../lib/classcost.mjs';
@@ -73,8 +90,11 @@ import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
-import { slopHolds, openBlocks, slopFiles } from '../lib/slop/host.mjs';
+import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
+import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
+import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
+import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -98,7 +118,7 @@ const line = s => String(s).replace(/[\r\n\u0000-\u001f]+/g, ' ').trim();
 const read = (p, fallback = '') => { const t = readText(p); return t === null ? fallback : t; };
 /** the async read: missing -> fallback; the text lands in the request's snapshot (a second read() of it is a lookup) */
 const readA = async (p, fallback = '') => { const t = await readTextA(p); return t === null ? fallback : t; };
-const NO_STATE = /^\/api\/(sessions(\/|$)|remote$|adopt\/repos$)/;   // GET routes that read no project state: no snapshot to prime
+const NO_STATE = /^\/api\/(sessions(\/|$)|remote$|adopt\/repos$|timing$)/;   // GET routes that read no project state: no snapshot to prime
 async function tail(p, count) {
   const text = await readA(p, null);
   if (text === null) return [];
@@ -216,7 +236,7 @@ export function createDashboard(o) {
   const one = url => pick(url)[0];
   // st(p): the request snapshot's fold (primed on fs.promises by primeFor) - the sync loadState only outside a snapshot
   const st = p => snap.getStore()?.folds.get(p.state) ?? loadState(p.state);
-  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {});
+  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {}, { role: 'dashboard' });
   const hbAge = p => id => { const x = statS(hbPath(p.state, id)); return x ? Date.now() - x.mtimeMs : Infinity; };
   // the live hand-off state (lanes.mjs handoffOf, one home): wrote = the run's own result.json says HANDOFF, written since its start
   // (result.mjs readResult's rule); talked = its session's first model event (agents.mjs runTalked, the tree's tail cache)
@@ -232,6 +252,16 @@ export function createDashboard(o) {
     return hoOf(p, r);
   }
   const runsOf = s => Object.values(s.items).filter(i => i.kind === 'run');
+  // RM-46 S3 (SPEC 3.3, 4.7): a synced project's row of another home = { home } (its "on b" chip) + the pending events on it, each with
+  // the primary that has not committed it yet ("answered on a, pending b"); an own row or a solo project adds nothing
+  function foreign(p, s, id) {
+    const h = homeIdOf(p.state);
+    if (!h) return {};
+    const w = homeOfId(id, h.bare_home), pd = s.pending?.[id] || [];
+    return { ...(w && w !== h.id ? { home: w } : {}), ...(pd.length ? { pending: pd.map(e => ({ ev: e.ev, home: e.home, ts: e.ts, primary: w })) } : {}) };
+  }
+  // a lane name another home wrote (its own x) as this home types it (b/x)
+  const laneFrom = (p, id, lane) => { const h = homeIdOf(p.state); return !h || typeof lane !== 'string' ? lane : laneNameIn(laneIdIn(lane, homeOfId(id, h.bare_home)), h.id); };
   // the records fold, re-read only when a records file changed (the feed head asks every poll)
   const folds = new Map();
   function stCached(p) {
@@ -245,24 +275,37 @@ export function createDashboard(o) {
   const statSig = f => fs.promises.stat(f).then(x => x.mtimeMs + ':' + x.size, () => '-');
   async function stAsync(p) {
     const sn = snap.getStore(), hit = sn?.folds.get(p.state); if (hit) return hit;
-    const key = (await Promise.all(['question', 'run'].map(k => statSig(recordsFile(p.state, k))))).join('|');
+    // RM-46 S3: a synced dir folds the other homes' copies too (the fetch rewrites them): their records + relay files are in the key
+    const hs = (await fs.promises.readdir(path.join(p.state, 'homes'), { withFileTypes: true }).catch(() => [])).filter(d => d.isDirectory()).flatMap(d => ['records.jsonl', 'relay.jsonl'].map(x => path.join(p.state, 'homes', d.name, x)));
+    const key = (await Promise.all([...['question', 'run'].map(k => recordsFile(p.state, k)), path.join(p.state, 'relay.jsonl'), ...hs].map(statSig))).join('|');
     let c = folds.get(p.state);
     if (!c || c.key !== key) { c = { key, st: await loadStateAsync(p.state) }; folds.set(p.state, c); }
     sn?.folds.set(p.state, c.st);
     return c.st;
   }
   /** a GET's snapshot: every project's records fold + its settings / status files, read concurrently on fs.promises */
-  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED / tick.lock flags
+  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED records (pausemode.mjs), the tick.lock flag
   const primeFor = ps => Promise.all(ps.flatMap(p => [
     stAsync(p).then(x => { const live = runsOf(x).filter(r => r.state === 'running');
       // handoffOf's reads (hoHooks): each running run's result.json, a running hand-off resume's transcript / rollout tail
       return Promise.all([prime({ files: [...auditFiles(p, x.items), ...live.map(r => resultPath(p.state, r.id))], stats: live.map(r => hbPath(p.state, r.id)) }),
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), loadPath(p.state), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
-      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), loadPath(p.state), laneRulesFile(p.state), lanePathsFile(p.state), ...pausedFiles(p), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
+  // RM-37: the pause in force (pausemode.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
+  // pause, the paused hand-offs; the modes and their one-line effects (the header's pause menu)
+  const pauseOfP = p => { for (const f of pausedFiles(p)) { const raw = readText(f); if (raw !== null) return parsePause(raw, f); } return null; };
+  const pauseView = ps => {
+    const p = ps.find(x => pauseOfP(x)) ?? null, pz = p ? pauseOfP(p) : null, runs = ps.flatMap(x => runsOf(st(x)).map(r => ({ ...r, project: x.name })));
+    const row = r => ({ run: r.id, lane: r.data.lane ?? null, project: r.project, stage: r.data.stage ?? null });
+    return { pause: pz ? { ...pz, project: p.name, says: PAUSE_MODES[pz.mode].says, checkins: stopsCheckins(pz) } : null,
+      modes: Object.entries(PAUSE_MODES).map(([mode, m]) => ({ mode, ...m })),
+      waiting: { held: holdsStarts(pz) ? runs.filter(r => r.state === 'queued').length : 0, asked: runs.filter(r => pauseState(r) === 'asked').map(row),
+        handoffs: runs.filter(r => pauseState(r) === 'handoff').map(row) } };
+  };
 
   // ---------- budget (machine) + policy (project) ----------
   function budgetRaw() { return read(o.budgetFile, '{}'); }
@@ -289,7 +332,7 @@ export function createDashboard(o) {
       settings: settingsView(s.view, { quietRule, quietFile: o.quietFile, ...exExtra(p) }), sections: SECTIONS, generated: generatedLines(s.view, exExtra(p)), targets,
       // F-6: each profile as Settings changes for this project's executors + role agents - the form is filled, Save stays the human step
       profiles: profileChoices(profileFor(p, s)), profile_now: profileNow(p, s), billing: billingChoices(), billing_now: s.budget?.billing ?? null,
-      notify: notifyInfo(p) };
+      notify: notifyInfo(p), checkin_below: checkinBelowFloor(s.view) };   // RM-26: the Settings notice while a check-in setting is below the floor
   }
   // META-PROFILE-BUG R1: a profile routes to the Codex executors this machine has (setup found codex) and the project did not switch
   // off, never to a retired one (retiredExecutors: its own cap 0 while Codex is open); the role names are the project's own agents
@@ -306,12 +349,13 @@ export function createDashboard(o) {
     const own = new Set([...Object.entries(d.data.values ?? {}).filter(([k, v]) => differs(k, v)).map(([k]) => k), ...(d.data.own ?? [])]);
     return { kind: 'profile', name: prof.name, label: prof.label, cost: d.data.cost ?? 'balanced', at: d.created, own: own.size };
   }
-  /** Review changes: each change in plain words (the setting's label, from -> to) + flags: a recorded ruling names the key, a retired executor */
+  /** Review changes: each change in plain words (the setting's label, from -> to) + flags: a recorded ruling names the key, a retired
+   *  executor, a check-in model / effort below the check-in floor (policy CHECKIN_FLOOR: a warning, the save is not refused) */
   function reviewSettings(p, changes, version) {
     const s = settingsState(p);
     if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
     const fc = floorChanges(s.view, changes, exExtra(p)), asked = changes; changes = fc.changes;   // the worker floor raises the settings it leaves below it
-    const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget);
+    const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget), lowCheckin = checkinBelowFloor(updated);
     const rulings = Object.values(st(p).items).filter(i => (i.kind === 'directive' && i.state === 'active') || (i.kind === 'decision' && i.state !== 'overruled' && !capsRec(i)));
     const words = v => (v === null || v === undefined ? 'unset' : Array.isArray(v) ? v.join(', ') || '(none)' : String(v));
     const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -327,6 +371,7 @@ export function createDashboard(o) {
       const capX = retired.find(x => capOfExecutor(x) === k);
       if (capX && to > 0) flags.push(`re-enables retired ${capX} (${k} is 0)`);
       if (!Object.hasOwn(asked, k)) flags.push('raised to the worker minimum');
+      for (const r of lowCheckin) if (r.key === k) flags.push(`${r.value} is ${r.text}`);
       const label = row?.label ?? k;
       return { key: k, label, from, to, text: `${label}: ${words(from)} -> ${words(to)}`, flags };
     });
@@ -345,6 +390,7 @@ export function createDashboard(o) {
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
   // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
   // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
+  const RESOLVED_MAX = 20;   // INBOX-REPLIES: the Resolved view's newest answered / applied Qs per project
   const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
@@ -360,22 +406,35 @@ export function createDashboard(o) {
       if (h) out.push(h); }
     // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
     for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited, generated: e.generated,
+      verdict: e.verdict, recommend: e.recommend, why: e.why, lines: e.lines, diff: e.diff,   // RM-35: what changed and who probably did it
       title: `${path.basename(e.file)} changed outside Norn: Norn has stopped updating it` });
     // OOTB-R2 N-5: runs held for a login that is down = ONE needs-you row per harness, carrying the command the human runs
     for (const h of loginHolds(p.state, items, { entryOf: x => p.executors?.[x] }))
       out.push({ type: 'login', id: 'login-' + h.harness, project: p.name, harness: h.harness, cls: h.cls, command: h.command, runs: h.runs, line: h.line, created: h.since,
         title: h.title });   // META-AUTH-VENDOR: a vendor hold names the incident and says no login is needed
     const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));   // META-Q-RECONCILE R1: the hint "already answered in DEC-m"
-    for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
+    // INBOX-REPLIES: + the source the options came from, the thread (owner messages, controller replies, revisions), the ruling to confirm
+    for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: laneFrom(p, q.id, q.data.lane), ...foreign(p, s, q.id), title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
+      origin: q.data.origin ?? null, thread: threadOf(q), waiting: unanswered(q).length, proposal: rulingOf(q),
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
+    // RM-28 S1: a finished planner run = ONE decision card (its summary, plan, a Queue now / Later / Drop per open stage)
+    await primeProposals(s.items);
+    for (const x of proposalsOf(s.items, loadRoadmap(p.state))) out.push({ type: 'proposal', id: x.run, project: p.name, lane: x.lane, item: x.item, title: `Decide: ${x.lane} plan`,
+      summary: x.summary, plans: x.plans, stages: x.stages, open: x.open, created: x.ended });
     // META-TEND P3: the repeat detector's approval cards (one per cluster, ranked): approve = a directive the check-in turns into a brief
-    for (const c of await openCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
+    for (const c of await enforceCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, asked: c.asked, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
     for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
-    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
+    // INBOX-REPLIES: the Resolved view - answered / applied Qs, newest first, each with its thread kept (for information: never a need)
+    for (const q of items.filter(i => i.kind === 'question' && ['answered', 'applied'].includes(i.state)).sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, RESOLVED_MAX))
+      out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
+    // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in
+    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) { const q = l.park?.q ? s.items[l.park.q] : null;
+      out.push({ type: 'parked', id: l.id, lane: laneName(l.id, p.state), project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
+        ...(q?.state === 'answered' ? { ruled: { q: q.id, choice: q.answer?.choice ?? null, text: q.answer?.text ?? null, at: q.updated } } : {}) }); }
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
     let adv = [];
     try { adv = (await adviceOf(p)).cards; } catch { adv = []; }
@@ -384,30 +443,119 @@ export function createDashboard(o) {
       out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
+  // RM-30 S1: what the prose renderer (prose.mjs) needs per project: its lane names, its GitHub repo (PR / commit links; the origin is
+  // read once per root) and the Docs key of each path the Inbox texts name that the Docs reader can show (a scan row or a project doc)
+  const repoOf = new Map();
+  const repoSlug = p => { if (!repoOf.has(p.root)) repoOf.set(p.root, new Promise(r => execFile('git', ['-C', p.root || '.', 'remote', 'get-url', 'origin'], { timeout: 5000, windowsHide: true }, (e, out) => r(e ? null : githubRepo(String(out).trim()))))); return repoOf.get(p.root); };
+  async function proseOf(p, items) {
+    const home = homeIdOf(p.state)?.id, lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane').map(i => laneNameIn(i.id, home));
+    const texts = items.flatMap(i => [i.body, i.title, i.why, i.answer?.text, i.recommend?.why, i.file && `\`${i.file}\``, i.card?.why, ...(i.options || []).flatMap(o => [o.text ?? o.t, o.cost ?? o.c])]).filter(x => typeof x === 'string');
+    const want = [...new Set(texts.flatMap(pathsIn))], docs = {};
+    if (want.length) {
+      const rows = [...(insCache(p).v?.rows || []).filter(r => r.exists).map(r => ({ key: r.id, path: r.path })), ...docsList(p).filter(d => d.exists).map(d => ({ key: docKey(d.i), path: d.path }))];
+      const byPath = new Map(rows.map(r => [fwdLow(r.path), r.key])), byName = new Map();
+      for (const r of rows) { const b = path.posix.basename(fwdLow(r.path)); byName.set(b, byName.has(b) ? null : r.key); }   // a name two files share opens neither
+      for (const w of want) { const k = /[\\/]/.test(w) ? byPath.get(fwdLow(path.resolve(p.root || '.', w))) : byName.get(w.toLowerCase()); if (k) docs[w] = k; }
+    }
+    return { lanes, repo: await repoSlug(p), docs };
+  }
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
+    const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
+    return lanesView(s, { all, hbAge: hbAge(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
   const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
+  // RM-34: each Lanes row's driver (purpose.mjs: the objective + where it is written); the briefs it reads are primed by primeBriefs
+  const briefsDirOf = p => path.resolve(p.briefs_dir || path.join(p.state, 'briefs'));
+  const briefHead = f => (readText(f) ?? '').split(/\r?\n/).find(l => /^#/.test(l)) ?? null;
+  const primeBriefs = ps => Promise.all(ps.map(p => { const items = st(p).items, home = homeIdOf(p.state)?.id;
+    return prime({ files: Object.values(items).filter(l => l.kind === 'lane').flatMap(l => laneBriefFiles(laneNameIn(l.id, home), items, briefsDirOf(p))) }); }));
+  // MAIL-29: its type (purpose.mjs laneType) and where its output goes (laneOutput): PR state from the deliverables cache (the child
+  // process keeps it; never git here), the branch tips' subjects as the commit-type signal, documents to the run's notes folder
+  const notesOf = (p, lane, items) => {
+    const n = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.notes).sort((a, b) => b.id.localeCompare(a.id, 'en', { numeric: true }))[0]?.data.notes;
+    const dir = n ? (/\.md$/i.test(n) ? path.dirname(n) : n) : path.join(p.state, 'notes', lane), rel = path.relative(path.resolve(p.root || path.dirname(p.state)), path.resolve(dir));
+    return (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : dir).replace(/\\/g, '/') + '/';
+  };
+  function withDriver(p, rows) {
+    const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name }, dl = deliverablesOf(p).rows || [];
+    return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
+      return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
+  }
+  // RM-39: each run's progress against its brief, pace, why slow and alarms in words (progress.mjs). The files are read on
+  // fs.promises first (the brief, NOTES, every session's transcript - tailed into the shared cache under its own key), then the
+  // derivation runs on what was read. CPU = the os.cpus() deltas between two reads of the dash (no timer, no wait; null at first),
+  // sampled at most every 15 s: os.cpus() costs real time on a loaded Windows box (a browser test saw 2 s of it in 23 s, unthrottled)
+  let cpuPrev = null, cpuPct = null;
+  const cpuNow = () => {
+    if (cpuPrev && Date.now() - cpuPrev.at < 15000) return cpuPct;
+    const t = os.cpus().reduce((s, c) => { const x = c.times; s.idle += x.idle; s.all += x.user + x.nice + x.sys + x.idle + x.irq; return s; }, { idle: 0, all: 0, at: Date.now() });
+    if (cpuPrev && t.all > cpuPrev.all) { cpuPct = 100 * (1 - (t.idle - cpuPrev.idle) / (t.all - cpuPrev.all)); if (metaRootDir) noteCpu(cpuPct, 'dash', { file: cpuLogFile(metaRootDir) }); }
+    cpuPrev = t;
+    return cpuPct;
+  };
+  const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
+  const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
+  /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
+  async function progressOf(p, ids, ctxOf = () => null) {
+    const items = st(p).items, rs = [...new Set(ids)].map(id => items[id]).filter(r => r?.kind === 'run' && r.data?.brief && r.data.lane && r.data.role !== 'helper');
+    if (!rs.length) return new Map();
+    const sess = new Map(rs.map(r => [r.id, sessionsOf(r, items)])), files = new Map();
+    await Promise.all([prime({ files: rs.flatMap(r => [r.data.brief, r.data.notes].filter(Boolean)) }),
+      ...[...new Set([...sess.values()].flat())].map(async r => { const f = await transcriptOf(r); if (f) { files.set(r.id, f); await tailA(f, pview(f), workInit, onWork); } })]);
+    let mails = [];
+    try { mails = Object.values(loadMail(p.state)); } catch { mails = []; }
+    const gc = guardChips(p.state), cpu = cpuNow(), out = new Map();
+    for (const r of rs) {
+      const work = mergeWork(sess.get(r.id).map(x => files.has(x.id) ? cache.get(PKEY + files.get(x.id)) : null));
+      out.set(r.id, runProgress(r, { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
+        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] }));
+    }
+    return out;
+  }
+  // RM-39 item 5: the lane overview card's data (one shape on Lanes and on the Runs page's Lane cell): why it exists, its type and
+  // output (RM-34), the current stage and its run's progress, pace, why slow and alarms, the last finished stage and what comes next
+  const cardOf = (l, pg) => ({ lane: l.name, objective: l.driver?.objective ?? null, source: l.driver?.sources?.[0] ?? null, finding: l.driver?.finding ?? null,
+    type: l.lane_type?.type ?? null, output: l.output?.text ?? null, stage: pg ? [l.stage ?? null, pg.run].filter(Boolean).join(' · ') : null, progress: pg ?? null, ...l.steps });
+  async function withCards(p, rows) {
+    const items = st(p).items, pg = await progressOf(p, rows.map(l => l.run).filter(Boolean));
+    return rows.map(l => { const g = pg.get(l.run), steps = laneSteps(l.name, items);
+      return { ...l, ...(g ? { progress: g } : {}), card: cardOf({ ...l, stage: items[l.run]?.data?.stage, steps }, g) }; });
+  }
   function lanesWithSpend(ps) {
-    const rows = sortLanes(ps.flatMap(p => lanes(p, true)));   // RM-19 S1: every row, one order across projects; the page filters
+    const rows = sortLanes(ps.flatMap(p => withDriver(p, lanes(p, true))));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
-  async function agents(p) {
+  async function agents(p, win, { homes = false } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own)
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
     const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
     // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
-    await primeAgents(runs, { projectsDir, codexDir, cache });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
-    return agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) })
-      .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
+    await primeAgents(runs, { projectsDir, codexDir, cache, window: win });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
+    const tree = agentsTree(runs, { projectsDir, codexDir, cache, window: win, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
+    // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
+    const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
+    if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
+    const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
+    // RM-46 S3: the other homes' runs from their read-only copies - running, queued, or ended inside the window; no feed, no actions
+    const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => r.state === 'running' || r.state === 'queued' || !win || now - Date.parse(r.updated) <= win)
+      .map(r => ({ id: r.id, name: r.data.name ?? null, kind: r.data.kind ?? 'worker', role: r.data.role ?? null, executor: r.data.executor ?? null, model: r.data.model ?? null, effort: r.data.effort ?? null,
+        lane: r.data.lane ?? null, stage: r.data.stage ?? null, state: r.state, outcome: r.state === 'exited' ? r.history.findLast(h => h.ev === 'end')?.data?.outcome ?? null : null,
+        started: r.created, ended: r.state === 'running' || r.state === 'queued' ? null : r.updated, project: p.name, home: r.home, readonly: true, children: [] }));
+    // worker-speed: a worker run's tok/s and wall split (a live one: its last 10 min) - the same transcript tail, its own cache key
+    const sp = new Map(await Promise.all(tree.filter(n => isWorker(byId.get(n.id))).map(async n => [n.id, await runSpeedA(byId.get(n.id), { projectsDir, cache, now })])));
+    const speedOf = id => { const s = sp.get(id), w = s?.last10 ?? s; return s?.requests ? { line: speedWords(w), rolling: !!s.last10, tok_s: w.tok_s, pct: w.pct } : null; };
+    return [...tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null, v = speedOf(n.id);
+      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}), ...(v ? { speed: v } : {}),
+        ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; }), ...away];
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
   // runs = the run ids the Runs page lists, so the tab links only those
@@ -415,12 +563,48 @@ export function createDashboard(o) {
     const n = url.searchParams.get('count'), o = url.searchParams.get('offset');
     const count = Math.min(2000, Math.max(1, Number.parseInt(n ?? '', 10) || 100)), offset = Math.max(0, Number.parseInt(o ?? '', 10) || 0);
     const all = p.ledger ? await tail(p.ledger, Infinity) : [], end = Math.max(0, all.length - offset), start = Math.max(0, end - count);
-    return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(st(p)))] };
+    const [s, sync] = await Promise.all([stAsync(p), syncBlocks(p)]);
+    return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(s))], ...sync };
+  }
+  // RM-46 S3 (SPEC sec. 8 S3): a synced project's Ledger page carries the Homes block (each other home's fetched head, the last fetch, lag,
+  // clock offset) and the Claims block (work claims with the stale flag on this home's clock, the merge leader). Async git on the local
+  // ledger repo only: the fetch is the sync loop's (S4), never the page's. {} when the project is not synced.
+  const gitA = (dir, args, input) => new Promise(res => { const c = execFile('git', args, { env: { ...process.env, GIT_DIR: dir }, encoding: 'buffer', windowsHide: true, maxBuffer: 32 << 20 }, (e, out) => res(e ? null : out)); if (input !== undefined) c.stdin.end(input); });
+  // cat-file --batch output -> [body string | null] in the order asked ("<sha> <type> <size>\n<body>\n" or "<name> missing\n")
+  function batchBodies(buf) {
+    const out = []; let i = 0;
+    while (i < buf.length) { const nl = buf.indexOf(10, i), head = buf.subarray(i, nl).toString('utf8').split(' ');
+      if (head[1] === 'missing' || head.length < 3) { out.push(null); i = nl + 1; continue; }
+      const n = Number(head[2]); out.push(buf.subarray(nl + 1, nl + 1 + n).toString('utf8')); i = nl + 2 + n; }
+    return out;
+  }
+  async function syncBlocks(p) {
+    let home; try { home = JSON.parse(await readA(path.join(p.state, 'home.json'), 'null'))?.id; } catch { home = null; }
+    const cfg = home ? ledgerConfig(machine, { metaRoot: metaRootDir ?? path.resolve(p.state, '..', '..') }) : null;
+    if (!cfg) return {};
+    const L = cfg.dir, now = Date.now(), s = await stAsync(p), newest = s.newest || {};
+    let ft = {}; try { ft = JSON.parse(await readA(path.join(L, 'sync-fetch.json'), '{}')) || {}; } catch { /* a torn file: no fetch shown */ }
+    const refs = String(await gitA(L, ['for-each-ref', '--format=%(refname:lstrip=3) %(objectname)', 'refs/sync/home/']) || '').split('\n').filter(Boolean).map(l => l.split(' '));
+    const rows = await Promise.all(refs.filter(([h]) => h !== home).map(async ([h, head]) => {
+      const m = (await fs.promises.stat(path.join(p.state, 'homes', h, 'records.jsonl')).catch(() => null))?.mtimeMs, ts = newest[h];
+      return { home: h, head, lag_s: ts ? Math.max(0, Math.round((now - ts) / 1000)) : null, ahead_s: ts && m ? Math.max(0, Math.round((ts - m) / 1000)) : null };
+    }));
+    // the claims at the fetched tip: one ls-tree, one cat-file --batch; seen = this home's observer clock (S2b)
+    const ls = String(await gitA(L, ['ls-tree', '-r', '-z', 'refs/sync/claims^{commit}']) || '').split('\0').filter(Boolean).map(l => { const [m, key] = l.split('\t'); return { sha: m.split(' ')[2], key }; })
+      .filter(e => e.key.startsWith(`work/${p.name}/`) || e.key === leaderKey(p.name));
+    const bodies = ls.length ? batchBodies(await gitA(L, ['cat-file', '--batch'], ls.map(e => e.sha).join('\n') + '\n') || Buffer.alloc(0)) : [];
+    let seen = {}; try { seen = JSON.parse(await readA(path.join(p.state, 'sync', 'claims-seen.json'), '{}')) || {}; } catch { /* a torn file: nothing seen yet */ }
+    const pol = syncPolicy(p.policy), work = [];
+    let leader = null;
+    ls.forEach((e, i) => { let c; try { c = JSON.parse(bodies[i]); } catch { return; }
+      if (e.key === leaderKey(p.name)) { leader = c; return; }
+      if (c?.kind === 'work') work.push({ key: e.key, home: c.home, lane: c.lane, n: c.n, run: c.run ?? null, items: c.items || [], renewed_at: c.renewed_at, stale: c.home !== home && isStale(seen[e.key], c, now, pol) }); });
+    return { homes: { home, fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, rows }, claims: { work, leader } };
   }
   // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
     const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
-    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows }) };
+    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows, home: homeIdOf(p.state)?.id }) };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
@@ -435,6 +619,13 @@ export function createDashboard(o) {
         .then(v => { c.val = { ...v, rows: (v.rows || []).map(r => ({ ...r, project: p.name })) }; c.sig = hash(JSON.stringify([c.val.rows, c.val.error ?? null])); c.at = Date.now(); c.busy = null; return c.val; });
     }
     return c.val ? { ...c.val, pending: false } : { rows: [], pending: true };
+  }
+  // MERGE-FIRST (4): the merge backlog of the projects shown, from the cached deliverables (pending until the first answer); over = any
+  // project past its own policy.merge.backlog_max
+  function backlogOf(ps) {
+    const parts = ps.map(p => ({ p, d: deliverablesOf(p) }));
+    const all = mergeBacklog(parts.flatMap(x => x.d.rows), { max: Math.min(...ps.map(p => backlogMax(p.policy))) });
+    return { ...all, over: parts.some(x => mergeBacklog(x.d.rows, { max: backlogMax(x.p.policy) }).over), pending: parts.some(x => x.d.pending) };
   }
   // META-PLAN R1: the plan = `norn plan --json` in a child process (the fill walk samples the CPU for 1 s and asks git: never on a
   // poll), per project, cached o.planTtlMs (30 s; then stale while it refreshes); before the first answer { pending: true }. R2: with
@@ -451,11 +642,14 @@ export function createDashboard(o) {
     return c.val ? { ...c.val, pending: false } : { project: p.name, pending: true };
   }
   // META-ROADMAP S2 (SPEC sec. 3 "Live"): the roadmap tree = `norn road show --json` in a child process (its derive asks git; git
-  // never blocks a poll), cached on the records files' mtime + size. A changed file = a new build that the request AWAITS, so the
-  // fetch a `rec` event triggers already shows the append; git-derived facts refresh after o.roadmapTtlMs (60 s, served stale while
-  // the child runs) and a changed tree then reaches the page as the stream's `derived` event (its hash is in the stream sig).
+  // never blocks a poll), cached on the records files' mtime + size. A changed roadmap file (an item append) = a new build that the
+  // request AWAITS, so the fetch a `rec` event triggers already shows the append. A change to the other record files only (runs,
+  // records: they churn while workers run) serves the last tree at once and rebuilds behind it (dash-latency: the child takes 3 s
+  // idle, 4-13 s with workers running, and every Roadmap render waited on it). Git-derived facts refresh after o.roadmapTtlMs (60 s,
+  // served stale while the child runs); a changed tree reaches the page as the stream's `derived` event (its hash is in the stream sig).
   const rm = new Map();
   const rmSig = p => RECORD_FILES.map(f => { const s = statS(path.join(p.state, f + '.jsonl')); return s ? s.mtimeMs + ':' + s.size : '-'; }).join('|');
+  const rmOwn = sig => sig.split('|')[RECORD_FILES.indexOf('roadmap')];   // the item records' own file in a sig
   function roadmapOf(p, { kick = false } = {}) {
     let c = rm.get(p.name);
     if (!c) { if (kick) return null; c = { sig: null, at: 0, val: null, busy: null, want: null }; rm.set(p.name, c); }
@@ -469,6 +663,7 @@ export function createDashboard(o) {
       return c.busy;
     };
     if (c.val && c.sig === sig) { if (!c.busy && Date.now() - c.at > (o.roadmapTtlMs ?? o.deliverablesTtlMs ?? 60000)) build(); return c.val; }
+    if (c.val && rmOwn(c.sig) === rmOwn(sig)) { if (!c.busy) build(); return c.val; }   // no item append: the last tree now, one rebuild behind it
     if (c.busy && c.want === sig) return c.busy;
     return kick ? (build(), null) : build();
   }
@@ -541,16 +736,17 @@ export function createDashboard(o) {
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
-      strip: stripOf(ps, running, m), paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
+      strip: stripOf(ps, running, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
+      backlog: backlogOf(ps),   // MERGE-FIRST (4)
       setup: ps.length === 1 ? setupOf(ps[0]) : null };   // META-ADOPT A3: the setup gaps (rules, caps nobody chose, no merge gate)
   }
   function records(p, url) {
     const kinds = ['decision', 'directive'], k = url.searchParams.get('kind'), s = url.searchParams.get('state');
-    const items = Object.values(st(p).items).filter(i => kinds.includes(i.kind) && (!k || i.kind === k) && (!s || i.state === s))
-      .map(i => ({ id: i.id, kind: i.kind, state: i.state, by: i.by, created: i.created, updated: i.updated, data: i.data, history: i.history }));
+    const S = st(p), items = Object.values(S.items).filter(i => kinds.includes(i.kind) && (!k || i.kind === k) && (!s || i.state === s))
+      .map(i => ({ id: i.id, kind: i.kind, state: i.state, by: i.by, created: i.created, updated: i.updated, data: i.data, history: i.history, ...foreign(p, S, i.id) }));
     return { project: p.name, decisions: items.filter(i => i.kind === 'decision'), directives: items.filter(i => i.kind === 'directive') };
   }
   // cost per lane (META-OPS-R1 #7): the roll-up of engine/lib/cost.mjs, cached one UI tick; ended runs memoized (never re-read),
@@ -680,6 +876,13 @@ export function createDashboard(o) {
   // one file - a scan row (its paragraphs with ages + its findings and rule advisories) or a project doc (its paragraphs, findings by
   // path). A project doc the scan also lists opens as that scan file.
   const fwdLow = s => String(s ?? '').replace(/\\/g, '/').toLowerCase();
+  // RM-34: two more Docs keys (purpose.mjs writes them): brief:<file> = a file of the project's briefs_dir, doc:<path> = a file under the
+  // project root (a roadmap item's doc: link). Anything that leaves those folders is no key (null: the plain lookup then 404s).
+  function docKeyPath(p, key) {
+    const b = String(key).match(/^brief:([^\\/]+)$/), d = String(key).match(/^doc:(.+)$/);
+    const inside = (dir, f) => { const r = path.relative(dir, f); return !!r && !r.startsWith('..') && !path.isAbsolute(r) ? f : null; };
+    return b ? inside(briefsDirOf(p), path.join(briefsDirOf(p), b[1])) : d && p.root ? inside(path.resolve(p.root), path.resolve(p.root, d[1])) : null;
+  }
   function docsAt(p, url) {
     const c = insCache(p), name = url.searchParams.get('part'), lim = Number(url.searchParams.get('limit'));
     if (name === null) return { project: p.name, ...docsListOf({ v: c.v, docs: docsList(p), limit: Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP }),
@@ -687,7 +890,23 @@ export function createDashboard(o) {
     if (name !== 'file') throw fail(400, `unknown part ${name} (file, or none for the list)`);
     return { doc: docFile(p, c, String(url.searchParams.get('file') ?? '')) };   // the page merges it as d.doc (d.file = its key)
   }
+  // RM-36: a file a run touched (the feed's activity view) opens in the reader by its path - inside the roots GET /api/file allows
+  // (the project root, its state, its runs' worktrees and NOTES folders); a source file is shown as one code block
+  function pathDoc(p, key) {
+    const raw = key.slice(5);
+    if (!path.isAbsolute(raw) || /^[\\/]{2}/.test(raw)) throw fail(400, 'path must be an absolute local path');
+    const real = insideRoots(showRoots(p.state, p), raw);
+    if (!real) throw fail(403, 'Outside the allowed roots (the project root, its state, its runs\' worktrees and NOTES folders)');
+    const text = read(real, null);
+    if (text === null) throw fail(404, 'File not found');
+    const md = /\.(?:md|markdown|txt)$/i.test(real);
+    return { key, name: path.basename(real), path: real.split('\\').join('/'), text, lines: text.split(/\r?\n/).length, paras: null, findings: [], ...(md ? {} : { code: path.extname(real).slice(1).toLowerCase() || 'text' }) };
+  }
   function docFile(p, c, key) {
+    if (key.startsWith('path:')) return pathDoc(p, key);
+    const kp = docKeyPath(p, key);   // RM-34: a lane's brief / its item's doc (the Lanes page's source links)
+    if (kp) { const text = readText(kp), at = fwdLow(kp); if (text === null) throw fail(404, 'No such file');
+      return { key, name: path.basename(kp), path: kp, text, lines: text.split(/\r?\n/).length, paras: paragraphs(text, null), findings: (c.v?.findings || []).filter(x => fwdLow(x.path) === at) }; }
     const m = key.match(/^doc-(\d+)$/), d = m ? docsList(p)[Number(m[1])] : null;
     if (m && !d?.exists) throw fail(404, 'No such doc');
     const row = (c.v?.rows || []).find(r => r.exists && (d ? fwdLow(r.path) === fwdLow(d.path) : r.id === key));
@@ -720,7 +939,9 @@ export function createDashboard(o) {
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
     let at = null; try { at = Date.parse(JSON.parse(await readA(bf, 'null')).at); } catch { at = null; }
     const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
-    const crossed = await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }));
+    // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
+    const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
+    const crossed = (await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }))).map(r => (told.has(r.id) && told.get(r.id).what ? { ...r, explain: told.get(r.id) } : r));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
@@ -752,6 +973,50 @@ export function createDashboard(o) {
     if (name === null) return chipView(g);   // S5: the header + chips: no hint / tighten rows, no patch text
     if (name === 'sheet') return { sheet: { ...fixSheet(g), usage: fixUsage(p) } };   // S6: the Fix all sheet
     return name === 'summary' ? guardSummary(g) : guardPart(g, name, Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP, url.searchParams.get('batch'));
+  }
+  // TESTS-RUNTIME: the Tests tab = a summary (testsView + the open Inbox questions the test machinery raised: data.area 'tests') and the
+  // chosen sub-view's part (?part=suite|costs|impact|trends&limit=). Impact takes &files=a,b or &lane=<name> (that lane's changed files:
+  // its worktree against the merge base with the main branch, uncommitted work included); Costs adds the merge queue's batches.
+  const gitCwd = (cwd, args) => new Promise((ok, no) => execFile('git', ['-C', cwd, ...args], { timeout: 10000, windowsHide: true, maxBuffer: 16 << 20 }, (e, out) => (e ? no(e) : ok(String(out).trim()))));
+  async function laneFiles(p, lane) {
+    const at = lanePaths(p, lane), wt = inDir(at.worktree, subdirOf(p)), main = p.ci?.branch || 'main';
+    if (!(await existsA(at.worktree))) return { error: `lane ${lane} has no worktree (${fwdP(at.worktree)})` };
+    try { const mb = await gitCwd(wt, ['merge-base', main, 'HEAD']); return { files: (await gitCwd(wt, ['diff', '--name-only', '--relative', mb])).split('\n').filter(Boolean).map(fwdP) }; }
+    catch (e) { return { error: `git diff of lane ${lane} failed: ${String(e.message).split('\n')[0].slice(0, 200)}` }; }
+  }
+  async function mergeBatches(p) {
+    const dir = path.join(p.state, 'mq'), names = (await fs.promises.readdir(dir).catch(() => [])).filter(f => /^batch-\d+\.json$/.test(f)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0])).slice(0, 12);
+    const recs = await Promise.all(names.map(f => fs.promises.readFile(path.join(dir, f), 'utf8').then(JSON.parse, () => null)));
+    return recs.filter(Boolean).map(b => ({ n: b.n, status: b.status, result: b.result ?? null, gate: b.gate ?? null, skipped: b.gate_skipped ?? null, built: b.built, done: b.done_at ?? null,
+      members: (b.members || []).map(m => m.id ?? m.branch), runs: (b.runs || []).map(r => ({ label: r.label, ok: r.ok, ms: r.ms, timedOut: !!r.timedOut })), gate_ms: (b.runs || []).reduce((n, r) => n + (r.ms || 0), 0) }));
+  }
+  async function testsAt(p, url) {
+    const name = url.searchParams.get('part'), lim = Number(url.searchParams.get('limit')), limit = Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP;
+    await prime({ files: testsFiles(p.state, name) });
+    if (name === null) {
+      const items = Object.values((await stAsync(p)).items);
+      const alerts = items.filter(i => i.kind === 'question' && i.state === 'open' && i.data?.area === 'tests').map(q => ({ id: q.id, title: q.data.title, options: q.data.options ?? [], recommend: q.data.recommend ?? null, created: q.created }));
+      return { project: p.name, ...testsView(p.state, await suiteOf(p)), alerts };
+    }
+    if (name === 'impact') {
+      const lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane' && i.state !== 'archived').map(i => i.id.slice(2)).sort();
+      const lane = url.searchParams.get('lane'), files = (url.searchParams.get('files') || '').split(',').map(s => s.trim()).filter(Boolean);
+      const lf = lane ? (lanes.includes(lane) ? await laneFiles(p, lane) : { error: `no lane ${lane} in ${p.name}` }) : null;
+      return testsPart(p.state, 'impact', { picked: { lanes, lane, files: lf ? lf.files ?? [] : files, error: lf?.error ?? null } });
+    }
+    return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [] });
+  }
+  // TESTS-RUNTIME: a test's file for the code viewer - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
+  // no .. or link out, nothing under .git), text only, at most 2 MB
+  async function testSource(p, url) {
+    if (!p.root) throw fail(404, 'This project has no repository folder');
+    const rel = String(url.searchParams.get('file') ?? ''), real = repoFile(projectHome(p), rel);
+    if (!real) throw fail(403, 'Only a file inside the project repository opens here');
+    const st8 = await fs.promises.stat(real);
+    if (st8.size > 2 * 1024 * 1024) throw fail(413, 'File larger than 2 MB');
+    const text = await fs.promises.readFile(real, 'utf8');
+    if (text.includes('\0')) throw fail(415, 'Not a text file');
+    return { file: rel.split('\\').join('/'), text, lines: text.split(/\r?\n/).length };
   }
   // META-UX-BUILD S6 (REPORT s.3 step 2): the usage a Send approves - one run of the docs class as Settings routes it today, with the
   // measured median cache reads of that class's runs (classCost, the Usage tab's table; 7 days)
@@ -798,7 +1063,8 @@ export function createDashboard(o) {
     const inSnap = fn => snap.run(newSnap(), fn);
     const policy = () => withDefaults(settingsState(p).view).policy;   // META-CTX-ENFORCE R1: the run role's lines, read live
     return {
-      poll: cur => inSnap(async () => withRefusals(adapter.feed(await now(), cur, env), p.state, id, cur)),   // META-DOD 2: + the run's scope refusals
+      // META-DOD 2: + the run's scope refusals; RM-36: full = a drawer's first poll reads the whole run (the activity view: every file it touched)
+      poll: (cur, full) => inSnap(async () => withRefusals(adapter.feed(await now(), cur, full ? { ...env, backlog: Infinity } : env), p.state, id, cur)),
       ended: () => inSnap(async () => (await now())?.state !== 'running'),
       head: ({ ctx, peak, window }) => inSnap(async () => {
         const [r] = await Promise.all([now(), readA(p.file), o.budgetFile ? readA(o.budgetFile, '{}') : null]);
@@ -806,9 +1072,14 @@ export function createDashboard(o) {
         return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
           elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
-          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard }) => ({ ctx_limit, ctx_hard }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r) };
+          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard, ctx_role }) => ({ ctx_limit, ctx_hard, ctx_role }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r), worktree: d.worktree ?? null, ...(await briefPlanOf(d)) };
       }),
     };
+  }
+  // RM-36: the activity view's plan without a todo list - the brief's numbered items, and the ones the run's NOTES name as done
+  async function briefPlanOf(d) {
+    const [brief, notes] = await Promise.all([d.brief ? readA(d.brief) : '', d.notes ? readA(d.notes) : '']), items = briefItems(brief);
+    return { brief_items: items, notes_done: items.length ? namedDone(items, notes, { doneWord: true }) : [] };
   }
   async function openFeed(req, res, url) {
     const p = one(url), id = url.searchParams.get('run') ?? '', r = stCached(p).items[id];
@@ -816,7 +1087,7 @@ export function createDashboard(o) {
     const fam = harnessOf(r.data.executor, (p.executors || {})[r.data.executor]), adapter = fam ? ADAPTERS[fam] : null;
     if (!adapter?.feed) throw fail(404, `No live feed for executor ${r.data.executor}`);
     const from = decodeCursor(req.headers['last-event-id'] ?? url.searchParams.get('from') ?? '');
-    if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from))) throw fail(429, `Too many live feeds: close one first (max ${o.feedMax ?? 4})`);
+    if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from, { full: url.searchParams.get('full') === '1' }))) throw fail(429, `Too many live feeds: close one first (max ${o.feedMax ?? 4})`);
   }
 
   // ---------- state stream (META-VISUAL-B S1, the #4 push channel): record appends + flags, replaces the 15 s refetch ----------
@@ -914,12 +1185,12 @@ export function createDashboard(o) {
     if (l?.kind !== 'done' || !u) throw fail(400, `thread line ${line} is not a done card with an Undo`);
     if (items.some(x => x.kind === 'undone' && x.line === line)) throw fail(409, 'Undone already');
     const why = `undo from the chat (thread line ${line})`, runOf = id => runsOf(st(p)).find(r => r.id === id);
-    if (u.verb === 'revoke' && /^DIR-\d+$/.test(u.id)) await rec(p, { kind: 'directive', ev: 'revoke', id: u.id, by: 'dashboard', data: {} });
-    else if (u.verb === 'stop' && /^RUN-\d+$/.test(u.run)) {
+    if (u.verb === 'revoke' && /^DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.id)) await rec(p, { kind: 'directive', ev: 'revoke', id: u.id, by: 'dashboard', data: {} });
+    else if (u.verb === 'stop' && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.run)) {
       const r = runOf(u.run);
       if (r?.state !== 'queued') throw fail(409, `${u.run} is ${r?.state ?? 'gone'}: Undo withdraws only a queued run`);
       await stopRunAsync({ state: p.state, locksDir: o.locksDir ?? path.join(path.dirname(path.resolve(p.state)), 'locks'), run: u.run, by: 'dashboard', why });
-    } else if (u.verb === 'requeue' && /^RUN-\d+$/.test(u.run) && /^RUN-\d+$/.test(u.from)) {
+    } else if (u.verb === 'requeue' && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.run) && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.from)) {
       try { requeueRun({ state: p.state, run: u.run, after: runOf(u.from)?.data.after ?? [], by: 'dashboard', why }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
     } else throw fail(400, `no undo verb ${u.verb}`);
     await viewsA(p);
@@ -951,12 +1222,12 @@ export function createDashboard(o) {
     const nodes = new Map((await agents(p)).map(n => [n.id, n])), today = new Date().toDateString(), byNew = (a, b) => String(b.created).localeCompare(String(a.created));
     // + a run that just ended HANDOFF and waits for its resume verdict (handoffOf step 'ending'): the lane is not idle, it hands off
     const now = runs.filter(r => (['running', 'queued', 'claimed'].includes(r.state) || (r.end?.outcome === 'handoff' && !r.resume && hoOf(p, r)?.step === 'ending')) && r.data.kind !== 'checkin' && r.data.role !== 'helper')
-      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, age_min: n.age_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
+      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, ran_min: n.ran_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
-      paused: pausedFiles(p).some(existsS), limits: limitLines(p.state),   // META-LIMIT-GATE: executors out of quota
-      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${String(n.id).slice(2)} parked` : n.id), created: n.created ?? null })),
+      checkins_paused: stopsCheckins(pauseOfP(p)), limits: limitLines(p.state),   // RM-37: Pause check-ins / Pause everything   // META-LIMIT-GATE: executors out of quota
+      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${n.lane} parked` : n.id), created: n.created ?? null })),
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };
@@ -1099,14 +1370,33 @@ data: ${JSON.stringify(l)}
     if (P?.facts_file) { try { return JSON.parse(read(path.join(p.state, P.facts_file))); } catch { /* moved: the cache */ } }
     return (p.root && scans.get(keyOf(p.root))?.facts) || null;
   }
+  /** the repo's own agent rules files (CLAUDE.md, AGENTS.md ...) at its root and its subdir: every worker's own tool reads them, so they ARE rules */
+  const agentFilesIn = p => !p.root ? [] : [...new Set(['', subdirOf(p)])].flatMap(d => AGENT_FILES.filter(f => existsS(path.join(p.root, d, f))).map(f => (d ? d + '/' : '') + f));
+  /** where the caps were chosen: a caps profile decision, else a cap in budget.json (Settings writes it) that is not the starter cap
+   *  `norn setup` wrote unasked (the default profile's), else null - nobody chose them */
+  function capsChosen(p, s, items) {
+    if (items.some(capsRec)) return 'decision';
+    const prof = loadProfiles().profiles.find(x => x.default), starter = prof ? profileBudget(prof, { found: profileFor(p, s).found }) : {};
+    return REQUIRED_CAPS.some(k => Number.isFinite(s.budget[k]) && s.budget[k] !== starter[k]) ? 'budget' : null;
+  }
   /** the setup gaps of one project (SPEC sec. 5 empty states): rules, caps chosen, the merge gate, the roadmap */
   function setupOf(p) {
-    const items = Object.values(st(p).items), facts = factsKnown(p);
+    const items = Object.values(st(p).items), facts = factsKnown(p), s = settingsState(p), view = withDefaults(s.view);
     let roadmap = 0; try { roadmap = Object.values(loadRoadmap(p.state).items).filter(i => i.state === 'open').length; } catch { /* no roadmap */ }
-    return { project: p.name, rules: !!(p.rules_read_whole || []).length || existsS(rulesFile(p)),
-      caps_chosen: items.some(i => i.kind === 'decision' && /caps profile$/.test(i.data?.question ?? '')), gate: p.merge?.gate?.cmd ?? null,
-      found_gate: facts?.commands?.find(c => c.id === 'test')?.cmd ?? null, roadmap, agent_files: facts ? facts.agent_files.map(a => a.file) : null,
-      caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct'].map(k => [k, withDefaults(settingsState(p).view)[k] ?? null])), profile_now: profileNow(p) };
+    const agentFiles = agentFilesIn(p), rulesFrom = [...((p.rules_read_whole || []).length || existsS(rulesFile(p)) ? [RULES_FILE] : []), ...agentFiles];
+    const caps = capsChosen(p, s, items);
+    return { project: p.name, rules: rulesFrom.length > 0, rules_from: rulesFrom, caps_chosen: !!caps, caps_from: caps, gate: p.merge?.gate?.cmd ?? null,
+      found_gate: facts?.commands?.find(c => c.id === 'test')?.cmd ?? null,
+      roadmap, agent_files: agentFiles, version: s.version, caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct'].map(k => [k, view[k] ?? null])), profile_now: profileNow(p, s) };
+  }
+  /** "Set it": merge.gate.cmd into project.json on the Settings write path (the version the page saw, one atomic write) */
+  async function saveGate(p, cmd, version) {
+    const s = settingsState(p);
+    if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and set the gate again.');
+    const merge = s.proj.merge || {};
+    await atomicA(p.file, JSON.stringify({ ...s.proj, merge: { ...merge, gate: { ...(merge.gate || {}), cmd } } }, null, 2) + '\n');
+    reloadProjects(true);
+    return { ok: true, gate: cmd, written: [p.file] };
   }
   async function adoptView(p) {
     const P = existsS(p.state) ? proposalOf(p.state) : null;
@@ -1124,7 +1414,7 @@ data: ${JSON.stringify(l)}
     }
     let lane = null;
     const fp = P?.parts.find(x => x.id === 'first'), fl = fp?.applied && fp.lines.find(l => !l.already && !(fp.decision?.off || []).includes(l.id));
-    if (fl) { try { const name = laneNameOf(fl.text), at = lanePaths(p, name); lane = { name, task: fl.text, worktree: fwdP(at.worktree), branch: at.branch, brief: fwdP(at.brief), exists: !!st(p).items['L:' + name] }; } catch { /* no lane paths */ } }
+    if (fl) { try { const name = laneNameOf(fl.text), at = lanePaths(p, name); lane = { name, task: fl.text, worktree: fwdP(at.worktree), branch: at.branch, brief: fwdP(at.brief), exists: !!st(p).items[laneId(name, p.state)] }; } catch { /* no lane paths */ } }
     return { project: p.name, title: p.title ?? p.name, root: p.root ?? null, facts, scan_error: scanError, interview: facts ? interviewOf(facts) : [], consent,
       setup: setupOf(p), proposal: P, read: rd, lane, answer_keys: ANSWER_KEYS };
   }
@@ -1223,12 +1513,24 @@ data: ${JSON.stringify(l)}
     if (route === '/api/adopt/caps') {   // "Keep the starter caps": a choice, recorded like a profile pick (the scheduler stays off)
       return rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'adopt', question: 'caps profile', choice: 'the starter caps (kept)', why: 'kept from the dashboard' } });
     }
+    if (route === '/api/adopt/gate') {   // the Overview merge gate step's one click: the proposed command -> merge.gate.cmd
+      if (typeof data.version !== 'string' || !data.version) throw fail(400, 'version is required: the settings version the page saw');
+      return saveGate(p, str(data.cmd, 'cmd', 1000), data.version);
+    }
     if (route === '/api/adopt/rehearse') {   // the first lane on the fake executor: spends nothing, shows the whole path
       const name = String(data.lane ?? ''), at = adoptCall(() => lanePaths(p, name));
-      if (!st(p).items['L:' + name]) throw fail(404, `lane ${name} does not exist`);
+      if (!st(p).items[laneId(name, p.state)]) throw fail(404, `lane ${name} does not exist`);
       return { ok: true, ...(await platform.rehearse(p, name, at.brief)) };
     }
     throw fail(404, 'Not found');
+  }
+
+  // INBOX-REPLIES: start the check-in that replies in a Q's thread now; a running one (or a pause) leaves it to the next tick
+  async function replyNow(p) {
+    if (pausedFiles(p).some(existsS)) return 'paused';
+    if (lockFresh(p) || checkinStarting) return 'next';
+    checkinStarting = true;
+    try { await platform.tick(p); return 'started'; } catch { return 'next'; } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }
   }
 
   async function post(route, data) {
@@ -1236,28 +1538,56 @@ data: ${JSON.stringify(l)}
     const p = projectOf(data);
     const rmo = route.match(/^\/api\/roadmap\/([a-z]+)$/);
     if (rmo) return roadEdit(p, rmo[1], data);
+    if (route === '/api/claim/take') {   // RM-46 S3: the owner's take over of another home's STALE work claim (the CLI checks stale on this home's clock)
+      if (typeof data.lane !== 'string' || !/^[a-z][a-z0-9]{0,7}\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(data.lane)) throw fail(400, 'lane must be <home>/<lane>');
+      const r = await metaCli(['claim', 'take', data.lane, '--project', p.name, ...(machineFile ? ['--machine', machineFile] : [])]);
+      if (r.code) throw cliFail(r);
+      return { ok: true, line: r.out.trim() };
+    }
     if (route === '/api/answer') {
       if (data.from !== undefined) {   // META-Q-RECONCILE R1: "already answered in DEC-m" - the owner words the DEC recorded
-        if (typeof data.from !== 'string' || !/^DEC-\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
+        if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
         return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { from: data.from } });
+      }
+      const id = String(data.id), q = st(p).items[id];
+      if (data.ruling !== undefined) {   // INBOX-REPLIES: the owner's one tap on the ruling the controller proposed from their words
+        const P = rulingOf(q);
+        if (!P || P.seq !== data.ruling) throw fail(409, `${id} has no such proposed ruling any more (a newer message or reply). Reload.`);
+        return rec(p, { kind: 'question', ev: 'answer', id, by: 'dashboard', data: { text: `Rule: ${P.key ? `(${P.key}) ` : ''}${P.text} - yes`, via: 'dashboard', ruling: P.seq, ...(P.key ? { choice: P.key } : {}) } });
       }
       const text = str(data.text, 'Answer', 4000);
       if (data.choice !== undefined && typeof data.choice !== 'string') throw fail(400, 'choice must be a string');
-      return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { text, via: 'dashboard', ...(data.choice ? { choice: data.choice } : {}) } });
+      // INBOX-REPLIES: typed words are a message to the controller, not a ruling - unless they are a bare option key ("b", "(b)").
+      // The message goes in the Q's thread (it stays open) and a check-in starts at once to reply, so the owner does not wait a tick.
+      const choice = data.choice || (q?.kind === 'question' ? pickOf(text, q.data.options) : null);
+      if (choice) {
+        const r = await rec(p, { kind: 'question', ev: 'answer', id, by: 'dashboard', data: { text, via: 'dashboard', choice } });
+        try { await platform.tick(p); } catch { /* the scheduled tick applies it then */ }   // item 8 (MAIL-9 d): an answer starts a tick at once
+        return r;
+      }
+      const r = await rec(p, { kind: 'question', ev: 'say', id, by: 'dashboard', data: { text, via: 'dashboard' } });
+      return { ...r, said: true, reply: await replyNow(p) };
     }
     if (route === '/api/first-task') {   // META-OOTB F-1: the owner's first task = a directive + lane `first` + its worktree / branch / brief
       const text = str(data.text, 'Task', 4000);
       try { const r = await newLaneAsync(p, { name: data.lane === undefined ? FIRST_LANE : String(data.lane), task: text, by: 'dashboard' }); await viewsA(p); return { ok: true, ...r }; }
       catch (e) { if (e instanceof LaneError) throw fail(e.code === 1 ? 500 : 400, e.message); if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/directive') {   // gap #5: a restatement of an active directive = 409 unless new: true (the page asks, then sends new: true)
-      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text);
-      if (dup && data.new !== true) throw fail(409, dupMessage(dup, 'new: true'));
-      return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(dup ? { distinct_from: [dup.id] } : {}) } });
+    // gap #5: a restatement of an active directive = 409 carrying the match (dup: the page says it in plain words and offers Open DIR-n /
+    // Replace it with this wording); new: true creates it anyway, replace: DIR-n creates it and supersedes DIR-n by it (both recorded).
+    // card: the repeat detector's card this approves (rules.mjs askedBy closes the card on it)
+    if (route === '/api/directive') {
+      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text), card = /^A-[0-9a-f]{10}$/.test(data.card ?? '') ? data.card : null;
+      const replace = data.replace == null ? null : String(data.replace), old = replace ? st(p).items[replace] : null;
+      if (replace && !(old?.kind === 'directive' && old.state === 'active')) throw fail(400, `${replace} is not an active directive`);
+      if (dup && data.new !== true && !replace) throw Object.assign(fail(409, dupMessage(dup, 'new: true')), { body: { dup: { id: dup.id, line: dup.line, why: dup.why } } });
+      const r = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(card ? { card } : {}), ...(dup && dup.id !== replace ? { distinct_from: [dup.id] } : {}) } });
+      if (replace) await rec(p, { kind: 'directive', ev: 'supersede', id: replace, by: 'dashboard', data: { by: r.id, why: 'restated: replaced by this wording from the dashboard' } });
+      return { ...r, ...(replace ? { superseded: replace } : {}) };
     }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
-    if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: 'L:' + String(data.lane), by: 'dashboard', data: {} });
+    if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: laneId(String(data.lane), p.state), by: 'dashboard', data: data.override ? { override: String(data.override) } : {} });   // item 9: work not on main needs the owner's override (records.mjs)
     if (route === '/api/handedit') {   // GAP-8: "Let Norn take it back" (a .bak of the hand text, then the views rewritten) or "Keep my version"
       if (!['takeback', 'keep'].includes(data.choice)) throw fail(400, 'choice must be takeback or keep');
       if (typeof data.file !== 'string' || !data.file) throw fail(400, 'file is required');
@@ -1268,10 +1598,27 @@ data: ${JSON.stringify(l)}
       } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
     }
     if (route === '/api/pause') {
-      if (typeof data.paused !== 'boolean') throw fail(400, 'paused must be boolean');
-      const f = path.join(p.state, 'PAUSED');
-      if (data.paused) { await fs.promises.mkdir(p.state, { recursive: true }); await fs.promises.writeFile(f, iso() + '\n'); } else { try { await fs.promises.unlink(f); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
-      return { paused: data.paused };
+      // RM-37: every pause is the CLI's (`norn pause` / `norn resume`, pause.mjs) run as a child: no sync write here. Exactly one of
+      // { mode, why? } | { runs: [RUN-n], why? } (a safe pause of each) | { resume: RUN-n | 'all' }
+      const runs = Array.isArray(data.runs) ? data.runs.map(String) : null, asks = ['mode', 'runs', 'resume'].filter(k => data[k] !== undefined);
+      if (asks.length !== 1) throw fail(400, 'give exactly one of mode | runs | resume');
+      if (runs && (!runs.length || !runs.every(r => /^RUN-\d+$/.test(r)))) throw fail(400, 'runs must be RUN-n ids');
+      if (data.resume !== undefined && !(data.resume === 'all' || /^RUN-\d+$/.test(String(data.resume)))) throw fail(400, 'resume must be RUN-n or all');
+      const args = data.mode !== undefined ? ['pause', '--mode', String(data.mode)] : runs ? ['pause', ...runs] : data.resume === 'all' ? ['resume', '--all'] : ['resume', String(data.resume)];
+      const r = await metaCli([...args, ...(data.why && data.resume === undefined ? ['--why', line(data.why)] : []), '--state', p.state, '--as', 'dashboard']);
+      if (r.code) throw cliFail(r);
+      return { ok: true, out: r.out.trim() };
+    }
+    // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
+    if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
+    if (route === '/api/requeue') {   // MERGE-FIRST: Plan > Up next's priority control - the queued run re-queued at that priority, its after: kept
+      const r = st(p).items[String(data.run)];
+      if (!r || r.kind !== 'run' || r.state !== 'queued') throw fail(409, 'Run is not queued any more. Refresh.');
+      let out;
+      try { out = requeueRun({ state: p.state, run: r.id, by: 'dashboard', why: `priority ${data.priority} set on the Plan page`, priority: data.priority }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
+      await viewsA(p);
+      if (plans.has(p.name)) plans.get(p.name).at = 0;   // the next Plan read asks again
+      return { ok: true, ...out };
     }
     if (route === '/api/stop') {
       if (data.confirm !== true) throw fail(400, 'confirm must be true');
@@ -1334,6 +1681,13 @@ data: ${JSON.stringify(l)}
       const text = `${head} ${ids.join(' ')}${ids.length < x.ids.length ? ` +${x.ids.length - ids.length} more (every id in ${r.id} and in this directive's findings)` : ''}`;
       const d = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', findings: x.ids, fixall: r.id } });
       return { ok: true, id: r.id, directive: d.id, n: x.ids.length, again: false };
+    }
+    if (route === '/api/proposal') {   // RM-28 S1: a stage's pick on the proposal card = `norn proposal rule` (the decision + the act: one path)
+      if (!['queue', 'later', 'drop'].includes(data.pick)) throw fail(400, 'pick must be queue, later or drop');
+      if (!/^RUN-\d+$/.test(String(data.run)) || !/^S\d+$/i.test(String(data.stage))) throw fail(400, 'run must be a RUN-n and stage an S<n>');
+      const r = await metaCli(['proposal', 'rule', String(data.run), String(data.stage), data.pick, '--as', 'dashboard', ...(p.file ? ['--project', p.file] : []), '--state', p.state]);
+      if (r.code !== 0) { const e = cliFail(r); throw fail(/decided already/.test(e.message) ? 409 : e.status, e.message); }
+      return { ok: true, lines: r.out.trim().split(/\r?\n/) };
     }
     if (route === '/api/advice') {   // META-TEND P4: the advice card's one tap - apply its Settings change, or keep the setting; both recorded
       if (!['apply', 'keep'].includes(data.verdict)) throw fail(400, 'verdict must be apply or keep');
@@ -1398,8 +1752,36 @@ data: ${JSON.stringify(l)}
     }
     throw fail(403, 'Pair this device first: on the desktop dashboard open Settings > Notifications > Reach Norn from your phone > Pair a device');
   }
+  // dash-latency: the server's own timings, always on and cheap. Every answer carries Server-Timing (app = ms in this process, prime =
+  // the snapshot read of a GET); a request over o.slowMs (1 s; the SSE streams excepted) and an event-loop stall over o.stallMs
+  // (250 ms: every request waited that long) go to a ring of the last 100 (GET /api/timing) and <norn>/local/dash-timing.jsonl. A
+  // stall names the requests that ran in its window: one of them blocked the loop (a sync build), or the box starved this process.
+  const timing = { slow: [], stalls: [], recent: [], writes: Promise.resolve(), lost: 0, error: null }, STALL_TICK = 100;
+  const timingFile = metaRootDir ? path.join(metaRootDir, 'local', 'dash-timing.jsonl') : null;
+  const noteTiming = (k, e) => { const a = timing[k]; a.push(e); if (a.length > 100) a.shift();
+    if (timingFile) timing.writes = timing.writes.then(() => fs.promises.appendFile(timingFile, JSON.stringify({ kind: k, ...e }) + '\n'))
+      .catch(x => { timing.lost++; timing.error = String(x.message).slice(0, 200); }); };   // the ring keeps the entry; /api/timing says the file missed it
+  let tickAt = performance.now();
+  const stallTimer = setInterval(() => {
+    const now = performance.now(), gap = now - tickAt - STALL_TICK; tickAt = now;
+    if (gap <= (o.stallMs ?? 250)) return;
+    const from = now - gap - STALL_TICK, during = timing.recent.filter(r => r.t0 <= now && (r.t1 ?? now) >= from).map(r => r.url);
+    noteTiming('stalls', { at: new Date().toISOString(), ms: Math.round(gap), requests: [...new Set(during)].slice(0, 10) });
+  }, STALL_TICK);
+  stallTimer.unref();
+  function timed(req, res) {
+    const r = { url: `${req.method} ${String(req.url).slice(0, 160)}`, t0: performance.now(), t1: null, prime: null };
+    timing.recent.push(r); if (timing.recent.length > 50) timing.recent.shift();
+    res.on('finish', () => { r.t1 = performance.now(); const ms = r.t1 - r.t0;
+      if (ms > (o.slowMs ?? 1000) && !String(res.getHeader('content-type') ?? '').startsWith('text/event-stream'))
+        noteTiming('slow', { at: new Date().toISOString(), url: r.url, ms: Math.round(ms), prime: r.prime === null ? null : Math.round(r.prime), status: res.statusCode }); });
+    return r;
+  }
   const serve = async (req, res, store) => {
-    const send = (status, data, type = 'application/json; charset=utf-8') => { res.writeHead(status, { 'content-type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); };
+    const tr = timed(req, res);
+    const send = (status, data, type = 'application/json; charset=utf-8') => {
+      res.setHeader('Server-Timing', `app;dur=${(performance.now() - tr.t0).toFixed(1)}${tr.prime === null ? '' : `, prime;dur=${tr.prime.toFixed(1)}`}`);
+      res.writeHead(status, { 'content-type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); };
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     try {
@@ -1419,12 +1801,14 @@ data: ${JSON.stringify(l)}
       }
       if (req.method === 'GET') {
         if ((route.startsWith('/api/') || route === '/log') && !NO_STATE.test(route)) {   // the snapshot of the projects this GET reads (fs.promises, concurrently)
-          const want = url.searchParams.get('project') ?? firstP()?.name;
+          const want = url.searchParams.get('project') ?? firstP()?.name, t = performance.now();
           await primeFor(route === '/api/projects' || want === 'all' ? projects : projects.filter(x => x.name === want));
+          tr.prime = performance.now() - t;
         }
+        if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1436,22 +1820,35 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
-        if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
-        if (route === '/api/lanes') return send(200, { lanes: lanesWithSpend(pick(url, { all: true })) });
-        if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
+        if (route === '/api/inbox') { const ps = pick(url, { all: true }), per = await Promise.all(ps.map(inbox)), items = per.flat();
+          const prose = Object.fromEntries(await Promise.all(ps.map(async (p, i) => [p.name, await proseOf(p, per[i])])));
+          return send(200, { items, needs_you: needsYou(items), prose }); }
+        if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
+          const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
+          return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)), backlog: backlogOf(ps) }); }
+        if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
+          const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
+          const ps = pick(url, { all: true }), win = windowMs(w);
+          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win, { homes: true })))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+        }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
-          const vs = pick(url, { all: true }).map(deliverablesOf);
-          return send(200, { rows: vs.flatMap(v => v.rows), pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
+          const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)
+          const away = (await Promise.all(ps.map(async p => (await copyItemsAsync(p.state, 'deliverable')).map(it => ({ ...dlvCopyRow(it), project: p.name }))))).flat();
+          return send(200, { rows: [...vs.flatMap(v => v.rows), ...away], pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
         }
         if (route === '/api/records') return send(200, records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));
+        if (route === '/api/handedit/diff') {   // RM-35: last written by Norn vs now, for the diff viewer
+          try { return send(200, await handEditDiff(one(url).state, url.searchParams.get('file') || '')); } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
+        }
         if (route === '/api/usage') return send(200, usageView(pick(url, { all: true }), url));
         if (route === '/api/plan') return send(200, { parts: pick(url, { all: true }).map(planOf) });
-        if (route === '/api/docs') return send(200, docsAt(one(url), url));   // META-UX-BUILD S3
+        if (route === '/api/docs') { const p = one(url), kp = docKeyPath(p, url.searchParams.get('file') ?? ''); if (kp) await prime({ files: [kp] }); return send(200, docsAt(p, url)); }   // META-UX-BUILD S3
         if (route === '/api/instructions') return send(200, insOf(one(url), url));
         if (route === '/api/guard') return send(200, await guardAt(one(url), url));   // META-TEND P6
-        if (route === '/api/tests') { const p = one(url); await prime({ files: testsFiles(p.state) }); return send(200, { project: p.name, ...testsView(p.state, await suiteOf(p)) }); }   // META-TEND TESTS
+        if (route === '/api/tests') return send(200, await testsAt(one(url), url));   // META-TEND TESTS; TESTS-RUNTIME: the summary or one sub-view's part
+        if (route === '/api/tests/source') return send(200, await testSource(one(url), url));   // TESTS-RUNTIME: the code viewer
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
         if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
@@ -1540,7 +1937,7 @@ data: ${JSON.stringify(l)}
       }
       if (route === '/api/checkin') {
         const p = projectOf(data);
-        if (pausedFiles(p).some(existsS)) throw fail(409, 'Check-ins are paused. Resume them first.');
+        if (stopsCheckins(pauseOfP(p))) throw fail(409, 'Check-ins are paused. Resume them first.');
         if (lockFresh(p) || checkinStarting) throw fail(409, 'A check-in is already running or starting.');
         checkinStarting = true;
         try { return send(200, await platform.tick(p)); } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }
@@ -1552,13 +1949,18 @@ data: ${JSON.stringify(l)}
         return r;
       });
       send(200, result);
-    } catch (e) { if (!res.headersSent) send(e.status ?? 500, { error: e.message }); else res.end(); }
+    } catch (e) { if (!res.headersSent) send(e.status ?? 500, { error: e.message, ...(e.body || {}) }); else res.end(); }
   };
   const server = http.createServer(handler);
   server.requestTimeout = 300000; server.headersTimeout = 15000;
   // close also stops a running account refresh and instructions rebuilds: their workers write the state-dir cache, so a caller
   // that removes the state after close (the test fixtures' temp dirs) never races them (ENOTEMPTY under load)
-  const close = async () => { sessions.stopAll(); feeds.close(); streams.close();
+  // RM-46 S4 (multi-home SPEC 4.3): the sync loop - ls-remote every 30 s + the optional doorbell; its publish and pass run as norn CLI
+  // children (metaCli), so this event loop never blocks. Off without machine.json ledger.remote; the loop itself idles until a project is synced
+  const syncCfg = machineFile ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null;
+  const syncL = syncCfg?.remote ? loopOf(syncCfg, { cli: args => metaCli(args) }) : null;
+  syncL?.start();
+  const close = async () => { syncL?.stop(); sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
     for (const r of chatStreams) r.end();
     await Promise.all([...chats.values()].map(c => c.close())); if (acct.worker) await acct.worker.terminate().catch(() => {});
     await Promise.all([...insWorkers].map(w => w.terminate()));

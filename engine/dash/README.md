@@ -17,8 +17,11 @@ needs-you count. On a phone the bottom bar is Home / Inbox / Runs / Plan / More 
   Pause / Resume check-ins, Run tick. The tab title shows `(n)` when something needs you.
 - Overview: needs-you items, running runs with age vs their time budget and context size, usage burn vs the weekly guard, latest
   records, ledger tail.
-- Inbox: open questions with their options (the recommended one highlighted) and a free-text answer; answered-not-applied
-  questions, parked lanes, unreviewed runs.
+- Inbox: open questions with their options as small cards (key, text, cost; the recommended one marked, with its why) and a
+  free-text answer; answered-not-applied questions, parked lanes, unreviewed runs. Its text goes through the one prose renderer
+  (`prose.mjs`, on the Docs markdown stack): ids, lanes, PRs and commits as chips, file paths shortened (full path in the title, a
+  copy button, the Docs reader when it can show the file), measurements, before -> after pairs, ranges and >= <= != ~ as symbols; a long
+  body is a 3-line preview + "more" on the phone. A repeat-detector card its directive already asks for reads "Asked as DIR-n".
 - Map: lanes are threads, runs are beads on them. Norn look: **the Well** (Yggdrasil over the Well of Urd; the lanes on a ring of
   stakes, the camera fitted to the crown + ring, a stake label per lane with its state and "n needs you", archived lanes behind
   the toggle, 1x / 1.5x / 2x + pan) or **the Tapestry** (the dense view: one row per lane in band order). Live from `/api/stream`:
@@ -31,7 +34,11 @@ needs-you count. On a phone the bottom bar is Home / Inbox / Runs / Plan / More 
 - Roadmap (`norn road`): themes and items with a status derived from the linked lanes, runs and records (never typed); a tree
   or a board, filters, and the unplaced work that has no item yet.
 - Lanes: one row per lane record with its latest run (any executor), state and outcome.
-- Runs: every running and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
+- Runs: every running, queued and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
+  Running first (newest start first), then queued, then ended (latest end first). Columns `ran` (start to end, or to now while it
+  runs; `queued for` on a queued run) and `ended` (how long ago). Chips filter by state (running / queued / finished / failed),
+  kind (worker / check-in / helper / talk) and project, a box by lane, and the window of ended runs (2 h / 12 h / 24 h / all today);
+  the view lives in the URL (`&state=`, `&kind=`, `&proj=`, `&lane=`, `&window=`).
 - Records: directives and decisions with their history; Add / Revoke directive, Overrule decision.
 - Docs: the project's `docs` list rendered as markdown (docs.mjs + pinned vendor/ libs, contents sidebar, record-id chips).
   Ledger: the project ledger, one row per entry, newest first (`ledger.mjs` parses check-in / minor / auto / controller lines into a headline + labelled sub-lines, record ids link to where they live, headings / prose as markdown), search + kind filter, 100 lines then "Show older" (`/api/ledger?count=&offset=`). Settings: categories from the schema (policy.mjs `SECTIONS`) with left nav, search (`@modified`),
@@ -44,13 +51,15 @@ The dashboard says these words and only these; a count of the same thing comes f
 - **Run** (`RUN-n`): one session of an agent on a lane, from start to end. The Runs page lists them; the Overview's "Running" counts
   runs in flight against the caps. **Worker** appears only in the cap names (`max_claude_workers`): the most runs at once.
 - **Needs you**: an Inbox row that waits for you - an open question, a fixer result to apply, an approval card, a login or setup to do,
-  a parked lane, an unreviewed run. Answered questions (waiting for the next check-in) and model advice are listed in the Inbox for
-  information but are not counted. ONE count: `terms.mjs` `needsYou` - the Overview card, the Inbox head, the Inbox badge, the page
+  a parked lane, an unreviewed run. Answered questions (waiting for the next check-in), model advice and an enforce card already
+  asked for (its directive exists) are listed in the Inbox for information but are not counted. ONE count: `terms.mjs` `needsYou` - the Overview card, the Inbox head, the Inbox badge, the page
   title, the Home filter and the project picker all show it (`tests/dash-counts.test.mjs`). Pending chat approvals in the Home thread
   are counted beside it by name ("+ n to approve").
 - **Finding**: one open problem a check reports (instruction files, memory, rules, docs, tests, models, code checks). The **Slop** page
   lists every open finding; "slop" names the page, never a count. A **new finding** is one at warn level (medium or high) first seen
-  since the last baseline - the Slop count, SloppaChoppa's line and his badge all say "new finding".
+  since the last baseline - the Slop count, SloppaChoppa's line and his badge all say "new finding". A code finding explains
+  itself (RM-27): under its row, what was found, why the rule exists, what to do, and the waiver path (`norn rec add waiver`). The text
+  is the rule's `explain` in `engine/lib/slop/rules/<id>.json`, the same text `norn slop check` prints; a rule without it does not load.
 - **Hunk**: one proposed edit to one file, shown as a diff (a fixer result or an audit card). A finding can need several hunks; Apply
   counts hunks, the Slop counts count findings.
 - **Directive / Decision / Question** (`DIR-n` / `DEC-n` / `Q-n`): the record kinds; the Records page lists the first two.
@@ -67,8 +76,11 @@ directives, overrules and stops become events; the generated views are re-render
 and the project's `project.json` and regenerates the marked policy lines (`<!-- policy:<key> -->`) in `project.policy_targets`.
 
 ## API (GET, `?project=<name>`; overview / inbox / lanes / agents also take `all`)
-`/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents`, `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`,
+`/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents` (`&window=2h|12h|24h|today`: ended runs kept; default 2h), `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`,
 `/log?run=RUN-n` (last 200 lines of that run's log), `/api/feed?run=RUN-n` (SSE live feed of one run), `/api/stream` (SSE state stream: record appends, flag flips, heartbeat pulse, derived changes - the page re-renders from it).
+`/api/timing`: the server's own timings - requests slower than 1 s and event-loop stalls over 250 ms (with the requests that ran in
+the stall), the last 100 of each; also appended to `local/dash-timing.jsonl`. Every answer carries `Server-Timing` (`app` = ms in
+the server, `prime` = the snapshot read of a GET), shown in the browser's network panel.
 
 ## Look
 Norn (default; `engine/dash/norn/`: pixel kit, 9-slice panels, palette lock to `palette.hex`, integer art scale, state tokens and art behind one asset map `norn/assets.mjs`, drop-in folder `norn/art/`) or classic: the header Look button, `?look=classic`, remembered per browser.

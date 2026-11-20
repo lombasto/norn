@@ -6,6 +6,11 @@
   "key": "match",
   "title": "a new environment switch not named NORN_* or missing from the env table (engine/lib/slop/env.md)",
   "how": "an env read (env.X, process.env.X, env['X']) of an upper-case name, keyed on the name tree-wide: new when no file of the base tree names it; a new NORN_* name listed in the env table engine/lib/slop/env.md passes",
+  "explain": {
+    "what": "The code reads a new environment variable that is not named NORN_* or has no row in engine/lib/slop/env.md.",
+    "why": "Hidden switches change behaviour without a trace. One prefix and one table let anyone find every switch and what it does.",
+    "fix": "Name it NORN_<something> and add its row to engine/lib/slop/env.md. Better still, use a setting or a flag."
+  },
   "files": [
     "**/*.mjs",
     "**/*.js",

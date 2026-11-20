@@ -47,7 +47,7 @@ test('e2e loop: run -> queue --after -> fill -> run -> DONE -> DLV -> merge-brie
   const pf = file('project.json', JSON.stringify({ schema: 1, name: 'e2e', title: 'e2e', root: fwd(repo), executors: { e2e: { type: 'claude-compatible',
     runner: 'fake', base_url: 'http://127.0.0.1:9/never-called', api_key_env: 'META_E2E_KEY', model: 'e2e-model', effort: 'medium' } } }));
   const liveBefore = fs.existsSync(path.join(REPO, 'state', 'e2e'));
-  const env = { ...process.env, META_HB_MS: '150', META_NO_TICK: '1', META_E2E_KEY: 'e2e-dummy', META_ROOT: metaRoot, META_FILL_SAMPLE: '{"free_gb":64,"cpu_pct":0}' };   // the fill's resource gate is not under test (a busy box holds b queued)   // with --project the state is ${meta}/state/<name>: a temp META_ROOT keeps it here
+  const env = { ...process.env, META_HB_MS: '150', META_NO_TICK: '1', META_E2E_KEY: 'e2e-dummy', META_ROOT: metaRoot, META_FILL_SAMPLE: '{"free_gb":64,"cpu_pct":0}' };   // the fill's resource gate is not under test (a busy box holds b queued)   // with --project the state is ${norn}/state/<name>: a temp META_ROOT keeps it here
   for (const k of ['META_RUN_ID', 'META_PROJECT', 'META_STATE']) delete env[k];
   const meta = (...a) => { const r = spawnSync(process.execPath, [META, ...a], { env, encoding: 'utf8' }); return { code: r.status, out: r.stdout, err: r.stderr }; };
   const common = ['--executor', 'e2e', '--project', pf, '--locks', locks, '--budget', budget];

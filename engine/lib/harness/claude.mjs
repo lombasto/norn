@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readdirS, readdirA, existsS, existsA } from '../fsnap.mjs';
-import { prompt, modeOf, readText, EMPTY, jsonObject, detectExe, HEADLESS_CORE, feedFiles, logLine, oneLine, argSummary, located, promptArg } from './common.mjs';
+import { prompt, modeOf, readText, EMPTY, jsonObject, detectExe, HEADLESS_CORE, feedFiles, logLine, oneLine, argSummary, located, promptArg, slimInput, clip, cut } from './common.mjs';
 // a read-only helper (norn delegate, design sec. 3): no project agent file, no shell / edit / subagent tools, no MCP servers
 export const CLAUDE_RO_NOPE = ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit', 'Agent'];
 const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'flag', output: 'final', usage: 'tokens+cost', skills: 'claude',
@@ -16,7 +16,9 @@ const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'fl
  */
 function command(o) {
   const mode = modeOf(o, 'claude', caps), ro = mode !== 'write', remote = !!o.remote;
-  const mcp = o.mcp ? ['--mcp-config', JSON.stringify({ mcpServers: { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } })] : [];
+  // proc-hygiene (4): the servers the project / lane names (profile.mcp_servers, launchpolicy.mcpServersOf) join Norn's own in one config
+  const servers = { ...(o.profile?.mcp_servers || {}), ...(o.mcp ? { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } : {}) };
+  const mcp = Object.keys(servers).length ? ['--mcp-config', JSON.stringify({ mcpServers: servers })] : [];
   const tools = mode === 'read-only' ? ['--disallowedTools', CLAUDE_RO_NOPE.join(','), ...mcp, '--strict-mcp-config']
     : mode === 'no-tools' ? ['--tools', '', ...mcp, '--strict-mcp-config'] : mcp.length ? [...mcp, '--strict-mcp-config'] : [];
   const extra = mergeArgs(tools, profileArgs(o.profile));   // META-STANDING-CONTEXT R1: before `tools` is spread (it may merge into it)
@@ -106,24 +108,28 @@ export async function findTranscriptA(projectsDir, sid) {
 
 export const usageCtx = u => (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
 const resultText = b => typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(x => x?.text ?? '').join('\n') : '';
-/** One transcript record -> normalised events (LANE-MAP-DESIGN 2). The human prompt (the brief) and thinking are not events. */
+/**
+ * One transcript record -> normalised events (LANE-MAP-DESIGN 2). The human prompt (the brief) and thinking are not events.
+ * RM-36: a tool event carries its input (slimInput), a result its text (clip), a text event its words (cut), a TodoWrite step
+ * its whole list - the activity view (dash/activity.mjs) is derived from these.
+ */
 export function transcriptEvents(text) {
   const j = JSON.parse(text), ts = j.timestamp ?? null, m = j.message;
   if (j.type === 'assistant' && m && Array.isArray(m.content)) {
     const out = [];
     for (const b of m.content) {
-      if (b?.type === 'text' && String(b.text ?? '').trim()) out.push({ ts, kind: 'text', summary: oneLine(b.text) });
+      if (b?.type === 'text' && String(b.text ?? '').trim()) out.push({ ts, kind: 'text', summary: oneLine(b.text), text: cut(String(b.text).trim(), 2000) });
       else if (b?.type === 'tool_use' && b.name === 'TodoWrite') {
-        const t = (b.input?.todos || []).find(x => x?.status === 'in_progress');
-        if (t) out.push({ ts, kind: 'step', name: 'TodoWrite', summary: oneLine(t.activeForm || t.content) });
-      } else if (b?.type === 'tool_use') out.push({ ts, kind: 'tool', name: String(b.name ?? 'tool'), id: b.id ?? null, summary: argSummary(b.input) });
+        const todos = slimInput(b.input).todos || [], t = todos.find(x => x.status === 'in_progress');
+        out.push({ ts, kind: 'step', name: 'TodoWrite', summary: t ? oneLine(t.activeForm || t.content) : `plan: ${todos.filter(x => x.status === 'completed').length} of ${todos.length} done`, todos });
+      } else if (b?.type === 'tool_use') out.push({ ts, kind: 'tool', name: String(b.name ?? 'tool'), id: b.id ?? null, summary: argSummary(b.input), input: slimInput(b.input) });
     }
     if (m.usage) { const ctx = usageCtx(m.usage); out.push({ ts, kind: 'usage', summary: `context ${Math.round(ctx / 1000)}k`, ctx }); }
     return out;
   }
   if (j.type === 'user' && Array.isArray(m?.content))
     return m.content.filter(b => b?.type === 'tool_result').map(b => ({ ts, kind: b.is_error ? 'error' : 'tool', id: b.tool_use_id ?? null, done: true,
-      summary: b.is_error ? oneLine(resultText(b).replace(/<\/?tool_use_error>/g, '')) : '' }));
+      summary: b.is_error ? oneLine(resultText(b).replace(/<\/?tool_use_error>/g, '')) : '', text: clip(resultText(b)) }));
   return [];
 }
 

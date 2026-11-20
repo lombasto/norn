@@ -14,7 +14,7 @@
   "checkin": {
     "cwd": "${root}",
     "add_dirs": [
-      "${meta}",
+      "${norn}",
       "${notes_root}"
     ],
     "interval_min": 15
@@ -27,7 +27,7 @@
   "executors": {
     "claude": {
       "agent": "demo-implementer",
-      "headless": "${meta}/engine/prompts/HEADLESS.txt"
+      "headless": "${norn}/engine/prompts/HEADLESS.txt"
     },
     "codex-sol": {
       "model": "gpt-6.1-sol",
