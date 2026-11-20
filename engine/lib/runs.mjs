@@ -14,7 +14,8 @@ import { adapterFor, harnessOf } from './harness/index.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
 import { writeQueueView, sleepMs } from './views.mjs';
-import { spawnOutside } from './jobguard.mjs';
+import { spawnOutside, procList, procListAsync } from './jobguard.mjs';
+import { receiptTree } from './kills.mjs';
 import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
 import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
 import { limitRefusal, openLimits } from './limitgate.mjs';
@@ -1046,21 +1047,27 @@ function descendants(pid, psOut = spawnSync('ps', PS, { encoding: 'utf8' }).stdo
   while (todo.length) for (const c of kids[todo.pop()] || []) if (!out.includes(c)) { out.push(c); todo.push(c); }
   return out;
 }
-export function killTree(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return; }
+// DEC-1088: every tree kill is receipted first (kills.mjs: one line per process of the tree in rc's kills.jsonl). rc = { state | file,
+// killer, reason }; returns the receipted rows ({ pid, name, cmd, ppid }) - [] for no pid.
+export function killTree(pid, rc) {
+  if (!Number.isInteger(pid) || pid <= 0) return [];
+  const rows = receiptTree(pid, rc, procList());
+  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return rows; }
   signal(pid, 'SIGSTOP');
   for (const c of descendants(pid)) signal(c, 'SIGKILL');
   signal(pid, 'SIGKILL');
+  return rows;
 }
 const execA = (cmd, args) => new Promise(ok => execFile(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 15000 }, (e, out) => ok(String(out || ''))));
-/** killTree off the event loop (the dash server's stop): taskkill / ps as async children */
-export async function killTreeAsync(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  if (process.platform === 'win32') { await execA('taskkill', ['/PID', String(pid), '/T', '/F']); return; }
+/** killTree off the event loop (the dash server's stop): listing, taskkill / ps as async children */
+export async function killTreeAsync(pid, rc) {
+  if (!Number.isInteger(pid) || pid <= 0) return [];
+  const rows = receiptTree(pid, rc, await procListAsync());
+  if (process.platform === 'win32') { await execA('taskkill', ['/PID', String(pid), '/T', '/F']); return rows; }
   signal(pid, 'SIGSTOP');
   for (const c of descendants(pid, await execA('ps', PS))) signal(c, 'SIGKILL');
   signal(pid, 'SIGKILL');
+  return rows;
 }
 const SYNC_IO = { record: (s, ev) => record(s, ev), kill: killTree, unlink: f => { try { fs.unlinkSync(f); } catch { /* none */ } }, release: releaseLock };
 const ASYNC_IO = { record: (s, ev) => recordAsync(s, ev), kill: killTreeAsync, unlink: async f => { try { await fs.promises.unlink(f); } catch { /* none */ } }, release: releaseLockAsync };
@@ -1077,8 +1084,9 @@ function* stopSteps({ state, locksDir, run, by, why }) {
   if (cur?.state === 'queued') return yield ['record', state, { kind: 'run', ev: 'withdraw', id: run, by, data: drop({ why }) }];
   const hb = readJson(hbPath(state, run)) || {};
   const ev = yield ['record', state, { kind: 'run', ev: 'kill', id: run, by, data: drop({ why, pid: hb.pid, supervisor_pid: hb.supervisor_pid }) }];
-  yield ['kill', hb.supervisor_pid];
-  yield ['kill', hb.pid];
+  const rc = { state, killer: `norn stop by ${by} (pid ${process.pid})`, reason: `stop ${run}${why ? `: ${why}` : ''}` };
+  yield ['kill', hb.supervisor_pid, rc];
+  yield ['kill', hb.pid, rc];
   yield ['unlink', hbPath(state, run)];
   const it = runsOf(state).find(x => x.id === run);
   // META-MERGELOCK: every lock the run took (its spec's lockFiles: a MERGE holds a merge slot too), else its worktree's
@@ -1131,6 +1139,7 @@ export function requeueRun({ state, run, after, by, why, notBefore, priority }) 
 
 // Children are stopped with the parent (metadelegate sec. 2): a running helper whose parent run is no longer running is
 // recorded lost (role launcher; the helper's supervisor then fails its `end` and exits) and its process tree is killed.
+// DEC-1088: only the pids the helper's own heartbeat registered (never a match by name / command line), each receipted first.
 export const stopOrphans = (state, o) => runSteps(orphanSteps(state, o), SYNC_IO);
 function* orphanSteps(state, { by = 'launcher' } = {}) {
   const runs = runsOf(state), byId = Object.fromEntries(runs.map(r => [r.id, r])), stopped = [];
@@ -1139,11 +1148,12 @@ function* orphanSteps(state, { by = 'launcher' } = {}) {
     if (it.data.via === 'ask') continue;   // norn ask: a helper of an ENDED run by design
     const p = byId[it.data.parent];
     if (p?.state === 'running') continue;
-    const hb = readJson(hbPath(state, it.id)) || {};
-    try { yield ['record', state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why: `parent ${it.data.parent} ${p?.state ?? 'missing'}` } }]; }
+    const hb = readJson(hbPath(state, it.id)) || {}, why = `parent ${it.data.parent} ${p?.state ?? 'missing'}`;
+    try { yield ['record', state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why } }]; }
     catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
-    yield ['kill', hb.supervisor_pid];
-    yield ['kill', hb.pid];
+    const rc = { state, killer: `stopOrphans by ${by} (pid ${process.pid}${process.env.META_RUN_ID ? `, ${process.env.META_RUN_ID}` : ''})`, reason: `orphaned helper ${it.id}: ${why}` };
+    yield ['kill', hb.supervisor_pid, rc];
+    yield ['kill', hb.pid, rc];
     yield ['unlink', hbPath(state, it.id)];
     stopped.push(it.id);
   }

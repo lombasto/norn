@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { jobguardExe, jobguardExeAsync, winQuote, holdGone } from '../engine/lib/jobguard.mjs';
+import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -57,7 +58,8 @@ test('S5 end evidence: a worktree git cannot read = no dirty / branch / head fie
   for (const k of ['dirty', 'branch', 'head']) assert.equal(e[k], undefined, k);
 });
 
-test('S5 reap: an orphaned grandchild (its parent already exited) dies with the run; the end records how many were reaped', { skip: process.platform !== 'win32' && 'job objects: Windows; POSIX = process group' }, async () => {
+// DEC-1088: the end record keeps WHICH processes were reaped (pid + image), not a count; each has its receipt in kills.jsonl
+test('S5 reap: an orphaned grandchild (its parent already exited) dies with the run; the end lists the reaped pids + images, each receipted', { skip: process.platform !== 'win32' && 'job objects: Windows; POSIX = process group' }, async () => {
   const d = sandbox();
   const pids = path.join(d.t, 'pids.json');
   const id = d.run(`mode: orphan\npids: ${pids}\n`);
@@ -65,7 +67,10 @@ test('S5 reap: an orphaned grandchild (its parent already exited) dies with the 
   const p = JSON.parse(fs.readFileSync(pids, 'utf8'));
   await waitFor(() => !alive(p.orphan), 5000).catch(() => {});
   assert.equal(alive(p.orphan), false, `orphan ${p.orphan} still alive after the run ended`);
-  assert.ok(e.reaped >= 1, `reaped ${e.reaped}`);
+  assert.ok(e.reaped.some(k => k.pid === p.orphan && /^node(\.exe)?$/i.test(k.image)), `reaped ${JSON.stringify(e.reaped)}`);
+  const rec = readKills(killsFile(d.state)).find(k => k.pid === p.orphan);
+  assert.equal(rec?.action, 'kill'); assert.equal(rec.reason, `reap: ${id} ended`); assert.match(rec.killer, new RegExp(`^${id} supervisor \\d+$`));
+  assert.match(rec.job, /^meta-run-/);
 });
 
 test('S5 jobguard: a held process keeps itself, reap kills its job; spawnOutside escapes the job', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
@@ -86,7 +91,7 @@ process.exit(0);`;
   await new Promise(r => c.on('exit', r));
   const o = JSON.parse(fs.readFileSync(out, 'utf8'));
   assert.equal(o.error, undefined);
-  assert.ok(o.r.killed.includes(o.inside));
+  assert.ok(o.r.killed.some(k => k.pid === o.inside));
   await waitFor(() => !alive(o.inside), 5000).catch(() => {});
   assert.equal(alive(o.inside), false);
   assert.equal(o.outside.breakaway, true);

@@ -190,7 +190,8 @@ const EVENT_MS = 72 * 3600e3;
 function stopForClaim(state, run, why, kill) {
   const hb = (() => { try { return JSON.parse(fs.readFileSync(hbPath(state, run.id), 'utf8')); } catch { return {}; } })();
   try { record(state, { kind: 'run', ev: 'lost', id: run.id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
-  kill(hb.supervisor_pid); kill(hb.pid);
+  const rc = { state, killer: `tick pid ${process.pid}`, reason: `claim: ${run.id} ${why}` };   // DEC-1088: receipted (killTree)
+  kill(hb.supervisor_pid, rc); kill(hb.pid, rc);
   try { fs.unlinkSync(hbPath(state, run.id)); } catch { /* gone */ }
   return true;
 }
