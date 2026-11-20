@@ -118,17 +118,20 @@ test('per role and per day: median standing context, cache create, the day\'s ca
 });
 
 // ---------- lean launch profiles: data in policy, flags in the adapters ----------
-test('profiles: "full" (default) adds no flag but a worker\'s strict MCP - the command stays byte-same otherwise; "lean" maps to the adapter\'s flags and never --bare', () => {
+test('profiles: "full" (default) adds no flag - the command stays byte-same, workers included (DEC-30); a lean / named profile gives a worker strict MCP; "lean" maps to the adapter\'s flags and never --bare', () => {
   assert.deepEqual(profileOf({}, 'checkin'), { name: 'full', ...PROFILE_DEFAULTS.full });
-  assert.deepEqual(profileOf({}, 'worker'), { name: 'full', mcp: 'none', ...PROFILE_DEFAULTS.full }, 'proc-hygiene (4): a worker loads no MCP server of the owner\'s setup');
-  assert.deepEqual(profileOf({}, 'merge').mcp, 'none');
-  assert.deepEqual(profileOf({ launch: { profiles: { full: { mcp: 'all' } } } }, 'worker').mcp, 'all', 'a profile that sets mcp wins');
+  assert.deepEqual(profileOf({}, 'worker'), { name: 'full', ...PROFILE_DEFAULTS.full }, 'DEC-30: full stays byte-same for a worker too');
+  const named = { launch: { roles: { worker: 'tight', merge: 'tight', checkin: 'tight' } } };
+  assert.deepEqual(profileOf(named, 'worker'), { name: 'tight', mcp: 'none' }, 'proc-hygiene (4): under a named profile a worker loads no MCP server of the owner\'s setup');
+  assert.deepEqual(profileOf(named, 'merge').mcp, 'none'); assert.equal(profileOf(named, 'checkin').mcp, undefined, 'a check-in keeps the profile\'s default');
+  assert.deepEqual(profileOf({ launch: { ...named.launch, profiles: { tight: { mcp: 'all' } } } }, 'worker').mcp, 'all', 'a profile that sets mcp wins');
   const pol = { launch: { roles: { worker: 'lean' }, profiles: { lean: { skills: true } } } };
   const lean = profileOf(pol, 'worker');
   assert.equal(lean.name, 'lean'); assert.equal(lean.skills, true, 'a project override keeps the skills'); assert.equal(profileOf(pol, 'checkin').name, 'full');
   const C = ADAPTERS.claude;
   assert.deepEqual(C.profileArgs(profileOf({}, 'checkin')), []);
-  assert.deepEqual(C.profileArgs(profileOf({}, 'worker')), ['--strict-mcp-config']);
+  assert.deepEqual(C.profileArgs(profileOf({}, 'worker')), []);
+  assert.deepEqual(C.profileArgs(profileOf(named, 'worker')), ['--strict-mcp-config']);
   const all = C.profileArgs({ name: 'lean', ...PROFILE_DEFAULTS.lean });
   assert.deepEqual(all, ['--strict-mcp-config', '--setting-sources', 'project,local', '--exclude-dynamic-system-prompt-sections', '--disallowedTools', 'Artifact,Workflow,ScheduleWakeup,ReportFindings'],
     'lean = the calibration (NOTES): skills kept, the unused harness tools dropped');
@@ -143,7 +146,8 @@ test('profiles: "full" (default) adds no flag but a worker\'s strict MCP - the c
   const spec = { executor: 'claude', exe: 'claude', lane: 'l', model: 'm', effort: 'e', session_id: 's', worktree: 'C:/w', brief: 'C:/b.md', notes: 'C:/n.md' };
   const a = buildCommand(spec).args, b = buildCommand({ ...spec, profile: profileOf({}, 'checkin') }).args;
   assert.deepEqual(a, b, 'full = today\'s launch');
-  assert.deepEqual(buildCommand({ ...spec, profile: profileOf({}, 'worker') }).args, [...a, '--strict-mcp-config'], 'a worker: today\'s launch + strict MCP');
+  assert.deepEqual(buildCommand({ ...spec, profile: profileOf({}, 'worker') }).args, a, 'a full worker: today\'s launch (DEC-30)');
+  assert.deepEqual(buildCommand({ ...spec, profile: profileOf(named, 'worker') }).args, [...a, '--strict-mcp-config'], 'a named-profile worker: today\'s launch + strict MCP');
   const l = buildCommand({ ...spec, profile: { name: 'lean', ...PROFILE_DEFAULTS.lean }, mcp: { name: 'norn', command: 'node', args: [] } }).args;
   assert.equal(l.filter(x => x === '--strict-mcp-config').length, 1); assert.ok(l.includes('--exclude-dynamic-system-prompt-sections'));
   const ro = buildCommand({ ...spec, readonly: true, profile: { name: 'lean', ...PROFILE_DEFAULTS.lean } }).args;
@@ -154,15 +158,15 @@ test('profiles: "full" (default) adds no flag but a worker\'s strict MCP - the c
   assert.deepEqual(ADAPTERS.claude.chatCommand({ exe: 'claude', model: 'm', effort: 'e', session_id: 's', profile: { name: 'full' } }).args, ADAPTERS.claude.chatCommand({ exe: 'claude', model: 'm', effort: 'e', session_id: 's' }).args);
 });
 
-// proc-hygiene (4): every worker loaded the owner's Ansys / agentmemory MCP servers. Strict by default; a server the project or lane
-// names comes from the owner's config into the one --mcp-config, beside Norn's own
-test('worker MCP: none by default; launch.mcp_servers + lane_mcp_servers name the servers, read from the owner\'s .claude.json / the worktree\'s .mcp.json', async () => {
+// proc-hygiene (4): every worker loaded the owner's Ansys / agentmemory MCP servers. Strict under a lean / named profile (DEC-30: full
+// stays byte-same); a server the project or lane names comes from the owner's config into the one --mcp-config, beside Norn's own
+test('worker MCP: none under a named profile; launch.mcp_servers + lane_mcp_servers name the servers, read from the owner\'s .claude.json / the worktree\'s .mcp.json', async () => {
   const { launchParts, mcpServersOf } = await import('../engine/lib/launchpolicy.mjs');
   const t = mkTmp('meta-mcp-'), claudeDir = path.join(t, '.claude'), wt = path.join(t, 'wt');
   fs.mkdirSync(claudeDir, { recursive: true }); fs.mkdirSync(wt, { recursive: true });
   fs.writeFileSync(path.join(t, '.claude.json'), JSON.stringify({ mcpServers: { ansys: { command: 'ansys.exe', args: [] }, memory: { command: 'npx', args: ['m'] } } }));
   fs.writeFileSync(path.join(wt, '.mcp.json'), JSON.stringify({ mcpServers: { local: { command: 'l', args: [] } } }));
-  const policy = { launch: { mcp_servers: ['local'], lane_mcp_servers: { 'fea-*': ['ansys', 'gone'] } } };
+  const policy = { launch: { roles: { worker: 'tight' }, mcp_servers: ['local'], lane_mcp_servers: { 'fea-*': ['ansys', 'gone'] } } };
   assert.deepEqual(mcpServersOf(policy, 'fea-1'), ['local', 'ansys', 'gone']);
   assert.deepEqual(mcpServersOf(policy, 'docs'), ['local']);
   assert.deepEqual(mcpServersOf({}, 'x'), []);
@@ -173,8 +177,10 @@ test('worker MCP: none by default; launch.mcp_servers + lane_mcp_servers name th
   const args = buildCommand({ ...spec, profile: p, mcp: { name: 'norn', command: 'node', args: ['n'] } }).args;
   assert.equal(args.filter(x => x === '--mcp-config').length, 1); assert.equal(args.filter(x => x === '--strict-mcp-config').length, 1);
   assert.deepEqual(Object.keys(JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers), ['local', 'ansys', 'norn']);
-  const none = buildCommand({ ...spec, profile: launchParts({ project: {}, executor: 'claude', lane: 'x', claudeDir, worktree: wt }).profile }).args;
+  const none = buildCommand({ ...spec, profile: launchParts({ project: { policy: { launch: { roles: { worker: 'tight' } } } }, executor: 'claude', lane: 'x', claudeDir, worktree: wt }).profile }).args;
   assert.ok(none.includes('--strict-mcp-config') && !none.includes('--mcp-config'), 'no server named: strict, none loaded');
+  const full = buildCommand({ ...spec, profile: launchParts({ project: {}, executor: 'claude', lane: 'x', claudeDir, worktree: wt }).profile }).args;
+  assert.ok(!full.includes('--strict-mcp-config') && !full.includes('--mcp-config'), 'DEC-30: no profile, no server named = today\'s launch');
 });
 
 test('profile drops: a lean profile that drops the skills / user setup a brief or agent file names is a doctor row', () => {
