@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { syncLoop, watchDoorbell, movedHeads, parseHeads, ringOf, doorbellOf, ringHome, syncStep, LOOP } from '../engine/lib/sync.mjs';
+import { syncLoop, watchDoorbell, movedHeads, parseHeads, ringOf, doorbellOf, ringHome, syncStep, LOOP, loopOf, norn, publishHome } from '../engine/lib/sync.mjs';
 import { ringDoorbell, doorbellStream } from '../engine/lib/notify.mjs';
 import { ledgerConfig } from '../engine/lib/ledger.mjs';
+import { loadMachine } from '../engine/lib/config.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const META = path.resolve('engine/bin/norn.mjs');
@@ -203,4 +204,50 @@ test('norn sync watch | ring: sync off is an error; a bad flag is usage', () => 
   }
   const u = spawnSync(process.execPath, [META, 'sync', 'watch', '--bogus'], { env, encoding: 'utf8', windowsHide: true });
   assert.equal(u.status, 2); assert.match(u.stderr, /usage: norn sync/);
+});
+
+test('machine.json ledger.doorbell { server?, topic } is accepted; a stray key or no topic is refused', () => {
+  const t = mkTmp('syncloop-schema-'), mf = path.join(t, 'machine.json'), fw = p => p.split(path.sep).join('/');
+  const m = bell => ({ schema: 1, home: fw(t), node: fw(process.execPath), codex: null, git: { exe: 'git' }, scheduler: { kind: 'cron', name: 'x', interval_min: 15 },
+    claude: { exe: fw(process.execPath), config_dir: fw(path.join(t, 'cfg')), projects_dir: fw(path.join(t, 'cfg', 'projects')) }, dash: { port: 8737, bind: '127.0.0.1' },
+    projects: [], ledger: { remote: 'file:///synthetic/ledger.git', doorbell: bell } });
+  fs.writeFileSync(mf, JSON.stringify(m(FAKE_BELL)));
+  assert.deepEqual(loadMachine(mf, { home: t, meta: t }).ledger.doorbell, FAKE_BELL);
+  for (const bad of [{ ...FAKE_BELL, extra: 1 }, { server: FAKE_BELL.server }]) {
+    fs.writeFileSync(mf, JSON.stringify(m(bad)));
+    assert.throws(() => loadMachine(mf, { home: t, meta: t }), /doorbell/);
+  }
+});
+
+// two synthetic homes on one temp bare remote, the real loop (ls-remote, for-each-ref, norn sync publish | fetch children); timers injected
+function realHome(id, remote) {
+  const t = mkTmp(`syncloop-real-${id}-`), meta = path.join(t, 'meta'), st = path.join(meta, 'state', 'demo'), mf = path.join(meta, 'local', 'machine.json'), fw = p => p.split(path.sep).join('/');
+  const ledger = { dir: fw(path.join(t, 'ledger.git')), state_root: fw(path.join(meta, 'state')), reviews: fw(path.join(t, 'reviews')), remote };
+  fs.mkdirSync(path.dirname(mf), { recursive: true }); fs.mkdirSync(st, { recursive: true });
+  fs.writeFileSync(mf, JSON.stringify({ schema: 1, home: fw(t), node: fw(process.execPath), codex: null, git: { exe: 'git' }, scheduler: { kind: 'cron', name: 'x', interval_min: 15 },
+    claude: { exe: fw(process.execPath), config_dir: fw(path.join(t, 'cfg')), projects_dir: fw(path.join(t, 'cfg', 'projects')) }, dash: { port: 8737, bind: '127.0.0.1' }, projects: [], ledger }));
+  fs.writeFileSync(path.join(st, 'home.json'), JSON.stringify({ id, bare_home: 'a', cut_at: '2026-11-20T09:00:00Z' }) + '\n');
+  fs.writeFileSync(path.join(st, 'roadmap.jsonl'), `{"id":"RM-${id}"}\n`);
+  return { meta, st, cfg: ledgerConfig({ ledger }, { metaRoot: meta, machineFile: mf }) };
+}
+
+test('loopOf on two temp homes: a publish of a is one pass on b (copies written), an unchanged remote none; b publishes its own', async () => {
+  const t = mkTmp('syncloop-remote-'), remote = path.join(t, 'remote.git').split(path.sep).join('/');
+  assert.equal(spawnSync('git', ['init', '-q', '--bare', remote], { windowsHide: true }).status, 0);
+  const a = realHome('a', remote), b = realHome('b', remote), tm = timers(), logs = [];
+  assert.ok(publishHome(a.cfg).pushed);
+  const loop = loopOf(b.cfg, { cli: args => norn(args, { env: { ...process.env, META_ROOT: b.meta } }), log: s => logs.push(s), timers: tm });
+  await loop.start();
+  const passes = () => logs.filter(l => /pass \(/.test(l));
+  assert.equal(passes().length, 1, logs.join('\n'));
+  assert.equal(fs.readFileSync(path.join(b.st, 'homes', 'a', 'roadmap.jsonl'), 'utf8'), '{"id":"RM-a"}\n');
+  assert.ok(logs.some(l => /publish: published home\/b/.test(l)), 'b published its own files first');
+  await tm.fire();
+  assert.equal(passes().length, 1, 'nothing moved: no fetch');
+  fs.appendFileSync(path.join(a.st, 'roadmap.jsonl'), '{"id":"RM-a2"}\n');
+  assert.ok(publishHome(a.cfg).pushed);
+  await tm.fire();
+  assert.equal(passes().length, 2);
+  assert.match(fs.readFileSync(path.join(b.st, 'homes', 'a', 'roadmap.jsonl'), 'utf8'), /RM-a2/);
+  loop.stop();
 });
