@@ -78,6 +78,9 @@ export function holdWords(term, { billing = null, status = '' } = {}) {
     clears: 'by itself as the last 24 h of spend falls under the cap', fix: 'wait, or raise or clear the API daily cap (Settings)' };
   if ((m = t.match(/^PAUSED (\w+) \((.+)\)$/))) return { reason: `Norn is paused (${PAUSE_MODES[m[1]]?.label ?? m[1]}): the file ${m[2]} holds every start`, clears: null, file: m[2], resume: true,
     fix: `resume all (the header's pause menu, or norn resume --all) - it deletes the project's own PAUSED file; a machine-level ${m[2]} is deleted by hand` };
+  if ((m = t.match(/^dwarf: (.+) is busy on (RUN-\d+)$/))) return { reason: `the lane is pinned to ${m[1]}, who is busy on ${m[2]}`, clears: `by itself when ${m[2]} ends`,   // DWARVES 1.3 rule 1
+    fix: 'wait, or unpin the dwarf: norn crew unpin <id>', command: 'norn crew unpin <id>' };
+  if (t.startsWith('crew store ')) return { reason: t, clears: null, fix: 'repair or move the crew store file: no worker run starts without a dwarf' };
   return { reason: t, clears: null, fix: 'see the Plan tab' };
 }
 

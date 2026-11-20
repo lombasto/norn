@@ -24,7 +24,7 @@ test('XSS: hostile directive text and decision fields render escaped in the Reco
   const d = { project: 'demo', directives: [rec('DIR-1', 'DIR', 'active', { text: bad, via: '<em>chat</em>' })],
     decisions: [rec('DEC-1', 'DEC', 'in-force', { question: bad, choice: bad, why: bad, lane: '<s>l</s>', source: '<a>' })] };
   const html = renderTab('records', d, { project: 'demo', now: Date.parse('2026-01-02T05:00Z') });
-  assert.ok(!/<(?:img|script|b|i|svg|em|u|s)[ >]/i.test(html.replace(/<b class="aname">/g, '')), html);
+  assert.ok(!/<(?:img|script|b|i|svg|em|u|s)[ >]/i.test(html.replace(/<b class="aname" data-dwarf="[a-z0-9-]*">/g, '')), html);
   assert.match(html, /&lt;img src=x/); assert.match(html, /<code>&lt;\/code&gt;&lt;svg&gt;<\/code>/);
 });
 

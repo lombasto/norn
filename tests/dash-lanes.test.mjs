@@ -11,6 +11,7 @@ import { lanesView, sortLanes } from '../engine/lib/lanes.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
+import { loadTab, renderTab } from '../engine/dash/ui.mjs';
 
 const GENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' };
 const g = (repo, ...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', env: GENV, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -38,6 +39,24 @@ test('the browser: a refused Archive keeps its reason on the row through a live 
     assert.ok(await repainted(pg, 'seabed'), 'the stream re-renders the page');
     assert.match(await pg.ev(`document.querySelector('#lane-seabed .lane-refused')?.textContent ?? ''`), /cannot be archived/, 'the refusal is still on the row');
   } finally { await pg.close(); await f.done(); }
+});
+
+// DWARVES S1: every page that names a run shows the dwarf who ran it (the server row's dwarf: { id, name }); a run with no dwarf shows its kind word
+test('Lanes, Runs and the Inbox show the dwarf who ran it; a run with no dwarf shows its kind word, never data.name', async () => {
+  const f = await fixture();
+  try {
+    const get = async p => (await f.get(p)).data;
+    const lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
+    assert.deepEqual(lanes.find(l => l.name === 'render').dwarf, { id: 'oin', name: 'Óin' });
+    assert.ok(!lanes.some(l => 'run_name' in l), 'no run_name any more');
+    const oin = '<b class="aname" data-dwarf="oin">Óin</b>';
+    for (const tab of ['runs', 'lanes']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(oin), tab);
+    assert.ok(renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' }).includes('<b class="aname" data-dwarf="thorin">Thorin</b>'), 'inbox: the unreviewed run');
+    record(f.pa.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'claude', lane: 'seabed', name: 'tawny-falcon' } });
+    const html = renderTab('lanes', await loadTab('lanes', 'kestrel', get), { project: 'kestrel' });
+    assert.ok(html.includes('<span class="mute">check-in</span>'), 'no dwarf: the kind word');
+    assert.ok(!html.includes('tawny-falcon'), 'a run\'s old data.name is never read');
+  } finally { await f.done(); }
 });
 
 // owner 2026-11-18: the Lanes row's Log opened /log (the supervisor's plain-text tail, a line with a file path) in a new browser

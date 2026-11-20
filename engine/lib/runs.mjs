@@ -32,6 +32,7 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
+import { withCrew, pickDwarf, readCrew, crewState, projectOf, CrewError } from './crew.mjs';
 import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
@@ -459,15 +460,51 @@ export function lostNotice(rows, project = '') {
   return { title: `${project ? project + ': ' : ''}${head}`, body: `${head}: ${rows.length} run${rows.length === 1 ? '' : 's'} lost, ${m} relaunched (${list})` };
 }
 
-// running, non-interactive runs with a fresh (or late: hbLate) heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
-export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
+// every sibling state dir with runs.jsonl (account-wide, D11): this machine's projects
+function machineStates(state) {
   const parent = path.dirname(path.resolve(state));
   const states = new Set([path.resolve(state)]);
   for (const d of fs.existsSync(parent) ? fs.readdirSync(parent) : []) if (fs.existsSync(path.join(parent, d, 'runs.jsonl'))) states.add(path.join(parent, d));
+  return states;
+}
+// running, non-interactive runs with a fresh (or late: hbLate) heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
+export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
   const live = [];
-  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs, cpu: sweptCpu(s, { now }) }))) live.push({ ...it, state_dir: s });
+  for (const s of machineStates(state)) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs, cpu: sweptCpu(s, { now }) }))) live.push({ ...it, state_dir: s });
   return live;
 }
+// ---------- the crew (DWARVES.md 1.3): a lane's worker run takes a dwarf; Norn's own steps and helpers take none ----------
+export const takesDwarf = o => !['checkin', 'audit', 'interactive'].includes(o.kind) && o.role !== 'helper' && !isMergeStage(o.stage);
+// busy: the dwarf of every live run on this machine (sibling state dirs); past: every run a dwarf took (rule 2's preferences, norn crew)
+export function crewLoad(state, staleMs = STALE_MS) {
+  const busy = {}, past = [];
+  for (const r of liveRuns(state, { staleMs })) if (r.data.dwarf) busy[r.data.dwarf] = r.id;
+  for (const s of machineStates(state)) for (const r of runsOf(s)) if (r.data.dwarf) past.push({ dwarf: r.data.dwarf, project: projectOf(s), lane: r.data.lane ?? null, at: r.created, run: r.id, state: r.state });
+  return { busy, past };
+}
+/** the wait term of run spec o (a busy pinned dwarf, or an unreadable crew store), else null; the dry check of the fill walk */
+export function dwarfWait(o, staleMs = STALE_MS) {
+  if (!takesDwarf({ ...o, kind: o.kind || infoOf(o)?.kind })) return null;
+  let st;
+  try { st = crewState(readCrew(o.state)); } catch (e) { if (e instanceof CrewError) return e.message; throw e; }
+  const key = `${projectOf(o.state)}/${o.lane}`;
+  if (!Object.values(st.dwarves).some(d => d.state === 'active' && d.pins.includes(key))) return null;
+  return pickDwarf(st, { project: projectOf(o.state), lane: o.lane }, crewLoad(o.state, staleMs).busy).wait ?? null;
+}
+// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf;
+// a busy pinned dwarf refuses (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
+function withDwarf(o, info, staleMs, write) {
+  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write(undefined);
+  try {
+    return withCrew(o.state, c => {
+      const { busy, past } = crewLoad(o.state, staleMs);
+      const p = pickDwarf(c.state, { project: projectOf(o.state), lane: o.lane }, busy, past);
+      if (p.wait) throw new RunRefused(p.wait, 3);
+      return write(p.dwarf ?? c.hire(p.hire));
+    });
+  } catch (e) { if (e instanceof CrewError) throw new RunRefused(e.message, 3); throw e; }
+}
+
 // META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief
 // rebases + pushes in the lane worktree waits / is refused (exit 3) while that worktree holds a live writer lock or the lane has a
 // live run; a staged brief (norn merge-brief --sha) merges one tested commit in its merge worktree and never touches it: no check.
@@ -741,6 +778,8 @@ export function startRun(o) {
     if (mh) return { ...queueRun(rest), queued: true, why: heldWords(mh) };
     const sf = slotsFull(rest, rest.staleMs ?? STALE_MS);   // GAP-6: every merge slot of the repo taken: it waits queued
     if (sf) return { ...queueRun(rest), queued: true, why: sf };
+    const dw = dwarfWait(rest, rest.staleMs ?? STALE_MS);   // DWARVES 1.3 rule 1: the lane's pinned dwarf is busy
+    if (dw) return { ...queueRun(rest), queued: true, why: dw };
     // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
     const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
     if (refused) return { ...queueRun(rest), queued: true, why: refused };
@@ -780,7 +819,7 @@ export function startRun(o) {
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     // WORK-SIZING S1: the context marks the run starts under, on its record (enforcement still reads the live policy: ctxlimit.mjs)
     const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
-    const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) });
+    const ev = withDwarf(o, info, staleMs, dwarf => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), dwarf, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
@@ -880,10 +919,11 @@ export function queueRun(o) {
 export const DEFAULT_PRIORITY = 'P2';
 const rank = r => PRIORITIES.indexOf(PRIORITIES.includes(r.data.priority) ? r.data.priority : DEFAULT_PRIORITY);
 const fillKey = r => 2 * rank(r) - (isLandingStage(r.data.stage) ? 3 : 0);
-/** The queued runs of a fold's run items in fill order (priority, landing first, then oldest first), with their 1-based position in it (pure). */
-export function queueOf(runs) {
+/** The queued runs of a fold's run items in fill order (priority, landing first, then oldest first), with their 1-based position in it (pure).
+ * pins (crew.mjs lanePins): a pinned lane's row names the dwarf who takes it; no other queued row has a dwarf (it is picked at the start) */
+export function queueOf(runs, pins = {}) {
   return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => fillKey(a) - fillKey(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
-    .map((r, i) => ({ id: r.id, name: r.data.name ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
+    .map((r, i) => ({ id: r.id, dwarf: pins[r.data.lane] ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
       executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
       after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null, labels: r.data.labels ?? [] }));
 }
@@ -1093,7 +1133,7 @@ export function resourceRefusal(res, fill = {}) {
 // META-AUTH: the login gate of the run's harness (authguard.mjs); a spec without a state dir is never held
 const authGate = (spec, o = {}) => (spec.state ? authRefusal(spec.state, infoOf(spec)?.harness, { spec, ...o }) : null);
 const resourceGate = (spec, sample) => { if (!spec.policy?.fill) return null; const r = resourceRefusal(sample(), spec.policy.fill); return r ? `resources: ${r}` : null; };
-/** readiness(state, { now }) -> the dry walk's rows in fill order: { id, name, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
+/** readiness(state, { now }) -> the dry walk's rows in fill order: { id, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
 export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null });
 
 function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth } = {}) {
@@ -1105,7 +1145,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
   const landing = new Set(queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now)
     && !(q.after.length && !evalAll(q.after, (E ??= makeEval(state))).conds.every(c => c.met))).map(q => q.id));
   for (const q of queue) {
-    const row = { id: q.id, name: q.name, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
+    const row = { id: q.id, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
     rows.push(row);
     const gone = why => { row.withdraw = why; row.terms.push(`withdraw: ${why}`); act?.withdraw(q.id, why); };
     if (q.after.length) {   // NORN-WATCH S4: an unmet trigger waits without blocking FIFO (like not_before)
@@ -1134,6 +1174,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     { const sf = slotsFull(spec, staleMs); if (sf) row.terms.push(sf); }   // GAP-6: a MERGE waits for a merge slot
     const mr = mergeStageRefusal(spec, staleMs);   // META-GTP-MERGEQ piece 0: a rebase MERGE waits for its lane worktree
     if (mr) row.terms.push(mr);
+    { const dw = dwarfWait(spec, staleMs); if (dw) row.terms.push(dw); }   // DWARVES 1.3: a busy pinned dwarf; holds no cap
     // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
     // this walk stays the one readiness evaluator (META-GTP-DAG piece 3): a node claims only an offered row
     // META-GTP-FED-2 piece 3: Claude rows are offered too (DEC-47 interim "node 2 non-Claude only" lifted): the usage term above is the same

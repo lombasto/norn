@@ -20,7 +20,8 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
+import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
@@ -1379,6 +1380,7 @@ Plan and land work:
   norn lane                        a new lane: its worktree / branch (--task: an owner directive + its first brief)
   norn flow                        start / resume a multi-step flow
   norn epic                        group runs and deliverables under one goal
+  norn crew                        the dwarves who take the worker runs: list, pin to a lane, retire, recall
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
   norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
@@ -1430,7 +1432,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1488,6 +1490,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'sync') return syncCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'crew') return crewCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
@@ -1688,7 +1691,7 @@ function readyCmd(argv, env, out, err) {
       rows = rows.filter(r => r.epic === flags.epic || members.has(r.id));
     }
     if (flags.json) { out(JSON.stringify(rows, null, 1)); return 0; }
-    for (const r of rows) out(`${r.id}  ${r.name ?? '-'}  lane ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''}  ${r.priority ?? '-'}${r.epic ? ' ' + r.epic : ''}  ${readyWords(r)}`);
+    for (const r of rows) out(`${r.id}  lane ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''}  ${r.priority ?? '-'}${r.epic ? ' ' + r.epic : ''}  ${readyWords(r)}`);
     if (!rows.length) out('no queued run');
     return 0;
   } catch (e) {
@@ -1988,6 +1991,81 @@ function flowCmd(argv, env, out, err) {
     if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
     throw e;
   }
+}
+
+// ---------- DWARVES S1: norn crew (the machine's dwarves, crew.mjs): list | show | pin | unpin | retire | recall ----------
+// Each act writes its crew event and a DEC by the caller (dwarf in its links) under the crew lock; retire drops the pins in the same DEC.
+const CREW_USAGE = "norn crew list [--json] | show <id> [--json] | pin <id> --lane <project>/<lane> [--why W] | unpin <id> [--why W] | retire <id> --why W | recall <id> [--why W]    [--project F | --state D] [--as role]    (the dwarves who take the worker runs, machine-wide; a pinned dwarf takes only its lanes' runs)";
+const CREW_FLAGS = ['project', 'state', 'as', 'lane', 'why', 'json!'];
+const CREW_ACTS = ['pin', 'unpin', 'retire', 'recall'];
+function crewCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = CREW_FLAGS.find(x => x.replace(/!$/, '') === a.slice(2));
+      if (!k) throw new RunError(`unknown flag ${a}`);
+      if (k.endsWith('!')) { flags[a.slice(2)] = true; continue; }
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    const { state } = where(flags, env);
+    const [sub, id, ...more] = pos;
+    if (more.length) throw new RunError(`unexpected ${more[0]}`);
+    if (sub === 'list' || sub === 'show') {
+      if (sub === 'list' && id) throw new RunError(`unexpected ${id}`);
+      const st = crewState(readCrew(state)), { busy, past } = crewLoad(state);
+      const row = d => ({ ...d, busy: busy[d.id] ?? null, runs: past.filter(p => p.dwarf === d.id).length });
+      const line = r => `${r.id}  ${r.name}  ${r.state}${r.state === 'active' ? `  ${r.busy ? `on ${r.busy}` : 'free'}` : `  ${r.why ?? ''}`}  ${r.runs} run${r.runs === 1 ? '' : 's'}${r.pins.length ? `  pinned ${r.pins.join(', ')}` : ''}`;
+      if (sub === 'list') {
+        const rows = Object.values(st.dwarves).sort((a, b) => a.order - b.order).map(row);
+        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires Thorin'); else for (const r of rows) out(line(r));
+        return 0;
+      }
+      if (!id || !st.dwarves[id]) throw new RunError(id ? `no dwarf ${id} in the crew (norn crew list)` : 'show needs a dwarf id');
+      const r = { ...row(st.dwarves[id]), career: past.filter(p => p.dwarf === id).sort((a, b) => String(a.at).localeCompare(String(b.at))) };
+      if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
+      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}${r.succeeds ? `, after ${dwarfDisplay(r.succeeds)}` : ''}`);
+      for (const p of r.career) out(`  ${p.at}  ${p.project}/${p.lane ?? '-'}  ${p.run}  ${p.state}`);
+      return 0;
+    }
+    if (!CREW_ACTS.includes(sub)) throw new RunError(sub ? `unknown subcommand ${sub}` : 'missing subcommand');
+    if (!id) throw new RunError(`${sub} needs a dwarf id (norn crew list)`);
+    const by = flags.as || env.META_ROLE;
+    if (!by) throw new RunError('no role: pass --as <role> or set META_ROLE');
+    if (!KINDS.decision.events.create.roles.includes(by)) throw new RunError(`role ${by} may not act on the crew: the act is a decision (${KINDS.decision.events.create.roles.join(', ')})`);
+    if (sub === 'pin') pinTarget(state, flags.lane);
+    if (sub === 'retire' && !String(flags.why ?? '').trim()) throw new RunError('retire needs --why');
+    const r = withCrew(state, c => {
+      const d = c.state.dwarves[id], evs = [];
+      if (sub === 'pin') evs.push(['pin', { lane: flags.lane }]);
+      if (sub === 'unpin' || (sub === 'retire' && d?.pins.length)) evs.push(['unpin', {}]);
+      if (sub === 'retire') evs.push(['retire', { why: flags.why }]);
+      if (sub === 'recall') evs.push(['recall', {}]);
+      for (const [ev, data] of evs) c.check(ev, id, data);   // refused before anything is written
+      const what = { pin: `pin ${d.name} to ${flags.lane}`, unpin: `unpin ${d.name} (${d.pins.join(', ') || 'no pins'})`,
+        retire: `retire ${d.name}${d.pins.length ? ` and drop the pins ${d.pins.join(', ')}` : ''}`, recall: `recall ${d.name}` }[sub];
+      const dec = record(state, { kind: 'decision', ev: 'create', by, data: { lane: 'crew', question: `crew: ${sub} ${d.name}?`, choice: what, why: flags.why || `norn crew ${sub}`, links: [`dwarf:${id}`] } });
+      for (const [ev, data] of evs) c.act(ev, id, by, { ...data, dec: dec.id });
+      return { dec: dec.id, what };
+    });
+    out(`${r.dec}: ${r.what}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof CrewError) { err('error: ' + e.message); if (e.code === 2) err('usage: ' + CREW_USAGE); return e.code; }
+    if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + CREW_USAGE); return 2; }
+    if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
+    throw e;
+  }
+}
+// a pin names <project>/<lane>: the project is a state dir of this machine (a sibling of this one), the lane one of its lanes
+function pinTarget(state, lane) {
+  const m = String(lane ?? '').match(/^([^/\s]+)\/(.+)$/);
+  if (!m) throw new RunError(`pin needs --lane <project>/<lane> (got ${JSON.stringify(lane ?? '')})`);
+  const dir = path.join(path.dirname(path.resolve(state)), m[1]);
+  if (!fs.existsSync(path.join(dir, 'records.jsonl'))) throw new RunError(`no project ${m[1]} on this machine (no state dir ${fwd(dir)})`);
+  if (!loadState(dir).items['L:' + m[2]]) throw new RunError(`project ${m[1]} has no lane ${m[2]}`);
 }
 
 // ---------- META-GTP-DAG piece 2: norn epic add | member | close | show | list (records in epics.jsonl; done is derived) ----------

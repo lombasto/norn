@@ -15,7 +15,7 @@ import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-import { esc, fin, dash, int, mTok, fmtMin, pct, plural, aname, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
+import { esc, fin, dash, int, mTok, fmtMin, pct, plural, runWho, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
 import { lanes } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
@@ -475,7 +475,7 @@ function inbox(d, ctx) {
     ...items.filter(i => i.type === 'parked').map(i => i.ruled ? row(i, chip('answered'), `lane <b>${esc(i.lane)}</b> waiting: your ruling is being applied<div class="small mute">${esc(rulingWords(i.ruled, ctx))}</div>`)
       : row(i, chip('parked'), `lane <b>${esc(i.lane)}</b> ${i.q ? `parked by ${renderProse(i.q, { ...proseCx(d, ctx, i.project), inline: true })}` : renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}`)),
     ...items.filter(i => i.type === 'unreviewed').map(i => row(i, chip(stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state)[0], String(i.outcome ?? i.state).toUpperCase()),
-      `<b>${esc(i.lane ?? '-')}</b> ${renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}<div class="small mute">${aname(i.name)} unreviewed: ended with no review event</div>`)),
+      `<b>${esc(i.lane ?? '-')}</b> ${renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}<div class="small mute">${runWho(i.dwarf, i.kind_word)} unreviewed: ended with no review event</div>`)),
     ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${renderProse(i.title, proseCx(d, ctx, i.project))}<div class="small mute">${esc(rulingWords({ q: i.id, choice: i.answer?.choice, text: i.answer?.text, at: i.updated }, ctx))}</div>`)),
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
