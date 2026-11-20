@@ -58,7 +58,7 @@ import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, s
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
-import { acts as runActs } from '/pages/runs-acts.mjs';
+import { acts as runActs, runsClose } from '/pages/runs-acts.mjs';
 import { createFeed } from '/pages/runs-feed.mjs';
 import { codeView, codeHead } from '/testparts.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
@@ -282,8 +282,8 @@ function paintMain(d) {
   const home = S.tab === 'talk' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  const rs = S.tab === 'runs' ? ['.runs-list', '#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run's panes keep their scroll (the same run's document only), a focused row its focus
-  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, narrow: runsNarrow(), strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, laneDetail: S.laneDetail, laneDet: S.laneDet, laneFile: S.laneFile, br: S.br, brUndo: S.brUndo });
+  const rs = S.tab === 'runs' ? ['#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run drawer keeps its scroll (the same run's document only), a focused row its focus
+  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, laneDetail: S.laneDetail, laneDet: S.laneDet, laneFile: S.laneFile, br: S.br, brUndo: S.brUndo });
   draftsRestore(keep);
   mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
@@ -475,9 +475,8 @@ document.addEventListener('change', e => {
 });
 // ---- the run document's live feed: pages/runs-feed.mjs (a live run that hands off opens the next run) ----
 const { F, mountFeed } = createFeed({ onFollow: (p, r) => feedGo(p, r) });
-// stage RUNS: under ~1100 px the list and the run are two screens; crossing the line repaints Runs from its last data
-const runsNarrow = () => matchMedia('(max-width:1100px)').matches;
-matchMedia('(max-width:1100px)').addEventListener('change', () => { if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); });
+// the Runs drawer: Esc closes it (the focus back on its row)
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.tab === 'runs' && S.run && document.getElementById('run-doc')) runsClose(C); });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
 const ACTS = { ...laneActs, ...runActs };
 const C = { S, render: () => render(), get, post, $, go: g => goTo(g), act, err, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r) };

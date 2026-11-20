@@ -1,18 +1,18 @@
-// The Runs page (stage RUNS, SPEC 4.3 "the list beside the run"): the list on the left (a 4-number summary, the Live / Queued / Ended
-// bands by attention, the filters in one bar), the picked run's document on the right (&run=RUN-n; none = the most urgent run). Under
-// ~1100 px the list and the run are two screens (ctx.narrow), Back returns to the list. The live feed mounts into the document's slot
-// (pages/runs-feed.mjs). The view lives in the URL (index.html: S.runsView, runsViewOf / runsViewQs).
-import { esc, fin, dash, int, mTok, fmtMin, runWho, chip, exChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, laneCard, guardOn, guardChip } from '../cells.mjs';
+// The Runs page (stage RUNS; owner 2026-11-20 "all the runs in tabular format"): one table of every run - state, run, lane · stage,
+// model, age, tools / words / commits, pace - under one filter-chip row (state with "need a look", kind, window, project, lane box).
+// A row opens the run's document in the drawer (&run=RUN-n): its pace, result, checklist, facts and live feed (pages/runs-feed.mjs
+// mounts into the document's slot). The view lives in the URL (index.html: S.runsView, runsViewOf / runsViewQs).
+import { esc, fin, dash, int, mTok, fmtMin, fmtTime, runWho, chip, exChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, laneCard, guardOn, guardChip, filterChips } from '../cells.mjs';
 import { dodChips, critiqueChip, hoChip } from '../widgets.mjs';
 import { LANE_SHOW } from './lanes.mjs';
-import { dayClock } from './plan.mjs';
 
 // RM-34: a run's lane (a link to its row on Lanes, every filter on so it shows) and the stage beside it; a check-in reads "check-in",
 // a run with no lane (a talk session) a dash
 const LANES_ALL = LANE_SHOW.map(([k]) => k).join(',');
 export const runLane = n => n.kind === 'checkin' ? 'check-in' : !n.lane ? dash
   : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&show=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
-export const RUNS_STATES = [['running', 'running'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];
+// the state chips: a live run that needs a look (stalled, slow or an alarm) is its own chip, out of "running"
+export const RUNS_STATES = [['running', 'running'], ['look', 'need a look'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];
 export const RUNS_KINDS = [['worker', 'worker'], ['checkin', 'check-in'], ['helper', 'helper'], ['talk', 'talk']];
 export const RUNS_WINDOWS = [['2h', '2 h'], ['12h', '12 h'], ['24h', '24 h'], ['today', 'all today']];   // the server's RUN_WINDOWS
 const RUN_FAILED = ['crash', 'stopped', 'no-result', 'limit', 'auth'];   // an end outcome that did not finish the work
@@ -31,9 +31,11 @@ export function runTimes(n, now) {
   const live = runStateOf(n) === 'running', s = isoMs(n.started ?? n.first), e = live ? null : isoMs(n.ended ?? n.last);
   return { ran_min: s === null || (!live && e === null) ? null : Math.max(0, ((e ?? now) - s) / 60000), ended_min: e === null ? null : Math.max(0, (now - e) / 60000), queued_min: null };
 }
-// attention inside the Live band: a stalled run first, then a slow one, then the rest (the run's pace, progress.mjs)
+// attention among the live runs: a stalled run first, then a slow one, then the rest (the run's pace, progress.mjs)
 const paceOf = n => n.progress?.pace?.state ?? null;
 const URGENT = { stalled: 0, slow: 1 };
+/** the state chip a root counts under: look = running and stalled, slow or alarmed; else its runStateOf */
+export const runShowOf = n => runStateOf(n) === 'running' && (URGENT[paceOf(n)] != null || (n.progress?.alarms || []).length) ? 'look' : runStateOf(n);
 /** the order: live (stalled, slow, the rest; newest start first in each), then queued (longest waiting first: the fill order), then ended (latest end first) */
 export function runsOrder(roots) {
   const g = n => ({ running: 0, queued: 1 })[runStateOf(n)] ?? 2, t = x => isoMs(x) ?? 0, u = n => g(n) === 0 ? URGENT[paceOf(n)] ?? 2 : 0;
@@ -42,18 +44,13 @@ export function runsOrder(roots) {
 }
 const RUN_ID = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/;
 const feedable = n => RUN_ID.test(n.id) && n.state !== 'queued' && !n.readonly;
-/** the run the page opens with no &run=: the most urgent live run, else the latest ended one (RUN- ids only), else null */
-export function runsPick(roots) {
-  const o = runsOrder(roots.filter(feedable));
-  return (o.find(n => runStateOf(n) === 'running') ?? o.find(n => runStateOf(n) !== 'queued'))?.id ?? null;
-}
 const allOf = l => new Set(l.map(x => x[0]));
 /** the page's view from the URL: &state= &kind= (a missing key = every chip on), &proj= (none = every project), &lane=, &window=;
- * open / help / ck = the Filters disclosure, the "?" legend and the folded check-ins (the page's own, never in the URL) */
+ * ck = the folded check-ins shown (the page's own, never in the URL) */
 export function runsViewOf(qs) {
   const set = (k, l) => { const v = qs.get(k); return v == null ? allOf(l) : new Set(v.split(',').filter(x => l.some(c => c[0] === x))); };
   return { state: set('state', RUNS_STATES), kind: set('kind', RUNS_KINDS), proj: new Set((qs.get('proj') ?? '').split(',').filter(Boolean)), lane: qs.get('lane') ?? '',
-    window: RUNS_WINDOWS.some(w => w[0] === qs.get('window')) ? qs.get('window') : '2h', open: false, help: false, ck: false };
+    window: RUNS_WINDOWS.some(w => w[0] === qs.get('window')) ? qs.get('window') : '2h', ck: false };
 }
 const full = (x, l) => x.size === l.length && l.every(c => x.has(c[0]));
 /** the view as URL params ('&state=running,queued...'): only what differs from the default, so a plain Runs link stays plain */
@@ -67,7 +64,7 @@ export function runsViewQs(v) {
   return p.map(([k, x]) => `&${k}=${encodeURIComponent(x)}`).join('');
 }
 /** the roots the view shows (children travel with their root) */
-export const runsFilter = (roots, v) => roots.filter(n => v.state.has(runStateOf(n)) && v.kind.has(runKindOf(n)) && (!v.proj.size || v.proj.has(n.project))
+export const runsFilter = (roots, v) => roots.filter(n => v.state.has(runShowOf(n)) && v.kind.has(runKindOf(n)) && (!v.proj.size || v.proj.has(n.project))
   && (!v.lane || String(n.lane ?? '').toLowerCase().includes(v.lane.toLowerCase())));
 const queueNode = q => ({ id: q.id, dwarf: q.dwarf ?? null, kind: q.kind, role: q.role, state: 'queued', lane: q.lane, stage: q.stage, executor: q.executor, model: q.model, effort: q.effort, queued: q.queued, project: q.project, children: [] });
 
@@ -106,47 +103,60 @@ const guardChips = (n, d) => `${(n.guard || []).map(g => `<span class="guard-chi
 const who = n => n.kind === 'talk' ? `<span class="id">${esc(n.id)}</span>` : `<span class="id">${esc(n.id)}</span>${runKindOf(n) === 'helper' ? ' <span class="small mute">helper</span>' : runWho(n.dwarf, n.kind_word)}`;
 const kids = n => (n.children || []).length ? `<span class="small mute">${(n.children || []).length} subagent${n.children.length === 1 ? '' : 's'}</span>` : '';
 
-// ---------- the list ----------
-function row(n, d, ctx, sel) {
-  const now = ctx.now, s = runStateOf(n), band = s === 'running' ? 'live' : s === 'queued' ? 'queued' : 'ended';
-  const at = feedable(n) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" tabindex="0" title="Open ${esc(n.id)}"` : '';
-  const head = `<div class="rhead">${stateChip(n)}<span class="rwho">${projTag(ctx, n.project)}${who(n)}</span>${band === 'live' ? paceChip(n) : ''}${homeChip(n)}${guardChips(n, d)}</div>`;
-  const sub = `<div class="rmeta small"><span class="rlane">${laneCard(n.lane_card, runLane(n))}</span>${exChip(n.executor, n.model, n.effort)}${kids(n)}</div>`;
-  let body = '';
-  if (band === 'live') body = `<div class="rtimes small">${timeBar(n, now)}${rtime(n, now)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}`;
-  else if (band === 'ended') { const e = runTimes(n, now).ended_min;
-    body = `<div class="rtimes small">${rtime(n, now)}${fin(e) ? `<span>ended ${fmtMin(e)} ago</span>` : ''}${items(n)}</div>${whyEnded(n) ? `<div class="rline small">${whyEnded(n)}</div>` : ''}`; }
-  else body = queuedBody(n, d, ctx);
-  return `<div class="rrow ${band}${sel ? ' sel' : ''}" id="node-${esc(n.id)}"${at}${sel ? ' aria-current="true"' : ''}>${head}${sub}${body}</div><!--/row-->`;
+// ---------- the table ----------
+// the counts of what the run did (lib/agents.mjs acts: a Claude transcript's tool calls, words written, git commits); none read = a dash
+const actCell = (n, k) => `<td class="rnum mono" data-label="${k}">${fin(n.acts?.[k]) ? int(n.acts[k]) : dash}</td>`;
+// age: a live run's time against its budget, an ended run's run time and how long ago it ended, a queued run's wait
+function ageCell(n, ctx) {
+  const now = ctx.now, s = runStateOf(n), t = runTimes(n, now);
+  const v = s === 'queued' ? (fin(t.queued_min) ? `waited ${fmtMin(t.queued_min)}` : dash) : `${rtime(n, now)}${s !== 'running' && fin(t.ended_min) ? `<div class="small mute">ended ${fmtMin(t.ended_min)} ago</div>` : ''}`;
+  return `<td class="rage" data-label="age">${v}</td>`;
 }
-// a queued row: what it waits for (Plan's holds, in words), how long it has waited, its estimate and start, and Plan's priority control
-function queuedBody(n, d, ctx) {
-  const part = (d.plan?.parts || []).find(p => p.project === n.project) ?? (d.plan?.parts || [])[0], u = (part?.upnext || []).find(x => x.id === n.id), now = ctx.now;
-  const at = x => (isoMs(x) === null ? null : dayClock(isoMs(x), now));
-  const holds = (u?.holds || []).map((h, i) => (u.holdAt?.[i] ? `not before ${at(u.holdAt[i])}` : h));
-  const start = u?.start ? (u.start.at && u.start.word !== 'now' ? `start ~${at(u.start.at)}` : `start ${u.start.word}`) : '';
-  const prio = (part?.priorities || []).length && u ? `<select class="pl-prio" data-act="prio" data-project="${esc(n.project ?? part.project)}" data-run="${esc(n.id)}" aria-label="priority of ${esc(n.id)}" title="re-queue at this priority (its conditions are kept)">${part.priorities.map(x => `<option${x === (u.priority ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
-  const w = runTimes(n, now).queued_min;
-  return `<div class="rtimes small">${fin(w) ? `<span>waited ${fmtMin(w)}</span>` : ''}${u?.estimate?.word ? `<span>${esc(u.estimate.word)}</span>` : ''}${start && !holds.includes(u.start.word) ? `<span>${esc(start)}</span>` : ''}${prio}</div>
+// pace: a live run's pace chip, time bar, checklist and why slow (or what it does now); an ended run's checklist and why it ended;
+// a queued run's estimate, start, hold-ups and the priority control (Plan's Up next, now here and on Lanes)
+function paceCell(n, d, ctx) {
+  const s = runStateOf(n), now = ctx.now;
+  if (s === 'queued') return `<td class="rpace" data-label="pace">${queuedCell(n, d)}</td>`;
+  if (s === 'running') return `<td class="rpace" data-label="pace"><div class="rtimes small">${paceChip(n)}${timeBar(n, now)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}</td>`;
+  return `<td class="rpace" data-label="pace"><div class="rtimes small">${items(n)}</div>${whyEnded(n) ? `<div class="rline small">${whyEnded(n)}</div>` : ''}</td>`;
+}
+function row(n, d, ctx, sel) {
+  const s = runStateOf(n), band = s === 'running' ? 'live' : s === 'queued' ? 'queued' : 'ended';
+  const at = feedable(n) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" tabindex="0" title="Open ${esc(n.id)}"` : '';
+  return `<tr class="rrow ${band}${sel ? ' sel' : ''}" id="node-${esc(n.id)}"${at}${sel ? ' aria-current="true"' : ''}>
+    <td class="rstate" data-label="state">${stateChip(n)}</td>
+    <td class="rwho" data-label="run">${projTag(ctx, n.project)}${who(n)} ${homeChip(n)}${guardChips(n, d)}${kids(n) ? `<div>${kids(n)}</div>` : ''}</td>
+    <td class="rlane" data-label="lane">${laneCard(n.lane_card, runLane(n))}</td>
+    <td class="rmodel small" data-label="model">${exChip(n.executor, n.model, n.effort)}</td>
+    ${ageCell(n, ctx)}${actCell(n, 'tools')}${actCell(n, 'words')}${actCell(n, 'commits')}${paceCell(n, d, ctx)}</tr><!--/row-->`;
+}
+// a queued row's pace cell: what it waits for (Plan's holds, in words), its estimate and start, and the priority control
+function queuedCell(n, d) {
+  const part = (d.plan?.parts || []).find(p => p.project === n.project) ?? (d.plan?.parts || [])[0], u = (part?.upnext || []).find(x => x.id === n.id);
+  const holds = (u?.holds || []).map((h, i) => (u.holdAt?.[i] ? `not before ${fmtTime(u.holdAt[i])}` : h));
+  const start = u?.start ? (u.start.at && u.start.word !== 'now' ? `start ~${fmtTime(u.start.at)}` : `start ${u.start.word}`) : '';
+  return `<div class="rtimes small">${u ? prioSelect(n.project ?? part.project, n.id, u.priority, part.priorities) : ''}${u?.estimate?.word ? `<span>${esc(u.estimate.word)}</span>` : ''}${start && !holds.includes(u.start.word) ? `<span>${esc(start)}</span>` : ''}</div>
     ${holds.length ? `<div class="rline small">${holds.map(esc).join(' · ')}</div>` : ''}`;
 }
+/** the priority control of a queued run (index.html: a change posts /api/requeue): re-queued at that priority, its conditions kept */
+export const prioSelect = (project, run, p, priorities) => !(priorities || []).length ? '' : `<select class="pl-prio" data-act="prio" data-project="${esc(project)}" data-run="${esc(run)}" aria-label="priority of ${esc(run)}" title="re-queue at this priority (its conditions are kept)">${priorities.map(x => `<option${x === (p ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
+const COLS = ['state', 'run', 'lane · stage', 'model', 'age', 'tools', 'words', 'commits', 'pace'];
 // check-ins (ended, more than one) collapse to one row: how many, the last one, how they went; "show them" opens them in place
 function checkinFold(cks, ctx) {
   const e = runTimes(cks[0], ctx.now).ended_min, bad = cks.filter(n => runStateOf(n) === 'failed').length;
-  return `<button class="rfold small" data-act="runs-checkins" aria-expanded="false">${cks.length} check-ins · last ${fmtMin(e)} ago · ${bad ? `${bad} failed` : 'all done'} · show them</button>`;
+  return `<tr class="rfoldrow"><td colspan="${COLS.length}"><button class="rfold small" data-act="runs-checkins" aria-expanded="false">${cks.length} check-ins · last ${fmtMin(e)} ago · ${bad ? `${bad} failed` : 'all done'} · show them</button></td></tr>`;
 }
-const bandHtml = (id, title, n, body) => `<section class="rband" id="runs-${id}" aria-label="${esc(title)}"><h3 class="small">${esc(title)} <span class="mute">${n}</span></h3>${body}</section>`;
 
-// ---------- the run document ----------
+// ---------- the run document: the drawer a row opens (&run=); Close or Esc drops the &run= ----------
+const CLOSE = '<button class="ghost" data-act="runs-close" title="Close (Esc)">Close</button>';
 function runDoc(n, d, ctx) {
   const now = ctx.now, s = runStateOf(n), live = s === 'running', g = n.progress, p = g?.pace, at = `data-project="${esc(n.project)}" data-run="${esc(n.id)}"`;
-  const back = ctx.narrow ? `<button class="ghost" data-act="runs-back" data-run="${esc(n.id)}">‹ Runs</button>` : '';
   const follow = n.handoff?.run && n.handoff.run !== n.id ? `<button data-act="run-open" data-run="${esc(n.handoff.run)}">Follow ${esc(n.handoff.run)}</button>` : '';
   const acts = [live ? (n.pause ? pauseAct(n.pause, n.project, n.id) : `<button class="ghost" data-act="run-pause" ${at} title="Ask ${esc(n.id)} to stop at a clean point and hand off">Pause</button>`) : '',
     live && RUN_ID.test(n.id) ? `<button class="danger" data-act="stop" ${at} title="Stop ${esc(n.id)} now (asks first)">Stop</button>` : '',
     !live && n.pause ? pauseAct(n.pause, n.project, n.id) : '', follow,
     `<button class="ghost" data-act="run-link" data-run="${esc(n.id)}">Copy link</button>`].filter(Boolean).join('');
-  const head = `<header class="rd-head">${back}<div class="rd-title"><h2>${projTag(ctx, n.project)}${who(n)}</h2>${stateChip(n)}${live ? paceChip(n) : ''}${homeChip(n)}${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ''}${critiqueChip(n.critique)}${guardChips(n, d)}</div>
+  const head = `<header class="rd-head"><div class="rd-title"><h2>${projTag(ctx, n.project)}${who(n)}</h2>${stateChip(n)}${live ? paceChip(n) : ''}${homeChip(n)}${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ''}${critiqueChip(n.critique)}${guardChips(n, d)}<span class="spacer"></span>${CLOSE}</div>
     <div class="small rd-sub">${laneCard(n.lane_card, runLane(n))} · ${exChip(n.executor, n.model, n.effort)}</div><div class="rd-acts">${acts}</div></header>`;
   const alarms = (g?.alarms || []).map(a => `<div class="rd-alarm" role="alert">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} <b>${esc(a.words)}</b><div class="small mute">${esc(a.numbers ?? '')}</div><div class="small">${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc((a.act || []).join(' / '))}</div></div>`).join('');
   // C's session beads: one per session of the stage, the hand-offs between them; the last one is this session
@@ -170,11 +180,11 @@ function runDoc(n, d, ctx) {
     ['refused', (n.refused || []).length ? n.refused.map(x => `<div>${chip('refused', `refused: ${x.words}`)} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div>`).join('') : null]]
     .filter(([, v]) => v != null).map(([k, v]) => `<span class="mute">${k}</span><span>${v}</span>`).join('');
   const feed = feedable(n) ? `<section id="run-feed-slot" ${at}></section>` : '';
-  return `<article class="rdoc card" id="run-doc" data-run="${esc(n.id)}" data-project="${esc(n.project ?? '')}" aria-label="${esc(n.id)}">${head}${alarms ? `<section class="rd-sec rd-alarms">${alarms}</section>` : ''}${paceBand}${result}${list}
+  return `<article class="rdoc drawer" id="run-doc" data-run="${esc(n.id)}" data-project="${esc(n.project ?? '')}" aria-label="${esc(n.id)}">${head}${alarms ? `<section class="rd-sec rd-alarms">${alarms}</section>` : ''}${paceBand}${result}${list}
     <section class="rd-sec"><h3>Facts</h3><div class="kv small rd-facts">${facts}</div></section>${feed}</article>`;
 }
-// a run the URL names that the tree does not hold: it ended outside the window, or the Ended band is still loading
-const missingDoc = (id, d, ctx, win) => `<article class="rdoc card" id="run-doc" data-run="${esc(id)}" data-project="${esc(ctx.project ?? '')}">${ctx.narrow ? `<button class="ghost" data-act="runs-back" data-run="${esc(id)}">‹ Runs</button>` : ''}
+// a run the URL names that the tree does not hold: it ended outside the window, or the ended runs are still loading
+const missingDoc = (id, d, ctx, win) => `<article class="rdoc drawer" id="run-doc" data-run="${esc(id)}" data-project="${esc(ctx.project ?? '')}" aria-label="${esc(id)}"><header class="rd-head"><div class="rd-title"><h2><span class="id">${esc(id)}</span></h2><span class="spacer"></span>${CLOSE}</div></header>
   <p class="mute">${d.parts_loading ? `Loading the ended runs to find ${esc(id)} ...` : `${esc(id)} is not in this window (${esc(win)}). A wider window may hold it.`}</p>
   ${RUN_ID.test(id) && ctx.project && ctx.project !== 'all' ? `<section id="run-feed-slot" data-project="${esc(ctx.project)}" data-run="${esc(id)}"></section>` : ''}</article>`;
 
@@ -183,32 +193,20 @@ export function runs(d, ctx) {
   // the live part (running + queue) and the history part (the ended runs in the window) may both name a run: history wins
   const seen = new Map(); for (const n of [...(d.tree || []), ...(d.ended || [])]) seen.set(`${n.project}|${n.id}`, n);
   const all = [...seen.values(), ...(d.queue || []).map(queueNode)], win = (RUNS_WINDOWS.find(w => w[0] === (d.window ?? v.window)) ?? RUNS_WINDOWS[0])[1];
-  const shown = runsOrder(runsFilter(all, v)), loading = !!d.parts_loading;
-  const pick = ctx.run ?? runsPick(shown) ?? runsPick(all), picked = pick ? all.find(n => n.id === pick) : null;
-  const live = shown.filter(n => runStateOf(n) === 'running'), queued = shown.filter(n => runStateOf(n) === 'queued'), ended = shown.filter(n => !['running', 'queued'].includes(runStateOf(n)));
-  const r = n => row(n, d, ctx, n.id === pick);
-  const cks = ended.filter(n => runKindOf(n) === 'checkin'), fold = cks.length > 1 && !v.ck;
-  const endedRows = ended.map(n => (fold && runKindOf(n) === 'checkin' ? (n === cks[0] ? checkinFold(cks, ctx) : '') : r(n))).join('');
-  const none = t => `<p class="rnone small mute">${esc(t)}</p>`;
-  const look = live.filter(n => URGENT[paceOf(n)] != null || (n.progress?.alarms || []).length).length;
-  const nEnded = all.filter(n => !['running', 'queued'].includes(runStateOf(n))).length;
-  const sum = `<div class="subsum" id="runs-sum">${[[all.filter(n => runStateOf(n) === 'running').length, 'running'], [look, 'need a look', look ? 'warn' : ''],
-    [all.filter(n => runStateOf(n) === 'queued').length, 'queued'], [loading && !d.ended ? '…' : nEnded, `ended in the last ${win}`]]
-    .map(([x, l, c]) => `<div class="subnum ${c ?? ''}"><b class="mono">${esc(x)}</b><span class="small mute">${esc(l)}</span></div>`).join('')}</div>`;
-  // the filters: the window and the lane box always; the state / kind / project chips behind "Filters" (open while one is set)
-  const chips = (group, l, has, of) => `<span class="fchips" role="group" aria-label="${esc(group)}">${l.map(([k, t]) => `<button class="hf" data-act="runs-show" data-group="${group}" data-show="${esc(k)}" aria-pressed="${has(k)}">${esc(t)} <b>${all.filter(n => of(n) === k).length}</b></button>`).join('')}</span>`;
-  const projs = [...new Set(all.map(n => n.project).filter(Boolean))].sort(), set = !full(v.state, RUNS_STATES) || !full(v.kind, RUNS_KINDS) || v.proj.size > 0, open = v.open || set;
-  const bar = `<div class="runs-bar"><span class="fchips" role="group" aria-label="window">${RUNS_WINDOWS.map(([k, t]) => `<button class="hf" data-act="runs-window" data-window="${k}" aria-pressed="${k === v.window}" title="ended runs from the last ${esc(t)}">${esc(t)}</button>`).join('')}</span>
-    <input type="search" data-runs-lane aria-label="Filter by lane" placeholder="lane" value="${esc(v.lane)}">
-    <button class="ghost" data-act="runs-filters" aria-expanded="${open}" aria-controls="runs-chips">Filters${set ? ' (on)' : ''}</button><button class="ghost rhelp" data-act="runs-help" aria-expanded="${!!v.help}" aria-controls="runs-legend" aria-label="What the list shows">?</button></div>
-    ${open ? `<div class="filters runs-filters" id="runs-chips">${chips('state', RUNS_STATES, k => v.state.has(k), runStateOf)}${chips('kind', RUNS_KINDS, k => v.kind.has(k), runKindOf)}${projs.length > 1 ? chips('proj', projs.map(p => [p, p]), k => v.proj.has(k), n => n.project) : ''}</div>` : ''}
-    ${v.help ? `<div class="runs-legend small" id="runs-legend" role="note"><p>Live runs first: stalled, then slow, then on track (newest start first in each); then the queue in fill order; then the runs that ended in the last ${esc(win)}, latest first. The bar is the time against the budget; its line is the budget, its tick what like runs took.</p>${d.counts ? `<p id="runs-counts">${esc(d.counts.scope)}: ${esc(d.counts.text)}</p>` : ''}</div>` : ''}`;
-  const empty = !shown.length ? `<div class="rnone mute">${all.length ? 'No runs under these filters.' : `No running, queued or recent (${esc(win)}) sessions.`}</div>` : '';
-  const list = `<div class="runs-list"><div class="tree">${empty}${bandHtml('live', 'Live', live.length, live.map(r).join('') || none('Nothing is running.'))}
-    ${bandHtml('queued', 'Queued', queued.length, queued.map(r).join('') || none('Nothing is waiting to start.'))}
-    ${bandHtml('ended', `Ended in the last ${win}`, loading && !d.ended ? '' : ended.length, (loading ? `<p class="rnone small mute">${d.ended ? 'refreshing ...' : 'loading the ended runs ...'}</p>` : '') + (endedRows || (loading ? '' : none('No run ended in this window.'))))}</div></div>`;
-  const doc = picked ? runDoc(picked, d, ctx) : pick ? missingDoc(pick, d, ctx, win) : `<article class="rdoc card" id="run-doc" data-run=""><p class="mute">No run to show: none is running, queued or ended in the last ${esc(win)}.</p></article>`;
-  const head = `<div class="phead pagehead" id="runs-head"><h2 class="ptitle">Runs</h2></div>`;
-  if (ctx.narrow && ctx.run) return `<div class="runs one">${doc}</div>`;
-  return `${head}${sum}${bar}<div class="runs-split${ctx.narrow ? ' one' : ''}">${list}${ctx.narrow ? '' : doc}</div>`;
+  const shown = runsOrder(runsFilter(all, v)), loading = !!d.parts_loading, pick = ctx.run ?? null, picked = pick ? all.find(n => n.id === pick) : null;
+  const cks = shown.filter(n => runKindOf(n) === 'checkin' && !['running', 'queued'].includes(runStateOf(n))), fold = cks.length > 1 && !v.ck;
+  const rows = shown.map(n => (fold && cks.includes(n) ? (n === cks[0] ? checkinFold(cks, ctx) : '') : row(n, d, ctx, n.id === pick))).join('');
+  // the one filter row: the state chips (with their counts), the kinds, the window, the projects (when the tree spans more than one), the lane box
+  const chips = (group, l, of) => filterChips(group, l.map(([k, t]) => ({ act: 'runs-show', data: { group, show: k }, text: t, n: all.filter(n => of(n) === k).length, on: v[group].has(k) })));
+  const projs = [...new Set(all.map(n => n.project).filter(Boolean))].sort();
+  const help = `<details class="lhelp"><summary aria-label="About this table">?</summary><div class="small">Live runs first (stalled, then slow, then on track), then the queue in fill order, then the runs that ended in the last ${esc(win)}. A row opens the run: its checklist, result, facts and live feed. Tools / words / commits count the run's tool calls, the words it wrote and its git commits (Claude runs).${d.counts ? `<p id="runs-counts">${esc(d.counts.scope)}: ${esc(d.counts.text)}</p>` : ''}</div></details>`;
+  const bar = `<div class="filters runs-filters">${chips('state', RUNS_STATES, runShowOf)}${chips('kind', RUNS_KINDS, runKindOf)}
+    ${filterChips('window', RUNS_WINDOWS.map(([k, t]) => ({ act: 'runs-window', data: { window: k }, text: t, on: k === v.window, title: `ended runs from the last ${t}` })))}
+    ${projs.length > 1 ? chips('proj', projs.map(p => [p, p]), n => n.project) : ''}<input type="search" data-runs-lane aria-label="Filter by lane" placeholder="lane" value="${esc(v.lane)}">${help}</div>`;
+  const msg = t => `<tr class="rnone"><td colspan="${COLS.length}" class="small mute">${esc(t)}</td></tr>`;
+  const empty = shown.length ? '' : msg(all.length ? 'No runs under these filters.' : `No running, queued or recent (${win}) sessions.`);
+  const wait = loading ? msg(d.ended ? 'refreshing the ended runs ...' : 'loading the ended runs ...') : '';
+  const table = `<div class="tablecard runs-table"><table class="runtab" data-rows="runs"><thead><tr>${COLS.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows}${empty}${wait}</tbody></table></div>`;
+  const doc = picked ? runDoc(picked, d, ctx) : pick ? missingDoc(pick, d, ctx, win) : '';
+  return `<div class="phead pagehead" id="runs-head"><h2 class="ptitle">Runs</h2></div>${bar}${table}${doc}`;
 }
