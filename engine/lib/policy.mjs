@@ -90,6 +90,9 @@ export const allowedExecutors=(found=['claude'],caps={})=>found.filter(x=>!CODEX
 // one on purpose, e.g. codex-astra with max_astra 0); with the Codex total at 0 Codex is simply not on yet (the starter caps).
 export const retiredExecutors=(caps={})=>capOpen(caps,'max_codex')?Object.keys(CODEX_CAP).filter(x=>!capOpen(caps,CODEX_CAP[x])):[];
 export const capOfExecutor=x=>CODEX_CAP[x]??null;
+// a lane list of globs (* and ?), as checkin.*_lanes and launch.lane_mcp_servers name lanes: one matcher for both
+const globRe=g=>new RegExp('^'+String(g).replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.')+'$');
+export const laneMatch=(list,lane)=>lane!=null&&(list||[]).some(g=>globRe(g).test(String(lane)));
 const STAND_IN_ROLE={review:'planner',diagnosis:'planner'};   // read-only classes; any other class -> implementer
 const CLAUDE_SIDE=new Set(['auto','wait','opus-xhigh','fable',...ROLE_AGENTS]);
 // the starter caps = the try-it profile's caps (engine/presets/profiles/try-it.json; tests/ootb-polish pins the two equal). norn setup

@@ -21,7 +21,7 @@ const writeAtomic = (f, o) => { const t = `${f}.${process.pid}.tmp`; fs.writeFil
 
 /** Process start time (ms since epoch) of a live pid, or null when it does not run. */
 const startProbe = (pid, platform) => platform === 'win32'
-  ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], { encoding: 'utf8', windowsHide: true }]
+  ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], { encoding: 'utf8', windowsHide: true, timeout: 30000 }]
   : ['ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }];
 const probeable = pid => {
   if (!Number.isInteger(pid) || pid <= 0) return false;

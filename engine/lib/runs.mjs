@@ -1071,7 +1071,7 @@ function descendants(pid, psOut = spawnSync('ps', PS, { encoding: 'utf8' }).stdo
 export function killTree(pid, rc) {
   if (!Number.isInteger(pid) || pid <= 0) return [];
   const rows = receiptTree(pid, rc, procList());
-  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return rows; }
+  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 30000 }); return rows; }
   signal(pid, 'SIGSTOP');
   for (const c of descendants(pid)) signal(c, 'SIGKILL');
   signal(pid, 'SIGKILL');

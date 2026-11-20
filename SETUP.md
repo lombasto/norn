@@ -207,7 +207,9 @@ node engine/bin/norn.mjs dash
 ```
 
 It serves on http://127.0.0.1:8737 (`dash.port` in machine.json; `--port 0` picks a free port) and opens your browser when started
-from a terminal; from a script it prints the URL only (`--open` / `--no-open` decide).
+from a terminal; from a script it prints the URL only (`--open` / `--no-open` decide). It runs in that terminal until you stop it.
+To keep it running without a window, start it with `node engine/bin/norn.mjs dash --background`. That starts the dashboard
+detached and hidden, or reports the one already running. `norn dash restart` restarts it the same way.
 
 ### Get a ping when Norn needs you
 

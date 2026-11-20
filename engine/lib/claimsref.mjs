@@ -23,7 +23,7 @@ export function rgit(f, args, { input, ok = [0], index } = {}) {
     GIT_COMMITTER_NAME: 'norn-fed', GIT_COMMITTER_EMAIL: `fed@${f.host}` };
   for (const k of ['GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[k];
   if (index) env.GIT_INDEX_FILE = index;
-  const r = spawnSync('git', args, { env, input, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync('git', args, { env, input, encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw new ClaimsError(`git ${args[0]}: ${r.error.message}`);
   if (!ok.includes(r.status)) throw new ClaimsError(`git ${args[0]} failed (${r.status}): ${(r.stderr || '').trim().split('\n').pop()}`);
   return { out: r.stdout, status: r.status, err: r.stderr };
@@ -32,7 +32,7 @@ export function rgit(f, args, { input, ok = [0], index } = {}) {
 export function initRepo(f) {
   if (fs.existsSync(path.join(f.dir, 'HEAD'))) return;
   fs.mkdirSync(f.dir, { recursive: true });
-  const r = spawnSync('git', ['init', '-q', '--bare', f.dir], { encoding: 'utf8', windowsHide: true });
+  const r = spawnSync('git', ['init', '-q', '--bare', f.dir], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
   if (r.status !== 0) throw new ClaimsError(`git init failed: ${(r.stderr || '').trim()}`);
 }
 /** the remote's claims branch into refs/sync/claims, plus `extra` refspecs in the same fetch (fed: the machine branches) */
@@ -46,7 +46,7 @@ const tipOf = f => rgit(f, ['rev-parse', '-q', '--verify', `${SYNC_CLAIMS}^{comm
 export function catBatch(f, shas, { heads = false } = {}) {
   if (!shas.length) return [];
   const env = { ...process.env, GIT_DIR: f.dir };
-  const r = spawnSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', windowsHide: true, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new ClaimsError(`git cat-file failed: ${String(r.stderr).trim()}`);
   const buf = r.stdout, out = [];
   let i = 0;
