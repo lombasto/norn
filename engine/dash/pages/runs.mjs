@@ -11,7 +11,7 @@ import { dayClock } from './plan.mjs';
 // a run with no lane (a talk session) a dash
 const LANES_ALL = LANE_SHOW.map(([k]) => k).join(',');
 export const runLane = n => n.kind === 'checkin' ? 'check-in' : !n.lane ? dash
-  : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&lanes=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
+  : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&show=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
 export const RUNS_STATES = [['running', 'running'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];
 export const RUNS_KINDS = [['worker', 'worker'], ['checkin', 'check-in'], ['helper', 'helper'], ['talk', 'talk']];
 export const RUNS_WINDOWS = [['2h', '2 h'], ['12h', '12 h'], ['24h', '24 h'], ['today', 'all today']];   // the server's RUN_WINDOWS

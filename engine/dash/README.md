@@ -8,7 +8,7 @@ only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the p
 The bar is **Lanes · Runs · Inbox · Talk · More** (`shell.mjs` `BAR`), the same on a desktop and a phone (at the bottom there),
 as link nav (`<nav>` + `aria-current`). Lanes is the landing page. **More** is a menu, not a page: a popover on a desktop, a
 bottom sheet on a phone (`MORE`): **Health** = Usage, Slop, Tests, Context; **History** = Records, Ledger, Docs; **Plan** =
-Roadmap (and Plan and Map until stages LANES / RUNS retire them); then Settings. When one of those is open, More is marked current; a
+Roadmap (and Plan until stage RUNS retires it); then Settings. When one of those is open, More is marked current; a
 Health page in a bad state puts a dot on More. Every page's label, tab id and URL are the same word (`?tab=runs` is Runs); an
 unknown or retired id (`overview`, `work`, `health`, `history`, `home`) opens Lanes - there is no alias or redirect table.
 The Inbox link carries the one needs-you count. A page with views (Slop, Context, Tests) shows its view switch on its own title
@@ -27,19 +27,19 @@ refreshes the strip only, a record refetches the open page only when the page re
   (`prose.mjs`, on the Docs markdown stack): ids, lanes, PRs and commits as chips, file paths shortened (full path in the title, a
   copy button, the Docs reader when it can show the file), measurements, before -> after pairs, ranges and >= <= != ~ as symbols; a long
   body is a 3-line preview + "more" on the phone. A repeat-detector card its directive already asks for reads "Asked as DIR-n".
-- Map: lanes are threads, runs are beads on them. Norn look: **the Well** (Yggdrasil over the Well of Urd; the lanes on a ring of
-  stakes, the camera fitted to the crown + ring, a stake label per lane with its state and "n needs you", archived lanes behind
-  the toggle, 1x / 1.5x / 2x + pan) or **the Tapestry** (the dense view: one row per lane in band order). Live from `/api/stream`:
-  a record / run event fires at its record ts, the view runs 3 s behind the wall clock; render on change only (no free-running
-  loop, 0 frames when idle), no frames while the tab is hidden, one static frame per change under QUIET, no travel with reduced
-  motion. Classic look: the SVG map with the deliverable band pills.
 - Plan (`norn plan`): up next (every queued run in start order, what it waits for, its time estimate and start), the chains
   of runs that wait for other runs, landing next (finished work heading to main, in merge order).
 - Usage: what the work used, and the forecast (from `norn plan`): the rate now against the hourly cap, this week against the
   weekly stop, and whether the queued work fits before the reset. With API billing, the last 24 h of spend against the daily cap.
 - Roadmap (`norn road`): themes and items with a status derived from the linked lanes, runs and records (never typed); a tree
   or a board, filters, and the unplaced work that has no item yet.
-- Lanes: one row per lane record with its latest run (any executor), state and outcome; a new project's first task and setup gaps on top.
+- Lanes: the attention board (stage LANES), one list grouped by what the owner must do: Needs you (an Inbox row names the lane),
+  Running, Stopped, Waiting, To land; Parked and Done today folded; Old and Archived as links with counts. The group buttons are the
+  filter (`&show=`), a type filter beside them. A row: the state tile, name + type, the now line, progress and pace (the elapsed-vs-budget
+  bar is a CSS animation, no timer), the run strip (the retired Map's lane band as beads: hand-offs joined, helpers, the open question),
+  the PR track (done -> PR -> merged -> installed) and at most 3 actions. The chevron opens the lane in place (its flow of runs, the
+  brief checklist, why slow, the goal and its links); Esc closes it. One strip legend under the list. Under 700 px a row is a card.
+  A new project's first task and setup gaps on top.
 - Runs: every running, queued and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
   Running first (newest start first), then queued, then ended (latest end first). Columns `ran` (start to end, or to now while it
   runs; `queued for` on a queued run) and `ended` (how long ago). Chips filter by state (running / queued / finished / failed),
@@ -97,4 +97,4 @@ the empty-state art. Both looks open the Overview with the strip of the three No
 its README). The classic look keeps the plain "norn" title and no art.
 
 ## Tests
-`node --test tests/dashboard.test.mjs tests/ui.test.mjs tests/dash-counts.test.mjs tests/dash-colours.test.mjs tests/norn-look.test.mjs tests/norn-map.test.mjs tests/norn-vocab.test.mjs` (fixture server on a random port, temp state).
+`node --test tests/dashboard.test.mjs tests/ui.test.mjs tests/dash-counts.test.mjs tests/dash-colours.test.mjs tests/norn-look.test.mjs tests/norn-vocab.test.mjs tests/lanes-page.test.mjs` (fixture server on a random port, temp state).

@@ -17,14 +17,14 @@ import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
 import { esc, fin, dash, int, mTok, fmtMin, pct, plural, aname, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
-import { lanes, map } from './pages/lanes.mjs';
+import { lanes } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
 import { plan, forecastCard } from './pages/plan.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
 export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
   ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
-  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['map', 'Map'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['talk', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
+  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
 const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
@@ -83,7 +83,6 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return get(`/api/lanes?${q}`);
-  if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
   if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (Plan's up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
     const [a, plan, guard] = await Promise.all([get(`/api/agents?${q}&part=live${runsWin(ctx.runsWindow)}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null), guardGet(get, q, all)]);
     const old = ctx.parts?.runs, ended = old && old.key.startsWith(`${project}|${a.window}|`) ? old.data.ended : undefined;
@@ -145,7 +144,7 @@ export function renderTab(tab, d, ctx = {}) {
   if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanes(d, { ...ctx, now })));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ inbox, lanes, runs, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
