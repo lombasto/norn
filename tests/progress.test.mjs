@@ -168,3 +168,30 @@ test('mergeWork: a stage\'s sessions as one fold - calls in order, a commit seen
   s.calls.push({}); assert.equal(one.calls.length, 1, 'the cached fold is not changed by its reader');
   assert.deepEqual(mergeWork([]), workInit());
 });
+
+test('one long test is not a stall: an open test call reads "running a test for N min, limit M min"; a background test process too; no test = stalled', () => {
+  const edit = call(0, 1, 'Edit', { file_path: '/fx/repo/engine/lib/dlvwhy.mjs' }), r = run('RUN-326', { created: iso(0), data: { lane: 'demo', stage: 'MERGE' } });
+  // the owner's case: one test file 17 min into a `timeout 1500` (25 min), nothing else moved for 34 min
+  const recs = [edit, [{ type: 'assistant', timestamp: iso(17), message: { content: [{ type: 'tool_use', id: 'long', name: 'Bash', input: { command: 'cd wt && timeout 1500 node --test tests/dlv-merged-truth.test.mjs', timeout: 600000 } }] } }]];
+  const p = runProgress(r, { runs: { 'RUN-326': r }, brief: FIVE, work: work(recs), now: T0 + 34 * 60000 });
+  assert.equal(p.pace.state, 'testing');
+  assert.equal(p.pace.still_min, null);
+  assert.match(p.pace.words, /^running a test for 17 min, limit 25 min \(dlv-merged-truth\.test\.mjs\)/);
+  assert.deepEqual(p.pace.test, { min: 17, limit_min: 25, what: 'dlv-merged-truth.test.mjs', from: 'call' });
+  // past its limit it says so
+  assert.match(runProgress(r, { runs: { 'RUN-326': r }, brief: FIVE, work: work(recs), now: T0 + 50 * 60000 }).pace.words, /^running a test for 33 min, limit 25 min \(dlv-merged-truth\.test\.mjs\) - past its limit/);
+  // no timeout arg: the tool call's own timeout is the limit
+  const w2 = work([edit, [{ type: 'assistant', timestamp: iso(20), message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'node --test tests/a.test.mjs', timeout: 600000 } }] } }]]);
+  assert.equal(runProgress(r, { runs: { 'RUN-326': r }, brief: FIVE, work: w2, now: T0 + 34 * 60000 }).pace.test.limit_min, 10);
+  // a test started in the background: the transcript call has its result, the process under the run's pid is still running
+  const bg = work([edit, call(10, 10, 'Bash', { command: 'node --test tests/x.test.mjs', run_in_background: true }, 'Command running in background with ID: b1')]);
+  const procs = [{ pid: 100, ppid: 1, cmd: 'claude.exe -p' }, { pid: 200, ppid: 100, cmd: 'bash -c "timeout 25m node --test tests/x.test.mjs"', created: T0 + 10 * 60000 },
+    { pid: 300, ppid: 200, cmd: 'node --test tests/x.test.mjs', created: T0 + 10 * 60000 }, { pid: 400, ppid: 9, cmd: 'node --test tests/other.test.mjs', created: T0 }];
+  const b = runProgress(r, { runs: { 'RUN-326': r }, brief: FIVE, work: bg, procs, pid: 100, now: T0 + 40 * 60000 });
+  assert.equal(b.pace.state, 'testing');
+  assert.match(b.pace.words, /^running a test for 30 min, limit 25 min \(x\.test\.mjs\) - past its limit/);
+  // the same run with no test process under it (another run's test does not count) is stalled
+  const s = runProgress(r, { runs: { 'RUN-326': r }, brief: FIVE, work: bg, procs: procs.filter(x => x.pid < 200 || x.pid === 400), pid: 100, now: T0 + 40 * 60000 });
+  assert.equal(s.pace.state, 'stalled');
+  assert.match(s.pace.words, /^stalled: no commit, edit or test change for (30|39) min/);
+});

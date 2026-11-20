@@ -10,6 +10,8 @@ import { makeGit } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv, fwd } from './dlvmerge.mjs';
+import { whyNotMerged } from './dlvwhy.mjs';
+import { queueOf } from './runs.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
@@ -76,9 +78,10 @@ function writeCache(stateDir, cache, before) {
 
 /**
  * One row per deliverable. opts: { stateDir, project, now (ms), git (makeGit()), questions (records items, default loaded) }
- * Row: id, record_state open|parked, state done|merged|installed|unknown (cannot tell), state_word, merged_how pr|git|equivalent|ruling,
- * merge_commit, merged_at, merge_pr, merge_latched, unknown_why, ruling (the open Q-n asking the owner), target, at_target, repo, branch, lane, run, delivers, subject (the tip's), tip,
- * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due.
+ * Row: id, record_state open|parked, state done|merged|installed|unknown (cannot tell), state_word, subject (the tip's), merged_how pr|git|equivalent|ruling,
+ * merge_commit, merged_at, merge_pr, merge_latched, unknown_why, ruling (the open Q-n asking the owner), target, at_target, repo, branch, lane, run, delivers, tip,
+ * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due,
+ * why_not (OVERVIEW-TRUTH 2, dlvwhy.mjs whyNotMerged: a DONE row's reason it is not merged, { kind, text, warn, run?, url? }) | null.
  */
 export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null } = {}) {
   const t0 = Date.now();
@@ -107,7 +110,8 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
     const since = Date.parse((lastEv(it, ['park', 'unpark']) || it.history[0]).ts);
-    const asked = qs.filter(q => q.data?.deliverable === it.id && !q.data?.ruling && Date.parse(q.created) >= since).sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0]?.id ?? null;
+    // OVERVIEW-TRUTH (1): a landed row asks nothing - its question is withdrawn by the tick (closeLandedQuestions), never shown as 'asked'
+    const asked = m ? null : qs.filter(q => q.data?.deliverable === it.id && !q.data?.ruling && Date.parse(q.created) >= since).sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0]?.id ?? null;
     const days = +((now - Date.parse(doneUtc)) / DAY).toFixed(1);
     const due = !superseded && state === 'done' && now - Date.parse(doneUtc) > cfg.ask_after_h * 3600e3 && (!park || park.expired) && !asked;
     // META-DLV-R2: the merge rehearsal of a DONE tip onto main, and the resolve flag (conflict, or more than resolve_behind behind)
@@ -125,7 +129,9 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     };
   });
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
-  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r) }));
+  const st = (() => { try { return loadState(stateDir); } catch { return { items: {} }; } })(), queue = queueOf(Object.values(st.items));
+  const readNotes = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r), why_not: whyNotMerged(r, { items: st.items, queue, readNotes }) }));
   scanner.finish();
   writeCache(stateDir, cache, before);
   rows.sort((a, b) => b.days - a.days);
@@ -271,22 +277,23 @@ export function onRunDone(stateDir, runId, { now, git = makeGit() } = {}) {
 // MERGE-FIRST (4): the merge backlog = the finished work not on its way to main yet - DONE, not merged, open (not parked, not
 // superseded) and no PR opened. The Lanes, Plan and Overview pages show it; over policy.merge.backlog_max the digest tells the check-in
 // to land work before it starts new lanes (digest row 0c).
-/** -> { n, oldest_h, ids, max, over (n > max), text ("merge backlog: 4, oldest 13h": the one line every page shows) }; max = backlogMax(policy) */
+/** -> { n, oldest_h, ids, max, over (n > max), text ("done, not merged: 4 (oldest 13h)": the one count every page shows) }; max = backlogMax(policy) */
 export function mergeBacklog(rows = [], { now = Date.now(), max = POLICY_DEFAULTS.merge.backlog_max } = {}) {
   const b = rows.filter(r => r.state === 'done' && r.record_state === 'open' && !r.superseded && !r.pr);
   const oldest = Math.min(...b.map(r => Date.parse(r.done_utc)).filter(Number.isFinite));
   const oldest_h = Number.isFinite(oldest) ? +Math.max(0, (now - oldest) / 3600e3).toFixed(1) : null;
   return { n: b.length, oldest_h, ids: b.map(r => r.id), max, over: b.length > max,
-    text: `merge backlog: ${b.length}${b.length && oldest_h !== null ? `, oldest ${oldest_h < 1 ? '<1' : Math.round(oldest_h)}h` : ''}` };
+    text: `done, not merged: ${b.length}${b.length && oldest_h !== null ? ` (oldest ${oldest_h < 1 ? '<1' : Math.round(oldest_h)}h)` : ''}` };
 }
 export const backlogMax = policy => policy?.merge?.backlog_max ?? POLICY_DEFAULTS.merge.backlog_max;
 export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean'
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
-// one listing line: id, state, age, behind main, native, branch, its PR, how it merged / why Norn cannot tell, park / question, merge
-// rehearsal, what it delivers
+// one listing line: id, state, age, behind main, native, branch, its PR, how it merged / why Norn cannot tell, why it is not merged (not when
+// that why is its open PR: the PR column already says so),
+// park / question, merge rehearsal, what it delivers
 export function formatDeliverable(r) {
   const how = r.state === 'unknown' ? `${r.state_word}${r.ruling ? ` (ruling ${r.ruling})` : ''}` : r.merged_how === 'equivalent' || r.merged_how === 'ruling' ? `merged (${r.merged_how})` : '';
-  const flag = [how, r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : ''].filter(Boolean).join(' | ');
+  const flag = [how, r.why_not?.kind === 'pr' ? '' : r.why_not?.text, r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : ''].filter(Boolean).join(' | ');
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
     pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
@@ -325,19 +332,26 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
 }
 
 /**
- * A "merge, batch or park?" question goes stale once its deliverable reaches its target (merged / installed / superseded): the
- * tick withdraws it, so the owner's Inbox never asks about work that already landed. Returns [{ q, dlv, why }] (written unless dry).
+ * OVERVIEW-TRUTH (1): once a deliverable LANDS (merged, installed or superseded - not only at its install target), every open question
+ * it makes moot is withdrawn with the reason (`landed as PR #n`): its "merge, batch or park?", its 'cannot tell' ruling, and any other
+ * open question that names it or its branch (a check-in's own question about landing it). The tick runs this right after latchMerged,
+ * so the owner's Inbox never asks about work already on main. Returns [{ q, dlv, why }] (written unless dry).
  */
+export const landedWhy = r => r.superseded ? `superseded by ${r.superseded.by}` : (r.merge_pr ?? r.pr?.number) != null ? `landed as PR #${r.merge_pr ?? r.pr.number}`
+  : `landed on main (${r.merged_how === 'equivalent' ? 'its change found on main' : r.merged_how === 'ruling' ? 'the owner ruled it merged' : 'git'}${r.merge_commit ? ` ${String(r.merge_commit).slice(0, 9)}` : ''})`;
+export const isLanded = r => !!r && (r.state === 'merged' || r.state === 'installed' || !!r.superseded);
+const names = (q, r) => { const t = [q.data?.title, q.data?.body, q.data?.source].filter(Boolean).join('\n');
+  return new RegExp(`(^|[^\\w-])${r.id}(?![\\w-])`).test(t) || (!!r.branch && t.includes(r.branch)); };
 export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
-  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items)
-    .filter(q => q.kind === 'question' && q.state === 'open' && q.data?.deliverable);
+  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items).filter(q => q.kind === 'question' && q.state === 'open');
   if (!open.length) return [];
-  const rows = new Map(deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.map(r => [r.id, r]));
-  const out = [];
+  const landed = deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.filter(isLanded);
+  if (!landed.length) return [];
+  const byId = new Map(landed.map(r => [r.id, r])), out = [];
   for (const q of open) {
-    const r = rows.get(q.data.deliverable);
-    if (!r?.at_target) continue;
-    const why = `${r.id} ${r.branch} is ${r.superseded ? `superseded by ${r.superseded.by}` : r.state}: nothing left to ask (closed by the tick)`;
+    const r = q.data?.deliverable ? byId.get(q.data.deliverable) : landed.find(x => names(q, x));
+    if (!r) continue;
+    const why = `${landedWhy(r)}: ${r.id} ${r.branch} is on main, nothing left to ask (withdrawn by the tick)`;
     if (!dry) record(stateDir, { kind: 'question', ev: 'withdraw', id: q.id, by: 'checkin', data: { why } }, { views: project.views || {}, ...(now ? { now } : {}) });
     out.push({ q: q.id, dlv: r.id, why });
   }
