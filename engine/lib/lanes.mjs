@@ -5,6 +5,7 @@ import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
 import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
 import { idNum as runNum, laneNameIn } from './records.mjs';
+import { runWord } from './map.mjs';
 
 
 // the evidence runs.hbLate found for a late beat: the CPU the sweep sampled, or how long ago the run's own output moved
@@ -114,6 +115,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
   idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, shipped = () => null, home = null } = {}) {
   const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged, home }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
   const items = Object.values(st.items);
+  const strips = stripsOf(items, now), asks = asksOf(items);
   const latest = {}, newest = {}, newer = (m, r) => !m[r.data.lane] || runNum(r.id) > runNum(m[r.data.lane].id);
   for (const r of items) if (r.kind === 'run' && r.data?.lane) {
     if (newer(newest, r)) newest[r.data.lane] = r;
@@ -137,6 +139,47 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
     return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
-      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old, rule: rules.get(name) ?? null, path: path(name, now) };
+      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old, rule: rules.get(name) ?? null, path: path(name, now),
+      outcome: r?.end?.outcome ?? null, ruled: !!ruled, started: r?.created ?? null, budget_min: r?.data.budget_min ?? null, runs: (strips[name] ?? []).slice(-STRIP),
+      runs_total: strips[name]?.length ?? 0, ask: park?.q && st.items[park.q]?.state === 'open' ? park.q : asks[name] ?? null,
+      waits: ['queued', 'claimed'].includes(r?.state) ? (r.data.after || []).filter(c => c.kind === 'run').map(c => c.id) : [] };
   }));
+}
+
+// ---------- Stage LANES (SPEC 4.2): the attention board - the Map's lane band folded into each row, and the board groups ----------
+// The run strip: a lane's runs oldest first (the way mapGraph folds lanesOf + resume_of + helpersOf), bookkeeping runs left out; a bead
+// joins its predecessor (cont) when it is that run's hand-off resume - a gap is a fresh start; by = the run (a check-in) that started
+// or queued it. The row keeps the last STRIP.
+export const STRIP = 6;
+function stripsOf(items, now) {
+  const helpers = {}, by = {};
+  for (const r of items) if (r.kind === 'run') { if (r.data?.role === 'helper') helpers[r.data.parent] = (helpers[r.data.parent] ?? 0) + 1;
+    else if (r.data?.lane && !BOOKKEEPING.includes(r.state)) (by[r.data.lane] ??= []).push(r); }
+  return Object.fromEntries(Object.entries(by).map(([lane, rs]) => [lane, rs.sort((a, b) => runNum(a.id) - runNum(b.id)).map((r, i) => {
+    const [cls, word] = ['queued', 'claimed'].includes(r.state) ? ['idle', 'queued'] : runWord(r), e = r.history.findLast(h => h.ev === 'end')?.ts;
+    return { id: r.id, name: runName(r), cls, word, min: Math.max(0, Math.round(((e ? Date.parse(e) : now) - Date.parse(r.created)) / 60000)),
+      cont: !!r.data.resume_of && r.data.resume_of === rs[i - 1]?.id, helpers: helpers[r.id] ?? 0, by: r.history.find(h => h.ev === 'start' || h.ev === 'queue')?.run ?? null }; })]));
+}
+// a lane's open question (the strip's "!" bead): the newest open question that names the lane
+const asksOf = items => { const o = {}; for (const q of items) if (q.kind === 'question' && q.state === 'open' && q.data?.lane && (!o[q.data.lane] || runNum(q.id) > runNum(o[q.data.lane]))) o[q.data.lane] = q.id; return o; };
+/** the PR track of a lane: its newest deliverable (deliverablesView rows) -> { step: done | pr | merged | installed, pr, url, branch } | null */
+export function prStep(rows) {
+  const r = [...(rows || [])].sort((a, b) => runNum(b.id) - runNum(a.id))[0]; if (!r) return null;
+  const step = ['merged', 'installed'].includes(r.state) ? r.state : r.pr ? 'pr' : 'done';
+  return { step, pr: r.merge_pr ?? r.pr?.number ?? null, url: /^https:\/\//.test(r.pr?.url ?? '') ? r.pr.url : null, branch: r.branch ?? null };
+}
+// The board groups (ids; labels and page order: pages/lanes.mjs LANE_SHOW). Needs you = an Inbox row names the lane (the server's `needs`, terms.mjs isNeed: never
+// counted here); Stopped = the last run ended without DONE in the last OLD_DAYS and nothing asks the owner; Old = that, longer ago
+// (SPEC Q6), or done before today; To land = done with its deliverable not on main yet.
+export const OLD_DAYS = 7;
+/** a lanesView row + its needs count -> its board group id */
+export function boardOf(l, now = Date.now()) {
+  if (l.state === 'archived') return 'archived';
+  if (l.needs > 0) return 'needs';
+  if (l.run_state === 'running') return 'running';
+  if (['queued', 'claimed'].includes(l.run_state) || (l.group === 'queued' && !l.ruled)) return 'waiting';
+  if (l.state === 'parked' || l.ruled) return 'parked';
+  const age = l.ended ? now - Date.parse(l.ended) : Infinity;
+  if (l.group === 'done' || l.outcome === 'done') return ['done', 'pr'].includes(l.dlv?.step) ? 'land' : age < 864e5 ? 'today' : 'old';
+  return age <= OLD_DAYS * 864e5 ? 'stopped' : 'old';
 }

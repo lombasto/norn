@@ -29,7 +29,7 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
-import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
+import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
@@ -40,7 +40,6 @@ import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
 import { ctxView } from '../lib/ctxlimit.mjs';
-import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
 import { homeDir, realPath } from '../lib/config.mjs';
 import { executorExtra } from '../lib/executors.mjs';
@@ -102,15 +101,15 @@ const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
 const EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5'];
-const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'three.module.js', 'three.core.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2'];
+const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2'];
 // the Norn look (META-VISUAL-B): its modules + stylesheet, served from norn/ by allowlist; art files only by the asset map
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
-  'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
+  'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
 const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'map', 'settings'];
+export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -489,7 +488,7 @@ export function createDashboard(o) {
   function withDriver(p, rows) {
     const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name }, dl = deliverablesOf(p).rows || [];
     return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
-      return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
+      return { ...l, driver: laneDriver(l.name, o), lane_type, dlv: prStep(dv), output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
   }
   // RM-39: each run's progress against its brief, pace, why slow and alarms in words (progress.mjs). The files are read on
   // fs.promises first (the brief, NOTES, every session's transcript - tailed into the shared cache under its own key), then the
@@ -616,11 +615,6 @@ export function createDashboard(o) {
       if (e.key === leaderKey(p.name)) { leader = c; return; }
       if (c?.kind === 'work') work.push({ key: e.key, home: c.home, lane: c.lane, n: c.n, run: c.run ?? null, items: c.items || [], renewed_at: c.renewed_at, stale: c.home !== home && isStale(seen[e.key], c, now, pol) }); });
     return { homes: { home, fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, rows }, claims: { work, leader } };
-  }
-  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
-  async function map(p, url) {
-    const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
-    return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows, home: homeIdOf(p.state)?.id }) };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
@@ -1877,7 +1871,8 @@ data: ${JSON.stringify(l)}
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
           const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           const need = new Map(); for (const i of (await Promise.all(ps.map(inbox))).flat().filter(isNeed)) if (i.lane) need.set(`${i.project}|${i.lane}`, (need.get(`${i.project}|${i.lane}`) ?? 0) + 1);
-          return send(200, { lanes: rows.map(l => ({ ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 })), backlog: backlogOf(ps) }); }
+          const now = Date.now();   // stage LANES: the board group needs the Inbox's needs count (boardOf)
+          return send(200, { lanes: rows.map(l => { const r = { ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 }; return { ...r, board: boardOf(r, now) }; }), backlog: backlogOf(ps) }); }
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           // NORN-UI-RUNS: ?part=live (running runs + the queue: the Runs page's first paint) | history (the ended runs in the window) | none: all
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
@@ -1889,7 +1884,6 @@ data: ${JSON.stringify(l)}
           const tree = (await Promise.all(ps.map(p => agents(p, win, { homes: true, part })))).flat();
           return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }) });
         }
-        if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
           const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)
           const away = (await Promise.all(ps.map(async p => (await copyItemsAsync(p.state, 'deliverable')).map(it => ({ ...dlvCopyRow(it), project: p.name }))))).flat();
