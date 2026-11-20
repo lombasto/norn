@@ -1023,8 +1023,8 @@ export async function killTreeAsync(pid) {
   for (const c of descendants(pid, await execA('ps', PS))) signal(c, 'SIGKILL');
   signal(pid, 'SIGKILL');
 }
-const SYNC_IO = { record: (s, ev) => record(s, ev), kill: killTree, unlink: f => { try { fs.unlinkSync(f); } catch { /* none */ } }, release: releaseLock };
-const ASYNC_IO = { record: (s, ev) => recordAsync(s, ev), kill: killTreeAsync, unlink: async f => { try { await fs.promises.unlink(f); } catch { /* none */ } }, release: releaseLockAsync };
+const SYNC_IO = { record: (s, ev) => record(s, ev), kill: killTree, unlink: f => { try { fs.unlinkSync(f); } catch { /* already gone: the stop goes on to the lock */ } }, release: releaseLock };
+const ASYNC_IO = { record: (s, ev) => recordAsync(s, ev), kill: killTreeAsync, unlink: async f => { try { await fs.promises.unlink(f); } catch { /* already gone: the stop goes on to the lock */ } }, release: releaseLockAsync };
 
 // Record the kill first (a supervisor still alive then fails its `end` and stops), then kill the tree, then free lock + heartbeat.
 export const stopRun = a => runSteps(stopSteps(a), SYNC_IO);
