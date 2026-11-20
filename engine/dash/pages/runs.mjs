@@ -113,7 +113,7 @@ function row(n, d, ctx, sel) {
   const head = `<div class="rhead">${stateChip(n)}<span class="rwho">${projTag(ctx, n.project)}${who(n)}</span>${band === 'live' ? paceChip(n) : ''}${homeChip(n)}${guardChips(n, d)}</div>`;
   const meta = `<div class="rmeta small"><span class="rlane">${laneCard(n.lane_card, runLane(n))}</span>${exChip(n.executor, n.model, n.effort)}${kids(n)}</div>`;
   let body = '';
-  if (band === 'live') body = `<div class="rtimes small">${timeBar(n, now)}${rtime(n, now)}${items(n)}</div>${nowLine(n)}${speedLine(n.speed)}`;
+  if (band === 'live') body = `<div class="rtimes small">${timeBar(n, now)}${rtime(n, now)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}`;
   else if (band === 'ended') { const e = runTimes(n, now).ended_min;
     body = `<div class="rtimes small">${rtime(n, now)}${fin(e) ? `<span>ended ${fmtMin(e)} ago</span>` : ''}${items(n)}</div>${whyEnded(n) ? `<div class="rline small">${whyEnded(n)}</div>` : ''}`; }
   else body = queuedBody(n, d, ctx);
