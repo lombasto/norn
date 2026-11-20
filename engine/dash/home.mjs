@@ -293,4 +293,3 @@ export function renderHome(d, ctx = {}) {
     ${costLine}<div class="hfoot small mute">An instruction becomes a DIRECTIVE in your words. Buttons write records directly - no model in between.</div>
   </section>${right(d.side || {}, ctx)}</div>`;
 }
-

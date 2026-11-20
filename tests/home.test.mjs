@@ -6,13 +6,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { homeEvents, renderThread, renderHome, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
+import { homeEvents, renderThread, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
 import { TABS, renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { BAR, renderBar } from '../engine/dash/shell.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { threadFile } from '../engine/lib/chatact.mjs';
-import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
+import { fixture } from './helpers/dash-fixture.mjs';
 
 const T = m => new Date(Date.parse('2026-11-13T00:00:00.000Z') + m * 60000).toISOString();
 const SHOT = 'C:/rev/meta/shots/plan-desktop-dark.png';
@@ -172,13 +172,11 @@ test('C2 /api/file: images inside the allow-listed roots (project root, state, r
 });
 
 // ---------- the phone width (SPEC row: scrollWidth == width at 390) ----------
-const css = () => dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
 
 // CI-RED-44384DB (windows): this test drove its own CDP socket with unbounded waits (the load event, the ready poll, every reply), so a
 // stalled step ran into the 120 s test timeout without a word and the finally (browser + server close) never ran - the file hung to
 // the 600 s cap. The shared openPage: every wait bounded, a timeout fails naming the page's state, pg.close in the finally.
 import { openPage, skipWhy } from './helpers/cdp.mjs';
-import { dashCss } from './helpers/dash-css.mjs';
 test('C2 the Talk tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
   skip: skipWhy, timeout: 120000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
