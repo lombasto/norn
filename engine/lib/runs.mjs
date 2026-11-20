@@ -390,6 +390,7 @@ function capCheck(o, staleMs) { const full = capFull(o, staleMs); if (full) thro
 // waited-longest order is the fill's (a direct start already queues behind same-or-higher priority runs: queuedAhead)
 function shareCheck(o, staleMs) {
   if (o.kind === 'checkin' || o.role === 'helper' || !(infoOf(o)?.caps || []).includes('max_claude_workers')) return;
+  if (!Number.isInteger(o.budget?.max_claude_workers)) return;   // no machine cap: no share to keep (slotVerdict's rule), no walk of the other projects
   const me = path.basename(path.resolve(o.state));
   const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me), waiting: slotWaiters(o.state, { now: o.now ?? Date.now(), resources: o.resources || sampleResources }), mine: -Infinity });
   if (sv) throw new RunRefused(sv, 4);
@@ -511,11 +512,11 @@ export function busyDoor(o) {
 export function queuedAhead(o) {
   const caps = infoOf(o)?.caps || [], mine = PRIORITIES.indexOf(PRIORITIES.includes(o.priority) ? o.priority : DEFAULT_PRIORITY);
   if (!caps.length || o.kind === 'checkin' || o.role === 'helper') return [];
-  const states = projectStates(o.state).filter(s => runsOf(s).some(r => r.kind === 'run' && r.state === 'queued'));
+  // a sibling project whose runs.jsonl does not read is skipped (its own fill reports it), never a refusal of this project's start
   const out = [];
-  for (const s of states) {
+  for (const s of projectStates(o.state)) {
     let rows;
-    try { rows = walkQueue(s, { now: o.now ?? Date.now(), act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
+    try { if (!runsOf(s).some(r => r.kind === 'run' && r.state === 'queued')) continue; rows = walkQueue(s, { now: o.now ?? Date.now(), act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
     for (const r of rows) {
       const rc = EXECUTORS[r.executor]?.caps ?? [];
       if (!rc.some(k => caps.includes(k)) || PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
@@ -898,9 +899,9 @@ export function slotWaiters(state, o = {}) {
   const out = {}, here = path.resolve(state);
   for (const s of projectStates(state)) {
     if (s === here) continue;
-    let rows;
-    try { rows = walkQueue(s, { ...o, act: null, fair: false }); } catch { continue; }
-    const runs = runsOf(s), at = new Map(runs.map(r => [r.id, Date.parse(r.created) || 0])), w = rows.filter(slotWaiting);
+    let rows, runs;
+    try { rows = walkQueue(s, { ...o, act: null, fair: false }); runs = runsOf(s); } catch { continue; }
+    const at = new Map(runs.map(r => [r.id, Date.parse(r.created) || 0])), w = rows.filter(slotWaiting);
     if (w.length) out[path.basename(s)] = { n: w.length, since: Math.max(Math.min(...w.map(r => at.get(r.id) ?? 0)), lastStart(runs)) };
   }
   return out;
