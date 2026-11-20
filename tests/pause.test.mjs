@@ -88,7 +88,9 @@ test('tick: Pause everything exits before the sweep; Pause check-ins sweeps, fil
   assert.match(fs.readFileSync(path.join(d.state, 'STATUS.md'), 'utf8'), /- pause: Pause check-ins by owner since .* - Check-ins do not run/);
   assert.ok(!Object.values(loadState(d.state).items).some(i => i.kind === 'run' && i.data.kind === 'checkin'), 'no check-in');
   assert.equal(d.item(q.run).state, 'filled', 'the fill goes on');
-  assert.equal(d.item(ghost).state, 'lost', 'the sweep goes on');
+  // the sweep goes on: lost (cause gone); with no spec to resume and every pid gone, the same tick's endLost (9cd28e6) ends it
+  assert.equal(d.item(ghost).lost?.cause, 'gone', 'the sweep goes on');
+  assert.equal(d.item(ghost).state, 'exited', 'endLost goes on');
   await d.ended(d.item(q.run).fill.next);
   setPause(d.state, { mode: 'queue', by: 'owner' });
   const r3 = go();
