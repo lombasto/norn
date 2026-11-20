@@ -2281,7 +2281,7 @@ function stuckCmd(argv, env, out, err) {
 }
 
 // ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
-const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage S] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)';
+const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)';
 function collideCmd(argv, env, out, err) {
   try {
     const flags = {}, pos = [];

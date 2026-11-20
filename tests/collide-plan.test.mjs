@@ -10,7 +10,7 @@ import { mkTmp } from './helpers/tmp.mjs';
 import { record } from '../engine/lib/records.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_TERMINAL_PROMPT: '0' };
-const git = (cwd, ...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...a], { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const git = (cwd, ...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...a], { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).trim();
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const fwd = p => p.split(path.sep).join('/');
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -45,7 +45,7 @@ function fixture() {
   f.caveat = (id, text) => record(state, { kind: 'item', ev: 'edit', id, by: 'owner', data: { caveat: text } });
   f.plan = (...args) => {
     const env = { ...ENV, META_ROOT: t, HOME: t, USERPROFILE: t, PATH: process.env.PATH, META_NO_TICK: '1' };
-    const r = spawnSync(process.execPath, [NORN, 'collide', 'plan', '--project', pf, '--state', state, ...args], { encoding: 'utf8', env });
+    const r = spawnSync(process.execPath, [NORN, 'collide', 'plan', '--project', pf, '--state', state, ...args], { encoding: 'utf8', env, windowsHide: true });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     return r.stdout;
   };
@@ -137,6 +137,6 @@ test('near-misses name no collision: tests/** only, the prose Scope of a NAV bri
   assert.match(prose, /note: no machine-readable Scope \(prose in the Scope line .*\): territory is judged from changed files only/);
   none(/^no collision/m)('# task other REVIEW\nScope: none (a review; no code)\nTests: t\nDone: d\n');
   const helper = spawnSync(process.execPath, [NORN, 'collide', 'plan', '--project', f.pf, '--state', f.state, '--lane', 'other', '--role', 'helper', '--brief', f.brief('h', '# h\nScope: web/**\nTests: t\nDone: d\n')],
-    { encoding: 'utf8', env: { ...ENV, META_ROOT: f.t, HOME: f.t, USERPROFILE: f.t, PATH: process.env.PATH, META_NO_TICK: '1' } });
+    { encoding: 'utf8', env: { ...ENV, META_ROOT: f.t, HOME: f.t, USERPROFILE: f.t, PATH: process.env.PATH, META_NO_TICK: '1' }, windowsHide: true });
   assert.match(helper.stdout, /^no collision/m, helper.stderr);
 });

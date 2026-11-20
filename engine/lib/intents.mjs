@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readEvents, recordsFile, fold } from './records.mjs';
+import { readEvents, recordsFile, fold, idNum } from './records.mjs';
 import { parseReady } from './ready.mjs';
 import { readScope, ahead } from './collide.mjs';
 
@@ -89,7 +89,6 @@ export function stackPairs(repo, intents, ref) {
 const LIVE = { running: 'running', queued: 'queued', claimed: 'queued' };
 const tsOf = r => Date.parse(r.history?.[0]?.ts ?? r.created ?? 0) || 0;
 const endOf = r => Date.parse(r.history?.at(-1)?.ts ?? 0) || 0;
-const num = id => Number(String(id).match(/(\d+)$/)?.[1] ?? 0);
 
 /**
  * gatherIntents({ state, repo, main, remote, now, recent_days, home }) -> { intents, runs, dlvs, ref, tracked, itemEvents } - the open work
@@ -105,7 +104,7 @@ export function gatherIntents({ state, repo, main = 'main', remote = 'origin', n
       scope: b.scope, scope_why: b.why, exclusive: b.exclusive, touched: g?.touched || [], commits: g?.commits || 0, branch: g?.branch ?? null, tip: g?.tip ?? null,
       dlv: null, stacked_on: [], names: b.names, tests: b.tests, done: b.done, brief: d.brief ?? null, worktree: d.worktree ?? null };
   };
-  const all = Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane).sort((a, b) => num(a.id) - num(b.id));
+  const all = Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane).sort((a, b) => idNum(a.id) - idNum(b.id));
   for (const r of all) if (LIVE[r.state] && !(out.get(r.data.lane)?.state === 'running')) out.set(r.data.lane, intentOf(r, LIVE[r.state]));
   // an open deliverable not on main: the lane's unlanded work (a live run on the lane carries its DLV id)
   for (const x of Object.values(dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state) && x.data?.lane)) {
@@ -131,7 +130,7 @@ export function gatherIntents({ state, repo, main = 'main', remote = 'origin', n
 
 /** the intent of a run that would start now: lane L, brief F (its worktree = the lane's newest run's, when it is still there) */
 export function briefIntent({ lane, brief, item = null, stage = null, role = null, kind = 'worker', now = Date.now(), home = null }, g, { repo } = {}) {
-  const b = briefFacts(brief), prev = Object.values(g.runs).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.worktree).sort((a, b2) => num(b2.id) - num(a.id))[0];
+  const b = briefFacts(brief), prev = Object.values(g.runs).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.worktree).sort((a, b2) => idNum(b2.id) - idNum(a.id))[0];
   const t = g.ref ? treeFacts(prev?.data.worktree, g.ref) : null, d = { kind, role, stage };
   const me = { lane, run: null, stage, state: 'new', since: now, role: roleOf(d), items: [...new Set([...laneItems(g.itemEvents, [`lane:${lane}`, ...(home ? [`lane:${home}/${lane}`] : [])]), ...b.items, ...(item ? [item] : [])])],
     part_of: null, scope: b.scope, scope_why: b.why, exclusive: b.exclusive, touched: t?.touched || [], commits: t?.commits || 0, branch: t?.branch ?? null, tip: t?.tip ?? null,
