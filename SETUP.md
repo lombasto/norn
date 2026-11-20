@@ -289,6 +289,12 @@ project has its own rules, roadmap, merge gate, lanes and check-ins, and several
 
 Workers still get a worktree of the whole repo, and Claude Code still loads the top-level CLAUDE.md as well as the folder's.
 
+### Two or more machines on one project
+
+To let a second machine build the same project without duplicate work, set up multi-home sync: the first machine cuts as the bare
+home (`norn sync cut --bare`), each other machine joins with `norn sync join --home <id> --ledger <remote>`. The ledger repo must
+be private. [docs/MULTI-HOME.md](docs/MULTI-HOME.md) walks it end to end.
+
 ## 10. Never
 
 - Run an install command without the human's consent.
