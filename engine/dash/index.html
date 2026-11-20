@@ -164,7 +164,8 @@ function moreShow(on, back = true) { S.moreOpen = on; $('#more-sheet').hidden = 
   const r = $('#tab-more').getBoundingClientRect(), st = document.documentElement.style; st.setProperty('--more-top', r.bottom + 'px'); st.setProperty('--more-left', r.left + 'px'); $('#tab-more').setAttribute('aria-expanded', String(on));
   if (on) $('#more-sheet a')?.focus(); else if (back) $('#tab-more').focus(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.moreOpen) { e.stopPropagation(); moreShow(false); } }, true);
-document.addEventListener('click', e => { if (S.moreOpen && !e.target.closest('#more-sheet, #tab-more')) moreShow(false, false); }, true);
+// a tap outside closes the sheet; on a phone the header controls are part of More (body.more), so a tap there (Pause, Look) keeps it
+document.addEventListener('click', e => { if (S.moreOpen && !e.target.closest(matchMedia('(max-width:700px)').matches ? '#more-sheet, #tab-more, header' : '#more-sheet, #tab-more')) moreShow(false, false); }, true);
 function guardHeader() {
   if (!S.project || S.project === 'all') { S.guard = null; paintOrc(); return; }
   const want = S.project;
