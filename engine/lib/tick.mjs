@@ -319,7 +319,7 @@ function tickPass(o, g = {}) {
     if (running) return { code: 0, msg: `${tag}: check-in ${running.id} running - exit` };
     const B = projectBudget(p, o.budget || {}), machine = o.machine || {}, cp = checkinPolicy(p.policy), nowMs = o.now ? o.now().getTime() : Date.now();
     // META-CHECKIN-DIET R1: routine ends (policy.checkin.routine) are handled here by code, each a launcher review record - no model
-    try { for (const x of handleRoutineEnds(state, p, { metaCmd: META_CMD, cli: o.cli, pushed: o.pushed })) tickLog(state, `${tag}: routine ${x.kind} ${x.id}: ${x.ok ? x.note : 'left for the check-in - ' + x.note}`); }
+    try { for (const x of handleRoutineEnds(state, p, { pushed: o.pushed })) tickLog(state, `${tag}: routine ${x.kind} ${x.id}: ${x.ok ? x.note : 'left for the check-in - ' + x.note}`); }
     catch (e) { tickLog(state, `${tag}: routine ends failed: ${e.message}`); }
     // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
     if (o.overlap !== false && !o.dry) projectOverlap(p);
