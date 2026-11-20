@@ -65,7 +65,8 @@ import { mergeConfig } from '../lib/mergecfg.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
-import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf } from '../lib/sync.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs } from '../lib/sync.mjs';
+import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
@@ -74,7 +75,7 @@ import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
 import { ClaimsError } from '../lib/claimsref.mjs';
 import { syncCut, cutLines, HOME_RE } from '../lib/synccut.mjs';
-import { listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
+import { localClaims, listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
@@ -2904,16 +2905,18 @@ function syncCutCmd(argv, env, out, err) {
   } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
-// ---------- RM-46 S1c + S4: norn sync status | publish | fetch | watch | ring | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home)' + '\n       ' + SYNC_CUT_USAGE;
+// ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
+const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
   const [sub, ...rest] = argv, f = {};
   for (let i = 0; i < rest.length; i++) {
+    if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }
+    if (sub === 'reconcile' && rest[i] === '--as' && rest[i + 1] !== undefined) { f.as = rest[++i]; continue; }
     if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
     f.machine = rest[++i];
   }
-  if (!['status', 'publish', 'fetch', 'watch', 'ring'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
+  if (!['status', 'publish', 'fetch', 'watch', 'ring', 'reconcile'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
     const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
@@ -2926,6 +2929,17 @@ function syncCmd(argv, env, out, err) {
       out(s.fetched_at ? `fetched ${s.fetched_at}` : 'never fetched');
       if (s.fetch_error) out(`stale since ${s.fetched_at || 'never'}: the fetch at ${s.failed_at} failed (${s.fetch_error})`);
       if (s.gone.length) out(`gone (copies kept): ${s.gone.join(' ')}`);
+      return 0;
+    }
+    if (sub === 'reconcile') {   // S5: the likely duplicate pairs across homes -> one owner card each; the answered cards apply first
+      const by = f.as || env.META_ROLE;
+      if (!f.dry && !by) { err('error: no role: pass --as <role> or set META_ROLE'); return 2; }
+      const claims = (() => { try { return localClaims(fedOf(cfg)); } catch { return {}; } })();   // the last fetched claims; none = no claim pairs
+      for (const { project, state } of syncedDirs(cfg)) {
+        const r = reconcile(state, { by, claims, dry: f.dry });
+        out(`${project}: ${r.pairs.length} likely duplicate pair${r.pairs.length === 1 ? '' : 's'} ${f.dry ? '(dry run, no card written)' : `, ${r.written.length} card${r.written.length === 1 ? '' : 's'} written (${r.written.join(' ') || '-'})`}; ${r.carded} asked before${r.applied.length ? `; applied ${r.applied.map(a => `${a.q} ${a.choice}`).join(', ')}` : ''}`);
+        for (const p of r.pairs) out(`  ${p.kind} ${p.a} + ${p.b}: ${p.why}  "${p.ta.slice(0, 60)}" / "${p.tb.slice(0, 60)}"`);
+      }
       return 0;
     }
     if (sub === 'publish') {
