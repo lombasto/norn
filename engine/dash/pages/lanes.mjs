@@ -140,7 +140,7 @@ function row(l, ctx) {
 }
 const LEGEND = `<div class="llegend small" aria-label="Strip legend"><span class="lg-i"><span class="bd t-done">${shape('done')}</span><span class="bd t-done cont">${shape('handoff')}</span> joined = a hand-off chain, a gap = a fresh start</span>
   <span class="lg-i"><span class="bd t-running">${shape('running')}<b class="hc">2</b></span> helpers working for the run</span><span class="lg-i"><span class="bd t-needs">${shape('needs')}</span> an open question</span>
-  <span class="lg-i">${['running', 'done', 'handoff', 'stopped', 'idle'].map(t => `<span class="bd t-${t}">${shape(t)}</span>`).join('')} running · DONE · HANDOFF · stopped / lost · queued</span>
+  <span class="lg-i">${['running', 'done', 'handoff', 'stopped', 'idle'].map(t => `<span class="bd t-${t}">${shape(t)}</span>`).join('')} running · done · hand-off · stopped / lost · queued</span>
   <span class="lg-i"><span class="ltrack" aria-hidden="true"><i class="on"></i><i class="on at"></i><i></i><i></i></span> done → PR → merged → installed</span></div>`;
 
 export function lanes(d, ctx) {
