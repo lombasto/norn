@@ -463,12 +463,13 @@ export function createDashboard(o) {
     }
     return { lanes, repo: await repoSlug(p), docs };
   }
-  // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
+  // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here;
+  // NORN-UI-SYNC (S6b follow-up #2): a lane's predicted cross-home conflicts (running or an open deliverable) ride along for its chip
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
     const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
     const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
-    return lanesView(s, { all, hbAge: hbAge(p), hbLate: hbLateOf(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
+    return lanesView(s, { all, hbAge: hbAge(p), hbLate: hbLateOf(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(ov[l.name]?.conflicts?.length ? { conflicts: ov[l.name].conflicts } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -615,6 +616,65 @@ export function createDashboard(o) {
       if (e.key === leaderKey(p.name)) { leader = c; return; }
       if (c?.kind === 'work') work.push({ key: e.key, home: c.home, lane: c.lane, n: c.n, run: c.run ?? null, items: c.items || [], renewed_at: c.renewed_at, stale: c.home !== home && isStale(seen[e.key], c, now, pol) }); });
     return { homes: { home, fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, rows }, claims: { work, leader } };
+  }
+  // NORN-UI-SYNC: Settings > Sync's state - this project solo or a home (home.json), machine.json ledger (the remote; the doorbell only as
+  // on / off: the topic is a secret and never leaves the server), the last publish / fetch (the ledger dir's sync files, sync.mjs syncStatus's),
+  // the other homes' lag (the Ledger page's Homes rows). version = machine.json's hash: the ledger form refuses a stale one (409). Async reads only.
+  async function syncInfo(p) {
+    const raw = machineFile ? await readA(machineFile, '') : '';
+    let m = {}; try { m = JSON.parse(raw || '{}') || {}; } catch { m = {}; }
+    const L = m.ledger || {}, h = homeIdOf(p.state), cfg = metaRootDir ? ledgerConfig(m, { metaRoot: metaRootDir, machineFile }) : null;
+    const js = async f => { try { return JSON.parse(await readA(f, 'null')) || {}; } catch { return {}; } };
+    const [man, ft, stopped, blocks] = cfg ? await Promise.all([js(path.join(cfg.dir, 'home-manifest.json')), js(path.join(cfg.dir, 'sync-fetch.json')),
+      readA(path.join(cfg.dir, 'home-stopped.txt'), null), h && cfg.remote ? syncBlocks(p) : {}]) : [{}, {}, null, {}];
+    await Promise.all(projects.map(x => readA(path.join(x.state, 'home.json'), null)));   // primes each project's home id (homeIdOf below)
+    return { version: hash(raw), home: h?.id ?? null, bare_home: h?.bare_home ?? null, remote: typeof L.remote === 'string' ? L.remote : null, home_id: L.home_id ?? null,
+      doorbell: !!L.doorbell?.topic, head: man.head ?? null, pushed: man.pushed ?? null, stopped: stopped?.trim() || null,
+      fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, homes: blocks.homes?.rows ?? [],
+      projects: projects.map(x => ({ name: x.name, home: homeIdOf(x.state)?.id ?? null })) };
+  }
+  // the heavy steps (join check / apply, reconcile) run the library in a worker (syncwork.mjs); tests pass o.syncWork (in-process, a fake gh)
+  const syncWork = o.syncWork ?? ((op, args) => new Promise((ok, no) => {
+    const w = new Worker(new URL('./syncwork.mjs', import.meta.url), { workerData: { op, o: JSON.parse(JSON.stringify(args)) } });
+    w.once('message', r => (r.error ? no(new Error(r.error)) : ok(r.ok))); w.once('error', no);
+    w.once('exit', c => no(new Error(`sync worker exit ${c}`)));   // after a message the promise is settled: a late reject is a no-op
+  }));
+  const HOME_ID = /^[a-z][a-z0-9]{0,7}$/, TOPIC = /^[A-Za-z0-9_-]{1,64}$/;
+  const remoteArg = v => { const r = str(v, 'ledger remote', 500); if (/\s/.test(r) || r.startsWith('-')) throw fail(400, 'ledger remote must be one URL or path (no spaces, no leading -)'); return r; };
+  // POST /api/sync/{plan,apply,ledger,reconcile} (owner actions, by: dashboard)
+  async function syncPost(p, route, data) {
+    const raw = machineFile ? await readA(machineFile, '') : '';
+    if (!machineFile || !raw) throw fail(409, 'No machine.json: install Norn first (SETUP.md)');
+    const m = JSON.parse(raw), L = m.ledger || {};
+    if (route === '/api/sync/ledger') {   // the ledger remote and the doorbell topic (write-only: never echoed)
+      if (data.version !== hash(raw)) throw fail(409, 'machine.json changed elsewhere. Reload and try again.');
+      const next = { ...L };
+      if (data.remote !== undefined) {
+        const r = remoteArg(data.remote);
+        if (L.home_id && L.remote && r !== L.remote) throw fail(409, `This machine is home ${L.home_id} of its ledger: one ledger repo. To move it, edit machine.json ledger.remote by hand (docs/MULTI-HOME.md).`);
+        next.remote = r;
+      }
+      if (data.topic !== undefined) {
+        const t = String(data.topic);
+        if (t && !TOPIC.test(t)) throw fail(400, 'doorbell topic: 1-64 letters, digits, _ or -');
+        const { topic: _old, ...rest } = L.doorbell || {};
+        if (t) next.doorbell = { ...rest, topic: t }; else if (Object.keys(rest).length) next.doorbell = rest; else delete next.doorbell;
+      }
+      if (JSON.stringify(next) === JSON.stringify(L)) return { ok: true, changed: false, doorbell: !!next.doorbell?.topic };
+      await atomicA(machineFile, JSON.stringify({ ...m, ledger: next }, null, 2) + '\n');
+      return { ok: true, changed: true, doorbell: !!next.doorbell?.topic, remote: next.remote ?? null };
+    }
+    if (route === '/api/sync/reconcile') return { ok: true, ...(await syncWork('reconcile', { state: p.state, machine: m, metaRoot: metaRootDir, machineFile, by: 'dashboard', dry: data.dry !== false })) };
+    // plan / apply: the guided set up (bare: this project as the first home) or join (every registered project the ledger names), as norn sync join
+    if (typeof data.home !== 'string' || !HOME_ID.test(data.home)) throw fail(400, 'home id: a letter, then up to 7 letters or digits (a-z, 0-9)');
+    const remote = data.remote === undefined || data.remote === '' ? L.remote : remoteArg(data.remote);
+    if (!remote) throw fail(400, 'ledger remote is required: the URL of your PRIVATE ledger repo');
+    const topic = data.topic === undefined || data.topic === '' ? null : String(data.topic);
+    if (topic && !TOPIC.test(topic)) throw fail(400, 'doorbell topic: 1-64 letters, digits, _ or -');
+    const bare = data.bare === true, apply = route === '/api/sync/apply';
+    const r = await syncWork('join', { home: data.home, remote, topic, machineFile, metaRoot: metaRootDir, projects: bare ? [p] : projects, bare, dry: !apply, by: 'dashboard', iCheckedPrivate: data.checked === true });
+    if (apply && !r.refused.length && !syncL) { try { startSyncLoop(JSON.parse(await fs.promises.readFile(machineFile, 'utf8'))); } catch { /* the tick syncs every 15 min */ } }
+    return { ok: !r.refused.length, refused: r.refused, lines: r.lines, noop: !!r.noop, dry: !!r.dry };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a
   // cache for o.deliverablesTtlMs (60 s; then stale while it refreshes). The child keeps its own git cache in the state dir.
@@ -1572,6 +1632,10 @@ data: ${JSON.stringify(l)}
       if (r.code) throw cliFail(r);
       return { ok: true, line: r.out.trim() };
     }
+    if (route.startsWith('/api/sync/')) {   // NORN-UI-SYNC: Settings > Sync
+      if (!['/api/sync/plan', '/api/sync/apply', '/api/sync/ledger', '/api/sync/reconcile'].includes(route)) throw fail(404, 'Not found');
+      return syncPost(p, route, data);
+    }
     if (route === '/api/answer') {
       if (data.from !== undefined) {   // META-Q-RECONCILE R1: "already answered in DEC-m" - the owner words the DEC recorded
         if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
@@ -1904,7 +1968,7 @@ data: ${JSON.stringify(l)}
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
         if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
-        if (route === '/api/settings') return send(200, settingsInfo(one(url)));
+        if (route === '/api/settings') { const p = one(url); return send(200, { ...settingsInfo(p), sync: await syncInfo(p) }); }
         if (route === '/api/feed') return await openFeed(req, res, url);
         if (route === '/api/stream') return await openStream(req, res, url);
         if (route === '/api/sessions') return send(200, { sessions: await sessions.list() });
@@ -2009,9 +2073,11 @@ data: ${JSON.stringify(l)}
   // that removes the state after close (the test fixtures' temp dirs) never races them (ENOTEMPTY under load)
   // RM-46 S4 (multi-home SPEC 4.3): the sync loop - ls-remote every 30 s + the optional doorbell; its publish and pass run as norn CLI
   // children (metaCli), so this event loop never blocks. Off without machine.json ledger.remote; the loop itself idles until a project is synced
-  const syncCfg = machineFile ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null;
-  const syncL = syncCfg?.remote ? loopOf(syncCfg, { cli: args => metaCli(args) }) : null;
-  syncL?.start();
+  let syncL = null;
+  // NORN-UI-SYNC: also after a set up / join applied from Settings (m = the machine.json it wrote): the loop starts at once
+  const startSyncLoop = (m = machine) => { const cfg = machineFile ? ledgerConfig(m, { metaRoot: metaRootDir, machineFile }) : null;
+    if (cfg?.remote) { syncL = loopOf(cfg, { cli: args => metaCli(args) }); syncL.start(); } };
+  startSyncLoop();
   const close = async () => { syncL?.stop(); sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
     for (const r of chatStreams) r.end();
     await Promise.all([...chats.values()].map(c => c.close())); if (acct.worker) await acct.worker.terminate().catch(() => {});

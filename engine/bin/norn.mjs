@@ -3023,7 +3023,7 @@ function syncCutCmd(argv, env, out, err) {
 }
 
 // ---------- RM-46 S6b: norn sync join (multi-home SPEC 8 S6b; engine/lib/sync.mjs syncJoin calls the cut, register, publish + fetch stages) ----------
-const SYNC_JOIN_USAGE = 'norn sync join --home <id> --ledger <remote> [--doorbell-topic t] [--i-checked-private] [--machine F]    (this machine joins the synced projects of the ledger remote as home <id>, in order: check access, check the ledger repo is private (a public one is refused; when gh cannot say, --i-checked-private), register the home, write machine.json ledger { remote, home_id, doorbell.topic }, cut each local project the ledger names (the dry run shown, then applied; the projects must be paused), the first publish + fetch, then print the collaborator step for the ledger owner. A taken id is refused; a re-join is a no-op)';
+const SYNC_JOIN_USAGE = 'norn sync join --home <id> --ledger <remote> [--doorbell-topic t] [--i-checked-private] [--machine F]    (this machine joins the synced projects of the ledger remote as home <id>, in order: check access, check the ledger repo is private (a public one is refused; when gh cannot say, --i-checked-private), register the home, write machine.json ledger { remote, home_id, doorbell.topic }, cut each local project the ledger names (the dry run shown, then applied; a project not paused is paused for the cut and resumed at the end), the first publish + fetch, then print the collaborator step for the ledger owner. A taken id is refused; a re-join is a no-op)';
 function syncJoinCmd(argv, env, out, err) {
   const f = {}, rest = argv.slice(1);
   const usage = msg => { err('error: ' + msg); err('usage: ' + SYNC_JOIN_USAGE); return 2; };

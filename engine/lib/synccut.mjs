@@ -134,7 +134,8 @@ function citesOf(root, branches) {
 
 /**
  * The cut of one project on one home. o: { state, project (loadProject: name, root, subdir), home, bare, apply, ledger (ledgerConfig),
- * machineFile, openPr (branch -> true | false | null; default gh), ledgerOpts (commitLedger's o), now }.
+ * machineFile, openPr (branch -> true | false | null; default gh), ledgerOpts (commitLedger's o), now, pausing (the caller pauses the project
+ * for the apply: sync join - no "not paused" refusal) }.
  * -> { refused: [why], noop?, applied, plan: { ids, lanes, files, logs, branches, cites, bare_home } }
  */
 export function syncCut(o) {
@@ -146,7 +147,7 @@ export function syncCut(o) {
   if (cur) return cur.id === home ? done({ noop: true, why: `${project.name} is already cut as home ${home}` }) : done({ refused: [`${project.name} is already cut as home ${cur.id}`] });
   const machine = readJson(machineFile) || {}, mine = machine.ledger?.home_id;
   if (mine && mine !== home) refused.push(`this machine is home ${mine} (machine.json ledger.home_id), not ${home}`);
-  if (!fs.existsSync(path.join(state, 'PAUSED'))) refused.push(`${project.name} is not paused: norn pause --project ${project.name} first`);
+  if (!o.pausing && !fs.existsSync(path.join(state, 'PAUSED'))) refused.push(`${project.name} is not paused: norn pause --project ${project.name} first`);
   for (const r of Object.values(fold(readEvents(recordsFile(state, 'run'))).items)) if (LIVE.includes(r.state)) refused.push(`${r.id} is ${r.state}: let it end or withdraw it`);
   const fe = fedOf(cfg);
   if (!fe) return done({ refused: [...refused, 'the cut needs the ledger with a remote (machine.json ledger.remote): the backup point and the claims branch'] });
@@ -234,8 +235,8 @@ function idMap(name, home, plan, now) {
   return L.join('\n');
 }
 
-/** the plan as lines for the CLI (every rename) */
-export function cutLines(r, { project, home, apply }) {
+/** the plan as lines for the CLI (every rename); next: false drops the closing "next: publish" line (sync join publishes itself) */
+export function cutLines(r, { project, home, apply, next = true }) {
   const p = r.plan, L = [];
   if (r.noop) return [`${r.why}: nothing to do`];
   L.push(`sync cut ${project}: home ${home}${p.bare_home === home ? ' (bare: keeps its ids)' : p.bare_home ? ` (joiner; bare home ${p.bare_home})` : ''} - ${apply ? (r.applied ? 'APPLIED' : 'NOT APPLIED') : 'DRY RUN (nothing written; --apply cuts)'}`);
@@ -246,6 +247,6 @@ export function cutLines(r, { project, home, apply }) {
   for (const b of p.branches) L.push(`branch ${branchLine(b)}`);
   for (const c of p.cites) L.push(`cite ${c.branch}: ${c.tokens.join(', ')} in added lines - one fix commit by hand`);
   for (const w of r.refused) L.push(`refused: ${w}`);
-  if (r.applied) L.push(`views: ${r.views.join(', ')}; ledger: ${r.ledger}`, 'next: publish home/<id> (norn sync publish, S1c), then norn resume --project ' + project);
+  if (r.applied) L.push(`views: ${r.views.join(', ')}; ledger: ${r.ledger}`, ...(next ? ['next: publish home/<id> (norn sync publish, S1c), then norn resume --project ' + project] : []));
   return L;
 }

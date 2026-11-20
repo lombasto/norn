@@ -43,8 +43,8 @@ it always has.
 
 ### On the second machine (home b)
 
-1. Update the install to the same Norn version (pull `main`), register the same project (`norn project new --root <repo>`), and pause
-   it: `norn pause --project demo`.
+1. Update the install to the same Norn version (pull `main`) and register the same project (`norn project new --root <repo>`). No need
+   to pause it: the join pauses each project it cuts and resumes it at the end (a project you paused yourself stays paused).
 2. Join:
 
    ```
@@ -59,9 +59,10 @@ it always has.
    | 2. private | `gh api repos/<owner>/<repo> --jq .private` | the repo is public; when gh cannot answer, pass `--i-checked-private` after checking by hand |
    | 3. register | CAS-creates home b's record on the claims branch | the id is taken by another home |
    | 4. machine.json | writes `ledger.remote`, `ledger.home_id` and `ledger.doorbell.topic` | `ledger.remote` already names another repo, or this machine is already another home |
-   | 5. the cut | for each local project the ledger names (`projects/<p>.json`): the dry run is printed, then applied | a project is not paused, a run is live, a lane worktree is dirty |
+   | 5. the cut | for each local project the ledger names (`projects/<p>.json`): pauses it, prints the dry run, then applies it | a run is live, a lane worktree is dirty |
    | 6. publish + fetch | pushes `home/b`, fetches `home/a` into `<state>/homes/a/` | the publish or the fetch fails |
    | 7. collaborator | prints the command the ledger owner runs | - |
+   | 8. resume | resumes each project step 5 paused, also after a refusal | - |
 
    The last line is for the ledger owner's account (not needed when home b uses the owner's own GitHub account):
 
@@ -72,7 +73,7 @@ it always has.
    A re-join with the same id is a no-op. A join that stopped half way continues where it stopped when you run it again.
 3. Look for duplicates: `norn sync reconcile --dry-run` lists the likely duplicate pairs; `norn sync reconcile --as owner` writes one
    owner card per pair (see below).
-4. Resume: `norn resume --project demo`.
+4. If you paused the project yourself, resume it: `norn resume --project demo`.
 
 A synthetic run of step 2 looks like this (shortened):
 
@@ -90,7 +91,25 @@ sync cut demo: home b (joiner; bare home a) - APPLIED
 6. publish: home/b pushed
 6. fetch: homes a, 8 copies written
 7. the ledger owner runs (unless this home uses the owner's own account): gh api -X PUT repos/example-owner/example-ledger/collaborators/example-b-login -f permission=push
+8. demo: resumed
 ```
+
+## From the dashboard: Settings > Sync
+
+Everything above can be done from the dashboard: More > Settings > Sync. The page calls the same library functions as the commands.
+
+- **This machine**: solo or home `<id>`, the ledger remote, the last publish and fetch, how far behind each other home is, and
+  whether the doorbell is on. The ledger remote and the doorbell topic are edited here (Save writes `machine.json`). The topic is
+  write-only: the page shows only "set (hidden)" or "not set". Once this machine is a home, its remote is fixed (one ledger repo).
+- **Set up / join**: the home id, the ledger remote, the doorbell topic, and "The first home" (`norn sync cut --bare`: this
+  project starts the ledger) or not (`norn sync join`). Check runs the dry run: access, the private check, the id, the renames.
+  Apply pauses the project, cuts, publishes + fetches and resumes it, then shows each step's line, the collaborator step to copy
+  when the GitHub account differs, or the refusal and why.
+- **Duplicates**: Find duplicates lists the likely pairs (`norn sync reconcile --dry-run`); Write the cards puts one owner card per
+  pair in the Inbox.
+- **Claim leases**: `policy.sync` (lease, renew, fence, stale grace), saved like every other setting.
+
+A lane whose branch is predicted to conflict with another home's open branch carries a "conflicts with `<home>`" chip on its Lanes row.
 
 ## What each home sees
 
