@@ -16,7 +16,7 @@
 //   path     (item 9, MAIL-20) a lane whose last work run ended DONE with commits not on main reaches a PR by code: lanepaths.mjs tickPaths.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadState, record, readEvents, recordsFile, fold, idNum as runNum } from './records.mjs';
+import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn } from './records.mjs';
 import { makeEval } from './after.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { mergeLatch } from './dlvmerge.mjs';
@@ -38,13 +38,13 @@ export const lanePolicy = (policy = {}) => ({ idleH: Number.isFinite(policy?.idl
  * o: { now, idleH, archiveDays, landed (lane, run) -> the stopped run's work landed, merged (lane, run) -> the done lane's work is merged
  * and nothing of it is open (git: the tick's probe; default false = the tick never archives on a guess) }
  */
-export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = () => false, merged = () => false } = {}) {
+export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = () => false, merged = () => false, home = null } = {}) {
   const items = Object.values(st.items), byLane = {};
   for (const r of items) if (r.kind === 'run' && r.data?.lane) (byLane[r.data.lane] ??= []).push(r);
   const out = [];
   for (const l of items) {
     if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
-    const name = l.id.slice(2), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id)), r = runs.at(-1);
+    const name = laneNameIn(l.id, home), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id)), r = runs.at(-1);
     if (runs.some(x => LIVE.includes(x.state))) continue;
     const row = (rule, act, text, why, at = null) => out.push({ lane: name, id: l.id, rule, act, at, run: r?.id ?? null, text, why });
     const maker = l.run ? st.items[l.run] : null;
@@ -91,13 +91,13 @@ export function laneHooks(state) {
     const r = runs.find(x => x?.landed);
     return r ? `landed: ${r.landed.why ?? 'ruled landed'}` : null;
   };
-  return { landed: has('landed'), merged: has('merged'), shipped, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
+  return { home: homeOf(state)?.id ?? null, landed: has('landed'), merged: has('merged'), shipped, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
 }
 
 /** the gate probe: a lane finding the check-in must act on (idle / stopped, from the facts the gate folded at that time) = `lanes:<rule>:L:x`, a MAJOR wake once */
-export const lanesProbe = policy => ({ at, items, runs }) => {
+export const lanesProbe = (policy, home = null) => ({ at, items, runs }) => {
   const st = { items: Object.fromEntries([...(items || []), ...(runs || [])].map(i => [i.id, i])) };
-  return laneRules(st, { now: at, ...lanePolicy(policy) }).filter(x => x.act === 'checkin').map(x => `lanes:${x.rule}:${x.id}`);
+  return laneRules(st, { now: at, ...lanePolicy(policy), home }).filter(x => x.act === 'checkin').map(x => `lanes:${x.rule}:${x.id}`);
 };
 
 /**
@@ -112,7 +112,7 @@ export function tickLanes(state, { project = {}, now = Date.now(), git = makeGit
   const landed = (lane, r) => !!r.landed || (laneDlvs(lane).length > 0 && laneDlvs(lane).every(dlvMerged));
   const merged = (lane, r) => ev({ kind: 'run', id: r.id, state: 'merged' }).met && laneDlvs(lane).every(dlvMerged);
   const out = [], seen = { landed: [], merged: [] };
-  const rules = laneRules(st, { now, ...lanePolicy(project.policy), landed: (l, r) => landed(l, r) && !!seen.landed.push(l), merged: (l, r) => merged(l, r) && !!seen.merged.push(l) });
+  const rules = laneRules(st, { now, ...lanePolicy(project.policy), home: homeOf(state)?.id ?? null, landed: (l, r) => landed(l, r) && !!seen.landed.push(l), merged: (l, r) => merged(l, r) && !!seen.merged.push(l) });
   if (!dry) try { fs.writeFileSync(laneRulesFile(state), JSON.stringify({ at: new Date(now).toISOString(), ...seen }) + '\n'); } catch { /* no cache: the Lanes page shows the rulings alone */ }
   for (const x of rules) {
     if (x.act !== 'tick' || (x.at && Date.parse(x.at) > now)) continue;

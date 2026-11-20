@@ -12,7 +12,7 @@ import { loadDeliverables } from '../engine/lib/deliverables.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { mergeqRun } from '../engine/lib/mergeq.mjs';
 import { loadLand, landGate } from '../engine/lib/landing.mjs';
-import { mergeConfig } from '../engine/lib/mergeq.mjs';
+import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { briefMarker } from '../engine/lib/mergebrief.mjs';
 import { queueRun } from '../engine/lib/runs.mjs';

@@ -4,7 +4,7 @@ import { STALE_MS } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
 import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
-import { idNum as runNum } from './records.mjs';
+import { idNum as runNum, laneNameIn } from './records.mjs';
 
 
 // queue bookkeeping, not a run of the lane: withdrawn before it started, or a queue entry filled into the real run
@@ -106,8 +106,8 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
  * ruling on its run or its newest one): the lane reads "shipped: <why>" and leaves the active list (group done), whatever its last run says - a live run still shows.
  */
 export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote,
-  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, shipped = () => null } = {}) {
-  const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
+  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, shipped = () => null, home = null } = {}) {
+  const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged, home }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
   const items = Object.values(st.items);
   const latest = {}, newest = {}, newer = (m, r) => !m[r.data.lane] || runNum(r.id) > runNum(m[r.data.lane].id);
   for (const r of items) if (r.kind === 'run' && r.data?.lane) {
@@ -115,7 +115,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, sta
     if (!BOOKKEEPING.includes(r.state) && newer(latest, r)) latest[r.data.lane] = r;
   }
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
-    const name = l.id.slice(2), w = newest[name], r = latest[name] ?? (w?.state === 'withdrawn' ? w : null), ship = l.state !== 'archived' ? shipped(name, r, w) : null;
+    const name = laneNameIn(l.id, home), w = newest[name], r = latest[name] ?? (w?.state === 'withdrawn' ? w : null), ship = l.state !== 'archived' ? shipped(name, r, w) : null;
     const tail = w && w !== r && w.state === 'withdrawn' ? ` · then ${w.id} ${runText(w, { now })}` : '';
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
     // item 8 (MAIL-9): parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling

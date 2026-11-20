@@ -128,7 +128,8 @@ export async function nodeRun({ machine: m, machineFile, metaRoot, home, labels,
   const fence = why => {
     const hb = readJson(hbPath(state, cur)) || {};
     try { record(state, { kind: 'run', ev: 'lost', id: cur, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; }
-    killTree(hb.supervisor_pid); killTree(hb.pid);
+    const rc = { state, killer: `fed node pid ${process.pid}`, reason: `fence ${cur}: ${why}` };   // DEC-1088: receipted
+    killTree(hb.supervisor_pid, rc); killTree(hb.pid, rc);
     try { stopOrphans(state); } catch { /* best effort */ }
     out(`${cur} fenced: ${why}`);
     publish(`node ${f.host}: ${cur} fenced`);

@@ -13,7 +13,8 @@ import { loadProject } from '../engine/lib/config.mjs';
 import { normSubdir, splitRepo, projectHome, inDir, gateText, SubdirError } from '../engine/lib/monorepo.mjs';
 import { scan, draftFacts } from '../engine/lib/adopt.mjs';
 import { laneBranch, lanePaths } from '../engine/lib/lanenew.mjs';
-import { mergeConfig, runGate } from '../engine/lib/mergeq.mjs';
+import { runGate } from '../engine/lib/mergeq.mjs';
+import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { scopeOf, scopeOnFor } from '../engine/lib/scope.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');

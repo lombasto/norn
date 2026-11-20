@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFile } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { loadState } from './records.mjs';
 
 export const STRAY_HOURS = 6;
@@ -13,10 +14,10 @@ const NODE = /^node(\.exe)?$/i;
 const norm = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 // the listing command and its parse, shared by the sync form (norn doctor, ci-suite) and the async one (the dash: never blocks a request)
-const PS_LIST = "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = $_.ProcessId; q = $_.ParentProcessId; n = $_.Name; c = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null }; l = $_.CommandLine } } | ConvertTo-Json -Compress";
+const PS_LIST = "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = $_.ProcessId; q = $_.ParentProcessId; n = $_.Name; c = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null }; l = $_.CommandLine; t = $_.ThreadCount; u = [double]$_.UserModeTime + [double]$_.KernelModeTime } } | ConvertTo-Json -Compress";
 const listCmd = platform => platform === 'win32' ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PS_LIST]] : ['ps', ['-eo', 'pid=,ppid=,etimes=,comm=,args=']];
 const parseProcs = (platform, out) => {
-  if (platform === 'win32') return [].concat(JSON.parse(out || '[]')).map(x => ({ pid: x.p, ppid: x.q, name: x.n || '', created: x.c ? Date.parse(x.c) : null, cmd: x.l || '' }));
+  if (platform === 'win32') return [].concat(JSON.parse(out || '[]')).map(x => ({ pid: x.p, ppid: x.q, name: x.n || '', created: x.c ? Date.parse(x.c) : null, cmd: x.l || '', threads: x.t ?? null, cpu: x.u ?? null }));
   const now = Date.now();
   return String(out).split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(Boolean)
     .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), created: now - +m[3] * 1000, cmd: m[5] }));
@@ -24,7 +25,9 @@ const parseProcs = (platform, out) => {
 /** every process: [{ pid, ppid, name, created (ms), cmd }]; [] when the listing fails */
 export function listProcs({ platform = process.platform } = {}) {
   try {
-    const [cmd, args] = listCmd(platform), r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 << 20 });
+    // proc-hygiene: on Windows a tree-killing timeout (7 of these were found orphaned, suspended at birth: their caller was killed mid-spawn)
+    const [cmd, args] = listCmd(platform), r = platform === 'win32' ? boundedSync(cmd, args, { timeout: 30000, maxBuffer: 64 << 20 })
+      : spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 << 20 });
     return r.status !== 0 ? [] : parseProcs(platform, r.stdout);
   } catch { return []; }
 }
@@ -74,3 +77,33 @@ export function strays(procs, { live = new Set(), ended = [], now = Date.now(), 
 }
 
 export const strayLine = s => `stray ${s.kind} pid ${s.pid} ${s.name} ${s.hours} h old, no live run${s.run ? ` (worktree of ended ${s.run})` : ''}: stop it (taskkill /PID ${s.pid} /T /F | kill ${s.pid})`;
+
+// proc-hygiene (5, census 2026-11-19): the families workers and Norn left behind, under the evidence rules of the tick's sweep
+// (fair-slots 5c): the parent is gone (a pid reused by a younger process counts as gone), no live run is above it, and it is older
+// than DERELICT_HOURS. Each hit carries its evidence, for the sweep's kill record and doctor's line. Read-only: it lists.
+export const DERELICT_HOURS = 2;
+const FAMILIES = [
+  ['watcher', p => /^tail(\.exe)?$/i.test(p.name) && /\s(-f|-F|--follow)\b/.test(p.cmd)],   // a worker's `tail -f <log> | grep` (Monitor, until loops)
+  ['watcher', p => /^grep(\.exe)?$/i.test(p.name) && /--line-buffered/.test(p.cmd)],
+  ['kill-helper', p => /^getprocaddr(32|64)(\.exe)?$/i.test(p.name)],   // Git for Windows' kill helper, left suspended by a killed bash
+  ['shell', p => /^bash(\.exe)?$/i.test(p.name) && /shell-snapshots/.test(p.cmd)],   // a Claude Code Bash tool shell
+  ['git', p => /^git(\.exe)?$/i.test(p.name)],
+  ['process-scan', p => /^powershell(\.exe)?$/i.test(p.name) && /Get-CimInstance Win32_Process/i.test(p.cmd)],   // Norn's own listProcs
+  ['mail-hook', p => NODE.test(p.name) && /(?:meta|norn)\.mjs"?\s+mail check --inject/.test(p.cmd)],
+];
+/** derelicts of FAMILIES: [{ pid, name, kind, hours, evidence }] */
+export function derelicts(procs, { live = new Set(), now = Date.now(), hours = DERELICT_HOURS, self = process.pid } = {}) {
+  const byPid = new Map(procs.map(p => [p.pid, p]));
+  const parentOf = p => { const q = byPid.get(p.ppid); return q && q.pid !== p.pid && !(q.created && p.created && q.created > p.created) ? q : null; };
+  const underLive = p => { for (let x = p, n = 0; x && n < 64; x = parentOf(x), n++) if (live.has(x.pid) || x.pid === self) return true; return false; };
+  const out = [];
+  for (const p of procs) {
+    const kind = FAMILIES.find(([, f]) => f(p))?.[0];
+    if (!kind || !p.created || now - p.created < hours * 3600e3 || parentOf(p) || underLive(p)) continue;
+    const unborn = p.threads === 1 && p.cpu === 0;   // never ran: created suspended, its parent killed before the resume
+    out.push({ pid: p.pid, name: p.name, kind, hours: +((now - p.created) / 3600e3).toFixed(1),
+      evidence: `parent ${p.ppid} gone, no live run above it, ${((now - p.created) / 3600e3).toFixed(1)} h old${unborn ? ', suspended at birth (1 thread, no CPU)' : ''}` });
+  }
+  return out;
+}
+export const derelictLine = d => `derelict ${d.kind} pid ${d.pid} ${d.name}: ${d.evidence}: stop it (taskkill /PID ${d.pid} /T /F | kill ${d.pid})`;

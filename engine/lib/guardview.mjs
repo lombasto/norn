@@ -73,7 +73,7 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   }
   for (const a of tests?.advisories?.list || [])
     out.push({ id: a.id, type: 'tests', severity: a.severity, surface: a.surface, path: a.path, line: a.line, why: a.why, source: a.source, action: a.fix?.action ?? null,
-      ...fixOf(a.key, a.fix, BATCH_TITLE[a.key] ?? a.surface), go: { tab: 'tests' } });
+      ...fixOf(a.key, a.fix, BATCH_TITLE[a.key] ?? a.surface), go: { tab: 'tests', sub: 'costs' } });
   for (const c of (advice?.cards || []).filter(x => !x.decided))
     out.push({ id: 'M-' + c.key, type: 'models', severity: c.severity, surface: `class ${c.id}`, path: null, line: null, why: c.title, source: c.source?.ref ?? c.source ?? null,
       action: c.fix ?? null, cls: c.id, ...fixOf('model-advice', ADVICE_FIX, 'Model advice for a class of work'), go: { tab: 'usage', jump: 'usage-advice' } });

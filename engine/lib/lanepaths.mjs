@@ -2,7 +2,7 @@
 // stages a MERGE through checkins.mjs, and lifecycle.mjs (read by lanes.mjs) must not import checkins (a K10 cycle through standing / agents).
 // The rule and its words: lifecycle.mjs ("path to main": pathWords, lane-paths.json).
 import fs from 'node:fs';
-import { loadState, readEvents, recordsFile, fold, idNum as runNum } from './records.mjs';
+import { loadState, readEvents, recordsFile, fold, idNum as runNum, laneName } from './records.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { stageArgs, isMergeRun, checkinPolicy } from './checkins.mjs';
@@ -23,7 +23,7 @@ export function tickPaths(state, { project: p = {}, now = Date.now(), git = make
   const paths = {}, out = [];
   for (const l of Object.values(st.items)) {
     if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
-    const name = l.id.slice(2), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id));
+    const name = laneName(l.id, state), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id));
     const work = runs.filter(x => !isMergeRun(x.data)), r = work.at(-1);
     if (!r || work.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done') continue;
     const branch = r.end?.branch || r.data.branch, wt = r.data.worktree && fs.existsSync(r.data.worktree) ? r.data.worktree : null, dir = wt || p.root;

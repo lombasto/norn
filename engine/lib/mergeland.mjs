@@ -8,23 +8,27 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { makeGit } from './dlvgit.mjs';
-import { mergeConfig } from './mergeq.mjs';
+import { mergeConfig } from './mergecfg.mjs';
 import { loadDeliverables } from './deliverables.mjs';
 import { sameRepo } from './dlvmerge.mjs';
-import { record } from './records.mjs';
+import { record, loadState, laneName, idNum as runNum } from './records.mjs';
+import { readSync, writeSync } from './claims.mjs';
+import { isWork } from './gate.mjs';
+import { isMergeRun } from './checkins.mjs';
+import { LIVE } from './lifecycle.mjs';
 import { slopOn } from './policy.mjs';
 import { doorCheck, doorWhy } from './slop/door.mjs';
 
-const fwd = p => String(p || '').replace(/\\/g, '/');
-const s7 = s => String(s || '').slice(0, 7);
+export const fwd = p => String(p || '').replace(/\\/g, '/');
+export const s7 = s => String(s || '').slice(0, 7);
 /** exit codes of norn merge-land: every PR opened (or already open), some branch has no PR */
 export const LAND_EXIT = { opened: 0, refused: 3 };
 
 /** gh run synchronously: (args) -> { code, out, err } (tests inject a fake: no network) */
 export const makeGh = () => args => {
-  const r = spawnSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  const r = boundedSync('gh', args, { timeout: 180000 });   // proc-hygiene: gh starts git; the timeout kills the tree
   return { code: r.error ? -1 : r.status, out: r.stdout || '', err: r.error ? r.error.message : r.stderr || '' };
 };
 /** owner/name of a GitHub remote URL (https or ssh), else null */
@@ -82,9 +86,33 @@ export function openPrs(o) {
 /** the words of one branch's result (the CLI's line; the brief tells the worker what each first word means) */
 export const prLine = r => r.status === 'refused' ? `NOT OPENED ${r.branch}: ${r.why}` : `PR ${r.status === 'opened' ? 'OPENED' : 'ALREADY OPEN'} ${r.url}: ${r.why}${r.dlv ? ` (recorded on ${r.dlv})` : ''}`;
 
-/** openPrs with a project's settings (project.json deliverables) and its slop door (on unless the project's switch is off) */
-export function openProjectPrs(p, { wt, branches, run, git, gh } = {}) {
+/** openPrs with a project's settings (project.json deliverables) and its slop door (on unless the project's switch is off; tests pass `door`) */
+export function openProjectPrs(p, { wt, branches, run, git, gh, door: d } = {}) {
   const cfg = mergeConfig(p);
-  const door = slopOn(p.policy) ? (branch, tip) => doorWhy(doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, projectDir: p.project_dir, main: cfg.main, remote: cfg.remote })) : null;
+  const door = d !== undefined ? d : slopOn(p.policy) ? (branch, tip) => doorWhy(doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, projectDir: p.project_dir, main: cfg.main, remote: cfg.remote })) : null;
   return openPrs({ repo: cfg.repo, wt, branches, main: cfg.main, remote: cfg.remote, stateDir: p.state || null, run, door, ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
+}
+
+// RM-46 S6a (multi-home SPEC 4.8): a home that is not the merge leader runs no merge queue and no MERGE stage - its tick hands each lane
+// whose last work run ended DONE on a pushed branch to openPrs, with the lane's own worktree as the "tested merge" (SPEC F21: its HEAD
+// holds the branch's commits). The PR's GitHub CI is the test; the slop door still applies. An opened (or open) PR is noted per branch
+// tip in <state>/sync/leader-prs.json, so it costs no gh call again until the lane moves; a refusal is retried and said again only when its why changes.
+/** followerPrs(p, state, { git, gh, door }) -> [{ branch, status, why, url?, lane, run }] of the branches it tried this pass (new words only) */
+export function followerPrs(p, state, { git = makeGit(), gh, door } = {}) {
+  const items = loadState(state).items, main = mergeConfig(p).main, memo = readSync(state, 'prs'), out = [];
+  const runs = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane && isWork(r.data) && !isMergeRun(r.data)).sort((a, b) => runNum(a.id) - runNum(b.id));
+  for (const l of Object.values(items)) {
+    if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
+    const name = laneName(l.id, state), mine = runs.filter(r => r.data.lane === name), r = mine.at(-1);
+    if (!r || mine.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done') continue;
+    const branch = r.end?.branch || r.data.branch, wt = r.data.worktree && fs.existsSync(r.data.worktree) ? r.data.worktree : null;
+    if (!branch || branch === main || !wt) continue;
+    const tip = git(wt, ['rev-parse', 'HEAD'], { allowFail: true })?.trim(), was = memo[branch];
+    if (!tip || (was?.tip === tip && was.status !== 'refused')) continue;
+    const [x] = openProjectPrs(p, { wt, branches: [branch], run: r.id, git, ...(gh ? { gh } : {}), ...(door !== undefined ? { door } : {}) });
+    if (!(was?.tip === tip && was.why === x.why)) out.push({ ...x, lane: name, run: r.id });
+    memo[branch] = { tip, status: x.status, why: x.why, ...(x.url ? { url: x.url } : {}) };
+  }
+  writeSync(state, 'prs', memo);
+  return out;
 }

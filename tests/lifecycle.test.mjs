@@ -11,6 +11,7 @@ import { laneRules, tickLanes, lanesProbe, lanePolicy, laneHooks } from '../engi
 import { tickPaths } from '../engine/lib/lanepaths.mjs';
 import { lanesView } from '../engine/lib/lanes.mjs';
 import { digest } from '../engine/lib/digest.mjs';
+import { renderTab } from '../engine/dash/ui.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const T0 = Date.parse('2026-11-17T10:00:00Z'), H = 3600e3, D = 24 * H;
@@ -219,4 +220,26 @@ test('work not on main past 2 h with no merge step is a red finding on the Lanes
   assert.match(row.path.text, /^work not on main for 3 h: no merge step/); assert.equal(row.path.red, true);
   const dg = digest(state, project, { now: T0 + 4 * H });
   assert.ok(dg.sections.lanes?.some(x => x.lane === 'rm28' && x.rule === 'off-main'), JSON.stringify(dg.sections.lanes));
+});
+
+test('a home id (L:<home>/<name>): the rules, the Lanes page, the probe, the digest and the archive guard read the lane name, not id.slice(2)', () => {
+  const state = mkTmp('lc-home-');
+  fs.writeFileSync(path.join(state, 'home.json'), JSON.stringify({ id: 'a' }) + '\n');
+  const l = rec(state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'stuck-one' } }, { now: at(T0) }).id;
+  assert.equal(l, 'L:a/stuck-one');
+  const r = start(state, 'stuck-one', T0 + H); end(state, r, T0 + 2 * H, 'stopped', 'needs an owner pick');
+  const st = loadState(state), now = T0 + 3 * H;
+  assert.deepEqual(laneRules(st, { now, home: 'a' }).map(x => [x.id, x.lane, x.rule, x.run]), [[l, 'stuck-one', 'stopped', r]], 'its run, not "no run: idle"');
+  const v = lanesView(st, { now, ...laneHooks(state) }).find(x => x.id === l);
+  assert.equal(v.name, 'stuck-one'); assert.equal(v.run, r); assert.equal(v.rule?.rule, 'stopped');
+  assert.deepEqual(lanesProbe({}, 'a')({ at: now, items: Object.values(st.items) }), [`lanes:stopped:${l}`]);
+  assert.deepEqual(digest(state, {}, { now, git: noGit }).sections.lanes.map(x => [x.id, x.lane, x.rule]), [[l, 'stuck-one', 'stopped']]);
+  // the archive guard finds the lane's path to main under its name
+  fs.writeFileSync(path.join(state, 'lane-paths.json'), JSON.stringify({ paths: { 'stuck-one': { state: 'at_risk', run: r, branch: 'norn/a/stuck-one', tip: 'abcdef1234' } } }) + '\n');
+  assert.throws(() => rec(state, { kind: 'lane', ev: 'archive', id: l, by: 'tick', data: { why: 'x' } }), /L:a\/stuck-one cannot be archived: its work is not on main/);
+});
+
+test('the Inbox names a parked lane of a home by its name (the server\'s lane field), not its id cut at 2', () => {
+  const h = renderTab('inbox', { items: [{ type: 'parked', id: 'L:a/gen', lane: 'gen', project: 'p', why: 'waits' }] }, { now: T0, project: 'p' });
+  assert.match(h, /lane <b>gen<\/b>/); assert.doesNotMatch(h, /a\/gen<\/b>/);
 });

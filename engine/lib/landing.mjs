@@ -11,13 +11,11 @@ import { makeGit } from './dlvgit.mjs';
 import { acquireLock, laneWriter, isLandingStage } from './runs.mjs';
 import { mergeWtPath, slotKey, mergeParallel, ensureMergeWorktree, removeMergeWorktree } from './mergewt.mjs';
 import { renderMergeBrief, suiteMode } from './mergebrief.mjs';
-import { openProjectPrs } from './mergeland.mjs';
+import { openProjectPrs, fwd, s7 } from './mergeland.mjs';
 import { checkinPolicy } from './checkins.mjs';
 import { gateText, subdirOf } from './monorepo.mjs';
 import { fileURLToPath } from 'node:url';
 
-const fwd = p => String(p || '').replace(/\\/g, '/');
-const s7 = s => String(s || '').slice(0, 7);
 export const landDir = stateDir => path.join(stateDir, 'mq', 'land');
 const landFile = (stateDir, id) => path.join(landDir(stateDir), `${id}.json`);
 export const loadLand = (stateDir, id) => { try { return JSON.parse(fs.readFileSync(landFile(stateDir, id), 'utf8')); } catch { return null; } };
@@ -37,8 +35,6 @@ export function landGate(project, { base, cfg }) {
   const dir = cfg.gate?.dir ?? subdirOf(project) ?? '';
   return { cmd: `node "${QUICK_CHECK}" --base ${base}${py ? ` --python "${fwd(py)}"` : ''}${py && dir ? ` --dir "${dir}"` : ''}`, timeout_min: QUICK_MIN };
 }
-/** does a project land its finished work by code? every one but a fast-gated one (its batches land it): the routine stage queues no MERGE */
-export const landsByCode = cfg => !cfg.gate?.fast;
 
 // the MERGE brief of a failed landing: the staged merge of the tip, with what failed put before the meta-merge marker
 export function fallbackBrief(project, { row, run, failure }) {

@@ -7,7 +7,7 @@
 // one day-aware clock ("today 21:41", "Fri 02:13") with the zone named once, plain names (lane title, else the lane humanized).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, fold, recordsFile, PRIORITIES } from './records.mjs';
+import { readEvents, fold, recordsFile, laneNameIn, homeOf, PRIORITIES } from './records.mjs';
 import { queueOf, readiness } from './runs.mjs';
 import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
@@ -34,7 +34,7 @@ export const approx = min => (min < 60 ? `~${Math.max(5, Math.round(min / 5) * 5
 const cap1 = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const evTs = (r, ev) => { const h = [...(r.history || [])].reverse().find(x => x.ev === ev); return h ? Date.parse(h.ts) : null; };
 const endTs = r => evTs(r, 'end');
-const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
+export const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 const onClaude = d => !d?.executor || ['claude', 'fake'].includes(d.executor);
 const idn = id => Number(String(id).slice(4)) || 0;
 
@@ -462,7 +462,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
 export function loadPlan({ state, project = null, budget = {}, now = Date.now(), git } = {}) {
   const runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
   let lanes = [];
-  try { lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: l.data?.name ?? String(l.id).slice(2), title: l.data?.title ?? null })); } catch { /* none */ }
+  try { const home = homeOf(state)?.id; lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null })); } catch { /* none */ }
   const ready = readiness(state, { now });
   let status = '';
   try { status = fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'); } catch { /* not written yet */ }

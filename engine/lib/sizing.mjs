@@ -3,11 +3,14 @@
 // request (floor), of its first real edit, its peak and end, its requests and its `git commit` calls. stageSizes lists the sessions of
 // a lane stage with that size (the end record's ctx, else measured live), the marks recorded on the run at launch (ctx_marks) and the
 // orders sent; verdict judges them (WORK-SIZING.md 4.1). Readers: the supervisor's end write (end.ctx), `norn size`; the pages from S2.
-import fs from 'node:fs';
 import path from 'node:path';
 import { loadState } from './records.mjs';
 import { transcriptTrace, runTranscript } from './standing.mjs';
 import { POLICY_DEFAULTS, withDefaults, merged } from './policy.mjs';
+import { readJsonS } from './fsnap.mjs';
+import { kTok } from './ctxlimit.mjs';
+import { pctOf } from './progress.mjs';
+import { median } from './plan.mjs';
 
 const EDIT_TOOLS = ['Edit', 'Write', 'NotebookEdit'];
 const COMMIT = /\bgit\s+(?:-[cC]\s+\S+\s+)*commit\b/;
@@ -26,7 +29,6 @@ export function sizeOfRun(transcriptFile, { notesDir = null, cache = new Map() }
     requests: t.reqs.length, commits: t.uses.filter(([, n, a]) => isCommit(n, a)).length };
 }
 const notesDirOf = d => (d.notes ? path.dirname(String(d.notes)) : null);
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 
 /**
  * The sessions of lane `lane` stage `stage` of `state` in start order (stage absent = the stage of the lane's last run) -> { lane, stage,
@@ -42,16 +44,13 @@ export function stageSizes(state, { lane, stage } = {}, o = {}) {
     let size = end?.ctx ?? null;
     if (!size) { const f = runTranscript(r, o); size = f ? sizeOfRun(f, { notesDir: notesDirOf(d), cache }) : null; }
     return { run: r.id, created: r.created, live, outcome: end?.outcome ?? (live ? 'running' : null), size, marks: d.ctx_marks ?? null,
-      orders: readJson(path.join(state, 'ctx', `${r.id}.json`))?.sent ?? [] };
+      orders: readJsonS(path.join(state, 'ctx', `${r.id}.json`))?.sent ?? [] };
   });
   return { lane, stage: st, sessions };
 }
 
 /** the sizing thresholds of a project policy (defaults filled in) */
 export const sizingThresholds = policy => ({ ...POLICY_DEFAULTS.sizing, ...withDefaults(merged({}, policy || {})).policy.sizing });
-const kTok = n => `${Math.round(n / 1000)}k`;
-const pc = x => `${Math.round(x * 100)} %`;
-const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 
 /**
  * The verdict on the ended sessions of one lane stage (WORK-SIZING.md 4.1; `too-big` is S5's) -> { code, words, numbers }.
@@ -71,7 +70,7 @@ export function verdict(sessions, thresholds = POLICY_DEFAULTS.sizing) {
     const bare = hand.filter(s => !s.size.commits).length;
     if (hand.length >= 2 && (share * 100 >= th.thrash_startup_pct || bare)) {
       return { code: 'thrashing', numbers: { ...base, share, floor, first_edit: first, mark, no_commit: bare },
-        words: `thrashing: ${hand.length} hand-offs, ${pc(share)} of the no-new-step mark used before the first edit (floor ${kTok(floor)}, first edit ${kTok(first)}, mark ${kTok(mark)})`
+        words: `thrashing: ${hand.length} hand-offs, ${pctOf(share)} of the no-new-step mark used before the first edit (floor ${kTok(floor)}, first edit ${kTok(first)}, mark ${kTok(mark)})`
           + `${bare ? `, ${bare} without a commit` : ''} - raise the mark or trim the start-up` };
     }
     const last = hand.at(-1), commits = hand.reduce((n, s) => n + s.size.commits, 0);
@@ -79,6 +78,6 @@ export function verdict(sessions, thresholds = POLICY_DEFAULTS.sizing) {
       words: `tight: ${hand.length === 1 ? 'one hand-off' : `${hand.length} hand-offs`} at ${kTok(last.size.peak)} after ${commits} commit${commits === 1 ? '' : 's'}` };
   }
   const shares = judged.map(s => s.size.peak / (s.marks.handoff_k * 1000)), top = judged[shares.indexOf(Math.max(...shares))], max = Math.max(...shares);
-  if (max * 100 < th.loose_pct) return { code: 'loose', numbers: { ...base, share: max }, words: `never above ${pc(max)}: the mark could be lower` };
+  if (max * 100 < th.loose_pct) return { code: 'loose', numbers: { ...base, share: max }, words: `never above ${pctOf(max)}: the mark could be lower` };
   return { code: 'fits', numbers: { ...base, share: max, peak: top.size.peak, handoff_k: top.marks.handoff_k }, words: `limit fits: peak ${kTok(top.size.peak)} of ${top.marks.handoff_k}k` };
 }

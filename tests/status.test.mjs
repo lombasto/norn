@@ -183,9 +183,31 @@ test('scheduler goldens per OS (dry render: nothing installed)', () => {
     if (process.env.META_UPDATE_GOLDEN) { fs.mkdirSync(GOLD, { recursive: true }); fs.writeFileSync(g, flat); }
     assert.equal(flat, fs.readFileSync(g, 'utf8'), kind);
   }
-  const x = adapterFor('windows-task').plan({ ...SCHED, user: 'H\\o' }).files[0].content;
+  const x = adapterFor('windows-task').plan({ ...SCHED, user: 'H\\o' }).files.find(f => f.path.endsWith('.task.xml')).content;
   for (const s of ['<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>', '<Hidden>true</Hidden>', '<ExecutionTimeLimit>PT55M</ExecutionTimeLimit>',
     '<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>', '<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>', '<Interval>PT15M</Interval>']) assert.ok(x.includes(s), s);
+});
+
+// proc-hygiene (8): the PowerShell action opened an empty Terminal window for every tick. The task runs wscript //B on a generated
+// .vbs whose Run passes 0 (no window) and True (wait: IgnoreNew + the 55 min limit hold); doctor warns on a task still on PowerShell.
+test('windows task: the action is wscript //B on local/<task>.vbs; the vbs runs the tick hidden (0) and waits (True); old action detected', async () => {
+  const { oldAction } = await import('../engine/lib/sched/win.mjs');
+  const { windowedSchedLines } = await import('../engine/lib/setup.mjs');
+  const o = { ...SCHED, node: 'C:/Program Files/nodejs/node.exe', meta: 'C:/my norn', user: 'H\\o' };
+  const p = adapterFor('windows-task').plan(o);
+  const vbs = p.files.find(f => f.path === 'C:/my norn/local/norn-tick.vbs'), xml = p.files.find(f => f.path.endsWith('.task.xml')).content;
+  assert.ok(vbs && vbs.encoding === 'utf16le', 'the vbs is generated (UTF-16: any path)');
+  assert.match(xml, /<Command>wscript\.exe<\/Command><Arguments>\/\/B \/\/NoLogo &quot;C:\\my norn\\local\\norn-tick\.vbs&quot;<\/Arguments>/);
+  assert.doesNotMatch(xml, /powershell/i);
+  assert.equal(vbs.content.split('\n')[1], 'CreateObject("WScript.Shell").Run """C:\\Program Files\\nodejs\\node.exe"" ""C:\\my norn\\engine\\bin\\norn.mjs"" tick --reason schedule", 0, True');
+  assert.ok(p.remove.some(c => c[0] === 'rm' && c[1] === vbs.path), 'remove deletes the vbs too');
+  assert.equal(oldAction(xml), false);
+  const oldXml = '<Exec><Command>powershell.exe</Command><Arguments>-WindowStyle Hidden -Command "&amp; node norn.mjs tick"</Arguments></Exec>';
+  assert.equal(oldAction(oldXml), true);
+  const io = xmlOut => ({ run: () => ({ status: 0, stdout: xmlOut }) });
+  const machine = { scheduler: { kind: 'windows-task', name: 'norn-tick-1', interval_min: 15 }, node: o.node, home: 'C:/h' };
+  assert.match(windowedSchedLines({ machine, meta: o.meta, io: io(oldXml) })[0], /task 'norn-tick-1' still starts the tick through powershell\.exe.*norn sched install/);
+  assert.deepEqual(windowedSchedLines({ machine, meta: o.meta, io: io(xml) }), []);
 });
 
 test('scheduler install / remove go through the injected runner (cron keeps foreign lines)', () => {

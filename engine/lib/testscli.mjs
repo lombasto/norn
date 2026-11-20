@@ -1,7 +1,9 @@
-// META-TEND TESTS: `norn tests` - measure | history | check | mutation | lean | gate. Code only, no model. Writes <state>/tests/ only:
+// META-TEND TESTS: `norn tests` - measure | history | check | mutation | lean | gate | for. Code only, no model. Writes <state>/tests/ only:
 //   measure.json (the last full measure), history.jsonl (one summary row per measure), mutation.json (the merged trial matrices),
 //   candidates.json (the last lean analysis), advisories.json (the last merge check), waves.jsonl (one row per gated wave),
-//   git-history.json (tests vs code per day). testsView reads them for the dash's Tests tab (small files only, never measure.json).
+//   git-history.json (tests vs code per day), times.json + impact.json (TESTS-RUNTIME: the per-test timing table and source -> tests,
+//   lib/testtimes.mjs). measure reads a node:test suite (ci-suite) or a pytest suite (--junitxml); check / mutation / lean / gate read
+//   node:test only. testsView + testsPart read them for the dash's Tests tab (small files only, never measure.json).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,42 +13,52 @@ import { fileURLToPath } from 'node:url';
 import { gitHistory, summarize, mergeCheck, leanGate, leafNames, mutationMatrix, addTrial, neverFailing, duplicates, slowest } from './testlean.mjs';
 import { crossings } from './advisory.mjs';
 import { subdirOf, inDir, projectHome } from './monorepo.mjs';
+import { suiteKind, runPytest, timesTable, impactMap, testsFor, breakdown, slowestTests, TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
 
-export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore]    '
-  + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer)';
-const FLAGS = { measure: ['no-coverage!'], history: ['points'], check: ['base'], mutation: ['report', 'kills', 'tests', 'label', 'wall'], lean: [], gate: ['base', 'restore!'] };
+export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore] | for FILE...    '
+  + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer; for = the test files that cover each FILE, from the last measure\'s coverage)';
+const FLAGS = { measure: ['no-coverage!'], history: ['points'], check: ['base'], mutation: ['report', 'kills', 'tests', 'label', 'wall'], lean: [], gate: ['base', 'restore!'], for: [] };
+const POSITIONAL = new Set(['for']);   // for: the files to look up
 const CI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ci-suite.mjs');
 const fwd = s => s.split('\\').join('/');
 const TEST_GLOB = /^tests\/[^/]+\.test\.mjs$/;
-/** does the folder hold a node:test suite (tests/*.test.mjs)? measure / check / lean / gate read only those; a pytest project (Solve Shack)
- * gets the git history and says so, rather than a check that always answers "no test file changed" */
-export const nodeSuite = dir => { try { return fs.readdirSync(path.join(dir, 'tests')).some(x => x.endsWith('.test.mjs')); } catch { return false; } };
-const NOT_NODE = repo => `this project has no node:test suite (tests/*.test.mjs in ${repo}): per-test timing, the merge check and lean tests read node:test only - nothing checked`;
+// measure reads both suites; check / mutation / lean / gate read node:test only: a pytest project (Solve Shack) gets the measure, the git
+// history and the impact answer, and the rest says so, rather than a check that always answers "no test file changed"
+const NODE_ONLY = new Set(['check', 'mutation', 'lean', 'gate']);
+const NOT_NODE = (repo, kind) => `this project's suite is ${kind ? `a ${kind} suite` : 'neither a node:test suite (tests/*.test.mjs) nor a pytest suite (tests/test_*.py)'} (${repo}): the merge check, mutation trials and lean tests read node:test only - nothing checked`;
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
+    if (!s && POSITIONAL.has(verb) && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }
     if (!s) throw new Error(`unexpected ${argv[i]}`);
     if (s.endsWith('!')) f[s.slice(0, -1)] = true;
     else { if (i + 1 >= argv.length) throw new Error(`${argv[i]} needs a value`); f[s] = argv[++i]; }
   }
   return f;
 }
-const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const readJson = readJsonS;   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(v)); fs.renameSync(t, f); };
 const appendLine = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.appendFileSync(f, JSON.stringify(v) + '\n'); };
 
-/** run ci-suite --measure on `files` (all of tests/*.test.mjs when empty) in repo -> { measure, status, log } */
+/** run ci-suite --measure on `files` (all of tests/*.test.mjs when empty) in repo -> { measure, status, wall_ms } */
 function runMeasure(repo, files, { coverage = true, log } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'norn-measure-')), out = path.join(tmp, 'm.json');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'norn-measure-')), out = path.join(tmp, 'm.json'), t0 = Date.now();
   const known = fs.existsSync(path.join(repo, 'tests', 'KNOWN-REDS.txt')) ? path.join(repo, 'tests', 'KNOWN-REDS.txt') : (fs.writeFileSync(path.join(tmp, 'k.txt'), ''), path.join(tmp, 'k.txt'));
   const r = spawnSync(process.execPath, [CI, '--known', known, '--measure', out, ...(coverage ? ['--coverage'] : []), ...files], { cwd: repo, encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 });
   if (log) { fs.mkdirSync(path.dirname(log), { recursive: true }); fs.writeFileSync(log, (r.stdout || '') + (r.stderr || '')); }
   const measure = readJson(out);
   fs.rmSync(tmp, { recursive: true, force: true });
-  return { measure, status: r.status };
+  return { measure, status: r.status, wall_ms: Date.now() - t0 };
+}
+/** TESTS-RUNTIME: the timing table + the impact map of a measure, beside it (the Tests tab reads these, never measure.json) */
+function writeTimes(dir, repo, measure, o) {
+  const readFile = f => { try { return fs.readFileSync(path.join(repo, f), 'utf8'); } catch { return null; } };
+  writeJson(path.join(dir, TIMES_FILE), timesTable(measure, { readFile, ...o }));
+  const im = impactMap(measure, { sha: o.sha });
+  if (im) writeJson(path.join(dir, IMPACT_FILE), im);
 }
 // --relative: from a monorepo project's folder the names are relative to it (as tests/x.test.mjs), never the repo's top
 const changedTests = (repo, base, filter = 'AMD') => git(repo, ['diff', '--name-only', '--relative', `--diff-filter=${filter}`, base, '--', 'tests']).split('\n').map(fwd).filter(f => TEST_GLOB.test(f));
@@ -66,17 +78,31 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
   const sha = () => git(repo, ['rev-parse', '--short=12', 'HEAD']);
   const print = (v, text) => (f.json ? out(JSON.stringify(v, null, 1)) : text.forEach(l => out(l)));
 
-  if (verb !== 'history' && !nodeSuite(repo)) {
-    if (verb === 'check') { print({ list: [], suite: false }, [`tests check: ${NOT_NODE(repo)}`]); return 0; }   // advisory: a merge goes on
-    err(`error: tests ${verb}: ${NOT_NODE(repo)}`); return 2;
+  const kind = suiteKind(repo);
+  if (NODE_ONLY.has(verb) && kind !== 'node:test') {
+    if (verb === 'check') { print({ list: [], suite: kind ?? false }, [`tests check: ${NOT_NODE(repo, kind)}`]); return 0; }   // advisory: a merge goes on
+    err(`error: tests ${verb}: ${NOT_NODE(repo, kind)}`); return 2;
   }
   if (verb === 'measure') {
-    const { measure, status } = runMeasure(repo, [], { coverage: !f['no-coverage'], log: path.join(dir, 'measure.log') });
-    if (!measure) { err(`error: the suite wrote no measure (exit ${status}; log ${fwd(path.join(dir, 'measure.log'))})`); return 1; }
-    const row = summarize(measure, { sha: sha() });
-    writeJson(path.join(dir, 'measure.json'), { ...measure, sha: row.sha });
+    if (!kind) { err(`error: tests measure: ${repo} holds neither a node:test suite (tests/*.test.mjs) nor a pytest suite (tests/test_*.py)`); return 2; }
+    const log = path.join(dir, 'measure.log'), cov = !f['no-coverage'];
+    const r = kind === 'pytest' ? runPytest(repo, w.project?.merge?.gate?.cmd, { coverage: cov, log }) : runMeasure(repo, [], { coverage: cov, log });
+    if (r.error) { err(`error: tests measure: ${r.error}`); return 2; }
+    if (!r.measure) { err(`error: the suite wrote no measure (exit ${r.status}; log ${fwd(log)})`); return 1; }
+    const row = { ...summarize(r.measure, { sha: sha() }), suite: kind, run: process.env.META_RUN_ID || null };
+    writeJson(path.join(dir, 'measure.json'), { ...r.measure, sha: row.sha });
     appendLine(path.join(dir, 'history.jsonl'), row);
-    print(row, [`measured ${row.tests} tests in ${row.files} files: suite ${Math.round(row.suite_ms / 1000)} s${row.coverage ? `, line coverage ${row.coverage.pct}% (${row.coverage.covered}/${row.coverage.total})` : ''} (suite exit ${status})`]);
+    writeTimes(dir, repo, r.measure, { sha: row.sha, run: row.run, via: 'measure', exit: r.status, wall_ms: r.wall_ms ?? null });
+    print(row, [`measured ${row.tests} ${kind} tests in ${row.files} files: suite ${Math.round(row.suite_ms / 1000)} s${row.coverage ? `, line coverage ${row.coverage.pct}% (${row.coverage.covered}/${row.coverage.total})` : r.coverage ? ` (coverage: ${r.coverage})` : ''} (suite exit ${r.status})`]);
+    return 0;
+  }
+  if (verb === 'for') {
+    if (!f._.length) { err('error: tests for needs one or more files (paths relative to the project folder)'); return 2; }
+    const im = readJson(path.join(dir, IMPACT_FILE));
+    if (!im) { err('error: no impact map yet: norn tests measure (with coverage) writes it'); return 2; }
+    const a = testsFor(im, f._);
+    print({ ...a, at: im.at, sha: im.sha }, [...a.rows.map(r => `${r.file}: ${r.tests.length ? r.tests.join(' ') : r.known ? 'no test covers it' : 'not in the last measure\'s coverage'}`),
+      `${a.tests.length} test file(s) to run (coverage of the measure at ${im.sha ?? '?'}, ${im.at})`]);
     return 0;
   }
   if (verb === 'history') {
@@ -128,7 +154,8 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
     if (base) {
       const folded = { ...base, at: new Date().toISOString(), sha: sha(), suite_ms: null, folded: changed, files: [...base.files.filter(x => !changed.includes(x.file)), ...head.files].sort((a, b) => a.file.localeCompare(b.file)) };
       writeJson(path.join(dir, 'measure.json'), folded);
-      appendLine(path.join(dir, 'history.jsonl'), { ...summarize(folded, { sha: folded.sha }), via: 'merge check' });
+      appendLine(path.join(dir, 'history.jsonl'), { ...summarize(folded, { sha: folded.sha }), via: 'merge check', suite: 'node:test', run: process.env.META_RUN_ID || null });
+      writeTimes(dir, repo, folded, { sha: folded.sha, run: process.env.META_RUN_ID || null, via: 'merge check' });
     }
     print(list, [`tests check: ${changed.length} changed test file(s), ${list.length} advisory finding(s)${base ? '' : ' (no base measure: copy-paste only)'} - advisory, never a merge block`,
       ...list.map(a => `  ${a.new ? 'NEW ' : ''}${a.key} ${a.path ?? ''}: ${a.why}`)]);
@@ -152,8 +179,6 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
 }
 
 const readLines = f => { try { return (readText(f) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
-/** META-DASH-ASYNC R1: the files testsView reads, for the dash to prime on fs.promises */
-export const testsFiles = state => ['mutation.json', 'history.jsonl', 'git-history.json', 'candidates.json', 'advisories.json', 'waves.jsonl'].map(f => path.join(state, 'tests', f));
 /** the tick's hook: `norn tests history` (git only, cheap) detached once a day, so the Tests tab's charts fill without anyone running it
  * (not while one started in the last 30 min). -> the tick-log words | null */
 export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
@@ -168,12 +193,64 @@ export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {})
   if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
   return `tests history: started pid ${r?.pid ?? '?'}`;
 }
-/** the Tests tab of one project: everything <state>/tests holds, small files only; a missing file = null / [] (not measured yet).
- * suite: does the project folder hold a node:test suite (false = the page says which parts can fill; the dash finds it with suiteOf, off the sync path) */
-export const suiteOf = project => project?.root ? fs.promises.readdir(path.join(projectHome(project), 'tests')).then(xs => xs.some(x => x.endsWith('.test.mjs')), () => false) : Promise.resolve(null);
+
+// ---------- the Tests tab (TESTS-RUNTIME): a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
+// The governance machinery (the test-governance lane, DIR-23 a-g) writes these beside the measure; until a file exists its view says
+// "not measured yet", never a number. Ids are timesTable's (file::group::name).
+//   costs.json    { at, cpu_pct (the machine's CPU % while measured), tests: { id: { cpu_s, peak_mb, children: { browser, server, git, other }, alone_ms, load_ms } } }
+//   health.json   { at, days, tests: { id: { fails, reruns, load_only, hangs } }, quarantine: { id: { by, until, why, q } } }
+//   tiers.json    { at, tests: { id: { tier: worker | pr | post-batch | nightly, verdict: keep | move | merge | delete | rewrite, evidence, q } } }
+//   budgets.jsonl { at, run, lane, wall_s, test_s, full_suite (full-suite commands seen), state: ok | warn | over } - one row per run
+//   history.jsonl rows may carry cpu_min (the suite's CPU-minutes for that measure)
+// An alert the machinery raises is an open Inbox question with data.area 'tests' (the server lists them: the tab links, never copies).
+const GOV = ['costs.json', 'health.json', 'tiers.json'];
+const read = (state, f) => readJson(path.join(state, 'tests', f));
+/** META-DASH-ASYNC R1: the files the summary + a part read, for the dash to prime on fs.promises */
+export const testsFiles = (state, sub = null) => [...['history.jsonl', 'git-history.json', TIMES_FILE, 'advisories.json'],
+  ...(sub === 'costs' ? [...GOV, 'budgets.jsonl', 'candidates.json', 'mutation.json'] : sub === 'impact' ? [IMPACT_FILE] : sub === 'trends' ? ['waves.jsonl', 'budgets.jsonl'] : sub === 'suite' ? [] : ['mutation.json', 'candidates.json', 'waves.jsonl'])]
+  .map(f => path.join(state, 'tests', f));
+/** which suite the project folder holds ('node:test' | 'pytest' | false = neither; null = no project folder), off the sync path */
+export const suiteOf = project => (project?.root ? fs.promises.access(path.join(projectHome(project), 'tests')).then(() => suiteKind(projectHome(project)) ?? false, () => false) : Promise.resolve(null));
+const timesHead = t => (t ? { at: t.at, sha: t.sha, run: t.run, via: t.via, suite: t.suite, exit: t.exit, total_ms: t.total_ms, wall_ms: t.wall_ms, coverage: t.coverage,
+  tests: t.tests.length, files: t.files.length, failed: t.tests.filter(x => !x.ok).length, slowest: t.tests[0] ? { id: t.tests[0].id, name: t.tests[0].name, ms: t.tests[0].ms } : null } : null);
+/** the Tests tab's summary: small files only; a missing file = null / [] (not measured yet). suite = suiteOf's answer.
+ *  guardview reads advisories from it (the merge check's findings are Slop rows) */
 export function testsView(state, suite = null) {
-  const dir = path.join(state, 'tests'), mx = readJson(path.join(dir, 'mutation.json'));
-  return { suite, history: readLines(path.join(dir, 'history.jsonl')), git: readJson(path.join(dir, 'git-history.json')), lean: readJson(path.join(dir, 'candidates.json')),
-    mutation: mx ? { files: mx.files, trials: mx.trials } : null, advisories: readJson(path.join(dir, 'advisories.json')), waves: readLines(path.join(dir, 'waves.jsonl')),
-    commands: { measure: 'norn tests measure', history: 'norn tests history', lean: 'norn tests lean' } };
+  return { suite, history: readLines(path.join(state, 'tests', 'history.jsonl')), git: read(state, 'git-history.json'), times: timesHead(read(state, TIMES_FILE)),
+    advisories: read(state, 'advisories.json'), commands: { measure: 'norn tests measure', history: 'norn tests history', lean: 'norn tests lean', for: 'norn tests for' } };
+}
+const cap = (list, limit) => ({ rows: list.slice(0, limit), n: list.length });
+/** the per-lane test minutes per day from budgets.jsonl -> [{ day, lane, min }] */
+const laneDays = rows => { const m = new Map(); for (const r of rows) { const k = `${String(r.at).slice(0, 10)}|${r.lane ?? '-'}`; m.set(k, (m.get(k) ?? 0) + (r.test_s ?? 0) / 60); }
+  return [...m].map(([k, min]) => ({ day: k.split('|')[0], lane: k.split('|')[1], min: Math.round(min * 10) / 10 })).sort((a, b) => a.day.localeCompare(b.day) || b.min - a.min); };
+/**
+ * one sub-view's part of the Tests tab -> its data. o: { limit, picked: { files, lane, lanes } (impact: the server resolves a lane's changed
+ * files), merges: the merge queue's batches (costs: per merge gate time + what it ran) }
+ */
+export function testsPart(state, name, { limit = 40, picked = null, merges = [] } = {}) {
+  const t = read(state, TIMES_FILE);
+  if (name === 'suite') {
+    if (!t) return { breakdown: null, tests: { rows: [], n: 0 } };
+    return { breakdown: breakdown(t), tests: cap(slowestTests(t), limit) };
+  }
+  if (name === 'costs') {
+    const [costs, health, tiers] = GOV.map(f => read(state, f)), budgets = readLines(path.join(state, 'tests', 'budgets.jsonl'));
+    const cost = id => costs?.tests?.[id] ?? null, hl = id => health?.tests?.[id] ?? null, q = id => health?.quarantine?.[id] ?? null, tr = id => tiers?.tests?.[id] ?? null;
+    const rows = (t?.tests ?? []).map(x => ({ id: x.id, file: x.file, name: x.name, line: x.line, ms: x.ms, cost: cost(x.id), health: hl(x.id), quarantine: q(x.id), tier: tr(x.id) }))
+      .sort((a, b) => (b.cost?.cpu_s ?? 0) - (a.cost?.cpu_s ?? 0) || (b.health?.fails ?? 0) - (a.health?.fails ?? 0) || b.ms - a.ms);
+    const mx = read(state, 'mutation.json');
+    return { sources: { costs: costs ? { at: costs.at, cpu_pct: costs.cpu_pct ?? null } : null, health: health ? { at: health.at, days: health.days ?? 7 } : null, tiers: tiers ? { at: tiers.at } : null, budgets: budgets.length > 0 },
+      rows: cap(rows, limit), runs: budgets.slice(-limit).reverse(), merges, lean: read(state, 'candidates.json'), mutation: mx ? { files: mx.files, trials: mx.trials } : null };
+  }
+  if (name === 'impact') {
+    const im = read(state, IMPACT_FILE);
+    return { impact: im ? { at: im.at, sha: im.sha, suite: im.suite, sources: Object.keys(im.sources).sort() } : null, lanes: picked?.lanes ?? [],
+      picked: picked && (picked.files?.length || picked.lane) ? { lane: picked.lane ?? null, error: picked.error ?? null, files: picked.files ?? [], ...(im ? testsFor(im, picked.files ?? []) : { rows: [], tests: [] }) } : null };
+  }
+  if (name === 'trends') {
+    const budgets = readLines(path.join(state, 'tests', 'budgets.jsonl'));
+    return { cpu: readLines(path.join(state, 'tests', 'history.jsonl')).filter(r => typeof r.cpu_min === 'number').map(r => ({ at: r.at, cpu_min: r.cpu_min })),
+      lanes: budgets.length ? laneDays(budgets) : null, wave: readLines(path.join(state, 'tests', 'waves.jsonl')).at(-1) ?? null };
+  }
+  throw new Error(`unknown tests part ${name}`);
 }

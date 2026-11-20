@@ -117,7 +117,7 @@ export const hashKey = f => { const p = path.resolve(f); return /^[a-z]:/.test(p
 // its hash is recorded, and each write leaves a record (views/last/: the text + who wrote it) that the notice diffs and names.
 const TRANSIENT = ['EPERM', 'EBUSY', 'EACCES'];
 export const LOCK_STALE_MS = 30e3, LOCK_WAIT_MS = 60e3, RETRY_MS = 10e3, LAST_KEEP = 20;
-const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export const sleepMs = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const ENGINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 let branchMemo;
 /** the branch (or commit) of the engine copy this process runs - a lane worktree's engine names its lane branch */
@@ -168,7 +168,7 @@ const SYNC = {
     fs.mkdirSync(path.dirname(f), { recursive: true });
     const tmp = `${f}.${process.pid}.tmp`, t0 = Date.now();
     fs.writeFileSync(tmp, text);
-    for (;;) { try { return fs.renameSync(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { try { fs.unlinkSync(tmp); } catch { /* the tmp could not be removed: the rename's error, thrown next, is the one that matters */ } throw e; } sleepSync(15); } }
+    for (;;) { try { return fs.renameSync(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { try { fs.unlinkSync(tmp); } catch { /* the tmp could not be removed: the rename's error, thrown next, is the one that matters */ } throw e; } sleepMs(15); } }
   },
   lock: hf => {
     const lf = hf + '.lock', token = crypto.randomBytes(6).toString('hex'), t0 = Date.now();
@@ -177,7 +177,7 @@ const SYNC = {
       try { fs.writeFileSync(lf, lockBody(token), { flag: 'wx' }); return token; } catch (e) { if (!['EEXIST', ...TRANSIENT].includes(e.code)) throw e; }
       try { if (isStale(fs.readFileSync(lf, 'utf8'), fs.statSync(lf).mtimeMs)) fs.unlinkSync(lf); } catch { /* released / being written meanwhile */ }
       if (Date.now() - t0 > LOCK_WAIT_MS) throw lockErr(hf, 'not acquired');
-      sleepSync(10);
+      sleepMs(10);
     }
   },
   unlock: (hf, token) => { try { if (JSON.parse(fs.readFileSync(hf + '.lock', 'utf8')).token === token) fs.unlinkSync(hf + '.lock'); } catch { /* broken as stale: a successor's */ } },

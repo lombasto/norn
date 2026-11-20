@@ -33,7 +33,7 @@ export const subdirOf = p => { try { return normSubdir(p?.subdir); } catch { ret
  */
 export function splitRepo(dir) {
   const abs = path.resolve(dir);
-  const r = spawnSync('git', ['-C', abs, 'rev-parse', '--show-prefix'], { encoding: 'utf8', windowsHide: true });
+  const r = spawnSync('git', ['-C', abs, 'rev-parse', '--show-prefix'], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
   if (r.status !== 0) return null;
   const subdir = normSubdir((r.stdout || '').replace(/\r\n/g, '\n').split('\n')[0]);
   const up = subdir ? subdir.split('/').length : 0;

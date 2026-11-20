@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile } from './records.mjs';
-import { deliverablesView, deliverableConfig, rehearsalWord } from './deliverables.mjs';
+import { deliverablesView, rehearsalWord } from './deliverables.mjs';
+import { fwd } from './dlvmerge.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
@@ -19,24 +20,16 @@ import { doorCheck, storedCheck } from './slop/door.mjs';
 import { rulesHash } from './slop/check.mjs';
 import { projectSlop } from './slop/runend.mjs';
 import { slopOn } from './policy.mjs';
-import { subdirOf, inDir, gateText } from './monorepo.mjs';
+import { inDir, gateText } from './monorepo.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { rowLookItems, lookHold } from './look.mjs';
 import { landPass } from './landing.mjs';
+import { mergeConfig } from './mergecfg.mjs';
 
 const H = 3600e3;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const pad = (s, n) => String(s ?? '').padEnd(n);
-export const MQ_DEFAULTS = { batch_max: 4 };
 export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
-/** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
-// a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own
-export function mergeConfig(project = {}) {
-  const m = project.merge || {}, d = deliverableConfig(project), sub = subdirOf(project);
-  const gate = m.gate ? { ...m.gate, ...(m.gate.dir === undefined && sub ? { dir: sub } : {}) } : null;
-  return { ...MQ_DEFAULTS, ...m, gate, ui: m.ui || [], scratch: fwd(m.scratch || (sub ? `${d.repo}-mq-${project.name}` : `${d.repo}-mq`)), repo: d.repo, main: d.main, remote: d.remote, native: d.native };
-}
 /** the gate kind of a queue row: door (native: the install path, the door flow), batch (a FAST gate is declared: batched + bisected),
  *  stage (one MERGE stage per branch) */
 export const gateKind = (row, cfg) => (row.native ? 'door' : cfg.gate?.fast ? 'batch' : 'stage');
@@ -223,7 +216,7 @@ export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
 /** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state), then adds gate.env */
-export function runGate(gate, { cwd, log }) {
+export function runGate(gate, { cwd, log, state }) {
   cwd = inDir(cwd, gate.dir);
   return new Promise(resolve => {
     const t0 = Date.now();
@@ -232,7 +225,7 @@ export function runGate(gate, { cwd, log }) {
     const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_'))), ...(gate.env || {}) };
     let child, timedOut = false, done = false;
     const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
-    const timer = setTimeout(() => { timedOut = true; killTree(child?.pid); }, (gate.timeout_min ?? 30) * 60e3);
+    const timer = setTimeout(() => { timedOut = true; killTree(child?.pid, { state, killer: `merge gate pid ${process.pid}`, reason: `gate past ${gate.timeout_min ?? 30} min: ${gate.cmd} (log ${fwd(log)})` }); }, (gate.timeout_min ?? 30) * 60e3);
     try { child = spawn(gate.cmd, { cwd, shell: true, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', fd, fd], env }); }
     catch (e) { end(-1, { error: e.message }); return; }
     child.on('error', e => end(-1, { error: e.message }));
@@ -472,7 +465,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       let k = 0;
       const gateAt = async (commit, label) => {
         git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach', commit]);
-        return gateRunner(cfg.gate, { cwd: cfg.scratch, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
+        return gateRunner(cfg.gate, { cwd: cfg.scratch, state: stateDir, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
       };
       // skip: the members merged clean (buildBatch drops a conflicting pick), so nothing runs; the MERGE stage keeps its smoke
       const res = skip ? { status: 'green', runs: [], green_prefix: b.members.length } : await gateBatch(b, gateAt);
@@ -555,10 +548,13 @@ export function takeRunLock(stateDir) {
 
 /**
  * The tick's step (tick.mjs, right after the fill): start `norn mergeq --run` detached for every project (MERGE-FIRST: each lands its work), unless a
- * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests) }. Returns the tick-log words or null.
+ * pass of this state dir is live. o: { metaCmd (engine/bin/norn.mjs), spawnFn (tests), leader (tick.mjs claimsPass: a synced home's merge
+ * leader state; none = not synced, the queue runs) }. RM-46 S6a: only the merge leader runs the queue. Returns the tick-log words or null.
  */
-export function tickMergeq(p, state, { metaCmd, spawnFn } = {}) {
-  if (!p?.file) return null;
+export const mergeqOn = p => !!p?.file;
+export function tickMergeq(p, state, { metaCmd, spawnFn, leader } = {}) {
+  if (!mergeqOn(p)) return null;
+  if (leader && !leader.leader) return `mergeq: refused - ${leader.why}`;
   const live = mqRunning(state);
   if (live) return `mergeq: pass pid ${live.pid} running`;
   const args = [metaCmd, 'mergeq', '--run', '--project', p.file, '--state', state];

@@ -20,7 +20,7 @@ export const laneBranch = (name, p) => laneBranchPrefix(p) + name;
 const fwd = p => String(p).replace(/\\/g, '/');
 
 function git(cwd, args) {
-  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true });
+  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
   return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || r.error?.message || '').trim() };
 }
 const gitA = (cwd, args) => new Promise(ok => execFile('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 << 20 }, (e, out, err) =>

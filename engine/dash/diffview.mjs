@@ -4,7 +4,7 @@
 // collapse (unchanged runs folded to n lines of context), parsePatch (a unified-diff hunk -> the same ops), renderDiff (unified or
 // side-by-side HTML; tokens only, styled in index.html / norn.css) and diffBlock (the compact inline form on a card, whose Open
 // button shows the same diff in the picture-in-picture panel - index.html #dvpip, see dvPanel there).
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+import { esc } from './docs.mjs';
 export const DIFF_CAP = 4e6;   // cells of the LCS table; a larger middle is shown as all removed + all added (honest, never slow)
 const splitLines = t => { const s = String(t ?? ''); if (!s) return []; const l = s.split('\n'); if (l.at(-1) === '') l.pop(); return l.map(x => x.replace(/\r$/, '')); };
 
