@@ -32,6 +32,7 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
+import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
 import { ClaimsError } from './claimsref.mjs';
@@ -180,11 +181,15 @@ const heldWords = h => (h.own ? `worktree held by ${h.run}` : `lane worktree ${f
 
 // ---------- GAP-6: merges in their own merge worktrees - the merge slots (policy.merge.parallel) ----------
 // a MERGE run whose brief names a merge worktree (marker merge_wt) works there, whatever --worktree said: the spec's worktree is
-// it (the lock, the cwd, the scope guard), merge_wt + merge_repo say Norn makes it at the start and removes it at the end
+// it (the lock, the cwd, the scope guard), merge_wt + merge_repo say Norn makes it at the start and removes it at the end.
+// MAIL-10 (solve-shack RUN-134, a check-in's --stage MERGE2): only MERGE is a merge stage, so a merge brief under any other stage
+// ran in the lane worktree with its merge worktree never made, nor kept by the next merge's sweep: refused. So is a merge brief
+// that names no merge worktree. A brief without the marker (hand-written) is no merge brief: it runs as given.
 export function mergeSpec(o) {
-  if (!isMergeStage(o.stage) || !o.brief) return o;
-  const m = markerOf(o);
-  if (!m?.merge_wt || !m.repo) return o;
+  const m = o.brief ? markerOf(o) : null;
+  if (!m) return o;
+  if (!isMergeStage(o.stage)) throw new RunError(`stage ${o.stage ?? '(none)'}: ${fwd(o.brief)} is a merge brief (meta-merge marker) - start it as --stage MERGE, so Norn makes and keeps its merge worktree`);
+  if (!m.merge_wt || !m.repo) throw new RunError(`MERGE ${o.lane ?? ''}: ${fwd(o.brief)} names no merge worktree (marker merge_wt + repo) - write it with norn merge-brief`);
   return { ...o, worktree: m.merge_wt, merge_wt: m.merge_wt, merge_repo: m.repo, merge_slots: Number.isInteger(m.slots) && m.slots > 0 ? m.slots : 1,
     merge_main: m.main_branch || 'main', merge_remote: m.remote || 'origin' };
 }
@@ -204,13 +209,18 @@ function acquireSlot(o, opts) {
 }
 // the merge worktrees a run may still need: those of queued / running / claimed runs, and of a run that ended HANDOFF in the last
 // day (its resume goes on there). Every other one in <state>/mq is a leftover.
+// MAIL-10 (RUN-134 swept mid-suite): a lost run may only be stalled (a stale heartbeat), so it keeps its merge worktree too; and a
+// run that may still work keeps the merge worktree its brief names, whatever worktree its record names.
 export const MERGE_WT_KEEP_MS = 24 * 3600e3;
+const MAY_WORK = ['queued', 'running', 'claimed', 'lost'];
 export function mergeWtInUse(state, now = Date.now()) {
   const keep = new Set(), last = new Map();
   for (const r of runsOf(state)) {
-    if (r.kind !== 'run' || !r.data.worktree || !isMergeStage(r.data.stage)) continue;
+    if (r.kind !== 'run') continue;
+    if (MAY_WORK.includes(r.state) && r.data.brief) { const m = markerOf(r.data); if (m?.merge_wt) keep.add(normWt(m.merge_wt)); }
+    if (!r.data.worktree || !isMergeStage(r.data.stage)) continue;
     const k = normWt(r.data.worktree);
-    if (['queued', 'running', 'claimed'].includes(r.state)) keep.add(k);
+    if (MAY_WORK.includes(r.state)) keep.add(k);
     if (!last.has(k) || Number(r.id.slice(4)) > Number(last.get(k).id.slice(4))) last.set(k, r);
   }
   for (const [k, r] of last) if (r.end?.outcome === 'handoff' && now - Date.parse(r.updated || r.created) < MERGE_WT_KEEP_MS) keep.add(k);
@@ -266,6 +276,53 @@ const BOOT_SLACK_MS = 60e3;   // record ts are whole seconds and uptime drifts: 
 export const pidGone = pid => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
 // the causes whose death is certain (the auto-resume policy relaunches them: relaunchLost); `stale` may be a stall, never relaunched
 export const DEAD_CAUSES = ['boot', 'gone', 'no-start'];
+// MAIL-22 (norn RUN-80: lost at a 210 s beat while 11 workers held the CPU at 97-100 %, beating again 8 min later): a late beat under
+// a busy CPU is a stall, not a death. While the CPU is at LATE_CPU_PCT or more, a stale beat whose supervisor pid lives waits up to
+// LATE_FACTOR x the threshold before the sweep calls it lost. The sweep keeps its sample in hb/load.json: the pages name it.
+export const LATE_CPU_PCT = 90, LATE_FACTOR = 3;
+/** the sweep's last CPU sample (hb/load.json); the dash primes it */
+export const loadPath = state => path.join(state, 'hb', 'load.json');
+/** the CPU % the last sweep sampled, when it is at most maxMs old, else null (the pages' "heartbeat late (N s, CPU x %)"); read: the dash's snapshot reader */
+export const sweptCpu = (state, { now = Date.now(), maxMs = 5 * 60e3, read = readJson } = {}) => { const l = read(loadPath(state)); return l && now - Date.parse(l.ts) <= maxMs ? l.cpu_pct : null; };
+// the run's heartbeat was written after its lost record (whose ts is whole seconds: a beat in a later second)
+const beatSinceLost = (state, it) => (fs.statSync(hbPath(state, it.id), { throwIfNoEntry: false })?.mtimeMs ?? 0) >= Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts) + 1000;
+// MAIL-28 (2): a supervisor deletes its heartbeat as it exits; when its end record did not land (refused: RUN-80, RUN-89) the run still
+// read running, and the sweep saw no heartbeat and recorded it lost, cause no-start - a certain death, so relaunchLost relaunched a run
+// that had finished. What a finished run leaves: its supervisor's end data (END_FILE, written before the record), its result.json, its
+// log's exit line. -> { data, from } | null
+export const END_FILE = 'end.json';
+export const endFilePath = (state, run) => path.join(resultDir(state, run), END_FILE);
+function endEvidence(state, it) {
+  const e = readJson(endFilePath(state, it.id));
+  if (e?.run === it.id && e.data && typeof e.data === 'object') return { data: e.data, from: `its supervisor's end data (${END_FILE})` };
+  const log = readJson(path.join(state, 'runs', it.id + '.spec.json'))?.log;
+  let text = ''; try { text = log ? fs.readFileSync(log, 'utf8') : ''; } catch { /* no log */ }
+  const m = [...text.matchAll(/^\S+ exit=(\S+)/gm)].at(-1), code = m && /^-?\d+$/.test(m[1]) ? Number(m[1]) : null;
+  const r = readResult(resultDir(state, it.id), { run: it.id });
+  if (r && !r.error && (!m || code === 0)) return { data: { exit: code, outcome: r.outcome, outcome_source: 'result', result: fwd(resultDir(state, it.id)), ...drop({ why: r.why, summary: r.summary, handoff: r.handoff && fwd(r.handoff) }) }, from: 'its result.json' };
+  return m ? { data: { exit: code, outcome: code === 0 ? NO_RESULT : 'crash', outcome_source: 'exit' }, from: `its log's exit line (exit=${m[1]})` } : null;
+}
+// the end a sweep records from a finished run's evidence (and its heartbeat goes) -> true when recorded
+function endFromEvidence(state, it, ev) {
+  try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { ...ev.data, swept: `end not recorded by its supervisor: recorded by the sweep from ${ev.from}` } }); }
+  catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
+  try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
+  return true;
+}
+/**
+ * MAIL-28 (1): the supervisor's end record. An end refused while the run reads lost (a supervisor whose event table takes end from
+ * running only: RUN-80 "end not recorded: RUN-80 is lost; end needs running") does not give up: alive, then its end. Any other refusal
+ * (killed, already ended) throws as before. rec: a test's record.
+ */
+export function recordEnd(state, run, data, { rec = record } = {}) {
+  const end = () => rec(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data });
+  try { return end(); }
+  catch (e) {
+    if (!(e instanceof RecordError) || runsOf(state).find(r => r.id === run)?.state !== 'lost') throw e;
+    rec(state, { kind: 'run', ev: 'alive', id: run, by: 'launcher', data: { why: `its supervisor ended it (end refused: ${e.message})` } });
+    return end();
+  }
+}
 // The second signal (owner report 2026-11-19): a stale .hb alone is never a death. The run's own output (its log, its transcript, the
 // newest mtime) -> ms, or null when there is none. Spec fields fill in what the start record lacks (projectsDir is the spec's only).
 export function runActivityMs(state, it) {
@@ -277,17 +334,28 @@ export function runActivityMs(state, it) {
   }
   return t;
 }
-/** a running run whose .hb is stale but whose supervisor pid (named by the .hb) lives and whose output advanced within staleMs: its
- * heartbeat is late, it is not lost (shown as a warn chip, never recorded lost) -> { supervisor_pid, output_age } | null */
-export function hbLate(state, it, { now = Date.now(), staleMs = STALE_MS, gone = pidGone } = {}) {
+/** The one late rule (owner report 2026-11-19 + MAIL-22): a running run whose .hb is stale is late, not lost, while the supervisor pid
+ * its .hb names lives and EITHER its own output advanced within staleMs OR the CPU is busy (>= LATE_CPU_PCT) and the beat is at most
+ * LATE_FACTOR x staleMs old. The sweep records lost only past both; the pages name the evidence.
+ * age: the beat's age (else the .hb mtime); cpu: the CPU % - a number, a sampler (called only when the output says nothing), or null
+ * (unknown: the output alone decides) -> { supervisor_pid, output_age } | { supervisor_pid, cpu } | null */
+export function hbLate(state, it, { now = Date.now(), staleMs = STALE_MS, gone = pidGone, age = null, cpu = null } = {}) {
   const pid = readJson(hbPath(state, it.id))?.supervisor_pid;
   if (!Number.isInteger(pid) || pid <= 0 || gone(pid)) return null;
   const at = runActivityMs(state, it);
-  return at !== null && now - at <= staleMs ? { supervisor_pid: pid, output_age: Math.max(0, now - at) } : null;
+  if (at !== null && now - at <= staleMs) return { supervisor_pid: pid, output_age: Math.max(0, now - at) };
+  if (cpu === null || (age ?? now - (fs.statSync(hbPath(state, it.id), { throwIfNoEntry: false })?.mtimeMs ?? 0)) > staleMs * LATE_FACTOR) return null;
+  const c = typeof cpu === 'function' ? cpu() : cpu;
+  return Number.isFinite(c) && c >= LATE_CPU_PCT ? { supervisor_pid: pid, cpu: c } : null;
 }
-export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone } = {}) {
+export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone, load = () => sampleResources({ ms: 250, src: 'sweep' }).cpu_pct } = {}) {
   const lost = [];
   const t = now().getTime(), bt = boot();
+  let cpu;   // sampled once per sweep, only when a live supervisor's beat is stale and its output says nothing (hbLate)
+  const sample = () => {
+    if (cpu === undefined) { cpu = Math.round(load()); try { fs.mkdirSync(path.dirname(loadPath(state)), { recursive: true }); fs.writeFileSync(loadPath(state), JSON.stringify({ cpu_pct: cpu, ts: new Date(t).toISOString() })); } catch { /* the pages go without it */ } }
+    return cpu;
+  };
   for (const it of runsOf(state)) {
     // a stall swept as lost (cause stale) whose heartbeat is fresh again and whose supervisor lives: alive, so its own end is accepted
     // (2026-11-18: a machine busy starting processes let heartbeats fall 210-297 s behind; five live runs read lost and would have
@@ -307,10 +375,12 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     let cause, why;
     if (Date.parse(it.created) < bt - BOOT_SLACK_MS) { cause = 'boot'; why = `machine rebooted at ${new Date(bt).toISOString().slice(0, 19)}Z after the run started`; }
     else if (hb && gone(hb.supervisor_pid)) { cause = 'gone'; why = `supervisor pid ${hb.supervisor_pid} gone without an end record`; }
-    else if (age <= staleMs || (has && hbLate(state, it, { now: t, staleMs, gone }))) continue;   // a late heartbeat on a live run: not lost
+    else if (age <= staleMs || (has && hbLate(state, it, { now: t, staleMs, gone, age, cpu: sample }))) continue;   // late, not lost (hbLate: output advanced, or a busy CPU)
     // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
     else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
     else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
+    const ev = DEAD_CAUSES.includes(cause) ? endEvidence(state, it) : null;   // MAIL-28 (2): a finished run is ended, never lost
+    if (ev && endFromEvidence(state, it, ev)) continue;
     try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
   }
   return lost;
@@ -330,13 +400,13 @@ export const LOST_RESUME_MAX_AGE_MS = 24 * 3600e3;   // an older dead run is the
  * routine, or its `resume` record says why not (the check-in rules it). Level-triggered from the records: whoever swept it. Once per run.
  * Returns [{ id, cause, boot?, next?, refused? }].
  */
+// a lost run relaunchLost still has to judge (a check-in is the tick's own; a helper belongs to its parent)
+const relaunchable = (it, now) => it.state === 'lost' && !it.review && DEAD_CAUSES.includes(it.lost?.cause) && !it.history.some(h => h.ev === 'resume')
+  && it.data.kind !== 'checkin' && it.data.role !== 'helper' && now - Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts) <= LOST_RESUME_MAX_AGE_MS;
 export function relaunchLost(state, { now = Date.now(), start = startRun } = {}) {
   const out = [];
   for (const it of runsOf(state)) {
-    if (it.state !== 'lost' || it.review || !DEAD_CAUSES.includes(it.lost?.cause) || it.history.some(h => h.ev === 'resume')) continue;
-    if (it.data.kind === 'checkin' || it.data.role === 'helper') continue;   // a check-in is the tick's own; a helper belongs to its parent
-    const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
-    if (!(now - lostAt <= LOST_RESUME_MAX_AGE_MS)) continue;
+    if (!relaunchable(it, now)) continue;
     const spec = readJson(path.join(state, 'runs', it.id + '.spec.json'));
     let { refused, count, max } = spec ? autoResumeRefusal(spec, state) : { refused: 'no spec file', count: 0, max: 0 };
     let next = null;
@@ -357,6 +427,29 @@ export function relaunchLost(state, { now = Date.now(), start = startRun } = {})
   }
   return out;
 }
+/**
+ * A lost run is not an ended one: `lost` only says the beat stopped (a stale one may be a stall whose supervisor still ends it), so
+ * nothing wrote its `end` and it looked live for hours (norn RUN-33: stale-lost, reviewed, never relaunched). Once its supervisor and
+ * executor pids are both gone - and the auto-resume policy has had its say (relaunchable) - the sweep writes the one `end` (outcome
+ * crash, the lost why) and drops its heartbeat file. A pid alive again (a stall, or a reused pid) leaves it alone. -> [ids ended]
+ */
+export function endLost(state, { now = Date.now(), gone = pidGone } = {}) {
+  const out = [];
+  for (const it of runsOf(state)) {
+    if (it.state !== 'lost' || it.data.kind === 'interactive' || relaunchable(it, now)) continue;
+    if (beatSinceLost(state, it)) continue;   // MAIL-22: it beat after the lost record - never ended (a live stall is revived above)
+    const hb = readJson(hbPath(state, it.id)), pids = [hb?.supervisor_pid, hb?.pid, it.lost?.supervisor_pid].filter(p => Number.isInteger(p) && p > 0);
+    if (!pids.every(gone)) continue;
+    const ev = endEvidence(state, it);   // MAIL-28: the end its supervisor could not record, else a crash
+    if (ev) { if (endFromEvidence(state, it, ev)) out.push(it.id); continue; }
+    const why = `lost: ${it.lost?.why ?? 'no heartbeat'}; supervisor and executor gone, no end record`;
+    try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } }); }
+    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
+    out.push(it.id);
+  }
+  return out;
+}
 /** one owner notice per sweep pass that handled dead runs (relaunchLost rows) -> { title, body } | null */
 export function lostNotice(rows, project = '') {
   if (!rows.length) return null;
@@ -372,7 +465,7 @@ export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
   const states = new Set([path.resolve(state)]);
   for (const d of fs.existsSync(parent) ? fs.readdirSync(parent) : []) if (fs.existsSync(path.join(parent, d, 'runs.jsonl'))) states.add(path.join(parent, d));
   const live = [];
-  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs }))) live.push({ ...it, state_dir: s });
+  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs, cpu: sweptCpu(s, { now }) }))) live.push({ ...it, state_dir: s });
   return live;
 }
 // META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief
@@ -957,7 +1050,7 @@ function homeClaim(state, q, spec) {
 // runs leave this many slots of each cap free for it
 export const FILL_DEFAULTS = { min_free_gb: 4, max_cpu_pct: 90, merge_reserve: POLICY_DEFAULTS.fill.merge_reserve };
 /** { free_gb, cpu_pct } now: os.freemem() and the os.cpus() deltas over ms; env META_FILL_SAMPLE (that JSON) pins it (tests, a drill) */
-export function sampleResources({ ms = 1000 } = {}) {
+export function sampleResources({ ms = 1000, src = 'fill' } = {}) {   // src: who sampled, for cpu.jsonl
   const pin = process.env.META_FILL_SAMPLE;
   if (pin) {
     let v = null;
@@ -969,10 +1062,10 @@ export function sampleResources({ ms = 1000 } = {}) {
   const a = tot();
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   const b = tot(), all = b.all - a.all, cpu = all > 0 ? 100 * (1 - (b.idle - a.idle) / all) : 0;
-  noteCpu(cpu, 'fill');
+  noteCpu(cpu, src);
   return { free_gb: os.freemem() / 2 ** 30, cpu_pct: cpu };
 }
-// worker-speed: every real CPU sample Norn takes (this gate's, the dash's 15 s one) is kept in <norn>/local/cpu.jsonl, so `norn speed`
+// worker-speed: every real CPU sample Norn takes (this gate's, the lost sweep's, the dash's 15 s one) is kept in <norn>/local/cpu.jsonl, so `norn speed`
 // can say how busy the machine was while a run ran - no sampler of its own. One machine, one file; past CPU_LOG_MAX bytes it keeps its
 // newer half. A failed write never fails the caller.
 const CPU_LOG_MAX = 1 << 20;
@@ -1132,8 +1225,8 @@ export async function killTreeAsync(pid, rc) {
   signal(pid, 'SIGKILL');
   return rows;
 }
-const SYNC_IO = { record: (s, ev) => record(s, ev), kill: killTree, unlink: f => { try { fs.unlinkSync(f); } catch { /* none */ } }, release: releaseLock };
-const ASYNC_IO = { record: (s, ev) => recordAsync(s, ev), kill: killTreeAsync, unlink: async f => { try { await fs.promises.unlink(f); } catch { /* none */ } }, release: releaseLockAsync };
+const SYNC_IO = { record: (s, ev) => record(s, ev), kill: killTree, unlink: f => { try { fs.unlinkSync(f); } catch { /* already gone: the stop goes on to the lock */ } }, release: releaseLock };
+const ASYNC_IO = { record: (s, ev) => recordAsync(s, ev), kill: killTreeAsync, unlink: async f => { try { await fs.promises.unlink(f); } catch { /* already gone: the stop goes on to the lock */ } }, release: releaseLockAsync };
 
 // Record the kill first (a supervisor still alive then fails its `end` and stops), then kill the tree, then free lock + heartbeat.
 export const stopRun = a => runSteps(stopSteps(a), SYNC_IO);

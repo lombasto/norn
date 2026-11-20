@@ -96,7 +96,7 @@ test('second signal: a stale .hb with a live supervisor and an advancing log or 
   const st = loadState(d.state);
   const text = id => lanesView({ items: { 'L:demo': { kind: 'lane', id: 'L:demo', state: 'active', data: {}, history: [], created: st.items[id].created, updated: st.items[id].created }, [id]: st.items[id] } },
     { hbAge: () => 300e3, hbLate: (_, r) => hbLate(d.state, r) })[0].text;
-  assert.match(text(a), /^running .* - heartbeat late \(300 s\)$/); assert.deepEqual(stateOf(text(a)), ['warn', 'heartbeat late']);
+  assert.match(text(a), /^running .* - heartbeat late \(300 s, output \d+ s ago\)$/); assert.deepEqual(stateOf(text(a)), ['warn', 'heartbeat late']);
   assert.equal(text(b), 'lost'); assert.deepEqual(stateOf(text(b)), ['lost', 'lost']);
   assert.deepEqual(liveRuns(d.state).map(r => r.id).sort(), [a, e].sort(), 'a late run still counts as live (caps, the lane writer gate)');
   assert.deepEqual(sweepLost(d.state).sort(), [b, c].sort());
