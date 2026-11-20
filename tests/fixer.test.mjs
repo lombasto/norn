@@ -165,6 +165,9 @@ test('norn fix start routes the fixer by the PROJECT policy (Settings, as the da
   fs.writeFileSync(findingsFile(state, dir.id), JSON.stringify({ rows: [{ id: 'I-1', key: 'k', path: 'CLAUDE.md', line: 2, why: 'w', action: 'a' }] }));
   assert.equal(run(['fix', 'start', dir.id, '--project', pf, '--state', state, '--budget', bf]), 0, e.join(' '));
   assert.match(o.join('\n'), /docs class [(]fake m-proj low[)]/, 'the project policy routes the docs class');
+  const sigs = fs.readdirSync(path.join(state, 'fixer')).filter(f => f.endsWith('.sigs.json'));
+  assert.equal(sigs.length, 1, 'each finding\'s fingerprint is written beside the brief');
+  assert.match(JSON.parse(fs.readFileSync(path.join(state, 'fixer', sigs[0]), 'utf8'))['I-1'], /^[0-9a-f]{12}$/);
 });
 
 test('norn fix start: another directive\'s fixer queued = refused before its brief is written (no orphan brief)', () => {

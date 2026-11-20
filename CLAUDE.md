@@ -14,12 +14,12 @@ These are tech debt. SloppaChoppa reports them as slop. If removing one really b
 
 ## Tests
 
+The testing rules (tiers, the run budget, load reds, quarantine, waiting on a test) are in docs/TESTING.md, the one full copy. Here only what is specific to this repo:
+
 - Run one file, or a few: `META_ROOT="$TEMP/emptyroot-<name>" node --test tests/<file>.test.mjs`. Create the empty folder first. `META_ROOT` keeps the tests away from this machine's live state.
 - Never run `node --test tests/`. It starts hundreds of processes at once.
-- Run the full suite with `node engine/bin/ci-suite.mjs`. It is slow; run it once before a merge, not in a loop.
+- In a run, the changed-file command is `node engine/bin/ci-suite.mjs --changed origin/main`; `norn tests for <file>` names the test files that cover a file. The full suite (`node engine/bin/ci-suite.mjs` without `--changed`) runs only in GitHub CI; Norn's scope hook refuses it in a run, even when a hand-off asks for it.
 - Every temp folder comes from `mkTmp` (tests/helpers/tmp.mjs); dashboard tests use tests/helpers/dash-fixture.mjs.
-- Under heavy load (several workers testing at once), browser and timing tests can time out. Rerun the file on its own before you call a failure real.
-- Wait for a long command by waiting on its exit, not by watching its log with `tail -f | grep`. `tail -f` never exits, so the watcher outlives you. If you need a watcher, make it end by itself (`timeout N`, `grep -m1`).
 
 ## Git
 
@@ -34,6 +34,6 @@ These are tech debt. SloppaChoppa reports them as slop. If removing one really b
 
 ## Dashboard
 
-- A dense tab has 3 or 4 sub-views (`subviewPage`). Don't add a fifth; fold the content into an existing one.
+- A page with views has 3 or 4 of them (`subviewPage`), switched on its title line. Don't add a fifth; fold the content into an existing one.
 - At 390 px wide (phone), no page may scroll sideways. Tests check this.
 - Every page has one name, used for its label, its id and its URL.

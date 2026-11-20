@@ -6,7 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONTEXT_SUBS, contextNumbers, standingRows, INS_PARTS } from '../engine/dash/insparts.mjs';
-import { TABS, NAV, ONE_PROJECT, renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
+import { TABS, ONE_PROJECT, renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
+import { MORE } from '../engine/dash/shell.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
@@ -32,7 +33,7 @@ const ROWS = Array.from({ length: 45 }, (_, i) => row(`f${i}`, `file-${i}.md`, i
 test('the tab is Context (label + URL id); the API route stays /api/instructions', () => {
   assert.ok(TABS.some(t => t[0] === 'context' && t[1] === 'Context')); assert.ok(!TABS.some(t => t[0] === 'instructions'));
   assert.ok(SERVER_TABS.includes('context') && !SERVER_TABS.includes('instructions'));
-  assert.ok(NAV.find(d => d[0] === 'health')[2].includes('context')); assert.ok(ONE_PROJECT.includes('context'));
+  assert.ok(MORE.find(g => g[0] === 'Health')[1].includes('context')); assert.ok(ONE_PROJECT.includes('context'));
   assert.deepEqual(CONTEXT_SUBS.map(x => x[0]), ['role', 'file', 'growing', 'checkins']);
   assert.deepEqual(CONTEXT_SUBS.map(x => x[1]), ['Per role', 'Per file', 'Is it growing?', 'Check-ins per day']);
 });
@@ -63,7 +64,7 @@ test('the default view: 4 numbers, 4 sub-views, Per role = what one session load
   const html = renderTab('context', { ...summary(), sub: 'role', parts_loading: false });
   assert.match(html, /id="context-sum"/); assert.equal((html.match(/class="subnum/g) || []).length, 4);
   assert.equal((html.match(/data-act="sub" data-sub="/g) || []).length, 4 + 1, '4 sub-view buttons + the one checks link');
-  assert.match(html, /id="context-sub-role"[^>]*aria-selected="true"/);
+  assert.match(html, /id="context-sub-role"[^>]*aria-pressed="true"/);
   assert.match(html, /id="ins-loads"/); assert.match(html, /id="ctx-roles"/);
   assert.equal((html.match(/<table/g) || []).length, 1, 'the two standing tables are one');
   assert.doesNotMatch(html, /id="ins-standing"/); assert.equal((html.match(/<h3>Standing context/g) || []).length, 1);

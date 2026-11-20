@@ -173,30 +173,16 @@ test('setup puts a `norn` shim in ~/.local/bin (design 3.5 "on PATH after setup"
   assert.equal(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), 'mine\n');
 });
 
-test('setup writes the `norn` launcher; `meta` (old name) beside it only on an upgrade: both run engine/bin/norn.mjs; a foreign `norn` is kept (META-RENAME R1, NAME-W2)', () => {
+test('setup writes only the `norn` launcher (norn.cmd beside it on Windows) and it runs engine/bin/norn.mjs (META-RENAME R1)', () => {
   const sb = sandbox();
   const bin = path.join(sb.home, '.local', 'bin');
-  // a fresh install: norn only, the old name never said
   const f = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
   assert.equal(f.code, 0, f.out + f.err);
   assert.match(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), /engine\/bin\/norn\.mjs/, 'norn runs norn.mjs');
-  for (const n of ['meta', 'meta.cmd']) assert.equal(fs.existsSync(path.join(bin, n)), false, `${n}: not on a fresh install`);
-  assert.doesNotMatch(f.out, /old name|\.local\/bin\/meta/);
-  // an upgrade: a meta launcher exists -> rewritten to the same entry as norn
-  fs.writeFileSync(path.join(bin, 'meta'), `#!/bin/sh\nexec "node" "${fwd(path.resolve(META, '..', '..', '..'))}/engine/bin/meta.mjs" "$@"\n`);
-  const r0 = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
-  assert.equal(r0.code, 0, r0.out + r0.err);
-  assert.equal(fs.readFileSync(path.join(bin, 'meta'), 'utf8'), fs.readFileSync(path.join(bin, 'norn'), 'utf8'), 'meta = the same entry');
-  if (WIN) assert.equal(fs.readFileSync(path.join(bin, 'meta.cmd'), 'utf8'), fs.readFileSync(path.join(bin, 'norn.cmd'), 'utf8'));
-  assert.match(r0.out, /^norn launcher: .*\/norn \(old name: meta\)/m);
-  for (const n of ['norn', 'meta']) {
-    const own = spawnSync(WIN ? path.join(bin, n + '.cmd') : path.join(bin, n), ['rec', 'list', '--state', path.join(sb.root, 'st')],
-      { env: { ...process.env, META_ROLE: 'owner' }, encoding: 'utf8', shell: WIN });
-    assert.equal(own.status, 0, n + ': ' + own.stderr);
-  }
-  fs.writeFileSync(path.join(bin, 'norn'), 'mine\n');
-  const r = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
-  assert.equal(r.code, 0); assert.equal(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), 'mine\n'); assert.match(r.out, /norn.*not a Norn launcher - kept/);
+  assert.deepEqual(fs.readdirSync(bin).sort(), WIN ? ['norn', 'norn.cmd'] : ['norn']);
+  const own = spawnSync(WIN ? path.join(bin, 'norn.cmd') : path.join(bin, 'norn'), ['rec', 'list', '--state', path.join(sb.root, 'st')],
+    { env: { ...process.env, META_ROLE: 'owner' }, encoding: 'utf8', shell: WIN });
+  assert.equal(own.status, 0, own.stderr);
 });
 
 // META-RENAME R1 bug (11-13 01:46Z): a merge worker ran `META_ROOT=<tmp> norn setup` in its worktree; HOME was the owner's, so setup
@@ -222,15 +208,6 @@ test('a launcher is never pointed at a linked git worktree: setup names the main
   assert.ok(fs.readFileSync(path.join(bin, 'norn'), 'utf8').includes(`${fwd(wt)}/engine/bin/norn.mjs`), 'with --force: written');
   installShim({ home, root: main, env: {}, out: () => {} });
   assert.match(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), /\/main\/engine\/bin\/norn\.mjs/, 'the main checkout takes over a launcher whose worktree is gone or ours');
-});
-
-test('a launcher of THIS install written before the rename (names engine/bin/meta.mjs) is rewritten to norn.mjs', async () => {
-  const { installShim } = await import('../engine/lib/setup.mjs');
-  const t = mkTmp('meta-shimold-'), home = path.join(t, 'home'), main = fakeInstall(t), bin = path.join(home, '.local', 'bin');
-  fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(path.join(bin, 'meta'), `#!/bin/sh\nexec "node" "${fwd(main)}/engine/bin/meta.mjs" "$@"\n`);
-  installShim({ home, root: main, platform: 'linux', env: {}, out: () => {} });
-  for (const n of ['meta', 'norn']) assert.match(fs.readFileSync(path.join(bin, n), 'utf8'), /\/engine\/bin\/norn\.mjs/, n);
 });
 
 // SHIP-READY R1 (a stranger's Windows install): the "not on PATH" hint was sh syntax (alias norn='...') on Windows too, where
@@ -294,28 +271,4 @@ test('doctor: a missing required tool is a PROBLEM with its install line (exit 1
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /^PROBLEM claude: .* does not exist \(rerun norn setup\)\r?\n {2}install: /m);
   if (installLine('claude')) assert.ok(r.out.includes('  install: ' + installLine('claude')), r.out);
-});
-
-test('META-ONBOARD cut-over expand: doctor notes pending compatibility paths (not a problem) until --contract removes them', () => {
-  const sb = sandbox(); const f = project(sb);
-  assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
-  fs.writeFileSync(path.join(sb.root, 'local', 'compat.json'), JSON.stringify({ swap: '2026-11-11T17:00:00.000Z', runs: ['demo RUN-7'],
-    paths: [{ from: '/old/demo/project.json', to: f.split(path.sep).join('/') }], retained: ['/old/demo/project.json', '/old/HELPERS.txt'] }, null, 2));
-  const r = sb.run('doctor');
-  assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, /^doctor: ok/m);
-  assert.match(r.out, /^note compat: 2 retained pre-swap path\(s\) \+ 1 project alias\(es\) since 2026-11-11T17:00:00\.000Z \(pre-swap runs: demo RUN-7\) - remove with onboard-cutover\.mjs --contract once none is live$/m);
-});
-
-test('META-NAME-W3: doctor names a project.json / template still using ${meta} / {{meta}} with the one-line fix; it still loads', () => {
-  const sb = sandbox(); const f = project(sb);
-  const extra = path.join(sb.root, 'projects', 'demo', 'extra.md');
-  fs.writeFileSync(extra, 'run {{meta}} status\n');
-  const o = JSON.parse(fs.readFileSync(f, 'utf8')); fs.writeFileSync(f, JSON.stringify({ ...o, checkin_extra: '${meta}/projects/demo/extra.md' }));
-  assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
-  let r = sb.run('doctor'); assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, /^ok project demo /m);
-  const pj = fwd(path.resolve(f)), ex = fwd(path.resolve(extra));
-  assert.ok(r.out.includes(`note demo: ${pj} uses the old variable name \${meta} (still resolves) - fix: replace \${meta} with \${norn}`), r.out);
-  assert.ok(r.out.includes(`note demo: ${ex} uses the old variable name {{meta}} (still resolves) - fix: replace {{meta}} with {{norn}}`), r.out);
-  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replaceAll('${meta}', '${norn}')); fs.writeFileSync(extra, 'run {{norn}} status\n');
-  r = sb.run('doctor'); assert.equal(r.code, 0, r.out); assert.doesNotMatch(r.out, /old variable name/);
 });

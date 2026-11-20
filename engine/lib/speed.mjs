@@ -3,14 +3,15 @@
 //   the fold   onSpeed folds a Claude transcript (read by agents.mjs tail/tailA under its own cache key: the byte-offset cache, no second
 //              reader) into its model requests (start = the CLI's `api-request` line the assistant lines name by requestRef, else the last
 //              user line before it; end = the request's last assistant line; output tokens = its usage, counted once) and, through
-//              progress.mjs onWork, its tool calls (tool_use -> tool_result, test commands told apart by the same TEST_RE).
+//              progress.mjs onWork, its tool calls (tool_use -> tool_result, test commands told apart by testcmd.mjs isTest, the one classifier).
 //   speedOf    one window of a fold: output tok/s of model time, the wall split model / tools / tests / idle, tokens per wall hour.
 //   load       workersDuring = the worker runs running at once (this one included) over a window, from the run records; cpuDuring = the
 //              CPU samples runs.mjs keeps (<norn>/local/cpu.jsonl: the fill gate's and the dash's, no sampler of its own).
 //   report     speedReport: one row per worker run that ended in the last N hours, then the hours grouped by workers running.
 import { tail, tailA, endedAt, findTranscript } from './agents.mjs';
 import { findTranscriptA } from './harness/claude.mjs';
-import { workInit, onWork, TEST_RE } from './progress.mjs';
+import { workInit, onWork } from './progress.mjs';
+import { isTest } from './testcmd.mjs';
 import { median } from './plan.mjs';
 import { fromUsage } from './cost.mjs';
 
@@ -53,7 +54,7 @@ export function speedOf(c, { from, to }) {
   const reqs = [...c.msgs.values()].filter(x => x.end >= from && x.end <= to && Number.isFinite(x.start) && x.start <= x.end);
   const gen = reqs.reduce((s, x) => s + (x.end - x.start), 0), out = reqs.reduce((s, x) => s + x.out, 0), ctx = reqs.reduce((s, x) => s + x.ctx, 0);
   const M = reqs.map(x => [x.start, x.end]);
-  const calls = [...c.work.calls.map(x => ({ kind: x.kind, a: ms(x.ts), b: ms(x.end) })), ...Object.values(c.work.open).map(x => ({ kind: /^(Bash|PowerShell)$/.test(x.name) && TEST_RE.test(String(x.cmd ?? '')) ? 'test' : 'open', a: ms(x.ts), b: to }))]
+  const calls = [...c.work.calls.map(x => ({ kind: x.kind, a: ms(x.ts), b: ms(x.end) })), ...Object.values(c.work.open).map(x => ({ kind: /^(Bash|PowerShell)$/.test(x.name) && isTest(String(x.cmd ?? '')) ? 'test' : 'open', a: ms(x.ts), b: to }))]
     .filter(x => Number.isFinite(x.a) && Number.isFinite(x.b));
   const T = calls.map(x => [x.a, x.b]), Tt = calls.filter(x => x.kind === 'test').map(x => [x.a, x.b]);
   const wall = Math.max(0, to - from), model = unionMs(M, from, to), busy = unionMs([...M, ...T], from, to);

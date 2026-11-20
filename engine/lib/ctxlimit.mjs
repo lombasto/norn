@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { POLICY_DEFAULTS, withDefaults, merged } from './policy.mjs';
-import { loadProject, compatTarget } from './config.mjs';
+import { loadProject } from './config.mjs';
 import { usageCtx, findTranscript } from './harness/claude.mjs';
 
 export { usageCtx };
@@ -60,7 +60,7 @@ export function transcriptCtx(file) {
 /** the CURRENT context policy of a launch spec: its project.json (spec.ctx_from) read now; none (no ctx_from, or no such file) = the
  *  defaults. A launch with no project file (a check-in, a test) still starts and records its marks (RUN-188); a broken file still throws */
 export function specPolicy(spec) {
-  if (!spec?.ctx_from || !fs.existsSync(compatTarget(spec.ctx_from))) return {};
+  if (!spec?.ctx_from || !fs.existsSync(spec.ctx_from)) return {};
   return loadProject(spec.ctx_from).policy || {};
 }
 

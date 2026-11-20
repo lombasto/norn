@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { record } from '../engine/lib/records.mjs';
-import { pauseMenu, pauseAct, renderTab } from '../engine/dash/ui.mjs';
+import { pauseMenu, renderTab } from '../engine/dash/ui.mjs';
+import { pauseAct } from '../engine/dash/cells.mjs';
 import { PAUSE_MODES } from '../engine/lib/pausemode.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -75,7 +76,7 @@ test('the pause menu fits a phone and a mode tap sets the mode', async t => {
     const pg = await openPage([390, 844]);
     try {
       await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-      await pg.go(`${f.url}/?project=kestrel&tab=overview`);
+      await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
       assert.ok(await pg.until(`document.querySelector('[data-act=more]')`, 60000));
       await pg.ev(`document.querySelector('[data-act=more]').click()`);
       await pg.ev(`document.querySelector('#pause').click()`);

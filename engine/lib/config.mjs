@@ -1,5 +1,5 @@
 // project.json / machine.json loading (META-GENERAL-DESIGN 4.2 / 4.3): schema check, then ${var} expansion with cycle detection.
-// Builtins: home, norn (engine root; `meta` = its read-only old name, META-NAME-W3), name, root, state (= ${norn}/state/<name>), dev (default: parent of root; a project var may set it),
+// Builtins: home, norn (engine root), name, root, state (= ${norn}/state/<name>), dev (default: parent of root; a project var may set it),
 // project_dir (the directory of the project.json: a project's own files, wherever it lives - META-ONBOARD 3.2).
 // ${lane} is late-bound (lane_defaults): it survives loading and is filled by expandLate at use.
 import fs from 'node:fs';
@@ -33,13 +33,9 @@ export function realPath(p) {
 export const pathKey = p => { const a = fwd(realPath(p)).replace(/(.)\/+$/, '$1'); return process.platform === 'win32' ? a.toLowerCase() : a; };
 export const metaRoot = (env = process.env) => fwd(env.META_ROOT || path.resolve(ENGINE, '..'));
 export const homeDir = () => fwd(os.homedir());
-const BUILTINS = ['home', 'norn', 'meta', 'state', 'name', 'root', 'lane', 'project_dir'];
+const BUILTINS = ['home', 'norn', 'state', 'name', 'root', 'lane', 'project_dir'];
 const LATE = ['lane'];
 const VAR = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
-// META-NAME-W3 (DEC-257): the old names of the engine-root variable; they keep resolving, `norn doctor` names a file still using one
-const OLD_NAMES = ['${meta}', '{{meta}}'];
-/** the old variable names a config / template text still uses (each once, in OLD_NAMES order) */
-export const oldNameUses = text => OLD_NAMES.filter(o => String(text ?? '').includes(o));
 
 // JSON-schema subset: type (incl. lists, "integer"), enum, required, properties, additionalProperties (bool | schema), items, minimum, pattern.
 export function validate(schema, v, at = '$') {
@@ -118,24 +114,11 @@ export function checkProject(obj, label = 'project.json') {
   if (pe.length) throw new ConfigError(`${label}: ${pe.join('; ')}`);
 }
 
-// META-ONBOARD cut-over EXPAND: <meta>/local/compat.json { swap, runs, paths: [{ from, to }], retained } maps a pre-swap project.json
-// path to its new home, so a run started before the swap (its exit tick, its resume, a command it types) loads the project from the
-// new layout. Its own file (not machine.json): it names the old paths on purpose, outside the stale-reference proof; --contract deletes it.
-export const compatFile = (meta = metaRoot()) => path.join(meta, 'local', 'compat.json');
-export function readCompat(meta = metaRoot()) { try { return JSON.parse(fs.readFileSync(compatFile(meta), 'utf8')); } catch { return null; } }
-export function compatTarget(file, meta = metaRoot()) {
-  const c = readCompat(meta);
-  const key = p => { const s = fwd(path.resolve(p)); return process.platform === 'win32' ? s.toLowerCase() : s; };
-  const hit = (c?.paths || []).find(x => key(x.from) === key(file));
-  return hit ? hit.to : file;
-}
-
 export function loadProject(file, { home = homeDir(), meta = metaRoot() } = {}) {
-  file = compatTarget(file, meta);
   const { label, obj: raw } = readJson(file);
   const obj = withPresets(raw, label);
   checkProject(obj, label);
-  const vars = { ...obj.vars, home: fwd(home), norn: fwd(meta), meta: '${norn}', name: obj.name, root: obj.root, state: '${norn}/state/${name}', project_dir: fwd(path.dirname(path.resolve(file))) };
+  const vars = { ...obj.vars, home: fwd(home), norn: fwd(meta), name: obj.name, root: obj.root, state: '${norn}/state/${name}', project_dir: fwd(path.dirname(path.resolve(file))) };
   if (!Object.hasOwn(vars, 'dev')) vars.dev = get => get('root').replace(/\/+$/, '').replace(/\/[^/]*$/, '');
   const exp = resolver(vars, LATE);
   let out;
@@ -149,7 +132,7 @@ export function loadMachine(file, { home = homeDir(), meta = metaRoot() } = {}) 
   const { label, obj } = readJson(file);
   const errs = validate(MACHINE_SCHEMA, obj).map(e => (MOVED_SLOTS.some(k => e === `$.${k} is not allowed`) ? `${e} - run \`norn migrate\`` : e));
   if (errs.length) throw new ConfigError(`${label}: ${errs.join('; ')}`);
-  const exp = resolver({ home: fwd(obj.home || home), norn: fwd(meta), meta: '${norn}' }, []);
+  const exp = resolver({ home: fwd(obj.home || home), norn: fwd(meta) }, []);
   try { return walk(obj, exp); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
 }
 
