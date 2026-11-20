@@ -54,8 +54,9 @@ test('every tab renders with fixture state: ids from records / runs / transcript
     const rowOf = k => out.settings.slice(out.settings.indexOf(`id="set-${k}"`)).split('<div class="srow')[0];
     assert.match(rowOf('max_claude_workers'), /class="tag"[^>]*>machine</, 'machine key tagged machine');
     assert.match(rowOf('policy.critical_lanes'), /class="tag"[^>]*>project</, 'policy key tagged project');
-    // one accent colour = "needs you": only Inbox uses the accent button
-    for (const t of ['lanes', 'runs', 'records', 'docs', 'ledger', 'settings']) assert.ok(!out[t].includes('class="primary"'), `${t}: no accent button`);
+    // one accent colour = "needs you": Inbox, and on Lanes only a row's first action (its way out of the group, SPEC 4.2 item 2)
+    for (const a of out.lanes.split('<div class="rowacts">').slice(1).map(x => x.split('</div>')[0])) assert.ok(!a.includes('class="primary"') || /^<(button|a) class="(btn )?primary"/.test(a), `lanes: the accent only on a row's first action: ${a}`);
+    for (const t of ['runs', 'records', 'docs', 'ledger', 'settings']) assert.ok(!out[t].includes('class="primary"'), `${t}: no accent button`);
   } finally { await f.done(); }
 });
 
@@ -103,7 +104,6 @@ test('phone width (<= 700 px, both looks): the header wraps, the project select 
   assert.match(rule('header select'), /min-width:0/); assert.match(rule('header select'), /max-width:100%/);
   assert.match(rule('.pagebar'), /position:fixed/, 'the page bar sits at the bottom'); assert.match(rule('.pagebar>a'), /flex:1;min-width:0/, 'its 5 items share the width');
   assert.match(phone, /\.card,\.tablecard\{[^}]*min-width:0[^}]*overflow-x:auto/, 'wide tables scroll inside their card');
-  assert.match(css, /@media \(max-width:700px\)\{\.mapwrap\{min-width:0;overflow-x:auto\}\}/, 'and the map inside its frame');
   assert.match(rule('.srow'), /grid-template-columns:minmax\(0,1fr\)/, 'setting rows stack');
   assert.ok(!/(?:html|body)[^{]*\{[^}]*overflow(?:-x)?:(?:hidden|clip)/.test(css), 'no overflow mask on html / body');
 });
@@ -133,7 +133,7 @@ const pressed = h => [...h.matchAll(/data-rm-scope="(\w+)" aria-pressed="(true|f
 const views = h => [...h.matchAll(/data-rm-view="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 
 test('roadmap tab: in More under Plan (stage NAV); one-project tab; the view switch Tree / Board, Tree the default', () => {
-  assert.deepEqual(MORE.find(g => g[0] === 'Plan')[1], ['roadmap', 'plan', 'map']);
+  assert.deepEqual(MORE.find(g => g[0] === 'Plan')[1], ['roadmap', 'plan']);
   assert.deepEqual(RM_VIEWS.map(v => v[0]), ['tree', 'board']);
   const h = rmRender(); clean(h, 'roadmap');
   assert.ok(h.includes('id="panel-roadmap"')); assert.deepEqual(views(h), ['tree:true', 'board:false'], 'the switch, Tree pressed by default');

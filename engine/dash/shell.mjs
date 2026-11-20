@@ -76,7 +76,7 @@ export const PAGE_KEYS = {
   lanes: ['records', 'runs', 'deliverables', 'derived'], runs: ['runs', 'records', 'derived'], inbox: ['records', 'runs', 'deliverables', 'derived', 'state'],
   talk: ['records', 'runs', 'state'], usage: ['records', 'runs', 'derived'], slop: ['derived'], tests: ['runs', 'derived'], context: ['derived'],
   records: ['records'], ledger: ['derived'], docs: ['derived'], roadmap: ['records', 'runs', 'deliverables'], plan: ['records', 'runs'],
-  map: ['records', 'runs'], settings: ['derived', 'state'], adopt: ['records', 'derived'],
+  settings: ['derived', 'state'], adopt: ['records', 'derived'],
 };
 /** a stream event -> its keys */
 export function keysOf(ev, data = {}) {

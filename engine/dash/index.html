@@ -232,11 +232,9 @@ async function render(force = false, why = []) {
       if (d.version === S.setVersion) { err(''); return; }
       if (S.setDirty) { err('Settings changed elsewhere: Discard to reload (saving these edits would be refused, 409).'); return; }
     }
-    const mw = $('.mapwrap'), keep = mw ? [mw.scrollLeft, mw.scrollTop] : null;   // a re-render keeps the map's pan position
     step('render:paint ' + S.tab); S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
     if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs' || S.tab === 'tests') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
     if (S.tab === 'docs' && S.docScroll && $('#main [data-focus]')) { S.docScroll = false; $('#main [data-focus]').scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card / a finding opens its line
-    if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) { box.value = S.find; draftNote(box); } S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
@@ -550,7 +548,7 @@ document.addEventListener('keydown', e => {
     pip.style.left = Math.max(0, Math.min(innerWidth - r.width, e.clientX - drag.dx)) + 'px'; pip.style.top = Math.max(0, Math.min(innerHeight - 40, e.clientY - drag.dy)) + 'px'; pip.style.right = 'auto'; pip.style.bottom = 'auto'; });
   $('#dvpip-bar').addEventListener('pointerup', () => { drag = null; }); }
 matchMedia('(max-width:600px)').addEventListener('change', () => { if (!$('#dvpip').hidden) dvPaint(); });
-// ---- deliverable drawer (DELIVERABLES-SPEC 3): the card's Open button and the map band pill ----
+// ---- deliverable drawer (DELIVERABLES-SPEC 3): the card's Open button ----
 async function openDlv(project, id) {
   closeFeed(); $('#rmed').hidden = true; $('#dlv').hidden = false; $('#dlv-body').innerHTML = '<span class="small mute">loading ...</span>';
   try { const r = await (await fetch(`/api/deliverables?project=${encodeURIComponent(project || S.project)}`)).json();
