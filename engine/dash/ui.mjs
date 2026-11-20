@@ -56,12 +56,16 @@ const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve
 // META-UX-BUILD S4: Context (the Instructions view's cost half) - the parts its sub-view needs (contextParts), of one view (project + scan
 // time + sub); its route stays /api/instructions (the Norn vocabulary rule: routes stay, labels and the URL tab move).
 // TESTS-RUNTIME: Tests - the chosen sub-view's part; Impact's pick rides in batch ('files:a,b' | 'lane:<name>')
-const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub] };
-const PART_API = { context: 'instructions', slop: 'guard' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
-export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
+// Stage RUNS: Runs paints the live part (running + queue) first; its one part is the history (the ended runs in the window), keyed by
+// the live answer's time so a stream repaint fetches it afresh
+const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub], runs: () => ['history'] };
+const PART_API = { context: 'instructions', slop: 'guard', runs: 'agents' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
+const runsWin = w => (w && w !== '2h' ? `&window=${w}` : '');
+export const partsKey = (tab, project, d) => (tab === 'runs' ? `${project}|${d.window}|${d.at}` : tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
 export async function loadParts(tab, project, d, get) {
   const pick = b => (b.startsWith('lane:') ? `&lane=${encodeURIComponent(b.slice(5))}` : `&files=${encodeURIComponent(b.slice(6))}`);
   const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}` : '';
+  if (tab === 'runs') return { ended: (await get(`/api/agents?${q}&part=history${runsWin(d.window)}`)).tree };   // the Ended band (its own key: `tree` is the live part's)
   const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
 }
@@ -80,7 +84,10 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return get(`/api/lanes?${q}`);
   if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
-  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}${ctx.runsWindow && ctx.runsWindow !== '2h' ? '&window=' + ctx.runsWindow : ''}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
+  if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (Plan's up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
+    const [a, plan, guard] = await Promise.all([get(`/api/agents?${q}&part=live${runsWin(ctx.runsWindow)}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null), guardGet(get, q, all)]);
+    const old = ctx.parts?.runs, ended = old && old.key.startsWith(`${project}|${a.window}|`) ? old.data.ended : undefined;
+    return { ...a, plan, guard, ended, parts_loading: true }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
     const d = await get(`/api/roadmap?${q}`);

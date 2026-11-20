@@ -213,7 +213,7 @@ const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = routeTab(q.get('tab'));
   if (q.get('project') !== S.project) return;
-  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; if (!S.run && !$('#feed').hidden) closeFeed(); S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
+  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -239,15 +239,14 @@ async function render(force = false, why = []) {
     }
     const mw = $('.mapwrap'), keep = mw ? [mw.scrollLeft, mw.scrollTop] : null;   // a re-render keeps the map's pan position
     step('render:paint ' + S.tab); S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
-    if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs' || S.tab === 'tests') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
+    if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs' || S.tab === 'tests' || S.tab === 'runs') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
     if (S.tab === 'docs' && S.docScroll && $('#main [data-focus]')) { S.docScroll = false; $('#main [data-focus]').scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card / a finding opens its line
     step('render:map'); if ($('#map-host')) await mountMap(d); else dropMap();
     if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) { box.value = S.find; draftNote(box); } S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
-    if (S.tab === 'runs' && S.run && (F.run !== S.run || $('#feed').hidden)) openFeed(S.project, S.run);   // the run URL: ?tab=runs&run=RUN-n
-    step('render:finish'); fxPaint(); recFit(); proseFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
+    step('render:finish'); fxPaint(); recFit(); proseFit(); applyFilters(); ORC.place(); err(''); step('ready');
     document.body.dataset.ready = S.tab;   // the ready signal: this tab's data is fetched and painted (tests wait on it, not on a clock)
   } catch (e) { err('Refresh failed: ' + e.message); document.body.dataset.ready = 'error'; }
 }
@@ -291,8 +290,10 @@ function paintMain(d) {
   const home = S.tab === 'talk' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  $('#main').innerHTML = renderTab(S.tab, d, { strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  const rs = S.tab === 'runs' ? ['.runs-list', '#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run's panes keep their scroll (the same run's document only), a focused row its focus
+  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, narrow: runsNarrow(), strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
   draftsRestore(keep);
+  mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
   if (lcard) document.getElementById(lcard)?.querySelector('.lhov > :first-child')?.focus();
   if (form) {
@@ -489,18 +490,21 @@ document.addEventListener('change', e => {
   // MERGE-FIRST: Plan > Up next - a queued run re-queued at the priority picked (its after: conditions kept)
   if (e.target.matches('[data-act="prio"]')) { const d = e.target.dataset; act(() => post('/api/requeue', { project: d.project, run: d.run, priority: e.target.value })); }
 });
-// ---- the live feed drawer: pages/runs-feed.mjs (its markup and script) ----
-const { F, narrow, openFeed, closeFeed, markFeed } = createFeed({ $, onClose: () => { NM?.map.select(null); if (S.run) { S.run = null; history.replaceState(null, '', tabUrl()); } } });
+// ---- the run document's live feed: pages/runs-feed.mjs (a live run that hands off opens the next run) ----
+const { F, mountFeed } = createFeed({ onFollow: (p, r) => feedGo(p, r) });
+// stage RUNS: under ~1100 px the list and the run are two screens; crossing the line repaints Runs from its last data
+const runsNarrow = () => matchMedia('(max-width:1100px)').matches;
+matchMedia('(max-width:1100px)').addEventListener('change', () => { if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
 const ACTS = { ...laneActs, ...runActs };
-const C = { S, render: () => render(), post, $, go: g => goTo(g), act, tabUrl, lanesRepaint, runsRepaint, openFeed, feedGo: (p, r) => feedGo(p, r), map: () => NM };
+const C = { S, render: () => render(), post, $, go: g => goTo(g), act, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r), map: () => NM };
 // ---- roadmap edit drawer (META-ROADMAP S3): a row's / theme's "..." or + Add opens it; each action = one POST /api/roadmap/<op>
 // (the page token, one record by dashboard). The reply's tree repaints the tab and the drawer at once; every other tab gets the
 // append through the state stream. A 409 (the item or the order moved on) says so and offers Reload: nothing was written. ----
 const RE = { id: null };
 const rmMsg = (t, bad) => { const m = $('#rmed-msg'); m.textContent = t; m.className = 'small' + (bad ? ' bad' : ''); };
 function paintRmEd() { if (RE.id && !$('#rmed').hidden) $('#rmed-body').innerHTML = renderRmEditor(S.rmData, RE.id, { theme: S.rm.theme || null }); }
-function openRmEd(id) { closeFeed(); $('#dlv').hidden = true; RE.id = id; $('#rmed').hidden = false; rmMsg(''); paintRmEd(); $('#rmed [data-rme]')?.focus(); }
+function openRmEd(id) { $('#dlv').hidden = true; RE.id = id; $('#rmed').hidden = false; rmMsg(''); paintRmEd(); $('#rmed [data-rme]')?.focus(); }
 $('#rmed-close').onclick = () => { $('#rmed').hidden = true; RE.id = null; };
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#rmed').hidden) { $('#rmed').hidden = true; RE.id = null; } });
 document.addEventListener('click', async e => {
@@ -581,7 +585,7 @@ document.addEventListener('keydown', e => {
 matchMedia('(max-width:600px)').addEventListener('change', () => { if (!$('#dvpip').hidden) dvPaint(); });
 // ---- deliverable drawer (DELIVERABLES-SPEC 3): the card's Open button and the map band pill ----
 async function openDlv(project, id) {
-  closeFeed(); $('#rmed').hidden = true; $('#dlv').hidden = false; $('#dlv-body').innerHTML = '<span class="small mute">loading ...</span>';
+  $('#rmed').hidden = true; $('#dlv').hidden = false; $('#dlv-body').innerHTML = '<span class="small mute">loading ...</span>';
   try { const r = await (await fetch(`/api/deliverables?project=${encodeURIComponent(project || S.project)}`)).json();
     $('#dlv-body').innerHTML = renderDeliverable((r.rows || []).find(x => x.id === id && (!project || x.project === project)), { now: Date.now() }); }
   catch (err) { $('#dlv-body').textContent = String(err); }
@@ -590,7 +594,7 @@ $('#dlv-close').onclick = () => { $('#dlv').hidden = true; };
 // ---- TESTS-RUNTIME: the code viewer drawer - a test's file, read-only, highlighted, every line numbered, scrolled to the test's line.
 // The server opens only a file inside the project repo (/api/tests/source, lib/testtimes.repoFile).
 async function openSrc(file, line) {
-  closeFeed(); $('#dlv').hidden = true; $('#rmed').hidden = true; $('#srcview').hidden = false; $('#srcview-head').innerHTML = codeHead({ file, lines: '...', line }); $('#srcview-body').innerHTML = '<span class="small mute">loading ...</span>';
+  $('#dlv').hidden = true; $('#rmed').hidden = true; $('#srcview').hidden = false; $('#srcview-head').innerHTML = codeHead({ file, lines: '...', line }); $('#srcview-body').innerHTML = '<span class="small mute">loading ...</span>';
   try { const r = await get(`/api/tests/source?project=${encodeURIComponent(S.project)}&file=${encodeURIComponent(file)}`); $('#srcview-head').innerHTML = codeHead({ file: r.file, lines: r.lines, line }); $('#srcview-body').innerHTML = codeView({ file: r.file, text: r.text, line });
     $('#srcview-body [data-focus]')?.scrollIntoView({ block: 'center' }); }
   catch (e) { $('#srcview-body').textContent = String(e.message || e); }
@@ -605,9 +609,10 @@ document.addEventListener('click', e => { const dv = e.target.closest?.('[data-d
 document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; const h = document.activeElement?.closest?.('.lhov') ?? document.querySelector('.lhov:hover');
   if (h) { h.classList.add('shut'); document.activeElement?.blur?.(); h.addEventListener('mouseleave', () => h.classList.remove('shut'), { once: true }); } });
 document.addEventListener('focusin', e => e.target.closest?.('.lhov')?.classList.remove('shut'));
-// NORN-UI-NAV: one run URL - every Feed link (Lanes, Inbox, Talk) goes to ?tab=runs&run=RUN-n, which opens the drawer there
-const feedGo = (project, run) => { if (project && project !== S.project) { openFeed(project, run); return; } S.tab = 'runs'; S.run = run; S.sub = null; history.pushState(null, '', tabUrl()); render(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#feed').hidden) closeFeed();
+// NORN-UI-NAV: one run URL - every Feed link (Lanes, Inbox, Talk) goes to ?tab=runs&run=RUN-n, the run's document on Runs (a run of
+// another project switches to it; the all-projects view stays)
+const feedGo = (project, run) => { if (project && S.project !== 'all' && project !== S.project) { S.project = project; $('#project').value = project; openStream(); } S.tab = 'runs'; S.run = run; S.sub = null; history.pushState(null, '', tabUrl()); render(); };
+document.addEventListener('keydown', e => {
   const fd = e.target.closest?.('[data-feed]'); if (fd && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); feedGo(fd.dataset.project, fd.dataset.feed); } });
 document.addEventListener('click', e => {
   const ab = e.target.closest('[data-act]'), af = ab && ACTS[ab.dataset.act]; if (af) { af(ab, C); return; }
@@ -631,7 +636,7 @@ document.addEventListener('click', e => {
   if (d.act === 'chat-default') { act(async () => { await pickNow(); await post('/api/chat/default', { project: S.project }); }); return; }
   if (d.act === 'open-setting') { S.pickOpen = false; S.tab = 'settings'; S.setQ = d.setting; S.jump = 'set-' + d.setting; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=settings&setq=${encodeURIComponent(d.setting)}`); render(); return; }
   if (d.act === 'chat-send') { chatSend(); return; }
-  if (d.act === 'feed-doc') { if (narrow()) closeFeed(); if (F.project && F.project !== S.project) { S.project = F.project; $('#project').value = S.project; openStream(); } goTo({ tab: 'docs', path: d.path }); return; }   // RM-36: a file the run touched opens in the Docs reader
+  if (d.act === 'feed-doc') { if (F.project && F.project !== S.project) { S.project = F.project; $('#project').value = S.project; openStream(); } goTo({ tab: 'docs', path: d.path }); return; }   // RM-36: a file the run touched opens in the Docs reader
   // C3: an approval card's tap and a done card's Undo - straight to the records as the owner, no model in between
   if (d.act === 'approve') { act(() => post('/api/chat/approve', { project: p, id: d.id, verdict: d.verdict })); return; }
   if (d.act === 'undo' && confirm('Undo this?')) { act(() => post('/api/chat/undo', { project: p, line: Number(d.line) })); return; }

@@ -155,7 +155,7 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   assert.equal(bad.status, 2); assert.match(bad.stderr, /usage: norn plan/);
 });
 
-test('ui: Plan sits in More; Runs has no queue table (a queued run is a tree row); Plan renders sections, all-projects groups and plain-words empty states; its forecast renders on Usage', async () => {
+test('ui: Plan sits in More; Runs shows the queue as its Queued band (stage RUNS: a queued run is a row there, no table); Plan renders sections, all-projects groups and plain-words empty states; its forecast renders on Usage', async () => {
   const { TABS, renderTab } = await import('../engine/dash/ui.mjs');
   const { MORE } = await import('../engine/dash/shell.mjs');
   const { forecastCard } = await import('../engine/dash/pages/plan.mjs');
@@ -164,8 +164,8 @@ test('ui: Plan sits in More; Runs has no queue table (a queued run is a tree row
   assert.ok(TABS.some(t => t[0] === 'plan') && SERVER_TABS.includes('plan'));
   const queue = [{ id: 'RUN-4', position: 1, lane: 'qlane', state: 'queued', project: 'demo' }];
   const ag = renderTab('runs', { tree: [], queue }, { project: 'demo' });
-  assert.ok(!/Queued|<table/.test(ag), 'no queue table on Runs: the queue detail is on Plan');
-  assert.match(ag, /class="node lvl0" id="node-RUN-4"[^]*?qlane/, 'the queued run is a row of the tree (owner 2026-11-19)');
+  assert.ok(!/<table/.test(ag), 'no queue table on Runs');
+  assert.match(ag, /<section class="rband" id="runs-queued"[^]*?<div class="rrow queued" id="node-RUN-4"[^]*?qlane/, 'the queued run is a row of the Queued band (SPEC stage RUNS)');
   const empty = renderTab('plan', { parts: [buildPlan({ project: 'demo', now: NOW })] }, { project: 'demo', now: NOW });
   for (const s of ['id="panel-plan"', 'Up next', 'Nothing is waiting to start.', 'Chains', 'No queued run waits for another run.', 'Landing next', 'Nothing is heading to main.']) assert.ok(empty.includes(s), s);
   assert.ok(!empty.includes('pl-fc'), 'the forecast left Plan (stage NAV: it is on Usage)');

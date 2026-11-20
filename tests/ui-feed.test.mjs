@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadTab, renderTab } from '../engine/dash/ui.mjs';
+import { loadTab, loadParts, renderTab } from '../engine/dash/ui.mjs';
 import { renderFeedHead, renderFeedEvent } from '../engine/dash/cells.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { dashCss } from './helpers/dash-css.mjs';
@@ -36,17 +36,18 @@ test('Agents rows of runs open the feed (data-feed); subagents and talk sessions
   const f = await fixture();
   try {
     const get = async p => (await f.get(p)).data;
-    const html = renderTab('runs', await loadTab('runs', 'kestrel', get), { project: 'kestrel' });
+    const d = await loadTab('runs', 'kestrel', get), html = renderTab('runs', { ...d, ...await loadParts('runs', 'kestrel', d, get), parts_loading: false }, { project: 'kestrel' });   // the live part + its history part (the ended RUN-1)
     assert.match(html, /id="node-RUN-1"[^>]*data-feed="RUN-1"/); assert.match(html, /data-feed="RUN-2"/);
     assert.ok(!/data-feed="(?!RUN-)/.test(html), 'only runs');
   } finally { await f.done(); }
 });
 
-test('shell: the drawer sits outside #main, one EventSource on /api/feed, closed on end / close; follow toggle; Esc closes', () => {
+test('shell: the feed is one section the module owns, mounted into the run document slot after each paint; one EventSource on /api/feed, closed on end; follow toggle', () => {
   const page = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8'), mod = fs.readFileSync(path.join(DASH, 'pages', 'runs-feed.mjs'), 'utf8'), html = page + mod + dashCss();
-  assert.ok(/id="feed"/.test(mod) && mod.includes("$('#main').insertAdjacentHTML('afterend', FEED_HTML)") && !page.includes('id="feed"'), 'the drawer is built after #main: not re-rendered by the 15 s tick');
+  assert.ok(mod.includes("box.id = 'run-feed'") && mod.includes('slot.replaceWith(box)') && !page.includes('id="feed"') && !page.includes('id="run-feed"'), 'the section lives outside the page markup: a re-render of #main never rebuilds it');
+  assert.ok(page.includes('mountFeed()'), 'paintMain mounts it');
   assert.match(html, /new EventSource\(`\/api\/feed\?/);
   assert.match(html, /addEventListener\('end'/); assert.match(html, /\.close\(\)/);
-  assert.match(html, /id="feed-follow"/); assert.match(html, /Escape/);
+  assert.match(html, /id="feed-follow"/);
   assert.ok(!/animation\s*:|transition\s*:|@keyframes/.test(html), 'no animation');
 });

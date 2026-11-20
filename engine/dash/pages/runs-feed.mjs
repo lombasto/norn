@@ -1,47 +1,48 @@
-// The live feed drawer (moved verbatim from index.html, stage NAV; stage RUNS replaces it with the run document at ?tab=runs&run=RUN-n).
-// It builds its own markup (outside #main, so a stream re-render never wipes it). createFeed(c): c = { $, onClose } (onClose: the Map's
-// selection goes with the drawer); returns { F, narrow, openFeed, closeFeed, markFeed }.
+// The run document's live feed (stage RUNS: it replaces the feed drawer). The module owns one detached <section id="run-feed">: a
+// paint of #main drops the document, and mountFeed() puts the same section back into the new document's #run-feed-slot, so the
+// stream, the activity view and the event list outlive every re-render. createFeed(c): c = { onFollow(project, run) } (a live run
+// that hands off: open the next run); returns { F, mountFeed, stopFeed }.
 import { esc, renderFeedHead, renderFeedEvent, renderActivity } from '../cells.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '../activity.mjs';
 import { hoChip } from '../widgets.mjs';
-export const FEED_HTML = `<aside id="feed" class="drawer" hidden aria-label="Live feed">
-  <div class="dh"><b class="small">Live feed</b><span class="small mute">times UTC · tool (duration)</span><span class="spacer"></span>
-    <label class="small"><input type="checkbox" id="feed-follow" checked> follow</label><button class="ghost" id="feed-close" title="Close (Esc)">Close</button></div>
+// the kind filters of the event list (in place of "All events"): each button shows its kinds; none pressed = the list folds away
+export const FEED_KINDS = [['tools', 'tools', ['tool', 'error']], ['words', 'words', ['text', 'step']], ['commits', 'commits', ['marker']]];
+const FEED_HTML = `<h3>Live feed <span class="small mute">times UTC · tool (duration)</span><span class="spacer"></span>
+    <label class="small"><input type="checkbox" id="feed-follow" checked> follow</label></h3>
   <div id="feed-head"></div>
   <div id="feed-now" class="small"></div>
   <div id="feed-status" class="small mute"></div>
   <div id="feed-act" aria-label="What the worker is doing"></div>
-  <div id="feed-raw-bar" class="small"><button class="ghost" id="feed-raw-tog" aria-expanded="true" aria-controls="feed-list">All events</button><span class="mute" id="feed-raw-n"></span></div>
-  <div id="feed-list" class="flist mono" aria-live="polite"></div>
-</aside>`;
-export function createFeed({ $, onClose = () => {} }) {
-  $('#main').insertAdjacentHTML('afterend', FEED_HTML);
-// ---- live feed drawer: one EventSource per open drawer (the server keeps one tailer per run, at most 4 feeds) ----
-// RM-36: F.act = the activity fold of every event of the run (a fresh drawer asks full=1: the whole run, not the last 256 KB),
-// painted at most every 300 ms; the Now duration ticks each second; <details data-k> keep their open state across paints
+  <div id="feed-raw-bar" class="small" role="group" aria-label="Show events">${FEED_KINDS.map(([k, t]) => `<button class="hf" data-feed-kind="${k}" aria-pressed="true" aria-controls="feed-list">${t}</button>`).join('')}<span class="mute" id="feed-raw-n"></span></div>
+  <div id="feed-list" class="flist mono" aria-live="polite"></div>`;
+export function createFeed({ onFollow = () => {} } = {}) {
+  const box = document.createElement('section'); box.className = 'rd-sec rd-feed'; box.id = 'run-feed'; box.innerHTML = FEED_HTML;
+  const $ = s => box.querySelector(s);
+// one EventSource for the shown run (the server keeps one tailer per run, at most 4 feeds). F.act = the activity fold of every event
+// of the run (full=1: the whole run, not the last 256 KB), painted at most every 300 ms; the Now duration ticks each second while the
+// feed is on screen; <details data-k> keep their open state across paints
 const F = { es: null, run: null, project: null, tools: new Map(), act: null, actT: null, tick: null, keep: new Map(), n: 0, scroll: false };
 const narrow = () => matchMedia('(max-width:700px)').matches;
 function paintAct() {
   F.actT = null; if (!F.act || !F.run) return;
-  const h = F.head || {}, box = $('#feed-act'), ended = !!F.ended || (h.state && h.state !== 'running');
-  box.querySelectorAll('details[data-k]').forEach(d => F.keep.set(d.dataset.k, d.open));
+  const h = F.head || {}, act = $('#feed-act'), ended = !!F.ended || (h.state && h.state !== 'running');
+  act.querySelectorAll('details[data-k]').forEach(d => F.keep.set(d.dataset.k, d.open));
   const v = activityView(F.act, { now: Date.now(), root: h.worktree ?? null, brief: h.brief_items, notesDone: h.notes_done, ended });
-  box.innerHTML = renderActivity(v, { ended });
-  box.querySelectorAll('details[data-k]').forEach(d => { if (F.keep.has(d.dataset.k)) d.open = F.keep.get(d.dataset.k); });
+  act.innerHTML = renderActivity(v, { ended });
+  act.querySelectorAll('details[data-k]').forEach(d => { if (F.keep.has(d.dataset.k)) d.open = F.keep.get(d.dataset.k); });
   $('#feed-raw-n').textContent = `${F.n} events`;
 }
 const actSoon = () => { if (!F.actT) F.actT = setTimeout(paintAct, 300); };
-// the Now clock: one text node a second while the drawer is open - it reads nothing (no refetch; the feed itself is pushed)
-function tickDur() { const d = $('#fa-dur'); if (d) d.textContent = fmtDur((Date.now() - Date.parse(d.dataset.since)) / 1000); F.tick = setTimeout(tickDur, 1000); }
-function rawShow(on) { $('#feed-list').hidden = !on; $('#feed-raw-tog').setAttribute('aria-expanded', String(on)); $('#feed-raw-tog').textContent = on ? 'Hide all events' : 'All events'; }
-$('#feed-raw-tog').onclick = () => rawShow($('#feed-list').hidden);
-function markFeed() { document.querySelectorAll('[data-feed].sel').forEach(x => x.classList.remove('sel'));
-  if (F.run) document.querySelectorAll(`[data-feed="${CSS.escape(F.run)}"]`).forEach(x => x.classList.add('sel')); }
-// stop = end the stream and hide the drawer; closeFeed = a close the owner asked for (onClose clears the run URL). openFeed only stops
-// the previous run: an onClose there would drop the &run= it is opening (the run URL, stage NAV)
-function stopFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearTimeout(F.tick); F.tick = null;
-  $('#feed').hidden = true; markFeed(); }
-function closeFeed() { stopFeed(); onClose(); }
+// the Now clock: one text node a second while the section is in the page - it reads nothing (the feed itself is pushed)
+function tickDur() { const d = $('#fa-dur'); if (d && box.isConnected) d.textContent = fmtDur((Date.now() - Date.parse(d.dataset.since)) / 1000); F.tick = setTimeout(tickDur, 1000); }
+// the kind filters: the list shows the pressed kinds (data-show on the list, CSS hides the rest); none pressed hides it
+function kinds(on) {
+  box.querySelectorAll('[data-feed-kind]').forEach(b => b.setAttribute('aria-pressed', String(on.includes(b.dataset.feedKind))));
+  $('#feed-list').dataset.show = on.join(' '); $('#feed-list').hidden = !on.length;
+}
+box.addEventListener('click', e => { const b = e.target.closest('[data-feed-kind]'); if (!b) return;
+  kinds([...box.querySelectorAll('[data-feed-kind]')].filter(x => (x === b) !== (x.getAttribute('aria-pressed') === 'true')).map(x => x.dataset.feedKind)); });
+function stopFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.project = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearTimeout(F.tick); F.tick = null; box.remove(); }
 function addEv(e) {
   const list = $('#feed-list');
   if (F.act) { activityAdd(F.act, e); F.n++; actSoon(); }
@@ -62,15 +63,17 @@ function addEv(e) {
 // the live hand-off state (head.handoff, lanes.mjs handoffOf): while the next session is on its way, or once the chain went on in
 // another run, the "now" line is the hand-off, not this session's last words ("I stopped this run with a hand-off ..." read as stopped)
 function feedHead(h) {
+  if (F.live0 === undefined) F.live0 = h.state === 'running';
   F.head = h; $('#feed-head').innerHTML = renderFeedHead(h); actSoon();
   const ho = h.handoff, now = ho && (ho.phase === 'pending' || ho.run !== h.run) ? hoChip(ho, h.run) : '';
   if (now !== (F.hoNow || '')) { F.hoNow = now; if (now) $('#feed-now').innerHTML = `<b>now</b> ${now}`; }
 }
-// a run that ended in a hand-off: ask for its head again until the supervisor names the next run, then follow that run's feed
+// a run that ended in a hand-off while it was on screen: ask for its head again until the supervisor names the next run, then open
+// that run (onFollow). A run opened after it ended stays put: the document offers Follow instead of moving under the owner
 function feedEnded(project, run, tries = 0) {
   if (F.run !== run) return;
   const ho = F.head?.handoff;
-  if (ho && ho.run !== run && ho.phase) { openFeed(project, ho.run); $('#feed-status').textContent = `followed the hand-off from ${run} to ${ho.run} · live`; return; }
+  if (ho && ho.run !== run && ho.phase) { if (F.live0) { onFollow(project, ho.run); return; } $('#feed-status').innerHTML = `run ended · handed off to <span class="id">${esc(ho.run)}</span> <button data-act="run-open" data-run="${esc(ho.run)}">Follow ${esc(ho.run)}</button>`; return; }
   if (!ho || ho.phase !== 'pending' || tries >= 20) { $('#feed-status').textContent = 'run ended · feed closed'; return; }
   $('#feed-status').textContent = 'run ended in a hand-off · waiting for the next session ...';
   setTimeout(() => { if (F.run !== run) return;
@@ -80,16 +83,23 @@ function feedEnded(project, run, tries = 0) {
     es.onerror = () => { es.close(); feedEnded(project, run, tries + 1); }; }, 3000);
 }
 function openFeed(project, run) {
-  stopFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear(); markFeed();
-  $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = ''; $('#feed-act').innerHTML = '';
-  $('#feed-status').textContent = 'connecting ...'; rawShow(!narrow()); F.tick = setTimeout(tickDur, 1000);   // a phone: the activity view is the first screen
+  stopFeed(); F.head = null; F.hoNow = ''; F.live0 = undefined; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear();
+  $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = ''; $('#feed-act').innerHTML = '';
+  $('#feed-status').textContent = 'connecting ...'; kinds(narrow() ? [] : FEED_KINDS.map(k => k[0])); F.tick = setTimeout(tickDur, 1000);   // a phone: the activity view first
   const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}&full=1`);
   es.onopen = () => { $('#feed-status').textContent = 'live · the server polls the run files every 2 s'; };
   es.addEventListener('head', m => feedHead(JSON.parse(m.data)));
   es.addEventListener('ev', m => addEv(JSON.parse(m.data)));
   es.addEventListener('end', () => { es.close(); F.ended = true; actSoon(); feedEnded(project, run); });
-  es.onerror = () => { if (F.es !== es) return; $('#feed-status').textContent = es.readyState === EventSource.CLOSED ? 'feed refused or gone (at most 4 live feeds: close one)' : 'reconnecting ...'; };
+  es.onerror = () => { if (F.es !== es) return; $('#feed-status').textContent = es.readyState === EventSource.CLOSED ? 'feed refused or gone (at most 4 live feeds)' : 'reconnecting ...'; };
 }
-$('#feed-close').onclick = closeFeed;
-  return { F, narrow, openFeed, closeFeed, markFeed };
+/** after a paint: the document's slot takes the feed (a new run / project opens its stream); no slot = the feed stops */
+function mountFeed() {
+  const slot = document.getElementById('run-feed-slot');
+  if (!slot) { if (F.run) stopFeed(); return; }
+  const { run, project } = slot.dataset;
+  if (F.run !== run || F.project !== project) openFeed(project, run);
+  slot.replaceWith(box);
+}
+  return { F, mountFeed, stopFeed };
 }
