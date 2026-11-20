@@ -96,8 +96,13 @@ export async function doneCheck({ worktree, dod, logDir, run, locksDir }) {
     const own = p => p === nf || (nd !== null && !nd.startsWith('..') && path.posix.dirname(p) === (nd || '.') && /\.(png|jpe?g|webp|gif)$/i.test(p));
     out.out_of_scope = out.changed.filter(p => !inScope(p, ready.scope) && !own(p));
   } else out.problems.push('no lane branch to diff against main');
-  const t = testCmds(ready.tests, worktree, dod.test_cmd);
+  // NORN-DOD-TESTS-NONE: a design run's `Tests: none - ...` is green only on a branch that changed nothing (no commit, no edit of a
+  // tracked or untracked file); with any change it is red, so a writing run cannot dodge its tests by writing "none"
+  const none = /^\s*none\b/i.test(String(ready.tests ?? '')), touched = none ? new Set([...out.changed, ...out.dirty]).size : 0;
+  const t = none ? {} : testCmds(ready.tests, worktree, dod.test_cmd);
   if (t.problem) out.problems.push(t.problem);
+  if (none && touched) out.problems.push(`the branch changed ${touched} file${touched === 1 ? '' : 's'} but the brief declares no tests`);
+  else if (none && bb) out.tests_none = 'none declared, nothing changed';
   // a docs-only branch runs no gate: CI ignores such a push and its MERGE runs no suite (RUN-1063 / RUN-1072 timed out on README + pictures)
   const docs = bb && out.changed.length > 0 && out.changed.every(p => inScope(p, DOCS_ONLY));
   if (docs && dod.gate?.cmd) out.gate_skipped = `docs-only branch (every changed path in the CI paths-ignore: ${DOCS_ONLY.join(' ')})`;
