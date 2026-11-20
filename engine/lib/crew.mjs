@@ -4,7 +4,7 @@
 // happens at the start of a worker run (runs.mjs), under this lock, so two launches never take one dwarf. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fold, readEvents, readEventsAsync, withLock } from './records.mjs';
+import { fold, readEvents, readEventsAsync, withLock, isoSec } from './records.mjs';
 
 export class CrewError extends Error {
   constructor(message, code = 2) { super(message); this.code = code; }
@@ -115,7 +115,6 @@ export function pickDwarf(state, run, busy = {}, past = []) {
 }
 
 // ---------- the store's writes: one lock, the checked events appended (the caller's work may run inside the lock: withCrew) ----------
-const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const LANE_RE = /^[^/\s]+\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 function checkEvent(st, { ev, id, data }) {
   const def = CREW_KINDS.dwarf.events[ev];

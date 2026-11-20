@@ -833,7 +833,7 @@ function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } 
   return { id, kind, ev, by, data };
 }
 
-const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+export const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
