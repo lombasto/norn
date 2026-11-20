@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { procsNaming } from '../../engine/lib/testprocs.mjs';
+import { procsNaming, orphanHolds } from '../../engine/lib/testprocs.mjs';
+import { listProcs } from '../../engine/lib/strays.mjs';
 import { killTree } from '../../engine/lib/runs.mjs';
 import { CALLER_ENV } from '../../engine/lib/cisuite.mjs';
 
@@ -21,9 +22,10 @@ for (const k of Object.keys(process.env)) if (CALLER_ENV.includes(k.toUpperCase(
 // names one of its mkTmp dirs is killed with its tree. 11-13: 22 supervisor + fake-executor pairs a run of delegate / agnostic left
 // behind lived 23-28 h. ci-suite fails a file that still leaves one (the hard check behind this teardown).
 const made = [], ever = [];
-/** kill every process (and its tree) whose command line names a dir mkTmp made in this process; -> the killed [{ pid, name, cmd }] */
+/** kill every process (and its tree) whose command line names a dir mkTmp made in this process, and every jobguard hold whose
+ *  supervisor is gone (a supervisor killed while its hold started: the hold names no mkTmp dir); -> the killed [{ pid, name, cmd }] */
 export function reapTmp() {
-  const left = procsNaming(ever);
+  const procs = listProcs(), left = [...procsNaming(ever, procs), ...orphanHolds(procs)];
   for (const p of left) killTree(p.pid);
   return left;
 }
