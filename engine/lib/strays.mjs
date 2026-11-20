@@ -13,6 +13,13 @@ const BROWSER = /^(msedge|chrome|chromium|chromium-browser|google-chrome|firefox
 const NODE = /^node(\.exe)?$/i;
 const norm = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
+/** a POSIX process's image name from ps's comm. Linux: comm is the main THREAD's name, and Node 24 names it 'MainThread' (CI 44672523595
+ * kill-receipts) - the image is /proc/<pid>/exe where it is readable (our own processes), else comm (another user's; macOS: no /proc,
+ * its comm is the image) */
+export function imageOf(pid, comm) {
+  try { return path.basename(fs.readlinkSync(`/proc/${pid}/exe`).replace(/ \(deleted\)$/, '')); } catch { return path.basename(comm); }
+}
+
 /** every process: [{ pid, ppid, name, created (ms), cmd }]; [] when the listing fails */
 export function listProcs({ platform = process.platform } = {}) {
   try {
@@ -27,7 +34,7 @@ export function listProcs({ platform = process.platform } = {}) {
     if (r.status !== 0) return [];
     const now = Date.now();
     return r.stdout.split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(Boolean)
-      .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), created: now - +m[3] * 1000, cmd: m[5] }));
+      .map(m => ({ pid: +m[1], ppid: +m[2], name: imageOf(m[1], m[4]), created: now - +m[3] * 1000, cmd: m[5] }));
   } catch { return []; }
 }
 
