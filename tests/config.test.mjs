@@ -91,15 +91,3 @@ test('META-ONBOARD S3: machine.json may carry projects_home (${home} expands)', 
   assert.equal(loadMachine(f, { home: H, meta: M }).projects_home, H + '/.norn/projects');
 });
 
-test('META-ONBOARD cut-over expand: local/compat.json maps an old project.json to its new home (loadProject follows it)', () => {
-  const meta = tmp(), oldD = path.join(meta, 'projects', 'demo'), newD = path.join(tmp(), 'demo');
-  fs.mkdirSync(oldD, { recursive: true }); fs.mkdirSync(newD);
-  const oldF = write(oldD, proj({ rules_read_whole: ['${norn}/projects/demo/R.md'] })), newF = write(newD, proj({ rules_read_whole: ['${project_dir}/R.md'] }));
-  const fw = p => path.resolve(p).split(path.sep).join('/');
-  assert.equal(loadProject(oldF, { home: H, meta }).file, fw(oldF), 'no compat: the file as given');
-  const c = { swap: '2026-11-11T17:00:00.000Z', runs: ['demo RUN-1'], paths: [{ from: process.platform === 'win32' ? fw(oldF).toUpperCase() : fw(oldF), to: fw(newF) }], retained: [fw(oldF)] };
-  fs.mkdirSync(path.join(meta, 'local')); fs.writeFileSync(path.join(meta, 'local', 'compat.json'), JSON.stringify(c));   // case-insensitive match only on Windows
-  const p = loadProject(oldF, { home: H, meta });
-  assert.equal(p.file, fw(newF)); assert.equal(p.project_dir, fw(newD)); assert.deepEqual(p.rules_read_whole, [fw(newD) + '/R.md']);
-  assert.equal(loadProject(newF, { home: H, meta }).file, fw(newF));
-});

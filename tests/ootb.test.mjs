@@ -11,8 +11,8 @@ import { ledgerConfig } from '../engine/lib/ledger.mjs';
 import { writeStatus } from '../engine/lib/status.mjs';
 import { dashOpens } from '../engine/bin/norn.mjs';
 import { loadState } from '../engine/lib/records.mjs';
-import { adapterFor, schedName, schedState, liveName, oldTasks, schedApply } from '../engine/lib/sched/index.mjs';
-import { schedChoice, oldSchedProblems } from '../engine/lib/setup.mjs';
+import { adapterFor, schedName, schedState, liveName, schedApply } from '../engine/lib/sched/index.mjs';
+import { schedChoice } from '../engine/lib/setup.mjs';
 import { settled } from './helpers/settled.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -294,12 +294,9 @@ test('F-4 HARD GATE: the existing install keeps its recorded task name; a fresh 
   p = schedChoice({ old: { ...base, name: 'norn-tick' }, meta: clone, adapter: win, io: fakeSched({ 'norn-tick': live }).io, node: '/n', home: '/h' });
   assert.equal(p.name, schedName(clone));
   assert.deepEqual(p.notes, [`scheduled task 'norn-tick' belongs to the install at ${live} - not this one (this install's task: '${schedName(clone)}')`]);
-  // a fresh clone beside an install still on the pre-rename task: its own name, the other install's task is not its business
-  p = schedChoice({ old: null, meta: clone, adapter: win, io: fakeSched({ 'meta-controller-tick': live }).io, node: '/n', home: '/h' });
-  assert.equal(p.name, schedName(clone)); assert.deepEqual(p.notes, []);
 });
 
-// META-NAME-W2: a stateful fake Task Scheduler / crontab (never the real one) for the old-name migration
+// a stateful fake Task Scheduler / crontab (never the real one)
 function liveSched(tasks, tab = '') {
   const io = {
     run: (cmd, args, input) => {
@@ -316,59 +313,38 @@ function liveSched(tasks, tab = '') {
   return { io, tasks, tab: () => tab };
 }
 
-test('NAME-W2: sched install / remove move the pre-rename task of THIS install in one step; another install\'s task is kept', () => {
-  const me = 'D:/inst/norn', other = 'D:/inst/sdd-codex', win = adapterFor('windows-task'), hashed = schedName(me).replace(/^norn-tick-/, 'meta-controller-tick-');
+test('sched install / remove: the task of this name in, then out; cron keeps a foreign line and tags its own "# norn:"', () => {
+  const me = 'D:/inst/norn', win = adapterFor('windows-task');
   assert.match(schedName(me), /^norn-tick-[0-9a-f]{8}$/);
-  const o = { name: liveName('meta-controller-tick', me), interval_min: 15, node: '/n/node', meta: me, home: '/h' };
-  assert.equal(o.name, schedName(me), 'a recorded pre-rename name runs as this install\'s norn-tick name');
+  const o = { name: liveName(null, me), interval_min: 15, node: '/n/node', meta: me, home: '/h' };
+  assert.equal(o.name, schedName(me), 'none recorded: this install\'s own name');
   assert.equal(liveName('norn-tick-custom', me), 'norn-tick-custom');
-  // the owner's case: the bare old name runs this install -> install = the new task in, the old one out, one command
-  let s = liveSched({ 'meta-controller-tick': me });
-  assert.deepEqual(oldTasks(win, o, s.io), ['meta-controller-tick']);
-  assert.deepEqual(schedApply('install', win, o, 'windows-task', s.io), [`scheduler windows-task '${o.name}' installed (every 15 min)`, `scheduler windows-task 'meta-controller-tick' removed (the old name)`]);
-  assert.deepEqual(Object.keys(s.tasks), [o.name], 'never two ticks');
-  // the per-install old name goes too; the bare old name of ANOTHER install stays
-  s = liveSched({ [hashed]: me, 'meta-controller-tick': other });
-  schedApply('install', win, o, 'windows-task', s.io);
-  assert.deepEqual(Object.keys(s.tasks).sort(), ['meta-controller-tick', o.name].sort());
-  // remove with only the old task left: it goes, the new one was never there
-  s = liveSched({ 'meta-controller-tick': me });
-  assert.deepEqual(schedApply('remove', win, o, 'windows-task', s.io), [`scheduler windows-task '${o.name}': not installed`, `scheduler windows-task 'meta-controller-tick' removed (the old name)`]);
+  const s = liveSched({});
+  assert.deepEqual(schedApply('install', win, o, 'windows-task', s.io), [`scheduler windows-task '${o.name}' installed (every 15 min)`]);
+  assert.deepEqual(Object.keys(s.tasks), [o.name]);
+  assert.deepEqual(schedApply('remove', win, o, 'windows-task', s.io), [`scheduler windows-task '${o.name}' removed`]);
   assert.deepEqual(s.tasks, {});
-  // cron: the old "# meta:" line goes, a foreign line stays, the new line is tagged "# norn:"
-  s = liveSched({}, `0 1 * * * /usr/bin/backup\n*/15 * * * * cd ${me} && /n/node ${me}/engine/bin/norn.mjs tick --reason schedule >/dev/null 2>&1 # meta:${hashed}\n`);
-  schedApply('install', adapterFor('cron'), o, 'cron', s.io);
-  assert.match(s.tab(), new RegExp(`^0 1 \\* \\* \\* /usr/bin/backup\\n\\*/15 .* # norn:${o.name}\\n$`));
+  assert.deepEqual(schedApply('remove', win, o, 'windows-task', s.io), [`scheduler windows-task '${o.name}': not installed`]);
+  const c = liveSched({}, `0 1 * * * /usr/bin/backup\n`);
+  schedApply('install', adapterFor('cron'), o, 'cron', c.io);
+  assert.match(c.tab(), new RegExp(`^0 1 \\* \\* \\* /usr/bin/backup\\n\\*/15 .* # norn:${o.name}\\n$`));
 });
 
-test('NAME-W2: doctor names a left-over pre-rename task of this install as a PROBLEM with the command that moves it', () => {
-  const me = 'D:/inst/norn', machine = { scheduler: { kind: 'windows-task', name: 'meta-controller-tick', interval_min: 15 }, node: '/n/node', home: '/h' };
-  assert.deepEqual(oldSchedProblems({ machine, meta: me, io: liveSched({ 'meta-controller-tick': me }).io }),
-    [`scheduler: old task 'meta-controller-tick' of this install is still installed - run: norn sched install (moves it to '${schedName(me)}')`]);
-  assert.deepEqual(oldSchedProblems({ machine, meta: me, io: liveSched({ 'meta-controller-tick': 'D:/inst/other' }).io }), [], 'another install\'s task is not this install\'s problem');
-  assert.deepEqual(oldSchedProblems({ machine: { ...machine, scheduler: { ...machine.scheduler, name: schedName(me) } }, meta: me, io: liveSched({ [schedName(me)]: me }).io }), []);
-  // setup says it too, and moves the recorded name
-  const p = schedChoice({ old: machine.scheduler, meta: me, adapter: adapterFor('windows-task'), io: liveSched({ 'meta-controller-tick': me }).io, node: '/n', home: '/h' });
-  assert.equal(p.name, schedName(me));
-  assert.deepEqual(p.notes, [`old scheduled task 'meta-controller-tick' of this install is still installed - norn sched install moves it to '${schedName(me)}'`]);
-});
-
-test('F-4: setup keeps a meta / norn shim of ANOTHER install and names it; a shim whose install is gone is replaced', () => {
+test('F-4: setup keeps a norn shim of ANOTHER install and names it; a shim whose install is gone is replaced', () => {
   const sb = sandbox(); fakeClaude(sb);
   const other = path.join(sb.t, 'other-install'), otherCli = path.join(other, 'engine', 'bin', 'norn.mjs');
   fs.mkdirSync(path.dirname(otherCli), { recursive: true }); fs.writeFileSync(otherCli, '');
   const bin = path.join(sb.home, '.local', 'bin'); fs.mkdirSync(bin, { recursive: true });
   const shim = `#!/bin/sh\nexec "${process.execPath.replace(/\\/g, '/')}" "${otherCli.replace(/\\/g, '/')}" "$@"\n`;
-  for (const n of ['meta', 'norn']) fs.writeFileSync(path.join(bin, n), shim);
+  fs.writeFileSync(path.join(bin, 'norn'), shim);
   let r = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
   assert.equal(r.code, 0, r.out + r.err);
-  for (const n of ['meta', 'norn']) assert.equal(fs.readFileSync(path.join(bin, n), 'utf8'), shim, `${n}: the other install's shim is untouched`);
-  assert.match(r.out, /\/meta runs the install at .*\/other-install - kept/);
+  assert.equal(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), shim, 'the other install\'s shim is untouched');
   assert.match(r.out, /\/norn runs the install at .*\/other-install - kept/);
   fs.rmSync(other, { recursive: true });
   r = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
   assert.equal(r.code, 0, r.out + r.err);
-  assert.match(fs.readFileSync(path.join(bin, 'meta'), 'utf8'), new RegExp(path.join(REPO, 'engine', 'bin', 'norn.mjs').replace(/\\/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), new RegExp(path.join(REPO, 'engine', 'bin', 'norn.mjs').replace(/\\/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(sb.run('setup', '--non-interactive', '--no-scheduler').out, /scheduler: skipped/);
   assert.match(JSON.parse(fs.readFileSync(path.join(sb.root, 'local', 'machine.json'), 'utf8')).scheduler.name, /^norn-tick-[0-9a-f]{8}$/, 'recorded in machine.json');
 });
