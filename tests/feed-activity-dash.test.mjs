@@ -105,7 +105,7 @@ test('Docs opens a file a run touched by its path (code as one block); a path ou
   } finally { await f.done(); }
 });
 
-test('the browser at 390 px: the run document's feed opens on the activity view (raw events behind the kind filters), a live call shows in Now, a file opens in Docs; replayed once ended', { skip: skipWhy, timeout: 240000 }, async () => {
+test('the browser at 390 px: the run document feed opens on the activity view (raw events behind the kind filters), a live call shows in Now, a file opens in Docs; replayed once ended', { skip: skipWhy, timeout: 240000 }, async () => {
   const f = await fixture({ dash: DASH }), pg = await openPage([390, 844]);
   try {
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
