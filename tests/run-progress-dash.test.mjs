@@ -87,6 +87,11 @@ test('the browser: focus opens the lane card, Esc closes it; at 390 px it is a b
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen .lname')`, 90000));
     await pg.ev(`document.querySelector('#lane-gen .lname').focus()`);
     assert.equal(await pg.ev(shown), true);
+    // a stream repaint (a new record; the stream's hello does the same after the first paint) keeps the open card open
+    await pg.ev(`window.__oldCard = document.querySelector('#lane-gen .lcard')`);
+    record(f.pa.state, { kind: 'mail', ev: 'create', by: 'controller', data: { from: 'role:controller', to: 'lane:gen', subject: 'Owner: a north arrow', body: 'a north arrow' } });
+    assert.ok(await pg.until(`!document.contains(window.__oldCard) && document.body.dataset.ready === 'lanes'`, 90000), 'the stream repaints Lanes');
+    assert.equal(await pg.ev(shown), true, 'the repaint keeps the focused lane card open');
     const sheet = await pg.ev(`(() => { const r = document.querySelector('#lane-gen .lcard').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(r.bottom)]; })()`);
     assert.deepEqual(sheet, [0, 390, 844], 'a bottom sheet the width of the phone');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Lanes with the card open');

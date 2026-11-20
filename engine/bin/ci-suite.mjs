@@ -14,8 +14,9 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseKnown, judge, suiteEnv, pickTests } from '../lib/cisuite.mjs';
-import { procsNaming } from '../lib/testprocs.mjs';
+import { procsNaming, leakText } from '../lib/testprocs.mjs';
 import { killTree } from '../lib/runs.mjs';
+import { listProcs } from '../lib/strays.mjs';
 import { measureFile } from '../lib/testlean.mjs';
 
 const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib');
@@ -99,9 +100,9 @@ const runFile = (name, f, i) => new Promise(resolve => {
     const hang = hung ? { file: f, name: `no exit within the ${capS} s per-file cap (killed)` } : null;
     const fails = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
       .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;
-    const left = procsNaming([ft]);
+    const procs = listProcs(), left = procsNaming([ft], procs);
     for (const p of left) killTree(p.pid);
-    const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${left.map(p => `pid ${p.pid} (${p.cmd})`).join('; ')}` } : null;
+    const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${leakText(left, procs)}` } : null;
     const ms = Date.now() - t0, lines = measure && fs.existsSync(mout) ? fs.readFileSync(mout, 'utf8') : '';
     resolve({ f, status, signal, fails, leak, hang, ...(measure ? { measured: measureFile(f, ms, lines, process.cwd()) } : {}) });
   };

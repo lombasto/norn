@@ -5,8 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
+import { spawn, spawnSync } from 'node:child_process';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -44,7 +44,7 @@ import { running } from '../lib/legacy.mjs';
 import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
-import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
+import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn, syncPolicy } from '../lib/policy.mjs';
 import { CLASS_LABELS } from '../lib/workclass.mjs';
 import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
@@ -54,16 +54,19 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
-import { openProjectPrs, prLine, LAND_EXIT } from '../lib/mergeland.mjs';
+import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve } from '../lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
-import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching, mergeConfig } from '../lib/mergeq.mjs';
+import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
+import { mergeConfig } from '../lib/mergecfg.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs } from '../lib/sync.mjs';
+import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
@@ -71,7 +74,8 @@ import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
 import { ClaimsError } from '../lib/claimsref.mjs';
-import { listClaims, allowPair, releaseWork } from '../lib/claims.mjs';
+import { syncCut, cutLines, HOME_RE } from '../lib/synccut.mjs';
+import { localClaims, listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
@@ -83,17 +87,20 @@ import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
+import { sourceQuestion, SourceError } from '../lib/qsource.mjs';
 import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
 import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll, pausedHandoffs } from '../lib/pause.mjs';
 import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
-  'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
+  'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--from-source "<file>#<section>"] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]    (list every real alternative - 3-4 where they exist; never trim to two, never pad with a fake one. --from-source copies every alternative the section lists, verbatim, and records the file + section; an --option next to it is marked "added by <you>")',
   'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
   'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO] [--q Q-n]    (owner / controller: a slop finding that may stay; a check-in only with --q, the answered Q whose ruling is the waiver)',
-  'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
+  'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage STAGE] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
+  say: 'norn rec say Q-n --text "<owner words>" --via dashboard|chat    (the owner message on an open Q: the Q stays open, the controller replies in its thread)',
+  reply: 'norn rec reply Q-n --text T [--option "key|text|cost"]... [--recommend "key|why"] [--propose "key|ruling"]    (the controller in the thread of a Q: --option revises the whole option list, --propose = a ruling from the owner words the owner confirms with one tap; key may be empty)',
   apply: 'norn rec apply Q-n --refs DEC-n,RUN-n',
   'not-an-answer': 'norn rec not-an-answer DEC-m --q Q-n [--why W]    (the DEC is not the answer to Q-n: the digest / Inbox stop pointing at it)',
   supersede: 'norn rec supersede ID --by ID --why W',
@@ -112,16 +119,16 @@ const USAGE = {
 };
 const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
-  'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
+  'add question': ['lane', 'title', 'body', 'body-file', 'from-source', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
   'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
   'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until', 'q'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
-  answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
+  answer: ['text', 'via', 'choice', 'each', 'from'], say: ['text', 'via'], reply: ['text', 'option*', 'recommend', 'propose'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
   list: ['open!', 'kind', 'lane', 'json!'], show: ['json!', 'full!'], views: [],
 };
-const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
+const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|say|reply|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
 
@@ -153,17 +160,30 @@ function parse(cmd, argv) {
 const csv = v => v === undefined ? undefined : v.split(',').map(s => s.trim()).filter(Boolean);
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
-function addData(what, f, cmd) {
+const optionsOf = (f, cmd) => (f.option || []).map(o => {
+  const [key, text, cost = ''] = o.split('|');
+  if (!key || text === undefined) throw new Usage(`--option must be "key|text|cost" (got ${JSON.stringify(o)})`, cmd);
+  return { key: key.trim(), text: text.trim(), cost: cost.trim() };
+});
+const recommendOf = (f, cmd, by) => {
+  if (f.recommend === undefined) return undefined;
+  const i = f.recommend.indexOf('|');
+  if (i < 1) throw new Usage('--recommend must be "key|why"', cmd);
+  return { key: f.recommend.slice(0, i).trim(), why: f.recommend.slice(i + 1).trim(), from: by };
+};
+function addData(what, f, cmd, by) {
   if (what === 'question') {
-    const options = (f.option || []).map(o => {
-      const [key, text, cost = ''] = o.split('|');
-      if (!key || text === undefined) throw new Usage(`--option must be "key|text|cost" (got ${JSON.stringify(o)})`, cmd);
-      return { key: key.trim(), text: text.trim(), cost: cost.trim() };
-    });
-    let recommend;
-    if (f.recommend !== undefined) { const i = f.recommend.indexOf('|'); if (i < 1) throw new Usage('--recommend must be "key|why"', cmd); recommend = { key: f.recommend.slice(0, i).trim(), why: f.recommend.slice(i + 1).trim() }; }
+    let options = optionsOf(f, cmd), recommend = recommendOf(f, cmd, by), origin, source = f.source;
+    if (f['from-source'] !== undefined) {   // INBOX-REPLIES (6a): every alternative the section names, verbatim; the writer's own marked
+      let q;
+      try { q = sourceQuestion(f['from-source']); } catch (e) { if (e instanceof SourceError) throw new Usage(e.message, cmd); throw e; }
+      const taken = new Set(q.options.map(o => o.key));
+      for (const o of options) if (taken.has(o.key)) throw new Usage(`--option ${o.key}: the source already has an option ${o.key} (${q.options.find(x => x.key === o.key).text}) - pick another key`, cmd);
+      options = [...q.options, ...options.map(o => ({ ...o, added_by: by }))];
+      recommend ??= q.recommend; origin = q.origin; source ??= `${q.origin.file}#${q.origin.section}`;
+    }
     const body = f['body-file'] !== undefined ? fs.readFileSync(f['body-file'], 'utf8') : f.body;
-    return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source: f.source, owner_only: f['owner-only'] ? true : undefined });
+    return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source, origin, owner_only: f['owner-only'] ? true : undefined });
   }
   if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
   if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
@@ -172,9 +192,15 @@ function addData(what, f, cmd) {
   throw new Usage(`unknown kind ${what}`, cmd);
 }
 
-function eventData(ev, f) {
+function eventData(ev, f, by) {
   switch (ev) {
     case 'answer': return drop({ choice: f.choice, text: f.text, via: f.via, from: f.from });
+    case 'say': return drop({ text: f.text, via: f.via });
+    case 'reply': {
+      let propose;
+      if (f.propose !== undefined) { const i = f.propose.indexOf('|'); if (i < 0) throw new Usage('--propose must be "key|ruling" (key may be empty)', 'reply'); propose = drop({ key: f.propose.slice(0, i).trim() || undefined, text: f.propose.slice(i + 1).trim() }); }
+      return drop({ text: f.text, options: f.option ? optionsOf(f, 'reply') : undefined, recommend: recommendOf(f, 'reply', by), propose });
+    }
     case 'not-an-answer': return drop({ q: f.q, why: f.why });
     case 'apply': case 'done': return drop({ refs: csv(f.refs) });
     case 'supersede': return drop({ by: f.by, why: f.why });
@@ -339,9 +365,9 @@ function setupCmd(argv, env, out, err) {
 
 // ---------- S4: norn run / norn stop / norn hook session ----------
 const RUN_USAGE = {
-  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage S] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
+  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
-  requeue: 'norn requeue RUN-n --after "<conditions as norn run --after> | none" [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions: same launch args; the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
+  requeue: 'norn requeue RUN-n [--after "<conditions as norn run --after> | none"] [--priority P0-P4] [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions or priority: same launch args, a flag left out keeps the old value (a MERGE / resolve stays at P1 or above); the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
 // SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
@@ -478,10 +504,12 @@ function runCmd(argv, env, out, err) {
     const { project, state, locks } = where(flags, env);
     if (cmd === 'requeue') {   // META-AUTONOMY R1
       if (pos.length !== 1) throw new RunError('requeue needs one RUN id');
-      if (flags.after === undefined) throw new RunError('--after is required (the new conditions; none = no conditions)');
       const nb = flags['not-before'];
-      const r = requeueRun({ state, run: pos[0], after: flags.after === 'none' ? [] : afterOf(flags.after), by: flags.as || env.META_ROLE, why: flags.why, notBefore: nb === 'none' ? null : nb });
-      out(`REQUEUED ${r.run} -> ${r.next} (after ${flags.after}${nb ? `; not before: ${nb}` : ''})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
+      if (flags.after === undefined && flags.priority === undefined && nb === undefined) throw new RunError('requeue needs --after, --priority or --not-before (what changes)');
+      const r = requeueRun({ state, run: pos[0], after: flags.after === undefined ? undefined : flags.after === 'none' ? [] : afterOf(flags.after), by: flags.as || env.META_ROLE, why: flags.why,
+        notBefore: nb === 'none' ? null : nb, priority: flags.priority });
+      const what = [flags.after !== undefined ? `after ${flags.after}` : 'its after: kept', ...(nb ? [`not before: ${nb}`] : []), ...(flags.priority ? [`priority ${r.priority}`] : [])];
+      out(`REQUEUED ${r.run} -> ${r.next} (${what.join('; ')})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
       for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // met now = starts now (as norn run --after)
       return 0;
     }
@@ -590,12 +618,12 @@ function hookCmd(argv, env, err) {
 const S5_USAGE = {
   status: 'norn status [--project <name | project.json> | --state D] [--machine F] [--budget F] [--out F]',
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
-  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
+  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--homes (+ the runs of the other homes of a synced project, read-only: their fetched copies, each "on <home>")] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
   overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'homes!', 'why', 'sha', 'at'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -755,10 +783,12 @@ function s5Cmd(argv, env, out, err) {
     if (flags['all-nodes']) return allNodes(state, m, flags, out);
     const items = Object.values(loadState(state).items).filter(i => i.kind === 'run' && (!flags.lane || i.data.lane === flags.lane)
       && (!flags.unreviewed || (['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive')));
+    // RM-46 S3: --homes adds the other homes' runs from their copies (read-only: never queued here, never reviewed here); lane = this home's form (b/x)
+    if (flags.homes) items.push(...copyItems(state, 'run').filter(i => !flags.lane || i.data.lane === flags.lane));
     if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => ({ ...i, outcome: history.find(h => h.ev === 'end')?.data.outcome ?? null })), null, 1));
-    const pos1 = Object.fromEntries(queueOf(items).map(q => [q.id, q]));
+    const pos1 = Object.fromEntries(queueOf(items.filter(i => !i.home)).map(q => [q.id, q]));
     const col3 = i => pos1[i.id] ? `#${pos1[i.id].position} not_before ${pos1[i.id].not_before ?? '-'}` : i.history.find(h => h.ev === 'end')?.data.outcome ?? '-';
-    if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}`);
+    if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}${i.home ? `  on ${i.home}` : ''}`);
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + S5_USAGE[cmd]); return 2; }
@@ -1175,7 +1205,7 @@ function askCmd(argv, env, out, err) {
 }
 
 // ---------- norn deliverables (DELIVERABLES-SPEC 6): done work followed to main / the install, any harness ----------
-const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry]    [--project F] [--state D] [--as role]';
+const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry] | recheck [--dry]    [--project F] [--state D] [--as role]';
 const DLV_FLAGS = ['project', 'state', 'as', 'why', 'by', 'only', 'executor', 'json!', 'all!', 'due!', 'apply!', 'resolve!', 'dry!'];
 function deliverablesCmd(argv, env, out, err) {
   try {
@@ -1239,6 +1269,13 @@ function deliverablesCmd(argv, env, out, err) {
       const r = askDeliverable(state, id, { project, by });
       if (r.refused) { out('REFUSED: ' + r.refused); return 3; }
       out(r.id);
+      return 0;
+    }
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+      if (id) throw new RunError(`unexpected ${id}`);
+      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
+      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)
@@ -1331,7 +1368,7 @@ Every day:
   norn stop                        stop a run (a queued run is withdrawn)
   norn pause                       pause check-ins / hold the queue / pause everything; pause a run safely (it hands off)
   norn resume                      resume a paused hand-off (at the front), or --all: release the pause
-  norn requeue                     re-queue a queued run with new conditions (its dependants follow)
+  norn requeue                     re-queue a queued run with new conditions or priority (its dependants follow)
   norn rec                         questions, decisions, directives, lanes: the records
   norn digest                      what needs attention now (read-only)
   norn notify                      send the owner a notice
@@ -1381,7 +1418,8 @@ Plumbing:
   norn harness                     install the Norn tools into an agent CLI
   norn mcp                         the stdio MCP server
   norn node                        one federation pull-agent job
-  norn claim                       the multi-home work claims (list, allow a pair, release)
+  norn claim                       the multi-home work claims (list, allow a pair, release, take over a stale one)
+  norn sync                        the multi-home sync (status, publish home/<id>, fetch the other homes' copies)
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
   norn hook                        the Claude Code session hook
   norn scope                       the PreToolUse hook: what a run may touch
@@ -1390,7 +1428,7 @@ function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, claim: CLAIM_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
+    node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
@@ -1445,6 +1483,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'sync') return syncCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
@@ -1507,7 +1546,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       return 0;
     }
     if (cmd === 'views') {
-      const v = writeViews(state, loadState(state), vpaths), qv = writeQueueView(state, vpaths, { ready: readiness(state) });
+      const v = writeViews(state, loadState(state), vpaths, { role: 'norn rec views' }), qv = writeQueueView(state, vpaths, { ready: readiness(state), role: 'norn rec views' });
       for (const k of ['written', 'unchanged', 'refused']) v[k].push(...qv[k]);
       // META-GTP-CV piece 2: CV.md with the other views (the CV of this state; a hand edit refused like every view): views.cv, else beside
       // the project.json views (one copy, S9), else <state>/views
@@ -1525,12 +1564,12 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     if (cmd.startsWith('add ')) {
       if (pos.length) throw new Usage(`unexpected ${pos[0]}`, cmd);
       const kind = cmd.slice(4);
-      ev = { kind, ev: 'create', by, data: addData(kind, flags, cmd) };
+      ev = { kind, ev: 'create', by, data: addData(kind, flags, cmd, by) };
     } else {
       if (pos.length !== 1) throw new Usage(`${cmd} needs one ID`, cmd);
       const kind = kindOfId(pos[0]);
       if (!kind) throw new Usage(`${pos[0]} is not a record id (Q-n, DEC-n, DIR-n, L:name)`, cmd);
-      ev = { kind, ev: cmd === 'not-an-answer' ? 'notanswer' : cmd, id: pos[0], by, data: eventData(cmd, flags) };
+      ev = { kind, ev: cmd === 'not-an-answer' ? 'notanswer' : cmd, id: pos[0], by, data: eventData(cmd, flags, by) };
     }
     if (flags.item) {   // META-ROADMAP S3: --item RM-n (add lane only) - checked before the lane exists
       try { openItem(state, flags.item); } catch (x) { throw new Usage(x.message, cmd); }
@@ -1563,7 +1602,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
 // ---------- META-GTP-DAG piece 3: norn ready - every queued run, ready | blocked + its unmet terms (the fill's own walk, dry; read-only) ----------
 const READY_USAGE = 'norn ready [--json] [--epic EP-n] [--project F | --state D] [--locks D]';
 // ---------- META-GTP-MERGEQ: norn mergeq - the merge queue (MR score order; code only, no LLM) ----------
-const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; --batching = the kill switch)';
+const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; else the mechanical landing: merge the top clean pushed row in a merge worktree, run the quick check (syntax + its changed test files), open its PR - a conflict, red check or slop block queues its MERGE run; --batching = the kill switch)';
 function mergeqCmd(argv, env, out, err) {
   try {
     const flags = {};
@@ -1586,9 +1625,13 @@ function mergeqCmd(argv, env, out, err) {
       return 0;
     }
     if (flags.run) {   // piece 3: one merge-queue pass (async: the gate runs)
-      return mergeqRun({ stateDir: state, project, locksDir: flags.locks }).then(r => {
+      // MERGE-FIRST (3): a landing's fallback MERGE (norn run --queue) and its notice go through this CLI, in a child (as the tick's routine stage)
+      const cli = args => { const c = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true, env: { ...process.env, ...env } }); return { code: c.status ?? 1, out: `${c.stdout || ''}${c.stderr || ''}`.trim() }; };
+      return mergeqRun({ stateDir: state, project, locksDir: flags.locks, cli }).then(r => {
         if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
         for (const u of r.updates) if (u.action !== 'skip') out(`${u.id} ${u.branch} update ${u.action}: ${u.why}`);
+        for (const id of r.land?.landed || []) out(`LANDED ${id}`);
+        for (const f of r.land?.fallback || []) out(`MERGE ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
         out(`mergeq: ${r.why}`);
         if (r.batch?.dispatch && r.batch.status === 'green') out(`MERGE: norn ${r.batch.dispatch.join(' ')}`);
         if (r.fix) out(`FIX ${r.fix.id}: norn ${r.fix.run.join(' ')}`);
@@ -1879,7 +1922,7 @@ function doneCmd(argv, env, out, err) {
   }
 }
 // ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
-const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P3] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
+const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P4] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
 const FLOW_FLAGS = ['project', 'state', 'locks', 'machine', 'budget', 'as', 'var*', 'executor', 'priority', 'flows-dir', 'briefs-dir', 'dry-run!', 'json!', 'no-tick!'];
 function flowCmd(argv, env, out, err) {
   try {
@@ -2618,7 +2661,7 @@ function guardCmd(argv, env, out, err) {
 }
 
 // ---------- WORK-SIZING S1 (RM-25): norn size - the sessions of a lane stage, their size against the marks they ran under, a verdict ----------
-const SIZE_USAGE = 'usage: norn size [RUN-n | --lane L [--stage S]] [--json] [--project project.json | --state D] [--machine F]    (read-only: RUN-n = the stage of that run; '
+const SIZE_USAGE = 'usage: norn size [RUN-n | --lane L [--stage STAGE]] [--json] [--project project.json | --state D] [--machine F]    (read-only: RUN-n = the stage of that run; '
   + 'no --stage = the lane\'s last stage)';
 function sizeCmd(argv, env, out, err) {
   try {
@@ -2785,19 +2828,19 @@ function nodeCmd(argv, env, out, err) {
     .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof FedError || e instanceof ClaimsError ? 2 : 1; });
 }
 
-// ---------- RM-46 S2a: norn claim list | allow | release (the claims branch of the ledger remote; take over is S2b's) ----------
-const CLAIM_USAGE = "norn claim list [--project P] | allow <home>/<lane> <home>/<lane> --project P [--why W] | release <lane> --project P  [--machine F]    (work claims on the ledger remote's claims branch: list every entry, let two homes' claims overlap (owner), CAS-delete this home's own claim with its allow files; the home id is the project's home.json)";
+// ---------- RM-46 S2a / S2b: norn claim list | allow | release | take (the claims branch of the ledger remote) ----------
+const CLAIM_USAGE = "norn claim list [--project P] | allow <home>/<lane> <home>/<lane> --project P [--why W] | release <lane> --project P | take <home>/<lane> --project P  [--machine F]    (work claims on the ledger remote's claims branch: list every entry, let two homes' claims overlap (owner), CAS-delete this home's own claim with its allow files, take over another home's STALE claim (owner; stale = its n unchanged for lease_s + policy.sync.stale_grace_s on this home's clock); the home id is the project's home.json)";
 function claimCmd(argv, env, out, err) {
   const [sub, ...rest] = argv, f = {}, pos = [];
   const usage = msg => { err('error: ' + msg); err('usage: ' + CLAIM_USAGE); return 2; };
-  if (!['list', 'allow', 'release'].includes(sub)) return usage(sub ? `unknown claim subcommand ${sub}` : 'missing subcommand');
+  if (!['list', 'allow', 'release', 'take'].includes(sub)) return usage(sub ? `unknown claim subcommand ${sub}` : 'missing subcommand');
   for (let i = 0; i < rest.length; i++) {
     const k = { '--project': 'project', '--why': 'why', '--machine': 'machine' }[rest[i]];
     if (!k) { if (rest[i].startsWith('--')) return usage(`unexpected ${rest[i]}`); pos.push(rest[i]); continue; }
     if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
     f[k] = rest[++i];
   }
-  if (pos.length !== { list: 0, allow: 2, release: 1 }[sub]) return usage(`claim ${sub}: wrong number of arguments`);
+  if (pos.length !== { list: 0, allow: 2, release: 1, take: 1 }[sub]) return usage(`claim ${sub}: wrong number of arguments`);
   if (sub !== 'list' && !f.project) return usage(`claim ${sub} needs --project`);
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
@@ -2814,14 +2857,123 @@ function claimCmd(argv, env, out, err) {
       out(r.exists ? `already allowed: ${r.key}` : `allowed: ${r.key}`);
       return 0;
     }
-    const home = homeOf(path.join(cfg.state_root, f.project))?.id;
+    const state = path.join(cfg.state_root, f.project), home = homeOf(state)?.id;
     if (!home) { err(`error: project ${f.project} is not synced (no home.json in its state dir)`); return 1; }
+    if (sub === 'take') {   // S2b (SPEC 4.5): only a stale claim; the observer's clock (claims-seen.json) is this home's, brought up to the fetched tip first
+      const m = /^([a-z][a-z0-9]{0,7})\/(.+)$/.exec(pos[0]);
+      if (!m) return usage(`claim take ${pos[0]}: want <home>/<lane>`);
+      if (m[1] === home) { err(`error: ${pos[0]} is this home's own claim - norn claim release ${m[2]} --project ${f.project}`); return 1; }
+      const now = Date.now(), seen = updateSync(state, 'seen', cur => observeClaims(listClaims(fe), cur, { home, now }));
+      const r = takeWork(fe, { project: f.project, home: m[1], lane: m[2], seen, now, pol: syncPolicy(), by: 'owner' });
+      if (r.gone) { out(`no claim ${r.key}`); return 0; }
+      if (r.notStale) { err('error: ' + r.why); return 3; }
+      if (r.busy) { err('error: ' + r.why); return 1; }
+      const rows = readSync(state, 'rows');
+      writeSync(state, 'rows', { ...rows, events: [...(rows.events || []), { kind: 'taken', id: r.key, why: `${pos[0]} taken over by the owner on ${home} (stale at n=${r.claim.n})`, ms: now, at: new Date(now).toISOString() }] });
+      out(`taken over: ${r.key} (stale at n=${r.claim.n}); ${m[1]} stops its run at its next renew`);
+      return 0;
+    }
     const r = releaseWork(fe, { project: f.project, home, lane: pos[0] });
     if (r.gone) { out(`no claim ${r.key}`); return 0; }
     if (r.busy) { err('error: ' + r.why); return 1; }
     out(`released: ${r.removed.join(' ')}`);
     return 0;
   } catch (e) { if (e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
+// ---------- RM-46 S1b: norn sync cut (multi-home SPEC sec. 6; the cut tool: engine/lib/synccut.mjs) ----------
+const SYNC_CUT_USAGE = 'norn sync cut --project P --home <id> [--bare] [--apply] [--machine F]    (the one cut that makes this project a home of a synced project: a dry run by default that prints every rename; --apply registers the home on the claims branch, renames the lane branches (local + origin; an open PR keeps its), rewrites the logs, renames the files keyed by id and writes home.json + ID-MAP.md. --bare: the first home, which keeps its bare ids. Pre-conditions: the project paused, no run running or queued, the lane worktrees clean)';
+function syncCutCmd(argv, env, out, err) {
+  const [sub, ...rest] = argv, f = {};
+  const usage = msg => { err('error: ' + msg); err('usage: ' + SYNC_CUT_USAGE); return 2; };
+  if (sub !== 'cut') return usage(sub ? `unknown sync subcommand ${sub}` : 'missing subcommand');
+  for (let i = 0; i < rest.length; i++) {
+    if (['--bare', '--apply'].includes(rest[i])) { f[rest[i].slice(2)] = true; continue; }
+    const k = { '--project': 'project', '--state': 'state', '--home': 'home', '--machine': 'machine' }[rest[i]];
+    if (!k) return usage(`unexpected ${rest[i]}`);
+    if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
+    f[k] = rest[++i];
+  }
+  if (!f.home) return usage('sync cut needs --home <id>');
+  if (!HOME_RE.test(f.home)) return usage(`--home ${f.home}: want [a-z][a-z0-9]{0,7}`);
+  try {
+    const { project, state } = where(f, env);
+    if (!project) return usage('sync cut needs --project (its repo holds the lane branches)');
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const r = syncCut({ state, project, home: f.home, bare: !!f.bare, apply: !!f.apply, ledger: cfg, machineFile: mf });
+    for (const l of cutLines(r, { project: project.name, home: f.home, apply: !!f.apply })) out(l);
+    return r.refused.length ? 1 : 0;
+  } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
+// ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
+const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE;
+function syncCmd(argv, env, out, err) {
+  if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
+  const [sub, ...rest] = argv, f = {};
+  for (let i = 0; i < rest.length; i++) {
+    if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }
+    if (sub === 'reconcile' && rest[i] === '--as' && rest[i + 1] !== undefined) { f.as = rest[++i]; continue; }
+    if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
+    f.machine = rest[++i];
+  }
+  if (!['status', 'publish', 'fetch', 'watch', 'ring', 'reconcile'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
+  try {
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const id = cfg && homeIdOf(cfg);
+    if (!id) { err('error: sync is off (it needs machine.json ledger.remote and a synced project: a state dir with home.json)'); return 1; }
+    if (sub === 'status') {
+      const s = syncStatus(cfg);
+      out(`home ${s.home} remote set  published ${s.head ? s.head.slice(0, 10) : 'never'}${s.head && s.head !== s.pushed ? ' (not pushed yet)' : ''}`);
+      if (s.stopped) out(`publish stopped: ${s.stopped}`);
+      out(s.fetched_at ? `fetched ${s.fetched_at}` : 'never fetched');
+      if (s.fetch_error) out(`stale since ${s.fetched_at || 'never'}: the fetch at ${s.failed_at} failed (${s.fetch_error})`);
+      if (s.gone.length) out(`gone (copies kept): ${s.gone.join(' ')}`);
+      return 0;
+    }
+    if (sub === 'reconcile') {   // S5: the likely duplicate pairs across homes -> one owner card each; the answered cards apply first
+      const by = f.as || env.META_ROLE;
+      if (!f.dry && !by) { err('error: no role: pass --as <role> or set META_ROLE'); return 2; }
+      const claims = (() => { try { return localClaims(fedOf(cfg)); } catch { return {}; } })();   // the last fetched claims; none = no claim pairs
+      for (const { project, state } of syncedDirs(cfg)) {
+        const r = reconcile(state, { by, claims, dry: f.dry });
+        out(`${project}: ${r.pairs.length} likely duplicate pair${r.pairs.length === 1 ? '' : 's'} ${f.dry ? '(dry run, no card written)' : `, ${r.written.length} card${r.written.length === 1 ? '' : 's'} written (${r.written.join(' ') || '-'})`}; ${r.carded} asked before${r.applied.length ? `; applied ${r.applied.map(a => `${a.q} ${a.choice}`).join(', ')}` : ''}`);
+        for (const p of r.pairs) out(`  ${p.kind} ${p.a} + ${p.b}: ${p.why}  "${p.ta.slice(0, 60)}" / "${p.tb.slice(0, 60)}"`);
+      }
+      return 0;
+    }
+    if (sub === 'publish') {
+      const r = publishHome(cfg);
+      if (r.error || r.refused || r.stopped || r.rejected) { err('error: ' + (r.error || r.stopped || r.rejected || `refused: a machine.json secret value in ${r.refused.join(', ')}`)); return 1; }
+      out(r.noop ? 'nothing to publish' : `published home/${id}${r.sha ? ' ' + r.sha.slice(0, 10) : ''}, ${r.pushed ? 'pushed' : `not pushed (${r.offline}): the next pass retries`}`);
+      return r.pushed ? ringCli(cfg, out).then(() => 0) : 0;   // SPEC 4.3: after each push
+    }
+    if (sub === 'ring') return ringCli(cfg, out).then(r => (r.error ? 1 : 0));
+    if (sub === 'watch') {   // long-running like norn dash: the same loop the dashboard server runs; Ctrl+C stops it
+      const loop = loopOf(cfg, { log: s => out(`${new Date().toISOString()} ${s}`), timers: { setTimeout, clearTimeout } });
+      out(`sync watch: home ${id}, ls-remote every ${LOOP.poll_s} s, doorbell ${doorbellOf(cfg) ? 'on' : 'off (poll only)'} (Ctrl+C stops)`);
+      for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => { loop.stop(); process.exitCode = 130; });
+      loop.start();
+      return undefined;
+    }
+    const r = syncPass(cfg);
+    if (r.error) { err(`error: fetch failed, the last copies stay: ${r.error}`); return 1; }
+    out(`fetched ${r.homes.length} home${r.homes.length === 1 ? '' : 's'} (${r.homes.join(' ') || '-'}), ${r.written.length} copies written`);
+    if (r.gone.length) out(`gone (copies kept): ${r.gone.join(' ')}`);
+    return 0;
+  } catch (e) {
+    err('error: ' + e.message);
+    return e instanceof ConfigError ? 2 : 1;
+  }
+}
+
+// the doorbell ring of the CLI: one line, never a failed publish (the other homes poll)
+async function ringCli(cfg, out) {
+  const r = await ringHome(cfg);
+  if (r.rung) out(`doorbell rung (${r.rung.slice(0, 10)})`); else if (r.error) out(`doorbell not rung (the other homes poll): ${r.error}`); else if (r.nothing) out('doorbell: nothing pushed yet');
+  return r;
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------

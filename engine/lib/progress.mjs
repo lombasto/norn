@@ -192,7 +192,7 @@ function lastMove(work) {
 }
 
 // ---------- why slow ----------
-const pctOf = x => `${Math.round(x * 100)} %`;
+export const pctOf = x => `${Math.round(x * 100)} %`;
 /** share of [from, to] (ms) covered by the calls of a kind (overlaps counted once) */
 function share(calls, from, to) {
   const iv = calls.map(x => [Math.max(from, Date.parse(x.ts)), Math.min(to, Date.parse(x.end))]).filter(([a, b]) => b > a).sort((a, b) => a[0] - b[0]);

@@ -13,7 +13,8 @@ import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { startRun, lockPath, readiness } from '../engine/lib/runs.mjs';
 import { deliverablesView, askDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
 import { main } from '../engine/bin/norn.mjs';
-import { mrScore, mergeQueue, formatMq, autoUpdate, mergeConfig, mergeqRun, loadBatch, loadMq, setBatching, mqProbe, intoSha, mainShaOf } from '../engine/lib/mergeq.mjs';
+import { mrScore, mergeQueue, formatMq, autoUpdate, mergeqRun, intoSha, mainShaOf } from '../engine/lib/mergeq.mjs';
+import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { tick, gateProbes } from '../engine/lib/tick.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
@@ -371,7 +372,7 @@ test('auto-update: merges main into an idle branch and pushes (a fast-forward, n
 });
 
 // ---------- piece 5: the tick ----------
-test('the tick starts `norn mergeq --run` right after the fill (detached, one pass per state dir); none without deliverables', async () => {
+test('the tick starts `norn mergeq --run` right after the fill (detached, one pass per state dir); every project with a file (it lands its work)', async () => {
   const t = tmp('tick');
   const root = path.join(t, 'root'), state = path.join(t, 'state', 'norn');
   fs.mkdirSync(root, { recursive: true }); fs.mkdirSync(state, { recursive: true });
@@ -394,7 +395,9 @@ test('the tick starts `norn mergeq --run` right after the fill (detached, one pa
   fs.unlinkSync(path.join(state, 'mq', 'run.lock'));
   const { deliverables: _d, ...bare } = p;
   tick({ project: bare, budget: {}, dry: true, spawnMergeq, reason: 'test' });
-  assert.equal(calls.length, 1, 'no deliverables, no merge: no merge queue');
+  assert.equal(calls.length, 2, 'no deliverables, no merge: the pass still runs (MERGE-FIRST: mechanical landing; no auto-update there)');
+  tick({ project: { ...bare, file: undefined }, budget: {}, dry: true, spawnMergeq, reason: 'test' });
+  assert.equal(calls.length, 2, 'no project file: no pass');
 });
 
 test('auto-update leaves native code to the door: no update of a native branch, nor one that would pull main native changes into a lane worktree', () => {

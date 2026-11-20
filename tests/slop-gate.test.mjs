@@ -178,7 +178,7 @@ test('D1 run end: a red Done check and a BLOCK go back as ONE resume carrying bo
   const res = loadState(state).items[id].resume;
   assert.equal(res.slop, 1); assert.ok(res.dod, 'the resume names both');
   const txt = fs.readFileSync(notes, 'utf8');
-  assert.match(txt, /Norn's slop check found 1 BLOCK finding\(s\)[^]*- K15 a\.txt\.orig [^]*Norn's Done check failed/, 'slop first, then the Done check, in one prompt');
+  assert.match(txt, /Norn's slop check found 1 BLOCK finding\(s\)[^]*- K15 `a\.txt\.orig` [^]*Norn's Done check failed/, 'slop first, then the Done check, in one prompt');
   assert.equal((txt.match(/^resumed session /gm) || []).length, 1, 'one resume');
 });
 

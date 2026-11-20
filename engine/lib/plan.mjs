@@ -7,11 +7,12 @@
 // one day-aware clock ("today 21:41", "Fri 02:13") with the zone named once, plain names (lane title, else the lane humanized).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, fold, recordsFile } from './records.mjs';
+import { readEvents, fold, recordsFile, laneNameIn, homeOf, PRIORITIES } from './records.mjs';
 import { queueOf, readiness } from './runs.mjs';
 import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { mergeQueue } from './mergeq.mjs';
+import { deliverablesView, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
@@ -33,7 +34,7 @@ export const approx = min => (min < 60 ? `~${Math.max(5, Math.round(min / 5) * 5
 const cap1 = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const evTs = (r, ev) => { const h = [...(r.history || [])].reverse().find(x => x.ev === ev); return h ? Date.parse(h.ts) : null; };
 const endTs = r => evTs(r, 'end');
-const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
+export const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 const onClaude = d => !d?.executor || ['claude', 'fake'].includes(d.executor);
 const idn = id => Number(String(id).slice(4)) || 0;
 
@@ -220,7 +221,7 @@ const LIVE = ['queued', 'running', 'claimed'];
  *   merges: { rows (mergeQueue order), error? }, roadmap: [{ id, title, links }], lanes: [{ name, title }], now, zone })
  *   -> { upnext, chains, landing, forecast, method, zone }
  */
-export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
+export function buildPlan({ project = null, runs = [], ready = [], status = '', budget = {}, merges = null, backlog = null, roadmap = [], lanes = [], now = Date.now(), zone = zoneName() } = {}) {
   runs = runs.filter(r => r.kind === 'run');
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
@@ -453,22 +454,26 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
   const costed = qc.filter(u => u.estimate.cost !== null);
   const forecast = forecastOf({ status, budget, now, queuedCost: { pct: costed.reduce((s, u) => s + u.estimate.cost, 0), n: costed.length, of: qc.length, rough: costed.some(u => u.estimate.costBasis === 'rough') } });
 
-  return { project, now: new Date(now).toISOString(), zone, upnext, chains, landing, landing_error: merges?.error ?? null, forecast, method: ESTIMATE_METHOD };
+  // MERGE-FIRST: the merge backlog line and the priorities a queued run may be re-queued at (the Up next priority control)
+  return { project, now: new Date(now).toISOString(), zone, upnext, chains, landing, landing_error: merges?.error ?? null, backlog, priorities: PRIORITIES, forecast, method: ESTIMATE_METHOD };
 }
 
 /** gather the inputs from a state dir and build the plan. o: { state, project (loaded project.json), budget, now, git } */
 export function loadPlan({ state, project = null, budget = {}, now = Date.now(), git } = {}) {
   const runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
   let lanes = [];
-  try { lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: l.data?.name ?? String(l.id).slice(2), title: l.data?.title ?? null })); } catch { /* none */ }
+  try { const home = homeOf(state)?.id; lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null })); } catch { /* none */ }
   const ready = readiness(state, { now });
   let status = '';
   try { status = fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'); } catch { /* not written yet */ }
-  let merges = null;
-  if (project) { try { merges = mergeQueue({ stateDir: state, project, now, ...(git ? { git } : {}) }); } catch (e) { merges = { rows: [], error: String(e.message).slice(0, 300) }; } }
+  let merges = null, backlog = null;
+  if (project) {
+    try { const view = deliverablesView({ stateDir: state, project, now, ...(git ? { git } : {}) }); backlog = mergeBacklog(view.rows, { now, max: backlogMax(project.policy) }); merges = mergeQueue({ stateDir: state, project, now, view, ...(git ? { git } : {}) }); }
+    catch (e) { merges = { rows: [], error: String(e.message).slice(0, 300) }; }
+  }
   let roadmap = [];
   try { roadmap = Object.values(loadRoadmap(state).items).filter(i => i.state !== 'dropped').map(i => ({ id: i.id, title: i.title, links: i.links })); } catch { /* none */ }
-  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, roadmap, lanes, now });
+  return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, backlog, roadmap, lanes, now });
 }
 
 // ---------- text (norn plan, norn_plan) ----------
@@ -483,7 +488,7 @@ export function formatPlan(p) {
     L.push(`  ${c.steps.map(s => `${GLYPH[s.shape]} ${s.label}`).join(' > ')}   ${c.finished ? c.finish.word : `finish ${c.finish.word}${c.finish.note ? ` ${c.finish.note}` : ''}`}${c.rm ? `   [${c.rm.id} ${c.rm.title}]` : ''}`);
     if (c.broken) L.push(`    ! ${c.broken}`);
   }
-  L.push('', 'Landing next');
+  L.push('', `Landing next${p.backlog ? ` (${p.backlog.text})` : ''}`);
   if (!p.landing.length) L.push(`  nothing is heading to main${p.landing_error ? ` (${p.landing_error})` : ''}`);
   p.landing.forEach((l, i) => L.push(`  ${i + 1}. ${l.label} (${l.id})  ${l.word}`));
   const f = p.forecast;

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadState } from './records.mjs';
 import { renderDigest } from './views.mjs';
+import { threadStatus } from './qthread.mjs';
 import { liveRuns, sweepLost, STALE_MS } from './runs.mjs';
 import { cacheRSince, jsonCacheRSince } from './usage.mjs';
 import { capKey, capDefault, capsOfRun } from './executors.mjs';
@@ -130,7 +131,7 @@ export function buildStatus(o) {
   L.push('## Records');
   const day = 24 * 3600000;
   const recs = [
-    ...items.filter(i => i.kind === 'question' && ['open', 'answered'].includes(i.state)).map(i => `- ${i.id} ${i.state}${i.state === 'open' && now - Date.parse(i.created) > day ? ' STALE' : ''} ${i.data.lane ?? '-'}: ${i.data.title}`),
+    ...items.filter(i => i.kind === 'question' && ['open', 'answered'].includes(i.state)).flatMap(i => [`- ${i.id} ${i.state}${i.state === 'open' && now - Date.parse(i.created) > day ? ' STALE' : ''} ${i.data.lane ?? '-'}: ${i.data.title}`, ...threadStatus(i)]),   // INBOX-REPLIES: + its thread's wait
     ...dirs.map(i => `- ${i.id} active: ${String(i.data.text).split('\n')[0].slice(0, 160)}`),
     ...items.filter(i => i.kind === 'lane' && i.state === 'parked').map(i => `- ${i.id} parked: ${i.history.at(-1).data.why ?? ''}`),
     ...items.filter(i => i.kind === 'run' && ['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive' && i.data.role !== 'helper')

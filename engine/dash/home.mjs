@@ -187,7 +187,7 @@ function card(e, ctx) {
   if (e.kind === 'show') return `<div class="who">shown · ${at}</div><div class="txt">${e.caption ? `${inline(e.caption)} ` : ''}<code>${esc(e.path)}</code></div>${shots(e.images, ctx.project)}${e.excerpt ? `<pre class="excerpt">${esc(e.excerpt)}</pre>` : ''}`;
   // the other needs-you rows of the inbox: a login to redo, a drafted setup, a parked lane, an unreviewed run
   const what = e.kind === 'unreviewed' ? `${rid(e.id)} <b>${esc(e.lane ?? 'run')}</b> ended ${esc(String(e.outcome ?? e.state).toUpperCase())}${e.why ? `: ${esc(e.why)}` : ''} - not reviewed yet`
-    : e.kind === 'parked' ? `lane <b>${esc(String(e.id).slice(2))}</b> parked${e.q ? ` by ${rid(e.q)}` : e.why ? `: ${esc(e.why)}` : ''}`
+    : e.kind === 'parked' ? `lane <b>${esc(e.lane)}</b> parked${e.q ? ` by ${rid(e.q)}` : e.why ? `: ${esc(e.why)}` : ''}`
     : e.kind === 'login' ? `${esc(e.title)}` : `${esc(e.title ?? e.id)}`;
   const go = e.kind === 'unreviewed' ? 'runs' : 'inbox';
   return `<div class="head">${tag('needs', 'NEEDS YOU')}<span class="txt">${what}</span><span class="spacer"></span><button class="ghost" data-tab="${go}">open</button></div>`;
@@ -210,7 +210,7 @@ const sh = (h, body) => `<section class="hs"><h4>${esc(h)}</h4>${body}</section>
 const NOW_GLYPH = { running: ['run', '▶'], queued: ['idle', '‖'], claimed: ['idle', '‖'] };
 function left(s, ctx) {
   const now = (s.now || []).map(n => { const [c, g] = NOW_GLYPH[n.state] ?? ['idle', '○'];
-    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
+    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.ran_min) ? `${Math.round(n.ran_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
     || '<div class="mute small">no run is running or queued</div>';
   const u = s.usage || {}, pct = fin(u.used) ? u.used : null;
   const usage = `<div class="hbar"><i style="width:${pct === null ? 0 : Math.min(100, pct)}%"></i>${fin(u.stop) ? `<b style="left:${Math.min(100, u.stop)}%"></b>` : ''}</div>
