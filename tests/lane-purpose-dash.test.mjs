@@ -79,16 +79,17 @@ test('the Lanes rows: a type chip naming its signal and the output in words; the
   } finally { await f.done(); }
 });
 
-test('the Runs page: a Lane column - a worker (lane · stage, linked to its row), a MERGE, a check-in; Session is the id + name, the rest its title', () => {
+test('the Runs page: a Lane column - a worker (lane · stage, linked to its row), a MERGE, a check-in; Session is the id + the dwarf (else the kind word), the rest its title', () => {
   const tree = [
-    { id: 'RUN-7', name: 'amber-fox', kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [], helpers: { n: 1, running: 0, tokens: 1200 } },
-    { id: 'RUN-8', name: 'bold-heron', kind: 'worker', state: 'exited', outcome: 'done', executor: 'claude', lane: 'gen', stage: 'MERGE', project: 'kestrel', started: new Date().toISOString(), children: [] },
-    { id: 'RUN-9', name: 'calm-ibis', kind: 'checkin', state: 'exited', outcome: 'done', executor: 'claude', lane: 'checkin', project: 'kestrel', started: new Date().toISOString(), children: [] },
+    { id: 'RUN-7', dwarf: { id: 'oin', name: 'Óin' }, kind_word: null, kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [], helpers: { n: 1, running: 0, tokens: 1200 } },
+    { id: 'RUN-8', dwarf: null, kind_word: 'merge', kind: 'worker', state: 'exited', outcome: 'done', executor: 'claude', lane: 'gen', stage: 'MERGE', project: 'kestrel', started: new Date().toISOString(), children: [] },
+    { id: 'RUN-9', dwarf: null, kind_word: 'check-in', kind: 'checkin', state: 'exited', outcome: 'done', executor: 'claude', lane: 'checkin', project: 'kestrel', started: new Date().toISOString(), children: [] },
   ];
   const html = renderTab('runs', { tree }, { project: 'kestrel', now: Date.now() }), node = id => html.split('id="node-').find(x => x.startsWith(`${id}"`));
   assert.match(html, /<div class="node head"><div>session<\/div><div class="lanecol">lane<\/div>/);
   assert.match(node('RUN-7'), /<div class="lanecol small"><a class="lanelink" data-rid="L:gen" href="\?project=kestrel&tab=lanes&lanes=active,done,old,archived">gen<\/a> · S1<\/div>/);
-  assert.match(node('RUN-7'), /<span class="t" title="gen · S1 · helpers 1, 1,200 tok"><span class="id">RUN-7<\/span> <b class="aname">amber-fox<\/b><\/span>/);
+  assert.match(node('RUN-7'), /<span class="t" title="gen · S1 · helpers 1, 1,200 tok"><span class="id">RUN-7<\/span> <b class="aname" data-dwarf="oin">Óin<\/b><\/span>/);
+  assert.match(node('RUN-8'), /<span class="id">RUN-8<\/span> <span class="mute">merge<\/span><\/span>/, 'no dwarf: the kind word');
   assert.match(node('RUN-8'), />gen<\/a> · MERGE<\/div>/);
   assert.match(node('RUN-8'), /title="gen · MERGE · DONE"/);
   assert.match(node('RUN-9'), /<div class="lanecol small">check-in<\/div>/);
