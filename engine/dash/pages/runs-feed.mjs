@@ -1,7 +1,7 @@
 // The live feed drawer (moved verbatim from index.html, stage NAV; stage RUNS replaces it with the run document at ?tab=runs&run=RUN-n).
 // It builds its own markup (outside #main, so a stream re-render never wipes it). createFeed(c): c = { $, onClose } (onClose: the Map's
 // selection goes with the drawer); returns { F, narrow, openFeed, closeFeed, markFeed }.
-import { esc, renderFeedHead, renderFeedEvent, renderActivity } from '../ui.mjs';
+import { esc, renderFeedHead, renderFeedEvent, renderActivity } from '../cells.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '../activity.mjs';
 import { hoChip } from '../widgets.mjs';
 export const FEED_HTML = `<aside id="feed" class="drawer" hidden aria-label="Live feed">

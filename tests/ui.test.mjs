@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, loadTab, renderTab, healthStates, worstState, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, loadTab, renderTab, healthStates, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { worstState } from '../engine/dash/cells.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
 import { ledgerInline } from '../engine/dash/ledger.mjs';
@@ -95,7 +96,6 @@ test('GET / serves the UI shell with the token; /ui.mjs is the same module; no t
 });
 
 test('phone width (<= 700 px, both looks): the header wraps, the project select shrinks, the page bar at the bottom, cards / setting rows scroll or reflow; no page-level overflow mask', () => {
-  const html = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
   const css = dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
   const phone = [...css.matchAll(/@media \(max-width:700px\)\{([\s\S]*?\})\}/g)].map(m => '}' + m[1]).join('\n');
   const rule = sel => [...phone.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(m => m[1].split(',').map(s => s.trim()).includes(sel)).map(m => m[2]).join(';');

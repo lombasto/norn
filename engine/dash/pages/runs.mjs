@@ -1,5 +1,5 @@
 // The Runs page (moved verbatim from ui.mjs, stage NAV): the run tree, its filter chips and the view kept in the URL.
-import { esc, fin, dash, int, mTok, fmtMin, aname, chip, exClass, exChip, runChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, progLine, laneCard, guardOn, guardChip } from '../ui.mjs';
+import { esc, fin, dash, int, mTok, fmtMin, aname, chip, exClass, exChip, runChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, progLine, laneCard, guardOn, guardChip } from '../cells.mjs';
 import { dodChips, critiqueChip, hoChip } from '../widgets.mjs';
 import { LANE_SHOW } from './lanes.mjs';
 

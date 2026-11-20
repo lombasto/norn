@@ -1,5 +1,5 @@
 // The Plan page (moved verbatim from ui.mjs, stage NAV): up next, chains, landing next (/api/plan); its usage forecast renders on Usage (forecastCard).
-import { esc, fin, pct, aname, chip, backlogLine } from '../ui.mjs';
+import { esc, fin, pct, aname, chip, backlogLine } from '../cells.mjs';
 import { meter } from '../widgets.mjs';
 
 // ---------- the Plan tab (META-PLAN R1, norn DIR-13): what happens next, and when - /api/plan = engine/lib/plan.mjs per project ----------

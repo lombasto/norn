@@ -6,7 +6,8 @@
 // repaints the strip only and a record append refetches the open page only when the page reads that file.
 // LANES and RUNS build on: BAR / MORE ids, renderBar / renderMore / renderStatus markup ids (#tabs, #tab-<id>, #more-sheet,
 // #status-strip), PAGE_KEYS (add or narrow a page's keys here), routeTab.
-import { TABS, esc, fin, int, pct, fmtTime, worstState } from './ui.mjs';
+import { TABS } from './ui.mjs';
+import { esc, fin, int, pct, fmtTime, worstState } from './cells.mjs';
 
 // the bar's 4 pages, in order: [id, label, glyph]. Glyphs pass the blind-label test (a list of rows, play, a tray, a speech
 // bubble, ⋯ for More), always beside the word; drawn as SVG in currentColor so both looks and grounds colour them

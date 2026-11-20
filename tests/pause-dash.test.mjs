@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { record } from '../engine/lib/records.mjs';
-import { pauseMenu, pauseAct, renderTab } from '../engine/dash/ui.mjs';
+import { pauseMenu, renderTab } from '../engine/dash/ui.mjs';
+import { pauseAct } from '../engine/dash/cells.mjs';
 import { PAUSE_MODES } from '../engine/lib/pausemode.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 

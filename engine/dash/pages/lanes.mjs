@@ -1,5 +1,5 @@
 // The Lanes page (moved verbatim from ui.mjs, stage NAV): the lane table, its filter chips and helpers, and the Map (classic SVG + the norn view).
-import { esc, fin, dash, aname, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, progLine, laneCard, backlogLine, cut } from '../ui.mjs';
+import { esc, fin, dash, aname, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, progLine, laneCard, backlogLine, cut } from '../cells.mjs';
 import { hoChip, critiqueWord } from '../widgets.mjs';
 
 // GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
@@ -9,7 +9,7 @@ const overlapChip = o => {
   const files = o.files || [], tip = esc([...(o.kind === 'pr' ? [`${o.ref}: ${o.title ?? ''}`] : []), ...files, ...(o.n > files.length ? [`+${o.n - files.length} more`] : [])].join('\n'));
   return o.kind === 'pr' && /^https:\/\//.test(o.url || '') ? `<a class="chip warn" href="${esc(o.url)}" target="_blank" rel="noopener" title="${tip}">${esc(overlapWords(o))}</a>`
     : `<span class="chip warn" title="${tip}">${esc(overlapWords(o))}</span>`; };
-// owner 2026-11-18: one chip per overlap stacked 2-3 lines under busy lanes and broke the table's rhythm - two or more fold into ONE
+// owner 2026-11-18: one chip per overlap stacked 2-3 lines under busy lanes and broke the table's rhythm - two or more become ONE
 // summary chip that opens (a native <details>: keyboard and phone work, no script) to the same per-branch chips
 const overlapChips = os => !(os || []).length ? '' : os.length === 1 ? `<div class="lane-overlap">${overlapChip(os[0])}</div>`
   : `<details class="lane-overlap"><summary class="chip warn" title="this lane's changed files overlap ${os.length} other branches / PRs">overlaps ${os.length} upstream: ${os.reduce((n, o) => n + (o.n || 0), 0)} files</summary><div class="lane-overlap-list">${os.map(overlapChip).join(' ')}</div></details>`;

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { speedInit, onSpeed, speedOf, runSpeed, workersDuring, workerSpans, cpuDuring, speedReport, formatSpeed, speedWords, isWorker } from '../engine/lib/speed.mjs';
 import { noteCpu, readCpu } from '../engine/lib/runs.mjs';
-import { speedLine } from '../engine/dash/ui.mjs';
+import { speedLine } from '../engine/dash/cells.mjs';
 import { record } from '../engine/lib/records.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
