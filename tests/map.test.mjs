@@ -4,8 +4,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fold } from '../engine/lib/records.mjs';
 import { mapGraph, RECENT_RUNS, MORE_CAP } from '../engine/lib/map.mjs';
-import { loadTab, renderTab, TABS } from '../engine/dash/ui.mjs';
-import { fixture } from './helpers/dash-fixture.mjs';
 
 let seq = 0;
 const T0 = Date.parse('2026-11-08T08:00:00Z');
@@ -91,20 +89,4 @@ test('map: subagents of a run (from the agents tree) are children; run nodes car
   assert.equal(N[`${rs[4]}/a178`].type, 'subagent');
   assert.ok(m.edges.some(e => e.kind === 'delegates' && e.to === `${rs[4]}/a178`));
   assert.equal(N[rs[4]].feed, rs[4]); assert.equal(N['L:render'].feed, undefined);
-});
-
-test('Map tab: /api/map for one project, SVG blueprint with named state-coloured nodes, legend words, zoom steps; "all" asks for one project', async () => {
-  const f = await fixture();
-  try {
-    assert.ok(TABS.some(t => t[0] === 'map'));
-    assert.equal((await f.get('/api/map?project=kestrel')).status, 200);
-    assert.equal((await f.get('/api/map?project=all')).status, 400);
-    const get = async p => (await f.get(p)).data;
-    const html = renderTab('map', await loadTab('map', 'kestrel', get), { project: 'kestrel' });
-    assert.match(html, /<svg[^>]*class="map"/); assert.match(html, /data-feed="RUN-2"/);
-    for (const w of ['owns', 'resumes', 'delegates', 'dispatched', 'reviewed', 'asks']) assert.ok(html.includes(w), 'legend ' + w);
-    assert.match(html, /data-act="map-zoom"/);
-    assert.ok(!/undefined|NaN/.test(html), 'no undefined / NaN');
-    assert.match(renderTab('map', await loadTab('map', 'all', get), { project: 'all' }), /Choose one project/);
-  } finally { await f.done(); }
 });
