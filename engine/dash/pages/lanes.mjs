@@ -2,8 +2,9 @@
 // tile, name, the now line, progress and pace, the run strip (the retired Map's lane band as beads), the PR track and at most 3
 // actions; the chevron opens the lane's flow and brief in place (S.laneOpen keeps it open through a stream repaint). No timer:
 // the elapsed bar is a CSS animation, rows redraw on stream events only.
-import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip } from '../cells.mjs';
+import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime } from '../cells.mjs';
 import { capStrip } from '../widgets.mjs';
+import { renderMarkdown } from '../docs.mjs';
 
 // GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
 // a PR one links to the PR; the shared files are its tooltip
@@ -122,6 +123,8 @@ function flow(l) {
   const to = l.dlv ? `<span class="fl-j">→</span><span class="fl-run">${l.dlv.branch ? `<span class="mono">${esc(l.dlv.branch)}</span> ` : ''}${track(l.dlv)}</span>` : '';
   return `<div class="lflow" aria-label="Lane flow">${steps || '<span class="mute small">no runs yet</span>'}${ask}${to}</div>${by}`;
 }
+// lane-outputs: Details in the open row loads the lane's findings, outputs, rulings and PRs above the board (S.laneDetail; GET /api/lane)
+const detailBtn = (l, ctx) => `<button data-act="lane-detail" data-project="${esc(l.project)}" data-lane="${esc(l.name)}" aria-pressed="${ctx.laneDetail === laneKey(l.project, l.name)}" title="Findings, outputs, rulings and PRs of ${esc(l.name)}">Details</button> `;
 function expand(l, ctx, open) {
   const g = l.progress, usd = l.usd?.runs ? `<span>${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)} to date</span>` : '';
   const ex = l.executor && exClass(l.executor) !== 'claude' ? '' : l.executor ? `<span>${esc(l.executor)}</span>` : '';
@@ -129,7 +132,7 @@ function expand(l, ctx, open) {
   const path = l.path ? `<div class="small">${l.path.red ? chip('bad', l.path.text) : esc(l.path.text)}</div>` : '';
   return `<div class="lexp" id="lx-${esc(l.name)}"${open ? '' : ' hidden'}>${flow(l)}
     <div class="lexp-cols"><div>${g ? `<div class="small"><b>${esc(g.stage ?? 'Brief')}</b>: ${esc(g.line)}</div>${progDetail(g)}${g.slow?.line ? `<p class="small lslow"><b>Why slow:</b> ${esc(g.slow.line)}</p>` : ''}` : '<p class="small mute">No brief checklist for this run.</p>'}</div>
-    <div>${laneWhy(l.driver)}${laneKind(l)}${overlapChips(l.overlap)}${path}<div class="small lfacts">${facts}</div><div class="rowacts">${l.board !== 'archived' ? btn('archive', l, 'Archive', 'ghost') : ''}</div></div></div></div>`;
+    <div>${laneWhy(l.driver)}${laneKind(l)}${overlapChips(l.overlap)}${path}<div class="small lfacts">${facts}</div><div class="rowacts">${detailBtn(l, ctx)}${l.board !== 'archived' ? btn('archive', l, 'Archive', 'ghost') : ''}</div></div></div></div>`;
 }
 function row(l, ctx) {
   const k = laneKey(l.project, l.name), open = ctx.laneOpen?.has(k), why = ctx.laneRefused?.[k], tok = tileToken(l), late = /heartbeat late/.test(l.text ?? '');
@@ -138,7 +141,7 @@ function row(l, ctx) {
   return `<article class="lrow b-${esc(l.board)}" id="lane-${esc(l.name)}" data-type="${esc(l.lane_type?.type ?? '')}">
     <span class="ltile t-${tok}" role="img" aria-label="${esc(word)}" title="${esc(word)}">${shape(tok)}</span>
     <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${l.land ? ` ${landChip(l)}` : ''}${l.priority ? ` ${prioChip(l)}` : ''}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
-      <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
+      <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${nextLine(l)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
     ${progress(l, ctx.now) || '<span class="lprog"></span>'}${strip(l)}${track(l.dlv)}
     <div class="rowacts">${actions(l).join(' ')}</div>
     <button class="lopen" data-act="lane-open" data-project="${esc(l.project)}" data-lane="${esc(l.name)}" aria-expanded="${!!open}" aria-controls="lx-${esc(l.name)}" aria-label="${esc(`${open ? 'Close' : 'Open'} ${l.name}`)}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
@@ -152,6 +155,47 @@ const LEGEND = `<div class="llegend small" aria-label="Strip legend"><span class
 // fair-slots item 3: the queued / running run's priority + its place in the fill order, one short chip in the row head; a run
 // with no priority shows the default P2, faded and said so in its title
 export const prioChip = l => !l.priority ? '' : `<span class="chip idle prio${l.priority.dflt ? ' dflt' : ''}" title="${esc(`priority ${l.priority.p}${l.priority.dflt ? ' (default: the run has no priority)' : ''}${l.position ? ` · #${l.position} in this project's fill order` : ''}`)}">${esc(l.priority.p)}${l.position ? ` #${l.position}` : ''}</span>`;
+// lane-outputs item 8: what happens next on a lane whose last run ended (laneout.mjs laneNext) - never a bare DONE - with the run's own
+// last summary line under it, the open rulings as an 'Open decisions' chip (to the Inbox) and the background work its CLI cut off
+const nextLine = l => !l.next ? '' : `<div class="lane-next small">${chip(l.next.cls, l.next.words)}${l.asks_open ? ` <button class="chip needs lnk" data-tab="inbox" title="rulings on this lane with no answer yet">Open decisions: ${int(l.asks_open)}</button>` : ''}${l.cutoff ? ` ${chip('warn', `background work cut off: ${l.cutoff.join(', ')}`)}` : ''}</div>${l.status_line ? `<div class="lane-status small mute" title="the run's own last summary line">${esc(l.status_line)}</div>` : ''}`;
+const kb = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+/**
+ * lane-outputs item 2: one file shown in place, read-only - an image as itself, Markdown rendered (headings, tables, code), any other
+ * text with its line numbers. f = a Docs reader file (GET /api/docs?part=file&file=path:<abs>: the one path guard, pathDoc); the Tests
+ * tab's code viewer can show its files through the same function.
+ */
+export function fileViewer(f, ctx = {}) {
+  if (!f) return '';
+  if (f.error) return `<div class="fileview card small">${chip('bad', 'not shown')} ${esc(f.error)}</div>`;
+  const head = `<div class="fileview-head"><b>${esc(f.name)}</b> <span class="small mute inspath">${esc(f.path)}</span> <button class="ghost" data-act="lane-file-close">Close</button></div>`;
+  if (f.image) return `<div class="fileview card">${head}<img class="fileview-img" alt="${esc(f.name)}" src="${esc(`/api/file?project=${encodeURIComponent(ctx.project ?? '')}&path=${encodeURIComponent(f.path)}`)}"></div>`;
+  if (!f.code && /\.(?:md|markdown)$/i.test(f.path ?? '')) return `<div class="fileview card">${head}<article class="md">${renderMarkdown(f.text ?? '', { sanitize: ctx.sanitize }).html}</article></div>`;
+  const lines = String(f.text ?? '').split(/\r?\n/);
+  return `<div class="fileview card">${head}<div class="docsrc fileview-src"><table><tbody>${lines.map((t, i) => `<tr><td class="ln mute">${i + 1}</td><td class="lt"><code>${esc(t)}</code></td></tr>`).join('')}</tbody></table></div></div>`;
+}
+const PR_CLS = { open: 'needs', approved: 'running', merged: 'ok', closed: 'idle' };
+/**
+ * lane-outputs: a lane's details (GET /api/lane) - Findings (the run's 'Summary for the owner', verbatim) on top, what happens next,
+ * the follow-up (the plan's decision, who picked each stage and when, where each stage is now; every ruling asked on the lane with its
+ * answer), every PR the lane produced, and the Outputs: each file its runs wrote to the notes folder, grouped, with size, time and
+ * the run that wrote it; a tap opens it in place (fileViewer). `file` = the open file.
+ */
+export function laneDetail(d, ctx = {}, file = null) {
+  if (!d) return `<section class="card lane-det" id="lane-det"><p class="small mute">loading ...</p></section>`;
+  if (d.error) return `<section class="card lane-det" id="lane-det">${chip('bad', 'not loaded')} <span class="small">${esc(d.error)}</span> <button class="ghost" data-act="lane-detail-close">Close</button></section>`;
+  const t = iso => (iso ? esc(fmtTime(iso, ctx.now)) : '?');
+  const find = d.findings ? `<div class="md lane-find">${renderMarkdown(d.findings.text, { sanitize: ctx.sanitize }).html}</div>` : `<p class="small mute">No 'Summary for the owner' in the lane's NOTES.md.</p>`;
+  const plan = !d.plan ? '' : `<h4>${esc(d.plan.title)} <span class="small mute">(${esc(d.plan.run)}${d.plan.open ? `, ${plural(d.plan.open, 'stage')} to pick` : ''})</span></h4><ul class="small lane-stages">${d.plan.stages.map(s => `<li><b>${esc(s.key)}</b> ${esc(s.title || '')} - ${esc(s.where)}${s.by ? ` <span class="mute">(picked by ${esc(s.by)}, ${t(s.at)})</span>` : ''}</li>`).join('')}</ul>`;
+  const asks = !d.asks?.length ? '' : `<h4>Rulings asked on this lane</h4><ul class="small lane-asks">${d.asks.map(a => `<li>${chip(a.open ? 'needs' : 'ok', a.open ? 'open' : a.state)} <a data-rid="${esc(a.id)}" href="#">${esc(a.id)}</a> ${esc(a.title)}${a.answer ? `<div class="mute">answer: ${esc([a.answer.choice && `(${a.answer.choice})`, a.answer.text].filter(Boolean).join(' '))} - ${esc(a.answer.by)}, ${t(a.answer.at)}</div>` : ''}</li>`).join('')}</ul>`;
+  const prs = !d.prs?.length ? '' : `<h4>Pull requests</h4><ul class="small lane-prs">${d.prs.map(p => `<li>${/^https:\/\//.test(p.url || '') ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">PR #${esc(p.number ?? '?')}</a>` : `PR #${esc(p.number ?? '?')}`} ${chip(PR_CLS[p.state] ?? 'idle', p.state)}${p.merged_at ? ` merged ${t(p.merged_at)}` : ''}<span class="mute"> ${esc(p.branch ?? '')} · ${esc(p.dlv ?? '')}</span></li>`).join('')}</ul>`;
+  const open = file?.path;
+  const outs = !d.outputs?.length ? `<p class="small mute">Nothing in ${esc(d.dir)}.</p>` : d.outputs.map(g => `<h4>${esc(g.label)} <span class="small mute">${int(g.files.length)}</span></h4><ul class="small lane-files">${g.files.map(f => `<li${f.path === open ? ' class="on"' : ''}><button class="lnk" data-act="lane-file" data-path="${esc(f.path)}">${esc(f.rel)}</button> <span class="mute">${kb(f.size)} · ${t(f.mtime)} · ${esc(f.run ?? 'no run')}</span></li>`).join('')}</ul>`).join('');
+  const nr = d.written?.length ? `<div class="small">${chip('warn', 'written by the run that ended without a result')} ${esc(d.written.join(', '))}</div>` : '';
+  return `<section class="card lane-det" id="lane-det"><div class="lane-det-head"><h3>${projTag(ctx, d.project)}${esc(d.lane)}</h3><button class="ghost" data-act="lane-detail-close">Close</button></div>
+    ${nextLine(d)}<div class="lane-det-sec" id="lane-findings"><h4>Findings</h4>${find}</div>
+    ${plan || asks ? `<div class="lane-det-sec" id="lane-follow"><h4>Follow-up</h4>${plan}${asks}</div>` : ''}${prs ? `<div class="lane-det-sec" id="lane-prs">${prs}</div>` : ''}
+    <div class="lane-det-sec" id="lane-outputs"><h4>Outputs <span class="small mute inspath">${esc(d.dir)}</span></h4>${nr}${outs}</div>${fileViewer(file, ctx)}</section>`;
+}
 export function lanes(d, ctx) {
   const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), undo = ctx.laneUndo;
   const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => l.board === k).length;
@@ -169,5 +213,6 @@ export function lanes(d, ctx) {
    <div class="filters lfilters"><span class="lane-show" role="group" aria-label="Show lane groups">${LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(gbtn).join('')}</span>
     <input type="search" data-filter="lanes" placeholder="filter lanes" aria-label="Filter lanes"><span class="lane-show lane-links">${LANE_SHOW.filter(g => LINKS.includes(g[0])).map(gbtn).join(' · ')}</span>${help}
     ${kinds.length > 1 || kind ? `<span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span>` : ''}</div>
+   ${ctx.laneDetail ? laneDetail(ctx.laneDet, ctx, ctx.laneFile) : ''}
    <div class="lboard" data-rows="lanes">${groups || `<p class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</p>`}</div>${all.length ? LEGEND : ''}`;
 }

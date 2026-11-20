@@ -27,6 +27,7 @@ import { tickMergeq, mqProbe, spawnDetached, mergeqOn } from './mergeq.mjs';
 import { followerPrs, makeGh } from './mergeland.mjs';
 import { tickFix } from './fixer.mjs';
 import { closeLandedQuestions, latchMerged } from './deliverables.mjs';
+import { sweepAsks, applyRulings } from './runasks.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { tickTests } from './testscli.mjs';
 import { checkinCv } from './cv.mjs';
@@ -333,6 +334,9 @@ function tickPass(o, g = {}) {
     if (!o.dry) try { for (const c of latchMerged(state, { project: p, gh: o.gh || makeGh() })) tickLog(state, `${tag}: ${c.dlv} ${c.ev} - ${c.why}`); } catch (e) { tickLog(state, `${tag}: merge latch: ${e.message}`); }
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
+    // lane-outputs items 7, 9, 10a: the asks of a run no supervisor ended (lost, killed) reach the Inbox; an answered ruling is written
+    // into the stage brief that needs it (runasks.mjs; never fails the tick)
+    if (!o.dry) try { for (const x of sweepAsks(state, { views: p.views || {}, ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: ${x.run} asks the owner: ${x.posted.map(q => q.id ?? `(refused) ${q.title}`).join(', ')}`); for (const x of applyRulings(state)) tickLog(state, `${tag}: ruling ${x.q} written into ${x.brief}`); } catch (e) { tickLog(state, `${tag}: owner asks: ${e.message}`); }
     // item 9 (MAIL-20, lanepaths.mjs tickPaths): finished work reaches a PR by code - unpushed commits pushed, the MERGE stage queued (P1)
     if (!o.dry || o.lanes) try { for (const x of tickPaths(state, { project: p, dry: !!o.dry, cli: o.cli || metaCli(META_CMD), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: path to main ${x.id}: ${x.act} - ${x.note}`); } catch (e) { tickLog(state, `${tag}: path to main: ${e.message}`); }
     // lane norn-lifecycle item 5 (lifecycle.mjs): no lane sits - the orphan / stopped-and-landed / done-merged-and-old lanes archived by code

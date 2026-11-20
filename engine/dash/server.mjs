@@ -49,6 +49,7 @@ import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
 import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
 import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
+import { laneNow, lanePlan, laneAsks, lanePrs, ownerSummary, walkOutputs, groupOutputs, laneRuns, notesDirOf, lastRun, outcomeOf } from '../lib/laneout.mjs';
 import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
 import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, AGENT_FILES, laneNameOf } from '../lib/adopt.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
@@ -581,6 +582,42 @@ export function createDashboard(o) {
     return rows.map(l => { const g = pg.get(l.run), steps = laneSteps(l.name, items);
       return { ...l, ...(g ? { progress: g } : {}), card: cardOf({ ...l, stage: items[l.run]?.data?.stage, steps }, g) }; });
   }
+  // lane-outputs items 4, 8, 10c: what happens next on a lane whose last run ended, in words (laneout.mjs laneNow: needs your input /
+  // PR awaiting approval / shipped / stages on the roadmap / not queued / ended without a result), the run's own last summary line and
+  // the background work its CLI cut off. Read on fs.promises first (the last runs' NOTES, the planner folders; a no-result lane's folder)
+  const R0 = { items: {} };
+  async function withNow(p, rows) {
+    const items = st(p).items, last = new Map(rows.map(l => [l.name, lastRun(l.name, items)]));
+    await Promise.all([primeProposals(items), prime({ files: [...last.values()].filter(r => r && outcomeOf(r) && r.data.notes).map(r => r.data.notes) })]);
+    let R = R0; try { R = loadRoadmap(p.state); } catch { R = R0; }
+    const props = proposalsOf(items, R, { all: true }), dl = deliverablesOf(p).rows || [];
+    return Promise.all(rows.map(async l => {
+      const r = last.get(l.name), o = outcomeOf(r);
+      if (!o) return l;
+      const written = ['no-result', 'crash', 'lost', 'killed'].includes(o) ? (await walkOutputs(notesDirOf(p.state, l.name, items))).filter(f => Date.parse(f.mtime) >= Date.parse(r.created) - 60e3) : [];
+      return { ...l, ...laneNow({ lane: l.name, items, R, rows: dl, prop: props.find(x => x.lane === l.name) ?? null, written, notes: r.data.notes ? readText(r.data.notes) : null }) };
+    }));
+  }
+  /**
+   * GET /api/lane?project=&lane=: a lane's details - its Findings (the last 'Summary for the owner' of its NOTES.md, verbatim), its
+   * Outputs (every file under its notes folder, grouped, with size, time and the run that wrote it; a file opens in the Docs reader
+   * by its path - pathDoc / GET /api/file, the one path guard), the plan's decision and where each stage is now, the owner questions
+   * on the lane with their answers, every PR it produced, and what happens next (laneNow)
+   */
+  async function laneDetail(p, lane) {
+    const items = st(p).items;
+    if (!items[laneId(lane, p.state)]) throw fail(404, `No lane ${lane}`);
+    const dir = notesDirOf(p.state, lane, items), runs = laneRuns(lane, items), r = lastRun(lane, items);
+    const notesFile = [path.join(dir, 'NOTES.md'), r?.data.notes].filter(Boolean);
+    await Promise.all([primeProposals(items), prime({ files: notesFile })]);
+    let R = R0; try { R = loadRoadmap(p.state); } catch { R = R0; }
+    const files = await walkOutputs(dir), dl = deliverablesOf(p).rows || [], prop = proposalsOf(items, R, { all: true }).find(x => x.lane === lane) ?? null;
+    const notes = notesFile.map(readText).find(t => t !== null) ?? null;
+    const written = r && ['no-result', 'crash', 'lost', 'killed'].includes(outcomeOf(r)) ? files.filter(f => Date.parse(f.mtime) >= Date.parse(r.created) - 60e3) : [];
+    return { project: p.name, lane, dir: dir.split(path.sep).join('/'), findings: ownerSummary(notes), outputs: groupOutputs(files, runs), plan: lanePlan(prop, { items, R, rows: dl }),
+      asks: laneAsks(items, lane), prs: lanePrs(dl, lane), ...laneNow({ lane, items, R, rows: dl, prop, written, notes }), written: written.map(f => f.rel),
+      runs: runs.sort((a, b) => b.id.localeCompare(a.id, 'en', { numeric: true })).map(x => ({ id: x.id, stage: x.data.stage ?? null, state: x.state, outcome: outcomeOf(x), cutoff: x.end?.cutoff ?? null })) };
+  }
   function lanesWithSpend(ps) {
     const rows = sortLanes(ps.flatMap(p => withDriver(p, lanes(p, true))));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
@@ -1022,6 +1059,8 @@ export function createDashboard(o) {
     if (!path.isAbsolute(raw) || /^[\\/]{2}/.test(raw)) throw fail(400, 'path must be an absolute local path');
     const real = insideRoots(showRoots(p.state, p), raw);
     if (!real) throw fail(403, 'Outside the allowed roots (the project root, its state, its runs\' worktrees and NOTES folders)');
+    // lane-outputs: an image (a lane's shots/*.png) is shown, not read as text - the page loads it from GET /api/file (same roots)
+    if (IMAGE[path.extname(real).slice(1).toLowerCase()]) { if (!statS(real)?.isFile()) throw fail(404, 'File not found'); return { key, name: path.basename(real), path: real.split('\\').join('/'), image: true, text: '', lines: 0, paras: null, findings: [] }; }
     const text = read(real, null);
     if (text === null) throw fail(404, 'File not found');
     const md = /\.(?:md|markdown|txt)$/i.test(real);
@@ -1980,10 +2019,11 @@ data: ${JSON.stringify(l)}
           const prose = Object.fromEntries(await Promise.all(ps.map(async (p, i) => [p.name, await proseOf(p, per[i])])));
           return send(200, { items, needs_you: needsYou(items), prose }); }
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
-          const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
+          const by = new Map((await Promise.all(ps.map(async p => withNow(p, await withCards(p, rows.filter(l => l.project === p.name)))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           const need = new Map(); for (const i of (await Promise.all(ps.map(inbox))).flat().filter(isNeed)) if (i.lane) need.set(`${i.project}|${i.lane}`, (need.get(`${i.project}|${i.lane}`) ?? 0) + 1);
           const now = Date.now();   // stage LANES: the board group needs the Inbox's needs count (boardOf)
           return send(200, { lanes: rows.map(l => { const r = { ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 }; return { ...r, board: boardOf(r, now) }; }), backlog: backlogOf(ps), capacity: await capacityOf() }); }
+        if (route === '/api/lane') return send(200, await laneDetail(one(url), String(url.searchParams.get('lane') ?? '')));
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           // NORN-UI-RUNS: ?part=live (running runs + the queue: the Runs page's first paint) | history (the ended runs in the window) | none: all
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
