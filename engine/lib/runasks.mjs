@@ -8,10 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadState, record, RecordError } from './records.mjs';
 import { ownerAsks, laneRuns } from './laneout.mjs';
+import { fwd } from './config.mjs';
+import { readText as read } from './harness/common.mjs';
 
-const fwd = p => String(p ?? '').replace(/\\/g, '/');
 const mtimeOf = f => { try { return fs.statSync(f).mtimeMs; } catch { return null; } };
-const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const listMd = dir => { try { return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isFile() && /\.(?:md|markdown)$/i.test(e.name)).map(e => e.name); } catch { return []; } };
 const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '~' : s);
 const endEv = r => (r.history || []).findLast(h => ['end', 'lost', 'kill'].includes(h.ev)) ?? null;

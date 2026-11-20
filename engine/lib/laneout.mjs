@@ -7,9 +7,9 @@
 // happens next on a lane whose last run ended (laneNext: one state vocabulary, NEXT_STATES). Pure but for listOutputs (fs.promises).
 import fs from 'node:fs';
 import path from 'node:path';
+import { fwd } from './config.mjs';
+import { idNum as num } from './records.mjs';
 
-const fwd = p => String(p ?? '').replace(/\\/g, '/');
-const num = id => Number(String(id).match(/(\d+)$/)?.[1] ?? 0);
 const HEAD = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
 const ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
 
