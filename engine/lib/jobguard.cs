@@ -22,6 +22,10 @@
 //   spawn <job|-> <cwd> <cmdline>  start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
 //                            "pid <n> breakaway", or "pid <n> inside" when an outer job forbids breakaway. <job> (the run's named job)
 //                            allows breakaway only around this one CreateProcess and forbids it again at once.
+//   spawn <job|-> <cwd> <cmdline> away   the same for an independent run (RM-48 S1, DEC-1088): it never starts inside. Windows keeps a
+//                            breakaway child in every job from the caller's own up to the first that forbids breakaway, WITHOUT an
+//                            error (an inner 'jobguard run' job, a parent's nested job); so the child starts suspended and runs only
+//                            when its handle is no member of <job>. Else it is ended unrun: "refused <why>" (exit 3).
 //   run <ms> <cwd> <cmdline> run <cmdline> in a new KILL_ON_JOB_CLOSE job of its own (this helper enters it first, so the child and
 //                            all it starts are in it from birth, suspended or not); exit with the child's code and kill the whole job
 //                            at the child's exit, at <ms> (exit 124, "jobguard-timeout" on stderr) or when this helper is killed (its
@@ -57,6 +61,7 @@ static class JobGuard {
   [DllImport("kernel32", SetLastError = true)] static extern IntPtr GetStdHandle(int n);
   [DllImport("kernel32", SetLastError = true)] static extern bool GetProcessTimes(IntPtr p, out long created, out long exited, out long kernel, out long user);
   [DllImport("kernel32")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32", SetLastError = true)] static extern uint ResumeThread(IntPtr t);
   [DllImport("kernel32", SetLastError = true)] static extern bool IsProcessInJob(IntPtr p, IntPtr j, out bool r);
   [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr p, int f, StringBuilder s, ref int n);
   [StructLayout(LayoutKind.Sequential)] struct PBI { public IntPtr exit, peb, affinity, prio, pid, ppid; }
@@ -179,18 +184,26 @@ static class JobGuard {
   }
   // breakaway is allowed only around this CreateProcess. Two spawns at once: either may close the window on the other, whose
   // CreateProcess then fails with 5 - it reopens the window and tries again. The window always ends closed, never restored "open".
-  static int Spawn(string jobName, string cwd, string cmdline) {
-    const uint BREAKAWAY = 0x01000000, DETACHED = 0x8, NEW_GROUP = 0x200, NO_WINDOW = 0x08000000;
+  static int Spawn(string jobName, string cwd, string cmdline, bool strict) {
+    const uint BREAKAWAY = 0x01000000, DETACHED = 0x8, NEW_GROUP = 0x200, NO_WINDOW = 0x08000000, SUSPENDED = 0x4;
     IntPtr job = jobName == "-" ? IntPtr.Zero : OpenJobObject(JOB_ALL, false, jobName);
     try {
-      for (int tries = 0; tries < 6; tries++) {
+      for (int tries = 0; tries < (strict ? 5 : 6); tries++) {
         bool away = tries < 5;
         if (away && job != IntPtr.Zero) Limits(job, Flags(job) | BREAKAWAY_OK);
         var si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PI pi;
-        uint f = DETACHED | NEW_GROUP | NO_WINDOW | (away ? BREAKAWAY : 0);
+        uint f = DETACHED | NEW_GROUP | NO_WINDOW | (away ? BREAKAWAY : 0) | (strict ? SUSPENDED : 0);
         bool ok = CreateProcess(null, new StringBuilder(cmdline), IntPtr.Zero, IntPtr.Zero, false, f, IntPtr.Zero, cwd, ref si, out pi);
         int err = ok ? 0 : Marshal.GetLastWin32Error();
         if (job != IntPtr.Zero) Limits(job, Flags(job) & ~BREAKAWAY_OK);
+        if (ok && strict) {
+          bool member = false;
+          if (job != IntPtr.Zero && !IsProcessInJob(pi.hProcess, job, out member)) member = true;   // unknown = inside: never run it
+          if (member) TerminateProcess(pi.hProcess, 1); else ResumeThread(pi.hThread);
+          CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+          if (member) { Console.Out.WriteLine("refused breakaway forbidden by a job around the caller: the child stayed in " + jobName); return 3; }
+          Console.Out.WriteLine("pid " + pi.pid + " breakaway"); return 0;
+        }
         if (ok) {
           CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
           Console.Out.WriteLine("pid " + pi.pid + (away ? " breakaway" : " inside")); return 0;
@@ -198,6 +211,7 @@ static class JobGuard {
         if (!away || err != 5) throw new Win32Exception(err);   // 5 = access denied: breakaway forbidden (an outer job, a racing spawn)
         if (job == IntPtr.Zero) tries = 4;   // no window of ours to reopen: start inside next
       }
+      if (strict) { Console.Out.WriteLine("refused breakaway denied (access denied " + (job == IntPtr.Zero ? "" : "5 times ") + "leaving " + jobName + ")"); return 3; }
       return 1;
     } finally { if (job != IntPtr.Zero) CloseHandle(job); }
   }
@@ -228,9 +242,9 @@ static class JobGuard {
       if (a.Length == 3 && a[0] == "hold") return Hold(int.Parse(a[1]), a[2]);
       if ((a.Length == 6 || a.Length == 7) && a[0] == "reap") return Reap(a[1], int.Parse(a[2]), a[3], a[4], a[5], a.Length == 7 ? a[6] : "");
       if (a.Length == 1 && a[0] == "procs") return Procs();
-      if (a.Length == 4 && a[0] == "spawn") return Spawn(a[1], a[2], a[3]);
+      if ((a.Length == 4 || a.Length == 5 && a[4] == "away") && a[0] == "spawn") return Spawn(a[1], a[2], a[3], a.Length == 5);
       if (a.Length == 4 && a[0] == "run") return Run(uint.Parse(a[1]), a[2], a[3]);
-      Console.Out.WriteLine("err usage: jobguard hold <pid> <name> | reap <name> <keep-pid> <receipts> <killer> <reason> [<pid,pid>] | procs | spawn <job|-> <cwd> <cmdline> | run <ms> <cwd> <cmdline>"); return 2;
+      Console.Out.WriteLine("err usage: jobguard hold <pid> <name> | reap <name> <keep-pid> <receipts> <killer> <reason> [<pid,pid>] | procs | spawn <job|-> <cwd> <cmdline> [away] | run <ms> <cwd> <cmdline>"); return 2;
     } catch (Exception e) { Console.Out.WriteLine("err " + e.Message); return 1; }
   }
 }

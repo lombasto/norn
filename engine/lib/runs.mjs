@@ -880,9 +880,17 @@ export function startRun(o) {
     const specFile = path.join(o.state, 'runs', run + '.spec.json');
     fs.mkdirSync(path.dirname(specFile), { recursive: true });
     fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
-    // NORN-WATCH S5: started from inside a reaped run's job (META_JOB) = break away, unless it is that run's own helper (dies with it)
-    const away = process.env.META_JOB && !(o.role === 'helper' && o.parent && o.parent === process.env.META_RUN_ID)
-      ? spawnOutside(process.execPath, [SUPERVISOR, specFile], { cwd: o.worktree }) : null;
+    // NORN-WATCH S5: started from inside a reaped run's job (META_JOB) = break away, unless it is that run's own helper (dies with it).
+    // RM-48 S1 (DEC-1088): an independent run that cannot leave the job is refused, naming it - never started inside (nested, the
+    // job's reap or close would kill it with the run that happened to launch it)
+    const job = !(o.role === 'helper' && o.parent && o.parent === process.env.META_RUN_ID) && process.env.META_JOB;
+    const away = job ? spawnOutside(process.execPath, [SUPERVISOR, specFile], { cwd: o.worktree, strict: true }) : null;
+    if (job && !away?.pid) {
+      const why = `independent run refused: it cannot leave run job ${job} (${away?.refused ?? 'no jobguard spawn'}) - started inside, that run's reap would kill it`;
+      record(o.state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data: { exit: null, outcome: 'no-result', outcome_source: 'none', refused: why } });
+      fs.rmSync(hbPath(o.state, run), { force: true });
+      throw new RunError(why);
+    }
     let pid = away?.pid;
     if (!away) { const sup = spawn(process.execPath, [SUPERVISOR, specFile], { detached: true, stdio: 'ignore', windowsHide: true, cwd: o.worktree }); sup.unref(); pid = sup.pid; }
     // the hb names the supervisor from its birth: a stop before its first beat (node start-up takes seconds on a loaded box) must
@@ -890,7 +898,7 @@ export function startRun(o) {
     // pid) wins: the launcher writes only while the hb still names no supervisor.
     if (pid && !readJson(hbPath(o.state, run))?.supervisor_pid) writeAtomic(hbPath(o.state, run), { run, pid: null, supervisor_pid: pid, ts: new Date().toISOString() });
     lock.refresh({ pid });
-    return { run, pid, log, final, session_id, ...(warnings.length ? { warnings } : {}), spawned: away ? (away.breakaway ? 'breakaway' : 'inside') : 'plain', ...(away && !away.breakaway ? { in_job: process.env.META_JOB } : {}) };
+    return { run, pid, log, final, session_id, ...(warnings.length ? { warnings } : {}), spawned: away ? 'breakaway' : 'plain' };
   } catch (e) { lock.release(); throw e; }
 }
 

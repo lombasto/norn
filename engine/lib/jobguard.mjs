@@ -128,12 +128,13 @@ export function winQuote(a) {
 }
 
 /** start exe + args OUTSIDE the caller's job (detached, no window). `job` (the run's job, META_JOB) allows breakaway for this one
- * start only (jobguard.cs). Returns { pid, breakaway } or null when it cannot (the caller then spawns as before). */
-export function spawnOutside(exePath, args, { cwd = process.cwd(), exe = jobguardExe(), job = process.env.META_JOB } = {}) {
+ * start only (jobguard.cs). Returns { pid, breakaway } or null when it cannot (the caller then spawns as before). `strict` (an
+ * independent run, RM-48 S1): never inside - a child still in `job` is ended unrun, the result { refused: why } */
+export function spawnOutside(exePath, args, { cwd = process.cwd(), exe = jobguardExe(), job = process.env.META_JOB, strict = false } = {}) {
   if (!exe) return null;
-  const r = spawnSync(exe, ['spawn', job || '-', cwd,[exePath, ...args].map(winQuote).join(' ')], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
-  const m = /^pid (\d+) (breakaway|inside)/m.exec(r.stdout || '');
-  return m ? { pid: Number(m[1]), breakaway: m[2] === 'breakaway' } : null;
+  const r = spawnSync(exe, ['spawn', job || '-', cwd, [exePath, ...args].map(winQuote).join(' '), ...(strict ? ['away'] : [])], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+  const m = /^pid (\d+) (breakaway|inside)/m.exec(r.stdout || ''), no = /^refused (.*?)\r?$/m.exec(r.stdout || '');
+  return m ? { pid: Number(m[1]), breakaway: m[2] === 'breakaway' } : no ? { refused: no[1] } : null;
 }
 
 // proc-hygiene (B, C; census 2026-11-19): the 33 git.exe and 7 powershell.exe found orphaned had never run - one thread, SUSPENDED,
