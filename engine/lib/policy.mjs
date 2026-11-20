@@ -257,7 +257,7 @@ export const SECTION_RULES=[
   [/^(billing|api_usd_per_day|desired_burn_pct_per_h|usage_rate_cap_pct_per_h|weekly_stop_pct|reserve_pct_for_doors|reset)$/,'workers/usage'],
   [/^(calib_pct|calib_time_utc)$/,'workers/calibration'],
   [/^(cacheR_per_pct|policy\.agents\.max_lane_writers)$/,'advanced/danger'],
-  [/^(max_claude_workers|policy\.dispatch_window\.max)$/,'workers/claude'],
+  [/^(max_claude_workers|policy\.dispatch_window\.max|policy\.fill\.merge_reserve|policy\.merge\.backlog_max)$/,'workers/claude'],   // MERGE-FIRST: slots kept of the worker caps; the backlog that holds new lanes
   [/^max_(codex|astra|sol)$/,'workers/codex'],
   [/^(max_[a-z0-9_-]+|policy\.delegate\.max_per_parent|policy\.ask\.max_per_day)$/,'workers/helpers'],
   [/^policy\.executors\.([a-z_]+)\.(executor|model|effort)$/,'executors/routing/$1'],
@@ -265,7 +265,7 @@ export const SECTION_RULES=[
   [/^worker_min_(model|effort)$/,'executors/minimum'],
   [/^policy\.critical_(lanes|effort)$/,'executors/critical'],
   [/^policy\.fallbacks\./,'executors/fallbacks'],
-  [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
+  [/^policy\.context\.([a-z]+)(?:_1m)?\.[a-z_]+$/,'agents/context/$1'],   // a [1m] row (NORN-CTX-1M) sits under its role
   [/^policy.sizing./,'agents/context/sizing'],
   [/^policy\.iteration\./,'agents/rounds'],
   [/^policy\.stuck\./,'agents/rounds'],
@@ -279,7 +279,6 @@ export const SECTION_RULES=[
   [/^policy\.slop\./,'voice/onoff'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
-  [/^policy\.holds\./,'workers/usage'],
   [/^policy\.holds\./,'workers/usage'],
   [/^policy\.launch\./,'advanced/harness'],
   [/^policy\.cadence\./,'checkins/schedule'],
