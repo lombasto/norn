@@ -3,15 +3,12 @@
 // kills nothing at all. One JSON line per target in <state>/kills.jsonl:
 //   { at, killer (run id / tick / supervisor pid), reason, action (kill | skipped), why?, pid, image, cmd (first 300 chars), ppid, job? }
 // The reap writes its own lines from the native helper (jobguard.cs: read off the very handle it kills); every other kill (killTree:
-// the whole tree taskkill /T or the POSIX group walk takes) is receipted here from one process listing - jobguard `procs` when the
-// helper is compiled (~0.2 s), else strays.listProcs (PowerShell CIM / ps). A kill with no project state (ci-suite, exit-watch)
-// is receipted in the calling run's state (META_RUN_STATE), else <tmp>/norn-kills.jsonl.
+// the whole tree taskkill /T or the POSIX group walk takes) is receipted here from one process listing the caller passes (jobguard.mjs
+// procList). A kill with no project state (ci-suite, exit-watch) is receipted in the calling run's state (META_RUN_STATE), else
+// <tmp>/norn-kills.jsonl. No imports from Norn: jobguard.mjs and runs.mjs both build on this file.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync, execFile } from 'node:child_process';
-import { listProcs } from './strays.mjs';
-import { jobguardCached } from './jobguard.mjs';
 
 export const killsFile = state => path.join(state, 'kills.jsonl');
 const CMD_MAX = 300;
@@ -19,19 +16,8 @@ const CMD_MAX = 300;
 export const receiptsOf = rc => rc?.file || (rc?.state || process.env.META_RUN_STATE ? killsFile(rc?.state || process.env.META_RUN_STATE) : path.join(os.tmpdir(), 'norn-kills.jsonl'));
 const killerOf = rc => rc?.killer || `${process.env.META_RUN_ID || 'norn'} pid ${process.pid}`;
 
-const parse = out => String(out || '').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-/** every process now: [{ pid, ppid, name, cmd }] */
-export function procList() {
-  const exe = process.platform === 'win32' ? jobguardCached() : null;
-  if (exe) { const r = spawnSync(exe, ['procs'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 64 << 20 }); if (r.status === 0) return parse(r.stdout); }
-  return listProcs();
-}
-/** procList off the event loop (killTreeAsync: the dash server) */
-export function procListAsync() {
-  const exe = process.platform === 'win32' ? jobguardCached() : null;
-  if (!exe) return Promise.resolve(listProcs());
-  return new Promise(ok => execFile(exe, ['procs'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 64 << 20 }, (e, out) => ok(e ? listProcs() : parse(out))));
-}
+/** JSON lines -> objects (a torn line, a half-written receipt, is left out) */
+export const jsonLines = out => String(out || '').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
 /** pid and every descendant of it in procs (what taskkill /T and the POSIX group walk end); a pid not listed is still named */
 export function treeOf(pid, procs) {
@@ -55,13 +41,13 @@ export function writeReceipts(rows, rc = {}) {
 
 /** the receipts of a tree kill of pid, written before it: the rows named (best effort - a kill the caller depends on, a cap or a hang,
  * is never held back by a receipt that cannot be written) */
-export function receiptTree(pid, rc, procs = procList()) {
+export function receiptTree(pid, rc, procs) {
   const rows = treeOf(pid, procs);
   try { writeReceipts(rows, rc); } catch { /* the kill goes on */ }
   return rows;
 }
 
 /** the receipts in a file, oldest first */
-export const readKills = file => { try { return parse(fs.readFileSync(file, 'utf8')); } catch { return []; } };
+export const readKills = file => { try { return jsonLines(fs.readFileSync(file, 'utf8')); } catch { return []; } };
 /** "node.exe 1234, python.exe 99": a log line's names of killed processes */
 export const killNames = rows => rows.map(r => `${r.image || r.name || '?'} ${r.pid}`).join(', ');

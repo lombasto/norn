@@ -69,7 +69,7 @@ test('reap: a pid that is not in the job (left it / reused) is skipped with a re
     const rec = readKills(receipts).find(k => k.pid === outside.pid);
     assert.equal(rec?.action, 'skipped'); assert.match(rec.why, /not in the job/); assert.match(rec.cmd, /kr-outside-marker/);
     assert.ok(o.r.killed.some(k => k.pid === o.inside), 'the member still died');
-  } finally { try { outside.kill(); } catch { /* gone */ } }
+  } finally { try { outside.kill(); } catch { /* already exited: nothing left to stop */ } }
 });
 
 test('killTree: the receipt (pid, image, command line, parent) is in <state>/kills.jsonl before the tree dies', async () => {
@@ -99,5 +99,5 @@ test('stopOrphans: only the registered heartbeat pids of an orphaned helper die,
     assert.equal(alive(bystander.pid), true, 'the same command line but not registered: untouched');
     const rec = readKills(killsFile(state)).find(k => k.pid === c.pid);
     assert.equal(rec?.action, 'kill'); assert.match(rec.reason, /RUN-2.*parent RUN-1/); assert.match(rec.cmd, /kr-orphan-marker/);
-  } finally { for (const p of [c, bystander]) { try { p.kill(); } catch { /* gone */ } } }
+  } finally { for (const p of [c, bystander]) { try { p.kill(); } catch { /* already exited: nothing left to stop */ } } }
 });

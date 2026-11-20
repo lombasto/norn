@@ -14,8 +14,8 @@ import { adapterFor, harnessOf } from './harness/index.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
 import { writeQueueView, sleepMs } from './views.mjs';
-import { spawnOutside } from './jobguard.mjs';
-import { receiptTree, procListAsync } from './kills.mjs';
+import { spawnOutside, procList, procListAsync } from './jobguard.mjs';
+import { receiptTree } from './kills.mjs';
 import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
 import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
 import { limitRefusal, openLimits } from './limitgate.mjs';
@@ -1051,7 +1051,7 @@ function descendants(pid, psOut = spawnSync('ps', PS, { encoding: 'utf8' }).stdo
 // killer, reason }; returns the receipted rows ({ pid, name, cmd, ppid }) - [] for no pid.
 export function killTree(pid, rc) {
   if (!Number.isInteger(pid) || pid <= 0) return [];
-  const rows = receiptTree(pid, rc);
+  const rows = receiptTree(pid, rc, procList());
   if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return rows; }
   signal(pid, 'SIGSTOP');
   for (const c of descendants(pid)) signal(c, 'SIGKILL');

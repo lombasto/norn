@@ -13,9 +13,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { receiptsOf, writeReceipts } from './kills.mjs';
+import { receiptsOf, writeReceipts, jsonLines } from './kills.mjs';
+import { listProcs } from './strays.mjs';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'jobguard.cs');
 const CSC = ['Framework64', 'Framework'].map(f => path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', f, 'v4.0.30319', 'csc.exe'));
@@ -41,6 +42,20 @@ function jobguardSettle(p, ok) {
 export function jobguardCached({ platform = process.platform, dir = os.tmpdir(), csc = CSC } = {}) {
   const p = jobguardPlan({ platform, dir, csc });
   return p && !p.c ? p.exe : null;
+}
+
+/** every process now, [{ pid, ppid, name, cmd }] (a kill's receipts, kills.mjs): the compiled helper's `procs` (~0.2 s), else
+ * strays.listProcs (PowerShell CIM / ps) */
+export function procList() {
+  const exe = jobguardCached();
+  if (exe) { const r = spawnSync(exe, ['procs'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 64 << 20 }); if (r.status === 0) return jsonLines(r.stdout); }
+  return listProcs();
+}
+/** procList off the event loop (killTreeAsync: the dash server) */
+export function procListAsync() {
+  const exe = jobguardCached();
+  if (!exe) return Promise.resolve(listProcs());
+  return new Promise(ok => execFile(exe, ['procs'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 64 << 20 }, (e, out) => ok(e ? listProcs() : jsonLines(out))));
 }
 
 /** the compiled helper's path (compiled once per source version), or null off Windows / without csc. Blocks while it compiles:
