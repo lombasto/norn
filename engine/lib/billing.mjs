@@ -55,7 +55,7 @@ function runLog(file) {
   let st; try { st = fs.statSync(file); } catch { return { rows: [], running: [] }; }
   const c = cache.get(file);
   if (c && c.size === st.size && c.mtime === st.mtimeMs) return c.val;
-  const starts = new Map(), rows = [], open = new Map();
+  const starts = new Map(), rows = [], open = new Map(), born = new Map();
   let text = ''; try { text = fs.readFileSync(file, 'utf8'); } catch { return { rows: [], running: [] }; }
   for (const line of text.split('\n')) {
     if (!line.includes('"kind":"run"')) continue;
@@ -63,7 +63,9 @@ function runLog(file) {
     if (r.ev === 'start' || r.ev === 'create') {
       const d = r.data || {};
       starts.set(r.id, d);
-      if (r.ev === 'start' && !notClaude(d) && d.session_id) open.set(r.id, { id: r.id, lane: d.lane ?? null, session_id: d.session_id, model: d.model ?? null, started: Date.parse(r.ts), transcript: d.transcript });
+      if (r.ev === 'start' && !notClaude(d) && d.session_id) { born.set(r.id, { id: r.id, lane: d.lane ?? null, session_id: d.session_id, model: d.model ?? null, started: Date.parse(r.ts), transcript: d.transcript }); open.set(r.id, born.get(r.id)); }
+    } else if (r.ev === 'alive') {   // MAIL-22: a lost run whose beat came back is running again
+      if (born.has(r.id)) open.set(r.id, born.get(r.id));
     } else if (r.ev === 'end' || r.ev === 'kill' || r.ev === 'lost') {
       open.delete(r.id);
       if (r.ev !== 'end' || typeof r.data?.cost_usd !== 'number') continue;
