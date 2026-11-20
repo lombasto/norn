@@ -87,6 +87,13 @@ test('the Overview parts re-homed: Lanes shows the first task + setup gaps from 
   assert.match(renderTab('usage', d, { project: 'tide', strip: s }), /id="panel-usage"[^]*id="strip-cards"[^]*id="usage-burn"/);
 });
 
+test('shared fixes: fmtMin shows days past 48 h; the server sets the wordmark src (no empty <img> before the art loads)', async () => {
+  const { fmtMin } = await import('../engine/dash/ui.mjs');
+  assert.equal(fmtMin(59), '59 min'); assert.equal(fmtMin(2879), '47 h 59'); assert.equal(fmtMin(2880), '2 d 0 h'); assert.equal(fmtMin(4 * 1440 + 5 * 60 + 30), '4 d 5 h');
+  const f = await fixture();
+  try { assert.match(await (await fetch(`${f.url}/`)).text(), /<img class="art h1-norn" data-asset="wordmark" src="\/norn\/art\/wordmark\.png"/); } finally { await f.done(); }
+});
+
 test('/api/strip: counts from the run records, never the run tree; /api/lanes rows carry `needs` = their Inbox isNeed rows', async () => {
   const f = await fixture();
   try {

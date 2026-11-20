@@ -38,6 +38,28 @@ test('every look and ground: chip text on its background is WCAG AA (ok, warn, b
   }
 });
 
+test('stage NAV item 5: the codex chip is ink text + a purple marker (AA in every ground); --field-line is >= 3:1 on every field ground', () => {
+  assert.match(html, /\.chip\.codex\{background:var\(--codex-bg\);color:var\(--ink\)\}/, 'codex chip text is ink (A-04)');
+  assert.match(html, /\.chip\.codex::before\{[^}]*background:var\(--codex\)/, 'the purple lives in the marker');
+  assert.ok(!/\.chip\.codex\s*\{[^}]*color:\s*var\(--codex\)/.test(norn), 'the norn look keeps the ink text');
+  for (const [name, t] of Object.entries(THEMES)) {
+    const c = contrast(t['--ink'], t['--codex-bg']), m = contrast(t['--codex'], t['--codex-bg']);
+    assert.ok(c >= 4.5, `${name}: codex chip ink on --codex-bg is ${c.toFixed(2)}:1 (< 4.5)`);
+    assert.ok(m >= 3, `${name}: the codex marker on --codex-bg is ${m.toFixed(2)}:1 (< 3, WCAG 1.4.11)`);
+    for (const g of ['--bg', '--panel', '--soft'].filter(k => t[k])) {
+      const f = contrast(t['--field-line'] ?? '#000', t[g]);
+      assert.ok(t['--field-line'] && f >= 3, `${name}: --field-line ${t['--field-line']} on ${g} ${t[g]} is ${f.toFixed(2)}:1 (< 3, A-12)`);
+    }
+  }
+  assert.match(html, /select,button,input\{[^}]*border:1px solid var\(--field-line\)/, 'fields draw their border with --field-line');
+});
+
+test('stage NAV item 5: a pressed filter chip is outlined in the run hue with ink text in both looks, never amber', () => {
+  const rules = [...`${html}\n${norn}`.matchAll(/\.hf\[aria-pressed=true\]\s*\{([^}]*)\}/g)].map(m => m[1]);
+  assert.ok(rules.length >= 1, 'a pressed .hf rule');
+  for (const r of rules) { assert.match(r, /border-color:\s*var\(--run\)/); assert.match(r, /color:\s*var\(--ink\)/); assert.ok(!/--gold|--warn/.test(r), `amber in ${r}`); }
+});
+
 test('every look and ground: ok / warn / bad / accent / run are five different colours with the conventional hues', () => {
   for (const [name, t] of Object.entries(THEMES)) {
     const set = ['ok', 'warn', 'bad', 'accent', 'run'].map(k => t[`--${k}`]);

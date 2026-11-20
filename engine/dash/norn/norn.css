@@ -8,12 +8,12 @@
 @font-face { font-family: 'Silkscreen'; src: url(/vendor/silkscreen-latin-700-normal.woff2) format('woff2'); font-weight: 700; font-display: block; }
 
 :root.norn { --px: 2px; --d1: 1px; --pix: 'Silkscreen', ui-monospace, monospace; }
-:root.norn[data-ground=dark] { --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
+:root.norn[data-ground=dark] { --field-line: #6380a0; --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
   --accent: #9eecc9; --accent-bg: #0e2b30; --ok: #94b44c; --ok-bg: #34431c; --run: #93aec6; --run-bg: #2e3f5f; --warn: #eec24a; --warn-bg: #6e430f;
   --bad: #e2683f; --bad-bg: #241a14; --codex: #a0569a; --codex-bg: #0b0e1a; --bar: #2e3f5f; --on-accent: #0b0e1a; --shadow: #0b0e1a; --zebra: #1f2b45;
   --gold: #eec24a; --dim: #6380a0;
   --k1: #93aec6; --k2: #a0569a; --k3: #e2683f; --k4: #eec24a; --k5: #52b8a0; --k6: #94b44c; --k7: #b8801e; --k8: #6380a0; --k9: #9c7048; --kgen: #a0569a; }   /* META-TEND P1-VISUAL: stack / bars series */
-:root.norn[data-ground=light] { --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
+:root.norn[data-ground=light] { --field-line: #8c7656; --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
   --accent: #17504f; --accent-bg: #9eecc9; --ok: #34431c; --ok-bg: #94b44c; --run: #2e3f5f; --run-bg: #d3e2ec; --warn: #6e430f; --warn-bg: #fff0a8;
   --bad: #a5302e; --bad-bg: #e9dcbc; --codex: #a0569a; --codex-bg: #d3e2ec; --bar: #c9b48c; --on-accent: #f7f0dc; --shadow: #8c7656; --zebra: #e9dcbc;
   --gold: #6e430f; --dim: #6b4a30;
@@ -42,7 +42,7 @@
 :root.norn .drawer { box-shadow: none; }
 :root.norn table, :root.norn .tablecard>h3 { background: var(--panel); }
 :root.norn .md tr:nth-child(2n) td { background: var(--zebra); }
-:root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--line); }
+:root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--field-line); }
 :root.norn button.primary { color: var(--on-accent); }
 :root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn span.rid, :root.norn .opt, :root.norn .okey, :root.norn .pba, :root.norn .ppath .pp, :root.norn .tg { border-radius: 0; }
 :root.norn #error { background: var(--bad-bg); color: var(--bad); }
@@ -262,7 +262,7 @@
 :root.norn .hn { font-size: calc(6 * var(--px)); letter-spacing: 3px; }
 :root.norn .hs h4 { font-size: calc(5 * var(--px)); letter-spacing: 3px; color: var(--mute); }
 :root.norn .tag { font-size: calc(5 * var(--px)); letter-spacing: 3px; }
-:root.norn .hf[aria-pressed=true] { border-color: var(--gold); color: var(--gold); background: var(--bg); }
+:root.norn .hf[aria-pressed=true] { border-color: var(--run); color: var(--ink); background: var(--run-bg); }
 :root.norn .hchip { border-color: var(--nu); color: var(--nu); }
 :root.norn .hbar i { background: var(--nu); } :root.norn .hbar b { background: var(--gold); }
 :root.norn .ev-controller .msg { border-left-color: var(--gold); }

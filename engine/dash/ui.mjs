@@ -37,7 +37,8 @@ export const mTok = n => !fin(n) ? '-' : n < 1e6 ? `${Math.round(n / 1000)}k` : 
 export function fmtMin(m) {
   if (!fin(m)) return '-';
   m = Math.max(0, Math.round(m));
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+  // past 48 h the hours stop reading at a glance: days + hours (stage NAV item 5)
+  return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}` : `${Math.floor(m / 1440)} d ${Math.floor((m % 1440) / 60)} h`;
 }
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
 // UTC times with a Z, ids and dates as the records carry them: today "02:14Z", older "10-30 22:20Z".
