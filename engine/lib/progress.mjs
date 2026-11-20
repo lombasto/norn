@@ -11,6 +11,7 @@
 //   alarms     guard.mjs's runaway / over-handoff / tool-spam flags as what they mean, their numbers and what the owner can do
 // Lane feed-activity (RM-36, engine/dash/activity.mjs) folds the same transcript for the feed drawer's activity view; when both are on
 // main the tool-call fold here can be its activityAdd (NOTES of lane run-progress).
+import { classify, isTest } from './testcmd.mjs';
 
 const STALE_MIN = 30, MAX_CALLS = 4000;
 const fwd = s => String(s ?? '').replace(/\\/g, '/');
@@ -68,10 +69,8 @@ export function briefPlan(text) {
 }
 
 // ---------- the transcript fold: the tool calls with their time, the commits, the tests ----------
-export const TEST_RE = /\bnode\s+(?:[^|;&\n]*\s)?--test\b|\bpytest\b|\bci-suite\.mjs\b|\bnpm\s+(?:run\s+)?test\b|\bvitest\b|\bjest\b/;
 const COMMIT_RE = /\bgit\s+(?:-C\s+\S+\s+)?commit\b/;
 const resultText = b => typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(x => x?.text ?? '').join('\n') : '';
-const testFiles = cmd => [...new Set([...String(cmd).matchAll(/[\w./\\-]*?([\w-]+\.test\.[cm]?[jt]s|test_[\w-]+\.py|[\w-]+_test\.py)\b/g)].map(m => m[1]))];
 /** pass / fail counts of a test run's output (node --test spec and TAP summaries, summed; pytest's line; ci-suite's red line) | null */
 export function testCounts(text) {
   const t = String(text ?? ''), sum = re => { let n = null; for (const m of t.matchAll(re)) n = (n ?? 0) + Number(m[1]); return n; };
@@ -98,8 +97,8 @@ export function onWork(c, j) {
     const u = c.open[b.tool_use_id], text = resultText(b), ok = !b.is_error;
     delete c.open[b.tool_use_id];
     const shell = u.name === 'Bash' || u.name === 'PowerShell', cmd = shell ? String(u.cmd ?? '') : '';
-    const kind = /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(u.name) ? 'edit' : shell && TEST_RE.test(cmd) ? 'test' : shell && COMMIT_RE.test(cmd) ? 'commit' : 'other';
-    const files = kind === 'test' ? testFiles(cmd) : kind === 'edit' && u.file ? [fwd(u.file)] : [];
+    const tc = shell ? classify(cmd) : null, kind = /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(u.name) ? 'edit' : tc && (tc.kind === 'test' || tc.kind === 'full') ? 'test' : shell && COMMIT_RE.test(cmd) ? 'commit' : 'other';
+    const files = kind === 'test' ? tc.files : kind === 'edit' && u.file ? [fwd(u.file)] : [];
     const bg = /running in background with ID|moved to the background/i.test(text);
     const call = { kind, name: u.name, ts: u.ts, end: ts, ok, files };
     if (kind === 'test') { call.key = files.length ? files.slice().sort().join(' ') : cmd.replace(/^cd\s+\S+\s*&&\s*/, '').slice(0, 120); call.counts = bg ? null : testCounts(text); if (bg) call.bg = true; }
@@ -153,7 +152,7 @@ function nowDoing(work, now) {
   const open = Object.values(work.open).filter(x => x.ts).sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))[0];
   if (open) {
     const sh = open.name === 'Bash' || open.name === 'PowerShell', cmd = String(open.cmd ?? '');
-    if (sh && TEST_RE.test(cmd)) return { verb: 'testing', files: testFiles(cmd) };
+    if (sh && isTest(cmd)) return { verb: 'testing', files: classify(cmd).files };
     if (/^(Edit|Write|MultiEdit)$/.test(open.name)) return { verb: 'editing', files: open.file ? [open.file] : [] };
   }
   const last = work.calls.filter(x => x.kind === 'test' || x.kind === 'edit').at(-1);

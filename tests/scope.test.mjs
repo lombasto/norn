@@ -173,16 +173,16 @@ test('the launcher guards write runs of executors that run Claude Code hooks; re
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', state: undefined }), undefined);
 });
 
-test('policy.dod.scope: off (and the default) launches a claude run with no deny rules, no write block, no hook; on launches as round 1', () => {
+test('policy.dod.scope: off (and the default) launches a claude run with no deny rules, no write block and the hook for shell tools only (the full-suite deny); on launches as round 1', () => {
   const w = world(), off = projectWith(w, { scope: 'off' }), none = projectWith(w, null), on = projectWith(w, { scope: 'on' });
   assert.equal(withDefaults({}).policy.dod.scope, 'off');
   const launch = o => { const spec = { ...w.spec, executor: 'claude', ...o }; return adapterFor('claude').command({ ...spec, mail_hook: mailHookOf(spec), scope: scopeOfLaunch(spec) }).args; };
   const settingsOf = args => JSON.parse(args[args.indexOf('--settings') + 1]);
   for (const o of [{ ctx_from: off }, { ctx_from: none }, { refill: { project_file: off } }, { env: { META_PROJECT: off } }, {}]) {
-    assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ...o }), undefined, JSON.stringify(o));
+    assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ...o }).permissions, undefined, JSON.stringify(o));
     const args = launch(o), st = settingsOf(args);
-    assert.equal(st.permissions, undefined); assert.equal(st.hooks.PreToolUse, undefined); assert.ok(st.hooks.PostToolUse, 'the mail hook stays');
-    assert.ok(!args.includes(path.dirname(w.notes)), 'no NOTES add-dir');
+    assert.equal(st.permissions, undefined); assert.equal(st.hooks.PreToolUse[0].matcher, 'Bash|PowerShell'); assert.ok(st.hooks.PostToolUse, 'the mail hook stays');
+    assert.ok(args.includes(path.dirname(w.notes)), 'the NOTES folder comes with the hook (harness/claude.mjs: any scope part)');
   }
   for (const o of [{ ctx_from: on }, { refill: { project_file: on } }, { env: { META_PROJECT: on } }]) {
     const args = launch(o), st = settingsOf(args);
@@ -193,10 +193,49 @@ test('policy.dod.scope: off (and the default) launches a claude run with no deny
   }
   // the CURRENT policy: switching the project off reaches the next launch
   fs.writeFileSync(on, fs.readFileSync(off));
-  assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: on }), undefined);
+  assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: on }).permissions, undefined);
   const row = SETTINGS.find(r => r.key === 'policy.dod.scope');
   assert.deepEqual([row.type, row.options, sectionOf(row).join('/')], ['enum', ['off', 'on'], 'agents/rounds']);
   assert.equal(SETTINGS.indexOf(row), SETTINGS.findIndex(r => r.key === 'policy.dod.ready') + 1, 'the row sits beside dod.ready');
+});
+
+test('TEST-GOVERNANCE S1: a fake worker (a resumed run too) issuing the full suite is denied by the hook, naming the changed-file command; scope off still denies it; full_suite = allow lets it run', () => {
+  const w = world();
+  fs.mkdirSync(path.join(w.state, 'runs'), { recursive: true });
+  const project = policy => { const f = path.join(w.root, `project-${JSON.stringify(policy).replace(/\W/g, '')}.json`); fs.writeFileSync(f, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy })); return f; };
+  const hook = (spec, command) => {
+    fs.writeFileSync(path.join(w.state, 'runs', 'RUN-1.spec.json'), JSON.stringify(spec));
+    const r = spawnSync(process.execPath, [META, 'scope', 'check', '--run', 'RUN-1', '--state', w.state],
+      { input: JSON.stringify({ session_id: 'S', hook_event_name: 'PreToolUse', ...bash(command, w.wt) }), encoding: 'utf8', env: { ...process.env, META_RUN_ID: 'RUN-1' } });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim() ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason : null;
+  };
+  const off = { ...w.spec, ctx_from: project({ dod: { scope: 'off' } }) };
+  for (const spec of [w.spec, off, { ...off, resumes: 1, resumeOf: 'RUN-0' }, { ...off, stage: 'MERGE' }]) {
+    const why = hook(spec, 'cd ' + w.wt + ' && node engine/bin/ci-suite.mjs');
+    assert.match(why, /^Norn refused this Bash call: a full test suite \(ci-suite\)/);
+    assert.match(why, /node engine\/bin\/ci-suite\.mjs --changed origin\/main/);
+    assert.equal(hook(spec, 'node engine/bin/ci-suite.mjs --changed origin/main'), null);
+    assert.equal(hook(spec, 'META_ROOT=/tmp/r node --test tests/a.test.mjs'), null);
+  }
+  assert.match(hook(off, 'python -m pytest tests -q'), /python -m pytest <tests\/test_x\.py>/);
+  // scope off: the full-suite deny only, no file guard
+  assert.equal(hook(off, 'git push --force'), null);
+  assert.match(hook(w.spec, 'git push --force'), /force/, 'a spec with no project file keeps the whole guard');
+  assert.equal(hook({ ...w.spec, ctx_from: project({ tests: { budget: { full_suite: 'allow' } }, dod: { scope: 'on' } }) }, 'node engine/bin/ci-suite.mjs'), null);
+  assert.ok(refusals(w.state).some(r => /full test suite/.test(r.why)), 'the deny is recorded for the run feed and the Slop list');
+});
+
+test('TEST-GOVERNANCE S1: the launch installs the hook alone (shell tools) when the scope guard is off and full_suite = deny; none with allow; the Settings row', () => {
+  const w = world(), f = policy => { const p = path.join(w.root, `p-${Object.keys(policy).join('')}.json`); fs.writeFileSync(p, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy })); return p; };
+  const s = scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ dod: { scope: 'off' } }) });
+  assert.deepEqual(s, { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: scopeHookOf({ state: w.state }), timeout: 30 }] }] } });
+  assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ tests: { budget: { full_suite: 'allow' } } }) }), undefined);
+  assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', mode: 'read-only' }), undefined);
+  assert.equal(withDefaults({}).policy.tests.budget.full_suite, 'deny');
+  const row = SETTINGS.find(r => r.key === 'policy.tests.budget.full_suite');
+  assert.deepEqual([row.type, row.options, row.recommended, sectionOf(row).join('/')], ['enum', ['deny', 'allow'], 'deny', 'agents/rounds']);
+  assert.match(row.help, /runs in CI/);
 });
 
 test('the run feed: the adapter poll plus the run refusals, both cursor keys carried', async () => {
