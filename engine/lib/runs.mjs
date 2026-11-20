@@ -25,7 +25,7 @@ import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } fro
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
-import { scopeHookOf, scopeSettings, scopeOnFor } from './scope.mjs';
+import { scopeHookOf, guardSettings } from './scope.mjs';
 import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
@@ -69,10 +69,11 @@ export function mailHookOf(o) {
   return a?.mailHook && a.caps.hooks === 'settings' && o.state ? hookCommand(o.state) : undefined;
 }
 // META-DOD 2: the same executors get the scope guard (scope.mjs): deny rules, the write block and the PreToolUse hook - write runs only
-// ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too)
+// ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too); TEST-GOVERNANCE S1:
+// with it off, the hook alone while policy.tests.budget.full_suite = deny (the full-suite deny reaches every run, a resume too)
 export function scopeOfLaunch(o) {
   const h = mailHookOf(o) && scopeHookOf(o);
-  return h && scopeOnFor(specPolicy({ ctx_from: policySource(o) }), o) ? scopeSettings(o, h) : undefined;
+  return h ? guardSettings(specPolicy({ ctx_from: policySource(o) }), o, h) : undefined;
 }
 /** the project.json whose CURRENT policy binds a run (policy.context, policy.dod.scope) */
 const policySource = o => o.ctx_from ?? o.refill?.project_file ?? o.env?.META_PROJECT;

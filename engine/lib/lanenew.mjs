@@ -2,10 +2,11 @@
 // first-task box both land here: the worktree goes where the project's lane_defaults.worktree says (the same path `norn run` uses),
 // on branch norn/<lane> (a synced project: norn/<home>/<lane>, RM-46 S1a) from the project root repo's HEAD (an existing branch is checked out, never reset); the LANE record
 // carries worktree / branch / notes. With a task: an owner DIRECTIVE scoped to the lane + the lane's first brief
-// (<briefs_dir>/<lane>.md, never overwritten). Idempotent: an existing record, worktree or brief is kept and reported.
+// (<briefs_dir>/<lane>.md, never overwritten) with a Tests: line pointing at the testing rules (docs/TESTING.md). Idempotent: an existing record, worktree or brief is kept and reported.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expandLate } from './config.mjs';
 import { record, recordAsync, loadState, homeOf, laneId } from './records.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';
@@ -18,6 +19,10 @@ export const LANE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 export const laneBranchPrefix = p => { const h = p?.state ? homeOf(p.state)?.id : null; return `norn/${h ? h + '/' : ''}${p && subdirOf(p) ? p.name + '/' : ''}`; };
 export const laneBranch = (name, p) => laneBranchPrefix(p) + name;
 const fwd = p => String(p).replace(/\\/g, '/');
+// the testing rules' one home (owner Q-32), by absolute path: a lane of any project reads it from the Norn engine's own checkout
+export const TESTING_DOC = fwd(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'TESTING.md'));
+// a lane brief's Tests: line. No backticks and no repo path, so the run-end Done check (dod.mjs) finds nothing in it to run
+export const BRIEF_TESTS = `Tests: the test files of the files you change (norn tests for FILE names them for node), each run alone; never the full suite. Rules: ${TESTING_DOC}`;
 
 function git(cwd, args) {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
@@ -82,7 +87,7 @@ export function* laneSteps(p, { name, task, by = 'owner', now } = {}) {
     directive = (yield ['record', p.state, { kind: 'directive', ev: 'create', by: owner, data: { text: taskText, scope: [name], via: by === 'dashboard' ? 'dashboard' : 'cli' } }, opts]).id;
     if (!(yield ['exists', at.brief])) {
       yield ['mkdir', path.dirname(at.brief)];
-      yield ['create', at.brief, `# ${name}\n\n${taskText}\n\nWork in your worktree on branch ${at.branch}. ${at.notes ? `Write your notes to ${fwd(at.notes)}. ` : ''}End with \`norn done\` (or \`norn done --outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).\n`];
+      yield ['create', at.brief, `# ${name}\n\n${taskText}\n\nWork in your worktree on branch ${at.branch}. ${at.notes ? `Write your notes to ${fwd(at.notes)}. ` : ''}\n\n${BRIEF_TESTS}\n\nEnd with \`norn done\` (or \`norn done --outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).\n`];
       brief_created = true;
     }
   }
