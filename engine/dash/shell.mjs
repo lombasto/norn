@@ -21,7 +21,7 @@ const G = {
 };
 export const BAR = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk']];
 // the More sheet: [group heading ('' = none), page ids]. Map and Plan stay until LANES and RUNS re-home them (SPEC 4.1 item 2)
-export const MORE = [['Health', ['usage', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap', 'plan', 'map']], ['', ['settings']]];
+export const MORE = [['Health', ['usage', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap', 'plan']], ['', ['settings']]];
 const HEALTH = MORE[0][1];
 const LABEL = Object.fromEntries(TABS);
 

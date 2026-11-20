@@ -18,18 +18,14 @@ Sanitising: docs.mjs escapes raw HTML, allows only http(s) / mailto / #anchor li
 tested in node); in the browser the result additionally passes DOMPurify (ctx.sanitize in index.html).
 
 ## Norn look (META-VISUAL-B; same pins as META-VISUAL-A2 norn-projects norn/design/visual-v2/vendor + norn/fonts, branch feat/dash-visual)
-three.js is ES modules only (`three.module.js` imports `./three.core.js`); no addons. Silkscreen is the heading pixel font
+Silkscreen is the heading pixel font
 (body text stays the system UI font), set at 8 art px so each font pixel lands on whole device pixels.
 
 | file | package | version | source path in the tarball | license |
 |---|---|---|---|---|
-| `three.module.js` | three | 0.187.0 | package/build/three.module.js | MIT (LICENSE.three) |
-| `three.core.js` | three | 0.187.0 | package/build/three.core.js (imported by three.module.js) | MIT (LICENSE.three) |
 | `silkscreen-latin-400-normal.woff2` | @fontsource/silkscreen | 5.3.0 | package/files/silkscreen-latin-400-normal.woff2 | SIL OFL 1.1 (LICENSE.silkscreen) |
 | `silkscreen-latin-700-normal.woff2` | @fontsource/silkscreen | 5.3.0 | package/files/silkscreen-latin-700-normal.woff2 | SIL OFL 1.1 (LICENSE.silkscreen) |
 
-- `three.module.js` sha256 `104f56145899722094556490d787aae0617cc2fc3382f31df02d724ea1aee341`
-- `three.core.js` sha256 `613e370f76638fdef83926642bf256dc9615684922de1ce1f63a8583e5d78578`
 - `silkscreen-latin-400-normal.woff2` sha256 `e6c72ea4702249202bcdd79d3343057e4e25ef1f04e3fcffd8602ab53b40b4cc`
 - `silkscreen-latin-700-normal.woff2` sha256 `5741b7f01a127f40ed70281fa2f686e8fc2cfe241930a120e4d1a1cebe78f995`
 - tarball `npm pack @fontsource/silkscreen@5.3.0` sha256 `c925ca04bd53cad84aca9f279f7e6aacb686322955a8a45f9c692338acc4e4bd`

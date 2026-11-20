@@ -57,12 +57,12 @@ import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards } from '/ui.mjs';
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
-import { acts as laneActs, pickMap as lanePick } from '/pages/lanes-acts.mjs';
+import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
 import { acts as runActs } from '/pages/runs-acts.mjs';
 import { createFeed } from '/pages/runs-feed.mjs';
 import { codeView, codeHead } from '/testparts.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
-// RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
+// RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&show=needs,running); a reload keeps them
 const laneShowQs = v => { const k = String(v ?? '').split(',').filter(x => LANE_SHOW.some(c => c[0] === x)); return new Set(v == null ? LANE_SHOW_DEFAULT : k); };
 // MAIL-29: the type filter (one type or none = every type) in S.laneType and the URL (&type=design); the chips are the types the rows
 // carry (purpose.mjs LANE_TYPES on the server), so any word is kept and an unknown one just matches no row
@@ -70,7 +70,6 @@ const laneTypeQs = v => v || null;
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
 import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, stillOnly, createStage, avoidRects } from '/norn/orc.mjs';
 import { createScheduler } from '/norn/motion.mjs';
-import { createEvents, eventsOfRecords, beatOf } from '/norn/live.mjs';
 import { routeTab, renderBar, renderMore, renderStatus, keysOf, refetchFor } from '/shell.mjs';
 import { renderThread, pickProject, threadOnly, chatState, chatStateClass, slashMenu, HOME_FILTERS } from '/home.mjs';
 // META-CI-WORKCLASS R2 (DEC-332): body.dataset.step = the last boot / render() step reached (a test timeout names where ready stalled)
@@ -78,16 +77,12 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('lanes')), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
-  mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
+const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+  quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
 // META-ROADMAP S2b: the Roadmap view (tree / board) - the hash first, else this viewer's last choice, else the tree (also on a phone)
 S.rm.view = S.rm.view || (() => { try { return localStorage.getItem('meta-rmview'); } catch { return null; } })() || null;
-// the Norn Map (META-VISUAL-B S2): ONE live stage per mount, re-attached across tab re-renders, rebuilt only when the picture
-// changes; its events come from the state stream (MAPEV), fire time = record ts. Gone when the tab or the look changes.
-const MAPEV = createEvents(), reducedQ = matchMedia('(prefers-reduced-motion: reduce)'), reducedNow = () => qs.get('reduced') === '1' || reducedQ.matches;
-let NM = null;
 const get = async p => { const r = await fetch(p); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
 const post = async (p, body) => { const r = await fetch(p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': TOKEN }, body: JSON.stringify(body) });
   const d = await r.json(); if (!r.ok) throw Object.assign(new Error(d.error || r.status), { status: r.status, body: d }); return d; };   // body: a refusal's data (a 409's dup)
@@ -117,7 +112,7 @@ await initLook({ look: qs.get('look'), theme: theme0, onChange: l => { $('#look'
 $('#look').textContent = 'Look: ' + look();
 $('#look').onclick = () => setLook(look() === 'norn' ? 'classic' : 'norn');
 theme(theme0);
-$('#theme').onclick = () => { theme(modes[(modes.indexOf($('#theme').textContent.slice(7)) + 1) % 3]); if (NM) render(); };
+$('#theme').onclick = () => { theme(modes[(modes.indexOf($('#theme').textContent.slice(7)) + 1) % 3]); };
 
 async function header(g = get) {
   if (!S.project) {   // META-ADOPT A3: zero projects - the page is Add a project; nothing to pause or check in
@@ -209,11 +204,11 @@ async function partsFetch(tab, d) {
   } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
-const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = routeTab(q.get('tab'));
   if (q.get('project') !== S.project) return;
-  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; if (!S.run && !$('#feed').hidden) closeFeed(); S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('lanes')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
+  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; if (!S.run && !$('#feed').hidden) closeFeed(); S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('show')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -224,7 +219,7 @@ async function render(force = false, why = []) {
     // overtook (a click while a slow fetch was out) never paints
     const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
     const tab = S.project ? S.tab : 'adopt';
-    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
+    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     // NORN-UI-NAV: the bar paints first, the strip (GET /api/strip) beside the page's own fetch, never in front of it
     document.body.dataset.tab = S.tab; paintNav(); if (!S.ov) paintStrip();
     step('render:header'); header(g).catch(e => err('Status failed: ' + e.message)); guardHeader();
@@ -241,7 +236,6 @@ async function render(force = false, why = []) {
     step('render:paint ' + S.tab); S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
     if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs' || S.tab === 'tests') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
     if (S.tab === 'docs' && S.docScroll && $('#main [data-focus]')) { S.docScroll = false; $('#main [data-focus]').scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card / a finding opens its line
-    step('render:map'); if ($('#map-host')) await mountMap(d); else dropMap();
     if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) { box.value = S.find; draftNote(box); } S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
@@ -291,7 +285,7 @@ function paintMain(d) {
   const home = S.tab === 'talk' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
-  $('#main').innerHTML = renderTab(S.tab, d, { strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, mapZoom: S.mapZoom, mapAll: S.mapAll, look: look(), art: assetImg, mapView: S.mapView, nornZoom: S.nornZoom, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
+  $('#main').innerHTML = renderTab(S.tab, d, { strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo });
   draftsRestore(keep);
   if (home) homeRestore(home);
   if (lcard) document.getElementById(lcard)?.querySelector('.lhov > :first-child')?.focus();
@@ -398,26 +392,6 @@ function recFit() {
   for (const t of document.querySelectorAll('.rtext.rclamp')) { const b = t.nextElementSibling;
     if (S.recOpen.has(t.dataset.key)) recOpen(t, b, true); else if (t.scrollHeight <= t.clientHeight + 40) { t.classList.remove('rclamp'); b?.remove(); } }
 }
-// ---- the Norn Map mount (see NM above) ----
-async function mountMap(d) {
-  if (NM && NM.view !== S.mapView) dropMap();
-  if (!NM) {
-    const view = S.mapView === 'tapestry' ? 'tapestry' : 'well';
-    const [{ createMap }, { look: lk }] = await Promise.all([import('/norn/mapview.mjs'), import(`/norn/${view}.mjs`)]);
-    if (!$('#map-host') || NM) return;   // the tab changed (or another render mounted) while the modules loaded
-    NM = { view, d, map: createMap($('#map-host'), lk, { map: d, events: MAPEV, flags: { quiet: S.quiet, reduced: reducedNow() }, theme: ground(), onPick: pickMap }) };
-    window.__map = NM.map;   // shots / CPU probe
-    if (S.nornZoom !== 1) NM.map.zoom(S.nornZoom);
-  } else { NM.d = d; NM.map.attach($('#map-host')); NM.map.update(d, ground()); }
-  mapHud();
-}
-function dropMap() { if (NM) { NM.map.dispose(); NM = null; window.__map = null; } }
-function mapHud() {
-  const h = $('#map-hud'); if (!h || !NM) return; const i = NM.map.info(), now = Date.now() / 1000;
-  h.textContent = `${S.quiet ? 'QUIET - static frame' : 'live'}${i.reduced ? ' · reduced motion' : ''} · ${MAPEV.list.filter(e => e.f > now - 120).length} events in 2 min · ${i.W} x ${i.H} texels, ${i.k} device px each, 32-colour lock`;
-}
-const pickMap = id => lanePick(id, C);
-reducedQ.addEventListener('change', () => NM?.map.setReduced(reducedNow()));
 // ---- Settings helpers: control value (same conversion the Review diff uses), search filter, unsaved-change marker ----
 function valueOf(el) {
   const ty = el.dataset.type;
@@ -455,7 +429,7 @@ function dirty() {
 function applyFilters() {
   for (const box of document.querySelectorAll('[data-filter]')) {
     const t = box.value.toLowerCase(), sel = document.querySelector(`[data-filter-state="${box.dataset.filter}"]`), states = sel && sel.value ? sel.value.split(' ') : null;
-    for (const tr of document.querySelectorAll(`[data-rows="${box.dataset.filter}"] tbody tr`))
+    for (const tr of document.querySelectorAll(`[data-rows="${box.dataset.filter}"] tbody tr, [data-rows="${box.dataset.filter}"] .lrow`))
       tr.style.display = (!t || tr.textContent.toLowerCase().includes(t)) && (!states || states.includes(tr.dataset.state)) ? '' : 'none';
   }
 }
@@ -472,9 +446,7 @@ function openStream() {
   es.addEventListener('hello', () => { S.live = true; sched.poke('all'); });
   for (const k of ['rec', 'pulse', 'derived', 'reset']) es.addEventListener(k, m => { let d = {}; try { d = JSON.parse(m.data); } catch {} for (const x of keysOf(k, d)) sched.poke(x); });
   // the Map's live events: a record appended = an event at its ts; a heartbeat = the running beads breathe
-  es.addEventListener('rec', m => { if (MAPEV.push(eventsOfRecords(JSON.parse(m.data).records))) { NM?.map.poke(); mapHud(); } });
-  es.addEventListener('pulse', m => { if (MAPEV.push(beatOf(JSON.parse(m.data).ts))) NM?.map.poke(); });
-  es.addEventListener('state', m => { const d = JSON.parse(m.data); S.quietBy[d.project] = !!d.quiet; S.quiet = Object.values(S.quietBy).some(Boolean); setQuiet(S.quiet); NM?.map.setQuiet(S.quiet); for (const x of keysOf('state')) sched.poke(x); });
+  es.addEventListener('state', m => { const d = JSON.parse(m.data); S.quietBy[d.project] = !!d.quiet; S.quiet = Object.values(S.quietBy).some(Boolean); setQuiet(S.quiet); for (const x of keysOf('state')) sched.poke(x); });
   es.onerror = () => { if (stream !== es) return; S.live = false; const st = $('#status'); if (st) st.innerHTML = st.innerHTML.replace(/live$/, 'reconnecting ...'); };
 }
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
@@ -485,15 +457,14 @@ document.addEventListener('change', e => {
   if (e.target.matches('[data-set-profile]')) { const o = e.target.selectedOptions[0]; $('#set-profile-note').textContent = o ? o.title : ''; }
   if (e.target.matches('[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-key]')) dirty();
-  if (e.target.matches('[data-act="map-all"]')) { S.mapAll = e.target.checked; render(); }
   // MERGE-FIRST: Plan > Up next - a queued run re-queued at the priority picked (its after: conditions kept)
   if (e.target.matches('[data-act="prio"]')) { const d = e.target.dataset; act(() => post('/api/requeue', { project: d.project, run: d.run, priority: e.target.value })); }
 });
 // ---- the live feed drawer: pages/runs-feed.mjs (its markup and script) ----
-const { F, narrow, openFeed, closeFeed, markFeed } = createFeed({ $, onClose: () => { NM?.map.select(null); if (S.run) { S.run = null; history.replaceState(null, '', tabUrl()); } } });
+const { F, narrow, openFeed, closeFeed, markFeed } = createFeed({ $, onClose: () => { if (S.run) { S.run = null; history.replaceState(null, '', tabUrl()); } } });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
 const ACTS = { ...laneActs, ...runActs };
-const C = { S, render: () => render(), post, $, go: g => goTo(g), act, tabUrl, lanesRepaint, runsRepaint, openFeed, feedGo: (p, r) => feedGo(p, r), map: () => NM };
+const C = { S, render: () => render(), post, $, go: g => goTo(g), act, tabUrl, lanesRepaint, runsRepaint, openFeed, feedGo: (p, r) => feedGo(p, r) };
 // ---- roadmap edit drawer (META-ROADMAP S3): a row's / theme's "..." or + Add opens it; each action = one POST /api/roadmap/<op>
 // (the page token, one record by dashboard). The reply's tree repaints the tab and the drawer at once; every other tab gets the
 // append through the state stream. A 409 (the item or the order moved on) says so and offers Reload: nothing was written. ----
@@ -602,7 +573,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#dlv')
 document.addEventListener('click', e => { const dv = e.target.closest?.('[data-dlv]'); if (dv) { e.stopPropagation(); e.preventDefault(); openDlv(dv.dataset.project, dv.dataset.dlv); } }, true);
 // RM-39: Esc closes an open lane card (it is open while its lane name holds the focus - CSS :focus-within) and hides it under the
 // pointer until the pointer leaves
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; const h = document.activeElement?.closest?.('.lhov') ?? document.querySelector('.lhov:hover');
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (laneEsc(e, C)) return; const h = document.activeElement?.closest?.('.lhov') ?? document.querySelector('.lhov:hover');
   if (h) { h.classList.add('shut'); document.activeElement?.blur?.(); h.addEventListener('mouseleave', () => h.classList.remove('shut'), { once: true }); } });
 document.addEventListener('focusin', e => e.target.closest?.('.lhov')?.classList.remove('shut'));
 // NORN-UI-NAV: one run URL - every Feed link (Lanes, Inbox, Talk) goes to ?tab=runs&run=RUN-n, which opens the drawer there
@@ -619,7 +590,7 @@ document.addEventListener('click', e => {
     S.tab = { DEC: 'records', DIR: 'records', Q: 'inbox', RUN: 'runs', L: 'lanes' }[k] ?? 'records';
     if (S.tab === 'records') S.find = id; if (S.tab === 'lanes') { S.find = id.slice(2); S.laneShow = new Set(LANE_SHOW.map(c => c[0])); S.laneType = null; }
     S.jump = { inbox: 'q-' + id, runs: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
-    history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'lanes' ? '&lanes=' + [...S.laneShow].join(',') : ''}`); render(); return; }
+    history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') : ''}`); render(); return; }
   const b = e.target.closest('button,[data-t],a[data-tab]'); if (!b) return;
   if (b.tagName === 'A') { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); }   // RM-18 S2: a strip link - a plain click stays in the page, a modified one opens its URL
   const p = b.dataset.project, d = b.dataset;

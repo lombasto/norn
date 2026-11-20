@@ -148,7 +148,8 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
 
 // ---------- Stage LANES (SPEC 4.2): the attention board - the Map's lane band folded into each row, and the board groups ----------
 // The run strip: a lane's runs oldest first (the way mapGraph folds lanesOf + resume_of + helpersOf), bookkeeping runs left out; a bead
-// joins its predecessor (cont) when it is that run's hand-off resume - a gap is a fresh start. The row keeps the last STRIP.
+// joins its predecessor (cont) when it is that run's hand-off resume - a gap is a fresh start; by = the run (a check-in) that started
+// or queued it. The row keeps the last STRIP.
 export const STRIP = 6;
 function stripsOf(items, now) {
   const helpers = {}, by = {};
@@ -157,21 +158,19 @@ function stripsOf(items, now) {
   return Object.fromEntries(Object.entries(by).map(([lane, rs]) => [lane, rs.sort((a, b) => runNum(a.id) - runNum(b.id)).map((r, i) => {
     const [cls, word] = ['queued', 'claimed'].includes(r.state) ? ['idle', 'queued'] : runWord(r), e = r.history.findLast(h => h.ev === 'end')?.ts;
     return { id: r.id, name: runName(r), cls, word, min: Math.max(0, Math.round(((e ? Date.parse(e) : now) - Date.parse(r.created)) / 60000)),
-      cont: !!r.data.resume_of && r.data.resume_of === rs[i - 1]?.id, helpers: helpers[r.id] ?? 0 }; })]));
+      cont: !!r.data.resume_of && r.data.resume_of === rs[i - 1]?.id, helpers: helpers[r.id] ?? 0, by: r.history.find(h => h.ev === 'start' || h.ev === 'queue')?.run ?? null }; })]));
 }
 // a lane's open question (the strip's "!" bead): the newest open question that names the lane
 const asksOf = items => { const o = {}; for (const q of items) if (q.kind === 'question' && q.state === 'open' && q.data?.lane && (!o[q.data.lane] || runNum(q.id) > runNum(o[q.data.lane]))) o[q.data.lane] = q.id; return o; };
-/** the PR track of a lane: its newest deliverable (deliverablesView rows) -> { step: done | pr | merged | installed, pr, url } | null */
+/** the PR track of a lane: its newest deliverable (deliverablesView rows) -> { step: done | pr | merged | installed, pr, url, branch } | null */
 export function prStep(rows) {
   const r = [...(rows || [])].sort((a, b) => runNum(b.id) - runNum(a.id))[0]; if (!r) return null;
   const step = ['merged', 'installed'].includes(r.state) ? r.state : r.pr ? 'pr' : 'done';
-  return { step, pr: r.merge_pr ?? r.pr?.number ?? null, url: /^https:\/\//.test(r.pr?.url ?? '') ? r.pr.url : null };
+  return { step, pr: r.merge_pr ?? r.pr?.number ?? null, url: /^https:\/\//.test(r.pr?.url ?? '') ? r.pr.url : null, branch: r.branch ?? null };
 }
-// The board groups, in page order (id, label). Needs you = an Inbox row names the lane (the server's `needs`, terms.mjs isNeed: never
+// The board groups (ids; labels and page order: pages/lanes.mjs LANE_SHOW). Needs you = an Inbox row names the lane (the server's `needs`, terms.mjs isNeed: never
 // counted here); Stopped = the last run ended without DONE in the last OLD_DAYS and nothing asks the owner; Old = that, longer ago
 // (SPEC Q6), or done before today; To land = done with its deliverable not on main yet.
-export const BOARD = [['needs', 'Needs you'], ['running', 'Running'], ['stopped', 'Stopped'], ['waiting', 'Waiting'], ['land', 'To land'],
-  ['parked', 'Parked'], ['today', 'Done today'], ['old', 'Old'], ['archived', 'Archived']];
 export const OLD_DAYS = 7;
 /** a lanesView row + its needs count -> its board group id */
 export function boardOf(l, now = Date.now()) {
