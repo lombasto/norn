@@ -15,7 +15,7 @@ import { startRun } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { POLICY_DEFAULTS, SETTINGS } from '../engine/lib/policy.mjs';
 import { injectJson } from '../engine/lib/mail.mjs';
-import { ctxMeter } from '../engine/dash/ui.mjs';
+import { ctxMeter } from '../engine/dash/cells.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 

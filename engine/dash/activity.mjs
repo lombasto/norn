@@ -5,6 +5,7 @@
 // The fields read are Claude Code's tool inputs (file_path, offset, limit, old_string, new_string, content, command, pattern, ...);
 // a harness without them (codex: shell reads, apply_patch edits) still gets the commands, commits and words.
 
+import { isTest } from '../lib/testcmd.mjs';   // the browser gets it at /lib/testcmd.mjs (server.mjs)
 const MAX_CMDS = 200, MAX_DIFFS = 30, MAX_COMMITS = 100, MAX_OPEN = 50;
 const fwd = s => String(s ?? '').replace(/\\/g, '/');
 const cut = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
@@ -75,13 +76,12 @@ export function stripCd(cmd) {
   } while (c !== prev);
   return c;
 }
-const TEST_RE = /\bnode\s+(?:--[\w-]+(?:[= ](?!--test)\S+)?\s+)*--test\b|\bpytest\b|\bci-suite\.mjs\b|\bnpm\s+(?:run\s+)?test\b|\bvitest\b|\bjest\b/;
 const unq = s => String(s ?? '').replace(/^(["'])(.*)\1$/, '$2');
 const pathy = s => /^[\w./~:-]+\.[A-Za-z0-9]{1,8}$/.test(s);
 /** A shell command -> { kind: test | commit | git | read | search | run, ... } (the first segment for read / search / git). */
 export function shell(cmd) {
   const c = stripCd(cmd), first = c.split(/\s*(?:&&|\|\||;|\|)\s*/)[0];
-  if (TEST_RE.test(c)) return { kind: 'test' };
+  if (isTest(c)) return { kind: 'test' };
   if (/\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(c)) {
     const m = c.match(/\bgit\s+(?:-C\s+\S+\s+)?commit\b[^\n]*?\s-[a-zA-Z]*m\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/);
     return { kind: 'commit', msg: m ? line1((m[1] ?? m[2]).replace(/^\$\(cat <<-?'?\w+'?[ \t]*\n/, '').replace(/\\"/g, '"')) || null : null };   // -m "$(cat <<'EOF' ...": the line after

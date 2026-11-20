@@ -8,12 +8,12 @@
 @font-face { font-family: 'Silkscreen'; src: url(/vendor/silkscreen-latin-700-normal.woff2) format('woff2'); font-weight: 700; font-display: block; }
 
 :root.norn { --px: 2px; --d1: 1px; --pix: 'Silkscreen', ui-monospace, monospace; }
-:root.norn[data-ground=dark] { --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
+:root.norn[data-ground=dark] { --field-line: #6380a0; --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
   --accent: #9eecc9; --accent-bg: #0e2b30; --ok: #94b44c; --ok-bg: #34431c; --run: #93aec6; --run-bg: #2e3f5f; --warn: #eec24a; --warn-bg: #6e430f;
   --bad: #e2683f; --bad-bg: #241a14; --codex: #a0569a; --codex-bg: #0b0e1a; --bar: #2e3f5f; --on-accent: #0b0e1a; --shadow: #0b0e1a; --zebra: #1f2b45;
   --gold: #eec24a; --dim: #6380a0;
   --k1: #93aec6; --k2: #a0569a; --k3: #e2683f; --k4: #eec24a; --k5: #52b8a0; --k6: #94b44c; --k7: #b8801e; --k8: #6380a0; --k9: #9c7048; --kgen: #a0569a; }   /* META-TEND P1-VISUAL: stack / bars series */
-:root.norn[data-ground=light] { --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
+:root.norn[data-ground=light] { --field-line: #8c7656; --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
   --accent: #17504f; --accent-bg: #9eecc9; --ok: #34431c; --ok-bg: #94b44c; --run: #2e3f5f; --run-bg: #d3e2ec; --warn: #6e430f; --warn-bg: #fff0a8;
   --bad: #a5302e; --bad-bg: #e9dcbc; --codex: #a0569a; --codex-bg: #d3e2ec; --bar: #c9b48c; --on-accent: #f7f0dc; --shadow: #8c7656; --zebra: #e9dcbc;
   --gold: #6e430f; --dim: #6b4a30;
@@ -21,12 +21,14 @@
 
 :root.norn img, :root.norn canvas, :root.norn .gl, :root.norn .tk { image-rendering: pixelated; image-rendering: crisp-edges; }
 /* headings in the pixel font at 8 art px (each font pixel on whole device px); body text stays the system UI font */
-:root.norn header h1, :root.norn nav button, :root.norn .card h2, :root.norn .tablecard>h3, :root.norn .ssub>h3, :root.norn .scat>h2,
+:root.norn header h1, :root.norn .card h2, :root.norn .tablecard>h3, :root.norn .ssub>h3, :root.norn .scat>h2,
 :root.norn .drawer .dh b { font-family: var(--pix); font-weight: 400; font-size: calc(8 * var(--px)); letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .card h2 b { font-family: var(--pix); font-size: calc(8 * var(--px)); }
 :root.norn header { background: var(--panel); border-bottom: calc(2 * var(--px)) solid var(--line); }
-:root.norn nav { border-bottom: calc(2 * var(--px)) solid var(--line); }
-:root.norn nav .count { border-radius: 0; color: var(--on-accent); }
+:root.norn .pagebar { border-bottom: calc(2 * var(--px)) solid var(--line); }
+:root.norn .pagebar .count { border-radius: 0; color: var(--on-accent); }
+/* NORN-UI-NAV (A-11): the pixel font only for the bar's 5 words, at 16 px, no tracking */
+:root.norn .pagebar .bl { font-family: var(--pix); font-weight: 400; font-size: 16px; letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .brand { display: inline-block; width: calc(32 * var(--d1)); height: calc(32 * var(--d1)); background-size: 100% 100%; flex: none; }
 :root:not(.norn) .brand { display: none; }
 
@@ -40,7 +42,7 @@
 :root.norn .drawer { box-shadow: none; }
 :root.norn table, :root.norn .tablecard>h3 { background: var(--panel); }
 :root.norn .md tr:nth-child(2n) td { background: var(--zebra); }
-:root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--line); }
+:root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--field-line); }
 :root.norn button.primary { color: var(--on-accent); }
 :root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn span.rid, :root.norn .opt, :root.norn .okey, :root.norn .pba, :root.norn .ppath .pp, :root.norn .tg { border-radius: 0; }
 :root.norn #error { background: var(--bad-bg); color: var(--bad); }
@@ -114,13 +116,11 @@
    colours (Roadmap time colours, the Home tags). */
 :root.norn[data-ground=dark] { --nv: #eec24a; --nu: #52b8a0; --ns: #93aec6; --ninv: #0b0e1a; }
 :root.norn[data-ground=light] { --nv: #6e430f; --nu: #17504f; --ns: #425a7d; --ninv: #f7f0dc; }
-:root.norn nav { --g: var(--accent); flex-wrap: wrap; overflow-x: visible; gap: calc(2 * var(--px)); padding-top: calc(2 * var(--px)); padding-bottom: 0; }
-:root.norn nav .pages { border-top: calc(1 * var(--px)) solid var(--line); }
-:root.norn nav .pages button { font-size: calc(8 * var(--px)); }
-:root.norn nav button:hover { background: var(--soft); color: var(--ink); }
-:root.norn nav button[aria-selected=true] { background: var(--g); color: var(--ninv); border-bottom: calc(2 * var(--px)) solid var(--g); }
-:root.norn nav button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
-:root.norn nav button[aria-selected=true]:focus-visible { outline-color: var(--ninv); }
+:root.norn .pagebar>button { border: 0; }
+:root.norn .pagebar>a:hover, :root.norn .pagebar>button:hover { background: var(--soft); color: var(--ink); }
+:root.norn .pagebar>[aria-current=page] { background: var(--accent); color: var(--ninv); border-bottom-color: var(--accent); }
+:root.norn .pagebar>a:focus-visible, :root.norn .pagebar>button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
+:root.norn .pagebar>[aria-current=page]:focus-visible { outline-color: var(--ninv); }
 
 
 /* ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17). The ONE section of this sheet that also styles
@@ -128,23 +128,9 @@
    running / mute), Norn: one Norn colour each (past = Urd, present = Verdandi, future = Skuld). Palette lock holds: var() only. ---------- */
 :root { --rm-past: var(--ok); --rm-now: var(--run); --rm-fut: var(--mute); --rm-inv: var(--panel); }
 :root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
-/* RM-18 S1: the nav in the same colours, both looks (ui.mjs navTone): Urd / Verdandi / Skuld = the three time colours, Health = its
-   worst state. A thin underline in the colour; the open one filled in it with the inverse ink (each fill >= 4.5:1 on --rm-inv, AA, both
-   looks, both grounds); the open destination's pages row carries its colour on its top rule. Neutral buttons keep the plain bar. */
+/* the Norn colours as meaning (Urd / Verdandi / Skuld = the three time colours; a Health state): the status strip's parts, the More dot */
 .tone-urd { --t: var(--rm-past); } .tone-verd { --t: var(--rm-now); } .tone-skuld { --t: var(--rm-fut); }
 .tone-ok { --t: var(--ok); } .tone-warn { --t: var(--warn); } .tone-bad { --t: var(--bad); }
-:root nav button[class*=tone-] { --g: var(--t); border-bottom-color: var(--t); }
-:root nav button[class*=tone-][aria-selected=true] { background: var(--t); color: var(--rm-inv); border-bottom-color: var(--t); }
-:root nav .pages[class*=tone-] { border-top-color: var(--t); }
-/* RM-18 S2: the Overview strip (ui.mjs overviewStrip), both looks: three links in a row, each ruled in its Norn colour; hover / focus
-   fill it in the colour with the inverse ink (the nav's AA pair). Stacks on a phone: no sideways scroll at 390 px. */
-.ostrip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
-.ostrip .np { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-left: 4px solid var(--t); color: inherit; text-decoration: none; overflow-wrap: anywhere; }
-.ostrip .np b { color: var(--t); } .ostrip .np span { font-size: 12px; color: var(--mute); }
-.ostrip .np:hover, .ostrip .np:focus-visible { background: var(--t); color: var(--rm-inv); }
-.ostrip .np:hover b, .ostrip .np:hover span, .ostrip .np:focus-visible b, .ostrip .np:focus-visible span { color: var(--rm-inv); }
-.ostrip .np:focus-visible { outline: 2px solid var(--t); outline-offset: 2px; }
-@media (max-width: 700px) { .ostrip { grid-template-columns: minmax(0, 1fr); } }
 .rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rmtop .chip { border: 0; cursor: pointer; }
 /* the scope switch: three toggle buttons, the pressed one filled in its time colour */
@@ -275,13 +261,11 @@
 
 /* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). Home is first in the bar (UX review 2: no Norn frames);
    the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
-:root.norn .hn, :root.norn .hs h4, :root.norn .tag, :root.norn .bbar .bl { font-family: var(--pix); font-weight: 400; -webkit-font-smoothing: none; text-transform: uppercase; }
+:root.norn .hn, :root.norn .hs h4, :root.norn .tag { font-family: var(--pix); font-weight: 400; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .hn { font-size: calc(6 * var(--px)); letter-spacing: 3px; }
 :root.norn .hs h4 { font-size: calc(5 * var(--px)); letter-spacing: 3px; color: var(--mute); }
 :root.norn .tag { font-size: calc(5 * var(--px)); letter-spacing: 3px; }
-:root.norn .bbar .bl { font-size: calc(5 * var(--px)); letter-spacing: 2px; }
-:root.norn .bbar button[aria-current=page] { color: var(--gold); box-shadow: inset 0 calc(2 * var(--px)) 0 var(--gold); }
-:root.norn .hf[aria-pressed=true] { border-color: var(--gold); color: var(--gold); background: var(--bg); }
+:root.norn .hf[aria-pressed=true] { border-color: var(--run); color: var(--ink); background: var(--run-bg); }
 :root.norn .hchip { border-color: var(--nu); color: var(--nu); }
 :root.norn .hbar i { background: var(--nu); } :root.norn .hbar b { background: var(--gold); }
 :root.norn .ev-controller .msg { border-left-color: var(--gold); }
@@ -292,7 +276,6 @@
 :root.norn .ev .hold { border-color: var(--gold); color: var(--gold); }
 :root.norn .composer .send { background: var(--gold); border-color: var(--gold); color: var(--on-accent); }
 :root.norn .ev .acts .rec { background: var(--bg); border-color: var(--gold); color: var(--ink); } :root.norn .ev .acts .rec small { color: var(--gold); }
-:root.norn .bbar .count { border-radius: 0; }
 
 /* META-TEND P1-VISUAL: the stack widget and the file map square on the pixel grid (the series --k1..--k9 sit in the ground blocks above) */
 :root.norn .insbar, :root.norn .insdot, :root.norn .stkdot, :root.norn .fmblk { border-radius: 0; }

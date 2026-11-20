@@ -21,7 +21,7 @@ export const wsSlug = s => String(s || 'lane').replace(/[^A-Za-z0-9._-]/g, '-').
 function git(cwd, args, { ok = [0] } = {}) {
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[k];
-  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw new FedError(`git ${args[0]}: ${r.error.message}`);
   if (!ok.includes(r.status)) throw new FedError(`git ${args[0]} failed (${r.status}): ${(r.stderr || '').trim().split('\n').pop()}`);
   return { out: (r.stdout || '').trim(), status: r.status };

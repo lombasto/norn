@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startRun, liveRuns, stopOrphans, fillAll, fillWords, readiness, sweepLost, relaunchLost, lostNotice, STALE_MS, killTree, hbPath, touchedOf } from './runs.mjs';
+import { startRun, liveRuns, stopOrphans, fillAll, fillWords, readiness, sweepLost, relaunchLost, endLost, lostNotice, STALE_MS, killTree, hbPath, touchedOf } from './runs.mjs';
 import { trackHold, holdNoticeDue, noticeMin } from './holds.mjs';
 import { writeStatus } from './status.mjs';
 import { tryDigest } from './digest.mjs';
@@ -73,7 +73,7 @@ export function launchValues(p, budget = {}) {
 /** Fill engine/prompts/CHECKIN.md (or o.template: CHECKIN-MINOR.md) + the project's checkin_extra -> state/<NAME>.rendered.md; returns that path. */
 export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.join(p.state, 'STATUS.md'), metaRoot = path.join(ENGINE, '..'), template = CHECKIN_PROMPT, wake = '(not given)', cv = '' } = {}) {
   const v = {
-    project: p.name, norn: `node "${fwd(META_CMD)}"`, meta: `node "${fwd(META_CMD)}"`,   // meta = the old name (META-NAME-W3)
+    project: p.name, norn: `node "${fwd(META_CMD)}"`,
     meta_root: fwd(metaRoot), status: fwd(statusFile), budget: fwd(budgetFile || '(none)'),
     ledger: fwd(p.ledger || '(none)'), briefs_dir: fwd(p.briefs_dir || p.root), policy: policyLine(budget),
     agents: knownAgents({ claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), project: p }).join(', ') || 'none: leave --agent out',
@@ -191,7 +191,8 @@ const EVENT_MS = 72 * 3600e3;
 function stopForClaim(state, run, why, kill) {
   const hb = (() => { try { return JSON.parse(fs.readFileSync(hbPath(state, run.id), 'utf8')); } catch { return {}; } })();
   try { record(state, { kind: 'run', ev: 'lost', id: run.id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
-  kill(hb.supervisor_pid); kill(hb.pid);
+  const rc = { state, killer: `tick pid ${process.pid}`, reason: `claim: ${run.id} ${why}` };   // DEC-1088: receipted (killTree)
+  kill(hb.supervisor_pid, rc); kill(hb.pid, rc);
   try { fs.unlinkSync(hbPath(state, run.id)); } catch { /* gone */ }
   return true;
 }
@@ -293,6 +294,7 @@ function tickPass(o, g = {}) {
       const rl = relaunchLost(state, o.now ? { now: o.now().getTime() } : {});
       for (const x of rl) tickLog(state, `${tag}: lost ${x.id} (${x.cause}) -> ${x.next ? 'relaunched ' + x.next : 'not relaunched: ' + x.refused}`);
       g.lost = lostNotice(rl, p.name);
+      for (const id of endLost(state, o.now ? { now: o.now().getTime() } : {})) tickLog(state, `${tag}: lost ${id}: supervisor and executor gone -> ended (crash)`);   // after the relaunch: it judges first
     } catch (e) { tickLog(state, `${tag}: dead runs: ${e.message}`); }
     stopOrphans(state);   // helpers of a lost / ended parent (metadelegate sec. 2)
     // fair-slots 5c: derelict test processes (derelict.mjs; once per window machine-wide) - a dry tick only with o.listProcs

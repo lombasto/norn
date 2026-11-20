@@ -22,7 +22,11 @@ export function landState(r, build, pr) {
 // fair-slots item 3: the priority of a queued or running run (data.priority; none = the fill's default P2, said so)
 export const priorityOf = r => ['queued', 'claimed', 'running'].includes(r?.state) ? (r.data?.priority ? { p: r.data.priority, dflt: false } : { p: DEFAULT_PRIORITY, dflt: true }) : null;
 
-function runText(r, { now, hbAge, staleMs, items = {} }) {
+// the evidence runs.hbLate found for a late beat: the CPU the sweep sampled, or how long ago the run's own output moved
+const lateWhy = l => l.cpu != null ? `CPU ${l.cpu} %` : `output ${l.output_age < 60e3 ? `${Math.round(l.output_age / 1000)} s` : `${Math.round(l.output_age / 60000)} min`} ago`;
+// queue bookkeeping, not a run of the lane: withdrawn before it started, or a queue entry filled into the real run
+const BOOKKEEPING = ['withdrawn', 'filled'];
+function runText(r, { now, hbAge, hbLate, staleMs, cpu = null, items = {} }) {
   const d = r.data || {}, end = r.end || {};
   // OOTB-R2 N-5: a queued run is queued (it has no end), and one re-queued after an auth exit says it waits for the login
   if (r.state === 'queued' || r.state === 'claimed') {
@@ -31,12 +35,17 @@ function runText(r, { now, hbAge, staleMs, items = {} }) {
     return prev?.end?.outcome === 'auth' ? `queued: held for login (${prev.id} exited: auth) - run ${loginCommand(d.executor)}` : r.state;
   }
   if (r.state === 'running') {
-    if (hbAge && hbAge(r.id, r) > staleMs) return 'lost';
+    // a stale .hb is 'lost' unless runs.hbLate finds the supervisor alive and its output advanced or the CPU busy: then 'heartbeat late', naming which
+    const age = hbAge ? hbAge(r.id, r) : 0, late = age > staleMs ? hbLate?.(r.id, r, { age, cpu }) : null;
+    if (age > staleMs && !late) return 'lost';
     const min = Math.max(0, Math.round((now - Date.parse(r.created)) / 60000));
     const who = [d.executor, d.model, d.effort].filter(Boolean).join(' ');
-    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '');
+    return `running ${who} for ${min} min` + (d.budget_min ? ` / budget ${d.budget_min}` : '') + (late ? ` - heartbeat late (${Math.round(age / 1000)} s, ${lateWhy(late)})` : '');
   }
   if (r.state === 'lost') return 'lost';
+  // OVERVIEW-TRUTH (5): a withdrawn run never started - it says so and why (it read 'exited: no-result': no end outcome)
+  if (r.state === 'withdrawn') return `withdrawn: ${r.history.findLast(h => h.ev === 'withdraw')?.data?.why ?? 'no reason recorded'}`;
+  if (r.state === 'filled') return `filled: started as ${r.history.findLast(h => h.ev === 'fill')?.data?.next ?? '?'}`;
   if (r.state === 'killed') return 'killed' + (r.kill?.why ? `: ${r.kill.why}` : '');
   if (r.resume?.refused) return `waiting: auto-resume refused (${r.resume.refused})`;
   const o = end.outcome;
@@ -91,8 +100,9 @@ export function handoffOf(r, items, { talked = () => true, wrote = () => false, 
 // then queued, then done, then archived; newest first in each group (row.at). Done = the lane record is done or the latest run
 // exited DONE; an old done lane (ended over oldDays ago) is faded and reads stopped.
 export const LANE_GROUPS = ['running', 'needs', 'queued', 'done', 'archived'];
-function laneGroup(l, r, land) {
+function laneGroup(l, r, land, shipped) {
   if (l.state === 'archived') return 'archived';
+  if (shipped && r?.state !== 'running' && r?.state !== 'queued' && r?.state !== 'claimed') return 'done';   // its work is on main: off the active list
   if (l.state === 'parked' || land === 'awaiting-pr') return 'needs';   // parked / a PR to approve = waiting on the owner, whatever its last run said
   if (r?.state === 'running') return 'running';
   if (r?.state === 'queued' || r?.state === 'claimed' || (!r && l.state === 'active')) return 'queued';
@@ -106,35 +116,48 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
  * executor, text, handoff, group, created, ended, at, old, rule, path, land, pr, priority, position }: land = landState ('awaiting-merge' |
  * 'awaiting-pr' | null), pr = the lane's open PR ({ url, number }), priority = priorityOf the latest run, position = its place in
  * the fill order (queueOf) while it is queued.
- * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, staleMs, oldDays (policy.done_lanes.old_days),
+ * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, hbLate (runId, run, { age, cpu }) -> runs.hbLate's evidence when a stale one is only late,
+ *   staleMs, cpu (the last sweep's CPU %: runs.mjs sweptCpu, or null), oldDays (policy.done_lanes.old_days),
  *   talked / wrote (handoffOf's hooks: the row's `handoff`), prs ({ lane: { url, number } }: the PRs merge-land opened, not merged yet),
  *   idleH / archiveDays / landed / merged (lifecycle.mjs laneRules: the row's
  *   `rule` { rule, act, at, text } = which rule acts on it and when; landed / merged default to the rulings: the tick's git answer
  *   comes in from lane-rules.json), path (lane, now) -> the row's `path` { state, text, red, ... } = its path to main (lane-paths.json) }.
  * A lane idle by its rule reads "idle: no run" and sits under needs you, not queued.
+ * OVERVIEW-TRUTH (5): the row's run is the lane's newest MEANINGFUL run - queue bookkeeping (a run withdrawn before it started, a queue
+ * entry filled into a run) never stands for the lane, so an old 'lost' or a withdrawn MERGE does not colour it; a newer withdrawn run is
+ * named after it ("withdrawn: <why>"). shipped (lane) -> why | null (laneHooks: its deliverables merged, its path merged, a landed
+ * ruling on its run or its newest one): the lane reads "shipped: <why>" and leaves the active list (group done), whatever its last run says - a live run still shows.
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, staleMs = STALE_MS, oldDays = 2, talked, wrote, prs = {},
-  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, home = null } = {}) {
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbLate = null, staleMs = STALE_MS, cpu = null, oldDays = 2, talked, wrote, prs = {},
+  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, shipped = () => null, home = null } = {}) {
   const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged, home }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
   const items = Object.values(st.items);
-  const latest = {}, build = {}, newer = (m, k, r) => { if (!m[k] || runNum(r.id) > runNum(m[k].id)) m[k] = r; };
-  for (const r of items) if (r.kind === 'run' && r.data?.lane) { newer(latest, r.data.lane, r); if (!isMergeStage(r.data.stage)) newer(build, r.data.lane, r); }
+  const latest = {}, newest = {}, build = {}, newer = (m, r) => !m[r.data.lane] || runNum(r.id) > runNum(m[r.data.lane].id);
+  for (const r of items) if (r.kind === 'run' && r.data?.lane) {
+    if (newer(newest, r)) newest[r.data.lane] = r;
+    if (BOOKKEEPING.includes(r.state)) continue;
+    if (newer(latest, r)) latest[r.data.lane] = r;
+    if (!isMergeStage(r.data.stage) && newer(build, r)) build[r.data.lane] = r;
+  }
   const pos = Object.fromEntries(queueOf(items).map(q => [q.id, q.position]));
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
-    const name = laneNameIn(l.id, home), r = latest[name], pr = prs[name] ?? null, land = l.state === 'parked' ? null : landState(r, build[name], pr);
+    const name = laneNameIn(l.id, home), w = newest[name], r = latest[name] ?? (w?.state === 'withdrawn' ? w : null), ship = l.state !== 'archived' ? shipped(name, r, w) : null;
+    const pr = prs[name] ?? null, land = l.state === 'parked' ? null : landState(r, build[name], pr);
+    const tail = w && w !== r && w.state === 'withdrawn' ? ` · then ${w.id} ${runText(w, { now })}` : '';
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
     // item 8 (MAIL-9): parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling
     const ruled = park?.q && st.items[park.q]?.state === 'answered' ? st.items[park.q] : null;
     // ... and once a check-in applied it (the lane unparked by that apply), the lane says who applied it and what it did until its next run
     const unpark = !park && l.state === 'active' ? l.history.findLast(h => h.ev === 'unpark' && h.data?.q) : null, aq = unpark ? st.items[unpark.data.q] : null;
     const ap = aq?.state === 'applied' && (!r || r.created < unpark.ts) ? aq.history.findLast(h => h.ev === 'apply') : null;
-    const rt = r ? runText(r, { now, hbAge, staleMs, items: st.items }) : rules.get(name)?.rule === 'idle' ? rules.get(name).text : 'no runs';
+    const rt = r ? runText(r, { now, hbAge, hbLate, staleMs, cpu, items: st.items }) + tail : rules.get(name)?.rule === 'idle' ? rules.get(name).text : 'no runs';
     const text = ap ? `Applied by ${ap.run ?? ap.by}: your ruling on ${aq.id} (${aq.answer?.choice ?? aq.answer?.text ?? '?'}) -> ${(ap.data?.refs || []).join(', ') || 'no refs'}`
       : ruled ? `waiting: your ruling is being applied (you ruled: ${ruled.answer?.choice ?? ruled.answer?.text ?? '?'}, ${ruled.updated}; the next check-in applies ${ruled.id})`
       : park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
+      : ship && !['running', 'queued', 'claimed'].includes(r?.state) ? `shipped: ${ship}`
       : land === 'awaiting-merge' ? `${LAND_WORDS[land]}${rt.startsWith('queued: ') ? ` - ${rt.slice(8)}` : ''}`
       : land === 'awaiting-pr' ? `${LAND_WORDS[land]}: PR #${pr.number ?? '?'}` : rt;
-    const group = ruled ? 'queued' : rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r, land), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
+    const group = ruled ? 'queued' : ship ? laneGroup(l, r, land, ship) : rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r, land), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
     return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,

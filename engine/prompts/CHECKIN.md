@@ -111,6 +111,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 ## 2f. Usage guard (digest row 8: GRD alarms - runaway vs its peers, over the hand-off line, tool spam; Norn never stops a run itself)
 - Rule each: `META guard rule GRD-n --action let-run|mail|stop --why W`. mail = `NORN mail send --to RUN-n` (hand off / stop reading
   whole logs); stop = mail `role:controller` (a kill is not yours). `META guard sources RUN-n` shows what fills its context.
+- Test alarms and questions (a run's test share, a full-suite attempt, a load red, a flaky test, an expired quarantine; the rules
+  are docs/TESTING.md in the Norn repo): pick one of the options it carries, or put it to the owner. Never "rerun and see", never
+  a longer timeout, and never a brief or hand-off that asks for the full suite.
 - A `stuck:RM-n` wake (policy.stuck: k stopped rounds in a row / n runs / d days without a merge; its last three stop reasons follow
   the wake line): `norn run` refuses further rounds on that item. Do not relaunch it as before: write `META stuck brief RM-n --out F`
   and start that review as stage APPROACH-REVIEW on another executor or model than the stuck rounds (or ask the owner).
@@ -168,7 +171,7 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   checkin_model / checkin_effort select the next check-in itself; they are not worker settings.
 - Write the next stage's brief to {{briefs_dir}}/task-<LANE>-<STAGE>-brief.md (lean, line-ranged reading, cites the rules,
   stop rule, time budget, the end: `norn done` / `--outcome stopped --why` / `--outcome handoff --handoff-file`) and its three Ready lines (DoR, policy.dod.ready):
-  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <what done means>`. At the run end Norn
+  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>` (the changed files' tests, never the full suite), `Done: <what done means>`. At the run end Norn
   runs those Tests + the merge gate itself and checks the tree is clean and inside Scope: only that green record makes a DONE count.
 - Launch: `META run --lane <l> --stage <S> --round <n> --executor <x> [--agent <a>] --model <m>
   --effort <e> --brief <f> --budget-min <n> [--item RM-n]`. Only these values exist - any other is refused (exit 2, naming the valid ones): <x> = {{executors}};

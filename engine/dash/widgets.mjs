@@ -3,7 +3,7 @@
 // project). Pure: data -> HTML on the palette's CSS variables (index.html .wbars / .wcols / .wstack / .wcap); every chart carries its
 // numbers as text and an aria-label.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fin = v => typeof v === 'number' && Number.isFinite(v);
+export const fin = v => typeof v === 'number' && Number.isFinite(v);
 const w = (v, max) => (fin(v) && max > 0 ? Math.max(0, Math.min(100, 100 * v / max)).toFixed(1) : '0');
 
 /** rows [{ label, value, note?, cls? }] -> a ranked list; fmt(value) the number shown; max (default the largest value) */

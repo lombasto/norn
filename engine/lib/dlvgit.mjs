@@ -1,17 +1,22 @@
 // Git facts for deliverables (the Norn project's design/DELIVERABLES-SPEC.md 1): branch tips, merged / installed sets, commits behind main,
 // native-touching paths. Read-only git, batched: a warm scan is ONE `for-each-ref`; everything else is cached by commit ids
 // (merged sets by main sha, behind counts by tip + main, native paths by tip). Node built-ins only; no records import.
-import { execFileSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// proc-hygiene: every call is bounded (GIT_TIMEOUT_MS) and its timeout kills the whole tree (jobguard boundedSync), never a lone
+// git.exe orphaned under Git's cmd launcher
+export const GIT_TIMEOUT_MS = 120000;
 // exec wrapper that counts calls (the cost gate); null on a non-zero exit when allowFail; status: { code, out } whatever the exit
 // (merge-tree exits 1 on a conflict with its answer on stdout); env: extra variables for this call; input: stdin for this call
 export function makeGit(exec = null) {
-  const run = exec || ((repo, args, env, input) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true,
-    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], maxBuffer: 64 << 20, ...(input === undefined ? {} : { input }),
-    ...(env ? { env: { ...process.env, ...env } } : {}) }));
+  const run = exec || ((repo, args, env, input) => {
+    const r = boundedSync('git', ['-C', repo, ...args], { timeout: GIT_TIMEOUT_MS, input, maxBuffer: 64 << 20, ...(env ? { env: { ...process.env, ...env } } : {}) });
+    if (r.error || r.status !== 0) throw Object.assign(r.error || new Error(`git ${args[0]} exited ${r.status}: ${String(r.stderr || '').trim().slice(0, 200)}`), { status: r.status, stdout: r.stdout, stderr: r.stderr });
+    return r.stdout;
+  });
   const git = (repo, args, { allowFail = false, status = false, env = null, input = undefined } = {}) => {
     git.calls++;
     try { const out = input === undefined ? run(repo, args, env) : run(repo, args, env, input); return status ? { code: 0, out } : out; } catch (e) {
