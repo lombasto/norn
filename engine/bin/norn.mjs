@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -614,12 +614,12 @@ function hookCmd(argv, env, err) {
 const S5_USAGE = {
   status: 'norn status [--project <name | project.json> | --state D] [--machine F] [--budget F] [--out F]',
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
-  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
+  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--homes (+ the runs of the other homes of a synced project, read-only: their fetched copies, each "on <home>")] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
   overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'homes!', 'why', 'sha', 'at'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -779,10 +779,12 @@ function s5Cmd(argv, env, out, err) {
     if (flags['all-nodes']) return allNodes(state, m, flags, out);
     const items = Object.values(loadState(state).items).filter(i => i.kind === 'run' && (!flags.lane || i.data.lane === flags.lane)
       && (!flags.unreviewed || (['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive')));
+    // RM-46 S3: --homes adds the other homes' runs from their copies (read-only: never queued here, never reviewed here); lane = this home's form (b/x)
+    if (flags.homes) items.push(...copyItems(state, 'run').filter(i => !flags.lane || i.data.lane === flags.lane));
     if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => ({ ...i, outcome: history.find(h => h.ev === 'end')?.data.outcome ?? null })), null, 1));
-    const pos1 = Object.fromEntries(queueOf(items).map(q => [q.id, q]));
+    const pos1 = Object.fromEntries(queueOf(items.filter(i => !i.home)).map(q => [q.id, q]));
     const col3 = i => pos1[i.id] ? `#${pos1[i.id].position} not_before ${pos1[i.id].not_before ?? '-'}` : i.history.find(h => h.ev === 'end')?.data.outcome ?? '-';
-    if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}`);
+    if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}${i.home ? `  on ${i.home}` : ''}`);
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + S5_USAGE[cmd]); return 2; }

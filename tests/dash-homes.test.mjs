@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { readEvents, recordsFile } from '../engine/lib/records.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
+import { main } from '../engine/bin/norn.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
 const GENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' };
@@ -112,6 +113,19 @@ test('the Ledger page: a Homes block (head, last fetch, lag, clock) and a Claims
     has(html, /id="ledger-claims"[\s\S]*?data-act="claim-take"[^>]*data-lane="b\/slop"/, 'a stale claim has a Take over button');
     has(html, /merge leader[\s\S]*?\ba\b/, 'the leader');
     has(html, /id="ledger-lines"/, 'the ledger lines stay on the same page (blocks, no new tab)');
+  } finally { await f.done(); }
+});
+
+test('norn runs --homes: b\'s run from its copy, "on b", lane in this home\'s form; without --homes only the own runs', { timeout: 120000 }, async () => {
+  const f = await fixture({ synced: true });
+  try {
+    const run = argv => { const o = []; const code = main(['runs', '--state', f.pa.state, ...argv], process.env, s => o.push(s), s => o.push(s)); return { code, lines: o }; };
+    const all = run(['--homes']), own = run([]);
+    assert.equal(all.code, 0, all.lines.join('\n'));
+    assert.ok(all.lines.some(l => /^RUN-b-1\s.*b\/slop.*\bon b$/.test(l)), all.lines.join('\n'));
+    assert.ok(!own.lines.some(l => l.startsWith('RUN-b-1')), 'a foreign run only with --homes');
+    const js = run(['--homes', '--json']);
+    assert.equal(JSON.parse(js.lines.join('\n')).find(i => i.id === 'RUN-b-1')?.home, 'b');
   } finally { await f.done(); }
 });
 
