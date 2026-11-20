@@ -11,8 +11,8 @@
 //                            by TerminateProcess on itself (no CLR shutdown, safe from both threads), and refuses ("err") a <pid>
 //                            that has exited or was created after the hold itself (not its supervisor: a reused pid).
 //   reap <name> <keep-pid> <receipts> <killer> <reason> [<pid,pid>]
-//                            kill every process of the job but <keep-pid>, then clear KILL_ON_JOB_CLOSE (what the supervisor starts
-//                            after its end - tick, auto-resume - lives on). DEC-1088: each pid of the job's list is opened and its
+//                            kill every process of the job but <keep-pid>, then clear KILL_ON_JOB_CLOSE and allow breakaway (what the
+//                            supervisor starts after its end - tick, auto-resume - lives on). DEC-1088: each pid of the job's list is opened and its
 //                            HANDLE re-checked as a member (IsProcessInJob): a member that exited between the list and the open may
 //                            name a reused pid, a stranger - skipped, never killed. Each one gets a receipt line appended to
 //                            <receipts> (kills.mjs; JSON: at, killer, reason, action kill | skipped, pid, image, cmd, ppid, job) BEFORE
@@ -28,7 +28,7 @@
 //                            handle closes). A CreateProcess failure: "jobguard-err <message>" on stderr, exit 127. stdio passes through.
 // proc-hygiene (2026-11-19, 84 orphaned tail.exe / grep.exe watchers): with BREAKAWAY_OK set, Git Bash (MSYS2 / Cygwin) starts every
 // child with CREATE_BREAKAWAY_FROM_JOB, so a worker's 'tail -f | grep' left the run's job at birth and outlived the reap. The job
-// never allows breakaway except inside 'spawn'.
+// never allows breakaway while the run lives, except inside 'spawn'.
 // Any failure prints "err <message>" (exit 1).
 using System;
 using System.Collections.Generic;
@@ -149,7 +149,10 @@ static class JobGuard {
         } finally { CloseHandle(h); }
       }
     }
-    Limits(job, 0);
+    // the run's tree is gone: what the supervisor starts after its end may break away again. 'spawn' cannot open the window then:
+    // the hold has ended, and with its handle the job's name (CI 44672523595 dod.test: the Done resume started "inside" the
+    // supervisor's libuv kill-on-close job and died with the supervisor's exit)
+    Limits(job, BREAKAWAY_OK);
     CloseHandle(job);
     Console.Out.WriteLine("reaped " + n);
     return 0;

@@ -103,7 +103,7 @@ export async function holdJob(pid, { exe, name = `meta-run-${pid}-${Date.now()}`
   });
 }
 
-/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off afterwards. Each target is receipted first in rc's file
+/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off and breakaway allowed afterwards (the run is over). Each target is receipted first in rc's file
  * (kills.mjs receiptsOf: rc { file | state, killer, reason }); a pid whose handle is no job member is skipped (`also`: pids added to
  * the job's list, the test seam). Returns { killed: [{ pid, image }], skipped: [{ pid, image }] } or { error } */
 export function reapJob(job, keep = process.pid, rc = {}) {
