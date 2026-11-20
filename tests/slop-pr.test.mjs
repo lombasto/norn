@@ -61,8 +61,9 @@ test('norn slop check --ci --diff base..HEAD: exit 1 on a BLOCK, the machine rul
   assert.match(r.stdout, /slop check: 1 BLOCK on HEAD /);
 });
 
-test('the slop workflow: every pull request (no path filter: a required status must always report), the merge base of the PR, a pinned tool cache; the doc says to make it required', () => {
-  const y = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'slop.yml'), 'utf8');
+test('the PR workflow\'s slop job: every pull request (no path filter: a required status must always report), the merge base of the PR, machine rules skipped, a pinned tool cache; the docs say to make it required', () => {
+  assert.equal(fs.existsSync(path.join(ROOT, '.github', 'workflows', 'slop.yml')), false, 'one PR workflow: pr.yml');
+  const y = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'pr.yml'), 'utf8');
   assert.match(y, /^on:\s*\n\s+pull_request:\s*$/m);
   assert.doesNotMatch(y, /paths-ignore|paths:/);
   assert.match(y, /^ {2}slop:$/m, 'the job (the status) is named slop');
@@ -71,10 +72,10 @@ test('the slop workflow: every pull request (no path filter: a required status m
   assert.match(y, /node engine\/bin\/norn\.mjs slop check --ci --diff "\$base\.\.HEAD"/);
   assert.match(y, /META_ROOT: \$\{\{ runner\.temp \}\}\/norn/, 'the tool cache lives under META_ROOT: one path per runner');
   assert.match(y, /actions\/cache@v4[\s\S]*path: \$\{\{ runner\.temp \}\}\/norn\/state\/tools\/npm/);
-  // docs/ tracks only images (.gitignore): SloppaChoppa's doc is the rules README
   const docs = fs.readFileSync(path.join(ROOT, 'engine', 'lib', 'slop', 'rules', 'README.md'), 'utf8');
-  assert.match(docs, /## On a pull request[\s\S]*required status/i);
+  assert.match(docs, /## On a pull request[\s\S]*\.github\/workflows\/pr\.yml[\s\S]*required status/i);
   assert.match(docs, /`slop`/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'TESTING.md'), 'utf8'), /`slop`[^\n]*required status/i, 'docs/TESTING.md names the required status');
 });
 
 test('merge-land: refuses a held branch; the PR of a clean one carries the WARN list of its stored check in the body', () => {

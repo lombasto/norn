@@ -1,7 +1,9 @@
 # SloppaChoppa rules
 
 A rule is a data file: an id, a level (`BLOCK`, `WARN`, `TREND`, `LIST`), a kind, that kind's parameters and a fixture with a
-`hit` and a near-miss `miss` (each a base and a head tree). Only new findings count: a finding is fingerprinted at head and at the
+`hit` and a near-miss `miss` (each a base and a head tree). Every rule, a project's own too, carries `explain`: `what` (the finding in plain
+words), `why` (why the rule exists) and `fix` (what to do). A rule without all three does not load. `norn slop check`, the run-end
+resume prompt and the Slop page show it under the finding, with the waiver command for that finding. Only new findings count: a finding is fingerprinted at head and at the
 merge base, and only a head finding the base did not have is reported. A new `BLOCK` finding holds the branch's merge until it is
 fixed or waived (`norn rec add waiver`).
 
@@ -55,7 +57,7 @@ them. Before a rule blocks, replay it over recent merged branches: a rule that f
 
 ## On a pull request
 
-Every pull request runs the `slop` job (`.github/workflows/slop.yml`): `norn slop check --ci --diff <merge base>..HEAD`, the same
+Every pull request runs the `slop` job of the PR check (`.github/workflows/pr.yml`): `norn slop check --ci --diff <merge base>..HEAD`, the same
 rules a lane's run end uses, on the PR's diff against its merge base with the target branch. A new BLOCK finding fails it (exit 1)
 and the job lists each finding (`BLOCK <rule> <file>:<line> ...`). `--ci` skips the rules flagged `machine` in their data (K14 reads
 the generated harness files of the machine it runs on; a runner has none) and lists them as skipped.
@@ -66,7 +68,7 @@ The job only blocks a merge when the branch protection asks for it. In the repo'
 that targets the default branch, turn on "Require status checks to pass" and add the check `slop` (source: GitHub Actions). This
 is a repository setting: no file in the repo can make it required.
 
-The workflow has no path filter on purpose: a required status whose workflow a filter skips stays "expected" and blocks the PR.
+pr.yml has no path filter on purpose: a required status whose workflow a filter skips stays "expected" and blocks the PR.
 
 ### What else covers main
 
