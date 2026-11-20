@@ -63,3 +63,10 @@ test('escalation_effort: default xhigh, settable to an effort, named in the gene
   assert.equal(r.policy.iteration.escalation_effort,'high');
   assert.throws(()=>applySettings(p,{'policy.iteration.escalation_effort':'max'}),e=>e.status===400);
 });
+
+test('NORN-CTX-1M: a _1m context row takes up to 1000k, a plain row keeps its 400k cap',()=>{
+  const b=merged(budget(),policy());
+  assert.equal(applySettings(b,{'policy.context.implementer_1m.hard_max_k':950}).policy.context.implementer_1m.hard_max_k,950);
+  assert.throws(()=>applySettings(b,{'policy.context.implementer.hard_max_k':450}),e=>e.status===400);
+  assert.throws(()=>applySettings(b,{'policy.context.planner_1m.hard_max_k':1001}),e=>e.status===400);
+});
