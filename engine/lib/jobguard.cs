@@ -1,6 +1,6 @@
 // NORN-WATCH S5 (DEC-683): the Windows half of "a run's process tree dies with the run" (jobguard.mjs). Compiled on first use with
-// the csc.exe of .NET Framework 4 (in every Windows 10 / 11), cached by source hash. Three verbs:
-//   hold <pid> <name>        create the named Job Object <name> (KILL_ON_JOB_CLOSE | BREAKAWAY_OK), put <pid> (the run's supervisor)
+// the csc.exe of .NET Framework 4 (in every Windows 10 / 11), cached by source hash. Five verbs:
+//   hold <pid> <name>        create the named Job Object <name> (KILL_ON_JOB_CLOSE, no BREAKAWAY_OK), put <pid> (the run's supervisor)
 //                            in it, print "ok", then wait for stdin EOF or the exit of <pid> itself, whichever comes first (the
 //                            supervisor ended or died) and exit: the handle closes, and while KILL_ON_JOB_CLOSE is still set the job
 //                            kills everything in it. The process wait: the hold ends with its supervisor however the pipe behaves
@@ -19,8 +19,16 @@
 //                            its kill: a receipt not written = "err", no kill. Prints "killed <pid> <image>" / "skipped <pid> <image>"
 //                            lines, then "reaped <n>". The optional pid list joins the job's list (the test seam of a non-member pid).
 //   procs                    every process, one JSON line { pid, ppid, name, cmd } (kills.mjs receipts: no PowerShell start per kill).
-//   spawn <cwd> <cmdline>    start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
-//                            "pid <n> breakaway", or "pid <n> inside" when an outer job forbids breakaway.
+//   spawn <job|-> <cwd> <cmdline>  start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
+//                            "pid <n> breakaway", or "pid <n> inside" when an outer job forbids breakaway. <job> (the run's named job)
+//                            allows breakaway only around this one CreateProcess and forbids it again at once.
+//   run <ms> <cwd> <cmdline> run <cmdline> in a new KILL_ON_JOB_CLOSE job of its own (this helper enters it first, so the child and
+//                            all it starts are in it from birth, suspended or not); exit with the child's code and kill the whole job
+//                            at the child's exit, at <ms> (exit 124, "jobguard-timeout" on stderr) or when this helper is killed (its
+//                            handle closes). A CreateProcess failure: "jobguard-err <message>" on stderr, exit 127. stdio passes through.
+// proc-hygiene (2026-11-19, 84 orphaned tail.exe / grep.exe watchers): with BREAKAWAY_OK set, Git Bash (MSYS2 / Cygwin) starts every
+// child with CREATE_BREAKAWAY_FROM_JOB, so a worker's 'tail -f | grep' left the run's job at birth and outlived the reap. The job
+// never allows breakaway except inside 'spawn'.
 // Any failure prints "err <message>" (exit 1).
 using System;
 using System.Collections.Generic;
@@ -43,6 +51,10 @@ static class JobGuard {
   [DllImport("kernel32", SetLastError = true)] static extern bool TerminateProcess(IntPtr p, uint code);
   [DllImport("kernel32", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
   [DllImport("kernel32", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+  [DllImport("kernel32", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr j, int c, ref EXT i, int n, IntPtr r);
+  [DllImport("kernel32", SetLastError = true)] static extern bool TerminateJobObject(IntPtr j, uint code);
+  [DllImport("kernel32", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr p, out uint code);
+  [DllImport("kernel32", SetLastError = true)] static extern IntPtr GetStdHandle(int n);
   [DllImport("kernel32", SetLastError = true)] static extern bool GetProcessTimes(IntPtr p, out long created, out long exited, out long kernel, out long user);
   [DllImport("kernel32")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32", SetLastError = true)] static extern bool IsProcessInJob(IntPtr p, IntPtr j, out bool r);
@@ -76,7 +88,7 @@ static class JobGuard {
   static int Hold(int pid, string name) {
     IntPtr job = CreateJobObject(IntPtr.Zero, name);
     if (job == IntPtr.Zero) throw new Win32Exception();
-    Limits(job, KILL_ON_CLOSE | BREAKAWAY_OK);
+    Limits(job, KILL_ON_CLOSE);
     IntPtr p = OpenProcess(SET_QUOTA | TERMINATE | SYNCHRONIZE | QUERY_LIMITED, false, pid);
     if (p == IntPtr.Zero) throw new Win32Exception();
     long born, self, x, k, u;
@@ -137,7 +149,7 @@ static class JobGuard {
         } finally { CloseHandle(h); }
       }
     }
-    Limits(job, BREAKAWAY_OK);
+    Limits(job, 0);
     CloseHandle(job);
     Console.Out.WriteLine("reaped " + n);
     return 0;
@@ -157,19 +169,55 @@ static class JobGuard {
     return 0;
   }
 
-  static int Spawn(string cwd, string cmdline) {
+  static uint Flags(IntPtr job) {
+    var e = new EXT();
+    if (!QueryInformationJobObject(job, EXTENDED, ref e, Marshal.SizeOf(typeof(EXT)), IntPtr.Zero)) throw new Win32Exception();
+    return e.Basic.LimitFlags;
+  }
+  // breakaway is allowed only around this CreateProcess. Two spawns at once: either may close the window on the other, whose
+  // CreateProcess then fails with 5 - it reopens the window and tries again. The window always ends closed, never restored "open".
+  static int Spawn(string jobName, string cwd, string cmdline) {
     const uint BREAKAWAY = 0x01000000, DETACHED = 0x8, NEW_GROUP = 0x200, NO_WINDOW = 0x08000000;
-    foreach (bool away in new[] { true, false }) {
-      var si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PI pi;
-      uint f = DETACHED | NEW_GROUP | NO_WINDOW | (away ? BREAKAWAY : 0);
-      if (CreateProcess(null, new StringBuilder(cmdline), IntPtr.Zero, IntPtr.Zero, false, f, IntPtr.Zero, cwd, ref si, out pi)) {
-        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-        Console.Out.WriteLine("pid " + pi.pid + (away ? " breakaway" : " inside")); return 0;
+    IntPtr job = jobName == "-" ? IntPtr.Zero : OpenJobObject(JOB_ALL, false, jobName);
+    try {
+      for (int tries = 0; tries < 6; tries++) {
+        bool away = tries < 5;
+        if (away && job != IntPtr.Zero) Limits(job, Flags(job) | BREAKAWAY_OK);
+        var si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PI pi;
+        uint f = DETACHED | NEW_GROUP | NO_WINDOW | (away ? BREAKAWAY : 0);
+        bool ok = CreateProcess(null, new StringBuilder(cmdline), IntPtr.Zero, IntPtr.Zero, false, f, IntPtr.Zero, cwd, ref si, out pi);
+        int err = ok ? 0 : Marshal.GetLastWin32Error();
+        if (job != IntPtr.Zero) Limits(job, Flags(job) & ~BREAKAWAY_OK);
+        if (ok) {
+          CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+          Console.Out.WriteLine("pid " + pi.pid + (away ? " breakaway" : " inside")); return 0;
+        }
+        if (!away || err != 5) throw new Win32Exception(err);   // 5 = access denied: breakaway forbidden (an outer job, a racing spawn)
+        if (job == IntPtr.Zero) tries = 4;   // no window of ours to reopen: start inside next
       }
-      int err = Marshal.GetLastWin32Error();
-      if (!away || err != 5) throw new Win32Exception(err);   // 5 = access denied: an outer job forbids breakaway -> start inside
+      return 1;
+    } finally { if (job != IntPtr.Zero) CloseHandle(job); }
+  }
+
+  static int Run(uint ms, string cwd, string cmdline) {
+    IntPtr job = CreateJobObject(IntPtr.Zero, null);
+    if (job == IntPtr.Zero) throw new Win32Exception();
+    Limits(job, KILL_ON_CLOSE);
+    if (!AssignProcessToJobObject(job, GetCurrentProcess())) throw new Win32Exception();
+    var si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); si.flags = 0x100;   // STARTF_USESTDHANDLES
+    si.i = GetStdHandle(-10); si.o = GetStdHandle(-11); si.e = GetStdHandle(-12);
+    PI pi;
+    if (!CreateProcess(null, new StringBuilder(cmdline), IntPtr.Zero, IntPtr.Zero, true, 0, IntPtr.Zero, cwd == "-" ? null : cwd, ref si, out pi)) {
+      Console.Error.WriteLine("jobguard-err " + new Win32Exception(Marshal.GetLastWin32Error()).Message); Console.Error.Flush(); return 127;
     }
-    return 1;
+    CloseHandle(pi.hThread);
+    if (WaitForSingleObject(pi.hProcess, ms) != 0) {
+      Console.Error.WriteLine("jobguard-timeout " + ms + " ms"); Console.Error.Flush();
+      TerminateJobObject(job, 124);   // the child, everything it started (suspended or not), and this helper
+      return 124;
+    }
+    uint code; GetExitCodeProcess(pi.hProcess, out code);
+    return (int)code;   // the job handle closes with this process: KILL_ON_JOB_CLOSE ends whatever the child left behind
   }
 
   static int Main(string[] a) {
@@ -177,8 +225,9 @@ static class JobGuard {
       if (a.Length == 3 && a[0] == "hold") return Hold(int.Parse(a[1]), a[2]);
       if ((a.Length == 6 || a.Length == 7) && a[0] == "reap") return Reap(a[1], int.Parse(a[2]), a[3], a[4], a[5], a.Length == 7 ? a[6] : "");
       if (a.Length == 1 && a[0] == "procs") return Procs();
-      if (a.Length == 3 && a[0] == "spawn") return Spawn(a[1], a[2]);
-      Console.Out.WriteLine("err usage: jobguard hold <pid> <name> | reap <name> <keep-pid> <receipts> <killer> <reason> [<pid,pid>] | procs | spawn <cwd> <cmdline>"); return 2;
+      if (a.Length == 4 && a[0] == "spawn") return Spawn(a[1], a[2], a[3]);
+      if (a.Length == 4 && a[0] == "run") return Run(uint.Parse(a[1]), a[2], a[3]);
+      Console.Out.WriteLine("err usage: jobguard hold <pid> <name> | reap <name> <keep-pid> <receipts> <killer> <reason> [<pid,pid>] | procs | spawn <job|-> <cwd> <cmdline> | run <ms> <cwd> <cmdline>"); return 2;
     } catch (Exception e) { Console.Out.WriteLine("err " + e.Message); return 1; }
   }
 }

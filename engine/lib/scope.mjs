@@ -156,7 +156,7 @@ function checkGit(a, cwd, c, env) {
       const dst = pos.map(r => r.split(':').pop().replace(/^refs\/heads\//, ''));
       if (dst.some(b => b === 'main' || b === 'master')) return `a push to ${dst.find(b => b === 'main' || b === 'master')} is the merge's job: push your feat/* branch`;
       if (!pos.length && dir !== null) {
-        const b = spawnSync('git', ['-C', dir, 'symbolic-ref', '--short', '-q', 'HEAD'], { encoding: 'utf8' }).stdout?.trim();
+        const b = spawnSync('git', ['-C', dir, 'symbolic-ref', '--short', '-q', 'HEAD'], { encoding: 'utf8', windowsHide: true, timeout: 20000 }).stdout?.trim();
         if (b === 'main' || b === 'master') return `this checkout is on ${b}: a bare git push pushes ${b}, the merge's job - push your feat/* branch`;
       }
     }
