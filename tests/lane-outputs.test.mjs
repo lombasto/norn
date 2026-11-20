@@ -143,7 +143,7 @@ test('stageWhere + lanePrs: a stage queued / built / merged / on the roadmap / d
   assert.equal(stageWhere({ key: 'S2', state: 'launched', ref: 'RUN-6' }, { items, rows: [{ lane: 'a-s2', state: 'merged', run: 'RUN-6' }] }).where, 'merged (RUN-6)');
   assert.equal(stageWhere({ key: 'S3', state: 'later', ref: 'RM-40' }, { R }).where, 'on the roadmap as RM-40, horizon next');
   assert.equal(stageWhere({ key: 'S4', state: 'drop' }).where, 'dropped');
-  const rows = [{ id: 'DLV-1', lane: 'a', branch: 'norn/a', state: 'merged', prs: [{ number: 12, state: 'merged', merged_at: 't' }, { number: 9, state: 'closed' }] }, { id: 'DLV-2', lane: 'a', branch: 'norn/ci-fix', state: 'done', pr: { number: 14, url: 'u' } }, { id: 'DLV-3', lane: 'b', prs: [{ number: 1 }] }];
+  const rows = [{ id: 'DLV-1', lane: 'a', branch: 'norn/a', state: 'merged', prs: [{ number: 12, state: 'merged', merged_at: 't' }, { number: 9, state: 'closed' }] }, { id: 'DLV-2', lane: 'a', branch: 'norn/ci-fix', state: 'done', prs: [{ number: 14, url: 'u', state: 'open' }] }, { id: 'DLV-3', lane: 'b', prs: [{ number: 1 }] }];
   assert.deepEqual(lanePrs(rows, 'a').map(p => [p.number, p.state, p.dlv]), [[14, 'open', 'DLV-2'], [12, 'merged', 'DLV-1'], [9, 'closed', 'DLV-1']]);
 });
 

@@ -227,9 +227,9 @@ export function laneAsks(items, lane) {
       ...(a ? { answer: { choice: a.data?.choice ?? null, text: o?.text ?? a.data?.text ?? null, by: a.by, at: a.ts } } : {}) };
   });
 }
-/** every PR of the lane's deliverables, newest first (deliverables rows: prs, else the last pr): [{ number, url, state, merged_at, dlv, branch }] */
+/** every PR of the lane's deliverables, newest first (deliverables rows' prs): [{ number, url, state, merged_at, dlv, branch }] */
 export function lanePrs(rows, lane) {
-  return rows.filter(r => r.lane === lane).flatMap(r => (r.prs?.length ? r.prs : r.pr ? [{ ...r.pr, state: r.state === 'done' ? 'open' : 'merged', merged_at: null }] : []).map(x => ({ ...x, dlv: r.id, branch: r.branch })))
+  return rows.filter(r => r.lane === lane).flatMap(r => (r.prs ?? []).map(x => ({ ...x, dlv: r.id, branch: r.branch })))
     .sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
 }
 /** where a proposed stage is now: waiting for the pick, queued / building / built as RUN-n, merged, on the roadmap as RM-n (horizon), dropped */
