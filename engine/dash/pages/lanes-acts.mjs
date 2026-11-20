@@ -17,10 +17,10 @@ export const acts = {
   'lane-type': P((d, p, { S, tabUrl, lanesRepaint }) => { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); }),
   'lane-show': P((d, p, { S, tabUrl, lanesRepaint }) => { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); }),
 };
-/** the Norn Map's node click: a run opens its feed, a question its Inbox row, anything else is selected */
-export function pickMap(id, { S, render, $, openFeed, map }) {
+/** the Norn Map's node click: a run opens its document on Runs, a question its Inbox row, anything else is selected */
+export function pickMap(id, { S, render, feedGo, map }) {
   const NM = map(), n = (NM?.d.nodes || []).find(x => x.id === id); if (!n) return;
-  if (n.feed) { openFeed(S.project, n.feed); NM.map.select(id, $('#feed').offsetWidth || 0); return; }
+  if (n.feed) { feedGo(S.project, n.feed); return; }
   if (n.type === 'question') { S.tab = 'inbox'; S.jump = 'q-' + id; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=inbox`); render(); return; }
   NM.map.select(id);
 }

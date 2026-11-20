@@ -158,20 +158,20 @@ test('the browser: the bar paints before /api/strip and /api/overview answer; bo
   await f.done();
 });
 
-test('the browser: ?tab=runs&run=RUN-n opens that run\'s feed, a reload keeps it, Back closes it; More opens and Escape returns focus', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser: ?tab=runs&run=RUN-n opens that run\'s document and feed, a reload keeps it, Back leaves it; More opens and Escape returns focus', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage();
   try {
     await pg.go(`${f.url}/?project=kestrel&tab=runs&run=RUN-2`, 90000);
-    assert.ok(await pg.until(`!document.querySelector('#feed').hidden && document.querySelector('#feed').textContent.includes('RUN-2')`, 30000), 'the feed is open on RUN-2');
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.run === 'RUN-2' && !!document.querySelector('#run-doc #run-feed #feed-head')?.textContent.includes('RUN-2')`, 30000), 'the run document and its feed show RUN-2');
     assert.match(await pg.ev('location.search'), /tab=runs&run=RUN-2/, 'opening the feed keeps the run URL');
     await pg.go(`${f.url}/?project=kestrel&tab=runs&run=RUN-2`, 90000);
-    assert.ok(await pg.until(`!document.querySelector('#feed').hidden && document.querySelector('#feed').textContent.includes('RUN-2') && location.search.includes('run=RUN-2')`, 30000), 'a reload keeps it open');
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.run === 'RUN-2' && !!document.querySelector('#run-feed') && location.search.includes('run=RUN-2')`, 30000), 'a reload keeps it open');
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`, 90000);
     assert.ok(await pg.until(`!!document.querySelector('#main [data-act="lane-feed"]')`, 30000), 'a lane row with a Feed button');
     await pg.ev(`document.querySelector('#main [data-act="lane-feed"]').click()`);
-    assert.ok(await pg.until(`location.search.includes('tab=runs') && /run=RUN-/.test(location.search) && !document.querySelector('#feed').hidden`, 30000), 'a Feed link navigates to the run URL');
+    assert.ok(await pg.until(`location.search.includes('tab=runs') && /run=RUN-/.test(location.search) && !!document.querySelector('#run-feed')`, 30000), 'a Feed link navigates to the run URL');
     await pg.ev('history.back()');
-    assert.ok(await pg.until(`document.body.dataset.tab === 'lanes' && document.querySelector('#feed').hidden`, 30000), 'Back closes it');
+    assert.ok(await pg.until(`document.body.dataset.tab === 'lanes' && !document.querySelector('#run-feed')`, 30000), 'Back leaves the run (its feed stops)');
     await pg.ev(`document.querySelector('#tab-more').focus(); document.querySelector('#tab-more').click()`);
     assert.ok(await pg.until(`!document.querySelector('#more-sheet').hidden`), 'More opens');
     await pg.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);

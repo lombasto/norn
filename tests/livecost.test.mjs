@@ -139,12 +139,16 @@ test('the dash in API mode: the strip carries the 24 h spend (running runs as an
   } finally { await f.done(); }
 });
 
-test('the dash in plan mode keeps the %/h burn column and no $ columns', async () => {
+test('the dash in plan mode keeps the burn (the run document\'s facts, tokens / 30 min) and no $ figures', async () => {
   const f = await fixture();
   try {
     const ui = async r => (await f.get(r)).data, now = Date.now();
     let html = renderTab('runs', await loadTab('runs', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.match(html, /<div>burn<\/div>/); assert.doesNotMatch(html, /\$ so far/);
+    assert.doesNotMatch(html, /\$ so far/);
+    // stage RUNS: the %/h column left with /api/overview; the burn is the picked run's own, in its facts
+    const burning = { id: 'RUN-9', kind: 'worker', state: 'running', started: new Date(now - 6e5).toISOString(), project: 'kestrel', burn30: 2.5e6, children: [] };
+    html = renderTab('runs', { tree: [burning], ended: [] }, { now, project: 'kestrel', run: 'RUN-9' });
+    assert.match(html, /<span class="mute">burn<\/span><span>2\.5M \/ 30 min<\/span>/); assert.doesNotMatch(html, /\$ so far/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
     assert.doesNotMatch(html, /\$ to date|lane-usd/);
     html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel' });
