@@ -1500,9 +1500,22 @@ export function ledgerRows(entries, d, ctx, compact = false) {
     return `<tr${compact ? '' : ` id="led-${entries.length - 1 - i}" data-state="${esc(e.kind)}"`}><td class="small mute ledt">${e.ts ? fmtTime(e.ts, ctx.now) : ''}</td><td class="ledk">${chip(LED_CHIP[e.kind], e.kind === 'other' ? 'note' : e.kind)}${who}</td><td class="ledb">${body}</td></tr>`;
   }).join('');
 }
+// RM-46 S3: a synced project's Homes + Claims blocks, above the ledger lines on the same page (no new tab); secs = a duration in words
+const secs = v => v == null ? '-' : v < 120 ? `${v} s` : v < 7200 ? `${Math.round(v / 60)} min` : `${Math.round(v / 3600)} h`;
+function syncBlocks(d, ctx) {
+  if (!d.homes) return '';
+  const h = d.homes, c = d.claims || { work: [] };
+  const homes = `<div class="card" id="ledger-homes"><h3>Homes <span class="mute small">this home: ${esc(h.home)} · last fetch ${h.fetched_at ? fmtTime(h.fetched_at, ctx.now) : 'never'}${h.fetch_error ? ` · <span class="bad">${esc(h.fetch_error)}</span>` : ''}</span></h3>
+    ${h.rows.map(r => `<div class="small">${homeChip(r)}<code>${esc(String(r.head).slice(0, 10))}</code> · lag ${secs(r.lag_s)} · clock ahead ${secs(r.ahead_s)}</div>`).join('') || '<p class="mute small">no other home fetched yet</p>'}</div>`;
+  const work = c.work.map(w => `<div class="small">${homeChip(w)}<b>${esc(w.lane)}</b> n=${esc(w.n)} ${esc(w.run ?? '-')} · renewed ${w.renewed_at ? fmtTime(w.renewed_at, ctx.now) : '-'}${w.items.length ? ` · ${esc(w.items.join(', '))}` : ''}
+    ${w.stale ? ` ${chip('bad', 'stale')} <button class="ghost" data-act="claim-take" data-project="${esc(ctx.project ?? '')}" data-lane="${esc(`${w.home}/${w.lane}`)}">Take over</button>` : ''}</div>`).join('');
+  const claims = `<div class="card" id="ledger-claims"><h3>Claims</h3>${work || '<p class="mute small">no work claims</p>'}
+    <div class="small mute">merge leader: ${c.leader ? `${esc(c.leader.home)} (renewed ${fmtTime(c.leader.renewed_at, ctx.now)})` : 'none'}</div></div>`;
+  return homes + claims;
+}
 function ledger(d, ctx) {
   const entries = parseLedger(d.ledger), more = d.more ? `<button class="ghost" data-act="ledger-more">Show older (${esc(d.count ?? 100)} more lines)</button>` : '';
-  return `<div class="filters"><input type="search" data-filter="ledger" placeholder="search text, ids  (e.g. RUN-12, merged)"><select data-filter-state="ledger"><option value="">all kinds</option>${LEDGER_KINDS.map(k => `<option value="${k}">${k === 'other' ? 'notes / headings' : k}</option>`).join('')}</select>
+  return `${syncBlocks(d, ctx)}<div class="filters"><input type="search" data-filter="ledger" placeholder="search text, ids  (e.g. RUN-12, merged)"><select data-filter-state="ledger"><option value="">all kinds</option>${LEDGER_KINDS.map(k => `<option value="${k}">${k === 'other' ? 'notes / headings' : k}</option>`).join('')}</select>
     <span class="small mute">${entries.length} entries · ${esc(d.ledger.length)} of ${esc(d.total ?? d.ledger.length)} lines</span></div>
    <div class="tablecard"><h3>Ledger <span class="mute small">${esc(d.file ?? 'no ledger file in project.json')} · newest first</span></h3>
    <table class="ledtab" id="ledger-lines" data-rows="ledger"><thead><tr><th>when</th><th>kind</th><th>entry</th></tr></thead><tbody>${ledgerRows(entries, d, ctx) || '<tr><td colspan="3" class="mute">empty</td></tr>'}</tbody></table>

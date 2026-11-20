@@ -415,7 +415,7 @@ export async function copyItemsAsync(stateDir, kind) {
 
 // a synced dir's view carries its pending events, conflicts and integrity rows (SPEC 3.7)
 const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items },
-  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity } : {}) });
+  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity, newest: a.newest } : {}) });
 // META-DASH-ASYNC R1: inside a primed dash request the snapshot's fold (lib/fsnap.mjs) - a lib that folds again (limitgate, ...) reads nothing
 export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(loadShared(stateDir, 'question'), fold(readEvents(recordsFile(stateDir, 'run'))));
 /** META-DASH-ASYNC R1: loadState on fs.promises (the two records files read concurrently on the threadpool; the same fold) */

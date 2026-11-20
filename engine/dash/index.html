@@ -1177,6 +1177,7 @@ document.addEventListener('click', e => {
   if (d.setcat) { S.setCat = d.setcat; S.setQ = ''; $('#set-search').value = ''; setFilter();
     const to = d.setsub && document.getElementById(d.setsub); if (to) to.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0); return; }
   if (d.act === 'rec-more') { const t = b.previousElementSibling, open = !t.classList.contains('open'); recOpen(t, b, open); if (open) S.recOpen.add(t.dataset.key); else S.recOpen.delete(t.dataset.key); return; }
+  if (d.act === 'claim-take' && confirm(`Take over ${d.lane}? Its home stops the run at its next renew.`)) { act(() => post('/api/claim/take', { project: p, lane: d.lane })); return; }
   if (d.act === 'ledger-more') { S.ledgerN += 100; render(); return; }
   if (d.act === 'map-zoom') { S.mapZoom = Number(d.z); render(); return; }
   if (d.act === 'map-view') { S.mapView = d.view; try { localStorage.setItem('meta-mapview', d.view); } catch { /* private mode */ } render(); return; }

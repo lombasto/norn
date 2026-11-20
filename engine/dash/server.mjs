@@ -19,7 +19,7 @@ import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
@@ -61,6 +61,8 @@ import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, rea
 import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
+import { ledgerConfig } from '../lib/ledger.mjs';
+import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
@@ -553,7 +555,43 @@ export function createDashboard(o) {
     const n = url.searchParams.get('count'), o = url.searchParams.get('offset');
     const count = Math.min(2000, Math.max(1, Number.parseInt(n ?? '', 10) || 100)), offset = Math.max(0, Number.parseInt(o ?? '', 10) || 0);
     const all = p.ledger ? await tail(p.ledger, Infinity) : [], end = Math.max(0, all.length - offset), start = Math.max(0, end - count);
-    return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(st(p)))] };
+    const [s, sync] = await Promise.all([stAsync(p), syncBlocks(p)]);
+    return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(s))], ...sync };
+  }
+  // RM-46 S3 (SPEC sec. 8 S3): a synced project's Ledger page carries the Homes block (each other home's fetched head, the last fetch, lag,
+  // clock offset) and the Claims block (work claims with the stale flag on this home's clock, the merge leader). Async git on the local
+  // ledger repo only: the fetch is the sync loop's (S4), never the page's. {} when the project is not synced.
+  const gitA = (dir, args, input) => new Promise(res => { const c = execFile('git', args, { env: { ...process.env, GIT_DIR: dir }, encoding: 'buffer', windowsHide: true, maxBuffer: 32 << 20 }, (e, out) => res(e ? null : out)); if (input !== undefined) c.stdin.end(input); });
+  // cat-file --batch output -> [body string | null] in the order asked ("<sha> <type> <size>\n<body>\n" or "<name> missing\n")
+  function batchBodies(buf) {
+    const out = []; let i = 0;
+    while (i < buf.length) { const nl = buf.indexOf(10, i), head = buf.subarray(i, nl).toString('utf8').split(' ');
+      if (head[1] === 'missing' || head.length < 3) { out.push(null); i = nl + 1; continue; }
+      const n = Number(head[2]); out.push(buf.subarray(nl + 1, nl + 1 + n).toString('utf8')); i = nl + 2 + n; }
+    return out;
+  }
+  async function syncBlocks(p) {
+    let home; try { home = JSON.parse(await readA(path.join(p.state, 'home.json'), 'null'))?.id; } catch { home = null; }
+    const cfg = home ? ledgerConfig(machine, { metaRoot: metaRootDir ?? path.resolve(p.state, '..', '..') }) : null;
+    if (!cfg) return {};
+    const L = cfg.dir, now = Date.now(), s = await stAsync(p), newest = s.newest || {};
+    let ft = {}; try { ft = JSON.parse(await readA(path.join(L, 'sync-fetch.json'), '{}')) || {}; } catch { /* a torn file: no fetch shown */ }
+    const refs = String(await gitA(L, ['for-each-ref', '--format=%(refname:lstrip=3) %(objectname)', 'refs/sync/home/']) || '').split('\n').filter(Boolean).map(l => l.split(' '));
+    const rows = await Promise.all(refs.filter(([h]) => h !== home).map(async ([h, head]) => {
+      const m = (await fs.promises.stat(path.join(p.state, 'homes', h, 'records.jsonl')).catch(() => null))?.mtimeMs, ts = newest[h];
+      return { home: h, head, lag_s: ts ? Math.max(0, Math.round((now - ts) / 1000)) : null, ahead_s: ts && m ? Math.max(0, Math.round((ts - m) / 1000)) : null };
+    }));
+    // the claims at the fetched tip: one ls-tree, one cat-file --batch; seen = this home's observer clock (S2b)
+    const ls = String(await gitA(L, ['ls-tree', '-r', '-z', 'refs/sync/claims^{commit}']) || '').split('\0').filter(Boolean).map(l => { const [m, key] = l.split('\t'); return { sha: m.split(' ')[2], key }; })
+      .filter(e => e.key.startsWith(`work/${p.name}/`) || e.key === leaderKey(p.name));
+    const bodies = ls.length ? batchBodies(await gitA(L, ['cat-file', '--batch'], ls.map(e => e.sha).join('\n') + '\n') || Buffer.alloc(0)) : [];
+    let seen = {}; try { seen = JSON.parse(await readA(path.join(p.state, 'sync', 'claims-seen.json'), '{}')) || {}; } catch { /* a torn file: nothing seen yet */ }
+    const pol = syncPolicy(p.policy), work = [];
+    let leader = null;
+    ls.forEach((e, i) => { let c; try { c = JSON.parse(bodies[i]); } catch { return; }
+      if (e.key === leaderKey(p.name)) { leader = c; return; }
+      if (c?.kind === 'work') work.push({ key: e.key, home: c.home, lane: c.lane, n: c.n, run: c.run ?? null, items: c.items || [], renewed_at: c.renewed_at, stale: c.home !== home && isStale(seen[e.key], c, now, pol) }); });
+    return { homes: { home, fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, rows }, claims: { work, leader } };
   }
   // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
@@ -1417,6 +1455,12 @@ data: ${JSON.stringify(l)}
     const p = projectOf(data);
     const rmo = route.match(/^\/api\/roadmap\/([a-z]+)$/);
     if (rmo) return roadEdit(p, rmo[1], data);
+    if (route === '/api/claim/take') {   // RM-46 S3: the owner's take over of another home's STALE work claim (the CLI checks stale on this home's clock)
+      if (typeof data.lane !== 'string' || !/^[a-z][a-z0-9]{0,7}\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(data.lane)) throw fail(400, 'lane must be <home>/<lane>');
+      const r = await metaCli(['claim', 'take', data.lane, '--project', p.name, ...(machineFile ? ['--machine', machineFile] : [])]);
+      if (r.code) throw cliFail(r);
+      return { ok: true, line: r.out.trim() };
+    }
     if (route === '/api/answer') {
       if (data.from !== undefined) {   // META-Q-RECONCILE R1: "already answered in DEC-m" - the owner words the DEC recorded
         if (typeof data.from !== 'string' || !/^DEC-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(data.from)) throw fail(400, 'from must be a DEC-n');
