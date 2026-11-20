@@ -5,12 +5,14 @@
 // the raw term: tests/waitwords.test.mjs keeps one sample per term kind the walk writes and fails on that.
 import { billingOf } from './billing.mjs';
 import { loginCommand } from './authguard.mjs';
+import { PAUSE_MODES } from './pausemode.mjs';
 
 const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
 // a cap key or an executor name -> the slot's name ("a free Claude slot")
 const SLOT = { max_claude_workers: 'Claude', max_codex: 'Codex', max_sol: 'Codex (sol)', max_astra: 'Codex (astra)', claude: 'Claude', codex: 'Codex', 'codex-sol': 'Codex (sol)', 'codex-astra': 'Codex (astra)' };
 const slot = k => SLOT[k] ?? k.replace(/^max_/, '');
 const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
+const isRun = id => /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(id);   // a run id, a home's (RUN-b-7) too
 const W = (code, text, o = {}) => ({ code, text, fix: o.fix ?? null, clears: o.clears ?? null, setting: o.setting ?? null, acts: o.acts ?? [], ...o.extra });
 
 /**
@@ -21,14 +23,15 @@ const W = (code, text, o = {}) => ({ code, text, fix: o.fix ?? null, clears: o.c
  */
 export function waitWords(term, { label = id => id, now = Date.now(), billing = null, status = '', state = null, clock = ms => hhmm(new Date(ms).toISOString()) } = {}) {
   const at = iso => { const t = Date.parse(iso); return Number.isFinite(t) ? clock(t, now) : iso; };
-  const t = String(term), name = id => (/^RUN-\d+$/.test(id) ? label(id) ?? id : id);
+  const t = String(term), name = id => (isRun(id) ? label(id) ?? id : id);
   let m;
   if (t.startsWith('withdraw: ')) return W('withdrawn', `Withdrawn: ${t.slice(10)}.`);
   if (t.startsWith('needs a ruling: ')) return W('ruling', `Needs a ruling: ${t.slice(16)}. The check-in repairs it.`, { acts: ['start-anyway', 'cancel'] });
-  if ((m = t.match(/^PAUSED \((.+)\)$/))) {
-    const own = state && m[1].replace(/\\/g, '/').replace(/\/PAUSED$/, '') === String(state).replace(/\\/g, '/').replace(/\/$/, '');
-    return W('paused', own === null ? `Paused (${m[1]}).` : own ? 'Paused: this project.' : 'Paused: all of Norn.', { acts: ['resume'],
-      fix: `delete ${m[1]} (the header's Resume button deletes the project's own PAUSED file)`, extra: { file: m[1], resume: true } });
+  if ((m = t.match(/^PAUSED (\w+) \((.+)\)$/))) {   // pausemode.mjs pauseTerm: `PAUSED <mode> (<file>)`
+    const f = m[2], mode = PAUSE_MODES[m[1]]?.label ?? m[1];
+    const own = state && f.replace(/\\/g, '/').replace(/\/PAUSED$/, '') === String(state).replace(/\\/g, '/').replace(/\/$/, '');
+    return W('paused', own === null ? `Paused (${mode}): ${f} holds every start.` : `Paused: ${own ? 'this project' : 'all of Norn'} (${mode}).`, { acts: ['resume'],
+      fix: `resume all (the header's pause menu, or norn resume --all) - it deletes the project's own PAUSED file; a machine-level ${f} is deleted by hand`, extra: { file: f, resume: true } });
   }
   if ((m = t.match(/^auth: (\S+) (login down|vendor outage) since (\S+) \((.*)\)(?:; (.*))?$/))) {
     const cmd = loginCommand(m[1]), probe = m[5] ? ` (${m[5].replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, x => at(x))})` : '';
@@ -61,16 +64,16 @@ export function waitWords(term, { label = id => id, now = Date.now(), billing = 
     { setting: 'api_usd_per_day', clears: 'by itself as the last 24 h of spend falls under the cap', fix: 'wait, or raise or clear the API daily cap (Settings)' });
   if ((m = t.match(/^budget (.+) unreadable \((.*)\): held until it parses$/)))
     return W('budget', `Held: the budget file ${m[1]} cannot be read (${m[2]}).`, { clears: 'by itself once the file parses', fix: `fix the JSON in ${m[1]}`, extra: { file: m[1] } });
-  if ((m = t.match(/^after run:(RUN-\d+):(\w+) unmet$/))) return W('after', `Waiting for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? `reach ${m[2]}`}.`, { acts: ['start-anyway'] });
-  if ((m = t.match(/^after dlv:(DLV-\d+):(\w+) unmet$/))) return W('after', `Waiting for ${m[1]} to ${m[2] === 'merged' ? 'merge' : `reach ${m[2]}`}.`, { acts: ['start-anyway'] });
-  if ((m = t.match(/^after q:(Q-\d+):(\w+) unmet$/))) return W('after', m[2] === 'applied' ? `Waiting for your answer to ${m[1]} to be applied.` : `Waiting for your answer to ${m[1]}.`, { acts: ['answer'] });
-  if ((m = t.match(/^after dir:(DIR-\d+):\w+ unmet$/))) return W('after', `Waiting for instruction ${m[1]} to be done.`, { acts: ['start-anyway'] });
+  if ((m = t.match(/^after run:(RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return W('after', `Waiting for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? `reach ${m[2]}`}.`, { acts: ['start-anyway'] });
+  if ((m = t.match(/^after dlv:(DLV-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return W('after', `Waiting for ${m[1]} to ${m[2] === 'merged' ? 'merge' : `reach ${m[2]}`}.`, { acts: ['start-anyway'] });
+  if ((m = t.match(/^after q:(Q-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return W('after', m[2] === 'applied' ? `Waiting for your answer to ${m[1]} to be applied.` : `Waiting for your answer to ${m[1]}.`, { acts: ['answer'] });
+  if ((m = t.match(/^after dir:(DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+):\w+ unmet$/))) return W('after', `Waiting for instruction ${m[1]} to be done.`, { acts: ['start-anyway'] });
   if ((m = t.match(/^after (\S+) unmet$/))) return W('after', `Waiting for ${m[1]}.`, { acts: ['start-anyway'] });
   if ((m = t.match(/^not_before (\S+)$/))) return W('not-before', `Starts at ${at(m[1])}.`, { clears: 'by itself at that time', acts: ['start-now'] });
-  if ((m = t.match(/^worktree held by (\S+)/))) return W('folder', `Waiting for its folder: ${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there.`, { extra: { run: /^RUN-\d+$/.test(m[1]) ? m[1] : null } });
-  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return W('folder', `Waiting for its lane's folder: ${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there.`, { extra: { run: /^RUN-\d+$/.test(m[1]) ? m[1] : null } });
+  if ((m = t.match(/^worktree held by (\S+)/))) return W('folder', `Waiting for its folder: ${isRun(m[1]) ? name(m[1]) : 'another run'} is writing there.`, { extra: { run: isRun(m[1]) ? m[1] : null } });
+  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return W('folder', `Waiting for its lane's folder: ${isRun(m[1]) ? name(m[1]) : 'another run'} is writing there.`, { extra: { run: isRun(m[1]) ? m[1] : null } });
   if ((m = t.match(/^merge slots full: (\d+) merge/))) return W('merge', `Waiting for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running).`, { setting: 'policy.merge.parallel' });
-  if ((m = t.match(/^MERGE \S+: .*?\blive run (RUN-\d+)/)) || /^MERGE /.test(t)) return W('folder', `Waiting: its lane is still writing${m?.[1] ? ` (${name(m[1])})` : ''}; a merge needs a prepared merge brief.`,
+  if ((m = t.match(/^MERGE \S+: .*?\blive run (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/)) || /^MERGE /.test(t)) return W('folder', `Waiting: its lane is still writing${m?.[1] ? ` (${name(m[1])})` : ''}; a merge needs a prepared merge brief.`,
     { fix: 'write a staged brief: norn merge-brief --sha <READY sha>' });
   if ((m = t.match(/^labels (\S+): not served here/))) return W('elsewhere', `Offered to another machine (it needs ${m[1]}).`);
   if ((m = t.match(/^cap ([\w, ]+): kept for (.+) \(fill order per cap\)$/))) {

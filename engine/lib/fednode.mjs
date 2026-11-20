@@ -44,7 +44,7 @@ const OFFERS = '/views/FED-OFFERS.json';
 export function listOffers(f, claims, served) {
   const out = [];
   for (const m of machineRefs(f)) {
-    const files = refFiles(f, m.ref, k => k.endsWith(OFFERS) || k.endsWith('/runs.jsonl') || /\/runs\/RUN-\d+\.queue\.json$/.test(k));
+    const files = refFiles(f, m.ref, k => k.endsWith(OFFERS) || k.endsWith('/runs.jsonl') || /\/runs\/RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+\.queue\.json$/.test(k));
     for (const key of Object.keys(files).filter(k => k.endsWith(OFFERS))) {
       const dir = key.slice(0, -OFFERS.length), project = path.posix.basename(dir);
       const items = foldText(files[`${dir}/runs.jsonl`]);

@@ -55,7 +55,9 @@ test('R2 chains: one line per real chain - re-queues and fill successors collaps
   const p = buildPlan(tonight());
   const lines = p.chains.map(c => c.steps.map(s => s.label).join(' > '));
   assert.equal(p.chains.length, 3, lines.join('\n'));
-  const live = p.chains[0];
+  // chains run in fill order: the MERGE pair's queued RUN-38 fills ahead of the build steps (MERGE-FIRST: a landing run outranks its own priority)
+  assert.deepEqual(p.chains[0].steps.map(s => s.label), ['Ootb fix merge', 'Adopt merge']);
+  const live = p.chains[1];
   assert.deepEqual(live.steps.map(s => [s.label, s.status]), [['Adopt A2', 'done'], ['Roadmap S3', 'running'], ['Plan', 'running'], ['Adopt A4 (MCP)', 'waiting'],
     ['Adopt A3', 'waiting'], ['Adopt A5', 'waiting'], ['Out-of-the-box review R2', 'waiting']]);
   assert.equal(live.broken, null, 'a withdrawn step re-queued (same lane + stage) is no break');
@@ -64,7 +66,6 @@ test('R2 chains: one line per real chain - re-queues and fill successors collaps
     assert.equal(new Set(keys).size, keys.length, `the same step twice: ${keys}`);
   }
   assert.ok(!lines.some(l => /A1/.test(l)), 'a finished upstream of a finished upstream is not pulled in');
-  assert.deepEqual(p.chains[1].steps.map(s => s.label), ['Ootb fix merge', 'Adopt merge']);
   const dead = p.chains[2];
   assert.deepEqual(dead.steps.map(s => [s.label, s.status]), [['CI fix', 'stopped'], ['CI engine git', 'withdrawn']]);
   assert.equal(dead.broken, 'chain broken: CI fix stopped, CI engine git withdrawn');
@@ -94,8 +95,8 @@ test('R2 estimates: a run\'s duration is its whole family (fill successors, resu
   assert.equal(up('RUN-32').start.at, T(105), 'S3 running: its ETA (+80) + the merge median (25)');
   assert.equal(up('RUN-33').start.at, T(190));
   assert.equal(up('RUN-36').start.at, T(275));
-  assert.equal(p.chains[0].finish.at, T(344), 'the ship review (+275 +44) and its own merge (+25)');
-  assert.equal(p.chains[1].finish.at, T(50), 'adopt MERGE ends +50; a MERGE sink adds no further merge');
+  assert.equal(p.chains[1].finish.at, T(344), 'the ship review (+275 +44) and its own merge (+25)');
+  assert.equal(p.chains[0].finish.at, T(50), 'adopt MERGE ends +50; a MERGE sink adds no further merge');
   // no basis: say why in words
   const q = buildPlan({ runs: [run(1, 'running', { lane: 'a', stage: 'X' }), run(2, 'queued', { lane: 'a', stage: 'Y', after: [after('RUN-1', 'done')] })],
     ready: [unmet('RUN-2', ['RUN-1', 'done'])], now: NOW });
@@ -155,6 +156,6 @@ test('R2 estimates: a run held by a live writer (its folder, or a MERGE while it
   const ready = [{ id: 'RUN-2', ready: false, terms: ['worktree held by RUN-1', 'MERGE road: lane road has live run RUN-1 in C:/x - write a staged brief'] }];
   const p = buildPlan({ runs, ready, now: NOW });
   assert.equal(p.upnext[0].start.at, T(40));
-  const q = buildPlan({ runs, ready: [{ id: 'RUN-2', ready: false, terms: ['resources: free RAM 1 GB'] }], now: NOW });
-  assert.equal(q.upnext[0].start.word, 'no estimate'); assert.equal(q.upnext[0].start.why, 'held: CPU / memory gate');
+  const q = buildPlan({ runs, ready: [{ id: 'RUN-2', ready: false, terms: ['resources: free RAM 1.0 GB < fill.min_free_gb 4'] }], now: NOW });   // the walk's term (runs.mjs walkQueue)
+  assert.equal(q.upnext[0].start.word, 'no estimate'); assert.equal(q.upnext[0].start.why, 'Held: this machine is low on memory (1.0 GB free < 4 GB).');
 });

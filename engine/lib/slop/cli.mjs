@@ -2,10 +2,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadRules, slopCheck, gitRun } from './check.mjs';
-import { loadState } from '../records.mjs';
+import { loadRules, slopCheck, gitRun, explainOf } from './check.mjs';
+import { loadState, laneId } from '../records.mjs';
 import { checkBranch } from './runend.mjs';
-import { hostWrite, activeWaivers, covers, findingLine } from './host.mjs';
+import { hostWrite, activeWaivers, covers, findingLine, explainLines } from './host.mjs';
 import { makeTool } from './tools.mjs';
 import { locReport, formatLoc } from './loc.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
@@ -41,7 +41,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   if (verb === 'check') {
     let repo = f.repo ? toplevel(f.repo) : process.cwd();
     if (f.lane) {
-      const lane = state && loadState(state).items['L:' + f.lane];
+      const lane = state && loadState(state).items[laneId(f.lane, state)];
       if (!lane?.data?.worktree) { err(`error: lane ${f.lane} names no worktree${state ? '' : ' (no state: pass --project / --state)'}`); return 2; }
       repo = lane.data.worktree;
     }
@@ -51,12 +51,14 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     const c = checkBranch({ repo, state, base, head, projectDir: project?.project_dir });
     if (!c) { out('slop check: no lane branch here (detached, on main, or no main to diff against): nothing to check'); return 0; }
     const ws = state ? activeWaivers(state) : [];
-    const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id }));
+    const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id, explain: explainOf(b.rule, project?.project_dir) }));
     if (state && !f.diff) hostWrite(state, { type: 'check', branch: c.branch, lane: f.lane, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped });
     const open = blocks.filter(b => !b.waived);
     if (f.json) out(JSON.stringify({ branch: c.branch, ...c.result, blocks }, null, 1));
     else {
-      for (const b of blocks) out((b.waived ? `waived (${b.waived}) ` : 'BLOCK ') + findingLine(b));
+      // RM-27: each open finding says what / why / what to do - once per rule (the first of its findings), so ten K2s are not ten copies
+      const told = new Set();
+      for (const b of blocks) { out((b.waived ? `waived (${b.waived}) ` : 'BLOCK ') + findingLine(b)); if (!b.waived && !told.has(b.rule)) { told.add(b.rule); for (const l of explainLines(b, { projectDir: project?.project_dir })) out(l); } }
       for (const s of c.result.skipped) out(`skipped ${s.rule}: ${s.why}`);
       out(`slop check: ${open.length} BLOCK${blocks.length > open.length ? ` (+${blocks.length - open.length} waived)` : ''} on ${c.branch} ${c.base.slice(0, 7)}..${c.result.head.slice(0, 7)} (${c.result.ran.join(' ')})`);
     }

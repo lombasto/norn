@@ -96,7 +96,7 @@ const MOJIBAKE = /â€|Ã[\u0080-¿]|Â[ -¿]|�/;
 const DATED = [[/\bthink (?:step[- ]by[- ]step|harder|deeply)\b/i, 'think step by step / harder'], [/\bdouble[- ]check\b/i, 'double-check'], [/\bbe thorough\b/i, 'be thorough'],
   [/\bevery \d+ (?:minutes|turns|steps|tool calls)\b/i, 'a fixed update cadence'], [/\b(?:under|at most|max(?:imum)?|no more than|<=?)\s*\d+\s+words\b/i, 'a word cap'],
   [/(?:past|over|above|at|under) ~?\d+k\b(?! ?(?:rows|lines|files|chars|bytes))/i, 'a token budget shown to the model'], [/\b(?:use (?:sub-?agents|parallel agents)|delegate (?:more|aggressively|often)\b(?! decision))/i, 'a push to delegate']];
-const HISTORY = /\b20\d\d-\d\d-\d\d\b|\b(?:0?[1-9]|1[0-2])-(?:[0-2]\d|3[01])\b(?=[\s:),;Z])|\bRUN-\d+\b|\bwas \d+\b|\bwas (?:renamed|removed|retired|moved|replaced)\b|\bno longer\b|\brenamed\b|\bused to\b|\bpreviously\b|\bformerly\b/i;
+const HISTORY = /\b20\d\d-\d\d-\d\d\b|\b(?:0?[1-9]|1[0-2])-(?:[0-2]\d|3[01])\b(?=[\s:),;Z])|\bRUN-(?:[a-z][a-z0-9]{0,15}-)?\d+\b|\bwas \d+\b|\bwas (?:renamed|removed|retired|moved|replaced)\b|\bno longer\b|\brenamed\b|\bused to\b|\bpreviously\b|\bformerly\b/i;
 const MODEL_RE = /\b(claude-(?:\d[\w.-]*[a-z0-9]|[a-z]+-\d[\w.-]*\d)|gpt-\d[\w.-]*|(?:opus|sonnet|haiku|fable)[ -]\d(?:\.\d)?)\b/gi;
 const normModel = m => { const x = m.toLowerCase(), f = x.match(/^(opus|sonnet|haiku)[ -](\d)(?:\.(\d))?$/); return f ? `claude-${f[1]}-${f[2]}${f[3] ? '-' + f[3] : ''}` : x.replace(/^fable[ -].*/, 'fable'); };
 

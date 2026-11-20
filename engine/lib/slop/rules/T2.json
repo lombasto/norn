@@ -4,6 +4,11 @@
   "kind": "pattern",
   "title": "a new test skip with no condition",
   "how": "in test code: describe / it / test / suite .skip( , or skip: true / skip: 'a reason' (a literal, not a condition)",
+  "explain": {
+    "what": "A test is skipped with no condition: test.skip, describe.skip, skip: true or skip: 'a reason'.",
+    "why": "A skipped test checks nothing, but the suite still looks green. Nobody notices when the code it covered breaks.",
+    "fix": "Fix the test, or delete it if it no longer applies. If it must skip on some machines, make skip a condition (for example the platform)."
+  },
   "files": [
     "tests/**"
   ],

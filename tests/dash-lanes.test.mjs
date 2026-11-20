@@ -108,7 +108,7 @@ test('the browser (RM-21 S1): a queued lane shows its one reason under its name 
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-seabed .lane-state')`, 90000), 'Lanes shows seabed with its state');
-    assert.match(await pg.ev(`document.querySelector('#lane-seabed .lane-state').textContent`), /^stopped red test$/, 'a stopped lane: its why, not "exited: STOPPED"');
+    assert.match(await pg.ev(`document.querySelector('#lane-seabed .lane-state').textContent`), /^stopped red test · stopped: needs a check-in decision$/, 'a stopped lane: its why, not "exited: STOPPED"; then the lifecycle rule that acts on it');
     // a queue record written after the load: the cap is 0, so the fill walk (the plan child) says it waits for a Claude slot
     const t = mkTmp('rm21-q-'), budget_file = path.join(t, 'budget.json'), wt = path.join(t, 'wt'), brief = path.join(t, 'b.md');
     fs.mkdirSync(wt); fs.writeFileSync(budget_file, JSON.stringify({ max_claude_workers: 0 })); fs.writeFileSync(brief, 'mode: done\n');

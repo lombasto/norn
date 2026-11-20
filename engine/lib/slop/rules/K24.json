@@ -4,6 +4,11 @@
   "kind": "pattern",
   "title": "a debug leftover: console.log / debug / trace / dir, or debugger",
   "how": "in code (not comments or strings) of modules that are not CLI printers",
+  "explain": {
+    "what": "A debug left-over is in the code: console.log, console.debug, console.trace, console.dir or debugger.",
+    "why": "Debug output clutters what the user sees and can leak data. A debugger statement stops the program when dev tools are open.",
+    "fix": "Delete it. If the output is wanted, use the module's logger or print from a CLI module under engine/bin."
+  },
   "files": [
     "**/*.mjs",
     "**/*.js",

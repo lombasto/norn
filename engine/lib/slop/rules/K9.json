@@ -4,6 +4,11 @@
   "kind": "dup",
   "title": "a new one-line helper that copies one another module already has",
   "how": "each new top-level one-statement function (const f = (..) => expr, or function f(..) { return expr }) of a touched file under roots, its body normalised; a finding when another module of the same group already has that body (groups: modules that can import each other; a browser module cannot import a Node one)",
+  "explain": {
+    "what": "A new one-line helper has the same body as a helper another module of the same group already has.",
+    "why": "Two copies of one helper drift apart. A fix lands in one copy, and the other keeps the bug.",
+    "fix": "Import the existing helper and delete the copy. If the two must differ, make the difference visible in the name or the body."
+  },
   "roots": [
     "engine/"
   ],

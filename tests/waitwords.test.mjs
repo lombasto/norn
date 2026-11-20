@@ -41,8 +41,8 @@ test('readiness on fixture queues: cap full, slot kept for an older run, paused,
   assert.match(T[a][0], /^cap: 0 claude workers running, budget max_claude_workers=0$/);
   assert.equal(mapped(T[a][0], ctx).text, 'Waiting for a free Claude slot (0 / 0). Next in line.');
   assert.equal(mapped(T[b][0], ctx).text, `Waiting for a free Claude slot; ${a} is ahead in line.`);
-  assert.equal(mapped(T[c].find(x => x.startsWith('PAUSED')), ctx).text, 'Paused: this project.');
-  assert.equal(mapped(T[c].find(x => x.startsWith('PAUSED')), { now: NOW, state: path.join(d.t, 'state', 'other') }).text, 'Paused: all of Norn.');
+  assert.equal(mapped(T[c].find(x => x.startsWith('PAUSED')), ctx).text, 'Paused: this project (Pause everything).');
+  assert.equal(mapped(T[c].find(x => x.startsWith('PAUSED')), { now: NOW, state: path.join(d.t, 'state', 'other') }).text, 'Paused: all of Norn (Pause everything).');
   assert.match(mapped(T[e][0], ctx).text, /^Starts at 2026-11-19 14:30Z\.$/, 'the default clock: the UTC minute');
   assert.equal(mapped(T[f][0], ctx).text, `Waiting for ${a} to merge.`);
   assert.equal(mapped(T[g].find(x => x.startsWith('labels ')), ctx).text, 'Offered to another machine (it needs gpu).');
@@ -76,6 +76,7 @@ const LITERAL = {
   'usage: RATE_OK=0': ['usage', /^Held: usage over the hourly cap/],
   'usage: weekly 95.2 % >= guard 95 %': ['usage', /^Held: the week's usage \(95\.2 %\) reached the weekly stop \(95 %\)/],
   'usage: api spend $212.00 in 24 h >= cap $200.00': ['usage', /^Held: API spend \(\$212\.00 in 24 h\) reached the \$200\.00 daily cap\.$/],
+  'after run:RUN-b-3:merged unmet': ['after', /^Waiting for RUN-b-3 to merge\.$/],   // a home's run id (RM-46)
   'after dlv:DLV-14:merged unmet': ['after', /^Waiting for DLV-14 to merge\.$/],
   'after q:Q-3:applied unmet': ['after', /^Waiting for your answer to Q-3 to be applied\.$/],
   'after dir:DIR-9:done unmet': ['after', /^Waiting for instruction DIR-9 to be done\.$/],
@@ -97,9 +98,9 @@ test('literal samples: every term kind has its code and words, never the raw ter
 });
 
 test('firstReason: the order of CAPACITY-UX 4.3, "+ n more" counts the rest, a ready row starts next', () => {
-  const row = { ready: false, terms: ['cap: 5 claude workers running, budget max_claude_workers=5', 'after dlv:DLV-14:merged unmet', 'PAUSED (C:/s/demo/PAUSED)'] };
+  const row = { ready: false, terms: ['cap: 5 claude workers running, budget max_claude_workers=5', 'after dlv:DLV-14:merged unmet', 'PAUSED queue (C:/s/demo/PAUSED)'] };
   const r = firstReason(row, { state: 'C:/s/demo' });
-  assert.equal(r.code, 'paused'); assert.equal(r.text, 'Paused: this project.'); assert.equal(r.more, 2);
+  assert.equal(r.code, 'paused'); assert.equal(r.text, 'Paused: this project (Hold the queue).'); assert.equal(r.more, 2);
   assert.equal(firstReason({ ready: false, terms: ['cap: 5 claude workers running, budget max_claude_workers=5', 'resources: CPU busy 94 % > fill.max_cpu_pct 90'] }).code, 'cap');
   assert.equal(firstReason({ ready: true, terms: [] }).code, 'ready');
   assert.equal(firstReason(null), null);

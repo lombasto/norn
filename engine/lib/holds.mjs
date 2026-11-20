@@ -1,6 +1,7 @@
 // GAP-1: a blocked Norn says so. The usage guard once held every queued run and merge for ~20 h ("usage: weekly unknown") and said
 // it only as one STATUS digest line. Now: when EVERY queued run of a project (or every queued run on the Claude account) waits on the
-// same machine-level term of the fill walk (runs.mjs walkQueue: a usage term of usageguard.mjs / billing.mjs, or a PAUSED file) for
+// same machine-level term of the fill walk (runs.mjs walkQueue: a usage term of usageguard.mjs / billing.mjs, or a pause that holds
+// starts: `PAUSED <mode> (<file>)`, pausemode.mjs - Hold the queue / Pause everything; Pause check-ins holds nothing) for
 // policy.holds.notice_min (default 60) minutes, the project gets ONE needs-you item (dashboard Inbox), ONE digest row (the check-in
 // reports it) and ONE owner notice per episode (tick -> norn notify, class alert). Level-triggered like the digest: <state>/hold.json
 // keeps only the episode (term, since, notified); the tick deletes it once the walk no longer holds, and the item and the row leave.

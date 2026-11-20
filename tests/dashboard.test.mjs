@@ -30,9 +30,9 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
   try {
     const q = (await f.get('/api/inbox')).data.items.find(i => i.type === 'question');
     assert.equal(q.id, 'Q-1'); assert.equal(q.recommend.key, 'a');
-    assert.equal((await f.post('/api/pause', { paused: true })).status, 200);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' })).status, 200);
     assert.equal((await f.post('/api/checkin', {})).status, 409);
-    assert.equal((await f.post('/api/pause', { paused: false })).status, 200);
+    assert.equal((await f.post('/api/pause', { resume: 'all' })).status, 200);
     fs.writeFileSync(path.join(f.pa.state, 'tick.lock'), 'busy');
     assert.equal((await f.post('/api/checkin', {})).status, 409);
     assert.equal(f.counts.ticks, 0);
@@ -61,9 +61,9 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     assert.equal((await f.post('/api/stop', { run: 'RUN-2', confirm: true })).status, 200);
     assert.equal(loadState(f.pa.state).items['RUN-2'].state, 'killed');
     assert.equal((await f.post('/api/stop', { run: 'RUN-2', confirm: true })).status, 409);
-    assert.equal((await f.post('/api/pause', { paused: true }, { origin: 'https://evil.example' })).status, 403);
-    assert.equal((await f.post('/api/pause', { paused: true }, { 'x-dash-token': 'wrong' })).status, 403);
-    assert.equal((await f.post('/api/pause', { paused: true }, { 'sec-fetch-site': 'cross-site' })).status, 403);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { origin: 'https://evil.example' })).status, 403);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'x-dash-token': 'wrong' })).status, 403);
+    assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'sec-fetch-site': 'cross-site' })).status, 403);
     assert.equal(f.counts.asks, 1);
   } finally { await f.done(); }
 });
@@ -122,8 +122,8 @@ test('project switcher: two projects, ?project= scopes every tab, all sums the o
     assert.equal((await f.get('/api/records?project=all')).status, 400);
     assert.equal((await f.get('/api/inbox?project=nope')).status, 404);
     assert.equal((await f.post('/api/answer', { project: 'other', id: 'Q-1', text: 'ok' })).status, 200);
-    assert.equal(loadState(f.pb.state).items['Q-1'].state, 'answered');
-    assert.equal(loadState(f.pa.state).items['Q-1'].state, 'open', 'the other project is untouched');
+    assert.equal(loadState(f.pb.state).items['Q-1'].history.at(-1).ev, 'say', 'typed words on a Q with no options: a message in its thread (INBOX-REPLIES)');
+    assert.equal(loadState(f.pa.state).items['Q-1'].history.at(-1).ev, 'create', 'the other project is untouched');
   } finally { await f.done(); }
 });
 
@@ -252,5 +252,25 @@ test('roadmap endpoint: the derived tree from roadmap records; cached while noth
     assert.equal((await f.get('/api/roadmap?project=nope')).status, 404);
     const e = (await f.get('/api/roadmap?project=other')).data;
     assert.deepEqual([e.themes, e.counts.items], [[], 0], 'a project with no roadmap: an empty tree, not an error');
+  } finally { await f.done(); }
+});
+
+// dash-latency: a run / lane / directive append (runs.jsonl, records.jsonl churn while workers run) never makes the Roadmap wait on
+// `norn road show` (3 s idle, 4-13 s with workers): the last tree at once, one rebuild behind it, the new tree on a later fetch
+test('roadmap endpoint: a non-roadmap record append serves the last tree at once and rebuilds behind it', async () => {
+  const f = await fixture();
+  try {
+    const S = f.pa.state;
+    record(S, { kind: 'item', ev: 'create', by: 'controller', data: { title: 'Core', kind: 'theme' } }, { views: false });
+    const a = (await f.get('/api/roadmap?project=kestrel')).data;
+    await new Promise(r => setTimeout(r, 5));   // a rebuild's `generated` is a later ms
+    record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen' } });
+    record(S, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'churn', via: 'chat' } });
+    const t0 = performance.now(), b = (await f.get('/api/roadmap?project=kestrel')).data, ms = performance.now() - t0;
+    assert.equal(b.generated, a.generated, 'the last tree, not a fresh build awaited');
+    assert.ok(ms < 500, `served from the cache in ${Math.round(ms)} ms`);
+    let c = b;
+    for (let i = 0; i < 300 && c.generated === a.generated; i++) { await new Promise(r => setTimeout(r, 100)); c = (await f.get('/api/roadmap?project=kestrel')).data; }
+    assert.notEqual(c.generated, a.generated, 'rebuilt behind the served tree');
   } finally { await f.done(); }
 });

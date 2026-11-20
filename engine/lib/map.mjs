@@ -5,6 +5,7 @@
 import { runName } from './names.mjs';
 import { critiqueOfNode } from './critique.mjs';
 import { laneState } from './lanes.mjs';
+import { laneIdIn, laneNameIn, idNum as num } from './records.mjs';
 
 export const RECENT_RUNS = 3;   // Q-B2 (controller 2026-11-08): last 3 runs per lane, the rest behind "more"
 export const MORE_CAP = 30;     // an expanded lane shows its latest 30 runs (the check-in band has ~1000)
@@ -12,7 +13,6 @@ const COL = [16, 296, 620, 900], W = [200, 260, 240, 240], WIDTH = 1160;
 const H = { lane: 50, big: 58, small: 40, child: 38, question: 44 }, GAP = 8, BAND_PAD = 12, BAND_GAP = 14;
 const CHECKIN = 'checkin', ADHOC_MS = 24 * 3600000;
 export const DLV_ROOM = 42;   // under the lane node: the "+n more" line, then the 20 px deliverable pill
-const num = id => Number(String(id).slice(4));
 
 const EDGE_WORD = { owns: 'owns (lane -> run)', resumes: 'resumes (HANDOFF -> next run)', delegates: 'delegates (run -> helper / subagent)',
   dispatched: 'dispatched (check-in started it)', reviewed: 'reviewed (check-in reviewed it)', asks: 'asks (open question parks the lane)' };
@@ -38,7 +38,9 @@ const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slic
  * RM-21 S1: a lane node's cls and word are its state (lanes.mjs laneState), its `why` the one reason; o.walk (Map run id -> fill walk
  * row) and o.hbAge feed it as on the Lanes page.
  */
-export function mapGraph(st, { all = false, more = new Set(), tree = [], now = Date.now(), deliverables = [], walk = new Map(), hbAge = null } = {}) {
+// home = the state dir's home id (RM-46 S1a: its lane ids are L:<home>/<name>), null for a solo dir
+export function mapGraph(st, { all = false, more = new Set(), tree = [], now = Date.now(), deliverables = [], walk = new Map(), hbAge = null, home = null } = {}) {
+  const L = n => laneIdIn(n, home), nm = l => laneNameIn(l.id, home);
   const items = Object.values(st.items), runs = items.filter(i => i.kind === 'run').sort((a, b) => num(b.id) - num(a.id));
   const lanesOf = {}, helpersOf = {};
   for (const r of runs) {
@@ -50,13 +52,13 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
   const subsOf = Object.fromEntries((tree || []).map(n => [n.id, (n.children || []).filter(c => c.kind === 'subagent')]));
   const hoBy = Object.fromEntries((tree || []).filter(n => n.handoff).map(n => [n.id, n.handoff]));   // the tree's live hand-off state (lanes.mjs handoffOf)
   const openQ = items.filter(i => i.kind === 'question' && i.state === 'open');
-  const rank = l => (lanesOf[l.id.slice(2)]?.[0]?.state === 'running' ? 0 : l.state === 'parked' ? 1 : 2);
+  const rank = l => (lanesOf[nm(l)]?.[0]?.state === 'running' ? 0 : l.state === 'parked' ? 1 : 2);
   // lanes with runs but no LANE record (launched ad hoc): shown while running or active in the last 24 h, all with `all`
   const recorded = new Set(items.filter(l => l.kind === 'lane').map(l => l.id));
-  const adhoc = Object.entries(lanesOf).filter(([n, rs]) => n !== CHECKIN && !recorded.has('L:' + n)
-    && (all || rs[0].state === 'running' || now - Date.parse(rs[0].updated) < ADHOC_MS)).map(([n]) => ({ id: 'L:' + n, kind: 'lane', state: 'active', adhoc: true }));
-  const lanes = [...items, ...adhoc].filter(l => l.kind === 'lane' && l.id !== 'L:' + CHECKIN && (all || l.state === 'active' || l.state === 'parked'))
-    .sort((a, b) => rank(a) - rank(b) || (num(lanesOf[b.id.slice(2)]?.[0]?.id ?? 'RUN-0') - num(lanesOf[a.id.slice(2)]?.[0]?.id ?? 'RUN-0')) || (a.id < b.id ? -1 : 1));
+  const adhoc = Object.entries(lanesOf).filter(([n, rs]) => n !== CHECKIN && !recorded.has(L(n))
+    && (all || rs[0].state === 'running' || now - Date.parse(rs[0].updated) < ADHOC_MS)).map(([n]) => ({ id: L(n), kind: 'lane', state: 'active', adhoc: true }));
+  const lanes = [...items, ...adhoc].filter(l => l.kind === 'lane' && l.id !== L(CHECKIN) && (all || l.state === 'active' || l.state === 'parked'))
+    .sort((a, b) => rank(a) - rank(b) || (num(lanesOf[nm(b)]?.[0]?.id ?? 'RUN-0') - num(lanesOf[nm(a)]?.[0]?.id ?? 'RUN-0')) || (a.id < b.id ? -1 : 1));
 
   const nodes = [], edges = [], bands = [], shown = new Set();
   const add = n => { nodes.push(n); shown.add(n.id); return n; };
@@ -67,7 +69,7 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
     const st0 = laneItem?.state ?? 'active', lead = list[0];
     const status = name === CHECKIN ? null : laneState(laneItem, lead ?? null, { items: st.items, runs: list, now, hbAge, walk, deliverables: deliverables.filter(d => d.lane === name) });
     const [cls, word] = status ? [status.state, status.state] : lead?.state === 'running' ? ['running', 'running'] : ['idle', 'controller'];
-    const laneId = 'L:' + name;
+    const laneId = L(name);
     add({ id: laneId, type: 'lane', lane: name, label: name === CHECKIN ? 'controller' : name, sub: `${name === CHECKIN ? 'check-ins · ' : ''}${laneItem?.adhoc ? 'no LANE record · ' : ''}${list.length} run${list.length === 1 ? '' : 's'}`,
       state: st0, cls, word, ...(status ? { why: status.why } : {}), x: COL[0], y: top + BAND_PAD, w: W[0], h: H.lane, more: list.length - vis.length, expanded: more.has(name), capped: more.has(name) && list.length > MORE_CAP,
       handoff: name === CHECKIN ? null : vis.map(r => hoBy[r.id]).find(Boolean) ?? null });   // every run of a hand-off chain carries its tip's state
@@ -95,8 +97,8 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
     bands.push({ lane: name, y: top, h, deliverables: dl });
     y = top + h + BAND_GAP;
   };
-  band(CHECKIN, items.find(i => i.id === 'L:' + CHECKIN));
-  for (const l of lanes) band(l.id.slice(2), l);
+  band(CHECKIN, items.find(i => i.id === L(CHECKIN)));
+  for (const l of lanes) band(nm(l), l);
 
   // check-in -> run: the run start event's actor (D3 records `run` on every event) and the review events
   const ticks = new Set(nodes.filter(n => n.type === 'checkin').map(n => n.id));

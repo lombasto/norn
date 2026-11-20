@@ -12,7 +12,7 @@ export const BATCH_ROWS = 3;
 export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 
 /** [id, label]: To fix (every open finding) · Per type (the counts per type) · Rules (the rule ledger + the rule rows) · By age (the open findings by first-seen day) */
-export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['growing', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
+export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['age', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
 const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}`)]));
@@ -51,7 +51,7 @@ export function guardSummary(g) {
   return { project: g.project, pending: g.pending, slop: g.slop, voice: g.voice, errors: g.errors || [], total: g.total ?? rows.length, new: g.new ?? 0,
     warn: rows.filter(r => WARN(r.severity)).length, kinds: kindsOf(rows), fixable: rows.filter(TICK).length, offer: rows.filter(OFFER).length, sent: g.sent || [], fixcards: g.fixcards || [], batches: batchesOf(rows).filter(b => b.kind !== 'count').length, ledger: g.ledger ?? null, top: rows.slice(0, 1),
     labels: Object.fromEntries((g.types || []).map(t => [t.type, t.label])),
-    counts: { fix: rows.length, types: (g.types || []).filter(t => t.open).length, rules: ruleRows(g).length, growing: null }, sig: sig(g) };
+    counts: { fix: rows.length, types: (g.types || []).filter(t => t.open).length, rules: ruleRows(g).length, age: null }, sig: sig(g) };
 }
 
 // META-UX-BUILD S6 (REPORT s.3 "End to end" 1-2, s.7): the Fix all sheet. One item per batch that is fixed or decided (count rows are
@@ -114,6 +114,6 @@ export function guardPart(g, name, limit = SUB_CAP, batch = null) {
   }
   if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length } };
   if (name === 'rules') return { rules: { ledger: g.ledger ?? null, ...capList(ruleRows(g), limit) } };
-  if (name === 'growing') return { growing: { trend: g.trend ?? null } };
+  if (name === 'age') return { age: { trend: g.trend ?? null } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });
 }
