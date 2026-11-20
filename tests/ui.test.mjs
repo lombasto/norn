@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, loadTab, renderTab, healthStates, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, loadTab, loadParts, renderTab, healthStates, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
 import { worstState } from '../engine/dash/cells.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
@@ -39,12 +39,14 @@ test('every tab renders with fixture state: ids from records / runs / transcript
   const f = await fixture();
   try {
     const get = getter(f), out = {};
-    for (const [tab] of TABS) { const d = await loadTab(tab, 'kestrel', get); out[tab] = renderTab(tab, d, { project: 'kestrel' }); clean(out[tab], tab);
+    for (const [tab] of TABS) { const d0 = await loadTab(tab, 'kestrel', get), d = tab === 'runs' ? { ...d0, ...await loadParts(tab, 'kestrel', d0, get), parts_loading: false } : d0; out[tab] = renderTab(tab, d, { project: 'kestrel' });
+      clean(out[tab], tab); if (tab === 'runs') { out.runDoc = renderTab(tab, d, { project: 'kestrel', run: 'RUN-1' }); clean(out.runDoc, 'run doc'); }   // Runs: the live part, then its history part
       assert.ok(out[tab].includes(`id="panel-${tab}"`), tab); }
     const has = (tab, ...ids) => { for (const id of ids) assert.ok(out[tab].includes(id), `${tab} shows ${id}`); };
     has('inbox', 'id="q-Q-1"', 'Choose (a) - recommended', 'Choose (b)', 'RUN-1', 'L:gen', 'STOPPED');
     has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'parked by Q-1', 'exited: STOPPED: red test', 'codex-sol', 'RUN-2');
-    has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'kestrel-implementer', '65k', 'gpt-5.4', '60,559');
+    has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'gpt-5.4', '60,559');
+    has('runDoc', 'id="run-doc" data-run="RUN-1"', 'kestrel-implementer', '65k');   // stage RUNS: an ended run's subagents and context are in its document
     has('records', 'id="rec-DEC-1"', 'id="rec-DIR-1"', 'keep going', 'in-force', 'active');
     has('docs', 'id="docf-doc-0"', 'id="docf-doc-1"', 'Plan', 'missing', 'Project docs');   // META-UX-BUILD S3: the list; the file is its own part (docs.test)
     // LEDGER-UX R1: /api/ledger serves 100 lines by default (the fixture has 30), one row per entry
@@ -54,8 +56,9 @@ test('every tab renders with fixture state: ids from records / runs / transcript
     const rowOf = k => out.settings.slice(out.settings.indexOf(`id="set-${k}"`)).split('<div class="srow')[0];
     assert.match(rowOf('max_claude_workers'), /class="tag"[^>]*>machine</, 'machine key tagged machine');
     assert.match(rowOf('policy.critical_lanes'), /class="tag"[^>]*>project</, 'policy key tagged project');
-    // one accent colour = "needs you": only Inbox uses the accent button
-    for (const t of ['lanes', 'runs', 'records', 'docs', 'ledger', 'settings']) assert.ok(!out[t].includes('class="primary"'), `${t}: no accent button`);
+    // one accent colour = "needs you": Inbox, and on Lanes only a row's first action (its way out of the group, SPEC 4.2 item 2)
+    for (const a of out.lanes.split('<div class="rowacts">').slice(1).map(x => x.split('</div>')[0])) assert.ok(!a.includes('class="primary"') || /^<(button|a) class="(btn )?primary"/.test(a), `lanes: the accent only on a row's first action: ${a}`);
+    for (const t of ['runs', 'records', 'docs', 'ledger', 'settings']) assert.ok(!out[t].includes('class="primary"'), `${t}: no accent button`);
   } finally { await f.done(); }
 });
 
@@ -103,7 +106,6 @@ test('phone width (<= 700 px, both looks): the header wraps, the project select 
   assert.match(rule('header select'), /min-width:0/); assert.match(rule('header select'), /max-width:100%/);
   assert.match(rule('.pagebar'), /position:fixed/, 'the page bar sits at the bottom'); assert.match(rule('.pagebar>a'), /flex:1;min-width:0/, 'its 5 items share the width');
   assert.match(phone, /\.card,\.tablecard\{[^}]*min-width:0[^}]*overflow-x:auto/, 'wide tables scroll inside their card');
-  assert.match(css, /@media \(max-width:700px\)\{\.mapwrap\{min-width:0;overflow-x:auto\}\}/, 'and the map inside its frame');
   assert.match(rule('.srow'), /grid-template-columns:minmax\(0,1fr\)/, 'setting rows stack');
   assert.ok(!/(?:html|body)[^{]*\{[^}]*overflow(?:-x)?:(?:hidden|clip)/.test(css), 'no overflow mask on html / body');
 });
@@ -133,7 +135,7 @@ const pressed = h => [...h.matchAll(/data-rm-scope="(\w+)" aria-pressed="(true|f
 const views = h => [...h.matchAll(/data-rm-view="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 
 test('roadmap tab: in More under Plan (stage NAV); one-project tab; the view switch Tree / Board, Tree the default', () => {
-  assert.deepEqual(MORE.find(g => g[0] === 'Plan')[1], ['roadmap', 'plan', 'map']);
+  assert.deepEqual(MORE.find(g => g[0] === 'Plan')[1], ['roadmap', 'plan']);
   assert.deepEqual(RM_VIEWS.map(v => v[0]), ['tree', 'board']);
   const h = rmRender(); clean(h, 'roadmap');
   assert.ok(h.includes('id="panel-roadmap"')); assert.deepEqual(views(h), ['tree:true', 'board:false'], 'the switch, Tree pressed by default');

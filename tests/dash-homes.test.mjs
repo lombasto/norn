@@ -47,14 +47,14 @@ test('rows, chips and pending: Inbox, Lanes, Runs, Records, Roadmap and Delivera
 
     const lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes, l = lanes.find(x => x.id === 'L:b/slop');
     assert.equal(l?.home, 'b', JSON.stringify(lanes.map(x => [x.id, x.home])));
-    has(renderTab('lanes', { lanes }, { now: Date.now(), laneShow: ['active', 'done', 'old', 'archived'] }), /class="chip home"[^>]*>on b</, 'the lane row shows "on b"');
+    has(renderTab('lanes', { lanes }, { now: Date.now(), laneShow: ['needs', 'running', 'stopped', 'waiting', 'land', 'parked', 'today', 'old', 'archived'] }), /class="chip home"[^>]*>on b</, 'the lane row shows "on b"');
 
     const ag = (await f.get('/api/agents?project=kestrel&window=24h')).data, r = ag.tree.find(n => n.id === 'RUN-b-1');
     assert.ok(r, 'the foreign run is in the Runs tree: ' + JSON.stringify(ag.tree.map(n => n.id)));
     assert.deepEqual([r.home, r.readonly, r.state, r.lane], ['b', true, 'running', 'b/slop']);
     const runsHtml = renderTab('runs', ag, { now: Date.now() });
     has(runsHtml, /id="node-RUN-b-1"[\s\S]*?class="chip home"[^>]*>on b</, 'the run row shows "on b"');
-    assert.doesNotMatch(runsHtml.match(/<div class="node lvl0" id="node-RUN-b-1"[^>]*>/)[0], /data-feed/, 'a foreign run opens no live feed (read-only)');
+    assert.doesNotMatch(runsHtml.match(/<div class="rrow [^"]*" id="node-RUN-b-1"[^>]*>/)[0], /data-feed/, 'a foreign run opens no live feed (read-only)');
 
     const dl = (await f.get('/api/deliverables?project=kestrel')).data, d = dl.rows.find(x => x.id === 'DLV-b-1');
     assert.deepEqual([d?.home, d?.readonly, d?.lane], ['b', true, 'b/slop'], JSON.stringify(dl.rows));

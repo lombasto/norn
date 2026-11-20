@@ -7,8 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { handoffOf, handoffWords } from '../engine/lib/lanes.mjs';
-import { sceneSig } from '../engine/dash/norn/live.mjs';
-import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, loadParts } from '../engine/dash/ui.mjs';
 import { renderFeedHead } from '../engine/dash/cells.mjs';
 import { hoChip } from '../engine/dash/widgets.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -90,7 +89,7 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
     fs.writeFileSync(path.join(S, 'results', a, 'result.json'), JSON.stringify({ v: 1, run: a, outcome: 'handoff', handoff: 'HANDOFF.md', at: new Date().toISOString() }));
     const lane = (await f.get('/api/lanes?project=kestrel')).data.lanes.find(l => l.name === 'relay');
     assert.equal(lane.handoff?.step, 'closing', JSON.stringify(lane));
-    assert.match(renderTab('lanes', await loadTab('lanes', 'kestrel', ui), ctx), /<span class="ho pending" role="status"><span class="pulse"[^>]*><\/span><span>hand-off in progress - session 2 next/);
+    assert.match(renderTab('lanes', await loadTab('lanes', 'kestrel', ui), ctx), /id="lane-relay"[^]*?class="lnow small"[^>]*>Hand-off in progress - session 2 next \(the last session is closing\)\.</, 'the Lanes row says it in its now line');
     assert.match(await (await fetch(`${f.url}/log?project=kestrel&run=${a}`)).text(), /^\[norn\] hand-off in progress - session 2 next .*\nstart RUN-x/);
     // 2. it ended; the supervisor started session 2, which has said nothing yet
     end(S, a); fs.rmSync(path.join(S, 'hb', `${a}.hb`));
@@ -98,14 +97,12 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
     fs.writeFileSync(path.join(S, 'hb', `${b}.hb`), '{}');
     const tree = (await f.get('/api/agents?project=kestrel')).data.tree;
     assert.deepEqual([a, b].map(id => tree.find(n => n.id === id)?.handoff?.text), Array(2).fill('hand-off in progress - session 2 starting'));
-    const runs = renderTab('runs', await loadTab('runs', 'kestrel', ui), ctx);
-    assert.match(runs, new RegExp(`id="node-${b}"[^]*?<div class="horow"><span class="ho pending"[^]*?session 2 starting`));
+    const r0 = await loadTab('runs', 'kestrel', ui), runs = renderTab('runs', { ...r0, ...await loadParts('runs', 'kestrel', r0, ui), parts_loading: false }, ctx);   // the ended run is in the history part
+    assert.match(runs, new RegExp(`id="node-${b}"[^]*?<div class="rline small rho"><span class="ho pending"[^]*?session 2 starting`));
     assert.match(runs, new RegExp(`id="node-${a}"[^]*?session 2 starting <span class="id">${b}</span>`), 'the old run names the run its work went on in');
-    const map = await loadTab('map', 'kestrel', ui);
-    assert.equal(map.nodes.find(n => n.id === 'L:relay').handoff.step, 'starting');
-    const svg = renderTab('map', map, ctx);
-    assert.match(svg, new RegExp(`id="mn-${b}"[^]*?<title>[^<]*hand-off in progress - session 2 starting[^]*?<circle class="pulse ho-pending"[^>]*/><text class="ns ho-w"[^>]*>hand-off: session 2 starting<`));
-    assert.notEqual(sceneSig(map), sceneSig({ ...map, nodes: map.nodes.map(n => ({ ...n, handoff: null })) }), 'the Norn map rebuilds its labels on a change');
+    const lanes = await loadTab('lanes', 'kestrel', ui);
+    assert.equal(lanes.lanes.find(l => l.name === 'relay')?.handoff?.step, 'starting');
+    assert.match(renderTab('lanes', lanes, ctx), /id="lane-relay"[^]*?class="lnow small"[^>]*>Hand-off in progress - session 2 starting\.</, 'the Lanes row says it in its now line');
     const home = await loadTab('talk', 'kestrel', ui);
     assert.equal(home.side.now.find(n => n.run === b)?.handoff?.step, 'starting');
     assert.match(renderTab('talk', home, ctx), /class="hrow ho-row"><span class="ho pending"/);
@@ -115,7 +112,7 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
       message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 5, output_tokens: 9, cache_read_input_tokens: 100, cache_creation_input_tokens: 10 } } }) + '\n');
     const l2 = (await f.get('/api/lanes?project=kestrel')).data.lanes.find(l => l.name === 'relay');
     assert.deepEqual([l2.handoff.phase, l2.handoff.text], ['resumed', 'resumed after hand-off (session 2)']);
-    assert.match(renderTab('lanes', await loadTab('lanes', 'kestrel', ui), ctx), /class="ho resumed"[^]*?resumed after hand-off \(session 2\)/);
+    assert.match(renderTab('lanes', await loadTab('lanes', 'kestrel', ui), ctx), /id="lane-relay"[^]*?class="lnow small"[^>]*>Resumed after hand-off \(session 2\)\.</);
     // 4. the chain ends: no chip anywhere
     end(S, b, 'done'); fs.rmSync(path.join(S, 'hb', `${b}.hb`));
     assert.equal((await f.get('/api/lanes?project=kestrel')).data.lanes.find(l => l.name === 'relay').handoff, null);
