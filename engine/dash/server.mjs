@@ -53,7 +53,7 @@ import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptClose
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
-import { runName } from '../lib/names.mjs';
+import { dwarfOf, doerOf, lanePinsAsync } from '../lib/crew.mjs';
 import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
 import { handEdits, takeBack, keepEdit, handEditDiff } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
@@ -444,7 +444,7 @@ export function createDashboard(o) {
     try { adv = (await adviceOf(p)).cards; } catch { adv = []; }
     for (const c of adv) out.push({ type: 'advice', id: c.key, project: p.name, check: c.check, cls: c.id, title: c.title, severity: c.severity, text: c.text, fix: c.fix, change: c.change, source: c.source, trial: c.trial, created: null });
     for (const r of runsOf(s).filter(r => ['exited', 'lost', 'killed'].includes(r.state) && !r.review && r.data.role !== 'helper' && (r.state !== 'exited' || r.end?.outcome === 'stopped')))
-      out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
+      out.push({ type: 'unreviewed', id: r.id, ...doerOf(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
   // RM-30 S1: what the prose renderer (prose.mjs) needs per project: its lane names, its GitHub repo (PR / commit links; the origin is
@@ -563,7 +563,7 @@ export function createDashboard(o) {
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
     // RM-46 S3: the other homes' runs from their read-only copies - running, queued, or ended inside the window; no feed, no actions
     const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => (r.state === 'running' || r.state === 'queued' ? part !== 'history' : part !== 'live' && (!win || now - Date.parse(r.updated) <= win)))
-      .map(r => ({ id: r.id, name: r.data.name ?? null, kind: r.data.kind ?? 'worker', role: r.data.role ?? null, executor: r.data.executor ?? null, model: r.data.model ?? null, effort: r.data.effort ?? null,
+      .map(r => ({ id: r.id, ...doerOf(r), kind: r.data.kind ?? 'worker', role: r.data.role ?? null, executor: r.data.executor ?? null, model: r.data.model ?? null, effort: r.data.effort ?? null,
         lane: r.data.lane ?? null, stage: r.data.stage ?? null, state: r.state, outcome: r.state === 'exited' ? r.history.findLast(h => h.ev === 'end')?.data?.outcome ?? null : null,
         started: r.created, ended: r.state === 'running' || r.state === 'queued' ? null : r.updated, project: p.name, home: r.home, readonly: true, children: [] }));
     // worker-speed: a worker run's tok/s and wall split (a live one: its last 10 min) - the same transcript tail, its own cache key
@@ -814,7 +814,7 @@ export function createDashboard(o) {
     // (or whose lane row is not "running") gets a row from its agents-tree node; a LANE row keeps its fields
     const laneRow = new Map(running.map(l => [`${l.project}|${l.run}`, l]));
     running = live.filter(n => isCodex(n) || isClaude(n)).map(n => laneRow.get(`${n.project}|${n.id}`)
-      ?? { name: n.lane ?? n.id, id: null, state: null, data: {}, run: n.id, run_name: n.name ?? null, executor: n.executor ?? null, run_state: 'running', text: 'running', project: n.project });
+      ?? { name: n.lane ?? n.id, id: null, state: null, data: {}, run: n.id, dwarf: n.dwarf ?? null, kind_word: n.kind_word ?? null, executor: n.executor ?? null, run_state: 'running', text: 'running', project: n.project });
     const perPct = m.cacheR_per_pct || null;
     const burners = tree.flatMap(n => [n, ...(n.children || [])]).filter(n => n.burn30 > 0)
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
@@ -1156,7 +1156,7 @@ export function createDashboard(o) {
       head: ({ ctx, peak, window }) => inSnap(async () => {
         const [r] = await Promise.all([now(), readA(p.file), o.budgetFile ? readA(o.budgetFile, '{}') : null]);
         const d = r.data || {}, end = r.end || {}, t1 = r.state === 'running' ? Date.now() : Date.parse(r.updated), marker = await resultMarker(p.state, r.id);
-        return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
+        return { run: r.id, ...doerOf(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
           elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
           ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard, ctx_role }) => ({ ctx_limit, ctx_hard, ctx_role }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r), worktree: d.worktree ?? null, ...(await briefPlanOf(d)) };
@@ -1296,7 +1296,7 @@ export function createDashboard(o) {
     const s = st(p), runs = runsOf(s), lines = readThread(p.state).items, seg = threadState(lines).seg;
     // an unreviewed run / a parked lane sits in the thread at its record's last event (the inbox row has no created time)
     const needs = (await inbox(p)).filter(isNeed).map(n => (n.created ? n : { ...n, created: s.items[n.id]?.updated ?? null }));
-    const events = homeEvents({ thread: lines, runs, items: Object.values(s.items), ledger: p.ledger ? (await tail(p.ledger, 400)).map(parseLedgerLine) : [], needs });
+    const events = homeEvents({ thread: lines, runs, dwarf: dwarfOf, items: Object.values(s.items), ledger: p.ledger ? (await tail(p.ledger, 400)).map(parseLedgerLine) : [], needs });
     const m = withDefaults(settingsState(p).view), usageLine = [...lines].reverse().find(l => l.kind === 'usage' && (!seg || l.seg === seg.n));
     // C5: model / effort / raw shell as the NEXT start will use them (Settings, live); the context meter amber past no_new_step_k; the cost line
     const live = (() => { try { return chatConfig(p); } catch { return null; } })(), cc = m.policy?.context?.controller ?? {}, day = new Date(); day.setHours(0, 0, 0, 0);
@@ -1309,7 +1309,7 @@ export function createDashboard(o) {
     const nodes = new Map((await agents(p)).map(n => [n.id, n])), today = new Date().toDateString(), byNew = (a, b) => String(b.created).localeCompare(String(a.created));
     // + a run that just ended HANDOFF and waits for its resume verdict (handoffOf step 'ending'): the lane is not idle, it hands off
     const now = runs.filter(r => (['running', 'queued', 'claimed'].includes(r.state) || (r.end?.outcome === 'handoff' && !r.resume && hoOf(p, r)?.step === 'ending')) && r.data.kind !== 'checkin' && r.data.role !== 'helper')
-      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, name: runName(r), state: r.state, ran_min: n.ran_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
+      .map(r => { const n = nodes.get(r.id) ?? {}; return { run: r.id, lane: r.data.lane ?? null, ...doerOf(r), state: r.state, ran_min: n.ran_min ?? null, ctx: n.ctx ?? null, handoff: n.handoff ?? hoOf(p, r) }; })
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
@@ -1497,7 +1497,7 @@ data: ${JSON.stringify(l)}
       const s = st(p), runs = runsOf(s).filter(r => r.data.lane === 'adopt' && String(r.data.q ?? '').startsWith(P.id + ' read '))
         .sort((a, b) => Number(a.id.split('-').pop()) - Number(b.id.split('-').pop()));
       const r = runs.at(-1), hist = readEvents(recordsFile(p.state, 'proposal')).filter(e => e.id === P.id);
-      if (r) rd = { id: r.id, name: runName(r), state: r.state, executor: r.data.executor ?? null, model: r.data.model ?? null, started: r.created,
+      if (r) rd = { id: r.id, dwarf: dwarfOf(r), state: r.state, executor: r.data.executor ?? null, model: r.data.model ?? null, started: r.created,
         attempt: runs.length, ingested: hist.some(h => h.ev === 'draft' && h.data?.run === r.id) };
     }
     let lane = null;
@@ -1946,7 +1946,7 @@ data: ${JSON.stringify(l)}
           const inWin = ps.flatMap(p => runsOf(st(p)).filter(r => ['queued', 'claimed', 'running'].includes(r.state) || Date.now() - Date.parse(r.updated) <= win));
           const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
           const tree = (await Promise.all(ps.map(p => agents(p, win, { homes: true, part })))).flat();
-          return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }) });
+          return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: (await Promise.all(ps.map(async p => queueOf(runsOf(st(p)), await lanePinsAsync(p.state)).map(q => ({ ...q, project: p.name }))))).flat() }) });
         }
         if (route === '/api/deliverables') {
           const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)

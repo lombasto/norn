@@ -2,7 +2,6 @@
 // records.jsonl holds question / decision / directive / lane; runs.jsonl holds run (D3). Node built-ins only.
 import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { agentName } from './names.mjs';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
@@ -287,22 +286,23 @@ export async function readEventsAsync(file) {
 }
 
 // ---------- fold (pure) ----------
-export function fold(events) {
+// kinds: the state machines to fold by (crew.mjs folds its own store's dwarf events with this fold)
+export function fold(events, kinds = KINDS) {
   const acc = { seq: 0, next: {}, items: {} };
-  for (const e of [...events].sort((a, b) => a.seq - b.seq)) { acc.seq = Math.max(acc.seq, e.seq); applyEv(acc, e); }
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) { acc.seq = Math.max(acc.seq, e.seq); applyEv(acc, e, kinds); }
   return acc;
 }
 // MAIL-28 (1): an event this table does not know (a newer writer's) still moves the state it names (its stamped `to`): a
 // supervisor started before `alive` existed dropped it, read the run lost and refused its own end. No `from`: this reader cannot check it
-const defOf = e => KINDS[e.kind]?.events[e.ev] ?? (KINDS[e.kind] && typeof e.to === 'string' ? { to: e.to } : null);
+const defOf = (e, kinds = KINDS) => kinds[e.kind]?.events[e.ev] ?? (kinds[e.kind] && typeof e.to === 'string' ? { to: e.to } : null);
 // one event onto { next, items } (fold's step; foldHomes applies the same step, so one stream folds exactly as fold() does)
-function applyEv({ items, next }, e) {
-  const def = defOf(e);
+function applyEv({ items, next }, e, kinds = KINDS) {
+  const def = defOf(e, kinds);
   if (!def) return;
   const h = { seq: e.seq, ts: e.ts, ev: e.ev, by: e.by, run: e.run ?? null, ...(e.via ? { via: e.via } : {}), ...(e.from_home ? { from_home: e.from_home } : {}), data: e.data ?? {} };
   if (def.from === null) {
     items[e.id] = { id: e.id, kind: e.kind, state: def.to, by: e.by, run: e.run ?? null, created: e.ts, updated: e.ts, data: e.data ?? {}, history: [h] };
-    if (e.kind !== 'lane') next[e.kind] = Math.max(next[e.kind] || 0, idNum(e.id));
+    if (e.kind !== 'lane' && kinds[e.kind].prefix) next[e.kind] = Math.max(next[e.kind] || 0, idNum(e.id));   // a dwarf's id is its name: no counter
     return;
   }
   const it = items[e.id];
@@ -835,11 +835,10 @@ function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } 
     if (kind === 'run' && ev === 'review' && target.review) fail(`${id} is already reviewed`);
   }
   if (kind !== 'lane' || def.from !== null) validateData(kind, ev, data, target, st, by, home);
-  if (kind === 'run' && (ev === 'start' || ev === 'queue')) data = { ...data, name: agentName(id) };   // META-UX-R1 C: stable name, fixed at launch
   return { id, kind, ev, by, data };
 }
 
-const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+export const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).

@@ -127,7 +127,7 @@ test('the dash in API mode: the strip carries the 24 h spend (running runs as an
     assert.equal(b.live_usd, 0.14); assert.equal(b.live_runs, 1); assert.equal(b.chat_usd, 0.4);
     assert.deepEqual(b.live.map(x => [x.id, x.usd]), [[id, 0.14]]);
     let html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel', strip: ov });
-    assert.match(html, /id="burn-api-parts"[^>]*>\$0\.00 from 0 Claude runs ended in the last 24 h · \$0\.14 running \(1 run, estimate\) · \$0\.40 dashboard chats/);
+    assert.match(html, /id="burn-api-parts"[^>]*>\$0\.00 from 0 Claude runs ended in the last 24 h \(every project\) · \$0\.14 running \(1 run, estimate\) · \$0\.40 dashboard chats/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
     assert.match(html, />\$ to date<\/th>/);
     assert.match(html, /id="lane-gen"[\s\S]*?class="mono lane-usd">~\$0\.14</);

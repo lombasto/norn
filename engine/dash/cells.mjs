@@ -23,8 +23,10 @@ export function fmtTime(iso, now = Date.now()) {
   const d = new Date(t), hm = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z`;
   return new Date(now).toISOString().slice(0, 10) === d.toISOString().slice(0, 10) ? hm : `${d.toISOString().slice(5, 10)} ${hm}`;
 }
-// run name (META-UX-R1 C): stable human name next to the RUN id everywhere a run shows
-export const aname = n => n ? ` <b class="aname">${esc(n)}</b>` : '';
+/** a run's dwarf (DWARVES 3.3): its display name, bold, with data-dwarf for the dossier link the Dwarves page adds (?tab=dwarves&dwarf=<id>) */
+export const dwarfName = d => (d ? ` <b class="aname" data-dwarf="${esc(d.id)}">${esc(d.name)}</b>` : '');
+/** who ran a run: its dwarf, else its kind word (a check-in, a merge, a run from before the crew) - never a blank */
+export const runWho = (d, kw) => (d ? dwarfName(d) : kw ? ` <span class="mute">${esc(kw)}</span>` : '');
 export const chip = (cls, txt) => `<span class="chip ${esc(cls)}">${esc(txt ?? cls)}</span>`;
 // built-ins by name; every configured (typed) executor - API or cli - is an own-account executor ('prov')
 export const exClass = ex => String(ex ?? '').startsWith('codex') ? 'codex' : !ex || ['claude', 'fake'].includes(ex) ? 'claude' : 'prov';
@@ -106,7 +108,7 @@ export function renderFeedHead(h) {
   const [cls, word] = stateOf(st);
   const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
   const c = h.commit;
-  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
+  return `<div class="fh-top">${dwarfName(h.dwarf)}<span class="id">${esc(h.run)}</span>${h.dwarf ? '' : runWho(null, h.kind_word)}${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
    <div class="fh-ex">${exChip(h.executor, h.model, h.effort)}${h.role === 'helper' ? ' <span class="tag">helper</span>' : ''}</div>
    <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? meter(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
    <span class="mute">context</span><span>${fin(h.ctx) ? ctxMeter(h) : kTok(h.ctx)}${fin(h.ctx_window) ? ` <span class="small mute">(window ${kTok(h.ctx_window)})</span>` : ''}</span>

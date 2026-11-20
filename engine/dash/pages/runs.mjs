@@ -2,7 +2,7 @@
 // bands by attention, the filters in one bar), the picked run's document on the right (&run=RUN-n; none = the most urgent run). Under
 // ~1100 px the list and the run are two screens (ctx.narrow), Back returns to the list. The live feed mounts into the document's slot
 // (pages/runs-feed.mjs). The view lives in the URL (index.html: S.runsView, runsViewOf / runsViewQs).
-import { esc, fin, dash, int, mTok, fmtMin, aname, chip, exChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, laneCard, guardOn, guardChip } from '../cells.mjs';
+import { esc, fin, dash, int, mTok, fmtMin, runWho, chip, exChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, laneCard, guardOn, guardChip } from '../cells.mjs';
 import { dodChips, critiqueChip, hoChip } from '../widgets.mjs';
 import { LANE_SHOW } from './lanes.mjs';
 import { dayClock } from './plan.mjs';
@@ -69,7 +69,7 @@ export function runsViewQs(v) {
 /** the roots the view shows (children travel with their root) */
 export const runsFilter = (roots, v) => roots.filter(n => v.state.has(runStateOf(n)) && v.kind.has(runKindOf(n)) && (!v.proj.size || v.proj.has(n.project))
   && (!v.lane || String(n.lane ?? '').toLowerCase().includes(v.lane.toLowerCase())));
-const queueNode = q => ({ id: q.id, name: q.name, kind: q.kind, role: q.role, state: 'queued', lane: q.lane, stage: q.stage, executor: q.executor, model: q.model, effort: q.effort, queued: q.queued, project: q.project, children: [] });
+const queueNode = q => ({ id: q.id, dwarf: q.dwarf ?? null, kind: q.kind, role: q.role, state: 'queued', lane: q.lane, stage: q.stage, executor: q.executor, model: q.model, effort: q.effort, queued: q.queued, project: q.project, children: [] });
 
 // ---------- the cells of a row and of the document ----------
 // A-05c: one shape, one meaning - "on track" is a word on a neutral chip, never the done check; testing reads as work in progress
@@ -103,7 +103,7 @@ const whyEnded = n => [stopWords(n.stop) && `<span>${esc(stopWords(n.stop))}</sp
 const nowLine = n => { const g = n.progress, s = paceOf(n), why = (s === 'slow' || s === 'stalled') && (g?.slow?.line ?? g?.pace?.words);
   return why ? `<div class="rline small ${PACE[s]}">${esc(why)}</div>` : g?.line ? `<div class="rline small">${esc(g.line)}</div>` : ''; };
 const guardChips = (n, d) => `${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}`;
-const who = n => n.kind === 'talk' ? `<span class="id">${esc(n.id)}</span>` : `<span class="id">${esc(n.id)}</span>${aname(n.name)}${runKindOf(n) === 'helper' ? ' <span class="small mute">helper</span>' : ''}`;
+const who = n => n.kind === 'talk' ? `<span class="id">${esc(n.id)}</span>` : `<span class="id">${esc(n.id)}</span>${runKindOf(n) === 'helper' ? ' <span class="small mute">helper</span>' : runWho(n.dwarf, n.kind_word)}`;
 const kids = n => (n.children || []).length ? `<span class="small mute">${(n.children || []).length} subagent${n.children.length === 1 ? '' : 's'}</span>` : '';
 
 // ---------- the list ----------

@@ -121,7 +121,7 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
 });
 
 test('live feed head: the hand-off chip under the head line', () => {
-  const h = { run: 'RUN-3', name: 'cedar-lark', state: 'running', handoff: { phase: 'pending', step: 'closing', session: 2, run: 'RUN-3', from: 'RUN-3', text: 'hand-off in progress - session 2 next (the last session is closing)' } };
+  const h = { run: 'RUN-3', dwarf: { id: 'balin', name: 'Balin' }, state: 'running', handoff: { phase: 'pending', step: 'closing', session: 2, run: 'RUN-3', from: 'RUN-3', text: 'hand-off in progress - session 2 next (the last session is closing)' } };
   assert.match(renderFeedHead(h), /<div class="fh-ho"><span class="ho pending" role="status"><span class="pulse"/);
   assert.doesNotMatch(renderFeedHead({ ...h, handoff: null }), /fh-ho/);
 });

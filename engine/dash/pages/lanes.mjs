@@ -2,7 +2,7 @@
 // tile, name, the now line, progress and pace, the run strip (the retired Map's lane band as beads), the PR track and at most 3
 // actions; the chevron opens the lane's flow and brief in place (S.laneOpen keeps it open through a stream repaint). No timer:
 // the elapsed bar is a CSS animation, rows redraw on stream events only.
-import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine } from '../cells.mjs';
+import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho } from '../cells.mjs';
 
 // GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
 // a PR one links to the PR; the shared files are its tooltip
@@ -82,7 +82,7 @@ function progress(l, now) {
   return !g && !bar ? '' : `<div class="lprog small">${pace}${g ? `<span class="pline">${esc(g.line)}</span>` : ''}${bar}</div>`;
 }
 // ---------- the run strip: up to 6 beads oldest left, joined on a hand-off chain, "!" for an open question, helpers on the bead ----------
-const beadTip = r => `${r.id}${r.name ? ` ${r.name}` : ''}: ${r.word}, ${r.min} min${r.cont ? ', resumes the run before' : ''}${r.helpers ? `, ${r.helpers} helper${r.helpers === 1 ? '' : 's'}` : ''}`;
+const beadTip = r => `${r.id}${r.dwarf || r.kind_word ? ` ${r.dwarf?.name ?? r.kind_word}` : ''}: ${r.word}, ${r.min} min${r.cont ? ', resumes the run before' : ''}${r.helpers ? `, ${r.helpers} helper${r.helpers === 1 ? '' : 's'}` : ''}`;
 export function strip(l) {
   const rs = l.runs || [];
   if (!rs.length && !l.ask) return '<span class="lstrip none small mute">no runs</span>';
@@ -115,7 +115,7 @@ function actions(l) {
 // the brief checklist with evidence, why slow, the goal with its links, and the facts the closed row leaves out ----------
 function flow(l) {
   const rs = l.runs || [], last = rs.at(-1);
-  const steps = rs.map((r, i) => `${i ? `<span class="fl-j${r.cont ? ' cont' : ''}" title="${r.cont ? 'hand-off: resumes the run before' : 'a fresh start'}">${r.cont ? '⇢ hand-off' : '· fresh start'}</span>` : ''}<span class="fl-run t-${RUN_TOKEN[r.cls] ?? 'idle'}">${shape(RUN_TOKEN[r.cls] ?? 'idle')}<b>${esc(r.id)}</b> ${esc(r.name ?? '')} <span class="mute">${esc(r.word)} · ${r.min} min</span>${r.helpers ? ` <span class="fl-h">+${r.helpers} helper${r.helpers === 1 ? '' : 's'}</span>` : ''}</span>`).join('');
+  const steps = rs.map((r, i) => `${i ? `<span class="fl-j${r.cont ? ' cont' : ''}" title="${r.cont ? 'hand-off: resumes the run before' : 'a fresh start'}">${r.cont ? '⇢ hand-off' : '· fresh start'}</span>` : ''}<span class="fl-run t-${RUN_TOKEN[r.cls] ?? 'idle'}">${shape(RUN_TOKEN[r.cls] ?? 'idle')}<b>${esc(r.id)}</b>${runWho(r.dwarf, r.kind_word)} <span class="mute">${esc(r.word)} · ${r.min} min</span>${r.helpers ? ` <span class="fl-h">+${r.helpers} helper${r.helpers === 1 ? '' : 's'}</span>` : ''}</span>`).join('');
   const by = last?.by ? `<span class="small mute">${esc(last.id)} started by <b>${esc(last.by)}</b></span>` : '';
   const ask = l.ask ? `<span class="fl-j">→</span><span class="fl-run t-needs">${shape('needs')}<b>${esc(l.ask)}</b> <span class="mute">open question</span></span>` : '';
   const to = l.dlv ? `<span class="fl-j">→</span><span class="fl-run">${l.dlv.branch ? `<span class="mono">${esc(l.dlv.branch)}</span> ` : ''}${track(l.dlv)}</span>` : '';
@@ -124,7 +124,7 @@ function flow(l) {
 function expand(l, ctx, open) {
   const g = l.progress, usd = l.usd?.runs ? `<span>${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)} to date</span>` : '';
   const ex = l.executor && exClass(l.executor) !== 'claude' ? '' : l.executor ? `<span>${esc(l.executor)}</span>` : '';
-  const facts = [`<span class="mono">${esc(l.id)}</span>`, l.run ? `<span class="mono">${esc(l.run)}</span>${l.run_name ? ` ${esc(l.run_name)}` : ''}` : '', ex, usd, `<span class="mute">${esc(l.text ?? '')}</span>`].filter(Boolean).join(' · ');
+  const facts = [`<span class="mono">${esc(l.id)}</span>`, l.run ? `<span class="mono">${esc(l.run)}</span>${runWho(l.dwarf, l.kind_word)}` : '', ex, usd, `<span class="mute">${esc(l.text ?? '')}</span>`].filter(Boolean).join(' · ');
   const path = l.path ? `<div class="small">${l.path.red ? chip('bad', l.path.text) : esc(l.path.text)}</div>` : '';
   return `<div class="lexp" id="lx-${esc(l.name)}"${open ? '' : ' hidden'}>${flow(l)}
     <div class="lexp-cols"><div>${g ? `<div class="small"><b>${esc(g.stage ?? 'Brief')}</b>: ${esc(g.line)}</div>${progDetail(g)}${g.slow?.line ? `<p class="small lslow"><b>Why slow:</b> ${esc(g.slow.line)}</p>` : ''}` : '<p class="small mute">No brief checklist for this run.</p>'}</div>

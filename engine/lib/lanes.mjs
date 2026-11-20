@@ -1,7 +1,7 @@
 // Truthful lanes (META-GENERAL-DESIGN 5, 12-S6): the lane list is LANE records only (no folder scan); a lane's state text is its
 // latest RUN on that lane, any executor. Pure over a loadState() fold; heartbeat age comes from the caller.
 import { STALE_MS } from './runs.mjs';
-import { runName } from './names.mjs';
+import { doerOf } from './crew.mjs';
 import { loginCommand } from './authguard.mjs';
 import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
 import { idNum as runNum, laneNameIn } from './records.mjs';
@@ -138,7 +138,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
     const group = ruled ? 'queued' : ship ? laneGroup(l, r, ship) : rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
-    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
+    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, ...(r ? doerOf(r) : { dwarf: null, kind_word: null }), executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
       handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old, rule: rules.get(name) ?? null, path: path(name, now),
       outcome: r?.end?.outcome ?? null, ruled: !!ruled, started: r?.created ?? null, budget_min: r?.data.budget_min ?? null, runs: (strips[name] ?? []).slice(-STRIP),
       runs_total: strips[name]?.length ?? 0, ask: park?.q && st.items[park.q]?.state === 'open' ? park.q : asks[name] ?? null,
@@ -157,7 +157,7 @@ function stripsOf(items, now) {
     else if (r.data?.lane && !BOOKKEEPING.includes(r.state)) (by[r.data.lane] ??= []).push(r); }
   return Object.fromEntries(Object.entries(by).map(([lane, rs]) => [lane, rs.sort((a, b) => runNum(a.id) - runNum(b.id)).map((r, i) => {
     const [cls, word] = ['queued', 'claimed'].includes(r.state) ? ['idle', 'queued'] : runWord(r), e = r.history.findLast(h => h.ev === 'end')?.ts;
-    return { id: r.id, name: runName(r), cls, word, min: Math.max(0, Math.round(((e ? Date.parse(e) : now) - Date.parse(r.created)) / 60000)),
+    return { id: r.id, ...doerOf(r), cls, word, min: Math.max(0, Math.round(((e ? Date.parse(e) : now) - Date.parse(r.created)) / 60000)),
       cont: !!r.data.resume_of && r.data.resume_of === rs[i - 1]?.id, helpers: helpers[r.id] ?? 0, by: r.history.find(h => h.ev === 'start' || h.ev === 'queue')?.run ?? null }; })]));
 }
 // a lane's open question (the strip's "!" bead): the newest open question that names the lane

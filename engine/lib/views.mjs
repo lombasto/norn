@@ -80,7 +80,7 @@ export function renderDirectives(st) {
 // rows follow the fill order. Without them (a caller with no walk) the order is FIFO and no words are printed.
 export function renderQueue(st, { evalAfter = null, ready = null } = {}) {
   const runs = ofKind(st, 'run');
-  const tag = r => [r.id, r.data.name, r.data.lane ? `lane ${r.data.lane}` : null, r.data.stage, r.data.executor, r.data.model !== r.data.executor && r.data.model].filter(Boolean).join(' ');   // the fake's model is 'fake': said once
+  const tag = r => [r.id, r.data.dwarf ? `dwarf ${r.data.dwarf}` : null, r.data.lane ? `lane ${r.data.lane}` : null, r.data.stage, r.data.executor, r.data.model !== r.data.executor && r.data.model].filter(Boolean).join(' ');   // the fake's model is 'fake': said once
   const running = runs.filter(r => r.state === 'running');
   const R = ready ? new Map(ready.map((r, i) => [r.id, { ...r, order: i }])) : null;
   const queued = runs.filter(r => r.state === 'queued').sort((a, b) => (R ? (R.get(a.id)?.order ?? 1e9) - (R.get(b.id)?.order ?? 1e9) : 0));

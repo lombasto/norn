@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { receiptsOf, writeReceipts, jsonLines } from './kills.mjs';
-import { listProcs } from './strays.mjs';
+import { listProcs, imageOf } from './strays.mjs';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'jobguard.cs');
 const CSC = ['Framework64', 'Framework'].map(f => path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', f, 'v4.0.30319', 'csc.exe'));
@@ -103,7 +103,7 @@ export async function holdJob(pid, { exe, name = `meta-run-${pid}-${Date.now()}`
   });
 }
 
-/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off afterwards. Each target is receipted first in rc's file
+/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off and breakaway allowed afterwards (the run is over). Each target is receipted first in rc's file
  * (kills.mjs receiptsOf: rc { file | state, killer, reason }); a pid whose handle is no job member is skipped (`also`: pids added to
  * the job's list, the test seam). Returns { killed: [{ pid, image }], skipped: [{ pid, image }] } or { error } */
 export function reapJob(job, keep = process.pid, rc = {}) {
@@ -184,5 +184,5 @@ export function reapGroup(pgid, rc = {}, { list = groupProcs } = {}) {
 function groupProcs(pgid) {
   const r = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid=,comm=,args='], { encoding: 'utf8', timeout: 15000, maxBuffer: 64 << 20, windowsHide: true });
   return String(r.stdout || '').split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(m => m && +m[3] === pgid)
-    .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), cmd: m[5] }));
+    .map(m => ({ pid: +m[1], ppid: +m[2], name: imageOf(m[1], m[4]), cmd: m[5] }));
 }

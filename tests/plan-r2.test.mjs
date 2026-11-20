@@ -125,7 +125,7 @@ test('R2 names: the lane title (lane record / roadmap item) else the lane humani
   assert.equal(name({ lane: 'meta-gtp-ci', stage: 'CIRED-41c2f98' }), 'CI fix');
   assert.equal(name({ lane: 'meta-plan', stage: 'PLAN' }), 'Plan tab');
   assert.equal(name({ lane: 'trees', stage: 'R4' }), 'Trees R4');
-  assert.equal(name({ name: 'tawny-falcon' }), 'tawny-falcon');
+  assert.equal(name({ id: 'RUN-9' }), 'RUN-9', 'no lane: the run id');
   const p = buildPlan(t), labels = [...p.upnext.map(u => u.label), ...p.chains.flatMap(c => c.steps.map(s => s.label)), ...p.landing.map(l => l.label)];
   assert.ok(!labels.some(l => /[0-9a-f]{7}/.test(l)), labels.join(', '));
   assert.ok(p.upnext.every(u => /^RUN-\d+$/.test(u.id)), 'the RUN id stays beside it');

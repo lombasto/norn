@@ -54,7 +54,7 @@ test('feed: a fake run appends lines -> the client sees them live; head carries 
   assert.equal(c.status, 200);
   const head = c.events.find(e => e.event === 'head').json;
   assert.equal(head.run, id); assert.equal(head.state, 'running'); assert.equal(head.lane, 'gen'); assert.equal(head.budget_min, 60);
-  assert.ok(Number.isFinite(head.elapsed_min)); assert.equal(typeof head.name, 'string');
+  assert.ok(Number.isFinite(head.elapsed_min)); assert.equal(head.dwarf, null); assert.equal(head.kind_word, 'worker');   // recorded by hand: no dwarf, the kind word
   fs.appendFileSync(log, 'step two\nstep three\n');
   await c.wait(x => evs(x).includes('step three'));
   assert.deepEqual(evs(c), ['booting', 'step two', 'step three']);
