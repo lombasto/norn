@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { doneCheck } from '../engine/lib/dod.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const dod = tests => ({ ready: { scope: ['src/**'], tests, done: '## DONE', missing: [] }, timeout_min: 1 });
 
 /** a repo on main + a lane worktree feat/x with no commit of its own */
