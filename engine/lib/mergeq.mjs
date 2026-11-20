@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile } from './records.mjs';
 import { deliverablesView, rehearsalWord } from './deliverables.mjs';
+import { fwd } from './dlvmerge.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
@@ -26,7 +27,6 @@ import { landPass } from './landing.mjs';
 import { mergeConfig } from './mergecfg.mjs';
 
 const H = 3600e3;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const pad = (s, n) => String(s ?? '').padEnd(n);
 export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 

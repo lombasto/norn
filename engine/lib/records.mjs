@@ -6,7 +6,8 @@ import { agentName } from './names.mjs';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
-import { isAncestor, refTip } from './dlvgit.mjs';
+import { dlvMerged } from './dlvmerge.mjs';
+import { isAncestor } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
@@ -100,7 +101,8 @@ export const KINDS = {
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
   // DELIVERABLES-SPEC 1: a lane's / DONE run's branch followed to main and the install. Its own file (deliverables.jsonl), so
-  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived from git (deliverables.mjs), never events.
+  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived (dlvmerge.mjs dlvMerged); a MERGED answer is
+  // latched by a `merged` event (DLV-MERGED-TRUTH), so a deleted branch or a rebased landing never turns it back into DONE.
   deliverable: { prefix: 'DLV-', file: 'deliverables', events: {
     create: { from: null, to: 'open', roles: ['launcher', ...CK] },
     done: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },          // a later DONE run on the same branch
@@ -110,6 +112,11 @@ export const KINDS = {
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
     // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
     pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
+    // DLV-MERGED-TRUTH: its work is on main { how: pr | git | equivalent | ruling, tip?, pr?, url?, merge_commit?, merged_at?, why?, q? };
+    // the tick latches it (a merged PR, git, the content check) or the owner rules it. A later `done` reopens the question.
+    merged: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK, ...OWNER] },
+    // DLV-MERGED-TRUTH: the owner's ruling "still open" on a deliverable Norn cannot tell is merged { why?, q? }: it reads DONE again
+    still_open: { from: ['open', 'parked'], to: null, roles: [...CK, ...OWNER] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
@@ -598,6 +605,8 @@ function validateData(kind, ev, d, target, st, by, home = null) {
       if (dup) fail(`${d.repo} ${d.branch} already has ${dup.id}`);
     }
     if (ev === 'done') for (const k of ['run', 'tip', 'done_utc']) str(d[k], k, { req: false });
+    if (ev === 'merged') { oneOf(d.how, 'how', ['pr', 'git', 'equivalent', 'ruling']); for (const k of ['tip', 'url', 'merge_commit', 'merged_at', 'why', 'q']) str(d[k], k, { req: false, max: 600 }); }
+    if (ev === 'still_open') for (const k of ['why', 'q']) str(d[k], k, { req: false, max: 600 });
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
@@ -806,7 +815,7 @@ function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } 
 const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
-// reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
+// reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
 function archiveGuard(stateDir, lane, ev = {}) {
   // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
@@ -817,9 +826,9 @@ function archiveGuard(stateDir, lane, ev = {}) {
   }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
-    const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
-    if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
-    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
+    const m = dlvMerged(d);
+    if (m.merged) continue;
+    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is ${m.unknown ? `done, cannot tell if merged (${m.unknown})` : 'done but not merged'} - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
 }
 // item 8 (lane norn-lifecycle): a check-in writes a waiver only as the owner's ruling it applies - data.q names a question the owner
