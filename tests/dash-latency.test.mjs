@@ -37,8 +37,11 @@ test('timing log: Server-Timing on every answer, slow requests and loop stalls i
   } finally { await f.done(); }
 });
 
+// The count is of ONE render's requests: a stream event (a `derived` when an async cache the earlier tabs kicked lands late on a
+// loaded runner) re-renders 120 ms after it, a second legitimate /api/overview inside the window (CI 44675202239). The stream polls
+// once an hour here, so after its hello only the taps render.
 test('the browser: a tab render fetches the header and the tab at once, and /api/overview once', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture(), pg = await openPage();
+  const f = await fixture({ dash: { streamPollMs: 3600000 } }), pg = await openPage();
   try {
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes'`, 90000), 'Lanes painted');
