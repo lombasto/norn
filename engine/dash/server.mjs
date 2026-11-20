@@ -292,7 +292,7 @@ export function createDashboard(o) {
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
     prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), ...pausedFiles(p), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
-      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
+      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path), ...agentPaths(p).map(([abs]) => abs)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
   // RM-37: the pause in force (pausemode.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
@@ -1371,7 +1371,8 @@ data: ${JSON.stringify(l)}
     return (p.root && scans.get(keyOf(p.root))?.facts) || null;
   }
   /** the repo's own agent rules files (CLAUDE.md, AGENTS.md ...) at its root and its subdir: every worker's own tool reads them, so they ARE rules */
-  const agentFilesIn = p => !p.root ? [] : [...new Set(['', subdirOf(p)])].flatMap(d => AGENT_FILES.filter(f => existsS(path.join(p.root, d, f))).map(f => (d ? d + '/' : '') + f));
+  const agentPaths = p => !p.root ? [] : [...new Set(['', subdirOf(p)])].flatMap(d => AGENT_FILES.map(f => [path.join(p.root, d, f), (d ? d + '/' : '') + f]));   // [abs, shown]; primeFor stats them
+  const agentFilesIn = p => agentPaths(p).filter(([abs]) => existsS(abs)).map(([, shown]) => shown);
   /** where the caps were chosen: a caps profile decision, else a cap in budget.json (Settings writes it) that is not the starter cap
    *  `norn setup` wrote unasked (the default profile's), else null - nobody chose them */
   function capsChosen(p, s, items) {
@@ -1754,12 +1755,14 @@ data: ${JSON.stringify(l)}
   }
   // dash-latency: the server's own timings, always on and cheap. Every answer carries Server-Timing (app = ms in this process, prime =
   // the snapshot read of a GET); a request over o.slowMs (1 s; the SSE streams excepted) and an event-loop stall over o.stallMs
-  // (250 ms: every request waited that long) go to a ring of the last 100 (GET /api/timing) and <norn>/local/dash-timing.jsonl. A
+  // (250 ms: every request waited that long) go to a ring of the last 100 (GET /api/timing) and <norn>/local/dash-timing-<port>.jsonl. A
   // stall names the requests that ran in its window: one of them blocked the loop (a sync build), or the box starved this process.
   const timing = { slow: [], stalls: [], recent: [], writes: Promise.resolve(), lost: 0, error: null }, STALL_TICK = 100;
-  const timingFile = metaRootDir ? path.join(metaRootDir, 'local', 'dash-timing.jsonl') : null;
+  // A-21: one file per listening port, so a second dashboard (a lane's own, a test's) never mixes into the live one's; before listen: the ring only
+  const timingFile = () => { const port = server.address()?.port; return metaRootDir && port ? path.join(metaRootDir, 'local', `dash-timing-${port}.jsonl`) : null; };
   const noteTiming = (k, e) => { const a = timing[k]; a.push(e); if (a.length > 100) a.shift();
-    if (timingFile) timing.writes = timing.writes.then(() => fs.promises.appendFile(timingFile, JSON.stringify({ kind: k, ...e }) + '\n'))
+    const tf = timingFile();
+    if (tf) timing.writes = timing.writes.then(() => fs.promises.appendFile(tf, JSON.stringify({ kind: k, ...e }) + '\n'))
       .catch(x => { timing.lost++; timing.error = String(x.message).slice(0, 200); }); };   // the ring keeps the entry; /api/timing says the file missed it
   let tickAt = performance.now();
   const stallTimer = setInterval(() => {
@@ -1805,7 +1808,7 @@ data: ${JSON.stringify(l)}
           await primeFor(route === '/api/projects' || want === 'all' ? projects : projects.filter(x => x.name === want));
           tr.prime = performance.now() - t;
         }
-        if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
+        if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile(), file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
         if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { briefPlan, workInit, onWork, checklist, doneLines, runProgress, alarmWords, testCounts } from '../engine/lib/progress.mjs';
+import { briefPlan, workInit, onWork, checklist, doneLines, runProgress, alarmWords, testCounts, laneSteps, mergeWork } from '../engine/lib/progress.mjs';
 
 const FX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'progress');
 const read = f => fs.readFileSync(path.join(FX, f), 'utf8');
@@ -141,4 +141,30 @@ test('doneLines: bullets under a "What was built" heading and lines with a done 
   const p = runProgress(run('RUN-5'), { brief: '# no list', now: Date.parse('2026-11-19T00:00:00Z') });
   assert.match(p.line, /^no numbered items in the brief/);
   assert.deepEqual(checklist({ plan: briefPlan(FIVE), mails: [], notes: '- item 4 done' }).map(x => x.state), ['todo', 'todo', 'todo', 'done', 'todo']);
+});
+
+test('a records change (a new fold) re-derives the sessions and the estimate: the run index never outlives its fold', () => {
+  const ended = (id, stage, startMin, endMin, outcome = 'done') => ({ id, kind: 'run', state: 'exited', created: iso(startMin), updated: iso(endMin), end: { outcome },
+    history: [{ ev: 'end', ts: iso(endMin) }], data: { kind: 'worker', lane: 'demo', stage, agent: 'implementer' } });
+  const live = run('RUN-9', { created: iso(0), data: { lane: 'demo', stage: 'S3' } });
+  const a = { 'RUN-1': ended('RUN-1', 'S1', -500, -440), 'RUN-2': ended('RUN-2', 'S2', -300, -200), 'RUN-9': live };
+  const p = runProgress(live, { runs: a, brief: FIVE, now: T0 + 10 * 60000 });
+  assert.deepEqual([p.pace.sessions, p.pace.estimate], [1, { min: 80, n: 2, from: 'the lane\'s own stages' }]);   // median of 60, 100
+  // the next fold: a hand-off session of S3 before RUN-9, a third done stage of 20 min
+  const b = { ...a, 'RUN-5': ended('RUN-5', 'S3', -30, -10, 'handoff'), 'RUN-6': ended('RUN-6', 'S4', -100, -80) };
+  const q = runProgress(live, { runs: b, brief: FIVE, now: T0 + 10 * 60000 });
+  assert.deepEqual([q.pace.sessions, q.pace.handoffs, q.pace.estimate], [2, 1, { min: 60, n: 3, from: 'the lane\'s own stages' }]);
+  assert.deepEqual(laneSteps('demo', b, T0).last, 'S4 done 1 h 20 min ago (RUN-6)');
+  assert.deepEqual(laneSteps('demo', a, T0).last, 'S2 done 3 h 20 min ago (RUN-2)');
+});
+
+test('mergeWork: a stage\'s sessions as one fold - calls in order, a commit seen in an earlier session once, the open calls and last of the newest', () => {
+  const w = (n, shas, o = {}) => ({ ...workInit(), calls: [{ kind: 'edit', n }], commits: shas.map(sha => ({ sha, n })), first: `f${n}`, last: `l${n}`, open: { [n]: { n } }, ...o });
+  const m = mergeWork([w(1, ['a', 'b']), null, w(2, ['b', 'c']), w(3, ['c', 'd'], { last: null })]);
+  assert.deepEqual(m.calls.map(c => c.n), [1, 2, 3]);
+  assert.deepEqual(m.commits.map(c => `${c.sha}${c.n}`), ['a1', 'b1', 'c2', 'd3']);
+  assert.deepEqual([m.first, m.last, Object.keys(m.open)], ['f1', 'l2', ['3']]);
+  const one = w(1, ['a']), s = mergeWork([one]);
+  s.calls.push({}); assert.equal(one.calls.length, 1, 'the cached fold is not changed by its reader');
+  assert.deepEqual(mergeWork([]), workInit());
 });
