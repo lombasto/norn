@@ -117,11 +117,14 @@ test('git cost: the view rehearses N done tips with one merge-tree spawn; same a
   assert.equal(a.exec.mt, 1, 'six done tips, one merge-tree');
   const s = scanRepo(f.repo, { cache: {}, git: makeGit() });
   for (const r of v.rows) assert.deepEqual(r.rehearsal, s.rehearse(r.tip), r.branch);
-  // a done tip that is no commit here any more: the per-pair answer (merge-tree exits 1), the others unchanged
-  mkDlv(state, { repo: f.repo, branch: 'feat/gone', tip: 'deadbeef'.repeat(5), lane: 'gone', delivers: 'gone' });
+  // a done tip that is no commit here any more: the per-pair answer (merge-tree exits 1), the others unchanged. Its branch is gone, so it
+  // is DONE only by the owner's still-open ruling (DLV-MERGED-TRUTH: else 'cannot tell', never rehearsed)
+  const gone = mkDlv(state, { repo: f.repo, branch: 'feat/gone', tip: 'deadbeef'.repeat(5), lane: 'gone', delivers: 'gone' });
+  record(state, { kind: 'deliverable', ev: 'still_open', id: gone.id, by: 'owner', data: { q: 'Q-1' } }, { now: () => at(-47), views: false });
   fs.rmSync(path.join(state, 'deliverables-cache.json'), { force: true });
   const v2 = deliverablesView({ stateDir: state, project: project(f.repo), now: NOW, git: counted().git });
   assert.equal(v2.rows.length, 7);
+  assert.equal(v2.rows.find(r => r.branch === 'feat/gone').state, 'done', 'ruled still open');
   for (const r of v2.rows) assert.deepEqual(r.rehearsal, s.rehearse(r.tip), r.branch);
 });
 
