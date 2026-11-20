@@ -165,7 +165,7 @@ test('Lanes page: 3 sub-views; Branches lists rows with state chips, filters and
   const d = { sub: 'branches', rows, states: BRANCH_STATES, counts: { 'in progress': 1, unknown: 1, stale: 1 }, scans: [{ project: 'p', at: new Date(NOW - 5 * 60000).toISOString(), error: null }] };
   const html = renderTab('lanes', d, { project: 'p', now: NOW });
   for (const id of ['lanes-sub-lanes', 'lanes-sub-branches', 'lanes-sub-worktrees']) assert.ok(html.includes(`id="${id}"`), id);
-  assert.match(html, /aria-selected="true" class="strong">Branches/);
+  assert.match(html, /aria-pressed="true" class="strong">Branches/);
   assert.match(html, /scanned 5 min ago/);
   assert.match(html, /data-act="br-state" data-state="awaiting merge"/);
   assert.match(html, /data-act="br-where" data-where="remote"/);

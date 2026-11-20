@@ -93,6 +93,24 @@ test('norn dash restart stops ONLY the recorded pid (a second dash of another ro
   } finally { kill(old.pid); kill(stranger.pid); if (fresh) kill(fresh.pid); }
 });
 
+// proc-hygiene (7): a dash started by hand from a shell left a blank node.exe console window; --background starts it the way restart
+// does (detached, hidden) and leaves a dashboard that already answers alone
+test('norn dash --background starts the live dashboard detached; run again it reports the running one and starts nothing', async () => {
+  const sb = await ready('bg');
+  let pid = null;
+  try {
+    const r = await sb.run(['dash', '--background']);
+    assert.equal(r.code, 0, r.err + r.out);
+    pid = readDash(sb.root)?.pid;
+    assert.ok(pid && alive(pid), r.out);
+    assert.match(r.out, new RegExp(`dash started in the background: pid ${pid} on http://127\\.0\\.0\\.1:${sb.port}/`));
+    const again = await sb.run(['dash', '--background']);
+    assert.equal(again.code, 0, again.err + again.out);
+    assert.match(again.out, new RegExp(`dash running: pid ${pid} .*already up`));
+    assert.equal(readDash(sb.root).pid, pid, 'the same dashboard');
+  } finally { if (pid) kill(pid); }
+});
+
 test('norn dash restart on a port taken by something else = an error naming the holder, never another port', async () => {
   const sb = await ready('busy');
   const s = net.createServer(); await new Promise(r => s.listen(sb.port, '127.0.0.1', r));

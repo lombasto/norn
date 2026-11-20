@@ -1,11 +1,11 @@
-// META-PROFILE-BUG R1 (owner DIR-60): a profile saved from Settings is recorded (the "caps profile" decision), shown on Overview and at
-// the top of Settings, and Save writes only the keys the owner changed; Review lists each change in plain words and flags one that
+// META-PROFILE-BUG R1 (owner DIR-60): a profile saved from Settings is recorded (the "caps profile" decision), shown at the top of
+// Settings (the caps row a Lanes setup gap until one is on record), and Save writes only the keys the owner changed; Review lists each change in plain words and flags one that
 // names a recorded ruling or picks a retired executor. Temp dirs only (dash fixture), no real claude / codex.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fixture, budget0 } from './helpers/dash-fixture.mjs';
-import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, stripCards } from '../engine/dash/ui.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { getProfile, profileBudget } from '../engine/lib/profiles.mjs';
 
@@ -19,12 +19,12 @@ const fx = async (budget = RETIRED) => {
 const heavy = (g, cost = 'balanced') => g.profiles.find(p => p.name === 'heavy').changes[cost];
 const getUi = f => async r => (await f.get(r)).data;
 
-test('a profile saved from Settings is recorded as the caps profile decision; the Overview caps row goes away', async () => {
+test('a profile saved from Settings is recorded as the caps profile decision; the Lanes caps row goes away', async () => {
   const f = await fx({ ...RETIRED, ...profileBudget(getProfile('try-it')) });   // the starter caps norn setup writes: nobody chose them yet
   try {
-    const before = (await f.get('/api/overview?project=kestrel')).data;
+    const before = (await f.get('/api/strip?project=kestrel')).data;
     assert.equal(before.setup.caps_chosen, false);
-    const html0 = renderTab('overview', await loadTab('overview', 'kestrel', getUi(f)), { now: Date.now(), project: 'kestrel' });
+    const html0 = stripCards('lanes', before);
     assert.match(html0, /Nobody chose them/);
     assert.doesNotMatch(html0, /scheduler stays off/i, 'the scheduler is not held off by the caps row');
     const g = (await f.get('/api/settings?project=kestrel')).data;
@@ -35,28 +35,24 @@ test('a profile saved from Settings is recorded as the caps profile decision; th
     assert.ok(d, 'a caps profile decision');
     assert.equal(d.by, 'dashboard'); assert.equal(d.data.profile, 'heavy'); assert.equal(d.data.cost, 'balanced');
     assert.match(d.data.choice, /Heavy \(overnight\)/);
-    const after = (await f.get('/api/overview?project=kestrel')).data;
+    const after = (await f.get('/api/strip?project=kestrel')).data;
     assert.equal(after.setup.caps_chosen, true);
-    const html = renderTab('overview', await loadTab('overview', 'kestrel', getUi(f)), { now: Date.now(), project: 'kestrel' });
+    const html = stripCards('lanes', after);
     assert.doesNotMatch(html, /Nobody chose them/);
   } finally { await f.done(); }
 });
 
-test('the current profile shows on Overview (one line) and at the top of Settings: saved / + own changes / no profile', async () => {
+test('the current profile shows at the top of Settings: saved / + own changes / no profile', async () => {
   const f = await fx();
   try {
-    const ov = async () => renderTab('overview', await loadTab('overview', 'kestrel', getUi(f)), { now: Date.now(), project: 'kestrel' });
     const se = async () => renderTab('settings', await loadTab('settings', 'kestrel', getUi(f)), { now: Date.now(), project: 'kestrel' });
     const line = (h, id) => (h.match(new RegExp(`id="${id}"[^>]*>([\\s\\S]*?)</(p|div)>`)) || [])[1] ?? '';
-    assert.match(line(await ov(), 'profile-now'), /your own settings \(no profile\)/);
     assert.match(line(await se(), 'set-profile-now'), /your own settings \(no profile\)/);
     let g = (await f.get('/api/settings?project=kestrel')).data;
     assert.equal((await f.post('/api/settings', { project: 'kestrel', version: g.version, changes: heavy(g), profile: { name: 'heavy', cost: 'balanced' } })).status, 200);
-    assert.match(line(await ov(), 'profile-now'), /Heavy \(overnight\), saved /);
     assert.match(line(await se(), 'set-profile-now'), /Heavy \(overnight\), saved /);
     g = (await f.get('/api/settings?project=kestrel')).data;   // one of the profile's keys changed by hand afterwards
     assert.equal((await f.post('/api/settings', { project: 'kestrel', version: g.version, changes: { max_claude_workers: 1 } })).status, 200);
-    assert.match(line(await ov(), 'profile-now'), /Heavy \(overnight\) \+ 1 of your own changes/);
     assert.match(line(await se(), 'set-profile-now'), /Heavy \(overnight\) \+ 1 of your own changes/);
   } finally { await f.done(); }
 });

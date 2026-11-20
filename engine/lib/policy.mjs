@@ -38,7 +38,8 @@ export const POLICY_DEFAULTS={
   ask:{max_per_day:10},
   fixer:{batch:40},   // META-UX-BUILD S7: the findings one fixer run (docs class) takes; a Send approves ceil(n / batch) runs (fixer.mjs)
   mail:{nudge_after_min:10},   // META-GTP-MAIL: an urgent mail not acked this long nudges the run (0 = off)
-  pause:{clean_min:20,near_end_min:10},   // RM-37 safe pause (pause.mjs): report a run not at a clean point after clean_min; pause half leaves a run near_end_min from its end alone
+  pause:{clean_min:20,near_end_min:10},
+  tests:{budget:{full_suite:'deny'}},   // TEST-GOVERNANCE S1 (owner Q-28): the scope hook denies a full test suite in every run (scope.mjs suiteCheck); the share budget is S3   // RM-37 safe pause (pause.mjs): report a run not at a clean point after clean_min; pause half leaves a run near_end_min from its end alone
   executors:{implementation:ex('auto','',''),critical_implementation:ex('implementer','claude-opus-5-5','high'),review:ex('codex-sol','gpt-6.1-sol','medium'),
     diagnosis:ex('codex-sol','gpt-6.1-sol','medium'),planning:ex('planner','claude-opus-5-5','xhigh'),chores:ex('auto','',''),passfail:ex('auto','',''),
     images:ex('codex-sol','gpt-6.1-sol','medium'),docs:ex('runner','claude-sonnet-5-5','medium')},
@@ -90,6 +91,9 @@ export const allowedExecutors=(found=['claude'],caps={})=>found.filter(x=>!CODEX
 // one on purpose, e.g. codex-astra with max_astra 0); with the Codex total at 0 Codex is simply not on yet (the starter caps).
 export const retiredExecutors=(caps={})=>capOpen(caps,'max_codex')?Object.keys(CODEX_CAP).filter(x=>!capOpen(caps,CODEX_CAP[x])):[];
 export const capOfExecutor=x=>CODEX_CAP[x]??null;
+// a lane list of globs (* and ?), as checkin.*_lanes and launch.lane_mcp_servers name lanes: one matcher for both
+const globRe=g=>new RegExp('^'+String(g).replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.')+'$');
+export const laneMatch=(list,lane)=>lane!=null&&(list||[]).some(g=>globRe(g).test(String(lane)));
 const STAND_IN_ROLE={review:'planner',diagnosis:'planner'};   // read-only classes; any other class -> implementer
 const CLAUDE_SIDE=new Set(['auto','wait','opus-xhigh','fable',...ROLE_AGENTS]);
 // the starter caps = the try-it profile's caps (engine/presets/profiles/try-it.json; tests/ootb-polish pins the two equal). norn setup
@@ -119,6 +123,7 @@ export const SETTINGS=[
   S('agents','policy.dod.critique_filter','Plan review filter file',{type:'text'},'The file the review is held to (what counts as a real problem). Blank = the built-in filter: a concrete scenario on real data giving wrong output, a crash, nondeterminism, a test that passes while broken, a contract that forces a breaking change, a measurable performance bug, or over-engineering.','the project review filter file','—',['norn critique (the review brief)']),
   S('agents','policy.mail.nudge_after_min','Nudge after (min)',int(0,240),'An URGENT mail (meta mail send --urgent) a running run has not acked within this many minutes stops its tree and resumes its session with the mail as the prompt. Never while the project quiet flag is set or its machine lock is held. 0 = off.','10','A nudge cuts the run at its current tool call; shorter = faster replies, more cut work.',['the run supervisor (engine/lib/supervisor.mjs nudge)']),
   S('agents','policy.pause.clean_min','Safe pause: report after (min)',int(1,240),'A run the owner paused (norn pause RUN-n, the Pause row action, Pause half) is mailed an urgent order to finish its step, commit and hand off. If it still runs this many minutes later, Norn sends one notice. It never kills the run: wait, mail it, or stop it.','20','Lower = earlier notices for a run in a long step.',['the tick (pause notice)','engine/lib/pause.mjs']),
+  S('agents','policy.tests.budget.full_suite','Full test suite in a run',en(['deny','allow']),'deny: Norn refuses a full test suite (node engine/bin/ci-suite.mjs without --changed, node --test with no file or a folder, pytest with no test file, npm test) in every claude run - a worker, a MERGE, a check-in, a resumed run - and tells it to run the tests of the files it changed instead. The full suite runs in CI on every PR and on main after a batch lands. allow: a run may start one (a full suite took 20-47 min of a busy machine per run in the 2026-11-19 incident). Read at each tool call.','deny','allow = full suites in runs again: tens of minutes of CPU each, slower and flakier tests for every other run.',['the scope hook (norn scope check)','the run launch (installs the hook)']),
   S('agents','policy.pause.near_end_min','Pause half: skip runs this close to their end (min)',int(0,240),'Pause half never picks a run whose time budget ends within this many minutes: it is left to finish. It never picks a merge either.','10','Higher = fewer runs picked; a picked run near its end loses less if this is low.',['norn pause --half','the dashboard Pause half']),
   S('workers','policy.guard.k','Runaway alarm at (x the median of its peers)',num(1.5,20),'A live run whose cache reads (or turns) pass this many times the median of its peers (ended runs of the same kind + agent + effort, last 14 days, at least 3) raises a GRD alarm the check-in rules: let it run, mail it, stop it. Norn never stops a run by itself.','3','Lower = earlier alarms, more false ones; higher = a runaway burns longer unseen.',['norn guard','the tick (digest row 8)','dashboard Agents chip']),
   S('workers','policy.guard.floor_m','Runaway alarm floor (M cache reads)',num(0,1000),'No runaway alarm below this many million cache reads, whatever the ratio.','5','Lower = small runs alarm too.',['norn guard']),
@@ -257,7 +262,7 @@ export const SECTION_RULES=[
   [/^(billing|api_usd_per_day|desired_burn_pct_per_h|usage_rate_cap_pct_per_h|weekly_stop_pct|reserve_pct_for_doors|reset)$/,'workers/usage'],
   [/^(calib_pct|calib_time_utc)$/,'workers/calibration'],
   [/^(cacheR_per_pct|policy\.agents\.max_lane_writers)$/,'advanced/danger'],
-  [/^(max_claude_workers|policy\.dispatch_window\.max)$/,'workers/claude'],
+  [/^(max_claude_workers|policy\.dispatch_window\.max|policy\.fill\.merge_reserve|policy\.merge\.backlog_max)$/,'workers/claude'],   // MERGE-FIRST: slots kept of the worker caps; the backlog that holds new lanes
   [/^max_(codex|astra|sol)$/,'workers/codex'],
   [/^(max_[a-z0-9_-]+|policy\.delegate\.max_per_parent|policy\.ask\.max_per_day)$/,'workers/helpers'],
   [/^policy\.executors\.([a-z_]+)\.(executor|model|effort)$/,'executors/routing/$1'],
@@ -265,12 +270,13 @@ export const SECTION_RULES=[
   [/^worker_min_(model|effort)$/,'executors/minimum'],
   [/^policy\.critical_(lanes|effort)$/,'executors/critical'],
   [/^policy\.fallbacks\./,'executors/fallbacks'],
-  [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
+  [/^policy\.context\.([a-z]+)(?:_1m)?\.[a-z_]+$/,'agents/context/$1'],   // a [1m] row (NORN-CTX-1M) sits under its role
   [/^policy.sizing./,'agents/context/sizing'],
   [/^policy\.iteration\./,'agents/rounds'],
   [/^policy\.stuck\./,'agents/rounds'],
   [/^policy\.mail\./,'agents/rounds'],
   [/^policy\.pause\./,'agents/rounds'],
+  [/^policy\.tests\./,'agents/rounds'],
   [/^policy\.dod\./,'agents/rounds'],
   [/^policy\.overlap\./,'agents/rounds'],
   [/^policy\.instructions\./,'agents/rounds'],
@@ -279,7 +285,6 @@ export const SECTION_RULES=[
   [/^policy\.slop\./,'voice/onoff'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
-  [/^policy\.holds\./,'workers/usage'],
   [/^policy\.holds\./,'workers/usage'],
   [/^policy\.launch\./,'advanced/harness'],
   [/^policy\.cadence\./,'checkins/schedule'],

@@ -12,7 +12,8 @@ import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
-import { acquireLock, laneWriter, killTree } from './runs.mjs';
+import { acquireLock, laneWriter, killTree, liveRuns } from './runs.mjs';
+import { isMergeStage } from './usageguard.mjs';
 import { renderBatchBrief, suiteMode, briefMarker } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { findingLine } from './slop/host.mjs';
@@ -140,8 +141,10 @@ export function ensureScratch(cfg, git = makeGit()) {
  * A conflict (main moved under the rehearsal) = `git merge --abort` + the existing resolve path (norn deliverables resolve).
  * Returns { id, action: updated | skip | conflict | failed, why, sha? }.
  */
-export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acquireLock, staleMs } = {}) {
+export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acquireLock, staleMs, merging = () => null } = {}) {
   const R = cfg.remote, B = row.branch, res = (action, why, x = {}) => ({ id: row.id, branch: B, action, why, ...x });
+  const m = merging(row);
+  if (m) return res('skip', `lane ${row.lane ?? B} has a live MERGE run ${m}: no update under its tested merge (merge-land judges the branch as tested)`);
   if (row.red) return res('skip', `red in the merge queue at ${row.red.slice(0, 7)}: its fix stage merges main itself`);
   if (!row.behind) return res('skip', 'current with main');
   if (row.rehearsal && !row.rehearsal.clean) return res('skip', `${rehearsalWord(row)}: the resolve path (norn deliverables resolve ${row.id})`);
@@ -197,10 +200,16 @@ export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acqu
   } finally { lock.release(); }
 }
 
+/** the live MERGE run testing a row's branch (its lane's, or one whose merge brief names the branch / lane), or null */
+export function mergingRun(stateDir, row) {
+  const here = path.resolve(stateDir), mark = r => { try { return briefMarker(fs.readFileSync(r.data.brief, 'utf8')); } catch { return null; } };
+  return liveRuns(stateDir).find(r => r.state_dir === here && isMergeStage(r.data.stage)
+    && ((row.lane && r.data.lane === row.lane) || (m => m && (m.branch === row.branch || (row.lane && m.lane === row.lane)))(mark(r))))?.id ?? null;
+}
 /** one update pass over the queue (score order): autoUpdate per row; the rows of a fresh view. Returns [{ id, branch, action, why }] */
 export function updatePass({ stateDir, project = {}, locksDir, git = makeGit(), now = Date.now(), acquire } = {}) {
   const { rows, cfg } = mergeQueue({ stateDir, project, now, git });
-  return rows.map(r => autoUpdate(r, { cfg, locksDir: locksDir || path.join(path.dirname(path.resolve(stateDir)), 'locks'), git, ...(acquire ? { acquire } : {}) }));
+  return rows.map(r => autoUpdate(r, { cfg, locksDir: locksDir || path.join(path.dirname(path.resolve(stateDir)), 'locks'), git, ...(acquire ? { acquire } : {}), merging: row => mergingRun(stateDir, row) }));
 }
 
 // ---------- 3. batch + bisect (Bors; Gas Town batch.go:11-33 batch max, 202-210 + 485-490 retry once then bisect; engineer.go:74-86,
@@ -216,7 +225,7 @@ export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
 /** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state), then adds gate.env */
-export function runGate(gate, { cwd, log }) {
+export function runGate(gate, { cwd, log, state }) {
   cwd = inDir(cwd, gate.dir);
   return new Promise(resolve => {
     const t0 = Date.now();
@@ -225,7 +234,7 @@ export function runGate(gate, { cwd, log }) {
     const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_'))), ...(gate.env || {}) };
     let child, timedOut = false, done = false;
     const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
-    const timer = setTimeout(() => { timedOut = true; killTree(child?.pid); }, (gate.timeout_min ?? 30) * 60e3);
+    const timer = setTimeout(() => { timedOut = true; killTree(child?.pid, { state, killer: `merge gate pid ${process.pid}`, reason: `gate past ${gate.timeout_min ?? 30} min: ${gate.cmd} (log ${fwd(log)})` }); }, (gate.timeout_min ?? 30) * 60e3);
     try { child = spawn(gate.cmd, { cwd, shell: true, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', fd, fd], env }); }
     catch (e) { end(-1, { error: e.message }); return; }
     child.on('error', e => end(-1, { error: e.message }));
@@ -465,7 +474,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       let k = 0;
       const gateAt = async (commit, label) => {
         git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach', commit]);
-        return gateRunner(cfg.gate, { cwd: cfg.scratch, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
+        return gateRunner(cfg.gate, { cwd: cfg.scratch, state: stateDir, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
       };
       // skip: the members merged clean (buildBatch drops a conflicting pick), so nothing runs; the MERGE stage keeps its smoke
       const res = skip ? { status: 'green', runs: [], green_prefix: b.members.length } : await gateBatch(b, gateAt);

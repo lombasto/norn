@@ -101,7 +101,7 @@ test('norn slop check: each finding names what / why / fix once per rule and the
   assert.equal(blocks.length, 2);
   for (const b of blocks) assert.deepEqual(b.explain, x);
   const p = slopPrompt(blocks);
-  assert.match(p, /\n- K15 `a\.mjs\.orig` [^\n]*\n  what: /, 'the resume prompt explains the rule under its first finding');
+  assert.match(p, /\n- K15 `a\.mjs\.orig`: 1\n  - K15 `a\.mjs\.orig` [^\n]*\n    what: /, 'the resume prompt explains the rule under its first finding');
   assert.equal(p.split(`why:  ${x.why}`).length - 1, 1);
 });
 
@@ -157,7 +157,8 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   const next = await waitFor(() => loadState(state).items[id]?.resume?.next, { what: 'the slop resume' });
   await waitFor(() => settled(loadState(state).items[next]) && fs.existsSync(path.join(state, 'slop', 'holds.json')) && slopHolds(state)['feat/x']?.run === next, { what: 'the resumed run ends' });
   assert.equal(loadState(state).items[id].resume.slop, 1);
-  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 `a\.txt\.orig` /, 'the resume carries the list (the path in backticks)');
+  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 `a\.txt\.orig`: 1\n  - K15 `a\.txt\.orig` /, 'the resume carries the list (the path in backticks)');
+  assert.match(fs.readFileSync(path.join(state, 'results', id, 'slop-blocks.md'), 'utf8'), /^- K15 `a\.txt\.orig` junk name/, 'the full list is in the named file');
   assert.equal(loadState(state).items[next].resume, undefined, 'a second BLOCK is not resumed again: the check-in decides');
   assert.deepEqual(openBlocks(state, 'feat/x').map(b => b.rule), ['K15']);
   const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha'];

@@ -47,7 +47,7 @@ test('parseReady: the three plain lines (bullets allowed), Scope split into path
 test('inScope: ** / * globs, a bare name = that file or folder, nothing else', () => {
   const s = ['engine/lib/**', 'engine/bin/norn.mjs', 'tests/*.test.mjs', 'docs'];
   for (const p of ['engine/lib/dod.mjs', 'engine/lib/slop/x.mjs', 'engine/bin/norn.mjs', 'tests/dod.test.mjs', 'docs', 'docs/a/b.md']) assert.ok(inScope(p, s), p);
-  for (const p of ['engine/bin/meta.mjs', 'tests/helpers/x.mjs', 'docsx/a.md', 'README.md', 'engine/libx/a.mjs']) assert.ok(!inScope(p, s), p);
+  for (const p of ['engine/bin/x.mjs', 'tests/helpers/x.mjs', 'docsx/a.md', 'README.md', 'engine/libx/a.mjs']) assert.ok(!inScope(p, s), p);
 });
 
 test('readyGate: policy.dod.ready off | warn | refuse (default off); a MERGE stage brief is Norn\'s own and exempt', () => {

@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { advisory } from '../engine/lib/advisory.mjs';
-import { renderTab, renderNav, NAV } from '../engine/dash/ui.mjs';
+import { renderTab } from '../engine/dash/ui.mjs';
+import { MORE, renderMore } from '../engine/dash/shell.mjs';
 import { GUARD_SUBS, guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
 import { explainOf } from '../engine/lib/slop/check.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
@@ -59,9 +60,9 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
   } finally { await f.done(); }
 });
 
-test('Slop sits in Health beside Usage, Tests and Context; chips in place on Docs', () => {
-  assert.deepEqual(NAV.find(d => d[0] === 'health')[2], ['usage', 'slop', 'tests', 'context']);
-  assert.match(renderNav('slop', {}), /id="tab-slop"[^>]*aria-selected="true"/);
+test('Slop sits in More under Health beside Usage, Tests and Context; chips in place on Docs', () => {
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['usage', 'slop', 'tests', 'context']);
+  assert.match(renderMore('slop', {}), /data-tab="slop" aria-current="page"/);
   // META-UX-BUILD S3: the Docs list carries each file's finding count (the same scan findings the Guard lists)
   const docs = renderTab('docs', { files: 2, groups: [{ id: 'project', label: 'Project docs', n: 2, rows: [{ key: 'doc-0', name: 'Plan', path: 'P', exists: true, findings: 0 }, { key: 'doc-1', name: 'Spec', path: 'S', exists: true, findings: 1 }] }] }, {});
   assert.match(docs, /id="docf-doc-1"[^]*?Spec[^]*?<span class="gchip"[^>]*><span class="chip warn">1 finding<\/span>/);

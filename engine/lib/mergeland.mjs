@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { mergeConfig } from './mergecfg.mjs';
 import { loadDeliverables } from './deliverables.mjs';
@@ -28,7 +28,7 @@ export const LAND_EXIT = { opened: 0, refused: 3 };
 
 /** gh run synchronously: (args) -> { code, out, err } (tests inject a fake: no network) */
 export const makeGh = () => args => {
-  const r = spawnSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  const r = boundedSync('gh', args, { timeout: 180000 });   // proc-hygiene: gh starts git; the timeout kills the tree
   return { code: r.error ? -1 : r.status, out: r.stdout || '', err: r.error ? r.error.message : r.stderr || '' };
 };
 /** owner/name of a GitHub remote URL (https or ssh), else null */
@@ -54,11 +54,16 @@ export function openPrs(o) {
     git(wt, ['fetch', '--quiet', remote, `+refs/heads/${main}:refs/remotes/${remote}/${main}`, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`], { allowFail: true });
     const tip = git(wt, ['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`], { allowFail: true })?.trim();
     if (!tip) return res('refused', `${branch} is not on ${remote}: push the lane branch first`);
-    const tested = git(wt, ['merge-base', head, tip], { allowFail: true })?.trim();
-    const onMain = tested && git(wt, ['merge-base', '--is-ancestor', tested, `refs/remotes/${remote}/${main}`], { allowFail: true }) !== null;
-    if (!tested || onMain) return res('refused', `the tested merge ${s7(head)} holds none of ${branch}'s commits past ${main}`);
+    // judged by the lane's own commits (non-merge, past main), never by a merge base: once the merge queue merged main into the branch
+    // (mergeq autoUpdate) during the MERGE run, the tested merge and the tip have two merge bases and git may name the one on main
+    // (solve-shack RUN-128). A merge commit brings main (or another branch's commits, which count on their own): never lane work itself
+    const revs = (...a) => (git(wt, ['rev-list', '--no-merges', ...a, '--not', `refs/remotes/${remote}/${main}`], { allowFail: true }) || '').split(/\r?\n/).filter(Boolean);
+    const own = revs(tip), untested = revs(tip, `^${head}`);
+    if (!own.length) return res('refused', `${branch} has no commits past ${main}: nothing to land`);
+    if (untested.length === own.length) return res('refused', `the tested merge ${s7(head)} holds none of ${branch}'s commits past ${main}`);
+    if (untested.length) return res('refused', `${branch} has ${untested.length} commit(s) the tested merge ${s7(head)} does not hold (${untested.slice(0, 3).map(s7).join(', ')}${untested.length > 3 ? ', ...' : ''}): test them in a new MERGE run`);
     if (door) { let why; try { why = door(branch, tip); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
-    const ahead = Number(git(wt, ['rev-list', '--count', `${head}..${tip}`], { allowFail: true }) || 0);
+    const ahead = Number(git(wt, ['rev-list', '--count', `${head}..${tip}`], { allowFail: true }) || 0);   // merges of main only (the checks above)
     const dlv = dlvs.find(d => sameRepo(d.data.repo, repo) && d.data.branch === branch) || null;
     const list = gh(['pr', 'list', '--repo', slug, '--head', branch, '--base', main, '--state', 'open', '--json', 'url,number']);
     if (list.code !== 0) return res('refused', `gh pr list failed: ${list.err.trim() || 'exit ' + list.code}`);
@@ -66,7 +71,7 @@ export function openPrs(o) {
     if (!pr) {
       const title = dlv?.data.delivers || branch;
       const body = [`Lane branch \`${branch}\`${dlv ? ` (${dlv.id}${dlv.data.lane ? `, lane ${dlv.data.lane}` : ''})` : ''}.`,
-        `Norn tested it merged on ${main}: merge ${s7(head)}${run ? `, run ${run}` : ''}.`, ahead ? `The branch has ${ahead} commit(s) past that merge.` : ''].filter(Boolean).join('\n\n');
+        `Norn tested it merged on ${main}: merge ${s7(head)}${run ? `, run ${run}` : ''}.`, ahead ? `The branch is ${ahead} commit(s) past that merge: merges of ${main} only.` : ''].filter(Boolean).join('\n\n');
       const bf = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'norn-pr-')), 'body.md');
       fs.writeFileSync(bf, body + '\n');
       const c = gh(['pr', 'create', '--repo', slug, '--base', main, '--head', branch, '--title', title, '--body-file', bf]);
@@ -79,7 +84,7 @@ export function openPrs(o) {
     }
     if (dlv && stateDir && dlv.state !== 'superseded' && dlv.history.findLast?.(h => h.ev === 'pr')?.data?.url !== pr.url)
       record(stateDir, { kind: 'deliverable', ev: 'pr', id: dlv.id, by: 'launcher', data: { url: pr.url, number: pr.number, repo: slug, head: branch, base: main, merge: head, ...(run ? { run } : {}) } }, { views: false });
-    return res(status, `${branch} -> ${slug} ${main}${ahead ? `; the branch is ${ahead} commit(s) past the tested merge` : ''}`, { url: pr.url, number: pr.number, ahead, dlv: dlv?.id ?? null });
+    return res(status, `${branch} -> ${slug} ${main}${ahead ? `; the branch is past the tested merge by ${main} updates only (${ahead} commit(s))` : ''}`, { url: pr.url, number: pr.number, ahead, dlv: dlv?.id ?? null });
   });
 }
 

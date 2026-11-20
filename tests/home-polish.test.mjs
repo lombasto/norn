@@ -10,6 +10,7 @@ import { homeEvents, renderThread, checkinFacts, checkinLine, pickProject, threa
 import { parseLedgerLine } from '../engine/dash/ledger.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const T = m => new Date(Date.parse('2026-11-13T14:00:00.000Z') + m * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
 let seq = 0;
@@ -79,7 +80,7 @@ test('renderThread: the check-in is ONE line (never the ledger prose) that expan
   const idx = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
   assert.match(idx, /details\.ck\[open\]/, 'homeKeep collects the open check-in keys');
   assert.match(idx, /open: S\.homeOpen/, 'and every thread paint hands them back');
-  const css = idx.slice(idx.indexOf('<style>'), idx.indexOf('</style>'));
+  const css = dashCss();
   for (const m of css.matchAll(/@media \(max-width[^{]*\{/g)) { let i = m.index + m[0].length, depth = 1; while (depth && i < css.length) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
     const blk = css.slice(m.index, i);
     assert.ok(!/details\.ck|ck-full/.test(blk), 'the phone uses the same check-in markup and rules'); }
@@ -110,12 +111,12 @@ test('/api/projects carries each project\'s needs-you count (the pick order read
 });
 
 test('threadOnly: chat lines alone repaint only the thread (no /api/overview, no page); anything else renders the page', () => {
-  assert.equal(threadOnly(['chat'], 'home'), true);
-  assert.equal(threadOnly(['chat', 'again'], 'home'), true, 'a queued repeat of chat lines');
-  assert.equal(threadOnly(['chat', 'visible'], 'home'), true, 'chat lines that arrived while hidden');
-  assert.equal(threadOnly(['chat', 'rec'], 'home'), false);
-  assert.equal(threadOnly(['chat'], 'overview'), false);
-  assert.equal(threadOnly([], 'home'), false); assert.equal(threadOnly(['again'], 'home'), false);
+  assert.equal(threadOnly(['chat'], 'talk'), true);
+  assert.equal(threadOnly(['chat', 'again'], 'talk'), true, 'a queued repeat of chat lines');
+  assert.equal(threadOnly(['chat', 'visible'], 'talk'), true, 'chat lines that arrived while hidden');
+  assert.equal(threadOnly(['chat', 'rec'], 'talk'), false);
+  assert.equal(threadOnly(['chat'], 'lanes'), false);
+  assert.equal(threadOnly([], 'talk'), false); assert.equal(threadOnly(['again'], 'talk'), false);
   const idx = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
   const fn = idx.slice(idx.indexOf('async function render('), idx.indexOf('await header();', idx.indexOf('async function render(')));
   assert.match(fn, /if \(threadOnly\(why, S\.tab\) && \$\('#thread'\)\) \{ await paintThread\(\); return; \}/, 'render() takes the thread-only path before header()');

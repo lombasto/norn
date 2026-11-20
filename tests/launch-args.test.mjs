@@ -8,7 +8,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { record } from '../engine/lib/records.mjs';
+import { record, loadState } from '../engine/lib/records.mjs';
+import { launchParts, profileOf } from '../engine/lib/launchpolicy.mjs';
+import claude from '../engine/lib/harness/claude.mjs';
+import { queueRun } from '../engine/lib/runs.mjs';
+import { parseAfter } from '../engine/lib/after.mjs';
 import { knownExecutors, knownModels, launchArgsRefusal } from '../engine/lib/launchargs.mjs';
 import { renderCheckin } from '../engine/lib/tick.mjs';
 import { FLOOR_MODELS } from '../engine/lib/floor.mjs';
@@ -16,12 +20,12 @@ import { FLOOR_MODELS } from '../engine/lib/floor.mjs';
 after(cleanTmp);
 const NORN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 
-function sandbox() {
+function sandbox(policy) {
   const t = mkTmp('meta-launch-args-');
   const d = { t, state: path.join(t, 'state', 'p'), wt: path.join(t, 'wt'), brief: path.join(t, 'brief.md'), project: path.join(t, 'project.json') };
   fs.mkdirSync(d.state, { recursive: true }); fs.mkdirSync(d.wt); fs.mkdirSync(path.join(t, 'local'));
   fs.writeFileSync(d.brief, 'mode: done\n');
-  fs.writeFileSync(d.project, JSON.stringify({ schema: 1, name: 'p', title: 'P', root: t.replace(/\\/g, '/'), executors: {} }));
+  fs.writeFileSync(d.project, JSON.stringify({ schema: 1, name: 'p', title: 'P', root: t.replace(/\\/g, '/'), executors: {}, ...(policy ? { policy } : {}) }));
   record(d.state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'work' } }, { views: false });
   d.gate = record(d.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'fake', executor: 'fake', lane: 'gate', worktree: d.wt } }, { views: false }).id;
   // every launch waits on the open gate run: one that passes the checks only QUEUES (nothing is spawned)
@@ -87,4 +91,44 @@ test('the check-in prompt names the valid executors, models and efforts on its l
     assert.match(txt, /<e> = low \| medium \| high \| xhigh;/);
     assert.doesNotMatch(txt, /\{\{\w+\}\}/);
   } finally { if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev; }
+});
+
+// overhead-audit S1 (owner Q-45): norn launches lean for worker / merge / check-in / chat (project policy, as Settings writes it); a
+// project without policy.launch (solve-shack) stays full. Every run's record names the profile it launched with, full included.
+const LEAN = { launch: { roles: { worker: 'lean', merge: 'lean', checkin: 'lean', chat: 'lean' } } };
+const LEAN_FLAGS = ['--strict-mcp-config', '--setting-sources', '--exclude-dynamic-system-prompt-sections'];
+const argsOf = profile => claude.command({ exe: 'claude', promptText: 'x', model: 'claude-opus-5-5', effort: 'medium', session_id: 's', worktree: 'w', profile }).args;
+
+test('under a lean project policy a worker, merge or check-in launch carries the lean flags; a project without one launches full', () => {
+  const lean = { policy: LEAN }, full = { policy: {} };
+  for (const [lane, role] of [['work', 'worker'], ['merge-work', 'merge']]) {
+    const p = launchParts({ project: lean, executor: 'claude', lane }).profile;
+    assert.equal(p.name, 'lean', role);
+    const a = argsOf(p);
+    for (const fl of LEAN_FLAGS) assert.ok(a.includes(fl), `${role}: ${fl}`);
+    assert.equal(a[a.indexOf('--setting-sources') + 1], 'project,local');
+    assert.deepEqual(a[a.indexOf('--disallowedTools') + 1].split(','), ['Artifact', 'Workflow', 'ScheduleWakeup', 'ReportFindings']);
+    assert.ok(!a.includes('--bare'));
+    const fp = launchParts({ project: full, executor: 'claude', lane }).profile;
+    assert.equal(fp.name, 'full'); assert.deepEqual(argsOf(fp), argsOf(undefined), 'full = the launch without a profile, byte-same');
+  }
+  for (const role of ['checkin', 'chat']) { assert.equal(profileOf(LEAN, role).name, 'lean'); assert.equal(profileOf({}, role).name, 'full'); }
+  const ck = argsOf(profileOf(LEAN, 'checkin'));
+  for (const fl of LEAN_FLAGS) assert.ok(ck.includes(fl), `checkin: ${fl}`);
+});
+
+test('every run record names its launch profile: lean under the lean policy, full without one (worker, merge, check-in)', () => {
+  const recOf = (d, lane, kind) => Object.values(loadState(d.state).items).find(i => i.kind === 'run' && i.data.lane === lane && (!kind || i.data.kind === kind))?.data;
+  for (const [policy, want] of [[LEAN, 'lean'], [undefined, 'full']]) {
+    const d = sandbox(policy);
+    for (const [args, lane, kind] of [[['--lane', 'work'], 'work'], [['--lane', 'merge-work'], 'merge-work']]) {
+      const r = d.cli(args);
+      assert.equal(r.code, 0, r.out); assert.match(r.out, /QUEUED/);
+      assert.equal(recOf(d, lane, kind)?.launch_profile, want, `${lane}: ${want}`);
+    }
+    // a check-in starts from the tick (tick.mjs: profile = profileOf(policy, 'checkin')); its queue record goes through the same fields
+    queueRun({ state: d.state, locksDir: path.join(d.t, 'locks'), lock: false, executor: 'fake', kind: 'checkin', lane: 'checkin', worktree: d.wt, brief: d.brief, promptText: 'x', budget: {}, budget_file: path.join(d.t, 'local', 'budget.json'),
+      profile: profileOf(policy, 'checkin'), after: parseAfter(`run:${d.gate}:done`) });
+    assert.equal(recOf(d, 'checkin', 'checkin')?.launch_profile, want, `checkin: ${want}`);
+  }
 });
