@@ -137,3 +137,82 @@ test('cli: norn sync join needs --home and --ledger', async () => {
   assert.match(e.join('\n'), /--ledger/);
   assert.equal(await main(['sync', 'join', '--home', 'B!', '--ledger', URL_], env, s => o.push(s), s => e.push(s)), 2);
 });
+
+// NORN-UI-SYNC (owner rulings on the S6b follow-ups): #4 the join pauses each project it cuts and resumes it; #3 no stray "next: publish"
+// line; the dashboard's guided set up = the same syncJoin with dry (plan only, nothing written) and bare (the first home).
+const unpause = X => fs.unlinkSync(path.join(X.state, 'PAUSED'));
+test('sync join: an unpaused project is paused for the cut and resumed after; no "next: publish" line', () => {
+  const { w, B } = world(), undo = viaGithub(w.ledgerRemote);
+  try {
+    unpause(B);
+    const r = join(B);
+    assert.deepEqual(r.refused, [], r.lines.join('\n'));
+    assert.equal(homeOf(B.state).id, 'b', 'the cut ran (it needs the project paused)');
+    assert.equal(fs.existsSync(path.join(B.state, 'PAUSED')), false, 'resumed at the end');
+    const text = r.lines.join('\n');
+    assert.match(text, /demo: paused for the cut/); assert.match(text, /demo: resumed/);
+    assert.ok(text.indexOf('paused for the cut') < text.indexOf('APPLIED') && text.indexOf('6. fetch') < text.indexOf('resumed'), 'pause, cut, publish + fetch, resume');
+    assert.doesNotMatch(text, /next: publish/);
+  } finally { undo(); }
+});
+
+test('sync join: a project the owner paused stays paused; a refused cut resumes the project the join paused', () => {
+  const { w, B } = world(), undo = viaGithub(w.ledgerRemote);
+  try {
+    const owners = fs.readFileSync(path.join(B.state, 'PAUSED'), 'utf8');
+    assert.deepEqual(join(B).refused, []);
+    assert.equal(fs.readFileSync(path.join(B.state, 'PAUSED'), 'utf8'), owners, 'the owner\'s pause is left alone');
+  } finally { undo(); }
+  const z = world(), undo2 = viaGithub(z.w.ledgerRemote);
+  try {
+    unpause(z.B);
+    fs.writeFileSync(path.join(z.B.state, 'runs.jsonl'), line('RUN-7', 'run', 'start', 'launcher', { lane: 'w' }) + '\n');
+    const r = join(z.B);
+    assert.match(r.refused.join('\n'), /RUN-7 is running/);
+    assert.equal(fs.existsSync(path.join(z.B.state, 'PAUSED')), false, 'the join resumed what it paused');
+    assert.equal(homeOf(z.B.state), null);
+  } finally { undo2(); }
+});
+
+test('sync join dry: access, private, the taken check and the cut\'s dry run - nothing written, an unpaused project is not refused', () => {
+  const { w, B } = world(), undo = viaGithub(w.ledgerRemote);
+  try {
+    unpause(B);
+    const mf = fs.readFileSync(B.mf, 'utf8'), led = heads(w.ledgerRemote), st = tree(B.state);
+    const r = join(B, { dry: true });
+    assert.deepEqual(r.refused, [], r.lines.join('\n'));
+    assert.equal(r.dry, true);
+    assert.match(r.lines.join('\n'), /2\. private: synthetic\/ledger is private[\s\S]*DRY RUN[\s\S]*id RM-1 -> RM-b-1/);
+    assert.doesNotMatch(r.lines.join('\n'), /APPLIED|registered/);
+    assert.equal(fs.readFileSync(B.mf, 'utf8'), mf); assert.deepEqual(tree(B.state), st); assert.equal(heads(w.ledgerRemote), led);
+    assert.match(join(B, { dry: true, home: 'a' }).refused.join('\n'), /home id a is taken/);
+    assert.match(join(B, { dry: true, gh: fakeGh(false) }).refused.join('\n'), /PUBLIC/);
+  } finally { undo(); }
+});
+
+test('sync join bare: the first home on an empty ledger - pause, cut --bare, publish, resume; no collaborator step', () => {
+  const t = mkTmp('meta-join-bare-', 'x'), root = path.dirname(path.dirname(t));
+  const origin = path.join(root, 'origin.git'), ledgerRemote = path.join(root, 'ledger-remote.git');
+  for (const d of [origin, ledgerRemote]) spawnSync('git', ['init', '-q', '--bare', '-b', 'main', d], { windowsHide: true });
+  const seed = path.join(root, 'seed');
+  spawnSync('git', ['init', '-q', '-b', 'main', seed], { windowsHide: true });
+  fs.writeFileSync(path.join(seed, 'README.md'), 'demo\n');
+  git(seed, 'add', '.'); git(seed, ...ident, 'commit', '-qm', 'init'); git(seed, 'remote', 'add', 'origin', origin); git(seed, 'push', '-q', 'origin', 'main');
+  const A = rig({ origin }, 'a'), undo = viaGithub(ledgerRemote);
+  try {
+    unpause(A);
+    assert.match(join(A, { home: 'a' }).refused.join('\n'), /bare home cuts first/, 'not bare: the empty ledger names no project');
+    const dry = join(A, { home: 'a', bare: true, dry: true });
+    assert.deepEqual(dry.refused, [], dry.lines.join('\n'));
+    assert.match(dry.lines.join('\n'), /\(bare: keeps its ids\) - DRY RUN/);
+    const r = join(A, { home: 'a', bare: true });
+    assert.deepEqual(r.refused, [], r.lines.join('\n'));
+    assert.deepEqual({ id: homeOf(A.state).id, bare: homeOf(A.state).bare_home }, { id: 'a', bare: 'a' });
+    assert.match(heads(ledgerRemote), /refs\/heads\/home\/a /);
+    assert.match(heads(origin), /refs\/heads\/norn\/a\/w /);
+    assert.equal(fs.existsSync(path.join(A.state, 'PAUSED')), false);
+    assert.doesNotMatch(r.lines.join('\n'), /collaborators|next: publish/);
+    const cfg = ledgerConfig(JSON.parse(fs.readFileSync(A.mf, 'utf8')), { metaRoot: A.meta, machineFile: A.mf });
+    assert.equal(listClaims(fedOf(cfg))['projects/demo.json'].bare_home, 'a');
+  } finally { undo(); }
+});
