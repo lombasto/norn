@@ -12,10 +12,10 @@ import { tail, tailA, endedAt, findTranscript } from './agents.mjs';
 import { findTranscriptA } from './harness/claude.mjs';
 import { workInit, onWork, TEST_RE } from './progress.mjs';
 import { median } from './plan.mjs';
+import { fromUsage } from './cost.mjs';
 
 const HOUR = 3600000, ROLL_MS = 10 * 60000;
 const ms = iso => Date.parse(iso ?? '');
-const n = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 // ---------- the fold ----------
 export const speedInit = () => ({ work: workInit(), req: new Map(), prev: null, msgs: new Map() });
@@ -31,8 +31,8 @@ export function onSpeed(c, j) {
   const key = (m.id || '') + ':' + (j.requestId || '');
   let x = c.msgs.get(key);
   if (!x) c.msgs.set(key, x = { start: c.req.get(j.requestRef) ?? c.prev, end: ts, out: 0, ctx: 0 });
-  x.end = Math.max(x.end, ts); x.out = Math.max(x.out, n(u.output_tokens));
-  x.ctx = Math.max(x.ctx, n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens));
+  const t = fromUsage(u);
+  x.end = Math.max(x.end, ts); x.out = Math.max(x.out, t.output); x.ctx = Math.max(x.ctx, t.input + t.cache_read + t.cache_create);
 }
 
 // the length of the union of intervals [a, b] clipped to [from, to]
