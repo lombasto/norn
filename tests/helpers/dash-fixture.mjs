@@ -29,6 +29,27 @@ export function projectFile(root, name, extra = {}) {
   return f;
 }
 
+// RM-46 S3: kestrel as a synced project - home a, the bare home (its bare ids stay), with a synthetic copy from home b as the fetch
+// writes it (homes/b/: the shared logs + copy/runs.jsonl, copy/deliverables.jsonl): lane b/slop, its open question Q-b-1, a theme RM-b-1
+// with item RM-b-2 linking the lane, a running RUN-b-1 on it and DLV-b-1. Written by record() in b's own state dir, so the bytes are real.
+export function homeCopy(S, root, t = '2026-11-20T10:00:00Z') {
+  fs.writeFileSync(path.join(S, 'home.json'), JSON.stringify({ id: 'a', bare_home: 'a', cut_at: t }) + '\n');
+  const B = path.join(root, 'home-b', 'kestrel'), now = () => new Date(t), R = e => record(B, e, { now, views: false });
+  fs.mkdirSync(B, { recursive: true });
+  fs.writeFileSync(path.join(B, 'home.json'), JSON.stringify({ id: 'b', bare_home: 'a', cut_at: t }) + '\n');
+  R({ kind: 'lane', ev: 'create', by: 'controller', data: { name: 'slop' } });
+  R({ kind: 'question', ev: 'create', by: 'controller', data: { title: 'pick a slop door', lane: 'slop', options: [{ key: 'a', text: 'one door' }, { key: 'b', text: 'two doors' }], recommend: { key: 'a', why: 'small' } } });
+  const th = R({ kind: 'item', ev: 'create', by: 'controller', data: { title: 'Slop', kind: 'theme' } });
+  R({ kind: 'item', ev: 'create', by: 'controller', data: { title: 'slop door', kind: 'item', parent: th.id, links: ['lane:slop'] } });
+  R({ kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'slop' } });
+  R({ kind: 'deliverable', ev: 'create', by: 'controller', data: { repo: 'owner/demo', branch: 'norn/b/slop', lane: 'slop', delivers: 'the slop door' } });
+  const to = path.join(S, 'homes', 'b');
+  for (const [from, rel] of [['home.json', 'home.json'], ['records.jsonl', 'records.jsonl'], ['roadmap.jsonl', 'roadmap.jsonl'], ['runs.jsonl', 'copy/runs.jsonl'], ['deliverables.jsonl', 'copy/deliverables.jsonl']]) {
+    fs.mkdirSync(path.dirname(path.join(to, rel)), { recursive: true }); fs.copyFileSync(path.join(B, from), path.join(to, rel));
+  }
+  return { B, to };
+}
+
 export async function fixture(extra = {}) {
   const root = mkTmp('meta-dash-');
   const pa = loadProject(projectFile(root, 'kestrel', extra.project || {}), { home: root, meta: root });
@@ -59,6 +80,7 @@ export async function fixture(extra = {}) {
   fs.mkdirSync(path.join(S, 'hb'), { recursive: true }); fs.writeFileSync(path.join(S, 'hb', 'RUN-2.hb'), '{}');
   fs.writeFileSync(path.join(S, 'STATUS.md'), '- since CALIB x: 0.1 % over 1 h = 0.10 %/h vs cap 0.43 -> ok\n- estimated weekly now ~60.0 %\nRATE_OK=1\n');
   record(pb.state, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'other project question', lane: 'x' } });
+  if (extra.synced) homeCopy(S, root);
   const liveUsage = path.join(root, 'live-usage.json');
   fs.writeFileSync(liveUsage, JSON.stringify({ seven_day_pct: 96, at_utc: new Date().toISOString() }));
   const target = path.join(root, 'kestrel-implementer.md'), rules = path.join(root, 'DECISION-RULES.md');
@@ -68,7 +90,9 @@ export async function fixture(extra = {}) {
   const platform = { tick: async () => ({ pid: ++counts.ticks }), setInterval: async m => { counts.intervals.push(m); return { ok: true, interval: 'PT' + m + 'M' }; },
     ask: async () => { counts.asks++; return { result: 'DIRECTIVE: Wait for the owner.\nIt was saved.', usage: {} }; } };
   const quietFile = path.join(root, 'common-rules.txt'); fs.writeFileSync(quietFile, 'QUIET: no GPU while the owner plays\n');
-  const app = createDashboard({ projects: [pa, pb], machine: { home: root }, budgetFile, platform, projectsDir, codexDir: path.join(root, 'codex-sessions'),
+  const ledgerDir = path.join(root, 'ledger.git');   // RM-46 S3: a synced fixture's ledger (the test builds the repo; nothing is pushed)
+  const machine = { home: root, ...(extra.synced ? { ledger: { dir: ledgerDir, state_root: path.dirname(S), remote: 'file:///nowhere-synthetic' } } : {}) };
+  const app = createDashboard({ projects: [pa, pb], machine, budgetFile, platform, projectsDir, codexDir: path.join(root, 'codex-sessions'),
     liveUsage, quietFile, sessionsDir: path.join(root, 'sessions'), spawnFn: extra.spawnFn, ...(extra.dash || {}) });
   watchServer(app.server);   // META-CI-WORKCLASS R3: a page timeout names when this server received / answered each request
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
@@ -80,5 +104,5 @@ export async function fixture(extra = {}) {
     q.on('error', rej); q.end(o.body); });
   const get = r => req(r);
   const post = (r, b, headers = {}) => req(r, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': app.token, ...headers }, body: JSON.stringify(b) });
-  return { app, root, pa, pb, url, get, post, counts, budgetFile, target, rules, done: async () => { await app.close(); fs.rmSync(root, { recursive: true, force: true }); } };
+  return { app, root, pa, pb, url, ledgerDir, get, post, counts, budgetFile, target, rules, done: async () => { await app.close(); fs.rmSync(root, { recursive: true, force: true }); } };
 }
