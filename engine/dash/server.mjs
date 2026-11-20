@@ -1809,6 +1809,7 @@ data: ${JSON.stringify(l)}
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
         if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/lib/testcmd.mjs') return send(200, await readA(path.join(DASH, '..', 'lib', 'testcmd.mjs')), 'text/javascript; charset=utf-8');   // activity.mjs's one lib import (TEST-GOVERNANCE S1: the test-command classifier)
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
