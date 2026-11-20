@@ -1,5 +1,7 @@
 // The Settings page (META-UX-R1): categories -> sub-categories from the schema (policy.mjs SECTIONS, served in /api/settings), left
 // nav + search, one-line help per row, the modified-from-default marker + reset, the danger zone. Controls keep data-key = the key.
+// UI redesign 2026-11-20: the header's cog opens it over the page (index.html #setview), and Look and Theme (this browser's, once
+// header buttons) head it.
 import { esc, chip, fmtTime, guardOn, guardChip } from '../cells.mjs';
 import { capStrip } from '../widgets.mjs';
 
@@ -161,6 +163,9 @@ function checkinNotice(rows) {
   if (!rows?.length) return '';
   return `<div class="banner" id="checkin-floor-notice"><b>Check-in below the floor.</b> ${rows.map(r => `${r.kind === 'model' ? 'Model' : 'Effort'} ${esc(r.value)} (floor ${esc(r.to)})`).join(' · ')}: ${esc(rows[0].text)}. Its decisions are marked ${BELOW_FLOOR}.</div>`;
 }
+/** Look (norn / classic) and Theme (system / light / dark): this browser's, kept in localStorage, applied at once (index.html) */
+const lookBar = ctx => `<div class="slook" id="set-look" role="group" aria-label="This browser"><span class="small mute">This browser</span>
+  <button class="ghost" data-act="look" title="Norn look / classic look">Look: ${esc(ctx.look ?? 'norn')}</button><button class="ghost" data-act="theme" title="System / light / dark">Theme: ${esc(ctx.theme ?? 'system')}</button></div>`;
 export function settings(d, ctx) {
   const sections = d.sections || [], at = s => (s.section || []).join('/'), sel = sections.some(c => c.id === ctx.setCat) ? ctx.setCat : sections[0]?.id;
   const nav = sections.map(c => {
@@ -177,7 +182,7 @@ export function settings(d, ctx) {
     }).join('');
     return `<section class="scat" id="cat-${esc(c.id)}" data-cat="${esc(c.id)}"${c.id === sel ? '' : ' hidden'}><h2>${esc(c.label)}</h2><p class="small mute">${esc(c.help)}</p>${subs}</section>`;
   }).join('');
-  return `${checkinNotice(d.checkin_below)}${profileBar(d, ctx.setLevel ?? 'basic')}<div class="settings"><aside class="snav"><input type="search" id="set-search" data-set-search placeholder="Search settings  ·  @modified" aria-label="Search settings">${nav}</aside>
+  return `${lookBar(ctx)}${checkinNotice(d.checkin_below)}${profileBar(d, ctx.setLevel ?? 'basic')}<div class="settings"><aside class="snav"><input type="search" id="set-search" data-set-search placeholder="Search settings  ·  @modified" aria-label="Search settings">${nav}</aside>
    <div class="spane"><p class="small mute" id="set-nohit" hidden>No setting matches.</p>${panes}</div></div>
    <div class="savebar"><span class="small" id="dirty-count">No unsaved changes</span><button class="strong" data-act="settings-review" data-project="${esc(d.project)}" data-version="${esc(d.version)}">Review changes</button><button class="ghost" data-act="settings-discard">Discard</button>
    <span class="small mute">Review shows a diff; Save writes atomically and refuses a stale version (409).</span><div id="settings-diff"></div></div>`;
