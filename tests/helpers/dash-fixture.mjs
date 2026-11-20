@@ -32,7 +32,7 @@ export function projectFile(root, name, extra = {}) {
 // RM-46 S3: kestrel as a synced project - home a, the bare home (its bare ids stay), with a synthetic copy from home b as the fetch
 // writes it (homes/b/: the shared logs + copy/runs.jsonl, copy/deliverables.jsonl): lane b/slop, its open question Q-b-1, a theme RM-b-1
 // with item RM-b-2 linking the lane, a running RUN-b-1 on it and DLV-b-1. Written by record() in b's own state dir, so the bytes are real.
-export function homeCopy(S, root, t = '2026-11-20T10:00:00Z') {
+export function homeCopy(S, root, t = new Date(Date.now() - 3600e3).toISOString().replace(/\.\d{3}Z$/, 'Z')) {
   fs.writeFileSync(path.join(S, 'home.json'), JSON.stringify({ id: 'a', bare_home: 'a', cut_at: t }) + '\n');
   const B = path.join(root, 'home-b', 'kestrel'), now = () => new Date(t), R = e => record(B, e, { now, views: false });
   fs.mkdirSync(B, { recursive: true });

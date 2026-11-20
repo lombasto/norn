@@ -34,7 +34,7 @@ function ledgerRepo(L, stateRoot) {
 }
 // the synced fixture + its ledger repo (the fixture's machine.json ledger points at <root>/ledger.git; the dash reads it per request)
 async function fx() { const f = await fixture({ synced: true }); ledgerRepo(f.ledgerDir, path.dirname(f.pa.state)); return f; }
-const has = (html, re, what) => assert.match(html, re, what);
+const has = (html, re, what) => assert.ok(re.test(html), `${what} (${re})`);   // never the whole page in the failure
 
 test('rows, chips and pending: Inbox, Lanes, Runs, Records, Roadmap and Deliverables carry b\'s rows with an "on b" chip; runs and DLVs are read-only', { timeout: 120000 }, async () => {
   const f = await fx();
@@ -71,7 +71,7 @@ test('rows, chips and pending: Inbox, Lanes, Runs, Records, Roadmap and Delivera
 });
 // a directive written on b (DIR-b-1), copied as the fetch does: Records lists it
 function record_dir_b(f) {
-  const B = path.join(f.root, 'home-b', 'kestrel'), t = '2026-11-20T10:05:00Z';
+  const B = path.join(f.root, 'home-b', 'kestrel'), t = iso(NOW - 1800e3);
   fs.appendFileSync(path.join(B, 'records.jsonl'), JSON.stringify({ seq: readEvents(path.join(B, 'records.jsonl')).at(-1).seq + 1, ts: t, kind: 'directive', ev: 'create', id: 'DIR-b-1', by: 'owner', run: null, data: { text: 'keep the slop door small', via: 'chat' } }) + '\n');
   fs.copyFileSync(path.join(B, 'records.jsonl'), path.join(f.pa.state, 'homes', 'b', 'records.jsonl'));
 }

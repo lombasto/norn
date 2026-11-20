@@ -20,7 +20,7 @@ import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from 
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
@@ -46,7 +46,7 @@ import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
 import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
 import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
-import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
+import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
 import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, laneNameOf } from '../lib/adopt.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
@@ -245,6 +245,16 @@ export function createDashboard(o) {
     return hoOf(p, r);
   }
   const runsOf = s => Object.values(s.items).filter(i => i.kind === 'run');
+  // RM-46 S3 (SPEC 3.3, 4.7): a synced project's row of another home = { home } (its "on b" chip) + the pending events on it, each with
+  // the primary that has not committed it yet ("answered on a, pending b"); an own row or a solo project adds nothing
+  function foreign(p, s, id) {
+    const h = homeIdOf(p.state);
+    if (!h) return {};
+    const w = homeOfId(id, h.bare_home), pd = s.pending?.[id] || [];
+    return { ...(w && w !== h.id ? { home: w } : {}), ...(pd.length ? { pending: pd.map(e => ({ ev: e.ev, home: e.home, ts: e.ts, primary: w })) } : {}) };
+  }
+  // a lane name another home wrote (its own x) as this home types it (b/x)
+  const laneFrom = (p, id, lane) => { const h = homeIdOf(p.state); return !h || typeof lane !== 'string' ? lane : laneNameIn(laneIdIn(lane, homeOfId(id, h.bare_home)), h.id); };
   // the records fold, re-read only when a records file changed (the feed head asks every poll)
   const folds = new Map();
   function stCached(p) {
@@ -258,7 +268,9 @@ export function createDashboard(o) {
   const statSig = f => fs.promises.stat(f).then(x => x.mtimeMs + ':' + x.size, () => '-');
   async function stAsync(p) {
     const sn = snap.getStore(), hit = sn?.folds.get(p.state); if (hit) return hit;
-    const key = (await Promise.all(['question', 'run'].map(k => statSig(recordsFile(p.state, k))))).join('|');
+    // RM-46 S3: a synced dir folds the other homes' copies too (the fetch rewrites them): their records + relay files are in the key
+    const hs = (await fs.promises.readdir(path.join(p.state, 'homes'), { withFileTypes: true }).catch(() => [])).filter(d => d.isDirectory()).flatMap(d => ['records.jsonl', 'relay.jsonl'].map(x => path.join(p.state, 'homes', d.name, x)));
+    const key = (await Promise.all([...['question', 'run'].map(k => recordsFile(p.state, k)), path.join(p.state, 'relay.jsonl'), ...hs].map(statSig))).join('|');
     let c = folds.get(p.state);
     if (!c || c.key !== key) { c = { key, st: await loadStateAsync(p.state) }; folds.set(p.state, c); }
     sn?.folds.set(p.state, c.st);
@@ -395,7 +407,7 @@ export function createDashboard(o) {
         title: h.title });   // META-AUTH-VENDOR: a vendor hold names the incident and says no login is needed
     const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));   // META-Q-RECONCILE R1: the hint "already answered in DEC-m"
     // INBOX-REPLIES: + the source the options came from, the thread (owner messages, controller replies, revisions), the ruling to confirm
-    for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
+    for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: laneFrom(p, q.id, q.data.lane), ...foreign(p, s, q.id), title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
       origin: q.data.origin ?? null, thread: threadOf(q), waiting: unanswered(q).length, proposal: rulingOf(q),
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
     // RM-28 S1: a finished planner run = ONE decision card (its summary, plan, a Queue now / Later / Drop per open stage)
@@ -445,7 +457,7 @@ export function createDashboard(o) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
     const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
     const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
-    return lanesView(s, { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
+    return lanesView(s, { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -513,7 +525,7 @@ export function createDashboard(o) {
     const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
-  async function agents(p, win) {
+  async function agents(p, win, { homes = false } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own)
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
@@ -526,9 +538,14 @@ export function createDashboard(o) {
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     if (names.size) await primeBriefs([p]);   // the lane card's driver reads the lanes' briefs: on fs.promises first
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
-    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
+    // RM-46 S3: the other homes' runs from their read-only copies - running, queued, or ended inside the window; no feed, no actions
+    const now = Date.now(), away = (homes ? await copyItemsAsync(p.state, 'run') : []).filter(r => r.state === 'running' || r.state === 'queued' || !win || now - Date.parse(r.updated) <= win)
+      .map(r => ({ id: r.id, name: r.data.name ?? null, kind: r.data.kind ?? 'worker', role: r.data.role ?? null, executor: r.data.executor ?? null, model: r.data.model ?? null, effort: r.data.effort ?? null,
+        lane: r.data.lane ?? null, stage: r.data.stage ?? null, state: r.state, outcome: r.state === 'exited' ? r.history.findLast(h => h.ev === 'end')?.data?.outcome ?? null : null,
+        started: r.created, ended: r.state === 'running' || r.state === 'queued' ? null : r.updated, project: p.name, home: r.home, readonly: true, children: [] }));
+    return [...tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
       return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}),
-        ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; });
+        ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; }), ...away];
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
   // runs = the run ids the Runs page lists, so the tab links only those
@@ -674,8 +691,8 @@ export function createDashboard(o) {
   }
   function records(p, url) {
     const kinds = ['decision', 'directive'], k = url.searchParams.get('kind'), s = url.searchParams.get('state');
-    const items = Object.values(st(p).items).filter(i => kinds.includes(i.kind) && (!k || i.kind === k) && (!s || i.state === s))
-      .map(i => ({ id: i.id, kind: i.kind, state: i.state, by: i.by, created: i.created, updated: i.updated, data: i.data, history: i.history }));
+    const S = st(p), items = Object.values(S.items).filter(i => kinds.includes(i.kind) && (!k || i.kind === k) && (!s || i.state === s))
+      .map(i => ({ id: i.id, kind: i.kind, state: i.state, by: i.by, created: i.created, updated: i.updated, data: i.data, history: i.history, ...foreign(p, S, i.id) }));
     return { project: p.name, decisions: items.filter(i => i.kind === 'decision'), directives: items.filter(i => i.kind === 'directive') };
   }
   // cost per lane (META-OPS-R1 #7): the roll-up of engine/lib/cost.mjs, cached one UI tick; ended runs memoized (never re-read),
@@ -1676,12 +1693,13 @@ data: ${JSON.stringify(l)}
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
-          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win)))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win, { homes: true })))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
         }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
-          const vs = pick(url, { all: true }).map(deliverablesOf);
-          return send(200, { rows: vs.flatMap(v => v.rows), pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
+          const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)
+          const away = (await Promise.all(ps.map(async p => (await copyItemsAsync(p.state, 'deliverable')).map(it => ({ ...dlvCopyRow(it), project: p.name }))))).flat();
+          return send(200, { rows: [...vs.flatMap(v => v.rows), ...away], pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
         }
         if (route === '/api/records') return send(200, records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));
