@@ -31,10 +31,10 @@ import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
-import { claimWork, renewWork, workKey, readSync, updateSync } from './claims.mjs';
+import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
 import { ClaimsError } from './claimsref.mjs';
 import { parseReady } from './ready.mjs';
-import { syncPolicy } from './policy.mjs';
+import { syncPolicy, POLICY_DEFAULTS } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -358,7 +358,8 @@ export function laneWriter({ state, locksDir, lane, worktree, staleMs = STALE_MS
 
 // a check-in is not a worker: it never counts against (or is refused by) the worker caps
 // the first full cap of run spec o as a refusal message, or null (room in every cap)
-function capFull(o, staleMs, extra = []) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
+// reserve (MERGE-FIRST, policy.fill.merge_reserve): the slots of each cap a non-landing run must leave free while a landing run waits
+function capFull(o, staleMs, extra = [], reserve = 0) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
   if (o.kind === 'checkin') return null;
   const typed = !EXECUTORS[o.executor];
   const capOf = k => (Number.isInteger(o.budget?.[k]) ? o.budget[k] : typed ? capDefault(o.provider) : null);  // a typed executor always has a cap
@@ -368,6 +369,7 @@ function capFull(o, staleMs, extra = []) {   // extra: run data that would start
   for (const k of caps) {
     const n = live.filter(it => capsOfRun(it.data).includes(k)).length;
     if (n >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}`;
+    if (reserve > 0 && n + reserve >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}: ${reserve} slot(s) kept for the queued merges (fill.merge_reserve)`;
   }
   return null;
 }
@@ -426,7 +428,7 @@ const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume
   critique: o.critique, floor: o.floor,   // floor: the worker floor raised this run (floor.mjs); META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
     // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
   labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
-  launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined, memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // META-STANDING-CONTEXT R1: a lean launch (launchpolicy.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
+  launch_profile: o.profile?.name || 'full', memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // launch_profile: the profile EVERY run launched with (launchpolicy.mjs profileOf; no profile = full) - overhead-audit S1: a floor is judged against it   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
 // META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
 const classStamp = o => { const w = workClass(o, o.workPolicy); return { class: w.class, class_basis: w.basis }; };
 // owner Q4: Fable is the cost class - a run on it carries a notice (printed at launch, shown on the Usage tab with the week's count)
@@ -445,6 +447,23 @@ function withEpic(o) {
   if (o.priority !== undefined && o.priority !== null && !PRIORITIES.includes(o.priority)) throw new RunError(`--priority ${JSON.stringify(o.priority)}: want ${PRIORITIES.join(' | ')}`);
   if (!o.epic || !isNew(o)) return o;
   try { return { ...o, priority: o.priority ?? openEpic(o.state, o.epic).data.priority }; } catch (e) { if (e instanceof EpicError) throw new RunError(e.message); throw e; }
+}
+// MERGE-FIRST (owner 11-19: "prioritize merging so we don't end up with some huge backlog of finished but unmerged work"; 11 merges
+// waited at the default P2 while P0 / P1 build work passed them): a LANDING run - a MERGE, or the resolve run that brings a branch up
+// to main - runs at the priority of the work it lands (the newest other run of its lane; none = the default P2), never below P1.
+// A priority given (--priority, a re-queue's) is raised to P1 the same way: no landing run waits behind the default.
+export const LANDING_FLOOR = 'P1';
+export const isLandingStage = stage => isMergeStage(stage) || String(stage ?? '').toLowerCase() === 'resolve';
+const higher = (a, b) => PRIORITIES[Math.min(PRIORITIES.indexOf(a), PRIORITIES.indexOf(b))];
+/** the priority of the work a landing run of lane lands: its newest non-landing run's (no priority = the default) */
+export function workPriority(runs, lane) {
+  const w = runs.filter(r => r.kind === 'run' && r.data.lane === lane && r.data.kind !== 'checkin' && !isLandingStage(r.data.stage))
+    .sort((a, b) => Number(b.id.slice(4)) - Number(a.id.slice(4)))[0];
+  return PRIORITIES.includes(w?.data.priority) ? w.data.priority : DEFAULT_PRIORITY;
+}
+export function landingPriority(o) {
+  if (!isLandingStage(o.stage) || o.kind === 'checkin') return o;
+  return { ...o, priority: higher(o.priority ?? (o.state ? workPriority(runsOf(o.state), o.lane) : DEFAULT_PRIORITY), LANDING_FLOOR) };
 }
 
 // META-ONBOARD cut-over: <state root>/SWAP.lock (written by onboard-cutover.mjs --apply for its swap steps, < 2 min) holds NEW starts:
@@ -489,7 +508,7 @@ const noCaller = ({ caller: _c, ...o }) => o;
 // Every dispatch path (norn run, the fill, check-in stage runs, relaunchLost, resumes) passes startRun, so claimDoor is the one hook:
 // after the cheap local refusals, before the worktree lock. Only a synced project (home.json) with a ledger remote claims, and only a
 // lane run that writes. Exempt: check-ins, helpers (the parent's claim covers them), audits, talks, plan reviews, read-only runs, and
-// MERGE stages (the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
+// MERGE stages (leaderDoor: the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
 // and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
 export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
 const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
@@ -525,8 +544,16 @@ export function workOf(o, home, project) {
 }
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
+/** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else RunRefused 3 */
+function leaderDoor(o) {
+  const f = homeOf(o.state) ? fedOf(o.git_ledger) : null;
+  if (!f) return;
+  const why = leaderWhy(o.state, f, { project: path.basename(path.resolve(o.state)), now: o.now ?? Date.now(), pol: syncPolicy(specPolicy({ ctx_from: policySource(o) })) });
+  if (why) throw new RunRefused(`MERGE: ${why} - this home only opens PRs`, 3);
+}
 /** the claim of launch o: null (exempt / not synced) | { key, n } (won) - throws RunRefused 3 (item / branch) or ClaimHeld (wait queued) */
 export function claimDoor(o) {
+  if (o.stage === 'MERGE') leaderDoor(o);
   if (claimExempt(o)) return null;
   const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
   if (!f) return null;
@@ -552,7 +579,7 @@ export function claimDoor(o) {
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = mergeSpec(withFloor(withEpic(noCaller(o))));
+  o = mergeSpec(withFloor(landingPriority(withEpic(noCaller(o)))));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
@@ -693,7 +720,7 @@ export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
   o = { ...o, budget_file: path.resolve(o.budget_file ?? machineBudgetFile()) };   // GAP-2: the fill reads this file, never a copy
-  o = mergeSpec(withFloor(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) }))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
+  o = mergeSpec(withFloor(landingPriority(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) })))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
@@ -710,11 +737,14 @@ export function queueRun(o) {
 }
 // META-GTP-DAG piece 4: the fill order is priority (P0 first), then FIFO. A run with no priority ranks as P2 - the beads default
 // (Gas Town `bd create`, priorities 0-4, default 2) - so a queue with no priorities keeps exactly the old FIFO order.
+// MERGE-FIRST: land before start - a landing run outranks the other runs of its own priority and of one level above (a P1 MERGE
+// goes before a P0 build, a P0 MERGE before everything), so finished work reaches main before new work takes the slot.
 export const DEFAULT_PRIORITY = 'P2';
 const rank = r => PRIORITIES.indexOf(PRIORITIES.includes(r.data.priority) ? r.data.priority : DEFAULT_PRIORITY);
-/** The queued runs of a fold's run items in fill order (priority, then oldest first), with their 1-based position in it (pure). */
+const fillKey = r => 2 * rank(r) - (isLandingStage(r.data.stage) ? 3 : 0);
+/** The queued runs of a fold's run items in fill order (priority, landing first, then oldest first), with their 1-based position in it (pure). */
 export function queueOf(runs) {
-  return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => rank(a) - rank(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
+  return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => fillKey(a) - fillKey(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
     .map((r, i) => ({ id: r.id, name: r.data.name ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
       executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
       after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null, labels: r.data.labels ?? [] }));
@@ -878,7 +908,9 @@ function homeClaim(state, q, spec) {
 // META-GTP-DAG piece 5 (Gas Town internal/daemon/pressure.go:31-91 - a no-op on Windows there, pressure_windows.go:3-9; ours works on
 // Windows): a run whose spec carries policy.fill (the CLI resolves project policy.fill over FILL_DEFAULTS into every run) waits while free
 // RAM < min_free_gb or CPU busy > max_cpu_pct. CPU busy = 1 - idle / total of the os.cpus() time deltas over 1 s (sync).
-export const FILL_DEFAULTS = { min_free_gb: 4, max_cpu_pct: 90 };
+// merge_reserve (MERGE-FIRST): while a landing run is queued and could start (no unmet after:, no future not_before), the other
+// runs leave this many slots of each cap free for it
+export const FILL_DEFAULTS = { min_free_gb: 4, max_cpu_pct: 90, merge_reserve: POLICY_DEFAULTS.fill.merge_reserve };
 /** { free_gb, cpu_pct } now: os.freemem() and the os.cpus() deltas over ms; env META_FILL_SAMPLE (that JSON) pins it (tests, a drill) */
 export function sampleResources({ ms = 1000 } = {}) {
   const pin = process.env.META_FILL_SAMPLE;
@@ -930,7 +962,11 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
   let E = null, R, L;
   const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
-  for (const q of queueOf(runsOf(state))) {
+  const queue = queueOf(runsOf(state));
+  // MERGE-FIRST: the landing runs that hold the merge reserve - queued, and not waiting on a condition or a clock (those may wait for hours)
+  const landing = new Set(queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now)
+    && !(q.after.length && !evalAll(q.after, (E ??= makeEval(state))).conds.every(c => c.met))).map(q => q.id));
+  for (const q of queue) {
     const row = { id: q.id, name: q.name, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
     rows.push(row);
     const gone = why => { row.withdraw = why; row.terms.push(`withdraw: ${why}`); act?.withdraw(q.id, why); };
@@ -967,14 +1003,15 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const served = spec.node_labels ?? [osLabel()], miss = unserved(q.labels, served);
     if (miss.length) { if (!row.terms.length) row.offer = true; row.terms.push(`labels ${miss.join(',')}: not served here (serves ${served.join(',')}) - a node serving them claims it`); continue; }
     if (row.terms.length) continue;   // the terms above wait without holding a cap for younger runs
-    const full = capFull(spec, staleMs, pending);
-    if (full) { row.terms.push(`cap: ${full}`); for (const k of caps) blocked.set(k, q.id); continue; }
+    const reserve = !isLandingStage(q.stage) && landing.size ? Math.max(0, Number({ ...FILL_DEFAULTS, ...(spec.policy?.fill || {}) }.merge_reserve) || 0) : 0;
+    const full = capFull(spec, staleMs, pending, reserve);
+    if (full) { row.terms.push(`cap: ${full}`); if (!full.includes('fill.merge_reserve')) for (const k of caps) blocked.set(k, q.id); continue; }   // a reserve refusal holds no cap
     const rr = resourceGate(spec, res);   // piece 5: machine pressure is global, so it holds no cap for later rows
     if (rr) { row.terms.push(rr); continue; }
     // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)
     { const a = authGate(spec, { now, probe: authProbe, dry: !act }); if (a) { row.terms.push(a); continue; } }
     row.ready = true;
-    if (!act) { pending.push(startFields(spec, info)); continue; }
+    if (!act) { pending.push(startFields(spec, info)); landing.delete(q.id); continue; }
     let next;
     try { next = act.start(q, spec); }
     catch (e) {
@@ -983,6 +1020,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
       gone(`error: ${e.message}`); continue;
     }
     act.started(q, next);
+    landing.delete(q.id);
   }
   return rows;
 }
@@ -1077,20 +1115,23 @@ function* stopSteps({ state, locksDir, run, by, why }) {
 // Roles: owner / dashboard / controller / checkin; --why required; never a RUNNING run (exit 3). -> { run, next, rewired: [ids] }
 export const REQUEUE_ROLES = ['owner', 'dashboard', 'controller', 'checkin'];
 // notBefore: undefined keeps the old run's not_before, null clears it (DEC-337: a limit clock the early reopen left behind), an ISO sets it.
-export function requeueRun({ state, run, after = [], by, why, notBefore }) {
+// MERGE-FIRST: priority undefined keeps the old run's, after undefined keeps its after: conditions (`norn requeue RUN-n --priority P0`).
+export function requeueRun({ state, run, after, by, why, notBefore, priority }) {
   if (!REQUEUE_ROLES.includes(by)) throw new RunError(`role ${by ?? '(none)'} may not re-queue a run (allowed: ${REQUEUE_ROLES.join(', ')})`);
   if (!why || !String(why).trim()) throw new RunError('norn requeue needs --why (the ruling, e.g. DEC-n)');
   if (notBefore && Number.isNaN(Date.parse(notBefore))) throw new RunError(`--not-before ${notBefore}: an ISO time or none`);
+  if (priority !== undefined && !PRIORITIES.includes(priority)) throw new RunError(`--priority ${JSON.stringify(priority)}: want ${PRIORITIES.join(' | ')}`);
   const cur = runsOf(state).find(r => r.id === run);
   if (!cur) throw new RunError(`${run} does not exist in ${state}`);
   if (cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: only a QUEUED run is re-queued (a kill stays owner / controller: norn stop)`, 3);
   heldRefusal(state, cur.data.lane, by);
   const spec = readJson(queueSpecPath(state, run));
   if (!spec) throw new RunError(`${run}: its queue spec is missing (${fwd(queueSpecPath(state, run))})`);
+  after ??= cur.data.after ?? [];
   if (after.some(c => c.kind === 'run' && c.id === run)) throw new RunError(`--after names ${run} itself`);
   const { replaces: _r, ...keep } = spec;
   const nb = notBefore === undefined ? cur.data.not_before : notBefore === null ? undefined : new Date(Date.parse(notBefore)).toISOString();
-  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: nb }).run;
+  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: nb, priority: priority ?? cur.data.priority ?? keep.priority }).run;
   try { record(state, { kind: 'run', ev: 'withdraw', id: run, by, data: { why: String(why), next } }); } catch (e) {
     if (!(e instanceof RecordError)) throw e;   // the fill started it meanwhile: undo the re-queue
     record(state, { kind: 'run', ev: 'withdraw', id: next, by: 'launcher', data: { why: `re-queue of ${run} lost a race: ${e.message}` } });
@@ -1104,7 +1145,7 @@ export function requeueRun({ state, run, after = [], by, why, notBefore }) {
     if (s) fs.writeFileSync(f, JSON.stringify({ ...s, after: swapped }, null, 1));
     rewired.push(q.id);
   }
-  return { run, next, rewired };
+  return { run, next, rewired, priority: runsOf(state).find(r => r.id === next)?.data.priority ?? null };
 }
 
 // Children are stopped with the parent (metadelegate sec. 2): a running helper whose parent run is no longer running is

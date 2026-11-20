@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { agentName } from './names.mjs';
 import path from 'node:path';
-import { readText, readTextA, snap, newSnap, prime, forget } from './fsnap.mjs';
+import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
-import { isAncestor, refTip } from './dlvgit.mjs';
+import { dlvMerged } from './dlvmerge.mjs';
+import { isAncestor } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
@@ -15,7 +16,7 @@ import { checkinBelow } from './floor.mjs';
 // worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
 // tick archiving a lane by its rules - only the lane archive allows it
 export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker', 'tick'];
-const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
+export const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
 const CK = ['controller', 'checkin'];
 const MAILERS = ['worker', ...CK];
 
@@ -100,7 +101,8 @@ export const KINDS = {
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
   // DELIVERABLES-SPEC 1: a lane's / DONE run's branch followed to main and the install. Its own file (deliverables.jsonl), so
-  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived from git (deliverables.mjs), never events.
+  // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived (dlvmerge.mjs dlvMerged); a MERGED answer is
+  // latched by a `merged` event (DLV-MERGED-TRUTH), so a deleted branch or a rebased landing never turns it back into DONE.
   deliverable: { prefix: 'DLV-', file: 'deliverables', events: {
     create: { from: null, to: 'open', roles: ['launcher', ...CK] },
     done: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },          // a later DONE run on the same branch
@@ -110,6 +112,11 @@ export const KINDS = {
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
     // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
     pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
+    // DLV-MERGED-TRUTH: its work is on main { how: pr | git | equivalent | ruling, tip?, pr?, url?, merge_commit?, merged_at?, why?, q? };
+    // the tick latches it (a merged PR, git, the content check) or the owner rules it. A later `done` reopens the question.
+    merged: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK, ...OWNER] },
+    // DLV-MERGED-TRUTH: the owner's ruling "still open" on a deliverable Norn cannot tell is merged { why?, q? }: it reads DONE again
+    still_open: { from: ['open', 'parked'], to: null, roles: [...CK, ...OWNER] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
@@ -205,7 +212,7 @@ export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in 
 export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
 export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
-export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
+export const PRIORITIES = ['P0', 'P1', 'P2', 'P3', 'P4'];   // Gas Town's 0-4 (bd create); P2 = the default
 export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
@@ -280,43 +287,152 @@ export async function readEventsAsync(file) {
 
 // ---------- fold (pure) ----------
 export function fold(events) {
-  const evs = [...events].sort((a, b) => a.seq - b.seq);
-  const items = {};
-  const next = {};
-  let seq = 0;
-  for (const e of evs) {
-    seq = Math.max(seq, e.seq);
-    const def = KINDS[e.kind]?.events[e.ev];
-    if (!def) continue;
-    const h = { seq: e.seq, ts: e.ts, ev: e.ev, by: e.by, run: e.run ?? null, ...(e.via ? { via: e.via } : {}), data: e.data ?? {} };
-    if (def.from === null) {
-      items[e.id] = { id: e.id, kind: e.kind, state: def.to, by: e.by, run: e.run ?? null, created: e.ts, updated: e.ts, data: e.data ?? {}, history: [h] };
-      if (e.kind !== 'lane') next[e.kind] = Math.max(next[e.kind] || 0, idNum(e.id));
-      continue;
-    }
-    const it = items[e.id];
-    if (!it) continue;
-    const to = typeof def.to === 'function' ? def.to(e.data ?? {}) : def.to;
-    if (to) it.state = to;
-    it.updated = e.ts;
-    it[e.ev] = e.data ?? {};
-    // INBOX-REPLIES: a reply that revises the options replaces the list (the create event keeps the first one; the thread shows each)
-    if (e.kind === 'question' && e.ev === 'reply' && Array.isArray(e.data?.options)) {
-      const keys = e.data.options.map(o => o.key), r = e.data.recommend ?? (keys.includes(it.data.recommend?.key) ? it.data.recommend : undefined);
-      it.data = { ...Object.fromEntries(Object.entries(it.data).filter(([k]) => k !== 'recommend')), options: e.data.options, ...(r ? { recommend: r } : {}) };
-    } else if (e.kind === 'question' && e.ev === 'reply' && e.data?.recommend) it.data = { ...it.data, recommend: e.data.recommend };
-    if (e.ev === 'supersede' && e.data?.by) it.superseded_by = e.data.by;
-    if (e.ev === 'rewire' && Array.isArray(e.data?.after)) it.data = { ...it.data, after: e.data.after };   // META-AUTONOMY R1
-    it.history.push(h);
+  const acc = { seq: 0, next: {}, items: {} };
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) { acc.seq = Math.max(acc.seq, e.seq); applyEv(acc, e); }
+  return acc;
+}
+// one event onto { next, items } (fold's step; foldHomes applies the same step, so one stream folds exactly as fold() does)
+function applyEv({ items, next }, e) {
+  const def = KINDS[e.kind]?.events[e.ev];
+  if (!def) return;
+  const h = { seq: e.seq, ts: e.ts, ev: e.ev, by: e.by, run: e.run ?? null, ...(e.via ? { via: e.via } : {}), ...(e.from_home ? { from_home: e.from_home } : {}), data: e.data ?? {} };
+  if (def.from === null) {
+    items[e.id] = { id: e.id, kind: e.kind, state: def.to, by: e.by, run: e.run ?? null, created: e.ts, updated: e.ts, data: e.data ?? {}, history: [h] };
+    if (e.kind !== 'lane') next[e.kind] = Math.max(next[e.kind] || 0, idNum(e.id));
+    return;
   }
-  return { seq, next, items };
+  const it = items[e.id];
+  if (!it) return;
+  const to = typeof def.to === 'function' ? def.to(e.data ?? {}) : def.to;
+  if (to) it.state = to;
+  it.updated = e.ts;
+  it[e.ev] = e.data ?? {};
+  // INBOX-REPLIES: a reply that revises the options replaces the list (the create event keeps the first one; the thread shows each)
+  if (e.kind === 'question' && e.ev === 'reply' && Array.isArray(e.data?.options)) {
+    const keys = e.data.options.map(o => o.key), r = e.data.recommend ?? (keys.includes(it.data.recommend?.key) ? it.data.recommend : undefined);
+    it.data = { ...Object.fromEntries(Object.entries(it.data).filter(([k]) => k !== 'recommend')), options: e.data.options, ...(r ? { recommend: r } : {}) };
+  } else if (e.kind === 'question' && e.ev === 'reply' && e.data?.recommend) it.data = { ...it.data, recommend: e.data.recommend };
+  if (e.ev === 'supersede' && e.data?.by) it.superseded_by = e.data.by;
+  if (e.ev === 'rewire' && Array.isArray(e.data?.after)) it.data = { ...it.data, after: e.data.after };   // META-AUTONOMY R1
+  it.history.push(h);
 }
 
-const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items } });
+// ---------- the merged fold of the homes (RM-46 S1d, multi-home SPEC 3.7) ----------
+// SPEC 3.3 as data: the kinds every home sees (its log is published on home/<id>); the others stay on their machine
+export const SHARED_KINDS = ['question', 'decision', 'directive', 'lane', 'item', 'mail', 'waiver'];
+const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
+const homePart = s => String(s).match(/^([a-z][a-z0-9]{0,15})\//)?.[1] ?? null;
+/** the home an id names: <P><h>-n, L:<h>/x; a bare legacy id belongs to bare_home */
+export const homeOfId = (id, bare) => (String(id).startsWith('L:') ? homePart(String(id).slice(2)) : idHome(id)) ?? bare;
+const homeOfAddr = (to, bare) => /^lane:/.test(to) ? homePart(to.slice(5)) ?? bare : /^role:/.test(to) ? String(to).match(/@([a-z][a-z0-9]{0,15})$/)?.[1] ?? bare : homeOfId(to, bare);
+/** SPEC 3.4: the home whose log commits a record's transitions - a mail's addressee, else the home its id names */
+export const primaryOf = (it, bare) => (it.kind === 'mail' ? homeOfAddr(it.data?.to ?? '', bare) : homeOfId(it.id, bare));
+export const foldKey = (e, h) => [Date.parse(e.ts) || 0, h, e.seq];
+export const keyBefore = (a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) || a[2] - b[2];
+/**
+ * foldHomes(streams [{ home, events, relay? (the refusals in that home's relay.jsonl for this log) }], { bare_home, own }) -> { seq (own),
+ * next (own prefix only), items (committed), pending { id: [ev + home] }, conflicts, integrity, events (committed, in fold order),
+ * relayed ['home:seq'], newest { home: ms } }. Merge order (Date.parse(ts), home, seq), never reordered within a stream: every home
+ * that folds the same streams gets the same view. A create counts only from the home its id names; a transition only from the
+ * record's primary (else it is pending until the primary relays it, or refuses it: a conflict).
+ */
+export function foldHomes(streams, { bare_home = null, own = streams[0]?.home ?? null } = {}) {
+  const S = streams.map(s => ({ home: s.home, evs: [...s.events].sort((a, b) => a.seq - b.seq), i: 0 }));
+  const acc = { seq: 0, next: {}, items: {} }, pending = {}, conflicts = [], integrity = [], events = [], relayed = new Set(), newest = {};
+  for (;;) {
+    let s = null;
+    for (const x of S) if (x.i < x.evs.length && (!s || keyBefore(foldKey(x.evs[x.i], x.home), foldKey(s.evs[s.i], s.home)) < 0)) s = x;
+    if (!s) break;
+    const e = s.evs[s.i++], h = s.home;
+    if (h === own) acc.seq = Math.max(acc.seq, e.seq);
+    newest[h] = Math.max(newest[h] ?? 0, Date.parse(e.ts) || 0);
+    const def = KINDS[e.kind]?.events[e.ev];
+    if (!def) continue;
+    if (def.from === null) {
+      const w = homeOfId(e.id, bare_home);
+      if (w !== h) { conflicts.push({ kind: 'foreign create', home: h, seq: e.seq, id: e.id, ev: e.ev, ts: e.ts, why: `${e.id} belongs to home ${w}: home ${h} may not create it` }); continue; }
+    } else {
+      const it = acc.items[e.id];
+      if (!it) continue;   // as fold(): a transition on no record
+      if (primaryOf(it, bare_home) !== h) { (pending[e.id] ||= []).push({ ...e, home: h }); continue; }
+      if (!def.from.includes(it.state)) { integrity.push({ home: h, seq: e.seq, id: e.id, why: `${e.id} is ${it.state}; ${e.ev} needs ${def.from.join(' | ')} (skipped)` }); continue; }
+      if (e.from_home) relayed.add(`${e.from_home.home}:${e.from_home.seq}`);
+    }
+    applyEv(acc, e);
+    events.push(e);
+  }
+  for (const [id, evs] of Object.entries(pending)) {
+    const p = primaryOf(acc.items[id], bare_home), refused = new Map((streams.find(x => x.home === p)?.relay || []).map(r => [`${r.home}:${r.seq}`, r]));
+    const keep = evs.filter(e => {
+      const k = `${e.home}:${e.seq}`, r = refused.get(k);
+      if (relayed.has(k)) return false;
+      if (r) conflicts.push({ kind: 'refused', home: e.home, seq: e.seq, id, ev: e.ev, ts: r.ts, primary: p, why: `your ${e.ev} on ${id} was not applied on home ${p}: ${r.why}` });
+      return !r;
+    });
+    if (keep.length) pending[id] = keep; else delete pending[id];
+  }
+  const next = {};
+  for (const it of Object.values(acc.items)) if (it.kind !== 'lane' && homeOfId(it.id, bare_home) === own) next[it.kind] = Math.max(next[it.kind] || 0, idNum(it.id));
+  return { seq: acc.seq, next, items: acc.items, pending, conflicts, integrity, events, relayed: [...relayed], newest };
+}
+// relay.jsonl rows { home, seq, file, id, ev, why, ts } of one log; a line that does not parse is skipped (the file is a home's own)
+const relayRows = (f, file) => (readText(f) ?? '').split('\n').flatMap(l => { try { const r = JSON.parse(l); return r?.file === file ? [r] : []; } catch { return []; } });
+/** one shared log's streams in a synced dir: the own file first, then each <state>/homes/<h>/ copy (ASCII order); a copy that does
+ * not parse is skipped with an integrity row, and so is what the fetch noted (<state>/sync/copy-integrity.json: a copy that was not an append) */
+export function homeStreams(stateDir, home, file) {
+  const streams = [{ home: home.id, events: readEvents(path.join(stateDir, file + '.jsonl')), relay: relayRows(path.join(stateDir, 'relay.jsonl'), file) }], integrity = [];
+  for (const h of readdirS(path.join(stateDir, 'homes')).filter(d => d.isDirectory() && HOME_RE.test(d.name) && d.name !== home.id).map(d => d.name).sort()) {
+    const dir = path.join(stateDir, 'homes', h);
+    try { streams.push({ home: h, events: readEvents(path.join(dir, file + '.jsonl')), relay: relayRows(path.join(dir, 'relay.jsonl'), file) }); }
+    catch (e) { integrity.push({ home: h, file, why: `the copy from home ${h} is skipped: ${e.message}` }); }
+  }
+  const noted = readJsonS(path.join(stateDir, 'sync', 'copy-integrity.json'));
+  for (const r of Array.isArray(noted) ? noted : []) if (r?.file === file + '.jsonl') integrity.push({ home: r.home, file, why: r.why });
+  return { streams, integrity };
+}
+/** a shared kind's log folded: in a synced dir (home.json) the fold of the own log + the copies, else fold() of the file */
+export function loadShared(stateDir, kind) {
+  const home = homeOf(stateDir);
+  if (!home) return fold(readEvents(recordsFile(stateDir, kind)));
+  const { streams, integrity } = homeStreams(stateDir, home, KINDS[kind].file), v = foldHomes(streams, { bare_home: home.bare_home, own: home.id });
+  return { ...v, integrity: [...integrity, ...v.integrity] };
+}
+
+// RM-46 S3 (SPEC 3.3): the read-only copies of the other homes' local kinds that publish one (run, deliverable) - homes/<h>/copy/<file>.jsonl,
+// each folded alone (its home is its only writer). An item carries `home` and its lane as this home types it (b/x); a copy that does not parse is skipped.
+const otherHomes = (stateDir, home) => readdirS(path.join(stateDir, 'homes')).filter(d => d.isDirectory() && HOME_RE.test(d.name) && d.name !== home.id).map(d => d.name).sort();
+export const copyFile = (stateDir, h, kind) => path.join(stateDir, 'homes', h, 'copy', KINDS[kind].file + '.jsonl');
+/** [item + home] of `kind` from every other home's copy; a solo dir has none */
+export function copyItems(stateDir, kind) {
+  const home = homeOf(stateDir), out = [];
+  if (!home) return out;
+  for (const h of otherHomes(stateDir, home)) {
+    let f; try { f = fold(readEvents(copyFile(stateDir, h, kind))); } catch { continue; }
+    for (const it of Object.values(f.items)) if (it.kind === kind) out.push({ ...it, home: h, data: { ...it.data, ...(typeof it.data?.lane === 'string' ? { lane: laneNameIn(laneIdIn(it.data.lane, h), home.id) } : {}) } });
+  }
+  return out;
+}
+/** copyItems on fs.promises: the copies primed into the request snapshot first (the dash server's GETs) */
+export async function copyItemsAsync(stateDir, kind) {
+  if (await readTextA(path.join(stateDir, 'home.json')) === null) return [];
+  const hs = (await readdirA(path.join(stateDir, 'homes'))).filter(d => d.isDirectory() && HOME_RE.test(d.name)).map(d => d.name);
+  await prime({ files: hs.map(h => copyFile(stateDir, h, kind)) });
+  return copyItems(stateDir, kind);
+}
+
+// a synced dir's view carries its pending events, conflicts and integrity rows (SPEC 3.7)
+const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items },
+  ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity, newest: a.newest } : {}) });
 // META-DASH-ASYNC R1: inside a primed dash request the snapshot's fold (lib/fsnap.mjs) - a lib that folds again (limitgate, ...) reads nothing
-export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(fold(readEvents(recordsFile(stateDir, 'question'))), fold(readEvents(recordsFile(stateDir, 'run'))));
+export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(loadShared(stateDir, 'question'), fold(readEvents(recordsFile(stateDir, 'run'))));
 /** META-DASH-ASYNC R1: loadState on fs.promises (the two records files read concurrently on the threadpool; the same fold) */
 export async function loadStateAsync(stateDir) {
+  if (await readTextA(path.join(stateDir, 'home.json')) !== null && homeOf(stateDir)) {   // a synced dir: the copies primed, then the merged fold
+    const hs = (await readdirA(path.join(stateDir, 'homes'))).filter(d => d.isDirectory()).map(d => path.join(stateDir, 'homes', d.name));
+    await prime({ files: [recordsFile(stateDir, 'question'), recordsFile(stateDir, 'run'), path.join(stateDir, 'relay.jsonl'), path.join(stateDir, 'sync', 'copy-integrity.json'),
+      ...hs.flatMap(d => [path.join(d, 'records.jsonl'), path.join(d, 'relay.jsonl')])] });
+    return loadState(stateDir);
+  }
   const [qa, ru] = await Promise.all([readEventsAsync(recordsFile(stateDir, 'question')), readEventsAsync(recordsFile(stateDir, 'run'))]);
   return joinFolds(fold(qa), fold(ru));
 }
@@ -511,6 +627,8 @@ function validateData(kind, ev, d, target, st, by, home = null) {
       if (dup) fail(`${d.repo} ${d.branch} already has ${dup.id}`);
     }
     if (ev === 'done') for (const k of ['run', 'tip', 'done_utc']) str(d[k], k, { req: false });
+    if (ev === 'merged') { oneOf(d.how, 'how', ['pr', 'git', 'equivalent', 'ruling']); for (const k of ['tip', 'url', 'merge_commit', 'merged_at', 'why', 'q']) str(d[k], k, { req: false, max: 600 }); }
+    if (ev === 'still_open') for (const k of ['why', 'q']) str(d[k], k, { req: false, max: 600 });
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
@@ -719,7 +837,7 @@ function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } 
 const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
-// reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
+// reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
 function archiveGuard(stateDir, lane, ev = {}) {
   // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
@@ -730,9 +848,9 @@ function archiveGuard(stateDir, lane, ev = {}) {
   }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
-    const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
-    if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
-    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
+    const m = dlvMerged(d);
+    if (m.merged) continue;
+    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is ${m.unknown ? `done, cannot tell if merged (${m.unknown})` : 'done but not merged'} - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
 }
 // item 8 (lane norn-lifecycle): a check-in writes a waiver only as the owner's ruling it applies - data.q names a question the owner
@@ -896,22 +1014,44 @@ function recordCtx(stateDir, evIn, opts) {
   return { file, lock, setIds: s => { ids = { pfx: idPrefix(s), home: homeOf(s) }; }, plan };
   /** the checked batch (no write): its jsonl text, the folded state after it, whether the views follow, the caller's result */
   function plan() {
-    const base = readEvents(file);
-    let st = fold(base);
-    const batch = [];
+    // RM-46 S1d (SPEC 3.8): a shared kind in a synced dir is checked against the merged view (own log + the copies); only the own
+    // file is written. A transition on another home's record is written here and stays pending until its primary relays it.
+    const home = ids.home, hs = home && SHARED_KINDS.includes(kind) ? homeStreams(stateDir, home, KINDS[kind].file) : null;
+    const base = hs ? hs.streams[0].events : readEvents(file);
+    const batch = [], pend = new Set();
+    const refold = () => (hs ? foldHomes([{ ...hs.streams[0], events: [...base, ...batch] }, ...hs.streams.slice(1)], { bare_home: home.bare_home, own: home.id }) : fold([...base, ...batch]));
+    let st = refold();
+    // the relay (sync.mjs relayPass) of an event this log already committed: nothing to write
+    if (opts.from_home && st.relayed?.includes(`${opts.from_home.home}:${opts.from_home.seq}`)) return { text: '', st, views: false, out: null };
+    // SPEC 3.7 HLC: a shared event sorts after every event of the other homes this view holds (+1 s), and never before the own newest
+    const stamp = () => {
+      let t = Math.floor(now().getTime() / 1000) * 1000;
+      if (hs) for (const [h, ms] of Object.entries(st.newest)) t = Math.max(t, h === home.id ? ms : ms + 1000);
+      return isoSec(new Date(t));
+    };
     // META-CONTROLLER C4: the lanes (and their holds) live in records.jsonl; a run / deliverable write reads them from there
     let lanes = null;
-    const laneItems = () => (KINDS[kind].file === 'records' ? st.items : (lanes ??= fold(readEvents(recordsFile(stateDir, 'lane'))).items));
+    const laneItems = () => (KINDS[kind].file === 'records' ? st.items : (lanes ??= loadShared(stateDir, 'lane').items));
     const push = e => {
       if (e.by === 'checkin') {
         // the clock is read only for a lane that was ever claimed (a caller's clock may count its calls: the golden views)
         const ln = laneOfEvent(e, st, ids.home?.id), l = ln ? laneItems()[laneIdIn(ln, ids.home?.id)] : null, h = l?.history.some(x => x.ev === 'claim') ? holdOf(l, now().getTime()) : null;
         if (h) throw new RecordError(holdMessage(h), HELD_EXIT);
       }
+      // SPEC 3.8: each home's check-ins (and controller) act only on its own lanes
+      const ln = home && CK.includes(e.by) ? laneOfEvent(e, st, home.id) : null, lh = ln ? homePart(ln) : null;
+      if (lh && lh !== home.id) fail(`L:${ln} belongs to home ${lh}: a ${e.by} acts only on the lanes of its own home (${home.id})`);
       const c = check(st, e, ids);
-      const env = { v: 1, seq: st.seq + 1, ts: isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, by: c.by, run, ...(via ? { via } : {}), data: c.data };
+      const p = hs && c.ev !== createEv(c.kind) ? primaryOf(st.items[c.id], home.bare_home) : home?.id;
+      if (hs && p !== home.id) {
+        const twin = (st.pending[c.id] || []).find(x => x.ev === c.ev);
+        if (twin) fail(`${c.id} already has a pending ${c.ev} from home ${twin.home} (seq ${twin.seq}), waiting for home ${p} to commit it - nobody ${c.ev}s twice`);
+      }
+      const env = { v: 1, seq: st.seq + 1, ts: hs ? stamp() : isoSec(now()), id: c.id, kind: c.kind, ev: c.ev, by: c.by, run, ...(via ? { via } : {}),
+        ...(opts.from_home ? { from_home: opts.from_home } : {}), data: c.data };
+      if (hs && p !== home.id) pend.add(env);
       batch.push(env);
-      st = fold([...base, ...batch]);
+      st = refold();
       return env;
     };
     const primaries = [];
@@ -943,6 +1083,7 @@ function recordCtx(stateDir, evIn, opts) {
     if (kind === 'question' && ev.ev === 'answer' && ev.data?.from !== undefined && caller !== 'migration') ev = answerFrom(st, ev);
     const primary = push(ev);
     primaries.push(primary);
+    if (pend.has(primary)) continue;   // pending: what the event implies (the apply, the lane park) is the primary's relay to write
     const closeQ = (qid, from) => {   // the answer (from the DEC) + the apply when the caller may apply
       const a = push(answerFrom(st, { kind: 'question', ev: 'answer', id: qid, by: caller, data: { from } }));
       if (KINDS.question.events.apply.roles.includes(caller)) {

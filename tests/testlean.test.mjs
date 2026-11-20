@@ -16,7 +16,7 @@ const M = (files, coverage = true) => ({ at: 'x', coverage, suite_ms: 9, files }
 test('measureFile: the reporter lines -> tests and the repo-relative covered lines per source file', () => {
   const cwd = path.resolve('/r');
   const text = [{ t: 'test', name: 'a', nesting: 0, ms: 3, ok: true }, { t: 'cov', path: path.join(cwd, 'engine', 'x.mjs'), total: 10, lines: [1, 2] }].map(x => JSON.stringify(x)).join('\n') + '\n';
-  assert.deepEqual(measureFile('tests\\a.test.mjs', 7, text, cwd), { file: 'tests/a.test.mjs', ms: 7, tests: [{ name: 'a', nesting: 0, ms: 3, ok: true }],
+  assert.deepEqual(measureFile('tests\\a.test.mjs', 7, text, cwd), { file: 'tests/a.test.mjs', ms: 7, tests: [{ name: 'a', nesting: 0, line: null, ms: 3, ok: true, group: [] }],
     cov: { 'engine/x.mjs': [1, 2] }, totals: { 'engine/x.mjs': 10 } });
 });
 
@@ -136,7 +136,7 @@ test('norn tests measure / check / lean / gate in a temp repo (state = a temp di
   fs.writeFileSync(path.join(repo, 'tests', 'x.test.mjs'), head + t('adds', 'a(1)') + t('doubles', 'b(2)'));
   g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('add', '-A'); g('commit', '-q', '-m', 'base');
   let r = norn('measure');
-  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /measured 2 tests in 1 files: .*line coverage/);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /measured 2 node:test tests in 1 files: .*line coverage/);
   const hist = fs.readFileSync(path.join(st, 'tests', 'history.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   assert.equal(hist.length, 1); assert.equal(hist[0].tests, 2); assert.ok(hist[0].coverage.covered > 0);
   r = norn('check', '--base', 'HEAD'); assert.equal(r.status, 0); assert.match(r.stdout, /no test file changed/);
@@ -176,31 +176,32 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   fs.writeFileSync(path.join(d, 'mutation.json'), JSON.stringify({ files: [{ file: 'engine/lib/drift.mjs', mutants: 256, killed: 154, survived: 102, timeout: 0, score: 60.2, ms: 390000 }], trials: [{ label: 'drift' }], tests: {}, mutants: {} }));
   fs.writeFileSync(path.join(d, 'waves.jsonl'), JSON.stringify({ at: '2026-11-14T11:00:00Z', base: 'main', head: 'def456', ok: true, removed: ['a.test.mjs :: small'], before: { tests: 805, cov: { pct: 90 } }, after: { tests: 804, cov: { pct: 90 } }, score: { before: 60.2, after: 60.2 }, lost_lines: 0, restored: [], ms_before: 9000, ms_after: 8000 }) + '\n');
   const { createDashboard } = await import('../engine/dash/server.mjs');
-  const { loadTab, renderTab, renderNav } = await import('../engine/dash/ui.mjs');
+  const { loadTab, loadParts, renderTab, renderNav } = await import('../engine/dash/ui.mjs');
   const app = createDashboard({ projects: [{ name: 'kestrel', state: st }], machine: {}, budgetFile: path.join(st, 'budget.json'), platform: {}, sessionsDir: path.join(st, 'sessions') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
-  let data;
-  try { data = await loadTab('tests', 'kestrel', async p => (await fetch(url + p)).json()); } finally { await app.close(); }
-  assert.equal(data.project, 'kestrel'); assert.equal(data.history.length, 2);
-  const html = renderTab('tests', data, { now: Date.parse('2026-11-14T12:00:00Z') });
-  for (const id of ['tests-head', 'tests-time', 'tests-count', 'tests-suite', 'tests-slow', 'tests-mut', 'tests-never', 'tests-dup', 'tests-wave']) assert.match(html, new RegExp(`id="${id}"`), id);
-  assert.match(html, /805 tests in 3 files · 1000 s of file time · suite 500 s wall/);
-  assert.match(html, /walks &lt;SETUP&gt;/, 'names are escaped');
-  assert.match(html, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
-  assert.match(html, /gate passed/); assert.match(html, /kills 0/); assert.match(html, /inside: <span class="mute">a\.test\.mjs<\/span> big/);
+  // TESTS-RUNTIME: the lean evidence and the merge check sit in Costs and health, the charts and the last wave in Trends
+  const get = async p => (await fetch(url + p)).json(), now = Date.parse('2026-11-14T12:00:00Z');
+  const view = async sub => { const d = await loadTab('tests', 'kestrel', get, { sub }); return renderTab('tests', { ...d, ...(await loadParts('tests', 'kestrel', d, get)), parts_loading: false }, { now }); };
+  let data, costs, trends;
+  try { data = await loadTab('tests', 'kestrel', get); costs = await view('costs'); trends = await view('trends'); } finally { await app.close(); }
+  assert.equal(data.project, 'kestrel'); assert.equal(data.history.length, 2); assert.equal(data.sub, 'suite'); assert.equal(data.parts_loading, true);
+  for (const id of ['tests-mut', 'tests-never', 'tests-dup', 'tests-lean', 'tests-merges']) assert.match(costs, new RegExp(`id="${id}"`), id);
+  for (const id of ['tests-time', 'tests-count', 'tests-suite', 'tests-wave']) assert.match(trends, new RegExp(`id="${id}"`), id);
+  assert.match(costs, /kills 0/); assert.match(costs, /inside: <span class="mute">a\.test\.mjs<\/span> big/);
+  assert.match(trends, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
+  assert.match(trends, /gate passed/);
   assert.match(renderNav('tests', {}), /id="tab-health"[^>]*aria-selected="true"[^]*id="pages-health"[^]*data-tab="usage"[^]*data-tab="tests"/, 'beside Usage under Health (UX review 2)');
-  const empty = renderTab('tests', { history: [], git: null, lean: null, mutation: null, advisories: null, waves: [], commands: { measure: 'norn tests measure', history: 'norn tests history' } }, {});
-  assert.match(empty, /not measured yet/); assert.match(empty, /norn tests history/);
+  const empty = renderTab('tests', { history: [], git: null, times: null, commands: { measure: 'norn tests measure', history: 'norn tests history' }, sub: 'suite', breakdown: null, tests: { rows: [], n: 0 } }, {});
+  assert.match(empty, /not measured yet/); assert.match(empty, /norn tests measure/);
   assert.match(empty, /id="tests-scope"[^>]*>Nothing measured yet\. The tick fills/, 'an empty page says why and what fills it');
-  const py = renderTab('tests', { suite: false, history: [], git: { points: [{ day: '2026-11-17', tests: 566, test_lines: 14848, code_lines: 39556 }] }, waves: [], commands: { measure: 'norn tests measure' } }, {});
-  assert.match(py, /not a node:test suite/); assert.match(py, /id="tests-time"/, 'the git charts still fill');
-  assert.doesNotMatch(py, /id="tests-head"|norn tests measure/, 'no command that would refuse');
+  const none = renderTab('tests', { suite: false, history: [], git: { points: [{ day: '2026-11-17', tests: 566, test_lines: 14848, code_lines: 39556 }] }, commands: { measure: 'norn tests measure' }, sub: 'trends', cpu: [], lanes: null, wave: null }, {});
+  assert.match(none, /this project's tests\/ holds neither/); assert.match(none, /id="tests-time"/, 'the git charts still fill');
 });
 
 // a pytest project (Solve Shack): check answers that it read nothing (it said "no test file changed" on every merge); measure refuses in words;
 // the tick starts `norn tests history` once a day so the charts fill
-test('a project without tests/*.test.mjs: check says so (exit 0), measure refuses (exit 2), history still works; tickTests once a day', async () => {
+test('a pytest project: check says it reads node:test only (exit 0), measure with no python names why (exit 2), history still works; tickTests once a day', async () => {
   const st = mkTmp('meta-tl-py-'), repo = path.join(path.dirname(path.dirname(st)), 'repo');
   const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '..');
   const norn = (...a) => spawnSync(process.execPath, [path.join(REPO, 'engine', 'bin', 'norn.mjs'), 'tests', ...a, '--state', st, '--repo', repo], { encoding: 'utf8', cwd: repo });
@@ -209,8 +210,8 @@ test('a project without tests/*.test.mjs: check says so (exit 0), measure refuse
   fs.writeFileSync(path.join(repo, 'tests', 'test_x.py'), 'def test_x():\n    assert 1\n');
   g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('add', '-A'); g('commit', '-q', '-m', 'base');
   let r = norn('check', '--base', 'HEAD');
-  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /no node:test suite .*nothing checked/);
-  r = norn('measure'); assert.equal(r.status, 2); assert.match(r.stderr, /no node:test suite/);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /a pytest suite .*read node:test only - nothing checked/);
+  r = norn('measure'); assert.equal(r.status, 2); assert.match(r.stderr, /no python for the pytest suite: project.json merge.gate.cmd is not set and .* has no .venv/);
   r = norn('history'); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /day\(s\) of history/);
   const { tickTests } = await import('../engine/lib/testscli.mjs');
   const calls = [], spawnFn = (exe, args) => (calls.push(args), { pid: 1 });

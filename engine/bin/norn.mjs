@@ -5,8 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
+import { spawn, spawnSync } from 'node:child_process';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -54,17 +54,19 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
-import { openProjectPrs, prLine, LAND_EXIT } from '../lib/mergeland.mjs';
+import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve } from '../lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
-import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching, mergeConfig } from '../lib/mergeq.mjs';
+import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
+import { mergeConfig } from '../lib/mergecfg.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
-import { publishHome, fetchHomes, syncStatus, homeIdOf } from '../lib/sync.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs } from '../lib/sync.mjs';
+import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
@@ -73,7 +75,7 @@ import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
 import { ClaimsError } from '../lib/claimsref.mjs';
 import { syncCut, cutLines, HOME_RE } from '../lib/synccut.mjs';
-import { listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
+import { localClaims, listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
@@ -366,7 +368,7 @@ function setupCmd(argv, env, out, err) {
 const RUN_USAGE = {
   run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
-  requeue: 'norn requeue RUN-n --after "<conditions as norn run --after> | none" [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions: same launch args; the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
+  requeue: 'norn requeue RUN-n [--after "<conditions as norn run --after> | none"] [--priority P0-P4] [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions or priority: same launch args, a flag left out keeps the old value (a MERGE / resolve stays at P1 or above); the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
 // SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
@@ -503,10 +505,12 @@ function runCmd(argv, env, out, err) {
     const { project, state, locks } = where(flags, env);
     if (cmd === 'requeue') {   // META-AUTONOMY R1
       if (pos.length !== 1) throw new RunError('requeue needs one RUN id');
-      if (flags.after === undefined) throw new RunError('--after is required (the new conditions; none = no conditions)');
       const nb = flags['not-before'];
-      const r = requeueRun({ state, run: pos[0], after: flags.after === 'none' ? [] : afterOf(flags.after), by: flags.as || env.META_ROLE, why: flags.why, notBefore: nb === 'none' ? null : nb });
-      out(`REQUEUED ${r.run} -> ${r.next} (after ${flags.after}${nb ? `; not before: ${nb}` : ''})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
+      if (flags.after === undefined && flags.priority === undefined && nb === undefined) throw new RunError('requeue needs --after, --priority or --not-before (what changes)');
+      const r = requeueRun({ state, run: pos[0], after: flags.after === undefined ? undefined : flags.after === 'none' ? [] : afterOf(flags.after), by: flags.as || env.META_ROLE, why: flags.why,
+        notBefore: nb === 'none' ? null : nb, priority: flags.priority });
+      const what = [flags.after !== undefined ? `after ${flags.after}` : 'its after: kept', ...(nb ? [`not before: ${nb}`] : []), ...(flags.priority ? [`priority ${r.priority}`] : [])];
+      out(`REQUEUED ${r.run} -> ${r.next} (${what.join('; ')})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
       for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // met now = starts now (as norn run --after)
       return 0;
     }
@@ -615,12 +619,12 @@ function hookCmd(argv, env, err) {
 const S5_USAGE = {
   status: 'norn status [--project <name | project.json> | --state D] [--machine F] [--budget F] [--out F]',
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
-  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
+  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--homes (+ the runs of the other homes of a synced project, read-only: their fetched copies, each "on <home>")] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
   overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'homes!', 'why', 'sha', 'at'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -780,10 +784,12 @@ function s5Cmd(argv, env, out, err) {
     if (flags['all-nodes']) return allNodes(state, m, flags, out);
     const items = Object.values(loadState(state).items).filter(i => i.kind === 'run' && (!flags.lane || i.data.lane === flags.lane)
       && (!flags.unreviewed || (['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive')));
+    // RM-46 S3: --homes adds the other homes' runs from their copies (read-only: never queued here, never reviewed here); lane = this home's form (b/x)
+    if (flags.homes) items.push(...copyItems(state, 'run').filter(i => !flags.lane || i.data.lane === flags.lane));
     if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => ({ ...i, outcome: history.find(h => h.ev === 'end')?.data.outcome ?? null })), null, 1));
-    const pos1 = Object.fromEntries(queueOf(items).map(q => [q.id, q]));
+    const pos1 = Object.fromEntries(queueOf(items.filter(i => !i.home)).map(q => [q.id, q]));
     const col3 = i => pos1[i.id] ? `#${pos1[i.id].position} not_before ${pos1[i.id].not_before ?? '-'}` : i.history.find(h => h.ev === 'end')?.data.outcome ?? '-';
-    if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}`);
+    if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}${i.home ? `  on ${i.home}` : ''}`);
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + S5_USAGE[cmd]); return 2; }
@@ -1200,7 +1206,7 @@ function askCmd(argv, env, out, err) {
 }
 
 // ---------- norn deliverables (DELIVERABLES-SPEC 6): done work followed to main / the install, any harness ----------
-const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry]    [--project F] [--state D] [--as role]';
+const DLV_USAGE = 'norn deliverables [--due | --resolve | --all] [--json] | backfill [--apply [--all | --only b1,b2]] [--json] | park DLV-n --why W | unpark DLV-n | supersede DLV-n --by <DLV-m | commit sha> --why W | ask DLV-n | resolve DLV-n [--executor E] [--dry] | recheck [--dry]    [--project F] [--state D] [--as role]';
 const DLV_FLAGS = ['project', 'state', 'as', 'why', 'by', 'only', 'executor', 'json!', 'all!', 'due!', 'apply!', 'resolve!', 'dry!'];
 function deliverablesCmd(argv, env, out, err) {
   try {
@@ -1264,6 +1270,13 @@ function deliverablesCmd(argv, env, out, err) {
       const r = askDeliverable(state, id, { project, by });
       if (r.refused) { out('REFUSED: ' + r.refused); return 3; }
       out(r.id);
+      return 0;
+    }
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+      if (id) throw new RunError(`unexpected ${id}`);
+      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
+      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)
@@ -1356,7 +1369,7 @@ Every day:
   norn stop                        stop a run (a queued run is withdrawn)
   norn pause                       pause check-ins / hold the queue / pause everything; pause a run safely (it hands off)
   norn resume                      resume a paused hand-off (at the front), or --all: release the pause
-  norn requeue                     re-queue a queued run with new conditions (its dependants follow)
+  norn requeue                     re-queue a queued run with new conditions or priority (its dependants follow)
   norn rec                         questions, decisions, directives, lanes: the records
   norn digest                      what needs attention now (read-only)
   norn notify                      send the owner a notice
@@ -1592,7 +1605,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
 // ---------- META-GTP-DAG piece 3: norn ready - every queued run, ready | blocked + its unmet terms (the fill's own walk, dry; read-only) ----------
 const READY_USAGE = 'norn ready [--json] [--epic EP-n] [--project F | --state D] [--locks D]';
 // ---------- META-GTP-MERGEQ: norn mergeq - the merge queue (MR score order; code only, no LLM) ----------
-const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; --batching = the kill switch)';
+const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; else the mechanical landing: merge the top clean pushed row in a merge worktree, run the quick check (syntax + its changed test files), open its PR - a conflict, red check or slop block queues its MERGE run; --batching = the kill switch)';
 function mergeqCmd(argv, env, out, err) {
   try {
     const flags = {};
@@ -1615,9 +1628,13 @@ function mergeqCmd(argv, env, out, err) {
       return 0;
     }
     if (flags.run) {   // piece 3: one merge-queue pass (async: the gate runs)
-      return mergeqRun({ stateDir: state, project, locksDir: flags.locks }).then(r => {
+      // MERGE-FIRST (3): a landing's fallback MERGE (norn run --queue) and its notice go through this CLI, in a child (as the tick's routine stage)
+      const cli = args => { const c = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...args], { encoding: 'utf8', timeout: 60000, windowsHide: true, env: { ...process.env, ...env } }); return { code: c.status ?? 1, out: `${c.stdout || ''}${c.stderr || ''}`.trim() }; };
+      return mergeqRun({ stateDir: state, project, locksDir: flags.locks, cli }).then(r => {
         if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
         for (const u of r.updates) if (u.action !== 'skip') out(`${u.id} ${u.branch} update ${u.action}: ${u.why}`);
+        for (const id of r.land?.landed || []) out(`LANDED ${id}`);
+        for (const f of r.land?.fallback || []) out(`MERGE ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
         out(`mergeq: ${r.why}`);
         if (r.batch?.dispatch && r.batch.status === 'green') out(`MERGE: norn ${r.batch.dispatch.join(' ')}`);
         if (r.fix) out(`FIX ${r.fix.id}: norn ${r.fix.run.join(' ')}`);
@@ -1908,7 +1925,7 @@ function doneCmd(argv, env, out, err) {
   }
 }
 // ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
-const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P3] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
+const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P4] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
 const FLOW_FLAGS = ['project', 'state', 'locks', 'machine', 'budget', 'as', 'var*', 'executor', 'priority', 'flows-dir', 'briefs-dir', 'dry-run!', 'json!', 'no-tick!'];
 function flowCmd(argv, env, out, err) {
   try {
@@ -2924,16 +2941,18 @@ function syncCutCmd(argv, env, out, err) {
   } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
-// ---------- RM-46 S1c: norn sync status | publish | fetch | cut (home/<id> on the ledger remote; the loop is S4's) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote, fetch every other home\'s into <state>/<project>/homes/<h>/; on with machine.json ledger.remote and a synced project: home.json { id } names the home)' + '\n       ' + SYNC_CUT_USAGE;
+// ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
+const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
   const [sub, ...rest] = argv, f = {};
   for (let i = 0; i < rest.length; i++) {
+    if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }
+    if (sub === 'reconcile' && rest[i] === '--as' && rest[i + 1] !== undefined) { f.as = rest[++i]; continue; }
     if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
     f.machine = rest[++i];
   }
-  if (!['status', 'publish', 'fetch'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
+  if (!['status', 'publish', 'fetch', 'watch', 'ring', 'reconcile'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
     const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
@@ -2948,13 +2967,32 @@ function syncCmd(argv, env, out, err) {
       if (s.gone.length) out(`gone (copies kept): ${s.gone.join(' ')}`);
       return 0;
     }
+    if (sub === 'reconcile') {   // S5: the likely duplicate pairs across homes -> one owner card each; the answered cards apply first
+      const by = f.as || env.META_ROLE;
+      if (!f.dry && !by) { err('error: no role: pass --as <role> or set META_ROLE'); return 2; }
+      const claims = (() => { try { return localClaims(fedOf(cfg)); } catch { return {}; } })();   // the last fetched claims; none = no claim pairs
+      for (const { project, state } of syncedDirs(cfg)) {
+        const r = reconcile(state, { by, claims, dry: f.dry });
+        out(`${project}: ${r.pairs.length} likely duplicate pair${r.pairs.length === 1 ? '' : 's'} ${f.dry ? '(dry run, no card written)' : `, ${r.written.length} card${r.written.length === 1 ? '' : 's'} written (${r.written.join(' ') || '-'})`}; ${r.carded} asked before${r.applied.length ? `; applied ${r.applied.map(a => `${a.q} ${a.choice}`).join(', ')}` : ''}`);
+        for (const p of r.pairs) out(`  ${p.kind} ${p.a} + ${p.b}: ${p.why}  "${p.ta.slice(0, 60)}" / "${p.tb.slice(0, 60)}"`);
+      }
+      return 0;
+    }
     if (sub === 'publish') {
       const r = publishHome(cfg);
       if (r.error || r.refused || r.stopped || r.rejected) { err('error: ' + (r.error || r.stopped || r.rejected || `refused: a machine.json secret value in ${r.refused.join(', ')}`)); return 1; }
       out(r.noop ? 'nothing to publish' : `published home/${id}${r.sha ? ' ' + r.sha.slice(0, 10) : ''}, ${r.pushed ? 'pushed' : `not pushed (${r.offline}): the next pass retries`}`);
-      return 0;
+      return r.pushed ? ringCli(cfg, out).then(() => 0) : 0;   // SPEC 4.3: after each push
     }
-    const r = fetchHomes(cfg);
+    if (sub === 'ring') return ringCli(cfg, out).then(r => (r.error ? 1 : 0));
+    if (sub === 'watch') {   // long-running like norn dash: the same loop the dashboard server runs; Ctrl+C stops it
+      const loop = loopOf(cfg, { log: s => out(`${new Date().toISOString()} ${s}`), timers: { setTimeout, clearTimeout } });
+      out(`sync watch: home ${id}, ls-remote every ${LOOP.poll_s} s, doorbell ${doorbellOf(cfg) ? 'on' : 'off (poll only)'} (Ctrl+C stops)`);
+      for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => { loop.stop(); process.exitCode = 130; });
+      loop.start();
+      return undefined;
+    }
+    const r = syncPass(cfg);
     if (r.error) { err(`error: fetch failed, the last copies stay: ${r.error}`); return 1; }
     out(`fetched ${r.homes.length} home${r.homes.length === 1 ? '' : 's'} (${r.homes.join(' ') || '-'}), ${r.written.length} copies written`);
     if (r.gone.length) out(`gone (copies kept): ${r.gone.join(' ')}`);
@@ -2963,6 +3001,13 @@ function syncCmd(argv, env, out, err) {
     err('error: ' + e.message);
     return e instanceof ConfigError ? 2 : 1;
   }
+}
+
+// the doorbell ring of the CLI: one line, never a failed publish (the other homes poll)
+async function ringCli(cfg, out) {
+  const r = await ringHome(cfg);
+  if (r.rung) out(`doorbell rung (${r.rung.slice(0, 10)})`); else if (r.error) out(`doorbell not rung (the other homes poll): ${r.error}`); else if (r.nothing) out('doorbell: nothing pushed yet');
+  return r;
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------

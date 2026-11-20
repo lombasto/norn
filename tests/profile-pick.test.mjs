@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { fixture, budget0 } from './helpers/dash-fixture.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { record } from '../engine/lib/records.mjs';
+import { getProfile, profileBudget } from '../engine/lib/profiles.mjs';
 
 // Codex is installed (machine.codex.exe), Codex is open (max_codex 2) and codex-astra is retired (max_astra 0): the norn machine
 const RETIRED = { ...budget0, max_codex: 2, max_sol: 2, max_astra: 0 };
@@ -19,7 +20,7 @@ const heavy = (g, cost = 'balanced') => g.profiles.find(p => p.name === 'heavy')
 const getUi = f => async r => (await f.get(r)).data;
 
 test('a profile saved from Settings is recorded as the caps profile decision; the Overview caps row goes away', async () => {
-  const f = await fx();
+  const f = await fx({ ...RETIRED, ...profileBudget(getProfile('try-it')) });   // the starter caps norn setup writes: nobody chose them yet
   try {
     const before = (await f.get('/api/overview?project=kestrel')).data;
     assert.equal(before.setup.caps_chosen, false);

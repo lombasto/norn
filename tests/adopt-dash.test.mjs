@@ -122,7 +122,8 @@ test('draft, review and apply through the routes: role dashboard, a stale part s
     let a = await d.get('/api/adopt?project=tide');
     assert.equal(a.proposal, null); assert.equal(a.facts.name, 'tide', 'GET scans once when there is no proposal');
     assert.match(a.consent.line, /read-only/); assert.match(a.consent.line, /15 min/); assert.match(a.consent.line, /file text goes to/);
-    assert.equal(a.setup.rules, false); assert.equal(a.setup.caps_chosen, false); assert.equal(a.setup.gate, null);
+    assert.equal(a.setup.rules, true, 'the repo own AGENTS.md counts as rules'); assert.deepEqual(a.setup.rules_from, ['AGENTS.md']);
+    assert.equal(a.setup.caps_chosen, false, 'the starter caps norn setup wrote: nobody chose them'); assert.equal(a.setup.gate, null); assert.equal(a.setup.found_gate, 'npm test');
     assert.equal((await d.post('/api/adopt/draft', { project: 'tide', read: 'yes' })).status, 400, 'read is a boolean choice');
     assert.equal((await d.post('/api/adopt/draft', { project: 'tide', read: false, answers: { bogus: 'x' } })).status, 400);
     const dr = await d.post('/api/adopt/draft', { project: 'tide', read: false, answers: { never: 'force-push to main' } });
@@ -172,14 +173,14 @@ test('draft, review and apply through the routes: role dashboard, a stale part s
     assert.equal(fs.existsSync(path.join(path.dirname(projectFile(sb)), 'rules', 'RULES.md')), false, 'rules skipped');
     assert.equal(JSON.parse(fs.readFileSync(projectFile(sb), 'utf8')).merge.gate.cmd, 'npm test');
     assert.equal(git(tide, 'status', '--porcelain'), ''); assert.equal(git(tide, 'rev-parse', 'HEAD'), head);
-    assert.equal(a.setup.caps_chosen, true); assert.equal(a.setup.gate, 'npm test'); assert.equal(a.setup.rules, false);
+    assert.equal(a.setup.caps_chosen, true); assert.equal(a.setup.caps_from, 'decision'); assert.equal(a.setup.gate, 'npm test'); assert.deepEqual(a.setup.rules_from, ['AGENTS.md']);
     // rules empty -> Write one rule: RULES.md beside project.json + rules_read_whole; the repo untouched
     assert.equal((await d.post('/api/adopt/rule', { project: 'tide', text: '' })).status, 400);
     const ru = await d.post('/api/adopt/rule', { project: 'tide', text: 'Never commit generated files.' });
     assert.equal(ru.status, 200, JSON.stringify(ru.data)); assert.equal(ru.data.added, true);
     assert.match(fs.readFileSync(path.join(path.dirname(projectFile(sb)), 'rules', 'RULES.md'), 'utf8'), /^- Never commit generated files\.$/m);
     assert.deepEqual(JSON.parse(fs.readFileSync(projectFile(sb), 'utf8')).rules_read_whole, ['${project_dir}/rules/RULES.md']);
-    assert.equal((await d.get('/api/adopt?project=tide')).setup.rules, true);
+    assert.deepEqual((await d.get('/api/adopt?project=tide')).setup.rules_from, ['rules/RULES.md', 'AGENTS.md']);
     assert.equal(git(tide, 'status', '--porcelain'), '');
     // apply again: nothing open = 409; a second adoption writes 0 new items
     assert.equal((await d.post('/api/adopt/apply', { project: 'tide' })).status, 409);
@@ -284,13 +285,17 @@ test('screen 4 Review: a rail of parts, one card per part with Approve / Skip, a
 test('empty states: the first-task box offers the look; an empty Roadmap offers the draft; the Overview setup card names rules, caps and the merge gate', () => {
   const ov = { now: new Date().toISOString(), projects: ['tide'], needs_you: 0, needs: [], running: { claude: { n: 0, cap: 1 }, codex: { n: 0, cap: 0 }, lanes: [] },
     burn: { usage: {}, top: [], executors: [] }, paused: false, checkin_locked: false,
-    first_run: { project: 'tide', lane: 'first', caps: {} }, setup: { project: 'tide', rules: false, caps_chosen: false, gate: null, found_gate: 'npm test', roadmap: 0, agent_files: ['AGENTS.md'] } };
+    first_run: { project: 'tide', lane: 'first', caps: {} }, setup: { project: 'tide', rules: false, rules_from: [], caps_chosen: false, gate: null, found_gate: 'npm test', roadmap: 0, agent_files: [], version: 'v1', caps: { max_claude_workers: 1 } } };
   const h = renderTab('overview', { overview: ov, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
   assert.match(h, /Or let Norn look at the repo and draft a roadmap, rules and a first task/); assert.match(h, /data-tab="adopt"/);
   assert.match(h, /id="setup-gaps"/);
-  assert.match(h, /No project rules yet\. Workers follow the repo's own AGENTS\.md/);
+  assert.match(h, /No project rules yet: no rules\/RULES\.md and no agent rules file/);
   assert.match(h, /No caps profile is on record\. Nobody chose them/); assert.doesNotMatch(h, /scheduler stays off/); assert.match(h, /Keep the starter caps/);
-  assert.match(h, /Merges are not gated/); assert.match(h, /npm test/);
+  assert.match(h, /Merges are not gated/); assert.match(h, /data-act="setup-gate" data-project="tide" data-cmd="npm test" data-version="v1"/, 'the found command is one click');
+  // rules from the repo's CLAUDE.md and caps from budget.json: the card names them in its In place line
+  const have = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, rules: true, rules_from: ['CLAUDE.md'], caps_chosen: true, caps_from: 'budget', caps: { max_claude_workers: 5, max_codex: 0, weekly_stop_pct: null } } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
+  assert.doesNotMatch(have, /No project rules yet|Nobody chose them/);
+  assert.match(have, /In place: rules: CLAUDE\.md · caps \(budget\.json\): 5 Claude workers, 0 Codex runs, weekly stop % unset \(no limit\)/);
   const done = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, rules: true, caps_chosen: true, gate: 'npm test', roadmap: 3 } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
   assert.doesNotMatch(done, /id="setup-gaps"/, 'nothing missing: no card');
   const kept = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, caps_kept: true } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });

@@ -20,6 +20,8 @@ const want = (re, v, what) => { if (!re.test(String(v ?? ''))) throw new ClaimsE
 export const workKey = (project, home, lane) => `work/${want(NAME, project, 'project')}/${want(HOME, home, 'home')}/${want(NAME, lane, 'lane')}.json`;
 export const homeKey = id => `homes/${want(HOME, id, 'home')}.json`;
 export const projectKey = project => `projects/${want(NAME, project, 'project')}.json`;
+/** the merge leader of a project (SPEC 4.8): one exclusive key, no overlap test */
+export const leaderKey = project => `leader/${want(NAME, project, 'project')}/merge.json`;
 /** the allow file of a pair of `home/lane` refs, either order */
 export const allowKey = (project, a, b) => `allow/${want(NAME, project, 'project')}/${[want(LANE, a, 'lane ref'), want(LANE, b, 'lane ref')].sort().map(x => x.replace('/', '~')).join('+')}.json`;
 
@@ -50,6 +52,8 @@ function hitsOf(me, claims) {
 }
 const whyOf = h => `${h.kind} overlaps ${h.home}/${h.lane}: ${h.what.join(' ')}${h.kind === 'scope' && h.noScope ? ' (brief has no Scope: line)' : ''}`;
 const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true, hit: h, why: whyOf(h) });
+const owned = c => c?.kind === 'work' || c?.kind === 'leader';
+const who = c => (c.kind === 'leader' ? `${c.home}/${c.role} leader` : `${c.home}/${c.lane}`);
 const sameSet = (a = [], b = []) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
 const unchanged = (c, me) => c?.kind === 'work' && c.home === me.home && c.branch === me.branch && sameSet(c.items, me.items) && sameSet(c.scope, me.scope) && sameSet(c.touched, me.touched);
 const netErr = e => e instanceof ClaimsError && /^git (fetch|push)\b/.test(e.message);
@@ -153,24 +157,26 @@ export function renewWork(f, own, o = {}) {
   if (!keys.length) return { ok: true, renewed: {}, gone: [], drift: [] };
   try {
     return under(f, () => rounds(f, claims => {
-      const gone = keys.filter(k => claims[k]?.kind !== 'work' || claims[k].nonce !== own[k].nonce), edits = {}, drift = [];
+      const gone = keys.filter(k => !owned(claims[k]) || claims[k].nonce !== own[k].nonce), edits = {}, drift = [];
       for (const k of keys.filter(x => !gone.includes(x))) {
-        const c = claims[k], next = { ...c, n: c.n + 1, renewed_at: at, run: own[k].run ?? c.run, touched: own[k].touched ? capTouched(own[k].touched) : c.touched };
+        const c = claims[k];
+        if (c.kind === 'leader') { edits[k] = { ...c, n: c.n + 1, renewed_at: at }; continue; }   // exclusive by key: no drift
+        const next = { ...c, n: c.n + 1, renewed_at: at, run: own[k].run ?? c.run, touched: own[k].touched ? capTouched(own[k].touched) : c.touched };
         const before = new Set(hitsOf(c, claims).map(h => h.key));
         for (const h of hitsOf(next, claims)) if (!before.has(h.key)) drift.push({ key: k, hit: h, why: `scope drift: ${c.home}/${c.lane} now changes files ${h.home}/${h.lane} claims (${h.what.join(' ')})` });
         edits[k] = next;
       }
       const renewed = Object.fromEntries(Object.entries(edits).map(([k, c]) => [k, c.n])), res = { ok: true, renewed, gone, drift };
       if (!Object.keys(edits).length) return res;
-      return { edits, msg: `renew ${Object.values(edits).map(c => `${c.home}/${c.lane} n=${c.n}`).join(' ')}`, ok: res,
+      return { edits, msg: `renew ${Object.values(edits).map(c => `${who(c)} n=${c.n}`).join(' ')}`, ok: res,
         landed: c => Object.entries(renewed).every(([k, n]) => c[k]?.nonce === own[k].nonce && c[k]?.n === n) };
     }, o));
   } catch (e) { if (netErr(e)) return { offline: true, why: UNREACHABLE }; throw e; }
 }
-/** the observer's clock (SPEC 4.5): { key: { n, first_seen_ms } } of every other home's work claim - a new n restarts its timer, a gone file leaves */
+/** the observer's clock (SPEC 4.5): { key: { n, first_seen_ms } } of every other home's work and leader claim - a new n restarts its timer, a gone file leaves */
 export function observeClaims(claims, seen = {}, { home, now = Date.now() }) {
   const out = {};
-  for (const [k, c] of Object.entries(claims)) if (c?.kind === 'work' && c.home !== home) out[k] = seen[k]?.n === c.n ? seen[k] : { n: c.n, first_seen_ms: now };
+  for (const [k, c] of Object.entries(claims)) if (owned(c) && c.home !== home) out[k] = seen[k]?.n === c.n ? seen[k] : { n: c.n, first_seen_ms: now };
   return out;
 }
 const staleAfterS = (c, pol) => (c.lease_s ?? pol.lease_s) + pol.stale_grace_s;
@@ -189,13 +195,43 @@ export function takeWork(f, { project, home, lane, seen = {}, now = Date.now(), 
     return { edits: dropEdits(claims, project, home, lane), msg: `take over ${home}/${lane} (${project}) by ${by}: stale at n=${c.n}`, ok: { ok: true, key, claim: c }, landed: x => !x[key] };
   }, o));
 }
+// ---------- S6a (SPEC 4.8): the merge leader - the same CAS, renew (renewWork), fence and stale clock as a work claim ----------
+/**
+ * claimLeader(f, { project, home, seen, now, pol, lease_s }) -> { won, key, n, claim, took? } | { follower, holder, why } | { queued, why }.
+ * A free key is created; this home's own file (a lost own record) is adopted with n+1; another home's STALE leader is taken over at once
+ * (no owner step: opening PRs is idempotent), in one commit that names the stale holder.
+ */
+export function claimLeader(f, { project, home, seen = {}, now = Date.now(), pol = syncPolicy(), lease_s }, o = {}) {
+  const key = leaderKey(project), at = new Date(now).toISOString();
+  try {
+    return under(f, () => rounds(f, claims => {
+      const c = claims[key]?.kind === 'leader' ? claims[key] : null;
+      if (c && c.home !== home && !isStale(seen[key], c, now, pol)) return { follower: true, key, holder: c.home, why: `merge leader is ${c.home}` };
+      const mine = c?.home === home ? c : null, claim = { v: 1, kind: 'leader', role: 'merge', project, home, nonce: mine?.nonce || crypto.randomUUID(),
+        n: (c?.n || 0) + 1, claimed_at: mine?.claimed_at || at, renewed_at: at, lease_s: lease_s ?? pol.lease_s };
+      const took = c && !mine ? c.home : null;
+      return { edits: { [key]: claim }, msg: took ? `take over ${took}/merge leader (${project}) by ${home}: stale at n=${c.n}` : `claim ${home}/merge leader (${project}) n=${claim.n}`,
+        ok: { won: true, key, n: claim.n, claim, ...(took ? { took } : {}) }, landed: x => x[key]?.nonce === claim.nonce && x[key]?.n === claim.n };
+    }, o));
+  } catch (e) { if (netErr(e)) return { queued: true, why: UNREACHABLE }; throw e; }
+}
+/** may this home run the merge queue now (local only: its leader record, confirmed within fence_s)? null = yes | the why it may not */
+export function leaderWhy(state, f, { project, now = Date.now(), pol = syncPolicy() }) {
+  const l = readSync(state, 'leader'), key = leaderKey(project);
+  if (l.key === key && now - l.confirmed_ms <= pol.fence_s * 1000) return null;
+  if (l.key === key) return `merge leader claim not confirmed for ${Math.floor((now - l.confirmed_ms) / 1000)} s (fenced)`;
+  const c = localClaims(f)[key];
+  return c?.kind === 'leader' ? `merge leader is ${c.home}` : 'no merge leader confirmed yet (the tick claims it)';
+}
 /** the claims as last fetched (no network; {} before the first fetch) */
 export const localClaims = f => { try { return readClaims(f).claims; } catch { return {}; } };
 
 // ---------- the home's own bookkeeping: <state>/sync/<file> (local, never published) ----------
 // own: { key: { project, home, lane, nonce, n, confirmed_ms } } (confirmed_ms = this clock when a claim / renew push landed: the fence);
-// seen: the observer's clock; holds: { RUN-n: { why, home, lane, kind } } (queued runs a claim holds); rows: { rows: [digest rows] }
-export const SYNC_FILES = { own: 'claims-own.json', seen: 'claims-seen.json', holds: 'claim-holds.json', rows: 'claims-digest.json' };
+// seen: the observer's clock; holds: { RUN-n: { why, home, lane, kind } } (queued runs a claim holds); rows: { rows: [digest rows] };
+// leader: { key, project, home, nonce, n, confirmed_ms } (this home's merge leader claim, S6a); prs: { branch: { tip, status, why, url } }
+// (a non-leader's PRs of its DONE lane branches, so an opened PR costs no gh call per tick)
+export const SYNC_FILES = { own: 'claims-own.json', seen: 'claims-seen.json', holds: 'claim-holds.json', rows: 'claims-digest.json', leader: 'leader.json', prs: 'leader-prs.json' };
 const syncPath = (state, name) => path.join(state, 'sync', SYNC_FILES[name]);
 export const readSync = (state, name) => { try { return JSON.parse(fs.readFileSync(syncPath(state, name), 'utf8')) || {}; } catch { return {}; } };
 export function writeSync(state, name, v) {
