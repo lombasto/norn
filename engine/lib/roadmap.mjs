@@ -5,7 +5,7 @@
 // Project-agnostic: every project fact comes from project.json (deliverables target / receipts, root, views.roadmap).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn } from './records.mjs';
+import { readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn, laneNameIn, homeOfId, copyItems } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
@@ -58,7 +58,22 @@ export function foldRoadmap(events, { ordered = false } = {}) {   // ordered: th
   return { items, kids };
 }
 // RM-46 S1d: a synced dir folds the own roadmap + the copies (records.mjs foldHomes: one order on every home)
-export const loadRoadmap = stateDir => (homeOf(stateDir) ? foldRoadmap(loadShared(stateDir, 'item').events, { ordered: true }) : foldRoadmap(readEvents(recordsFile(stateDir, 'item'))));
+// a synced dir's fold also carries the pending item events (another home's, or this home's on another home's item: SPEC 3.7)
+export const loadRoadmap = stateDir => (homeOf(stateDir) ? (v => ({ ...foldRoadmap(v.events, { ordered: true }), pending: v.pending }))(loadShared(stateDir, 'item')) : foldRoadmap(readEvents(recordsFile(stateDir, 'item'))));
+/**
+ * RM-46 S3: the fold as this home reads it. Another home's item names its lanes as that home types them (lane:x = its own x): here they
+ * read lane:b/x, so derive() finds b's copied runs and DLVs; such a node carries home (its "on b" chip). A pending event on an item =
+ * pending [{ ev, home, ts, primary }]. A solo dir: R as is.
+ */
+export function hereLinks(R, home) {
+  if (!home) return R;
+  const items = Object.fromEntries(Object.entries(R.items).map(([id, n]) => {
+    const h = homeOfId(id, home.bare_home), pd = (R.pending?.[id] || []).map(e => ({ ev: e.ev, home: e.home, ts: e.ts, primary: h }));
+    const own = h === home.id ? n : { ...n, home: h, links: (n.links || []).map(t => (/^lane:/.test(t) ? 'lane:' + laneNameIn(laneIdIn(t.slice(5), h), home.id) : t)) };
+    return [id, pd.length ? { ...own, pending: pd } : own];
+  }));
+  return { ...R, items };
+}
 /** the ordered child ids of a node (null = the root: the themes) */
 export const childrenOf = (R, id) => [...(R.kids[id || ''] || [])];
 
@@ -255,10 +270,15 @@ export function unplacedOf(nodes, W) {
 /** the install is the target only when the project names install receipts (SPEC sec. 2 "Target"); else main */
 export const hasInstallTarget = project => { const c = deliverableConfig(project || {}); return c.target === 'install' && (c.receipts || []).length > 0; };
 
+/** RM-46 S3 (SPEC 3.3): another home's deliverable (records.mjs copyItems) as a read-only deliverables row. Its git facts are that
+ * home's: the record says only that a DONE run delivered it (state done, never merged / installed from here). */
+export const dlvCopyRow = it => ({ id: it.id, home: it.home, readonly: true, record_state: it.state, state: 'done', target: 'main', at_target: it.state === 'superseded',
+  ...(it.state === 'superseded' ? { superseded: true } : {}), repo: it.data.repo ?? null, branch: it.data.branch ?? null, lane: it.data.lane ?? null, run: it.data.run ?? null,
+  delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created });
 /** worldOf() filled from the state dir, the deliverables view and git (the engine's scanRepo; branch / sha facts asked lazily) */
 export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle } = {}) {
   project = project || {};
-  const st = loadState(stateDir);
+  const st = loadState(stateDir), away = copyItems(stateDir, 'run');   // RM-46 S3: + the other homes' runs and DLVs (read-only copies)
   let rows = [];
   try { rows = deliverablesView({ stateDir, project, now, git, questions: Object.values(st.items).filter(i => i.kind === 'question') }).rows; } catch { rows = []; }
   const cfg = deliverableConfig(project), hasInstall = hasInstallTarget(project);
@@ -280,7 +300,8 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
     return (shaMemo[x] = !full ? null : git(cfg.repo, ['merge-base', '--is-ancestor', full, s.mainSha], { allowFail: true }) !== null);
   };
   const docs = p => fs.existsSync(path.isAbsolute(p) ? p : path.join(project.root || path.dirname(path.resolve(stateDir)), p));
-  const W = worldOf({ now, items: st.items, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy, home: homeOf(stateDir)?.id });
+  rows = [...rows, ...copyItems(stateDir, 'deliverable').map(dlvCopyRow)];
+  const W = worldOf({ now, items: { ...st.items, ...Object.fromEntries(away.map(r => [r.id, r])) }, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy, home: homeOf(stateDir)?.id });
   W.repo = cfg.repo || null;
   return W;
 }
@@ -291,7 +312,7 @@ function epicsOf(stateDir) {
 
 /** META-ROADMAP S3: the audit's Unplaced list (D3) for the digest - no git (lanes, DLV rows, directives, epics); null = no roadmap yet */
 export function unplacedNow(stateDir, { now = Date.now(), items, dlv = [] } = {}) {
-  const nodes = Object.values(loadRoadmap(stateDir).items);
+  const nodes = Object.values(hereLinks(loadRoadmap(stateDir), homeOf(stateDir)).items);
   if (!nodes.length) return null;
   return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, epics: epicsOf(stateDir), home: homeOf(stateDir)?.id }));
 }
@@ -336,7 +357,7 @@ export function buildTree({ stateDir, project = {}, now, git, memo = null, maxAg
   if (memo && memo.sig === sig && Date.now() - memo.at < maxAgeMs) { memo.hits = (memo.hits || 0) + 1; return memo.tree; }
   project = project || {};
   const W = world({ stateDir, project, now: now ?? Date.now(), git, idle });
-  const tree = treeOf(loadRoadmap(stateDir), W, { project: project.name ?? path.basename(path.resolve(stateDir)), title: project.title || project.name || path.basename(path.resolve(stateDir)) });
+  const tree = treeOf(hereLinks(loadRoadmap(stateDir), homeOf(stateDir)), W, { project: project.name ?? path.basename(path.resolve(stateDir)), title: project.title || project.name || path.basename(path.resolve(stateDir)) });
   if (memo) Object.assign(memo, { sig, at: Date.now(), tree });
   return tree;
 }
@@ -350,7 +371,8 @@ const head = tr => `${tr.title}: ${tr.counts.items} items - past ${tr.counts.pas
 /** one item (and its children) as text lines */
 export function renderItem(n, depth = 0) {
   const pad = '  '.repeat(depth), out = [];
-  out.push(`${pad}${n.id}  ${n.status.padEnd(8)}  ${n.progress.done}/${n.progress.total}  ${n.title}${n.horizon ? ` [${n.horizon}]` : ''}`);
+  out.push(`${pad}${n.id}  ${n.status.padEnd(8)}  ${n.progress.done}/${n.progress.total}  ${n.title}${n.horizon ? ` [${n.horizon}]` : ''}${n.home ? `  (on ${n.home})` : ''}`);
+  for (const e of n.pending || []) out.push(`${pad}      pending: ${e.ev} on ${e.home}, not yet committed on ${e.primary}`);   // RM-46 S3
   out.push(`${pad}      ${n.why}`);
   if (n.proof) out.push(`${pad}      ${lookWords(n)}`);   // META-CATCH S2
   if (n.stuck?.runs) out.push(`${pad}      ${stuckWords(n.stuck)}${n.stuck.flag ? ` - STUCK since ${n.stuck.flag.ts.slice(0, 16)}Z: ${n.stuck.flag.why.join(', ')}` : ''}`);

@@ -47,7 +47,9 @@ export const POLICY_DEFAULTS={
   fallbacks:{claude_over_guard:'codex-astra',codex_down:'implementer',fable_unavailable:'opus-xhigh'},
   context:{implementer:{no_new_step_k:90,handoff_k:110,hard_max_k:150},planner:{no_new_step_k:90,handoff_k:150,hard_max_k:150},
     runner:{no_new_step_k:90,handoff_k:110,hard_max_k:150},controller:{no_new_step_k:90,handoff_k:110,hard_max_k:150},
-    checkin:{no_new_step_k:90,handoff_k:110,hard_max_k:150}},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
+    checkin:{no_new_step_k:90,handoff_k:110,hard_max_k:150},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
+    implementer_1m:{no_new_step_k:450,handoff_k:500,hard_max_k:560},runner_1m:{no_new_step_k:450,handoff_k:500,hard_max_k:560},
+    planner_1m:{no_new_step_k:800,handoff_k:900,hard_max_k:950}},   // NORN-CTX-1M (DIR-100): the row of a run whose model has a 1M window ([1m]; ctxRole)
   sizing:{thrash_startup_pct:60,loose_pct:40},   // WORK-SIZING S1 (sizing.mjs verdict): a first edit at this share of the no-new-step mark in hand-off sessions = thrashing; every peak under loose_pct of the hand-off mark = loose
   iteration:{round_estimate_default:2,escalation_multiplier:2,escalation_action:'raise effort',escalation_effort:'xhigh',wall_time_multiplier:2},   // escalation_effort: META-TEND P2 (owner Q3) - the effort 'raise effort' goes to
   cadence:{checkin_interval_min:15,trigger_on_exit:true},
@@ -147,10 +149,10 @@ export const SETTINGS=[
   S('executors','policy.fallbacks.claude_over_guard','Fallback: Claude over the weekly guard',en(FALLBACK),'Who takes Claude work once the weekly guard trips.','codex-astra','"wait" stalls lanes until reset.',[CHECKIN]),
   S('executors','policy.fallbacks.codex_down','Fallback: Codex down',en(FALLBACK),'Who takes Codex work when Codex is unavailable.','implementer','Moves load onto Claude weekly usage.',[CHECKIN]),
   S('executors','policy.fallbacks.fable_unavailable','Fallback: fable executor unavailable',en(FALLBACK),'Who takes the work routed to the fable executor when it is unavailable.','opus-xhigh','Opus xhigh is slower on genuinely hard proofs.',[CHECKIN]),
-  ...Object.keys(POLICY_DEFAULTS.context).flatMap(a=>[
-    S('context',`policy.context.${a}.no_new_step_k`,`${a}: no new step past (k tokens)`,int(30,400),'Past this context the agent starts no new step.',String(POLICY_DEFAULTS.context[a].no_new_step_k),'Higher = fewer hand-offs but costlier, less reliable late turns.',[`the ${a} agent file (policy:context.${a})`]),
-    S('context',`policy.context.${a}.handoff_k`,`${a}: hand-off at (k tokens)`,int(30,400),'At this context the agent stops at a clean point and hands off (norn done --outcome handoff).',String(POLICY_DEFAULTS.context[a].handoff_k),'Higher = each turn re-reads a bigger context (cost grows per turn).',[`the ${a} agent file (policy:context.${a})`]),
-    S('context',`policy.context.${a}.hard_max_k`,`${a}: hard max (k tokens)`,int(30,400),'Never run past this context.','150','Near the window limit quality drops and compaction may kick in.',[`the ${a} agent file (policy:context.${a})`])]),
+  ...Object.keys(POLICY_DEFAULTS.context).map(a=>[a,int(30,a.endsWith('_1m')?1000:400)]).flatMap(([a,kI])=>[   // a 200k-window model cannot use more than 400k; a [1m] row up to 1000k
+    S('context',`policy.context.${a}.no_new_step_k`,`${a}: no new step past (k tokens)`,kI,'Past this context the agent starts no new step.',String(POLICY_DEFAULTS.context[a].no_new_step_k),'Higher = fewer hand-offs but costlier, less reliable late turns.',[`the ${a} agent file (policy:context.${a})`]),
+    S('context',`policy.context.${a}.handoff_k`,`${a}: hand-off at (k tokens)`,kI,'At this context the agent stops at a clean point and hands off (norn done --outcome handoff).',String(POLICY_DEFAULTS.context[a].handoff_k),'Higher = each turn re-reads a bigger context (cost grows per turn).',[`the ${a} agent file (policy:context.${a})`]),
+    S('context',`policy.context.${a}.hard_max_k`,`${a}: hard max (k tokens)`,kI,'Never run past this context.',String(POLICY_DEFAULTS.context[a].hard_max_k),'Near the window limit quality drops and compaction may kick in.',[`the ${a} agent file (policy:context.${a})`])]),
   S('context','policy.sizing.thrash_startup_pct','Sizing: thrashing at first edit (% of no-new-step mark)',int(30,95),'The verdict of norn size on a lane stage: sessions that handed off after using this share of the no-new-step mark before their first edit are thrashing; a stage whose every peak stayed under the second share of the hand-off mark could have a lower mark.',String(POLICY_DEFAULTS.sizing.thrash_startup_pct),'Lower = a stage is called thrashing sooner; the verdict changes no mark by itself.',['norn size']),
   S('context','policy.sizing.loose_pct','Sizing: could be lower, every peak under (% of hand-off mark)',int(5,90),'A lane stage whose every session peaked under this share of the hand-off mark reads "could be lower" (norn size).',String(POLICY_DEFAULTS.sizing.loose_pct),'Display only: unused context costs nothing; a loose mark only catches a runaway late.',['norn size']),
   S('iteration','policy.iteration.round_estimate_default','Default round estimate per stage',int(1,10),'Rounds a stage is expected to take when its plan gives none.','2','Higher hides grinding stages longer.',[CHECKIN]),
@@ -432,14 +434,15 @@ export function floorChanges(b,changes,extra={}){
   return {changes:{...changes,...Object.fromEntries(raised.map(r=>[r.key,r.to]))},raised};}
 
 const onoff=v=>v?'on':'OFF';
+const t1m=r=>` (a [1m] run: ~${r.no_new_step_k}k / ${r.handoff_k}k)`;   // NORN-CTX-1M: an agent file names both tiers (no new step / hand-off)
 export function generatedLines(b,extra={}){const f=withDefaults(b),p=f.policy,c=p.context,it=p.iteration,pv=extra.providers||[];
   const narrow=rankNames(pv,extra).map(n=>[n,allowedClasses(p,n,pv)]).filter(([,a])=>a.length!==ALL_CLASSES.length||!ALL_CLASSES.every(x=>a.includes(x)));
   const ranks=` Allowed classes: ${narrow.map(([n,a])=>`${n} ${a.join('+')||'none'}`).join('; ')}${narrow.length?'; others all':'all executors all'}.`;
   const exs=Object.entries(p.executors).map(([k,e])=>`${k} -> ${[e.executor,e.model,e.effort].filter(Boolean).join(' ')}`).join('; ');
   return {
-    'context.implementer':`HANDOFF: start NO new step past ~${c.implementer.no_new_step_k}k; at ~${c.implementer.handoff_k}k (even mid-wait) stop at a clean point (work committed), hand off: \`norn done --outcome handoff --handoff-file F\``,
-    'context.planner':`HANDOFF (OWNER 2026-10-29): start NO new step (probe, bake, investigation) past ~${c.planner.no_new_step_k}k. Past ${c.planner.no_new_step_k}k you MAY run to ~${c.planner.handoff_k}k to FINISH`,
-    'context.runner':`- Long runs via run_in_background; read log tails, never whole logs. HANDOFF at ~${c.runner.handoff_k}k: clean point, then \`norn done --outcome handoff --handoff-file F\`.`,
+    'context.implementer':`HANDOFF: start NO new step past ~${c.implementer.no_new_step_k}k; at ~${c.implementer.handoff_k}k${t1m(c.implementer_1m)} (even mid-wait) stop at a clean point (work committed), hand off: \`norn done --outcome handoff --handoff-file F\``,
+    'context.planner':`HANDOFF (OWNER 2026-10-29): start NO new step (probe, bake, investigation) past ~${c.planner.no_new_step_k}k${t1m(c.planner_1m)}. Past ${c.planner.no_new_step_k}k you MAY run to ~${c.planner.handoff_k}k to FINISH`,
+    'context.runner':`- Long runs via run_in_background; read log tails, never whole logs. HANDOFF at ~${c.runner.handoff_k}k${t1m(c.runner_1m)}: clean point, then \`norn done --outcome handoff --handoff-file F\`.`,
     'context.controller':`Controller hand-off: start no new step past ~${c.controller.no_new_step_k}k; hand off at ~${c.controller.handoff_k}k; never past ~${c.controller.hard_max_k}k.`,
     'iteration':`D. Controller: a stage past ~${it.escalation_multiplier}x its round estimate is escalated (first: ${it.escalation_action}${it.escalation_action==='raise effort'?` to ${it.escalation_effort}`:''}; Opus xhigh / Fable) or re-scoped, never left to grind.`,
     'speed_mode':`SPEED MODE switches (dashboard Settings): A ${onoff(p.speed_mode.A)}, B ${onoff(p.speed_mode.B)}, C ${onoff(p.speed_mode.C)}, D ${onoff(p.speed_mode.D)} - an OFF item does not apply.`,
