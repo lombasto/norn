@@ -41,6 +41,8 @@ export function homeIdOf(cfg) {
   if (ids.length > 1) throw new Error(`the synced projects name several homes (${ids.join(', ')}): one machine is one home`);
   return ids[0] ?? null;
 }
+/** S5: this home's synced projects: [{ project, state }] (sync off: none) */
+export const syncedDirs = cfg => { const id = homeIdOf(cfg); return id ? projects(cfg, id).map(p => ({ project: p, state: path.join(cfg.state_root, p) })) : []; };
 // cfg + its home_id, or null (off); throws like homeIdOf
 const synced = cfg => { const id = homeIdOf(cfg); return id ? { ...cfg, home_id: id } : null; };
 
