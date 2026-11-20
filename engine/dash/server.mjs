@@ -1061,9 +1061,10 @@ export function createDashboard(o) {
   const streamSource = p => ({ project: p.name, hbDir: path.join(p.state, 'hb'),
     files: Object.fromEntries(RECORD_FILES.map(f => [f, path.join(p.state, f + '.jsonl')])),
     flags: () => fresh(async () => { const [a, b, quiet, tick_locked] = await Promise.all([...pausedFiles(p).map(existsA), existsA(quietFlag(p)), lockFreshA(p)]); return { paused: a || b, quiet, tick_locked }; }),
-    // what the tabs show besides records: the ledger, STATUS.md (burn), live usage, the docs, and the async caches (git-derived
-    // deliverables, account usage) - one stat per file + two timestamps per poll; kick() keeps the caches fresh while watched
-    sig: () => fresh(async () => (await Promise.all([p.ledger, path.join(p.state, 'STATUS.md'), o.liveUsage, ...(p.docs || []).map(d => d.path)].map(f => (f ? statSig(f) : '-'))))
+    // what the tabs show besides records: the ledger, STATUS.md (burn), live usage, the docs, the branch scan (a landed Scan now /
+    // tick refresh repaints the Branches view), and the async caches (git-derived deliverables, account usage) - one stat per file +
+    // two timestamps per poll; kick() keeps the caches fresh while watched
+    sig: () => fresh(async () => (await Promise.all([p.ledger, path.join(p.state, 'STATUS.md'), o.liveUsage, branchesFile(p.state), ...(p.docs || []).map(d => d.path)].map(f => (f ? statSig(f) : '-'))))
       .concat([dlv.get(p.name)?.sig ?? '-', acct.sig ?? '-', rm.get(p.name)?.hash ?? '-', plans.get(p.name)?.hash ?? '-']).join('|')),   // cache CONTENT hashes: an unchanged refresh is no event
     // DEC-341: a new instruction view / the end of a rebuild a page shows as "refreshing" goes out at once, outside the pulse window
     // (bounded: one change per rebuild, a rebuild at most one per insTtlMs)
