@@ -391,7 +391,7 @@ function capCheck(o, staleMs) { const full = capFull(o, staleMs); if (full) thro
 function shareCheck(o, staleMs) {
   if (o.kind === 'checkin' || o.role === 'helper' || !(infoOf(o)?.caps || []).includes('max_claude_workers')) return;
   const me = path.basename(path.resolve(o.state));
-  const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me), waiting: slotWaiters(o.state, { resources: o.resources || sampleResources }), mine: -Infinity });
+  const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me), waiting: slotWaiters(o.state, { now: o.now ?? Date.now(), resources: o.resources || sampleResources }), mine: -Infinity });
   if (sv) throw new RunRefused(sv, 4);
 }
 
@@ -515,7 +515,7 @@ export function queuedAhead(o) {
   const out = [];
   for (const s of states) {
     let rows;
-    try { rows = walkQueue(s, { act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
+    try { rows = walkQueue(s, { now: o.now ?? Date.now(), act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
     for (const r of rows) {
       const rc = EXECUTORS[r.executor]?.caps ?? [];
       if (!rc.some(k => caps.includes(k)) || PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
