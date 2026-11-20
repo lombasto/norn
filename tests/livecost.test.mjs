@@ -129,9 +129,10 @@ test('the dash in API mode: the strip carries the 24 h spend (running runs as an
     let html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel', strip: ov });
     assert.match(html, /id="burn-api-parts"[^>]*>\$0\.00 from 0 Claude runs ended in the last 24 h \(every project\) · \$0\.14 running \(1 run, estimate\) · \$0\.40 dashboard chats/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.match(html, /title="[^"]*every run of the lane[^"]*">\$ to date, all runs<\/th>/, 'the header says it sums every run of the lane (fair-slots item 2)');
-    assert.match(html, /id="lane-gen"[\s\S]*?class="mono lane-usd">~\$0\.14</);
-    assert.match(html, /id="lane-render"[\s\S]*?class="mono lane-usd"><span class="mute">-</, 'a lane with no Claude spend');
+    // the Lanes board: the figure sits in the lane's facts and says it sums every run of the lane (fair-slots item 2)
+    assert.match(html, /id="lane-gen"[\s\S]*?<span class="mono lane-usd" title="[^"]*every run of the lane[^"]*">~\$0\.14 to date, all runs<\/span>/, 'the figure says it sums every run of the lane (fair-slots item 2)');
+    const render = html.match(/id="lane-render"[\s\S]*?<\/article>/)?.[0];
+    assert.ok(render, 'the lane with no Claude spend is on the board'); assert.doesNotMatch(render, /lane-usd|to date/, 'a lane with no Claude spend shows no figure');
     html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel' });
     assert.match(html, /id="usage-spend"><h2>API spend <b>\$0\.54<\/b> today/);
     assert.match(html, /<b>gen<\/b>[^<]*<span[^>]*>live<\/span><\/td><td class="mono">~\$0\.14<\/td><td class="mono">~\$0\.14<\/td>/);
