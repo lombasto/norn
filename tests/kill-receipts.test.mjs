@@ -31,7 +31,7 @@ const insideAlive = (() => { try { process.kill(inside.pid, 0); return true; } c
 fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ error: job.error, job: job.name, inside: inside.pid, insideAlive, r }));
 process.exit(0);`;
   const f = path.join(t, 'held.mjs'); fs.writeFileSync(f, src);
-  const c = spawn(process.execPath, [f], { stdio: 'ignore' });
+  const c = spawn(process.execPath, [f], { stdio: 'ignore', windowsHide: true });
   await new Promise(r => c.on('exit', r));
   return JSON.parse(fs.readFileSync(out, 'utf8'));
 }

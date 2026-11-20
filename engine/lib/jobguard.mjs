@@ -154,7 +154,7 @@ export function reapGroup(pgid, rc = {}, { list = groupProcs } = {}) {
   try { process.kill(-pgid, 'SIGKILL'); return { killed: rows.map(p => ({ pid: p.pid, image: p.name })) }; } catch (e) { return e.code === 'ESRCH' ? { killed: [] } : { error: e.message }; }
 }
 function groupProcs(pgid) {
-  const r = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid=,comm=,args='], { encoding: 'utf8', timeout: 15000, maxBuffer: 64 << 20 });
+  const r = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid=,comm=,args='], { encoding: 'utf8', timeout: 15000, maxBuffer: 64 << 20, windowsHide: true });
   return String(r.stdout || '').split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(m => m && +m[3] === pgid)
     .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), cmd: m[5] }));
 }
