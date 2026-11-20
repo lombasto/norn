@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, loadTab, renderTab, healthStates, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, loadTab, loadParts, renderTab, healthStates, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
 import { worstState } from '../engine/dash/cells.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
@@ -39,12 +39,14 @@ test('every tab renders with fixture state: ids from records / runs / transcript
   const f = await fixture();
   try {
     const get = getter(f), out = {};
-    for (const [tab] of TABS) { const d = await loadTab(tab, 'kestrel', get); out[tab] = renderTab(tab, d, { project: 'kestrel' }); clean(out[tab], tab);
+    for (const [tab] of TABS) { const d0 = await loadTab(tab, 'kestrel', get), d = tab === 'runs' ? { ...d0, ...await loadParts(tab, 'kestrel', d0, get), parts_loading: false } : d0; out[tab] = renderTab(tab, d, { project: 'kestrel' });
+      clean(out[tab], tab); if (tab === 'runs') { out.runDoc = renderTab(tab, d, { project: 'kestrel', run: 'RUN-1' }); clean(out.runDoc, 'run doc'); }   // Runs: the live part, then its history part
       assert.ok(out[tab].includes(`id="panel-${tab}"`), tab); }
     const has = (tab, ...ids) => { for (const id of ids) assert.ok(out[tab].includes(id), `${tab} shows ${id}`); };
     has('inbox', 'id="q-Q-1"', 'Choose (a) - recommended', 'Choose (b)', 'RUN-1', 'L:gen', 'STOPPED');
     has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'parked by Q-1', 'exited: STOPPED: red test', 'codex-sol', 'RUN-2');
-    has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'kestrel-implementer', '65k', 'gpt-5.4', '60,559');
+    has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'gpt-5.4', '60,559');
+    has('runDoc', 'id="run-doc" data-run="RUN-1"', 'kestrel-implementer', '65k');   // stage RUNS: an ended run's subagents and context are in its document
     has('records', 'id="rec-DEC-1"', 'id="rec-DIR-1"', 'keep going', 'in-force', 'active');
     has('docs', 'id="docf-doc-0"', 'id="docf-doc-1"', 'Plan', 'missing', 'Project docs');   // META-UX-BUILD S3: the list; the file is its own part (docs.test)
     // LEDGER-UX R1: /api/ledger serves 100 lines by default (the fixture has 30), one row per entry
