@@ -116,7 +116,9 @@ test('shot: norn shot on the command line drives the fake browser and leaves no 
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^shot .*d\.png$/m);
   assert.ok(fs.existsSync(out));
-  assert.deepEqual(fs.readdirSync(prof), [], 'temp profile removed');
+  // the jobguard helper is a cache of the temp dir by design (jobguard.mjs: <tmp>/meta-jobguard-<sha>.exe, compiled by the cleanup's
+  // process listing, strays.listProcs -> boundedSync); everything else is the browser's
+  assert.deepEqual(fs.readdirSync(prof).filter(f => !/^meta-jobguard-[0-9a-f]{12}\.exe$/.test(f)), [], 'temp profile removed');
   const start = readLog(logf)[0];
   assert.ok(start.argv.includes('--window-size=800,600'));
   assert.ok(!alive(start.pid) && !alive(start.child));
