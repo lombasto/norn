@@ -289,6 +289,10 @@
 :root.norn .pulse { border-radius: 0; width: calc(4 * var(--px)); height: calc(4 * var(--px)); }
 :root.norn.motion .pulse, :root.norn.motion .chat-live::before { animation: norn-blink 1.2s steps(1, end) infinite; }
 @keyframes norn-blink { 50% { visibility: hidden; } }
+/* the Lanes elapsed-vs-budget bar (pages/lanes.mjs .ebar): grows from elapsed / budget to full over the remaining minutes, so no timer
+   redraws it; no .motion = a still bar at the elapsed width */
+:root.motion .ebar i { animation: ebar var(--dur) linear forwards; }
+@keyframes ebar { to { width: 100%; } }
 :root.norn .lbl .ho { margin: 0 0 0 4px; padding: 0 4px; font-size: 11px; }
 /* RM-35: the diff viewer (diffview.mjs; index.html .dv / #dvpip) - the panel in the drawer's 9-slice chrome, its title in the pixel font,
    square marks and rows; the inline box ruled on the pixel grid. Colours are the tokens above (palette-locked); a still panel, no motion */

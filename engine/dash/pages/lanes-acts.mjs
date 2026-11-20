@@ -1,13 +1,12 @@
-// The Lanes page's handlers (moved verbatim from index.html, stage NAV): data-act -> fn(el, c); index.html dispatches every click on a
-// [data-act] through one registry (pages/*-acts.mjs `acts`), c = { S, render, post, $, go, act, tabUrl, lanesRepaint, openFeed, feedGo, map }.
+// The Lanes page's handlers (stage NAV moved them from index.html): data-act -> fn(el, c); index.html dispatches every click on a
+// [data-act] through one registry (pages/*-acts.mjs `acts`), c = { S, render, post, $, go, act, tabUrl, lanesRepaint, runsRepaint, feedGo }.
 import { laneKey } from './lanes.mjs';
 const P = f => (b, c) => f(b.dataset, b.dataset.project, c, b);
+// stage LANES: a row opens in place (S.laneOpen keeps it open through a stream repaint); the chevron and Esc close it
+const setOpen = (b, on) => { const r = b.closest('.lrow'); b.setAttribute('aria-expanded', on); b.setAttribute('aria-label', `${on ? 'Close' : 'Open'} ${b.dataset.lane}`); r.querySelector('.lexp').hidden = !on; };
 export const acts = {
-  'map-more': P((d, p, { S, render }) => { const l = d.lane; if (S.mapMore.has(l)) S.mapMore.delete(l); else S.mapMore.add(l); render(); }),
   'lane-feed': P((d, p, { feedGo }) => { feedGo(d.project || p, d.run); }),   // a Lanes row's Feed: the run URL (?tab=runs&run=), so Back returns to Lanes
-  'map-zoom': P((d, p, { S, render }) => { S.mapZoom = Number(d.z); render(); }),
-  'map-view': P((d, p, { S, render }) => { S.mapView = d.view; try { localStorage.setItem('meta-mapview', d.view); } catch { /* private mode */ } render(); }),
-  'map-nz': P((d, p, { S, map }, b) => { S.nornZoom = Number(d.z); map()?.map.zoom(S.nornZoom); document.querySelectorAll('[data-act="map-nz"]').forEach(x => { const on = x === b; x.classList.toggle('strong', on); x.setAttribute('aria-pressed', on); }); }),
+  'lane-open': P((d, p, { S }, b) => { const k = laneKey(p, d.lane), on = !S.laneOpen.has(k); if (on) S.laneOpen.add(k); else S.laneOpen.delete(k); setOpen(b, on); }),
   // RM-19 S1: Archive acts on the tap - the row leaves at once (S.archiving), then an Undo bar (S.laneUndo, the chat's Undo without a
   // confirm); a refusal (409: an unmerged deliverable) puts the row back with the reason kept in S.laneRefused, which a re-render keeps
   archive: P((d, p, { S, render, post, lanesRepaint }) => { const k = laneKey(p, d.lane); S.archiving.add(k); delete S.laneRefused[k]; S.laneUndo = null; lanesRepaint();
@@ -17,10 +16,9 @@ export const acts = {
   'lane-type': P((d, p, { S, tabUrl, lanesRepaint }) => { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); }),
   'lane-show': P((d, p, { S, tabUrl, lanesRepaint }) => { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); }),
 };
-/** the Norn Map's node click: a run opens its document on Runs, a question its Inbox row, anything else is selected */
-export function pickMap(id, { S, render, feedGo, map }) {
-  const NM = map(), n = (NM?.d.nodes || []).find(x => x.id === id); if (!n) return;
-  if (n.feed) { feedGo(S.project, n.feed); return; }
-  if (n.type === 'question') { S.tab = 'inbox'; S.jump = 'q-' + id; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=inbox`); render(); return; }
-  NM.map.select(id);
+/** Esc inside an open lane row closes it and gives the focus back to its chevron; true when it did */
+export function laneEsc(e, { S }) {
+  const r = e.target.closest?.('.lrow'), b = r?.querySelector('.lopen');
+  if (!b || b.getAttribute('aria-expanded') !== 'true') return false;
+  S.laneOpen.delete(laneKey(b.dataset.project, b.dataset.lane)); setOpen(b, false); b.focus(); return true;
 }

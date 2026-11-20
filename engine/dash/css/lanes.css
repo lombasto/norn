@@ -1,35 +1,75 @@
-/* The Lanes page (moved verbatim from index.html, stage NAV): the lane table's rows and filter chips, and the Map. */
-.lane-why{margin-top:3px;font-size:12.5px;max-width:46ch}.lane-why summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;list-style:none}.lane-why summary::-webkit-details-marker{display:none}.lane-why[open] summary{white-space:normal}.lane-why ul{margin:4px 0 0;padding-left:16px;font-weight:400}.lane-srcs{display:flex;flex-wrap:wrap;gap:2px 8px;max-width:46ch}.lane-src{font-size:12px}button.lnk.lane-src{background:none;border:0;padding:0;color:var(--accent);cursor:pointer}@media (max-width:700px){.lane-why,.lane-srcs{max-width:62vw}}
-.lane-kind{margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;max-width:46ch}.lane-out{color:var(--mute);overflow-wrap:anywhere}.lane-types{border-left:1px solid var(--line);padding-left:8px}
-tr.old{opacity:.55}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}.lane-show{display:flex;gap:6px;flex-wrap:wrap}
-.lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
-/* Map (LANE-MAP-DESIGN 1): blueprint SVG, state = stripe colour + word, one accent for "needs you"; no animation */
-.mapwrap{overflow:auto;max-height:calc(100vh - 230px);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:8px}
-svg.map{display:block}svg.map text{font:12px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:var(--ink)}
-svg.map .band{fill:var(--soft);opacity:.55}svg.map .band.alt{opacity:.25}
-.mn .box{fill:var(--panel);stroke:var(--bar);stroke-width:1.2}.mn .st{fill:var(--mute)}
-.mn .nl{font-weight:650}.mn.t-run:not(.faded) .nl,.mn.t-checkin:not(.faded) .nl{font-size:13.5px}.mn .ns{fill:var(--mute);font-size:11px;font-family:ui-monospace,Consolas,monospace}
-.mn .nw{font-size:11px;font-weight:650;fill:var(--mute)}
-.mn.t-lane .box{fill:var(--soft);stroke:var(--line)}.mn.t-lane .nl{font-size:13.5px}
-.mn.t-subagent .box{stroke-dasharray:4 3}
-.mn.c-running .st,.mn.c-running .box{stroke:var(--run)}.mn.c-running .st{fill:var(--run)}.mn.c-running .nw{fill:var(--run)}
-.mn.c-done .st{fill:var(--ok)}.mn.c-done .nw{fill:var(--ok)}
-.mn.c-handoff .st,.mn.c-parked .st,.mn.c-warn .st{fill:var(--warn)}.mn.c-handoff .nw,.mn.c-parked .nw{fill:var(--warn)}
-.mn.c-stopped .st,.mn.c-bad .st,.mn.c-lost .st,.mn.c-no-result .st{fill:var(--bad)}.mn.c-stopped .nw,.mn.c-bad .nw,.mn.c-lost .nw,.mn.c-no-result .nw{fill:var(--bad)}
-.mn.needs .box{fill:var(--accent-bg);stroke:var(--accent);stroke-width:2}.mn.needs .st,.mn.needs .nw{fill:var(--accent)}
-.mn.faded{opacity:.7}
-.mn[data-feed]{cursor:pointer}.mn[data-feed]:hover .box{stroke-width:2.2}.mn[data-feed]:focus{outline:none}.mn[data-feed]:focus .box{stroke:var(--ink)}
-.mn.sel .box{stroke:var(--run);stroke-width:3}
-.mn .more{fill:var(--run);font-weight:600;cursor:pointer;text-decoration:underline}
-.me{fill:none;stroke:var(--mute);stroke-width:1.4}.me.e-owns{stroke:var(--bar);stroke-width:1.6}.me.e-resumes{stroke:var(--warn);stroke-dasharray:5 4;stroke-width:1.6}
-.me.e-delegates{stroke:var(--codex)}.me.e-dispatched,.me.e-reviewed{stroke:var(--mute);stroke-width:.9;opacity:.75}.me.e-reviewed{stroke-dasharray:1 3}.me.e-asks{stroke:var(--accent);stroke-width:1.6}
-svg.map marker path{fill:var(--mute)}
-/* Deliverables (DELIVERABLES-SPEC 3): the map band pill, by derived state */
-svg.map .dlv{cursor:pointer}svg.map .dlv rect{stroke-width:1.2}svg.map .dlv text{font-size:11.5px;font-weight:650}
-svg.map .dlv.done rect{fill:var(--warn-bg);stroke:var(--warn)}svg.map .dlv.done text{fill:var(--warn)}
-svg.map .dlv.merged rect{fill:var(--run-bg);stroke:var(--run)}svg.map .dlv.merged text{fill:var(--run)}
-svg.map .dlv.installed rect{fill:var(--ok-bg);stroke:var(--ok)}svg.map .dlv.installed text{fill:var(--ok)}
-svg.map .dlv.parked rect{fill:var(--soft);stroke:var(--mute)}svg.map .dlv.parked text{fill:var(--mute)}
-svg.map .dlv.due rect{stroke:var(--accent);stroke-width:2}
-.zoom{display:inline-flex;gap:4px}
-@media (max-width:700px){.mapwrap{min-width:0;overflow-x:auto}}
+/* The Lanes page (stage LANES, SPEC 4.2: the attention board): the group filter, one panel per group, the lane row grid (tile, name +
+   now line, progress and pace, the run strip, the PR track, actions, the open chevron), the in-place expand and the strip legend.
+   Colour carries state only through the tinted tile and beads (one hue per state token); pace is a word on a tint. Under 700 px a
+   row becomes a card. The elapsed bar's growth is in norn/norn.css under :root.motion (this sheet holds no animation). */
+.lfilters{gap:8px 12px}.lane-show{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.lane-show b{font-variant-numeric:tabular-nums}
+.lfilters input[type=search]{width:220px;max-width:100%}.lane-links{font-size:13px;color:var(--mute)}.lane-links .lnk{font-weight:400;color:var(--run)}
+.lane-types{border-left:1px solid var(--line);padding-left:8px}
+.lhelp{position:relative}.lhelp>summary{list-style:none;cursor:pointer;display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid var(--field-line);border-radius:50%;font-weight:700;color:var(--mute)}
+.lhelp>summary::-webkit-details-marker{display:none}.lhelp>div{position:absolute;z-index:4;right:0;top:32px;width:min(340px,86vw);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;box-shadow:0 6px 18px var(--shadow);white-space:normal}
+/* a group: a panel with its heading and count; Needs you is the one accent-tinted heading */
+.lgroup{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden}
+.lgh{margin:0;padding:9px 14px;border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);display:flex;gap:8px;align-items:baseline}
+.lgh b{font-variant-numeric:tabular-nums;color:var(--ink)}.g-needs>.lgh{background:var(--accent-bg);color:var(--ink)}
+/* the row: one grid line at desktop width, the expand on its own line under it */
+.lrow{display:grid;grid-template-columns:32px minmax(0,2fr) minmax(0,1fr) auto auto auto 32px;gap:4px 14px;align-items:center;padding:10px 14px;border-top:1px solid var(--line)}
+.lgh+.lrow{border-top:0}.lrow:hover{background:var(--zebra)}.lrow:has(>.lopen[aria-expanded=true]){background:var(--soft)}
+.lmain{min-width:0}.lhead{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;min-width:0}.lrow .lname{font-size:14.5px;font-weight:650;overflow-wrap:anywhere}
+.ltype{color:var(--mute)}.waits{padding:0 6px;border:1px solid var(--line);border-radius:6px;color:var(--mute);white-space:nowrap}
+.lnow{margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}
+/* the state tile and the beads: the shape in currentColor on its token's tint */
+.ltile,.bd{display:inline-grid;place-items:center;flex:none;color:var(--mute);background:var(--soft)}
+.ltile{width:32px;height:32px;border-radius:6px}.ltile svg{width:18px;height:18px}
+.t-running{color:var(--run);background:var(--run-bg)}.t-done{color:var(--ok);background:var(--ok-bg)}.t-handoff,.t-parked{color:var(--warn);background:var(--warn-bg)}
+.t-stopped{color:var(--bad);background:var(--bad-bg)}.t-needs{color:var(--accent);background:var(--accent-bg)}.t-idle{color:var(--mute);background:var(--soft)}
+/* progress and pace: the brief line, pace as a word on a tint, the elapsed-vs-budget bar */
+.lprog{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}.pline{color:var(--mute);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pace{padding:0 7px;border-radius:6px;font-weight:600;white-space:nowrap}.p-ok{background:var(--ok-bg);color:var(--ok)}.p-warn{background:var(--warn-bg);color:var(--warn)}
+.p-bad{background:var(--bad-bg);color:var(--bad)}.p-idle{background:var(--soft);color:var(--mute)}
+.ebar{display:inline-block;width:72px;height:6px;border-radius:3px;background:var(--soft);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}.ebar i{display:block;height:100%;width:var(--from);background:var(--run)}
+/* the run strip: beads oldest left; a hand-off bead is joined to the one before it, a fresh start keeps a gap */
+.lstrip{display:flex;align-items:center;gap:6px;list-style:none;margin:0;padding:0}.lstrip.none{display:block}
+.bd{position:relative;width:20px;height:20px;border-radius:6px}.bd svg{width:14px;height:14px}
+.lstrip .bd.cont{margin-left:-6px}.bd.cont::before{content:'';position:absolute;right:100%;top:50%;width:6px;height:2px;margin-top:-1px;background:var(--warn)}
+.lstrip>.bd:first-child.cont::before,.lstrip>.bmore+.bd.cont::before{display:none}
+.bd .hc{position:absolute;right:-7px;top:-7px;min-width:13px;padding:0 2px;font-size:10px;line-height:13px;text-align:center;border-radius:7px;background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+.bmore{white-space:nowrap}.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* the PR track: four pips (done -> PR -> merged -> installed), the reached ones filled, the current one ringed */
+.ltrack{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}.ltrack i{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--mute)}
+.ltrack i.on{background:var(--ok);border-color:var(--ok)}.ltrack i.at{box-shadow:0 0 0 2px var(--ok-bg),0 0 0 3px var(--ok)}.ltrack .small{margin-left:5px}.ltrack a{color:var(--run)}
+.lrow .rowacts{flex-wrap:nowrap}.lrow .rowacts a.btn{display:inline-block;padding:4px 10px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:var(--on-accent);text-decoration:none}
+.lopen{width:32px;height:32px;padding:0;display:inline-grid;place-items:center;background:transparent}.lopen svg{width:16px;height:16px}
+.lopen[aria-expanded=true] svg{transform:rotate(180deg)}
+/* the open row: the lane's flow, then the brief and the goal side by side */
+.lexp{grid-column:1/-1;padding:4px 0 6px 46px;min-width:0}.lexp[hidden]{display:none}
+.lflow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:4px 0 6px}
+.fl-run{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);font-size:12.5px;color:var(--ink)}
+.fl-run>svg{width:14px;height:14px}.fl-run.t-running>svg{color:var(--run)}.fl-run.t-done>svg{color:var(--ok)}.fl-run.t-handoff>svg{color:var(--warn)}
+.fl-run.t-stopped>svg{color:var(--bad)}.fl-run.t-needs>svg{color:var(--accent)}.fl-run.t-idle>svg{color:var(--mute)}
+.fl-run.t-running,.fl-run.t-done,.fl-run.t-handoff,.fl-run.t-stopped,.fl-run.t-needs,.fl-run.t-idle{background:var(--panel)}
+.fl-j{font-size:12px;color:var(--mute)}.fl-j.cont{color:var(--warn)}.fl-h{color:var(--mute)}
+.lexp-cols{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:8px 24px;margin-top:8px}.lslow{margin:6px 0 0}
+.lfacts{margin-top:6px;overflow-wrap:anywhere}.lexp .rowacts{justify-content:flex-start;margin-top:8px}
+.lane-why{margin-top:3px;font-size:12.5px}.lane-why summary{cursor:pointer;list-style:none}.lane-why summary::-webkit-details-marker{display:none}
+.lane-why ul{margin:4px 0 0;padding-left:16px;font-weight:400}.lane-srcs{display:flex;flex-wrap:wrap;gap:2px 8px}.lane-src{font-size:12px}
+button.lnk.lane-src{background:none;border:0;padding:0;color:var(--accent);cursor:pointer}
+.lane-kind{margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center}.lane-out{color:var(--mute);overflow-wrap:anywhere}
+.lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}
+details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
+/* the one strip legend under the list */
+.llegend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:4px 2px 12px;color:var(--mute)}.lg-i{display:inline-flex;align-items:center;gap:4px;white-space:normal}
+.llegend .bd{width:18px;height:18px}.llegend .bd svg{width:12px;height:12px}
+@media (max-width:1100px){.lrow{grid-template-columns:32px minmax(0,2fr) minmax(0,1fr) auto auto 32px}.lrow>.ltrack{display:none}}
+/* phone: a card per lane - name + strip, the now line on 2 lines, progress and pace, the PR track, 44 px buttons */
+@media (max-width:700px){
+  .lfilters input[type=search]{width:100%}.lgroup{border-radius:8px}
+  .lrow{grid-template-columns:32px minmax(0,1fr) 44px;grid-template-areas:"tile main open" ". strip strip" ". prog prog" ". track track" ". acts acts" "exp exp exp";gap:8px 10px;padding:12px}
+  .lrow>.ltile{grid-area:tile}.lrow>.lmain{grid-area:main}.lrow>.lopen{grid-area:open;width:44px;height:44px}.lrow>.lstrip{grid-area:strip}
+  .lrow>.lprog{grid-area:prog}.lrow>.ltrack{grid-area:track;display:inline-flex}.lrow>.ltrack:empty{display:none}.lrow>.rowacts{grid-area:acts;justify-content:flex-start;flex-wrap:wrap}.lrow>.lexp{grid-area:exp;padding-left:0}
+  .lnow{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .lrow .rowacts button,.lrow .rowacts a.btn,.lfilters button.hf{min-height:44px}.lrow .rowacts a.btn{display:inline-flex;align-items:center}
+  .lexp-cols{grid-template-columns:minmax(0,1fr)}.lhelp>summary{width:44px;height:44px}
+}
+/* Norn look: square corners, the woven panel frame stays on the group (theme in the frame + style only) */
+:root.norn .lgroup,:root.norn .ltile,:root.norn .bd,:root.norn .pace,:root.norn .waits,:root.norn .ebar,:root.norn .fl-run,:root.norn .lhelp>summary,:root.norn .lhelp>div,:root.norn .lrow .rowacts a.btn{border-radius:0}
+:root.norn .ltrack i{border-radius:0}:root.norn .lgh{font-family:var(--pix);font-weight:400}
