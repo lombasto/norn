@@ -4,8 +4,9 @@
 // Sections: finished (not on main), queued (+ after / inputs, evaluated by S4), questions, ended (no clean successor), directives,
 // ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green),
 // overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
-// lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk).
-import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho, homeOf, laneName } from './records.mjs';
+// lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk),
+// homes (RM-46 S1d: a synced dir's refused cross-home writes and copies that did not fold).
+import { loadState, loadShared, readEvents, recordsFile, fold, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS } from './records.mjs';
 import { deliverablesView, deliverableConfig } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
 import { makeEval, condText } from './after.mjs';
@@ -225,6 +226,9 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // claims of other homes (the owner may take them over); only while any is there
   const cl = claimRows(stateDir, st.items);
   if (cl.length) sections.claims = cl;
+  // RM-46 S1d (SPEC 3.7): this home's writes another home refused (or a create it may not make) and the copies that did not fold
+  const hm = homeRows(stateDir);
+  if (hm.length) sections.homes = hm;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
@@ -245,6 +249,17 @@ function claimRows(stateDir, items) {
     .map(([id, h]) => ({ id, kind: 'held', lane: items[id].data.lane ?? null, home: h.home, why: h.home ? `held by ${h.home}: ${h.why}` : `held: ${h.why}` }));
   const r = readSync(stateDir, 'rows');
   return [...holds, ...(r.events || []).map(e => ({ id: e.id, kind: e.kind, at: e.at, why: e.why })), ...(r.stale || [])];
+}
+
+// a synced dir: the conflicts whose writer is this home + every integrity row, over each shared log (records, roadmap, mail, waivers)
+function homeRows(stateDir) {
+  const h = homeOf(stateDir);
+  if (!h) return [];
+  return SHARED_KINDS.filter((k, i, a) => a.findIndex(x => KINDS[x].file === KINDS[k].file) === i).flatMap(k => {
+    const v = loadShared(stateDir, k);
+    return [...v.conflicts.filter(c => c.home === h.id).map(c => ({ id: c.id, kind: 'conflict', home: c.primary ?? c.home, ev: c.ev, why: c.why })),
+      ...v.integrity.map(x => ({ id: x.id ?? `${x.home}:${KINDS[k].file}`, kind: 'integrity', home: x.home, why: x.why }))];
+  });
 }
 
 // git unreadable: every open deliverable record counts as done (listing too much beats dropping work)

@@ -5,7 +5,7 @@
 // Project-agnostic: every project fact comes from project.json (deliverables target / receipts, root, views.roadmap).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, loadState, homeOf, laneIdIn } from './records.mjs';
+import { readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
@@ -21,7 +21,7 @@ export class RoadmapError extends Error {}
 /** events -> { items: { RM-n: node }, kids: { parentId | '': [ids in order] } }; node = { id, kind, title, note, horizon, stages,
  *  links, parent, caveat {text, by, ts} | null, legacy | null, state open | dropped, dropped {why, ref, by, ts} | null, by, created, updated, history,
  *  proof look | null, views [name], verdict {verdict, image, by, ts} | null (META-CATCH S2: the latest look verdict) } */
-export function foldRoadmap(events) {
+export function foldRoadmap(events, { ordered = false } = {}) {   // ordered: the events are in fold order already (foldHomes)
   const items = {}, kids = { '': [] };
   const unplace = id => { const l = kids[items[id].parent || '']; const i = l ? l.indexOf(id) : -1; if (i >= 0) l.splice(i, 1); };
   const place = (id, after) => {
@@ -29,7 +29,7 @@ export function foldRoadmap(events) {
     const j = after === undefined ? -1 : after === null ? -2 : l.indexOf(after);
     if (j === -2) l.unshift(id); else if (j < 0) l.push(id); else l.splice(j + 1, 0, id);
   };
-  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+  for (const e of ordered ? events : [...events].sort((a, b) => a.seq - b.seq)) {
     if (e.kind !== 'item') continue;
     const d = e.data || {};
     if (e.ev === 'create') {
@@ -57,7 +57,8 @@ export function foldRoadmap(events) {
   }
   return { items, kids };
 }
-export const loadRoadmap = stateDir => foldRoadmap(readEvents(recordsFile(stateDir, 'item')));
+// RM-46 S1d: a synced dir folds the own roadmap + the copies (records.mjs foldHomes: one order on every home)
+export const loadRoadmap = stateDir => (homeOf(stateDir) ? foldRoadmap(loadShared(stateDir, 'item').events, { ordered: true }) : foldRoadmap(readEvents(recordsFile(stateDir, 'item'))));
 /** the ordered child ids of a node (null = the root: the themes) */
 export const childrenOf = (R, id) => [...(R.kids[id || ''] || [])];
 
