@@ -25,10 +25,10 @@
 :root.norn .drawer .dh b { font-family: var(--pix); font-weight: 400; font-size: calc(8 * var(--px)); letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .card h2 b { font-family: var(--pix); font-size: calc(8 * var(--px)); }
 :root.norn header { background: var(--panel); border-bottom: calc(2 * var(--px)) solid var(--line); }
-:root.norn .bar { border-bottom: calc(2 * var(--px)) solid var(--line); }
-:root.norn .bar .count { border-radius: 0; color: var(--on-accent); }
+:root.norn .pagebar { border-bottom: calc(2 * var(--px)) solid var(--line); }
+:root.norn .pagebar .count { border-radius: 0; color: var(--on-accent); }
 /* NORN-UI-NAV (A-11): the pixel font only for the bar's 5 words, at 16 px, no tracking */
-:root.norn .bar .bl { font-family: var(--pix); font-weight: 400; font-size: 16px; letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
+:root.norn .pagebar .bl { font-family: var(--pix); font-weight: 400; font-size: 16px; letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .brand { display: inline-block; width: calc(32 * var(--d1)); height: calc(32 * var(--d1)); background-size: 100% 100%; flex: none; }
 :root:not(.norn) .brand { display: none; }
 
@@ -114,10 +114,10 @@
    colours (Roadmap time colours, the Home tags). */
 :root.norn[data-ground=dark] { --nv: #eec24a; --nu: #52b8a0; --ns: #93aec6; --ninv: #0b0e1a; }
 :root.norn[data-ground=light] { --nv: #6e430f; --nu: #17504f; --ns: #425a7d; --ninv: #f7f0dc; }
-:root.norn .bar>a:hover, :root.norn .bar>button:hover { background: var(--soft); color: var(--ink); }
-:root.norn .bar>[aria-current=page] { background: var(--accent); color: var(--ninv); border-bottom-color: var(--accent); }
-:root.norn .bar>a:focus-visible, :root.norn .bar>button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
-:root.norn .bar>[aria-current=page]:focus-visible { outline-color: var(--ninv); }
+:root.norn .pagebar>a:hover, :root.norn .pagebar>button:hover { background: var(--soft); color: var(--ink); }
+:root.norn .pagebar>[aria-current=page] { background: var(--accent); color: var(--ninv); border-bottom-color: var(--accent); }
+:root.norn .pagebar>a:focus-visible, :root.norn .pagebar>button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
+:root.norn .pagebar>[aria-current=page]:focus-visible { outline-color: var(--ninv); }
 
 
 /* ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17). The ONE section of this sheet that also styles

@@ -34,7 +34,7 @@ const dot = (st, words) => (st === 'warn' || st === 'bad' ? `<span class="dot to
 export function renderBar(tab, o = {}) {
   const inMore = MORE.some(([, ids]) => ids.includes(tab)), sick = worstState(o.health);
   const links = BAR.map(([k, l]) => `<a href="${href(o.project, k)}" id="tab-${k}" data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}>${G[k]}<span class="bl">${l}</span>${k === 'inbox' ? badge(o.needs) : ''}</a>`).join('');
-  return `<nav class="bar" id="tabs" aria-label="Pages">${links}<button type="button" id="tab-more" data-act="more" aria-haspopup="dialog" aria-expanded="${!!o.open}" aria-controls="more-sheet"${inMore ? ' aria-current="page"' : ''}>${G.more}<span class="bl">More</span>${dot(sick, 'a Health page needs a look')}</button></nav>`;
+  return `<nav class="pagebar" id="tabs" aria-label="Pages">${links}<button type="button" id="tab-more" data-act="more" aria-haspopup="dialog" aria-expanded="${!!o.open}" aria-controls="more-sheet"${inMore ? ' aria-current="page"' : ''}>${G.more}<span class="bl">More</span>${dot(sick, 'a Health page needs a look')}</button></nav>`;
 }
 /** the More sheet (hidden until More opens it): every page not on the bar, under its group heading; the open page marked */
 export function renderMore(tab, o = {}) {

@@ -24,7 +24,7 @@ test('the bar is Lanes, Runs, Inbox, Talk + More: links with aria-current, the I
   assert.deepEqual([...BAR.map(b => b[0]), ...more].sort(), [...SERVER_TABS].sort(), 'every page once: on the bar or in More');
   assert.deepEqual(MORE.map(g => g[0]), ['Health', 'History', 'Plan', '']);
   const html = renderBar('runs', { project: 'p', needs: 4 });
-  assert.match(html, /^<nav class="bar" id="tabs" aria-label="Pages">/); assert.ok(!/role="tab/.test(html), 'link nav, not a tablist');
+  assert.match(html, /^<nav class="pagebar" id="tabs" aria-label="Pages">/); assert.ok(!/role="tab/.test(html), 'link nav, not a tablist');
   assert.equal((html.match(/<a /g) || []).length, 4); assert.equal((html.match(/data-act="more"/g) || []).length, 1, '4 links + More');
   assert.match(html, /<a href="\?project=p&amp;tab=runs" id="tab-runs" data-tab="runs" aria-current="page">/);
   assert.match(html, /id="tab-inbox"[^>]*>[^]*?Inbox<\/span><span class="count" aria-label="4 need you">4<\/span><\/a>/);
@@ -142,6 +142,8 @@ test('the browser: the bar paints before /api/strip and /api/overview answer; bo
         assert.equal(await pg.ev('document.body.dataset.tab'), open, `${t} -> ${open}`);
         assert.equal(await pg.ev(BAR_IDS), 'tab-lanes,tab-runs,tab-inbox,tab-talk,tab-more', `${look} ${t}: 5 items`);
         assert.ok(await pg.until(`document.querySelector('#tab-inbox .count')?.textContent === '${need}'`), `${look} ${t} ${size[0]}: the badge`);
+        // the bar is drawn, not squashed by another .bar rule (the 6 px meter): full height, the badge inside it
+        assert.ok(await pg.ev(`(() => { const n = document.querySelector('#tabs').getBoundingClientRect(), b = document.querySelector('#tab-inbox .count').getBoundingClientRect(); return n.height >= 36 && b.height > 0 && b.top >= n.top - 1 && b.bottom <= n.bottom + 1; })()`), `${look} ${t} ${size[0]}: the bar shows its items`);
         assert.ok(!(await pg.ev(`[...document.querySelectorAll('.pages, .subnav')].some(x => !x.closest('.phead'))`)), `${t}: no second nav row`);
         assert.ok(await pg.ev(`document.documentElement.scrollWidth <= innerWidth + 1`), `${look} ${t} ${size[0]}: no sideways scroll`);
         if (look === 'norn' && size[0] === 1440) assert.equal(await pg.ev(`document.title`), `(${need}) Norn - kestrel`);
