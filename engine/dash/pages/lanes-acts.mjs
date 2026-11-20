@@ -1,5 +1,5 @@
 // The Lanes page's handlers (stage NAV moved them from index.html): data-act -> fn(el, c); index.html dispatches every click on a
-// [data-act] through one registry (pages/*-acts.mjs `acts`), c = { S, render, get, post, $, go, act, tabUrl, lanesRepaint, runsRepaint, feedGo }.
+// [data-act] through one registry (pages/*-acts.mjs `acts`), c = { S, render, get, post, $, go, act, err, tabUrl, lanesRepaint, runsRepaint, feedGo }.
 import { laneKey } from './lanes.mjs';
 const P = f => (b, c) => f(b.dataset, b.dataset.project, c, b);
 // stage LANES: a row opens in place (S.laneOpen keeps it open through a stream repaint); the chevron and Esc close it
@@ -25,7 +25,20 @@ export const acts = {
   'lane-undo': P((d, p, { S, post, act }) => { S.laneUndo = null; act(() => post('/api/lane/archive', { project: p, lane: d.lane, unarchive: true })); }),
   'lane-type': P((d, p, { S, tabUrl, lanesRepaint }) => { S.laneType = S.laneType === d.type ? null : d.type; history.replaceState(null, '', tabUrl()); lanesRepaint(); }),
   'lane-show': P((d, p, { S, tabUrl, lanesRepaint }) => { if (S.laneShow.has(d.show)) S.laneShow.delete(d.show); else S.laneShow.add(d.show); history.replaceState(null, '', tabUrl()); lanesRepaint(); }),
+  // the Lanes page's Branches / Worktrees sub-views: filters repaint in place; a row action answers with its Undo (S.brUndo, the
+  // Archive bar's pattern); Scan now starts the detached refresh the tick would start
+  'br-state': P((d, p, { S, lanesRepaint }) => { const s = S.br.states, all = S.last?.states || []; if (!s.size) for (const k of all) s.add(k); if (s.has(d.state)) s.delete(d.state); else s.add(d.state); if (s.size === all.length) s.clear(); lanesRepaint(); }),
+  'br-where': P((d, p, { S, lanesRepaint }) => { S.br.where = d.where; lanesRepaint(); }),
+  'br-scan': P((d, p, { S, post, act, err }) => { act(async () => { await post('/api/branches/refresh', { project: p }); S.brUndo = null; err(''); }); }),
+  'br-delete': P((d, p, c) => brAct('delete', d, p, c)), 'br-rmwt': P((d, p, c) => brAct('rmwt', d, p, c)), 'br-adopt': P((d, p, c) => brAct('adopt', d, p, c)),
+  'br-undo': P((d, p, { S, post, act }) => { const u = S.brUndo; S.brUndo = null; if (u) act(() => (u.verb === 'adopt' ? post('/api/lane/archive', { project: u.project, lane: u.undo.lane, override: 'Undo of Adopt into a lane: the branch stays as it was' }) : post('/api/branches/act', { project: u.project, act: 'undo', undo: u.undo }))); }),
 };
+/** a Branches row action (delete / rmwt / adopt): `norn branches <verb>` through the server, then its Undo bar */
+function brAct(verb, d, p, { S, post, act }) {
+  const what = verb === 'rmwt' ? d.path : d.branch;
+  act(async () => { const r = await post('/api/branches/act', { project: p, act: verb, ...(verb === 'rmwt' ? { path: d.path } : { branch: d.branch }) });
+    S.brUndo = { project: p, verb, undo: r.undo, text: verb === 'delete' ? `Deleted ${what}.` : verb === 'rmwt' ? `Removed the worktree ${what}.` : `Adopted ${what} into lane ${r.lane}.` }; });
+}
 /** Esc inside an open lane row closes it and gives the focus back to its chevron; true when it did */
 export function laneEsc(e, { S }) {
   const r = e.target.closest?.('.lrow'), b = r?.querySelector('.lopen');
