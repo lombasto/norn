@@ -1505,12 +1505,12 @@ const secs = v => v == null ? '-' : v < 120 ? `${v} s` : v < 7200 ? `${Math.roun
 function syncBlocks(d, ctx) {
   if (!d.homes) return '';
   const h = d.homes, c = d.claims || { work: [] };
-  const homes = `<div class="card" id="ledger-homes"><h3>Homes <span class="mute small">this home: ${esc(h.home)} · last fetch ${h.fetched_at ? fmtTime(h.fetched_at, ctx.now) : 'never'}${h.fetch_error ? ` · <span class="bad">${esc(h.fetch_error)}</span>` : ''}</span></h3>
-    ${h.rows.map(r => `<div class="small">${homeChip(r)}<code>${esc(String(r.head).slice(0, 10))}</code> · lag ${secs(r.lag_s)} · clock ahead ${secs(r.ahead_s)}</div>`).join('') || '<p class="mute small">no other home fetched yet</p>'}</div>`;
-  const work = c.work.map(w => `<div class="small">${homeChip(w)}<b>${esc(w.lane)}</b> n=${esc(w.n)} ${esc(w.run ?? '-')} · renewed ${w.renewed_at ? fmtTime(w.renewed_at, ctx.now) : '-'}${w.items.length ? ` · ${esc(w.items.join(', '))}` : ''}
-    ${w.stale ? ` ${chip('bad', 'stale')} <button class="ghost" data-act="claim-take" data-project="${esc(ctx.project ?? '')}" data-lane="${esc(`${w.home}/${w.lane}`)}">Take over</button>` : ''}</div>`).join('');
-  const claims = `<div class="card" id="ledger-claims"><h3>Claims</h3>${work || '<p class="mute small">no work claims</p>'}
-    <div class="small mute">merge leader: ${c.leader ? `${esc(c.leader.home)} (renewed ${fmtTime(c.leader.renewed_at, ctx.now)})` : 'none'}</div></div>`;
+  const homes = `<div class="tablecard" id="ledger-homes"><h3>Homes <span class="mute small">this home: ${esc(h.home)} · last fetch ${h.fetched_at ? fmtTime(h.fetched_at, ctx.now) : 'never'}${h.fetch_error ? ` · ${esc(h.fetch_error)}` : ''}</span></h3>
+   <table><thead><tr><th>home</th><th>head</th><th>lag</th><th>clock ahead</th></tr></thead><tbody>${h.rows.map(r => `<tr><td>${homeChip(r)}</td><td class="id">${esc(String(r.head).slice(0, 10))}</td><td>${secs(r.lag_s)}</td><td>${secs(r.ahead_s)}</td></tr>`).join('') || '<tr><td colspan="4" class="mute">no other home fetched yet</td></tr>'}</tbody></table></div>`;
+  const work = c.work.map(w => `<tr><td>${homeChip(w)}<b>${esc(w.lane)}</b></td><td class="id">${esc(w.run ?? '-')} n=${esc(w.n)}</td><td class="small">${w.renewed_at ? fmtTime(w.renewed_at, ctx.now) : '-'}</td>
+    <td>${w.stale ? `${chip('bad', 'stale')} <button class="ghost" data-act="claim-take" data-project="${esc(ctx.project ?? '')}" data-lane="${esc(`${w.home}/${w.lane}`)}">Take over</button>` : chip('ok', 'active')}</td></tr>`).join('');
+  const claims = `<div class="tablecard" id="ledger-claims"><h3>Claims <span class="mute small">merge leader: ${c.leader ? `${esc(c.leader.home)} · renewed ${fmtTime(c.leader.renewed_at, ctx.now)}` : 'none'}</span></h3>
+   <table><thead><tr><th>lane</th><th>run</th><th>renewed</th><th>state</th></tr></thead><tbody>${work || '<tr><td colspan="4" class="mute">no work claims</td></tr>'}</tbody></table></div>`;
   return homes + claims;
 }
 function ledger(d, ctx) {
