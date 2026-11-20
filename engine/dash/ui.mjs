@@ -20,11 +20,11 @@ import { diffBlock } from './diffview.mjs';
 import { lanes, map } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
 import { plan } from './pages/plan.mjs';
-export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'],
-  ['work', 'Work'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['map', 'Map'], ['plan', 'Plan'], ['roadmap', 'Roadmap'],
-  ['health', 'Health'], ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'],
-  ['history', 'History'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['home', 'map', 'roadmap', 'history', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
+// NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
+export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
+  ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
+  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['map', 'Map'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['talk', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 // ---------- formatting ----------
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -86,26 +86,6 @@ const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose o
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-// UX review 2: the bar is 7 destinations with plain names (both looks). Home, Overview, Inbox and Settings are one page each; Work,
-// Health and History are pages of their own (a hub: one card per page under it, with what needs a look) and, while one of them or one of
-// its pages is open, a second row lists its pages. Label, tab id and URL (?tab=<id>) are the same word for every page.
-// [id (= the destination's own page), label, the pages under it in display order]
-export const NAV = [
-  ['home', 'Home', []],
-  ['overview', 'Overview', []],
-  ['inbox', 'Inbox', []],
-  ['work', 'Work', ['lanes', 'runs', 'map', 'plan', 'roadmap']],
-  ['health', 'Health', ['usage', 'slop', 'tests', 'context']],
-  ['history', 'History', ['records', 'ledger', 'docs']],
-  ['settings', 'Settings', []],
-];
-/** the destination a page sits in ([id, label, pages]): itself or the one whose pages hold it; null for the setup page */
-export const destOf = tab => NAV.find(([g, , ids]) => g === tab || ids.includes(tab)) ?? null;
-const countBadge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
-// RM-18 S1: a Norn colour on the nav as a meaning. History = Urd (was), Work = Verdandi (is) but its Plan and Roadmap = Skuld (shall be),
-// Inbox = Skuld; Health = its worst state; Home, Overview, Settings neutral. CSS: norn.css .tone-* (both looks).
-export const DEST_NORN = { history: 'urd', work: 'verd', inbox: 'skuld' };
-export const PAGE_NORN = { plan: 'skuld', roadmap: 'skuld' };
 const RANK = { ok: 0, warn: 1, bad: 2 };
 /** the worst of { page: 'ok'|'warn'|'bad'|null } states; null when none is known */
 export const worstState = st => Object.values(st || {}).filter(v => v in RANK).reduce((w, v) => (w === null || RANK[v] > RANK[w] ? v : w), null);
@@ -115,20 +95,6 @@ export function healthStates({ usage = null, rows = null } = {}) {
   const u = !usage || usage.billing?.type === 'api' ? null : usage.guard === 'STOP' || usage.rateOK === false ? 'bad' : usage.guard === 'ok' ? 'ok' : null;
   const of = types => (rows ? (rows.some(r => types.includes(r.type) && (r.severity === 'high' || r.severity === 'medium')) ? 'warn' : 'ok') : null);
   return { usage: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
-}
-/** a page's tone: its Norn colour, a Health state, or '' (neutral) */
-export function navTone(id, health = {}) {
-  const d = destOf(id)?.[0];
-  if (d === 'health') return (id === 'health' ? worstState(health) : health[id]) ?? '';   // a page whose state is not known yet: neutral
-  return PAGE_NORN[id] ?? DEST_NORN[d] ?? '';
-}
-const toneCls = t => (t ? ` class="tone-${t}"` : '');
-export function renderNav(tab, counts = {}, health = {}) {
-  const label = Object.fromEntries(TABS), cur = destOf(tab);
-  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}${toneCls(navTone(g, health))}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
-  const pt = cur ? navTone(cur[0], health) : '';
-  const pages = cur && cur[2].length ? `<div class="pages${pt ? ' tone-' + pt : ''}" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}"${toneCls(navTone(k, health))}>${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
-  return `<div class="dests" role="tablist" aria-label="Sections">${top}</div>${pages}`;
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
 const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(name, cls) : '');
@@ -164,19 +130,10 @@ export async function loadTab(tab, project, get, ctx = {}) {
   }
   const q = `project=${encodeURIComponent(project)}`, all = project === 'all';
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
-  if (tab === 'home') return get(`/api/home?${q}`);   // META-CONTROLLER C2
-  if (tab === 'overview') {
-    const [overview, agents, records, ledger, deliverables] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`),
-      all ? null : get(`/api/records?${q}`), all ? null : get(`/api/ledger?${q}`), dlvGet(get, q)]);
-    return { overview, agents, records, ledger, deliverables };
-  }
+  if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return get(`/api/lanes?${q}`);
   if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
-  // UX review 2: the three destination pages - what needs a look under each, from the endpoints the pages already use
-  if (tab === 'work') { const [overview, a] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`)]); return { overview, queue: a.queue || [] }; }
-  if (tab === 'health') { const [overview, slop] = await Promise.all([get(`/api/overview?${q}`), all ? null : Promise.resolve().then(() => get(`/api/guard?${q}&part=summary`)).catch(() => null)]); return { overview, slop }; }
-  if (tab === 'history') return { records: await get(`/api/records?${q}`) };
   if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}${ctx.runsWindow && ctx.runsWindow !== '2h' ? '&window=' + ctx.runsWindow : ''}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
@@ -229,8 +186,8 @@ export function renderTab(tab, d, ctx = {}) {
   const now = ctx.now ?? Date.now();
   if (tab === 'usage') return panel(tab, usage(d, { ...ctx, now }));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
-  if (tab === 'home') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ overview, inbox, work: workHub, lanes, runs, map, roadmap, health: healthHub, history: historyHub, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes, runs, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
@@ -502,63 +459,6 @@ export function pauseMenu(o, ctx = {}) {
 export const pauseAct = (pz, project, run) => { const at = `data-project="${esc(project)}" data-run="${esc(run)}"`;
   return pz === 'running' ? `<button class="ghost" data-act="run-pause" ${at} title="Ask ${esc(run)} to stop at a clean point and hand off">Pause</button>`
     : pz === 'asked' ? chip('warn', 'pausing') : pz === 'handoff' ? `<button data-act="run-resume" ${at} title="Queue the resume of ${esc(run)} first">Resume</button>` : ''; };
-// RM-18 S2: the Overview strip in place of the hero (both looks): three real links, one per Norn in its time colour (norn.css .ostrip),
-// each opening its destination - Urd History, Verdandi Work, Skuld Inbox (DEST_NORN)
-export function overviewStrip(s, ctx = {}) {
-  if (!s) return '';
-  const q = ctx.project ? `?project=${encodeURIComponent(ctx.project)}&tab=` : '?tab=';
-  const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
-  const ll = s.last_landed, ck = s.checkin || {};
-  const next = ctx.checkinsPaused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
-  return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
-    + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
-    + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
-}
-function overview(d, ctx) {
-  const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
-  const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
-  const needs = o.needs.length ? o.needs.map(i => needItem(i, ctx)).join('') : `<div class="item">${art(ctx, 'empty-nothing-needs-you', 'empty')}${chip('ok', 'all clear')}<span>Nothing needs you</span></div>`;
-  // gap #9: API billing - the burn column is each running run's $ so far (a live estimate from its tokens; the end record has the CLI's figure)
-  const apiB = o.burn.usage?.billing?.type === 'api' ? o.burn.usage.billing : null, liveUsd = new Map((apiB?.live || []).map(x => [`${x.project}|${x.id}`, x.usd]));
-  const burnCell = l => { if (!apiB) return fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-';
-    const v = liveUsd.get(`${l.project}|${l.run}`); return fin(v) ? `~$${v.toFixed(2)}` : '-'; };
-  const rows = o.running.lanes.map(l => {
-    const n = byId[l.run] || {}, age = n.ran_min, b = n.budget_min;
-    const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
-    const ctxCell = ctxMeter(n, { codexNote: true });
-    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
-      <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
-      <td class="mono run-burn">${burnCell(l)}</td></tr>`;
-  }).join('') || `<tr><td colspan="5" class="mute">${art(ctx, 'empty-no-runs', 'empty')}No lane is running.</td></tr>`;
-  const u = o.burn.usage, used = u.weeklyUsed, stop = u.weeklyStopPct;
-  const guardChip = u.guard === 'STOP' ? chip('bad', 'guard tripped: no new Claude worker') : u.guard === 'ok' ? chip('ok', 'under guard') : chip('idle', 'guard unknown');
-  const rateChip = u.rateOK === false ? chip('bad', 'over cap: Claude dispatch off') : u.rateOK === true ? chip('ok', 'under cap') : '';
-  const trip = fin(used) && fin(stop) && fin(u.rate) && u.rate > 0 && used < stop
-    ? (() => { const h = (stop - used) / u.rate; return `in ~${h.toFixed(1)} h · <b>${esc(fmtLocal(new Date(ctx.now + h * 3600000).toISOString()))}</b>`; })()
-    : fin(used) && fin(stop) && used >= stop ? '<b>tripped</b>' : '<span class="mute">- (no trailing rate)</span>';
-  const provLine = (o.burn.executors || []).length ? `<div class="small mute" id="exec-usage" style="margin-top:8px">Own-account executors (7 days, not in burn): ${o.burn.executors.map(x => `<b>${esc(x.name)}</b> ${plural(x.runs, 'run')} ${mTok(x.tokens)} tok${x.cost_usd ? ` $${x.cost_usd.toFixed(2)}` : ''}`).join(' · ')}</div>` : '';
-  const burners = (o.burn.top || []).map(t => `<div class="item"><span class="mono" style="width:76px">${fin(t.pct_per_h) ? t.pct_per_h.toFixed(2) + ' %/h' : mTok(t.burn30)}</span><span class="small"><span class="id">${esc(t.id)}</span> ${projTag(ctx, t.project)}${esc(t.lane ?? '')}</span></div>`).join('')
-    || '<div class="small mute">no cache reads in the last 30 min</div>';
-  const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
-    .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}${r.kind === 'decision' ? decMark(r) : ''}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
-  const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
-  const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}${backlogLine(o.backlog)}<div class="glance">
-   <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
-   <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
-     <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
-   <section class="card" id="burn"><h2>Burn${u.billing ? ` <span class="mute small" id="burn-billing">${esc(u.billing.label)}</span>` : ''}</h2>
-     ${u.billing?.type === 'api' ? apiBurn(u.billing) : `<div class="kv"><span class="mute small">weekly</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${meter(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
-     <span class="mute small">trailing 2 h</span><div><b>${fin(u.rate) ? u.rate.toFixed(2) + ' %/h' : '-'}</b> <span class="mute">vs cap ${fin(u.cap) ? u.cap.toFixed(2) + ' %/h' : '-'}</span> ${rateChip}</div>
-     <span class="mute small">guard trips</span><div>${trip}</div>
-     <span class="mute small">reset</span><div>${esc(fmtLocal(u.resetAt))}</div>
-     <span class="mute small">source</span><div class="small mute">${esc(u.source)}${u.source === 'live' && u.estimate && fin(u.estimate.weekly) ? ` (estimate ${pct(u.estimate.weekly)})` : ''}</div></div>`}
-     <h2 style="margin-top:14px">Top burners (last 30 min)</h2>${burners}${provLine}</section></div>
-   ${d.deliverables ? deliverablesCard(d.deliverables, ctx) : ''}
-   ${d.records ? `<div class="grid2"><div class="tablecard"><h3>Latest records <span class="mute small">newest first</span></h3><table><tbody>${recs || '<tr><td class="mute">no records yet</td></tr>'}</tbody></table></div>
-   <div class="tablecard"><h3>Ledger <span class="mute small">last 4 entries, newest first</span></h3><table class="ledtab compact"><tbody>${led || '<tr><td class="mute">no ledger file</td></tr>'}</tbody></table></div></div>` : ''}`;
-}
-
 // RM-30 S1: the Inbox's text goes through the one prose renderer (prose.mjs) with its project's lanes / repo / Docs keys (/api/inbox prose)
 const proseCx = (d, ctx, project, key) => ({ ...(d.prose?.[project] || {}), project, sanitize: ctx.sanitize, ...(key ? { clamp: true, key } : {}) });
 // an option = a small card: its key, its text, its cost; the recommended one is marked and carries its why
@@ -690,36 +590,6 @@ export function laneCard(c, label) {
 // policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
 export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
-// ---------- UX review 2: Work, Health and History - one card per page under the destination: what it shows + what needs a look now ----------
-const HUB_WHAT = { lanes: 'one row per lane: its latest run, state and outcome', runs: 'every running and recent run as a tree: tokens, context, its findings',
-  map: 'lanes as threads, runs as beads on them', plan: 'what starts next and what it waits for, what lands next, the usage forecast',
-  roadmap: 'themes and items, their status from the linked lanes, runs and records', usage: 'usage against the weekly guard and the hourly cap; what each kind of work cost',
-  slop: 'every open finding of every check, in batches by the kind of fix', tests: 'suite time, the slowest tests, tests that never fail or duplicate others',
-  context: 'what one agent session loads and what it costs, per role and per file', records: 'directives and decisions with their history',
-  ledger: 'the project ledger, newest first', docs: "the project's docs and every file the agents read" };
-function hub(dest, now) {
-  const label = Object.fromEntries(TABS), [, , ids] = NAV.find(([g]) => g === dest);
-  return `<div class="hub" id="${dest}-hub">${ids.map(k => `<section class="card hubcard" id="hub-${k}"><h2><button class="lnk" data-tab="${k}">${esc(label[k])}</button></h2>
-    <p class="small mute">${esc(HUB_WHAT[k])}</p>${now[k] ? `<div class="small hubnow">${now[k]}</div>` : ''}</section>`).join('')}</div>`;
-}
-function workHub(d) {
-  const o = d.overview, needs = o.needs || [], n = t => needs.filter(i => i.type === t).length, run = o.running;
-  return hub('work', {
-    lanes: `${chip(run.lanes.length ? 'running' : 'idle', `${int(run.lanes.length)} running`)}${n('parked') ? ' ' + chip('parked', `${int(n('parked'))} parked`) : ''}`,
-    runs: `${chip(run.claude.n + run.codex.n ? 'running' : 'idle', `${int(run.claude.n)} Claude · ${int(run.codex.n)} Codex running`)}${n('unreviewed') ? ' ' + chip('warn', `${int(n('unreviewed'))} unreviewed`) : ''}`,
-    plan: chip(d.queue.length ? 'idle' : 'ok', `${int(d.queue.length)} queued`) });
-}
-function healthHub(d) {
-  const u = d.overview.burn.usage, s = d.slop;
-  const use = u.billing?.type === 'api' ? chip('idle', 'API billing: see the daily cap') : u.guard === 'STOP' ? chip('bad', 'guard tripped: no new Claude worker')
-    : fin(u.weeklyUsed) ? chip(u.guard === 'ok' ? 'ok' : 'idle', `${pct(u.weeklyUsed)} of the ${pct(u.weeklyStopPct, 0)} weekly guard`) : chip('idle', 'usage unknown');
-  return hub('health', { usage: `${use}${u.rateOK === false ? ' ' + chip('bad', 'over the hourly cap') : ''}`,
-    slop: s ? `${chip(s.total ? 'warn' : 'ok', plural(s.total ?? 0, 'open finding'))}${s.new ? ' ' + chip('needs', `${int(s.new)} new`) : ''}` : '' });
-}
-function historyHub(d) {
-  const r = d.records, act = (r.directives || []).filter(x => x.state === 'active').length;
-  return hub('history', { records: `${chip(act ? 'active' : 'idle', plural(act, 'active directive'))} ${chip('idle', plural((r.decisions || []).length, 'decision'))}` });
-}
 export const guardOn = (g, pick) => (g?.rows || []).filter(pick);
 export function guardChip(rows, go = null) {
   if (!rows?.length) return '';
