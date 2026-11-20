@@ -1,6 +1,6 @@
 // The live hand-off state (lanes.mjs handoffOf): one server-side field every page reads. Unit cases over a real records fold (fresh
 // run, hand-off pending at each step, resumed, ended, refused, a slop resume), then one dashboard fixture walked through a hand-off:
-// the Lanes, Runs, Map, Overview and Home pages, the live feed head and the plain log each show the chip / line.
+// the Lanes, Runs, Map and Talk pages, the live feed head and the plain log each show the chip / line.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,8 @@ import path from 'node:path';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { handoffOf, handoffWords } from '../engine/lib/lanes.mjs';
 import { sceneSig } from '../engine/dash/norn/live.mjs';
-import { renderTab, loadTab, renderFeedHead } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderFeedHead } from '../engine/dash/cells.mjs';
 import { hoChip } from '../engine/dash/widgets.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
@@ -105,10 +106,9 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
     const svg = renderTab('map', map, ctx);
     assert.match(svg, new RegExp(`id="mn-${b}"[^]*?<title>[^<]*hand-off in progress - session 2 starting[^]*?<circle class="pulse ho-pending"[^>]*/><text class="ns ho-w"[^>]*>hand-off: session 2 starting<`));
     assert.notEqual(sceneSig(map), sceneSig({ ...map, nodes: map.nodes.map(n => ({ ...n, handoff: null })) }), 'the Norn map rebuilds its labels on a change');
-    assert.match(renderTab('overview', await loadTab('overview', 'kestrel', ui), ctx), new RegExp(`id="run-${b}"[^]*?class="ho pending"`));
-    const home = await loadTab('home', 'kestrel', ui);
+    const home = await loadTab('talk', 'kestrel', ui);
     assert.equal(home.side.now.find(n => n.run === b)?.handoff?.step, 'starting');
-    assert.match(renderTab('home', home, ctx), /class="hrow ho-row"><span class="ho pending"/);
+    assert.match(renderTab('talk', home, ctx), /class="hrow ho-row"><span class="ho pending"/);
     // 3. session 2 talks: resumed
     const dir = path.join(f.root, 'claude-projects', 'C--fx-wt');
     fs.writeFileSync(path.join(dir, `${sid2}.jsonl`), JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: 'r1',

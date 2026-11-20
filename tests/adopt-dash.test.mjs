@@ -14,7 +14,7 @@ import { loadMachine, loadProject } from '../engine/lib/config.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { createDashboard } from '../engine/dash/server.mjs';
-import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, stripCards } from '../engine/dash/ui.mjs';
 import { renderAdopt, adoptStep, ADOPT_STEPS } from '../engine/dash/adopt.mjs';
 import { proposalOf } from '../engine/lib/adopt.mjs';
 
@@ -107,8 +107,8 @@ test('zero projects: the dashboard starts, serves the page and lists none; scan 
     assert.ok(by.other, JSON.stringify(r2)); assert.equal(by.other.registered, null);
     assert.equal(by.tide.registered, 'tide'); assert.equal(by.plain, undefined);
     assert.equal(path.resolve(by.other.path), path.resolve(other));
-    // the overview works now; the first-task box carries the adopt line
-    const o2 = await d.get('/api/overview?project=tide');
+    // the strip works now; the first-task box (Lanes) carries the adopt line
+    const o2 = await d.get('/api/strip?project=tide');
     assert.equal(o2.first_run.project, 'tide');
   } finally { await d.close(); }
 });
@@ -282,26 +282,26 @@ test('screen 4 Review: a rail of parts, one card per part with Approve / Skip, a
 });
 
 // ---------- the empty states (SPEC sec. 5): each names what is missing in one line and offers the next action ----------
-test('empty states: the first-task box offers the look; an empty Roadmap offers the draft; the Overview setup card names rules, caps and the merge gate', () => {
+test('empty states: the first-task box offers the look; an empty Roadmap offers the draft; the Lanes setup card names rules, caps and the merge gate', () => {
   const ov = { now: new Date().toISOString(), projects: ['tide'], needs_you: 0, needs: [], running: { claude: { n: 0, cap: 1 }, codex: { n: 0, cap: 0 }, lanes: [] },
     burn: { usage: {}, top: [], executors: [] }, paused: false, checkin_locked: false,
     first_run: { project: 'tide', lane: 'first', caps: {} }, setup: { project: 'tide', rules: false, rules_from: [], caps_chosen: false, gate: null, found_gate: 'npm test', roadmap: 0, agent_files: [], version: 'v1', caps: { max_claude_workers: 1 } } };
-  const h = renderTab('overview', { overview: ov, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
+  const h = stripCards('lanes', ov);
   assert.match(h, /Or let Norn look at the repo and draft a roadmap, rules and a first task/); assert.match(h, /data-tab="adopt"/);
   assert.match(h, /id="setup-gaps"/);
   assert.match(h, /No project rules yet: no rules\/RULES\.md and no agent rules file/);
   assert.match(h, /No caps profile is on record\. Nobody chose them/); assert.doesNotMatch(h, /scheduler stays off/); assert.match(h, /Keep the starter caps/);
   assert.match(h, /Merges are not gated/); assert.match(h, /data-act="setup-gate" data-project="tide" data-cmd="npm test" data-version="v1"/, 'the found command is one click');
   // rules from the repo's CLAUDE.md and caps from budget.json: the card names them in its In place line
-  const have = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, rules: true, rules_from: ['CLAUDE.md'], caps_chosen: true, caps_from: 'budget', caps: { max_claude_workers: 5, max_codex: 0, weekly_stop_pct: null } } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
+  const have = stripCards('lanes', { ...ov, first_run: null, setup: { ...ov.setup, rules: true, rules_from: ['CLAUDE.md'], caps_chosen: true, caps_from: 'budget', caps: { max_claude_workers: 5, max_codex: 0, weekly_stop_pct: null } } });
   assert.doesNotMatch(have, /No project rules yet|Nobody chose them/);
   assert.match(have, /In place: rules: CLAUDE\.md · caps \(budget\.json\): 5 Claude workers, 0 Codex runs, weekly stop % unset \(no limit\)/);
-  const done = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, rules: true, caps_chosen: true, gate: 'npm test', roadmap: 3 } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
+  const done = stripCards('lanes', { ...ov, first_run: null, setup: { ...ov.setup, rules: true, caps_chosen: true, gate: 'npm test', roadmap: 3 } });
   assert.doesNotMatch(done, /id="setup-gaps"/, 'nothing missing: no card');
-  const kept = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, caps_kept: true } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
+  const kept = stripCards('lanes', { ...ov, first_run: null, setup: { ...ov.setup, caps_kept: true } });
   assert.doesNotMatch(kept, /Nobody chose them/, 'Keep the starter caps is a choice');
-  // the needs-you row of an open draft
-  const nr = renderTab('overview', { overview: { ...ov, first_run: null, needs_you: 1, needs: [{ type: 'setup', id: 'ADP-1', project: 'tide', title: 'Review the draft setup (4 parts)', created: new Date().toISOString() }] }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
+  // the needs-you row of an open draft (Inbox)
+  const nr = renderTab('inbox', { items: [{ type: 'setup', id: 'ADP-1', project: 'tide', title: 'Review the draft setup (4 parts)', created: new Date().toISOString() }] }, { now: Date.now(), project: 'tide' });
   assert.match(nr, /Review the draft setup \(4 parts\)/); assert.match(nr, /data-act="adopt-review"/); assert.match(nr, /data-act="adopt-notnow"/);
   // the Roadmap tab, empty
   const rm = renderTab('roadmap', { themes: [], adopt: { plans: 2, items: 17, branches: 2 } }, { project: 'tide' });

@@ -1,5 +1,5 @@
 // META-UX-R1 addendum C: every run gets a stable, distinguishable human name, deterministic from its run id (never re-rolled),
-// stored in the RUN record at launch (records lib = every launcher, any harness) and shown in agents / lanes / overview.
+// stored in the RUN record at launch (records lib = every launcher, any harness) and shown in runs / lanes / inbox.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -36,14 +36,14 @@ test('the RUN start event stores the name at launch; older runs without one get 
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the dashboard shows run names: agents tree, lanes, overview running rows, inbox', async () => {
+test('the dashboard shows run names: agents tree, lanes, runs, inbox', async () => {
   const f = await fixture();
   try {
     const tree = (await f.get('/api/agents')).data.tree, n2 = tree.find(n => n.id === 'RUN-2');
     assert.equal(n2.name, agentName('RUN-2'));
     const lanes = (await f.get('/api/lanes')).data.lanes; assert.equal(lanes.find(l => l.name === 'render').run_name, agentName('RUN-2'));
     const get = async r => (await f.get(r)).data;
-    for (const tab of ['runs', 'lanes', 'overview']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(agentName('RUN-2')), tab);
+    for (const tab of ['runs', 'lanes']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(agentName('RUN-2')), tab);
     assert.ok(renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' }).includes(agentName('RUN-1')), 'inbox unreviewed run');
   } finally { await f.done(); }
 });
