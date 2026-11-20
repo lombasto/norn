@@ -344,7 +344,7 @@ function tests(d, ctx) {
   const why = d.suite === false ? `<div class="banner" id="tests-scope">Norn reads node:test suites (tests/*.test.mjs) and pytest suites (tests/test_*.py); this project's tests/ holds neither, so only <b>Trends</b> fills: test cases and lines per day from git, refreshed once a day by the tick.</div>`
     : !d.times && !(d.history || []).length && !(d.git?.points || []).length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Trends</b> from git once a day; per-test runtimes come from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
   const views = TESTS_SUBS.map(([k, label]) => [k, label, k === 'suite' && d.times ? int(d.times.tests) : null]);
-  return why + testsAlerts(d) + subviewPage('tests', { numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
+  return subviewPage('tests', { title: 'Tests', lead: why + testsAlerts(d), numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
@@ -716,9 +716,7 @@ function guard(d, ctx) {
   const numbers = [{ n: int(total), label: `open · ${int(fresh)} new${K.count ? ` · ${int(K.count)} only count` : ''}`, cls: fresh ? 'warn' : '' }, { n: int(K.ready ?? 0), label: 'ready: the text is known', cls: K.ready ? 'ok' : '' },
     { n: int(K.drafts ?? 0), label: 'to draft: a worker writes it' }, { n: int(K.call ?? 0), label: 'your call: two ways' }];
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
-  return `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}
-   ${him}${cards}
-   ${subviewPage('slop', { numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P })}`;
+  return subviewPage('slop', { title: 'Slop', lead: `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}${him}${cards}`, numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P });
 }
 
 
@@ -895,8 +893,7 @@ function context(d, ctx) {
   const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growing' ? insTrend(d.measured) || none('no measured session in the last 30 days')
     : d.sub === 'checkins' ? insCheckins(d.checkins) || none('no check-in recorded yet') : `${insLoads(d)}${ctxRoles(d)}`;
   const n = d.counts || {}, checks = (n.findings ?? 0) + (n.advisories ?? 0) + (n.hints ?? 0) + (n.suggest ?? 0);
-  return `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>
-   ${subviewPage('context', { numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
+  return `${subviewPage('context', { title: 'Context', lead: `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>`, numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
    <div class="small mute" id="context-links">Read the files in <button class="lnk" data-tab="docs">Docs</button> · their checks (findings, rules, audits, memory): <button class="lnk" data-act="sub" data-sub="checks">open the checks</button> · every finding, hint and tightening candidate, in batches: <button class="lnk" data-go="slop" data-gosub="fix">Slop</button> (${int(checks)})</div>`;
 }
 // Per file: the count card, the file map + most tokens per day, the files (capped, show more); a name opens the Docs reader

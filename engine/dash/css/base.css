@@ -64,7 +64,9 @@ a{color:inherit}
 .sexplain{margin-top:3px;overflow-wrap:anywhere}.sexplain summary{cursor:pointer}.sexplain dl{margin:4px 0 0}.sexplain dt{font-weight:600;margin-top:4px}.sexplain dd{margin:0}.sexplain code{white-space:normal;word-break:break-all}
 /* META-UX-BUILD S2: the sub-view pattern (subviews.mjs) - a summary row of at most 4 numbers, the sub-view row, the chosen part */
 .subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
-.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid var(--line)}.subnav button[aria-selected=true]{background:var(--ink);color:var(--bg)}.subnav button[aria-selected=true] .mute{color:inherit}
+/* a page with views: the title and its view switch on one line (subviews.mjs), never a row under the nav */
+.phead.pagehead{align-items:center;margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid var(--line)}.ptitle{margin:0;font-size:20px}
+.subnav{display:inline-flex;flex-wrap:wrap;gap:6px}.subnav button[aria-pressed=true]{background:var(--ink);color:var(--bg)}.subnav button[aria-pressed=true] .mute{color:inherit}
 /* META-UX-BUILD S5: Slop's batches - the three kinds of fix apart (a coloured edge + heading each), the rows that only count folded */
 .sblist{list-style:none;margin:0;padding:0}.sbatch{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.sbatch:last-child{border-bottom:0}.sbpaths{margin:2px 0}.sbways{margin-top:4px}.sbrows summary{cursor:pointer}
 /* META-UX-BUILD S6: the Fix all sheet */
