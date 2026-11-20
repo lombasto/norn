@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { record, loadState } from '../engine/lib/records.mjs';
-import { lanesView, boardOf, prStep, BOARD } from '../engine/lib/lanes.mjs';
+import { lanesView, boardOf, prStep } from '../engine/lib/lanes.mjs';
+import { LANE_SHOW } from '../engine/dash/pages/lanes.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const run = (s, lane, extra = {}) => record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane, ...extra } }).id;
@@ -27,6 +28,7 @@ test('the run strip: oldest left, at most 6, joined on a hand-off chain, a gap o
   assert.ok(l.runs.every(r => Number.isInteger(r.min) && r.min >= 0), 'each bead has its minutes');
   assert.equal(l.ask, q, 'the open question on the lane');
   assert.equal(l.runs_total, 7, 'the strip says how many runs it left out');
+  assert.equal(l.runs.at(-1).by, null, 'started by hand, not by a check-in');
   assert.equal(l.budget_min, null); assert.equal(l.started, loadState(s).items[b].created);
 });
 
@@ -56,13 +58,13 @@ test('boardOf: needs you (Inbox rows only), running, stopped, waiting, to land, 
   assert.equal(B({ group: 'done', outcome: 'done', dlv: { step: 'pr', pr: 7 } }), 'land', 'done, not on main: To land');
   assert.equal(B({ group: 'done', outcome: 'done', dlv: { step: 'merged' } }), 'today');
   assert.equal(B({ group: 'done', outcome: 'done', ended: h(30) }), 'old');
-  assert.deepEqual(BOARD.map(g => g[0]), ['needs', 'running', 'stopped', 'waiting', 'land', 'parked', 'today', 'old', 'archived']);
+  assert.deepEqual(LANE_SHOW.map(g => g[0]), ['needs', 'running', 'stopped', 'waiting', 'land', 'parked', 'today', 'old', 'archived']);
 });
 
 test('prStep: done -> PR -> merged -> installed, with the PR number of the newest deliverable', () => {
   assert.equal(prStep([]), null);
-  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done' }]), { step: 'done', pr: null, url: null });
-  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done', pr: { number: 9, url: 'https://github.com/o/r/pull/9' } }]), { step: 'pr', pr: 9, url: 'https://github.com/o/r/pull/9' });
+  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done' }]), { step: 'done', pr: null, url: null, branch: null });
+  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done', pr: { number: 9, url: 'https://github.com/o/r/pull/9' } }]), { step: 'pr', pr: 9, url: 'https://github.com/o/r/pull/9', branch: null });
   assert.equal(prStep([{ id: 'DLV-2', state: 'merged', merge_pr: 4 }, { id: 'DLV-1', state: 'done' }]).step, 'merged');
-  assert.deepEqual(prStep([{ id: 'DLV-3', state: 'installed', pr: { number: 3 } }]), { step: 'installed', pr: 3, url: null });
+  assert.deepEqual(prStep([{ id: 'DLV-3', state: 'installed', pr: { number: 3 } }]), { step: 'installed', pr: 3, url: null, branch: null });
 });
