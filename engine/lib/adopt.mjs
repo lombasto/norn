@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, recordAsync, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, nodePrefix } from './records.mjs';
+import { record, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, idPrefix } from './records.mjs';
 import { loadRoadmap, world, goneLinks, planEvents, checkLinks, buildTree, writeRoadmapView, writeRoadmapViewAsync, roadmapViewPath } from './roadmap.mjs';
 import { laneSteps, LANE_IO } from './lanenew.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';
@@ -16,6 +16,7 @@ import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 import { normSubdir, subdirOf } from './monorepo.mjs';
 import { floorOf } from './floor.mjs';
+import { lineAt } from './slop/scan.mjs';
 
 export class AdoptError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 // META-DASH-ASYNC R1 (option a): the review's writes (decide / close / rule / apply) are yielded effects (lib/steps.mjs): the CLI and the
@@ -29,7 +30,6 @@ const sh = (cwd, args) => {
   return r.status === 0 ? r.stdout.replace(/\r\n/g, '\n').trimEnd() : null;
 };
 export const slugOf = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-const lineAt = (text, i) => text.slice(0, i).split('\n').length;
 
 export const AGENT_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', '.cursorrules', '.windsurfrules', '.clinerules', '.github/copilot-instructions.md', 'CONVENTIONS.md'];
 const PLAN_RE = /^(?:docs\/)?(?:ROADMAP|TODO|BACKLOG|PLAN|MILESTONES)[^/]*\.(?:md|txt)$|^TODO$/i;
@@ -507,7 +507,7 @@ function openFor(stateDir, { project, by, answers = {} }) {
   fs.mkdirSync(stateDir, { recursive: true });
   let p = proposalOf(stateDir), created = false;
   if (!p || p.state !== 'open') {
-    const pfx = nodePrefix(stateDir), n = Math.max(0, ...proposals(stateDir).map(x => num(x.id))) + 1;
+    const pfx = idPrefix(stateDir), n = Math.max(0, ...proposals(stateDir).map(x => num(x.id))) + 1;
     const dir = path.join(stateDir, 'adopt', `ADP-${pfx ? pfx + '-' : ''}${n}`);
     fs.mkdirSync(dir, { recursive: true });
     const text = JSON.stringify(facts, null, 1) + '\n', file = path.join(dir, 'facts.json');

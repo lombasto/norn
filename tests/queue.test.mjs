@@ -222,14 +222,15 @@ test('limit exit: outcome limit + reset; re-queued, held by the limit gate until
 
 // ---------- dash ----------
 // META-PLAN R1: the queue moved from the Runs page to the Plan tab (Up next)
-test('dash Plan tab: queued runs are listed (position, not before), not in Agents, not tree roots', () => {
+test('dash Plan tab: queued runs are listed (position, not before); not agentsTree roots; the Runs page shows them as queued rows', () => {
   const d = sandbox();
   queueRun(d.opts({ brief: d.brief('mode: done\n'), lane: 'qlane', notBefore: '2026-11-09T18:16:00.000Z' }));
   const runs = d.runs();
   assert.equal(agentsTree(runs, {}).length, 0);
   const queue = queueOf(runs);
   assert.equal(queue[0].not_before, '2026-11-09T18:16:00.000Z');
-  assert.ok(!/RUN-1|qlane/.test(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo' })));
+  // owner 2026-11-19: the Runs page lists queued runs after the running ones (a tree row, 'queued for'); what they wait for stays on Plan
+  assert.match(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo', now: Date.now() }), /id="node-RUN-1"[^]*?qlane[^]*?queued for /);
   const now = Date.parse('2026-11-09T12:00:00Z');
   const html = renderTab('plan', { parts: [buildPlan({ project: 'demo', runs, ready: readiness(d.state, { now, resources: () => ({ free_gb: 64, cpu_pct: 0 }) }), now })] }, { project: 'demo', now });
   assert.match(html, /Up next/);

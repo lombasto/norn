@@ -25,8 +25,8 @@ test('wholeHold: every queued (Claude) run on the same machine-level term, else 
   assert.equal(wholeHold([row('RUN-1', [W]), row('RUN-2', ['usage: RATE_OK=0'])]), null, 'two different terms: no single reason');
   assert.equal(wholeHold([row('RUN-1', ['cap: max_claude_workers 1/1'])]), null, 'a cap is not machine-level');
   assert.deepEqual(wholeHold([row('RUN-1', [W]), row('RUN-2', [], { account: false })]).scope, 'claude', 'a Codex run free to go: every Claude run is still held');
-  assert.equal(wholeHold([row('RUN-1', ['PAUSED (C:/s/PAUSED)']), row('RUN-2', [], { account: false })]), null, 'PAUSED must hold every row');
-  assert.equal(wholeHold([row('RUN-1', ['PAUSED (C:/s/PAUSED)', W]), row('RUN-2', ['PAUSED (C:/s/PAUSED)'], { account: false })]).term, 'PAUSED (C:/s/PAUSED)');
+  assert.equal(wholeHold([row('RUN-1', ['PAUSED all (C:/s/PAUSED)']), row('RUN-2', [], { account: false })]), null, 'PAUSED must hold every row');
+  assert.equal(wholeHold([row('RUN-1', ['PAUSED all (C:/s/PAUSED)', W]), row('RUN-2', ['PAUSED all (C:/s/PAUSED)'], { account: false })]).term, 'PAUSED all (C:/s/PAUSED)');
 });
 
 test('holdWords: the reason and the exact fix, in the billing mode in force', () => {
@@ -37,8 +37,8 @@ test('holdWords: the reason and the exact fix, in the billing mode in force', ()
   assert.match(holdWords('usage: RATE_OK=0').clears, /trailing 2 h rate/);
   assert.match(holdWords('usage: weekly 96.0 % >= guard 95 %', { status: '- reset 2026-11-20T08:00Z\n' }).clears, /weekly reset \(2026-11-20 08:00Z\)/);
   assert.match(holdWords('usage: api spend $12.00 in 24 h >= cap $10.00').reason, /\$10.00 daily cap/);
-  const p = holdWords('PAUSED (C:/s/PAUSED)');
-  assert.equal(p.file, 'C:/s/PAUSED'); assert.equal(p.resume, true); assert.match(p.fix, /delete C:\/s\/PAUSED/);
+  const p = holdWords('PAUSED all (C:/s/PAUSED)');
+  assert.equal(p.file, 'C:/s/PAUSED'); assert.equal(p.resume, true); assert.match(p.fix, /norn resume --all/); assert.match(p.reason, /Pause everything/);
   assert.equal(noticeMin({}), NOTICE_MIN); assert.equal(noticeMin({ holds: { notice_min: 15 } }), 15);
 });
 
@@ -115,7 +115,7 @@ test('tick: a PAUSED tick still tracks the hold, and returns ONE hold notice pas
   const go = () => tick({ project, machine: {}, budget: {}, reason: 'test', dry: true });
   const r1 = go();
   assert.match(r1.msg, /PAUSED/);
-  assert.match(readHold(state).term, /^PAUSED \(/); assert.equal(r1.hold_notice, undefined, 'not before notice_min');
+  assert.match(readHold(state).term, /^PAUSED all \(/); assert.equal(r1.hold_notice, undefined, 'not before notice_min');
   fs.writeFileSync(path.join(state, 'hold.json'), JSON.stringify({ ...readHold(state), since: new Date(Date.now() - 31 * 60000).toISOString() }));
   const r2 = go();
   assert.match(r2.hold_notice.title, /all queued work held .*Norn is paused/);

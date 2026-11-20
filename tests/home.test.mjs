@@ -12,7 +12,6 @@ import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { threadFile } from '../engine/lib/chatact.mjs';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
-import { mkTmp } from './helpers/tmp.mjs';
 
 const T = m => new Date(Date.parse('2026-11-13T00:00:00.000Z') + m * 60000).toISOString();
 const SHOT = 'C:/rev/meta/shots/plan-desktop-dark.png';
@@ -89,7 +88,7 @@ test('C2 renderThread on a fixture thread: every card kind, escaped text, shots 
 const HOME = {
   project: 'kestrel', now: T(60), events: FIX, needs_you: 2,
   status: { running: false, busy: false, segment: 1, executor: 'claude', model: 'claude-opus-5-5', effort: 'medium', ctx: 62000, handoff_k: 110 },
-  side: { now: [{ run: 'RUN-411', lane: 'meta-autonomy', state: 'running', age_min: 38, ctx: 71000 }, { run: 'RUN-413', lane: 'meta-ledger', state: 'queued' }],
+  side: { now: [{ run: 'RUN-411', lane: 'meta-autonomy', state: 'running', ran_min: 38, ctx: 71000 }, { run: 'RUN-413', lane: 'meta-ledger', state: 'queued' }],
     usage: { used: 38, stop: 95 }, interval_min: 15, paused: false,
     waiting: [{ id: 'Q-17', type: 'question', title: 'Plan tab forecast', created: T(0) }],
     ruled: [{ id: 'DEC-112', text: 'autonomy R1 first' }], orders: [{ id: 'DIR-15', text: 'no merges 23-07', created: T(0) }] },
@@ -178,44 +177,28 @@ test('C2 /api/file: images inside the allow-listed roots (project root, state, r
 // ---------- the phone width (SPEC row: scrollWidth == width at 390) ----------
 const css = () => { const h = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8'); return h.slice(h.indexOf('<style>'), h.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ''); };
 
-let shotLib = null;
-try { shotLib = await import('../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch yet */ }
-const browser = shotLib?.findBrowser?.() ?? null;
+// CI-RED-44384DB (windows): this test drove its own CDP socket with unbounded waits (the load event, the ready poll, every reply), so a
+// stalled step ran into the 120 s test timeout without a word and the finally (browser + server close) never ran - the file hung to
+// the 600 s cap. The shared openPage: every wait bounded, a timeout fails naming the page's state, pg.close in the finally.
+import { openPage, skipWhy } from './helpers/cdp.mjs';
 test('C2 the Home tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
-  skip: !shotLib ? 'engine/lib/shot.mjs (norn shot) is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false, timeout: 120000 }, async () => {
-  const { launchBrowser, closeBrowser } = shotLib;
-  const f = await fixture();
-  const profile = mkTmp('meta-shot-');   // <mkdtemp>/state/kestrel as the private browser profile
-  const child = launchBrowser({ browser, profile, size: [390, 844] });
-  let ws, passed = false;
+  skip: skipWhy, timeout: 120000 }, async () => {
+  const f = await fixture(), pg = await openPage([390, 844]);
   try {
     fs.mkdirSync(path.dirname(threadFile(f.pa.state)), { recursive: true });
     const long = 'x'.repeat(300), cmd = 'git push --force-with-lease origin feat/dash-phone-header-and-a-very-long-branch-name-that-does-not-break';
     fs.writeFileSync(threadFile(f.pa.state), [{ ts: T(0), seg: 1, kind: 'owner', text: `look at ${long}` }, { ts: T(1), seg: 1, kind: 'text', text: `run \`${cmd}\` ${long} C:/nowhere/a-very-long-shot-name-for-the-phone-test.png` }]
       .map(l => JSON.stringify(l)).join('\n') + '\n');
-    const port = await shotLib.waitDevToolsPort({ browser, profile, child });
-    let page = null;
-    for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
-    ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-    let id = 0; const pend = new Map();
-    const on = new Map();   // CDP event name -> one waiter
-    ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m.result); pend.delete(m.id); } else if (m.method && on.has(m.method)) { on.get(m.method)(m.params); on.delete(m.method); } };
-    const send = (method, params = {}) => new Promise(r => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
-    const ev = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }))?.result?.value;
     const measure = async (w, h, ground, mobile) => {
-      await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
-      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: ground }] });
-      // read only the NEW page, and only once it says it painted (body data-ready = the tab, or 'error' with #error), never on a clock
-      const loaded = new Promise(r => on.set('Page.loadEventFired', r));
-      await send('Page.navigate', { url: `${f.url}/?project=kestrel&tab=home&theme=${ground}` });
-      await loaded;
-      return ev(`new Promise(r => { const go = () => document.body.dataset.ready ? setTimeout(() => r({ ready: document.body.dataset.ready, error: document.querySelector('#error')?.textContent || null,
+      await pg.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
+      await pg.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: ground }] });
+      // read only the NEW page, and only once it says it painted (go: the load event, then body data-ready = the tab or 'error')
+      const ready = await pg.go(`${f.url}/?project=kestrel&tab=home&theme=${ground}`);
+      return { ready, ...await pg.ev(`new Promise(r => setTimeout(() => r({ error: document.querySelector('#error')?.textContent || null,
         sw: document.documentElement.scrollWidth, w: innerWidth, ev: document.querySelectorAll('#panel-home .ev').length,
         bar: getComputedStyle(document.querySelector('.bbar')).display, l: document.querySelector('.home-l') && getComputedStyle(document.querySelector('.home-l')).display,
-        cols: [...document.querySelectorAll('.home > *')].filter(e => getComputedStyle(e).display !== 'none').map(e => Math.round(e.getBoundingClientRect().left)) }), 300) : setTimeout(go, 100); go(); })`);
+        cols: [...document.querySelectorAll('.home > *')].filter(e => getComputedStyle(e).display !== 'none').map(e => Math.round(e.getBoundingClientRect().left)) }), 300))`) };
     };
-    await send('Page.enable'); await send('Runtime.enable');
     for (const ground of ['dark', 'light']) {
       const m = await measure(390, 844, ground, true);
       assert.equal(m.ready, 'home', `${ground}: the page painted the Home tab (${JSON.stringify(m)})`);
@@ -225,12 +208,5 @@ test('C2 the Home tab at 390 x 844 (phone, both grounds): document scrollWidth =
     }
     const d = await measure(1440, 900, 'dark', false);
     assert.equal(d.sw, 1440); assert.equal(d.bar, 'none'); assert.equal(d.cols.length, 3, JSON.stringify(d)); assert.ok(d.cols[0] < d.cols[1] && d.cols[1] < d.cols[2]);
-    passed = true;
-  } finally {
-    try { ws?.close(); } catch { /* closed */ }
-    // RUN-575: the browser tree may still hold the profile; closeBrowser waits for it and never throws, so done() always runs and a
-    // teardown failure is reported only after a passing body (a failing body keeps its own error)
-    let torn; try { torn = await closeBrowser(child, profile, { dir: path.dirname(path.dirname(profile)) }); } finally { await f.done(); }
-    if (!torn.ok) { if (passed) assert.fail(`teardown: ${torn.why}`); else console.error(`teardown (after the failure above): ${torn.why}`); }
-  }
+  } finally { await pg.close(); await f.done(); }
 });

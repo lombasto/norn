@@ -10,11 +10,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
-import { withLock } from './records.mjs';
+import { withLock, KINDS } from './records.mjs';
 
 export const BIG_BYTES = 5 * 1024 * 1024;   // anything larger stays out (named in the commit message)
-// the whitelist of a state/<project>/ dir: top-level text records + generated views; runs/*.json; views/** (GT-PARITY-PLAN 2.2)
-const STATE_TOP = [/^records.*\.jsonl$/, /^runs.*\.jsonl$/, /^deliverables.*\.jsonl$/, /^epics.*\.jsonl$/, /^notify.*\.jsonl$/, /\.md$/i, /^checkin-gate\.json$/];
+// the whitelist of a state/<project>/ dir: top-level text records + generated views; runs/*.json; views/** (GT-PARITY-PLAN 2.2). The record
+// logs come from KINDS (RM-46 S1c, F4: a hand list had missed roadmap / mail / waivers / adopt / instructions / guard), so a new kind is backed up
+const STATE_TOP = [...[...new Set(Object.values(KINDS).map(k => k.file))].map(f => new RegExp(`^${f}.*\\.jsonl$`)), /^notify.*\.jsonl$/, /\.md$/i, /^checkin-gate\.json$/];
 const SKIP_DIRS = new Set(['logs', 'hb', '.git', 'local', 'node_modules']);
 const SKIP_FILE = [/\.lock$/, /-cache\.json$/];
 const SCRATCH = /^scratch/i;   // the kill-criterion re-plan (LEDGER-NOTES DECIDED): scratch copies were 1700 of 5277 files on 11-09
@@ -120,8 +121,8 @@ export function ensureLedger(cfg, o = {}) {
   if ((fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '') !== want) fs.writeFileSync(ex, want);
 }
 
-// a loose blob from the exact bytes we scanned (sha1 object format)
-function writeBlob(cfg, buf) {
+// a loose blob from the exact bytes we scanned (sha1 object format); sync.mjs publishes home/<id> through it too
+export function writeBlob(cfg, buf) {
   const head = Buffer.from(`blob ${buf.length}\0`), full = Buffer.concat([head, buf]);
   const sha = crypto.createHash('sha1').update(full).digest('hex');
   const f = path.join(cfg.dir, 'objects', sha.slice(0, 2), sha.slice(2));

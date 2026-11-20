@@ -44,27 +44,20 @@ test('routine ends: MERGE DONE and a pushed worker DONE on an auto-stage lane ar
   assert.equal(wakeClass({ changes: [`-run:${m.id}`, '+owner:3'] }), 'minor');
 });
 
-test('worker_done_stage: the staged merge (merge-brief --sha, then meta run --queue) or, with a fast merge-queue gate, the queue; each a launcher review', () => {
+test('worker_done_stage: reviewed by code - mergeq lands the work (a fast gate batches it, else the mechanical landing); no CLI, no MERGE queued', () => {
   const t = mkTmp('meta-diet-s-'), state = path.join(t, 'state', 'demo');
   const w = start(state, 0, { lane: 'meta-x', worktree: 'C:/wt/x', notes: 'C:/rev/meta-x/NOTES.md' });
   end(state, w.id, 5, 'done', { head: 'b'.repeat(40), branch: 'feat/x', dirty: { files: 0, untracked: 0 } });
-  const calls = [], cli = a => { calls.push(a); return a[0] === 'run' ? { code: 0, out: 'queued RUN-77 (position 1)' } : { code: 0, out: 'merge-brief -> x' }; };
-  const p = { name: 'demo', file: 'C:/p/project.json', root: t, briefs_dir: 'C:/briefs', state, policy: { checkin: { auto_stage: ['meta-*'], merge_agent: 'runner' } } };
-  const r = handleRoutineEnds(state, p, { cli, pushed: () => true });
-  assert.deepEqual(r.map(x => [x.id, x.kind, x.ok]), [[w.id, 'worker_done_stage', true]]);
-  assert.deepEqual(calls[0].slice(0, 1), ['merge-brief']); assert.ok(calls[0].includes('--sha') && calls[0].includes('b'.repeat(40)));
-  assert.equal(calls[0][calls[0].indexOf('--notes') + 1], 'C:/rev/meta-x/MERGE-NOTES.md');
-  assert.deepEqual(calls[1].slice(0, 2), ['run', '--queue']); assert.equal(calls[1][calls[1].indexOf('--stage') + 1], 'MERGE');
-  assert.equal(calls[1][calls[1].indexOf('--agent') + 1], 'runner'); assert.equal(calls[1][calls[1].indexOf('--model') + 1], 'claude-sonnet-5-5');
+  const p = { name: 'demo', file: 'C:/p/project.json', root: t, briefs_dir: 'C:/briefs', state, policy: { checkin: { auto_stage: ['meta-*'] } } };
+  const r = handleRoutineEnds(state, p, { pushed: () => true });
+  assert.deepEqual(r.map(x => [x.id, x.kind, x.ok, x.note]), [[w.id, 'worker_done_stage', true, 'reviewed']]);
   const rv = items(state)[w.id].history.find(h => h.ev === 'review');
-  assert.equal(rv.by, 'launcher'); assert.equal(rv.data.routine, 'worker_done_stage'); assert.equal(rv.data.queued, 'RUN-77'); assert.match(rv.data.why, /pushed bbbbbbb on feat\/x/);
-  // a failed stage leaves the end for the check-in
+  assert.equal(rv.by, 'launcher'); assert.equal(rv.data.routine, 'worker_done_stage'); assert.equal(rv.data.queued, undefined);
+  assert.match(rv.data.why, /pushed bbbbbbb on feat\/x.*mergeq lands it by code/);
+  // the fast merge-queue gate batches the deliverable itself
   const s2 = path.join(t, 'state', 'two'), w2 = start(s2, 0, { lane: 'meta-x', worktree: 'W' });
   end(s2, w2.id, 5, 'done', { head: 'c'.repeat(40), branch: 'feat/y', dirty: { files: 0 } });
-  assert.equal(handleRoutineEnds(s2, { ...p, state: s2 }, { cli: () => ({ code: 3, out: 'REFUSED' }), pushed: () => true })[0].ok, false);
-  assert.equal(items(s2)[w2.id].review, undefined);
-  // the fast merge-queue gate batches the deliverable itself: review only, no CLI
-  const r3 = handleRoutineEnds(s2, { ...p, state: s2, merge: { gate: { fast: true } } }, { cli: () => { throw new Error('no CLI'); }, pushed: () => true });
+  const r3 = handleRoutineEnds(s2, { ...p, state: s2, merge: { gate: { fast: true } } }, { pushed: () => true });
   assert.equal(r3[0].ok, true); assert.match(items(s2)[w2.id].history.find(h => h.ev === 'review').data.why, /merge-queue gate batches/);
 });
 
@@ -191,7 +184,7 @@ test('settings: the policy.checkin rows (checkins/schedule) save, lane globs are
   assert.equal(checkinDayText(d[0]), 'check-ins: 4 (1 mechanical, 1 minor, 2 full)');
   assert.match(renderTab('context', { sub: 'checkins', rows: [], standing: [], hints: [], suggest: [], checkins: d }, { project: 'demo' }), /2026-11-08<\/td><td>check-ins: <b>4<\/b> \(1 mechanical, 1 minor, 2 full\)/);
   // doctor: the diet in force, and a knob that does nothing
-  assert.deepEqual(checkinDoctorLines({ name: 'demo', policy: {} }), [{ level: 'ok', text: 'demo: check-ins: run ends within 5 min share one check-in; done by code, no model turn: a finished merge is reviewed, a finished worker on an auto-merge lane gets its merge queued; auto-merge lanes: none; lanes that never wake a check-in: none; lanes checked only when a run ends: none' }]);
+  assert.deepEqual(checkinDoctorLines({ name: 'demo', policy: {} }), [{ level: 'ok', text: 'demo: check-ins: run ends within 5 min share one check-in; done by code, no model turn: a finished merge is reviewed, a finished worker on an auto-merge lane is reviewed (mergeq lands its work); auto-merge lanes: none; lanes that never wake a check-in: none; lanes checked only when a run ends: none' }]);
   // SHIP-READY R1: a stranger reads this line in doctor - plain words, no policy keys
   assert.match(checkinDoctorLines({ name: 'demo', policy: { checkin: { auto_stage: ['docs'], none_lanes: ['ci-*'], routine: ['merge_done'] } } })[0].text, /: a finished merge is reviewed; auto-merge lanes: docs; lanes that never wake a check-in: ci-\*;/);
   assert.match(checkinDoctorLines({ name: 'demo', policy: { checkin: { routine: ['merge_done'], auto_stage: ['a'] } } })[1].text, /auto_stage lists lanes but routine has no worker_done_stage/);

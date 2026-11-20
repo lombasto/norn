@@ -28,9 +28,9 @@ test('lines: the same axes; the period is the number of days; the aria label nam
 });
 
 test('Slop: the sub-view is "By age" and the chart says it plots the findings open NOW by the day first seen, not the open count over time', () => {
-  assert.deepEqual(GUARD_SUBS.find(x => x[0] === 'growing'), ['growing', 'By age']);
+  assert.deepEqual(GUARD_SUBS.find(x => x[0] === 'age'), ['age', 'By age']);
   const days = ['2026-11-15', '2026-11-16', '2026-11-17'];
-  const html = renderTab('slop', { sub: 'growing', growing: { trend: { days, series: [{ key: 'docs', label: 'Docs', points: days.map((x, i) => ({ x, y: i })) }] } }, total: 2, new: 0, kinds: {}, counts: {} }, { project: 'p' });
+  const html = renderTab('slop', { sub: 'age', age: { trend: { days, series: [{ key: 'docs', label: 'Docs', points: days.map((x, i) => ({ x, y: i })) }] } }, total: 2, new: 0, kinds: {}, counts: {} }, { project: 'p' });
   assert.match(html, /id="slop-trend-card"><h2>Open findings by age <span class="mute small">the findings open now, per type, counted from the day each was first seen · last 3 days/);
   assert.match(html, /id="slop-trend-note">[^<]*not the open count over time/);
   assert.ok(!/Is it growing\?/.test(html), 'the old title implied a trend of the open count');

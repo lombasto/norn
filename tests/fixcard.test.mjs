@@ -24,7 +24,7 @@ test('the result card: every file with Skip this file, every hunk as a diff, App
   for (const f of ['CLAUDE.md', 'AGENTS.md']) assert.match(page, new RegExp(`data-act="fx-skip"[^>]*data-file="${f}"`), `Skip this file for ${f}`);
   assert.equal((page.match(/Skip this file/g) || []).length, 2);
   for (const t of ['-old rule', '+new rule', '-stale', '+fresh', '+y']) assert.ok(page.includes(t), `the diff line ${t}`);
-  assert.match(page, /class="fxdiff[^"]*"/);
+  assert.match(page, /class="dvbox fxdiff"[^]*data-act="diff-open"/, "each hunk is the shared diff component (RM-35), Open = the diff viewer");
   assert.match(page, /data-act="fixresult"[^>]*data-choice="apply"[^>]*>Apply all <span[^>]*>3</);
   assert.match(page, /data-act="fixresult"[^>]*data-choice="discard"/);
   assert.match(page, /3 drafted · 1 skipped/); assert.ok(page.includes('the owner file'), 'a skip says why');

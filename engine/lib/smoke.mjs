@@ -107,7 +107,7 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     const brief = path.join(tmp, 'brief-handoff.md');
     fs.writeFileSync(brief, 'mode: handoff-once\nms: 1500\n');
     const started = must(['run', '--executor', 'fake', '--lane', 'smoke', '--stage', 'S1', '--round', '1', '--budget-min', '5', '--brief', brief, '--project', PJ, '--no-tick']);
-    const r1 = (started.match(/STARTED (RUN-\d+)/) || [])[1];
+    const r1 = (started.match(/STARTED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/) || [])[1];
     if (!r1) throw new SmokeError('no RUN id in: ' + started);
     const run = id => loadState(state).items[id];
     // META-ONBOARD S1: a run that never exits names its record and its supervisor log (the hosted Windows red: RUN-2 never exited)
@@ -132,7 +132,7 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     // 6. second writer in the same worktree is refused (exit 3)
     const hold = path.join(tmp, 'brief-sleep.md'), wt = path.join(state, 'wt', 'hold');
     fs.writeFileSync(hold, 'mode: sleep\nms: 30000\n');
-    holder = (must(['run', '--executor', 'fake', '--lane', 'hold', '--worktree', wt, '--brief', hold, '--project', PJ, '--no-tick']).match(/STARTED (RUN-\d+)/) || [])[1];
+    holder = (must(['run', '--executor', 'fake', '--lane', 'hold', '--worktree', wt, '--brief', hold, '--project', PJ, '--no-tick']).match(/STARTED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/) || [])[1];
     await until(`${holder} running`, () => run(holder)?.state === 'running');
     const refused = must(['run', '--executor', 'fake', '--lane', 'hold2', '--worktree', wt, '--brief', hold, '--project', PJ, '--no-tick'], {}, 3);
     if (!/REFUSED: worktree .* is held by/.test(refused)) throw new SmokeError('second writer: ' + refused);

@@ -136,9 +136,9 @@ test('overlap: the digest row (running lanes only, level-triggered), the Lanes c
 });
 
 test('githubRepo: https / ssh / scp forms; anything else null', () => {
-  assert.equal(githubRepo('https://github.com/lombasto/norn.git'), 'lombasto/norn');
-  assert.equal(githubRepo('https://github.com/lombasto/norn'), 'lombasto/norn');
-  assert.equal(githubRepo('git@github.com:lombasto/norn-public.git'), 'lombasto/norn-public');
+  assert.equal(githubRepo('https://github.com/kestrel/prism.git'), 'kestrel/prism');
+  assert.equal(githubRepo('https://github.com/kestrel/prism'), 'kestrel/prism');
+  assert.equal(githubRepo('git@github.com:kestrel/prism-public.git'), 'kestrel/prism-public');
   assert.equal(githubRepo('ssh://git@github.com/a/b.git'), 'a/b');
   assert.equal(githubRepo('https://gitlab.com/a/b.git'), null);
   assert.equal(githubRepo('C:/x/origin.git'), null);

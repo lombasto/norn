@@ -1,0 +1,102 @@
+{
+  "id": "K23",
+  "level": "BLOCK",
+  "kind": "eslint",
+  "tool": "eslint",
+  "title": "a new duplicate import of one module",
+  "how": "ESLint no-duplicate-imports (imports only) on the JS files the diff touches, at base and at head",
+  "explain": {
+    "what": "A file imports from the same module in two import lines.",
+    "why": "Two imports of one module make it harder to see what the file uses, and they often mean a merge or an edit went wrong.",
+    "fix": "Merge them into one import line."
+  },
+  "rules": {
+    "no-duplicate-imports": [
+      "error",
+      {
+        "includeExports": false
+      }
+    ]
+  },
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/m.mjs": "import { a } from './a.mjs';\nexport const m = a;\n"
+      },
+      "head": {
+        "src/m.mjs": "import { a } from './a.mjs';\nimport { b } from './a.mjs';\nexport const m = a + b;\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "src/m.mjs",
+            "messages": [
+              {
+                "ruleId": "no-duplicate-imports",
+                "severity": 2,
+                "message": "'./a.mjs' import is duplicated.",
+                "line": 2,
+                "column": 1,
+                "endLine": 2,
+                "endColumn": 29
+              }
+            ]
+          }
+        ],
+        "base": [
+          {
+            "filePath": "src/m.mjs",
+            "messages": []
+          }
+        ]
+      }
+    },
+    "miss": {
+      "base": {
+        "src/m.mjs": "import { a } from './a.mjs';\nimport { b } from './a.mjs';\nexport const m = a + b;\n"
+      },
+      "head": {
+        "src/m.mjs": "// the two imports predate this change\nimport { a } from './a.mjs';\nimport { b } from './a.mjs';\nimport { c } from './c.mjs';\nexport { d } from './c.mjs';\nexport const m = a + b + c;\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "src/m.mjs",
+            "messages": [
+              {
+                "ruleId": "no-duplicate-imports",
+                "severity": 2,
+                "message": "'./a.mjs' import is duplicated.",
+                "line": 3,
+                "column": 1,
+                "endLine": 3,
+                "endColumn": 29
+              }
+            ]
+          }
+        ],
+        "base": [
+          {
+            "filePath": "src/m.mjs",
+            "messages": [
+              {
+                "ruleId": "no-duplicate-imports",
+                "severity": 2,
+                "message": "'./a.mjs' import is duplicated.",
+                "line": 2,
+                "column": 1,
+                "endLine": 2,
+                "endColumn": 29
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

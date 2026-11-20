@@ -5,7 +5,7 @@
 import { Marked } from './vendor/marked.esm.js';
 import hljs from './vendor/highlight.min.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SAFE_URL = /^(https?:\/\/|mailto:|#)/i;
 const MAX_HL = 100000;          // code blocks above this many characters are shown unhighlighted
 const MAX_DOC = 3000000;        // documents above this many characters are shown as plain text
@@ -25,6 +25,23 @@ export function decorate(html) {
   }).join('');
 }
 
+/** the safe renderer parts every Norn markdown view shares (Docs here, prose.mjs for Norn's prose): code highlighted, raw HTML escaped,
+ * links only http(s) / mailto / #anchor (other schemes: the text), images never loaded. Methods use marked's this.parser. */
+export const safeRenderer = {
+  code({ text: code, lang }) {
+    const l = String(lang ?? '').trim().split(/\s+/)[0].toLowerCase(), known = l && hljs.getLanguage(l);
+    const body = known && code.length <= MAX_HL ? hljs.highlight(code, { language: l, ignoreIllegals: true }).value : esc(code);
+    return `<pre class="code"><code class="hljs${known ? ` language-${esc(l)}` : ''}">${body}</code></pre>\n`;
+  },
+  html({ text: raw }) { return esc(raw); },
+  link({ href, title, tokens }) {
+    const inner = this.parser.parseInline(tokens);
+    return SAFE_URL.test(href ?? '') ? `<a href="${esc(href)}"${title ? ` title="${esc(title)}"` : ''}${href.startsWith('#') ? '' : ' rel="noopener noreferrer" target="_blank"'}>${inner}</a>`
+      : `<span class="relink"${/^[a-z][a-z0-9+.-]*:/i.test(href ?? '') ? '' : ` title="${esc(href)}"`}>${inner}</span>`;   // other schemes: text only
+  },
+  image({ text: alt }) { return `<span class="relink">[image: ${esc(alt)}]</span>`; },   // never loaded (img-src self)
+};
+
 /** markdown -> { html, toc: [{ depth, id, text }] }; o.sanitize (browser: DOMPurify) runs last. */
 export function renderMarkdown(text, o = {}) {
   const src = String(text ?? '');
@@ -32,24 +49,13 @@ export function renderMarkdown(text, o = {}) {
   const toc = [], seen = new Map();
   const md = new Marked({ gfm: true });
   md.use({ renderer: {
+    ...safeRenderer,
     heading({ tokens, depth }) {
       const inner = this.parser.parseInline(tokens), base = slug(inner), n = seen.get(base) ?? 0; seen.set(base, n + 1);
       const id = n ? `${base}-${n}` : base, label = plainText(inner), mk = label.match(/^(DONE|STOPPED|HANDOFF)\b/);
       if (depth <= 3) toc.push({ depth, id, text: label });
       return `<h${depth} id="${esc(id)}"${mk ? ` class="mk mk-${MARK[mk[1]]}"` : ''}>${inner}</h${depth}>\n`;
     },
-    code({ text: code, lang }) {
-      const l = String(lang ?? '').trim().split(/\s+/)[0].toLowerCase(), known = l && hljs.getLanguage(l);
-      const body = known && code.length <= MAX_HL ? hljs.highlight(code, { language: l, ignoreIllegals: true }).value : esc(code);
-      return `<pre class="code"><code class="hljs${known ? ` language-${esc(l)}` : ''}">${body}</code></pre>\n`;
-    },
-    html({ text: raw }) { return esc(raw); },
-    link({ href, title, tokens }) {
-      const inner = this.parser.parseInline(tokens);
-      return SAFE_URL.test(href ?? '') ? `<a href="${esc(href)}"${title ? ` title="${esc(title)}"` : ''}${href.startsWith('#') ? '' : ' rel="noopener noreferrer" target="_blank"'}>${inner}</a>`
-        : `<span class="relink"${/^[a-z][a-z0-9+.-]*:/i.test(href ?? '') ? '' : ` title="${esc(href)}"`}>${inner}</span>`;   // other schemes: text only
-    },
-    image({ text: alt }) { return `<span class="relink">[image: ${esc(alt)}]</span>`; },   // never loaded (img-src self)
   } });
   let html = decorate(md.parse(src));
   if (o.sanitize) html = o.sanitize(html);

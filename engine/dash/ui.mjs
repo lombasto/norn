@@ -3,6 +3,7 @@
 // Rules (section 7): status = text + colour (a chip always carries a word), numbers with units, ids everywhere, tabular
 // numerals (CSS), one accent colour for "needs you", no animation and no timer (index.html re-renders from the /api/stream state stream).
 import { renderMarkdown } from './docs.mjs';
+import { renderProse } from './prose.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
@@ -10,9 +11,12 @@ import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, crit
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
+import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
+import { fmtDur } from './activity.mjs';
+import { diffBlock } from './diffview.mjs';
 export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'],
   ['work', 'Work'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['map', 'Map'], ['plan', 'Plan'], ['roadmap', 'Roadmap'],
   ['health', 'Health'], ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'],
@@ -69,6 +73,11 @@ export function stateOf(text) {
 }
 const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
 const projTag = (ctx, p) => ctx.project === 'all' && p ? `<span class="id">${esc(p)}</span> ` : '';
+// RM-46 S3 (SPEC 3.3, 4.7): a row another home wrote = an "on b" chip (that home commits its changes); an event written here on it and not
+// yet committed by its home = "answered on a, pending b" (the server's foreign(): home, pending [{ ev, home, primary }])
+const PAST = { answer: 'answered', say: 'said', archive: 'archived', unarchive: 'unarchived', revoke: 'revoked', overrule: 'overruled', edit: 'edited', move: 'moved', link: 'linked', unlink: 'unlinked', drop: 'dropped', reopen: 'reopened' };
+export const homeChip = x => (x?.home ? `<span class="chip home" title="${esc(`written on home ${x.home}: home ${x.home} commits its changes`)}">on ${esc(x.home)}</span> ` : '');
+export const pendingChips = x => (x?.pending || []).map(e => `<span class="chip pending" title="written here, applied once home ${esc(e.primary)} relays it">${esc(`${PAST[e.ev] ?? e.ev} on ${e.home}, pending ${e.primary}`)}</span>`).join(' ');
 const panel = (tab, html) => `<div id="panel-${tab}">${html}</div>`;
 const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose one project in the header: the ${esc(tab)} tab belongs to one project (its own records / files).</p></div>`);
 
@@ -131,11 +140,13 @@ const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve
 // META-UX-BUILD S3: Docs - the open file is its one part (&file=<key>) of one list (project + sig).
 // META-UX-BUILD S4: Context (the Instructions view's cost half) - the parts its sub-view needs (contextParts), of one view (project + scan
 // time + sub); its route stays /api/instructions (the Norn vocabulary rule: routes stay, labels and the URL tab move).
-const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []) };
+// TESTS-RUNTIME: Tests - the chosen sub-view's part; Impact's pick rides in batch ('files:a,b' | 'lane:<name>')
+const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub] };
 const PART_API = { context: 'instructions', slop: 'guard' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
-export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
+export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
 export async function loadParts(tab, project, d, get) {
-  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? `&batch=${encodeURIComponent(d.batch)}` : ''}` : '';
+  const pick = b => (b.startsWith('lane:') ? `&lane=${encodeURIComponent(b.slice(5))}` : `&files=${encodeURIComponent(b.slice(6))}`);
+  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}` : '';
   const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
 }
@@ -163,7 +174,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'work') { const [overview, a] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`)]); return { overview, queue: a.queue || [] }; }
   if (tab === 'health') { const [overview, slop] = await Promise.all([get(`/api/overview?${q}`), all ? null : Promise.resolve().then(() => get(`/api/guard?${q}&part=summary`)).catch(() => null)]); return { overview, slop }; }
   if (tab === 'history') return { records: await get(`/api/records?${q}`) };
-  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
+  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}${ctx.runsWindow && ctx.runsWindow !== '2h' ? '&window=' + ctx.runsWindow : ''}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
     const d = await get(`/api/roadmap?${q}`);
@@ -191,7 +202,11 @@ export async function loadTab(tab, project, get, ctx = {}) {
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
   if (tab === 'usage') return get(`/api/usage?${q}`);
-  if (tab === 'tests') return get(`/api/tests?${q}`);   // META-TEND TESTS
+  if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
+    const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
+    const have = partsHave(ctx, 'tests', project, d);
+    return { ...d, ...(have || {}), parts_loading: !have };
+  }
   if (tab === 'slop') {   // META-TEND P6. META-UX-BUILD S2: the summary first, then the chosen sub-view's part. S5: Slop (was Guard); one open batch
     const sub = pickSub(GUARD_SUBS, ctx.sub);
     const d = { ...(await get(`/api/guard?${q}&part=summary`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'fix' && ctx.batch ? { batch: ctx.batch } : {}) };
@@ -215,21 +230,131 @@ export function renderTab(tab, d, ctx = {}) {
   return panel(tab, ({ overview, inbox, work: workHub, lanes, runs, map, roadmap, health: healthHub, history: historyHub, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
-// META-TEND TESTS (owner DIR-19 + DIR-47): lean tests, measured - count + suite time over time, the slowest, never-failing and
-// duplicate tests with their mutant evidence, the last lean-tests wave before / after, the merge check's advisories
-const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : `${(ms / 1000).toFixed(1)} s`) : '-');
+// META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
+// the test machinery raised (linked to their Inbox question), and four sub-views (testparts.mjs TESTS_SUBS), each its own part:
+//   Suite            - the runtime of every test from the last `norn tests measure` (node:test or pytest): when and by which run, where the
+//                      time goes per file and group (share of the suite total), every test slowest first with its one-line description;
+//                      a test's file opens in the code viewer drawer (index.html #srcview) at its line
+//   Costs and health - cost, health and tier per test, test share per run and lane, gate time per merge, the merge check, lean tests
+//   Impact           - which test files cover a source file, or a lane's changed files (`norn tests for`)
+//   Trends           - test cases / lines and suite time over time, suite CPU-minutes, worker test minutes per lane
+// A part whose source does not exist yet says "not measured yet" and what writes it - never a number.
+const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`) : '-');
 const shortT = t => String(t ?? '').replace(/^(\S+\.test\.mjs) :: /, '<span class="mute">$1</span> ');
 const none = '<p class="mute" style="padding:0 12px">none measured</p>';
-function testsHead(d, ctx, last, gl) {
-  const ratio = gl ? (gl.test_lines / (gl.code_lines || 1)).toFixed(2) : null;
-  const wall = [...(d.history || [])].reverse().find(x => fin(x.suite_ms));   // a merge check folds files in: no wall time of its own
-  const what = last ? `${int(last.tests)} tests in ${int(last.files)} files · ${sec(last.file_ms)} of file time${wall ? ` · suite ${sec(wall.suite_ms)} wall (full measure)` : ''}` : 'per-test time: not measured yet';
-  const when = last ? `measured ${esc(fmtTime(last.at, ctx.now))} at ${esc(last.sha ?? '?')} (<span class="mono">${esc(d.commands.measure)}</span>)`
-    : `<span class="mono">${esc(d.commands.measure)}</span> measures a node:test suite (tests/*.test.mjs, run by ci-suite)`;
-  const hist = d.git ? `history ${esc(fmtTime(d.git.at, ctx.now))} (<span class="mono">${esc(d.commands.history)}</span>)` : `tests vs code over git: <span class="mono">${esc(d.commands.history)}</span>`;
-  return `<div class="card" id="tests-head"><b>${what}</b>${last?.coverage ? ` · line coverage <b>${pct(last.coverage.pct)}</b>` : ''}${gl ? ` · ${int(gl.tests)} test cases, ${int(gl.test_lines)} test lines vs ${int(gl.code_lines)} code lines (<b>${ratio}:1</b>)` : ''}
-    <div class="small mute">${when} · ${hist}. Measured, never judged by a model; every finding is advisory.</div></div>`;
+const notYet = (what, src) => `<p class="small mute tnotyet" style="padding:0 12px"><span class="chip idle">not measured yet</span> ${what}${src ? ` <span class="mute">(${src})</span>` : ''}</p>`;
+const SUITE_NAME = { 'node:test': 'node:test', pytest: 'pytest' };
+const nodeOnly = d => (d.suite === 'pytest' ? `<p class="small mute tscope" style="padding:0 12px">${chip('idle', 'node:test only')} reads node:test suites only: this project's suite is pytest, so nothing fills here.</p>` : '');
+// a test's file:line opens the code viewer; the test's row names it
+const srcBtn = (file, line, label) => `<button class="lnk mono small" data-act="test-src" data-file="${esc(file)}" data-line="${esc(line ?? '')}" title="open ${esc(file)}${line ? ` at line ${esc(line)}` : ''} (read-only)">${esc(label ?? `${file}${line ? `:${line}` : ''}`)}</button>`;
+function testsWhen(t, ctx) {
+  if (!t) return '';
+  return `<p class="small mute" id="tests-when">Timings taken <b>${esc(fmtTime(t.at, ctx.now))}</b> at <span class="mono">${esc(t.sha ?? '?')}</span> by ${t.run ? `<button class="lnk" data-go="runs" title="the run that measured">${esc(t.run)}</button>` : 'a hand run'}
+    (<span class="mono">${t.via === 'merge check' ? 'norn tests check' : 'norn tests measure'}</span>${fin(t.exit) ? `, suite exit ${int(t.exit)}` : ''}${t.via === 'merge check' ? ': the changed files re-measured, the rest from the last full measure' : ''}) · ${esc(SUITE_NAME[t.suite] ?? t.suite)} · ${int(t.tests)} tests in ${int(t.files)} files${t.failed ? ` · ${chip('bad', `${t.failed} failed`)}` : ''}</p>`;
 }
+export function testsNumbers(d) {
+  const t = d.times, last = (d.history || []).at(-1), al = (d.alerts || []).length;
+  return [{ n: t ? int(t.tests) : '-', label: t ? `${SUITE_NAME[t.suite] ?? t.suite} tests timed` : 'tests timed: not measured yet' },
+    { n: t ? sec(t.total_ms) : '-', label: t?.suite === 'pytest' ? 'suite wall (one process)' : 'suite time (file times summed)' },
+    { n: t?.slowest ? sec(t.slowest.ms) : '-', label: t?.slowest ? `slowest: ${t.slowest.name.slice(0, 48)}` : 'slowest test' },
+    al ? { n: int(al), label: 'alerts: they need you', cls: 'warn' } : { n: last?.coverage ? pct(last.coverage.pct) : '-', label: 'line coverage (last measure)' }];
+}
+function testsAlerts(d) {
+  const xs = d.alerts || [];
+  if (!xs.length) return '';
+  return `<div class="card" id="tests-alerts"><b>The test machinery needs you</b> <span class="small mute">each is an Inbox question: answer it here or there</span>${xs.map(q => {
+    const rk = q.recommend?.key;
+    return `<div class="item" id="tests-alert-${esc(q.id)}">${chip('needs', q.id)}<div style="flex:1;min-width:0"><b>${esc(q.title)}</b>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${(q.options || []).map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(d.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">${esc(o.text ?? o.t ?? k)}${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
+      <button class="lnk" data-tab="inbox">Open in Inbox</button></div></div></div>`; }).join('')}</div>`;
+}
+// ---- Suite ----
+function testsBreakdown(b) {
+  const row = f => `<details class="tbd"><summary><span class="tbdn mono">${esc(f.file)}</span> <b class="mono">${sec(f.ms)}</b> <span class="small mute">${f.share === null ? '' : pct(f.share)} · ${int(f.tests)} tests</span>${meter(f.share ?? 0, 100)}</summary>
+    <ul class="tlist">${f.groups.map(g => `<li><span>${g.group ? esc(g.group) : '<span class="mute">top level</span>'}</span> <b class="mono">${sec(g.ms)}</b> <span class="small mute">${g.share === null ? '' : pct(g.share)} · ${int(g.tests)} tests</span></li>`).join('')}</ul></details>`;
+  const top = b.files.slice(0, 12), rest = b.files.slice(12);
+  return `<div class="tablecard" id="tests-breakdown"><h3>Where the time goes <span class="mute small">per file, then per group (describe / suite / parent test, or pytest class), slowest first · share of ${sec(b.total_ms)}</span></h3>
+    <div style="padding:4px 12px">${top.map(row).join('')}${rest.length ? `<details class="tbd"><summary class="small mute">${int(rest.length)} more files</summary>${rest.map(row).join('')}</details>` : ''}</div></div>`;
+}
+const descLine = t => (t.desc ? `<div class="small">${esc(t.desc)} <span class="mute">(${esc(t.from)})</span></div>` : '<div class="small mute">no description: no docstring, no comment above it, and its name says little</div>');
+function testsList(p) {
+  const rows = p.tests.rows;
+  return `<div class="tablecard" id="tests-list"><h3>Every test, slowest first <span class="mute small">${int(p.tests.n)} · share = of the suite total · tap a file to read the test</span></h3>
+    <ul class="tlist" id="tests-rows">${rows.map(t => `<li data-test="${esc(t.id)}"><div><b>${esc(t.name)}</b> <b class="mono">${sec(t.ms)}</b> <span class="small mute">${t.share === null ? '' : pct(t.share, 2)}</span>${t.ok ? '' : ` ${chip('bad', 'failed')}`}${(t.cause || []).map(c => ` ${chip(c === 'in-process work' ? 'idle' : 'prov', c)}`).join('')}</div>
+      ${descLine(t)}<div class="small mute">${srcBtn(t.file, t.line)}${t.group?.length ? ` · ${esc(t.group.join(' › '))}` : ''}</div></li>`).join('')}</ul>${subMore(rows.length, p.tests.n)}</div>`;
+}
+function testsSuite(d) {
+  if (!d.breakdown) return `<div class="card" id="tests-suite-empty">${notYet('per-test runtimes', `<span class="mono">${esc(d.commands.measure)}</span> times every test of a node:test or pytest suite: a full suite run, once, on a quiet machine`)}</div>`;
+  return testsBreakdown(d.breakdown) + testsList(d);
+}
+// ---- Costs and health ----
+const kids = c => Object.entries(c?.children || {}).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(', ') || 'none';
+function testsPerTest(d) {
+  const s = d.sources || {}, have = ['costs', 'health', 'tiers'].filter(k => s[k]);
+  const head = `<h3>Per test: cost, health, tier <span class="mute small">${have.length ? `measured: ${have.join(', ')}` : ''}</span></h3>`;
+  if (!have.length) return `<div class="tablecard" id="tests-pertest">${head}${notYet('cost (CPU s, peak MB, child processes, alone vs under load), health (failures and reruns in 7 days, passes alone but fails under load, hangs, quarantine) and tier (worker / PR check / post-batch / nightly, with the hygiene verdict)', 'costs.json, health.json, tiers.json: the test-governance machinery writes them')}</div>`;
+  const li = r => {
+    const c = r.cost, h = r.health, q = r.quarantine, tr = r.tier;
+    return `<li data-test="${esc(r.id)}"><div><b>${esc(r.name)}</b> <span class="small mute">${sec(r.ms)}</span>${q ? ` ${chip('warn', 'quarantined')}` : ''}${tr?.tier ? ` ${chip('idle', tr.tier)}` : ''}${tr?.verdict ? ` ${chip(tr.verdict === 'keep' ? 'ok' : 'warn', tr.verdict)}` : ''}</div>
+      <div class="small">${s.costs ? (c ? `CPU ${fin(c.cpu_s) ? `${c.cpu_s.toFixed(1)} s` : '-'} · peak ${fin(c.peak_mb) ? `${int(c.peak_mb)} MB` : '-'} · children: ${esc(kids(c))} · alone ${sec(c.alone_ms)} / under load ${sec(c.load_ms)}` : '<span class="mute">cost: not in the last cost measure</span>') : ''}</div>
+      <div class="small">${s.health ? (h ? `${int(h.fails)} failures, ${int(h.reruns)} reruns in ${int(s.health.days)} days · ${int(h.load_only)} passed alone but failed under load · ${int(h.hangs)} hangs` : `<span class="mute">no failure in ${int(s.health.days)} days</span>`) : ''}${q ? ` · quarantined by ${esc(q.by)}${q.until ? ` until ${esc(String(q.until).slice(0, 10))}` : ''}${q.why ? `: ${esc(q.why)}` : ''}` : ''}</div>
+      ${tr?.evidence ? `<div class="small mute">${esc(tr.evidence)}</div>` : ''}<div class="small mute">${srcBtn(r.file, r.line)}${tr?.q || q?.q ? ` · <button class="lnk" data-tab="inbox">open the ruling ${esc(tr?.q || q.q)} in Inbox</button>` : ''}</div></li>`;
+  };
+  const miss = ['costs', 'health', 'tiers'].filter(k => !s[k]);
+  return `<div class="tablecard" id="tests-pertest">${head}${s.costs?.cpu_pct !== undefined && s.costs?.cpu_pct !== null ? `<p class="small mute" style="padding:0 12px">cost measured ${esc(String(s.costs.at ?? '').slice(0, 16))} with the machine at ${pct(s.costs.cpu_pct, 0)} CPU</p>` : ''}
+    ${miss.length ? notYet(miss.join(', '), `${miss.map(k => `${k}.json`).join(', ')}: the test-governance machinery writes them`) : ''}<ul class="tlist">${d.rows.rows.map(li).join('')}</ul>${subMore(d.rows.rows.length, d.rows.n)}</div>`;
+}
+const BUDGET = { ok: 'ok', warn: 'warn', over: 'bad' };
+function testsRuns(d) {
+  const head = '<h3>Per run and lane <span class="mute small">share of the run\'s wall time in test commands · full-suite commands seen (should be 0) · the budget</span></h3>';
+  if (!d.sources?.budgets) return `<div class="tablecard" id="tests-runs">${head}${notYet('test time per run', 'budgets.jsonl: the supervisor\'s per-run test budget writes it')}</div>`;
+  return `<div class="tablecard" id="tests-runs">${head}<ul class="tlist">${d.runs.map(r => `<li>${chip(BUDGET[r.state] ?? 'idle', r.state ?? '-')} <button class="lnk" data-go="runs">${esc(r.run)}</button> <span class="mute">${esc(r.lane ?? '')}</span>
+    <div class="small">${fin(r.wall_s) && r.wall_s > 0 ? `<b>${pct(100 * (r.test_s ?? 0) / r.wall_s, 0)}</b> of ${fmtMin(r.wall_s / 60)} in tests` : `${fmtMin((r.test_s ?? 0) / 60)} in tests`} · ${r.full_suite ? chip('bad', `${int(r.full_suite)} full-suite command${r.full_suite === 1 ? '' : 's'}`) : 'no full-suite command'} <span class="mute">${esc(fmtTime(r.at))}</span></div></li>`).join('')}</ul></div>`;
+}
+const MQ = { merged: 'ok', green: 'ok', landed: 'ok', red: 'bad', 'main-red': 'bad', pinned: 'bad', flaky: 'warn', slop: 'warn', gating: 'running' };
+function testsMerges(d, ctx) {
+  const head = '<h3>Per merge <span class="mute small">the merge queue\'s batches: gate time and what the gate ran</span></h3>', xs = d.merges || [];
+  if (!xs.length) return `<div class="tablecard" id="tests-merges">${head}<p class="small mute" style="padding:0 12px">no merge-queue batch yet</p></div>`;
+  return `<div class="tablecard" id="tests-merges">${head}<ul class="tlist">${xs.map(b => `<li>${chip(MQ[b.status] ?? MQ[b.result] ?? 'idle', b.status)} <b>batch-${esc(b.n)}</b> <b class="mono">${b.skipped ? 'gate skipped' : sec(b.gate_ms)}</b> <span class="small mute">${esc(fmtTime(b.done ?? b.built, ctx.now))} · ${int(b.runs.length)} gate run${b.runs.length === 1 ? '' : 's'}${b.runs.some(r => r.timedOut) ? ' · timed out' : ''}</span>
+    <div class="small mono" style="overflow-wrap:anywhere">${esc(b.skipped || b.gate || '-')}</div><div class="small mute" style="overflow-wrap:anywhere">${esc(b.members.join(', '))}</div></li>`).join('')}</ul></div>`;
+}
+function testsAdv(d) {
+  const adv = d.advisories, head = `<h3>Last merge check <span class="mute small">${adv ? `${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · ` : ''}advisory, never a merge block</span></h3>`;
+  if (d.suite === 'pytest') return `<div class="tablecard" id="tests-adv">${head}${nodeOnly(d)}</div>`;
+  if (!adv) return `<div class="tablecard" id="tests-adv">${head}<p class="small mute" style="padding:0 12px">no merge check yet</p></div>`;
+  return `<div class="tablecard" id="tests-adv">${head}${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>`;
+}
+function testsLean(d) {
+  const lean = d.lean, mx = d.mutation, files = mx?.files || [], never = lean?.never || [], dup = lean?.duplicates || [];
+  const head = '<h3>Lean tests <span class="mute small">the hygiene evidence: mutation trials (StrykerJS, outside the repo), tests that never fail, duplicates</span></h3>';
+  if (d.suite === 'pytest') return `<div class="tablecard" id="tests-lean">${head}${nodeOnly(d)}</div>`;
+  if (!lean && !mx) return `<div class="tablecard" id="tests-lean">${head}${notYet('lean tests', `<span class="mono">${esc(d.commands.lean)}</span> after a measure and a mutation trial`)}</div>`;
+  const mut = mx ? `<div class="inswrap" id="tests-mut"><table class="instab"><thead><tr><th>file</th><th>mutants</th><th>score</th><th class="insopt">survived</th><th class="insopt">test-process time</th></tr></thead><tbody>
+    ${files.map(f => `<tr><td class="mono">${esc(f.file.split('/').pop())}</td><td class="num">${int(f.mutants)}</td><td class="num"><b>${pct(f.score)}</b>${meter(f.score, 100)}</td><td class="num insopt">${int(f.survived)}</td><td class="num insopt">${sec(f.ms)}</td></tr>`).join('')}</tbody></table></div>` : '';
+  const nv = `<div id="tests-never"><div class="small" style="padding:4px 12px"><b>Never fail</b> <span class="mute">${int(never.length)} · ran against every mutant of ${esc(files.map(f => f.file.split('/').pop()).join(', ') || 'no file')} and killed none</span></div>
+    ${never.length ? `<ul class="tlist">${never.map(t => `<li>${chip('warn', 'kills 0')} ${shortT(esc(t.test))}${fin(t.ms) ? ` <span class="small mute">${sec(t.ms)}</span>` : ''}</li>`).join('')}</ul>` : none}</div>`;
+  const dp = `<div id="tests-dup"><div class="small" style="padding:4px 12px"><b>Duplicates</b> <span class="mute">${int(dup.length)} · every mutant it kills, another test kills too (equal sets: the slower one is listed)</span></div>
+    ${dup.length ? `<ul class="tlist">${dup.map(t => `<li>${chip(t.same ? 'warn' : 'idle', t.same ? 'same set' : 'subset')} ${shortT(esc(t.test))} <span class="small mute">kills ${int(t.kills)}${fin(t.ms) ? ` · ${sec(t.ms)}` : ''}</span><div class="small mute">inside: ${shortT(esc(t.within))}</div></li>`).join('')}</ul>` : none}
+    <p class="small mute" style="padding:0 12px">The evidence covers the trial's files only: a listed test may still guard other code - the wave gate re-measures coverage and mutants before a cut stands.</p></div>`;
+  return `<div class="tablecard" id="tests-lean">${head}${mut}${lean ? nv + dp : ''}</div>`;
+}
+const testsCosts = (d, ctx) => testsPerTest(d) + testsRuns(d) + testsMerges(d, ctx) + testsAdv(d) + testsLean(d);
+// ---- Impact ----
+function testsImpact(d) {
+  const im = d.impact, p = d.picked;
+  const form = `<div class="card" id="tests-impact-pick"><div class="small"><b>Which tests cover a file?</b> <span class="mute">the answer of <span class="mono">${esc(d.commands.for)} &lt;files&gt;</span>, from the coverage of the last measure${im ? ` (${esc(String(im.at).slice(0, 16))}, ${esc(im.sha ?? '?')})` : ''}</span></div>
+    <div class="tpick"><input type="search" id="tests-impact-files" list="tests-srcs" placeholder="source files, comma-separated" value="${esc(p && !p.lane ? p.files.join(', ') : '')}"><button data-act="tests-impact">Which tests?</button></div>
+    <datalist id="tests-srcs">${(im?.sources || []).map(s => `<option value="${esc(s)}">`).join('')}</datalist>
+    ${d.lanes?.length ? `<div class="tpick"><select id="tests-impact-lane" aria-label="a lane">${d.lanes.map(l => `<option${p?.lane === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><button data-act="tests-impact-lane">A lane's changed files</button></div>` : ''}</div>`;
+  if (!im) return form + `<div class="card" id="tests-impact-out">${notYet('test impact', `${d.suite === 'pytest' ? 'a pytest measure with pytest-cov installed' : `<span class="mono">${esc(d.commands.measure)}</span> with coverage`} writes it`)}</div>`;
+  if (!p) return form + `<p class="small mute" id="tests-impact-out">${int(im.sources.length)} source files are covered by the suite: pick one, or a lane.</p>`;
+  if (p.error) return form + `<div class="card" id="tests-impact-out">${chip('bad', 'refused')} ${esc(p.error)}</div>`;
+  return form + `<div class="tablecard" id="tests-impact-out"><h3>${p.lane ? `Lane ${esc(p.lane)}: ${int(p.files.length)} changed file(s)` : `${int(p.files.length)} file(s)`} → <b>${int(p.tests.length)} test file(s)</b></h3>
+    ${p.tests.length ? `<p class="small" style="padding:0 12px">${p.tests.map(t => srcBtn(t, null, t)).join(' ')}</p>` : ''}
+    <ul class="tlist">${p.rows.map(r => `<li><span class="mono">${esc(r.file)}</span> <span class="small mute">${r.tests.length ? `${int(r.tests.length)} test file(s)` : r.known ? 'covered by no test' : 'not in the measure\'s coverage (a test file, or not run by any test)'}</span></li>`).join('')}</ul>
+    <p class="small mute" style="padding:0 12px">The same answer in a terminal: <span class="mono" style="overflow-wrap:anywhere">${esc(d.commands.for)} ${esc(p.files.join(' '))}</span></p></div>`;
+}
+// ---- Trends ----
 function testsOver(h, g, last, gl) {
   const col = (title, cur, body) => `<div><div class="small"><b>${title}</b> <span class="mute">${cur}</span></div>${body}</div>`;
   return `<div class="tablecard" id="tests-time"><h3>Over time <span class="mute small">per day: test cases and lines (git, first parent) · per measure or merge check: the summed file time</span></h3><div class="tgrid">
@@ -238,20 +363,6 @@ function testsOver(h, g, last, gl) {
     ${col('test lines per code line', gl ? `${(gl.test_lines / (gl.code_lines || 1)).toFixed(2)}:1 now` : '-', g.length ? columns(g.map(x => ({ label: x.day.slice(5), value: Math.round(100 * x.test_lines / (x.code_lines || 1)) / 100 })), { fmt: v => `${v}:1`, title: 'test lines per code line', id: 'tests-ratio', per: 'day' })
       + stack([{ key: 'tests', label: 'test lines', value: gl.test_lines }, { key: 'code', label: 'code lines', value: gl.code_lines }], { fmt: int }) : '')}</div></div>`;
 }
-function testsLean(lean, mx) {
-  const files = mx?.files || [], never = lean?.never || [], dup = lean?.duplicates || [];
-  const slow = lean?.slowest?.length ? `<div class="tablecard" id="tests-slow"><h3>Slowest ${int(lean.slowest.length)} <span class="mute small">per-test time, last measure · cause = what the test body does</span></h3><div style="padding:4px 12px">
-    ${bars(lean.slowest.map(t => ({ label: `${t.file.replace(/^tests\//, '')} · ${t.name}`, value: t.ms, note: t.cause.map(c => chip(c === 'in-process work' ? 'idle' : 'prov', c)).join(' ') })), { fmt: sec, id: 'tests-slow-bars' })}</div></div>` : '';
-  const mut = mx ? `<div class="tablecard" id="tests-mut"><h3>Mutation trial <span class="mute small">StrykerJS, outside the repo · a mutant = one planted bug; a test that fails on it kills it</span></h3><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>mutants</th><th>score</th><th class="insopt">survived</th><th class="insopt">test-process time</th></tr></thead><tbody>
-    ${files.map(f => `<tr><td class="mono">${esc(f.file.split('/').pop())}</td><td class="num">${int(f.mutants)}</td><td class="num"><b>${pct(f.score)}</b>${meter(f.score, 100)}</td><td class="num insopt">${int(f.survived)}</td><td class="num insopt">${sec(f.ms)}</td></tr>`).join('')}</tbody></table></div></div>` : '';
-  if (!lean) return slow + mut;
-  const nv = `<div class="tablecard" id="tests-never"><h3>Never fail <span class="mute small">${int(never.length)} · ran against every mutant of ${esc(files.map(f => f.file.split('/').pop()).join(', ') || 'no file')} and killed none</span></h3>
-    ${never.length ? `<ul class="tlist">${never.map(t => `<li>${chip('warn', 'kills 0')} ${shortT(esc(t.test))}${fin(t.ms) ? ` <span class="small mute">${sec(t.ms)}</span>` : ''}</li>`).join('')}</ul>` : none}</div>`;
-  const dp = `<div class="tablecard" id="tests-dup"><h3>Duplicates <span class="mute small">${int(dup.length)} · every mutant it kills, another test kills too (equal sets: the slower one is listed)</span></h3>
-    ${dup.length ? `<ul class="tlist">${dup.map(t => `<li>${chip(t.same ? 'warn' : 'idle', t.same ? 'same set' : 'subset')} ${shortT(esc(t.test))} <span class="small mute">kills ${int(t.kills)}${fin(t.ms) ? ` · ${sec(t.ms)}` : ''}</span><div class="small mute">inside: ${shortT(esc(t.within))}</div></li>`).join('')}</ul>` : none}
-    <p class="small mute" style="padding:0 12px">The evidence covers the trial's files only: a listed test may still guard other code - the wave gate re-measures coverage and mutants before a cut stands.</p></div>`;
-  return slow + mut + nv + dp;
-}
 function testsWave(w, ctx) {
   if (!w) return '';
   return `<div class="tablecard" id="tests-wave"><h3>Last lean-tests wave ${chip(w.ok ? 'ok' : 'bad', w.ok ? 'gate passed' : 'gate failed')}${w.restored?.length ? ` ${chip('warn', 'restored')}` : ''} <span class="mute small">${esc(fmtTime(w.at, ctx.now))} · ${esc(w.head)} vs ${esc(w.base)}</span></h3><div style="padding:4px 12px">
@@ -259,14 +370,21 @@ function testsWave(w, ctx) {
     <div class="small">coverage ${pct(w.before.cov?.pct)} -> <b>${pct(w.after.cov?.pct)}</b>${w.score ? ` · mutation score ${pct(w.score.before)} -> <b>${pct(w.score.after)}</b>` : ''} · changed files ${sec(w.ms_before)} -> <b>${sec(w.ms_after)}</b>${w.lost_lines ? ` · lost ${int(w.lost_lines)} line(s)` : ''}</div>
     <div class="small mute" style="margin-top:4px;overflow-wrap:anywhere">cut: ${w.removed.map(t => shortT(esc(t))).join(' · ') || 'nothing'}</div></div></div>`;
 }
+function testsTrends(d, ctx) {
+  const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1);
+  const cpu = `<div class="tablecard" id="tests-cpu"><h3>Suite CPU-minutes per full run <span class="mute small">a hygiene pass pays off here</span></h3>${d.cpu?.length ? `<div style="padding:4px 12px">${columns(d.cpu.map(x => ({ label: String(x.at).slice(5, 10), value: x.cpu_min })), { fmt: v => `${v} min`, title: 'suite CPU-minutes per full run', id: 'tests-cpu-cols', unit: 'CPU-min', per: 'run' })}</div>` : notYet('suite CPU time', 'a measure that records its CPU-minutes (cpu_min in history.jsonl)')}</div>`;
+  const days = d.lanes ? [...new Set(d.lanes.map(x => x.day))] : [];
+  const lane = `<div class="tablecard" id="tests-lanemin"><h3>Worker test minutes per lane <span class="mute small">per day, from the per-run test budget</span></h3>${d.lanes ? `<div style="padding:4px 12px">${columns(days.map(day => ({ label: day.slice(5), value: Math.round(10 * d.lanes.filter(x => x.day === day).reduce((n, x) => n + x.min, 0)) / 10 })), { fmt: v => `${v} min`, title: 'worker test minutes per day', id: 'tests-lane-cols', unit: 'min', per: 'day' })}
+    ${bars(Object.entries(d.lanes.reduce((m, x) => ({ ...m, [x.lane]: (m[x.lane] ?? 0) + x.min }), {})).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => ({ label: k, value: Math.round(v * 10) / 10 })), { fmt: v => `${v} min`, id: 'tests-lane-bars' })}</div>` : notYet('worker test minutes', 'budgets.jsonl: the supervisor\'s per-run test budget writes it')}</div>`;
+  return testsOver(h, g, last, gl) + cpu + lane + testsWave(d.wave, ctx);
+}
+const TESTS_PART = { suite: testsSuite, costs: testsCosts, impact: testsImpact, trends: testsTrends };
 function tests(d, ctx) {
-  const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1), adv = d.advisories;
-  const advCard = adv ? `<div class="tablecard" id="tests-adv"><h3>Last merge check <span class="mute small">${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · advisory, never a merge block</span></h3>
-    ${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>` : '';
-  // a pytest (or any non node:test) project: say which parts can fill, instead of a page of "not measured yet" and a command that refuses
-  const why = d.suite === false ? `<div class="banner" id="tests-scope">This project's tests are not a node:test suite (tests/*.test.mjs), so only <b>Over time</b> fills here: test cases and lines per day from git, refreshed once a day by the tick. Per-test time, the slowest tests, the merge check and lean tests read node:test suites only.</div>`
-    : !g.length && !h.length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Over time</b> from git once a day; per-test time comes from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
-  return why + (d.suite === false ? testsOver(h, g, last, gl) : testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx));
+  // a project whose suite Norn cannot read: say which suite it is and what still fills, instead of a page of "not measured yet"
+  const why = d.suite === false ? `<div class="banner" id="tests-scope">Norn reads node:test suites (tests/*.test.mjs) and pytest suites (tests/test_*.py); this project's tests/ holds neither, so only <b>Trends</b> fills: test cases and lines per day from git, refreshed once a day by the tick.</div>`
+    : !d.times && !(d.history || []).length && !(d.git?.points || []).length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Trends</b> from git once a day; per-test runtimes come from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
+  const views = TESTS_SUBS.map(([k, label]) => [k, label, k === 'suite' && d.times ? int(d.times.tests) : null]);
+  return why + testsAlerts(d) + subviewPage('tests', { numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
@@ -277,11 +395,15 @@ const holdRow = (i, ctx) => `<div class="item" id="hold-${esc(i.project)}">${chi
   <div class="small">Fix: ${esc(i.fix)}${i.command ? ` <span class="mono">${esc(i.command)}</span>` : ''}${i.clears ? ` <span class="mute">- or it clears ${esc(i.clears)}</span>` : ''}</div></div>
   <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.setting ? `<button class="primary" data-tab="settings" title="${esc(i.setting)}">Open Settings</button>` : ''}${i.resume ? `<button class="primary" data-act="hold-resume" data-project="${esc(i.project)}">Resume</button>` : ''}</div></div>`;
 // GAP-8 (lib/handedits.mjs): a generated file edited by hand is no longer regenerated - take it back (a .bak keeps the hand text) or keep it
-// the words say what Norn saw and what each button does; a file that still carries Norn's GENERATED header was not written by a person
-const editRow = (i, ctx) => `<div class="item" id="${esc(i.id)}">${chip('warn', 'changed outside Norn')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}<span class="mono">${esc(i.file)}</span>${i.created ? ` · changed ${fmtMin(minsSince(i.created, ctx.now))} ago` : ''}</div>
-  <div class="small">Norn writes this file itself, and its text no longer matches what Norn last wrote, so Norn leaves it alone rather than overwrite someone's edit.${i.generated ? ' It still carries Norn\'s GENERATED header, so it was most likely not edited by a person: take it back.' : ''}</div>
+// the words say what Norn saw and what each button does. RM-35: then what changed and who probably did it (handedits.mjs explain: the
+// write record's lines, plain text), "View diff" (last written by Norn vs now in the diff viewer) and, when the text is clearly Norn's
+// own (an older copy, or its last text with a lost hash), the recommendation to take it back with the reason
+const editRow = (i, ctx, px = { project: i.project, sanitize: ctx.sanitize }) => `<div class="item" id="${esc(i.id)}">${chip('warn', 'changed outside Norn')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${renderProse('`' + i.file + '`', px)}${i.created ? ` · changed ${fmtMin(minsSince(i.created, ctx.now))} ago` : ''}</div>
+  <div class="small">Norn writes this file itself, and its text no longer matches what Norn last wrote, so Norn leaves it alone rather than overwrite someone's edit.</div>
+  ${i.lines?.length ? `<ul class="small hedwho">${i.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : i.generated ? '<div class="small">It still carries Norn\'s GENERATED header, so it was most likely not edited by a person.</div>' : ''}
+  ${i.recommend === 'takeback' ? `<div class="small"><b>Recommended: Let Norn take it back</b> - ${esc(i.why)}.</div>` : ''}
   <div class="small mute"><b>Let Norn take it back</b>: the current text is saved beside it as .bak and Norn updates the file again. <b>Keep my version</b>: Norn never updates this file again, until you take it back.</div></div>
-  <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
+  <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.diff ? `<button class="ghost" data-act="diff-open" data-dv-url="/api/handedit/diff?project=${encodeURIComponent(i.project ?? '')}&amp;file=${encodeURIComponent(i.file)}" data-dv-title="${esc(i.file.split('/').pop())}" data-dv-sub="last written by Norn vs now">View diff</button>` : ''}<button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
 // META-TEND P4: one model-advice card - what, why (the measured numbers), the vendor source and the day it was read (stale = past the
 // re-read date), the proposed Settings change and one tap: apply it, or keep the setting. Both write a decision record; nothing is automatic.
 export function adviceRow(i, ctx) {
@@ -303,7 +425,8 @@ function needItem(i, ctx) {
   if (i.type === 'login') return loginRow(i, ctx);
   if (i.type === 'hold') return holdRow(i, ctx);
   if (i.type === 'handedit') return editRow(i, ctx);
-  if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.id.slice(2))} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
+  if (i.type === 'parked' && i.ruled) return `<div class="item">${chip('answered', i.id)}<div><b>lane ${esc(i.lane)}: waiting - your ruling is being applied</b><div class="small mute">${projTag(ctx, i.project)}${esc(rulingWords(i.ruled, ctx))}</div></div></div>`;
+  if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.lane)} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
   const [cls] = stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state);
   return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${aname(i.name)} unreviewed - no review event yet</div></div></div>`;
 }
@@ -316,14 +439,18 @@ function setupGaps(g) {
   const p = esc(g.project), rows = [];
   const row = (what, text, acts) => rows.push(`<div class="item">${chip('warn', what)}<div><b>${text}</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${acts}</div></div></div>`);
   if (!g.roadmap) row('roadmap', 'No roadmap yet.', `<button data-act="adopt-open" data-project="${p}">Draft it from the repository</button><button class="ghost" data-tab="roadmap">Open the roadmap</button>`);
-  if (!g.rules) row('rules', `No project rules yet. Workers follow the repo's own ${esc((g.agent_files || []).join(', ') || 'instruction files')}.`,
+  if (!g.rules) row('rules', 'No project rules yet: no rules/RULES.md and no agent rules file (CLAUDE.md, AGENTS.md) in the repo.',
     `<button data-act="adopt-open" data-project="${p}">Draft them</button><button class="ghost" data-act="adopt-rule" data-project="${p}">Write one rule</button>`);
   const c = g.caps || {}, cap = (k, u) => (c[k] === null || c[k] === undefined ? `${u} unset (no limit)` : `${c[k]} ${u}`);
   if (!g.caps_chosen && !g.caps_kept) row('caps', `No caps profile is on record. Nobody chose them: the caps in force are ${cap('max_claude_workers', 'Claude workers')}, ${cap('max_codex', 'Codex runs')}, weekly stop ${cap('weekly_stop_pct', '%')}.`,
     `<button data-tab="settings">Choose a profile</button><button class="ghost" data-act="adopt-caps-keep" data-project="${p}">Keep the starter caps</button>`);
-  if (!g.gate) row('merge gate', `Merges are not gated. ${g.found_gate ? `The scan found <span class="mono">${esc(g.found_gate)}</span>.` : 'No test command is on record.'}`,
-    `<button data-act="adopt-open" data-project="${p}">Set it</button>`);
-  return rows.length ? `<section class="card" id="setup-gaps" style="margin-bottom:12px"><h2>Set up ${p}</h2>${rows.join('')}</section>` : '';
+  if (!g.gate) row('merge gate', `Merges are not gated. ${g.found_gate ? `Proposed: <span class="mono">${esc(g.found_gate)}</span>.` : 'No test command is on record.'}`,
+    g.found_gate ? `<button class="primary" data-act="setup-gate" data-project="${p}" data-cmd="${esc(g.found_gate)}" data-version="${esc(g.version ?? '')}">Set it</button><button class="ghost" data-act="adopt-open" data-project="${p}">Another command</button>`
+      : `<button data-act="adopt-open" data-project="${p}">Set it</button>`);
+  // what is already in place, named (which rules file, the caps and where they were chosen), so a short card says why a row is gone
+  const have = [g.rules && (g.rules_from || []).length ? `rules: ${esc(g.rules_from.join(', '))}` : '', g.caps_chosen ? `caps (${g.caps_from === 'budget' ? 'budget.json' : 'a recorded profile'}): ${cap('max_claude_workers', 'Claude workers')}, ${cap('max_codex', 'Codex runs')}, weekly stop ${cap('weekly_stop_pct', '%')}` : '',
+    g.gate ? `merge gate: <span class="mono">${esc(g.gate)}</span>` : ''].filter(Boolean);
+  return rows.length ? `<section class="card" id="setup-gaps" style="margin-bottom:12px"><h2>Set up ${p}</h2>${rows.join('')}${have.length ? `<p class="small mute" id="setup-have" style="margin:8px 0 0">In place: ${have.join(' · ')}</p>` : ''}</section>` : '';
 }
 // META-OOTB F-1: a project with no records yet - one text box = an owner directive + lane `first` with its own worktree and branch
 const capShown = v => (v === null || v === undefined ? 'unset (no limit)' : String(v));
@@ -337,14 +464,14 @@ function firstTask(f) {
    <div class="small mute" style="margin-top:8px">Caps in force: <b>${esc(capShown(c.max_claude_workers))}</b> Claude worker(s) · <b>${esc(capShown(c.max_codex))}</b> Codex · weekly stop <b>${esc(unit(c.weekly_stop_pct, '%'))}</b> · rate cap <b>${esc(unit(c.usage_rate_cap_pct_per_h, '%/h'))}</b> (Settings, Workers &amp; budget)</div></section>`;
 }
 // META-CTX-ENFORCE R1 (DIR-56): ONE context cell - the CURRENT context (last request) on a bar to the hard max, the tick = the hand-off
-// line of the run's role; red past the hand-off line, a chip naming which line it passed; the peak beside it when it was higher
+// line of the run's role (NORN-CTX-1M: "(1M tier)" when the run's model has the 1M window); red past the hand-off line, a chip naming which line it passed; the peak beside it when it was higher
 export function ctxMeter(n, { codexNote = false } = {}) {
   if (!fin(n.ctx)) return `<span class="small mute">${codexNote && String(n.executor ?? '').startsWith('codex') ? 'n/a (codex: tokens at end)' : '-'}</span>`;
   const lim = fin(n.ctx_limit) ? n.ctx_limit : null, hard = fin(n.ctx_hard) ? n.ctx_hard : null;
   const over = hard && n.ctx >= hard ? 'over' : lim && n.ctx >= lim ? 'hot' : '';
   const flag = over === 'over' ? ` ${chip('bad', 'past hard max')}` : over === 'hot' ? ` ${chip('bad', 'past hand-off')}` : '';
   const peak = fin(n.ctx_peak) && n.ctx_peak > n.ctx ? ` · peak ${kTok(n.ctx_peak)}` : '';
-  return `<span class="ctxm${over ? ' ' + over : ''}">${meter(n.ctx, Math.max(hard ?? 150000, n.ctx), lim, over)}<span class="small mute">${kTok(n.ctx)} ctx${lim ? ` / hand-off ${kTok(lim)}` : ''}${hard ? ` · max ${kTok(hard)}` : ''}${peak}</span>${flag}</span>`;
+  return `<span class="ctxm${over ? ' ' + over : ''}">${meter(n.ctx, Math.max(hard ?? 150000, n.ctx), lim, over)}<span class="small mute">${kTok(n.ctx)} ctx${lim ? ` / hand-off ${kTok(lim)}${/_1m$/.test(n.ctx_role ?? '') ? ' (1M tier)' : ''}` : ''}${hard ? ` · max ${kTok(hard)}` : ''}${peak}</span>${flag}</span>`;
 }
 // API billing (lib/billing.mjs): no weekly limit - the Burn card shows the last 24 h of spend against the daily $ cap instead
 function apiBurn(b) {
@@ -354,6 +481,24 @@ function apiBurn(b) {
      <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
      <span class="mute small">guard</span><div class="small mute">none weekly: API billing has no weekly limit${cap === null ? '. Set a daily cap in Settings (API daily cap) to stop spend past it' : ''}</div></div>`;
 }
+// RM-37: the header's pause menu (index.html #pause-pop) from the overview: the mode in force (who, when, why), one button per mode with
+// its one-line effect, what waits on the pause (queued runs held, runs asked to pause, paused hand-offs with a Resume each), Pause half
+// (ctx.half = its pick: the confirm line + Confirm) and Resume all
+export function pauseMenu(o, ctx = {}) {
+  const pz = o.pause, w = o.waiting || { held: 0, asked: [], handoffs: [] }, half = ctx.half, run = r => `${esc(r.run)}${r.lane ? ` (${esc(r.lane)})` : ''}`;
+  const now = pz ? `<div><b>Now: ${esc(pz.label)}</b><div class="small mute">${[pz.by && `by ${esc(pz.by)}`, pz.at && esc(fmtTime(pz.at, ctx.now)), pz.why && esc(pz.why)].filter(Boolean).join(' · ')}</div></div>` : '<div><b>Now: nothing paused</b></div>';
+  const modes = (o.modes || []).map(m => `<div class="pm-mode"><button data-act="pause-mode" data-mode="${esc(m.mode)}"${pz?.mode === m.mode ? ' aria-pressed="true" disabled' : ''}>${esc(m.label)}</button><span class="small">${esc(m.says)}</span></div>`).join('');
+  const wait = [w.held ? `<div class="small">${plural(w.held, 'queued run')} held until release</div>` : '', w.asked.length ? `<div class="small">Asked to pause: ${w.asked.map(run).join(', ')}</div>` : '',
+    ...w.handoffs.map(r => `<div class="small">Paused hand-off ${run(r)} ${pauseAct('handoff', r.project, r.run)}</div>`)].join('');
+  const pick = half ? `<div class="small" id="pause-half">${esc(half.line)}${half.pick.length ? ` <button data-act="pause-half-go" data-runs="${esc(half.pick.map(r => r.id).join(','))}">Confirm</button>` : ''}</div>` : '';
+  return `${now}${modes}${wait ? `<div><b class="small">Waiting on the pause</b>${wait}</div>` : ''}
+    <div class="acts"><button class="ghost" data-act="pause-half" title="Ask the newer half of the running runs to stop at a clean point and hand off">Pause half</button><button data-act="pause-resume-all"${pz || w.handoffs.length ? '' : ' disabled'}>Resume all</button></div>${pick}`;
+}
+// RM-37: a run row's pause action (Runs + Lanes, the menu's hand-offs) from its pauseState: Pause a running work run (the safe pause
+// order), pausing once asked, Resume a paused hand-off (its resume queued first)
+export const pauseAct = (pz, project, run) => { const at = `data-project="${esc(project)}" data-run="${esc(run)}"`;
+  return pz === 'running' ? `<button class="ghost" data-act="run-pause" ${at} title="Ask ${esc(run)} to stop at a clean point and hand off">Pause</button>`
+    : pz === 'asked' ? chip('warn', 'pausing') : pz === 'handoff' ? `<button data-act="run-resume" ${at} title="Queue the resume of ${esc(run)} first">Resume</button>` : ''; };
 // RM-18 S2: the Overview strip in place of the hero (both looks): three real links, one per Norn in its time colour (norn.css .ostrip),
 // each opening its destination - Urd History, Verdandi Work, Skuld Inbox (DEST_NORN)
 export function overviewStrip(s, ctx = {}) {
@@ -361,7 +506,7 @@ export function overviewStrip(s, ctx = {}) {
   const q = ctx.project ? `?project=${encodeURIComponent(ctx.project)}&tab=` : '?tab=';
   const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
   const ll = s.last_landed, ck = s.checkin || {};
-  const next = ctx.paused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
+  const next = ctx.checkinsPaused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
   return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
     + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
     + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
@@ -375,7 +520,7 @@ function overview(d, ctx) {
   const burnCell = l => { if (!apiB) return fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-';
     const v = liveUsd.get(`${l.project}|${l.run}`); return fin(v) ? `~$${v.toFixed(2)}` : '-'; };
   const rows = o.running.lanes.map(l => {
-    const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
+    const n = byId[l.run] || {}, age = n.ran_min, b = n.budget_min;
     const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
     const ctxCell = ctxMeter(n, { codexNote: true });
     return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
@@ -392,10 +537,10 @@ function overview(d, ctx) {
   const burners = (o.burn.top || []).map(t => `<div class="item"><span class="mono" style="width:76px">${fin(t.pct_per_h) ? t.pct_per_h.toFixed(2) + ' %/h' : mTok(t.burn30)}</span><span class="small"><span class="id">${esc(t.id)}</span> ${projTag(ctx, t.project)}${esc(t.lane ?? '')}</span></div>`).join('')
     || '<div class="small mute">no cache reads in the last 30 min</div>';
   const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
-    .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
+    .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}${r.kind === 'decision' ? decMark(r) : ''}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${overviewStrip(o.strip, { ...ctx, paused: o.paused })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
+  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}${backlogLine(o.backlog)}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
@@ -411,41 +556,108 @@ function overview(d, ctx) {
    <div class="tablecard"><h3>Ledger <span class="mute small">last 4 entries, newest first</span></h3><table class="ledtab compact"><tbody>${led || '<tr><td class="mute">no ledger file</td></tr>'}</tbody></table></div></div>` : ''}`;
 }
 
+// RM-30 S1: the Inbox's text goes through the one prose renderer (prose.mjs) with its project's lanes / repo / Docs keys (/api/inbox prose)
+const proseCx = (d, ctx, project, key) => ({ ...(d.prose?.[project] || {}), project, sanitize: ctx.sanitize, ...(key ? { clamp: true, key } : {}) });
+// an option = a small card: its key, its text, its cost; the recommended one is marked and carries its why
+function optCard(o, rk, q, px) {
+  const k = o.key ?? o.k, rec = k === rk, cost = o.cost ?? o.c;
+  return `<div class="opt${rec ? ' rec' : ''}" data-key="${esc(k)}"><div class="ohead"><b class="okey">${esc(k)}</b>${rec ? ` ${chip('needs', `recommended${recFrom(q.recommend) ? ` · ${recFrom(q.recommend)}` : ''}`)}` : ''}${o.added_by ? ` <span class="small mute qadded">added by ${esc(o.added_by)}</span>` : ''}</div>${renderProse(o.text ?? o.t, px)}
+    ${cost ? `<div class="ocost"><span class="olab">cost</span>${renderProse(cost, px)}</div>` : ''}${rec && q.recommend.why ? `<div class="owhy"><span class="olab">why</span>${renderProse(q.recommend.why, px)}</div>` : ''}</div>`;
+}
+
+// RM-28 S1: a finished planner run's proposal - its 10-line summary, the plan file, and per stage Queue now / Later / Drop (each
+// tap = `norn proposal rule`: a decision by dashboard, then the act). A decided stage shows what it became; the card goes when none is open.
+const PICK_DONE = { queue: 'queued', later: 'later', drop: 'dropped', launched: 'launched' };
+export function proposalCard(i, ctx) {
+  const btn = (s, pick, words, cls = '') => `<button class="${cls}" data-act="proposal" data-project="${esc(i.project)}" data-run="${esc(i.id)}" data-stage="${esc(s.key)}" data-pick="${pick}"${pick === 'later' && !i.item ? ' disabled title="No roadmap item links this lane or run"' : ''}>${words}</button>`;
+  const stage = s => `<li class="pstage" id="prop-${esc(i.id)}-${esc(s.key)}"><div><b>${esc(s.key)}</b> ${esc(s.title || s.brief.split('/').pop())}</div>${s.state === 'open'
+    ? `<div class="pacts">${btn(s, 'queue', 'Queue now', 'primary')}${btn(s, 'later', 'Later')}${btn(s, 'drop', 'Drop', 'ghost')}</div>`
+    : `<div class="small">${chip(s.state === 'drop' ? 'withdrawn' : 'applied', PICK_DONE[s.state] ?? s.state)}${s.ref ? ` <span class="mono">${esc(s.ref)}</span>` : ''}${s.dec ? ` <span class="mute">(${esc(s.dec)})</span>` : ''}</div>`}</li>`;
+  return `<article class="q openq proposal" id="prop-${esc(i.id)}"><div class="phead">${chip('open', `${i.open} open`)}<b style="font-size:15px">${esc(i.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, i.project)}${esc(i.id)}${i.item ? ` · ${esc(i.item)}` : ''} · ${fmtMin(minsSince(i.created, ctx.now))} ago</span></div>
+    ${i.summary.length ? `<ol class="psum">${i.summary.map(l => `<li>${esc(l.replace(/^\d+[.)]\s*/, ''))}</li>`).join('')}</ol>` : '<p class="small mute">The NOTES file has no summary section.</p>'}
+    ${i.plans.length ? `<div class="small">Plan: ${i.plans.map(f => `<span class="mono ppath">${esc(f)}</span>`).join(', ')}</div>` : ''}
+    <ul class="pstages">${i.stages.map(stage).join('')}</ul>
+    <div class="small mute">Each pick writes a decision (by dashboard). Queue now queues the brief on lane ${esc(i.lane)}${i.item ? ` linked to ${esc(i.item)}` : ''}; Later adds it to the roadmap${i.item ? ` under ${esc(i.item)}` : ''}, horizon next; Drop records only.</div></article>`;
+}
+
+// RM-28 S2: Decisions - every open proposal in one section of the Inbox so the owner rules several in one sitting: a count, an index
+// (one link per proposal: lane, run, open stages) and the S1 cards themselves (same buttons, same /api/proposal path). Empty = nothing.
+export function decisionsSection(items, ctx) {
+  const ps = items.filter(i => i.type === 'proposal');
+  if (!ps.length) return '';
+  const stages = ps.reduce((n, i) => n + i.open, 0);
+  const idx = ps.length > 1 ? `<div class="pindex small">${ps.map(i => `<a href="#prop-${esc(i.id)}">${projTag(ctx, i.project)}<b>${esc(i.lane)}</b> ${esc(i.id)} · ${plural(i.open, 'open stage')}</a>`).join('')}</div>` : '';
+  return `<section id="inbox-decisions" class="decisions"><h2>Decisions <span class="mute small">${plural(ps.length, 'proposal')} · ${plural(stages, 'open stage')} · each stage is ruled on its own: Queue now, Later or Drop</span></h2>${idx}${ps.map(i => proposalCard(i, ctx)).join('')}</section>`;
+}
+
+// INBOX-REPLIES: a question's thread - the owner's messages, the controller's replies (each options revision shown), the ruling it
+// proposed from the owner's words (one tap confirms it). (6b) where the options came from and whose recommendation it is.
+const recFrom = r => (!r?.from ? '' : r.from === 'source' ? 'plan default' : r.from === 'checkin' || r.from === 'controller' ? "the controller's own" : `${r.from}'s own`);
+const optsHead = q => `<div class="small mute qsrc" id="qsrc-${esc(q.id)}">${plural((q.options || []).length, 'option')}${q.origin ? ` · from <button class="lnk" data-ins="${esc(`path:${q.origin.file}`)}"${q.origin.line ? ` data-line="${esc(q.origin.line)}"` : ''} title="${esc(q.origin.file)}">${esc(`${String(q.origin.file).split(/[\\/]/).pop()}#${q.origin.section}`)}</button>` : ''}</div>`;
+const tmsg = (x, q, now) => {
+  const who = x.ev === 'reply' ? esc(x.who === 'checkin' ? 'controller (check-in)' : x.who) : 'you';
+  const body = x.ev === 'answer' ? `answered${x.choice ? ` <b>(${esc(x.choice)})</b>` : ''}${x.ruling ? ' - confirmed the ruling' : ''}: ${esc(x.text)}` : x.ev === 'reopen' ? 'reopened' : esc(x.text);
+  const rev = x.options ? `<div class="small qrev">revised the options: ${x.options.map(o => `<b>(${esc(o.key)})</b> ${esc(o.text)}`).join(' · ')}</div>` : '';
+  const prop = x.propose ? `<div class="small qprop">Rule: ${x.propose.key ? `<b>(${esc(x.propose.key)})</b> ` : ''}${esc(x.propose.text)}?</div>` : '';
+  return `<li class="qmsg ${x.ev === 'reply' ? 'ctl' : 'own'}" id="qm-${esc(q.id)}-${esc(x.seq)}"><span class="small mute">${who} · ${esc(fmtTime(x.ts, now))}</span><div>${body}</div>${rev}${prop}</li>`;
+};
+function qThread(q, now) {
+  const t = q.thread || [], P = q.proposal;
+  if (!t.length) return '';
+  const wait = q.waiting ? `<li class="small mute qwait">${chip('run', 'replying')} the controller answers here (a check-in started when you sent it, or the next one)</li>` : '';
+  const conf = P ? `<div class="card needs qconfirm" id="qconfirm-${esc(q.id)}"><span>Rule: ${P.key ? `<b>(${esc(P.key)})</b> ` : ''}${esc(P.text)}?</span> <button class="primary" data-act="rule" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-ruling="${esc(P.seq)}">Yes, rule it</button></div>` : '';
+  return `<ol class="qthread" id="qt-${esc(q.id)}">${t.map(x => tmsg(x, q, now)).join('')}${wait}</ol>${conf}`;
+}
+// the Resolved view: answered / applied questions, newest first, each with its thread
+function resolvedView(rs, ctx) {
+  if (!rs.length) return '';
+  const one = r => `<article class="q" id="qr-${esc(r.id)}"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${chip(r.state, `${r.id} ${r.state}`)}<b>${esc(r.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, r.project)}${esc(r.lane ?? '-')} · ${fmtTime(r.updated, ctx.now)}</span></div>
+    ${r.origin || r.options.length ? optsHead(r) : ''}${r.answer ? `<p class="small" style="margin:6px 0">${r.answer.choice ? `<b>(${esc(r.answer.choice)})</b> ` : ''}${esc(r.answer.text ?? '')}</p>` : ''}${(r.thread || []).some(x => x.ev !== 'answer') ? qThread({ ...r, waiting: 0, proposal: null }, ctx.now) : ''}</article>`;
+  return `<details class="tablecard" id="inbox-resolved" style="margin-bottom:12px"><summary><b>Resolved</b> <span class="mute small">${int(rs.length)} answered or applied, newest first · the thread is kept</span></summary>${rs.map(one).join('')}</details>`;
+}
+
 function inbox(d, ctx) {
   const items = d.items || [];
   const qs = items.filter(i => i.type === 'question').map(q => {
-    const rk = q.recommend ? q.recommend.key ?? q.recommend.k : null, opts = q.options || [];
-    return `<article class="q openq" id="q-${esc(q.id)}"><div style="display:flex;gap:10px;align-items:center">${chip('open', q.id + ' open')}<b style="font-size:15px">${esc(q.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, q.project)}${esc(q.lane ?? '-')} · ${fmtMin(minsSince(q.created, ctx.now))} ago${q.class ? ` · class ${esc(q.class)}` : ''}</span></div>
-    ${q.body ? `<p style="margin:8px 0">${esc(q.body)}</p>` : ''}
-    ${opts.length ? `<div class="opts">${opts.map(o => { const k = o.key ?? o.k; return `<div class="opt ${k === rk ? 'rec' : ''}"><b>(${esc(k)})</b> ${esc(o.text ?? o.t)}${o.cost ?? o.c ? `<div class="small mute">cost: ${esc(o.cost ?? o.c)}</div>` : ''}</div>`; }).join('')}</div>` : ''}
-    ${rk ? `<p class="small" style="margin:8px 0 10px"><b>Recommendation (${esc(rk)}):</b> ${esc(q.recommend.why ?? '')}</p>` : ''}
+    const rk = q.recommend ? q.recommend.key ?? q.recommend.k : null, opts = q.options || [], px = proseCx(d, ctx, q.project);
+    const answered = (q.pending || []).some(e => e.ev === 'answer');   // RM-46 S3: answered here, its home relays it - no second answer (SPEC 3.8)
+    return `<article class="q openq" id="q-${esc(q.id)}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${chip('open', q.id + ' open')}${homeChip(q)}${pendingChips(q)}<b style="font-size:15px;min-width:0;overflow-wrap:anywhere">${esc(q.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, q.project)}${esc(q.lane ?? '-')} · ${fmtMin(minsSince(q.created, ctx.now))} ago${q.class ? ` · class ${esc(q.class)}` : ''}</span></div>
+    ${q.body ? `<div class="qbody">${renderProse(q.body, proseCx(d, ctx, q.project, `${q.project}:${q.id}`))}</div>` : ''}
+    ${opts.length ? `${optsHead(q)}<div class="opts">${opts.map(o => optCard(o, rk, q, px)).join('')}</div>` : ''}
+    ${rk && !opts.some(o => (o.key ?? o.k) === rk) ? `<div class="small owhy"><b>Recommendation (${esc(rk)}${recFrom(q.recommend) ? `, ${esc(recFrom(q.recommend))}` : ''}):</b> ${renderProse(q.recommend.why ?? '', px)}</div>` : ''}
+    ${qThread(q, ctx.now)}
     ${q.answered_by ? `<div class="card needs" style="margin:8px 0;padding:8px 10px"><span class="small">Possibly answered in <b class="mono">${esc(q.answered_by.id)}</b>${q.answered_by.words ? `: <q>${esc(q.answered_by.words)}</q>` : ` (${esc(q.answered_by.why ?? '')})`}</span>
       ${q.answered_by.words ? `<button class="primary" style="margin-left:8px" data-act="answer-from" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-from="${esc(q.answered_by.id)}">Yes - already answered in ${esc(q.answered_by.id)}</button>` : ''}</div>` : ''}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${opts.map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">Choose (${esc(k)})${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
-    <input type="search" id="ans-${esc(q.id)}" placeholder="or answer in your words ..." style="flex:1;min-width:220px"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
-    <div class="small mute" style="margin-top:6px">Writes <span class="mono">answer ${esc(q.id)}</span> (by dashboard). The next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}.</div></article>`;
+    ${answered ? `<div class="small mute qpending">Your answer is written on this home; home ${esc(q.home)} applies it at its next sync pass (a refusal comes back as a conflict card).</div>` : `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${opts.map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">Choose (${esc(k)})${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
+    <textarea id="ans-${esc(q.id)}" rows="2" placeholder="or write to the controller (a doubt, a question) ..." aria-label="Answer ${esc(q.id)} in your words" style="flex:1;min-width:0"></textarea><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>`}
+    <div class="small mute" style="margin-top:6px">A Choose button answers <span class="mono">${esc(q.id)}</span>; the next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}. Words you type go to the controller, who replies here: ${esc(q.id)} stays open until you pick an option or confirm a ruling (a bare key such as <span class="mono">b</span> picks it).</div></article>`;
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
+  const props = decisionsSection(items, ctx);
   const aud = items.filter(i => i.type === 'audit');
   const audCard = aud.length ? `<section class="tablecard" id="inbox-audit" style="margin-bottom:12px"><h3>Audit hunks <span class="mute small">${int(aud.length)} open · the vendor prompt audit proposed them; accept = the check-in applies it, decline = keep the text; Norn edits nothing</span></h3><ul>${aud.map(i => auditCard(i.card, i.project)).join('')}</ul></section>` : '';
-  const fxCard = fxSection(items.filter(i => i.type === 'fixresult').map(i => [i.card, i.project]), 'inbox-fixer', 'tablecard');
+  const fxCard = fxSection(items.filter(i => i.type === 'fixresult').map(i => [i.card, i.project, proseCx(d, ctx, i.project)]), 'inbox-fixer', 'tablecard');
   const enf = items.filter(i => i.type === 'enforce');
-  const enfCard = enf.length ? `<section class="tablecard" id="inbox-enforce" style="margin-bottom:12px"><h3>Make it enforced? <span class="mute small">${int(enf.length)} correction(s) said again · approve = a directive asks the check-in for a brief; Norn installs nothing</span></h3><ul>${enf.map(i => enforceCard({ ...i.card, approve: i.approve }, i.project)).join('')}</ul></section>` : '';
-  const dlvCard = (items.some(i => ['setup', 'login', 'hold', 'handedit'].includes(i.type)) ? `<section class="card needs" style="margin-bottom:12px">${items.filter(i => i.type === 'hold').map(i => holdRow(i, ctx)).join('')}${items.filter(i => i.type === 'login').map(i => loginRow(i, ctx)).join('')}${items.filter(i => i.type === 'handedit').map(i => editRow(i, ctx)).join('')}${items.filter(i => i.type === 'setup').map(i => setupRow(i, ctx)).join('')}</section>` : '')
+  const enfCard = enf.length ? `<section class="tablecard" id="inbox-enforce" style="margin-bottom:12px"><h3>Make it enforced? <span class="mute small">${int(enf.length)} correction(s) said again · approve = a directive asks the check-in for a brief; Norn installs nothing</span></h3><ul>${enf.map(i => enforceCard({ ...i.card, approve: i.approve, asked: i.asked }, i.project, proseCx(d, ctx, i.project))).join('')}</ul></section>` : '';
+  const dlvCard = (items.some(i => ['setup', 'login', 'hold', 'handedit'].includes(i.type)) ? `<section class="card needs" style="margin-bottom:12px">${items.filter(i => i.type === 'hold').map(i => holdRow(i, ctx)).join('')}${items.filter(i => i.type === 'login').map(i => loginRow(i, ctx)).join('')}${items.filter(i => i.type === 'handedit').map(i => editRow(i, ctx, proseCx(d, ctx, i.project))).join('')}${items.filter(i => i.type === 'setup').map(i => setupRow(i, ctx)).join('')}</section>` : '')
     + (d.deliverables ? `<div style="margin-bottom:12px">${deliverablesCard(d.deliverables, ctx)}</div>` : '');
   const row = (i, st, what) => `<tr id="in-${esc(i.id)}"><td class="id">${esc(i.id)}</td><td>${st}</td><td>${projTag(ctx, i.project)}${what}</td></tr>`;
   const other = [
-    ...items.filter(i => i.type === 'parked').map(i => row(i, chip('parked'), `lane <b>${esc(i.id.slice(2))}</b> ${i.q ? `parked by ${esc(i.q)}` : esc(i.why ?? '')}`)),
+    ...items.filter(i => i.type === 'parked').map(i => i.ruled ? row(i, chip('answered'), `lane <b>${esc(i.lane)}</b> waiting: your ruling is being applied<div class="small mute">${esc(rulingWords(i.ruled, ctx))}</div>`)
+      : row(i, chip('parked'), `lane <b>${esc(i.lane)}</b> ${i.q ? `parked by ${renderProse(i.q, { ...proseCx(d, ctx, i.project), inline: true })}` : renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}`)),
     ...items.filter(i => i.type === 'unreviewed').map(i => row(i, chip(stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state)[0], String(i.outcome ?? i.state).toUpperCase()),
-      `<b>${esc(i.lane ?? '-')}</b> ${esc(i.why ?? '')}<div class="small mute">${aname(i.name)} unreviewed: ended with no review event</div>`)),
-    ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${esc(i.title)}<div class="small mute">${esc(i.answer?.text ?? '')} · ${fmtTime(i.updated, ctx.now)} · waits for the next tick to apply</div>`)),
+      `<b>${esc(i.lane ?? '-')}</b> ${renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}<div class="small mute">${aname(i.name)} unreviewed: ended with no review event</div>`)),
+    ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${renderProse(i.title, proseCx(d, ctx, i.project))}<div class="small mute">${esc(rulingWords({ q: i.id, choice: i.answer?.choice, text: i.answer?.text, at: i.updated }, ctx))}</div>`)),
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  const nNeeds = needsYou(items), nInfo = items.length - nNeeds;   // UX review 4: the one needs-you count (terms.mjs)
-  return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
-   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
+  const rsv = items.filter(i => i.type === 'resolved'), nNeeds = needsYou(items), nInfo = items.length - nNeeds - rsv.length;   // UX review 4: the one needs-you count (terms.mjs)
+  return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice; cards already asked for)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${props}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
+   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>
+    ${resolvedView(rsv, ctx)}`;
 }
 
+// item 8 (MAIL-9 a): an answered question in plain words wherever it shows - the owner's part is done, a check-in applies it
+const rulingWords = (r, ctx) => `You ruled: ${r.choice ?? r.text ?? '?'} (${fmtTime(r.at, ctx.now)}) on ${r.q} - waiting for the next check-in to apply it (an answer starts one at once)`;
 // GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
 // a PR one links to the PR; the shared files are its tooltip
 const overlapWords = o => `overlaps upstream: ${o.kind === 'pr' ? `PR #${o.number}` : o.ref} (${o.n} file${o.n === 1 ? '' : 's'})`;
@@ -463,27 +675,74 @@ export const LANE_SHOW = [['active', 'Active'], ['done', 'Done recently'], ['old
 export const LANE_SHOW_DEFAULT = ['active', 'done'];
 export const laneShowOf = l => l.group === 'archived' ? 'archived' : l.group === 'done' ? (l.old ? 'old' : 'done') : 'active';
 export const laneKey = (project, lane) => `${project}:${lane}`;
+// RM-34: why the lane exists (purpose.mjs laneDriver): the objective in one line under the name - a tap opens it in full with every
+// source and its title - and the sources as small links (RM / DIR / DEC / Q open the record where it lives, a brief or doc the Docs
+// reader). No source = the finding as a chip. Plain text (lane readable-text's renderer, RM-30, is not on main yet).
+const SRC_WORD = { brief: 'brief', doc: 'doc' };
+export const laneSrcLink = s => s.doc ? `<button class="lnk lane-src" data-go="docs" data-goins="${esc(s.doc)}" title="${esc(`${s.id}: ${s.title}`)}">${esc(SRC_WORD[s.kind])}</button>`
+  : `<a class="lane-src" data-rid="${esc(s.id)}" href="${esc(s.href)}" title="${esc(s.title)}">${esc(s.id)}</a>`;
+export const laneWhy = d => !d ? '' : !d.sources.length ? `<div class="lane-why">${chip('warn', d.finding)}</div>`
+  : `<details class="lane-why"><summary title="${esc(d.objective)}">${esc(d.objective)}</summary><ul class="small">${d.sources.map(s => `<li>${laneSrcLink(s)} ${esc(s.title)}</li>`).join('')}</ul></details>
+    <div class="lane-srcs small">${d.sources.map(laneSrcLink).join(' ')}</div>`;
+// MAIL-29: the lane's type as a chip (its tooltip = the signal that decided it; purpose.mjs laneType), a landing run in flight beside it
+// (MERGE is what the lane does now, not its type), and where the output goes in words (laneOutput: a PR and its state, or the notes)
+export const laneKind = l => { const t = l.lane_type, o = l.output; if (!t && !o) return '';
+  const out = !o ? '' : o.href ? `<a class="lane-out" href="${esc(o.href)}" target="_blank" rel="noopener">${esc(o.text)}</a>` : `<span class="lane-out">${esc(o.text)}</span>`;
+  return `<div class="lane-kind small"><span class="chip ${t?.type ? 'idle' : 'warn'}" title="${esc(`type from ${t?.signal ?? '-'}`)}">${esc(t?.type ?? 'no type')}</span>${t?.now ? ` ${chip('running', t.now)}` : ''} ${out}</div>`; };
+// RM-39: a run's progress against its brief (progress.mjs runProgress) - ONE short line on a row: the pace as a chip ("on track" /
+// "slow" / "stalled") and "2 of 5 items done, testing item 3"; its title = why slow
+const PACE_CLS = { 'on track': 'ok', slow: 'warn', stalled: 'bad' };
+export const progLine = g => !g ? '' : `<div class="prog small" title="${esc(g.slow?.line ?? g.pace?.words ?? '')}">${chip(PACE_CLS[g.pace?.state] ?? 'idle', g.pace?.state ?? '-')} ${esc(g.line)}</div>`;
+const ITEM_MARK = { done: '✓', doing: '…', todo: '·' };
+/** the detail: the checklist with its evidence, the pace, why slow, the alarms in words and the owner's moves */
+export const progDetail = g => !g ? '' : `<ol class="prog-items small">${g.items.map(it => `<li class="prog-${esc(it.state)}"><span aria-hidden="true">${ITEM_MARK[it.state]}</span> ${esc(it.title)}<span class="mute"> - ${esc(it.state)}${it.evidence ? `: ${esc(it.evidence)}` : ''}</span></li>`).join('')}</ol>
+  <div class="small"><b>Pace</b> ${esc(g.pace.words)}</div>${g.slow?.line ? `<div class="small"><b>Why</b> ${esc(g.slow.line)}</div>` : ''}
+  ${(g.alarms || []).map(a => `<div class="small prog-alarm">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} ${esc(a.words)}<div class="mute">${esc(a.numbers)}</div><div>${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc(a.act.join(' / '))}</div></div>`).join('')}`;
+/**
+ * RM-39 item 5: the lane overview card - one component on the Lanes name and the Runs page's Lane cell. Hover (desktop) or focus / tap
+ * (keyboard, phone) opens it over the row under the name, never over the row's buttons; Esc closes it (index.html); on a phone it is
+ * a bottom sheet (CSS). `label` = what opens it (the lane name, or the Lane cell's link).
+ */
+export function laneCard(c, label) {
+  if (!c) return label;
+  const g = c.progress, src = c.source ? `<span class="mute"> (${esc(c.source.id)})</span>` : '';
+  return `<span class="lhov">${label}<div class="lcard" role="dialog" aria-label="${esc(`Lane ${c.lane}`)}">
+    <div><b>${esc(c.lane)}</b> ${c.type ? chip('idle', c.type) : ''}</div>
+    <div class="small">${c.objective ? `${esc(c.objective)}${src}` : chip('warn', c.finding ?? 'no recorded driver')}</div>${c.output ? `<div class="small mute">${esc(c.output)}</div>` : ''}
+    ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
+    <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
+}
+// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
+// policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
+export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
+  : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
   const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), refused = ctx.laneRefused ?? {}, undo = ctx.laneUndo;
   const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => laneShowOf(l) === k).length;
   const usd = all.some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
   const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
-  // a done lane says how long ago it ended; an old one reads stopped (its row is faded)
-  const nowText = l => l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`;
-  const rows = all.filter(l => show.has(laneShowOf(l))).map(l => {
+  // a done lane says how long ago it ended; an old one reads stopped (its row is faded); lifecycle.mjs: then which rule acts on it and
+  // when ("archives in 3 days", "stopped: needs a check-in decision") unless the text already says it (idle)
+  const ruleText = l => !l.rule || l.text === l.rule.text ? '' : ` · ${l.rule.text}`;
+  const nowText = l => (l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`) + ruleText(l);
+  // MAIL-29: the type filter - one type at a time (none = all); its chips are the types of the rows the state chips leave, counted
+  const kind = ctx.laneType ?? null, typeOf = l => l.lane_type?.type ?? 'no type', shown = all.filter(l => show.has(laneShowOf(l)));
+  const kinds = [...new Set([...shown.map(typeOf), ...(kind ? [kind] : [])])].sort();
+  const rows = shown.filter(l => !kind || typeOf(l) === kind).map(l => {
     // the lane's run opens in the live feed drawer (as a Runs row does), not the supervisor's plain-text tail in a new browser tab
     const [cls, word] = stateOf(l.text), log = l.run ? `<button data-act="lane-feed" data-project="${esc(l.project)}" data-run="${esc(l.run)}" title="Open ${esc(l.run)} in the live feed">Feed</button>` : '';
-    const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
-      : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
+    const pa = pauseAct(l.pause, l.project, l.run), act = (pa ? pa + ' ' : '') + (cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
+      : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>`
+      : `${log} <button class="ghost" data-act="lane-undo" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Unarchive</button>`);   // an archive by the tick (lifecycle.mjs) is undone here too; RM-37: Pause / pausing / Resume first
     const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
-    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
+    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td>${laneCard(l.card, `<button class="lnk lname" aria-haspopup="dialog"><b>${projTag(ctx, l.project)}${esc(l.name)}</b></button>`)} ${homeChip(l)}${pendingChips(l)}<div class="id">${esc(l.id)}</div>${laneKind(l)}${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
+      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}${l.path ? ` · ${l.path.red ? chip('bad', l.path.text) : esc(l.path.text)}` : ''}${progLine(l.progress)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
   }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
   const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
-  return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
+  return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>${backlogLine(d.backlog)}
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
-   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span></div>
+   <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><span class="lane-show" role="group" aria-label="Show lanes">${chips}</span><span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span></div>
    <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -518,29 +777,96 @@ function historyHub(d) {
   return hub('history', { records: `${chip(act ? 'active' : 'idle', plural(act, 'active directive'))} ${chip('idle', plural((r.decisions || []).length, 'decision'))}` });
 }
 
+// RM-34: the Runs page's Lane cell - the lane (a link to its row on Lanes, every filter on so it shows) and the stage beside it;
+// a check-in reads "check-in", a run with no lane (a talk session) a dash
+const LANES_ALL = LANE_SHOW.map(([k]) => k).join(',');
+export const runLane = n => n.kind === 'checkin' ? 'check-in' : !n.lane ? dash
+  : `<a class="lanelink" data-rid="L:${esc(n.lane)}" href="?project=${encodeURIComponent(n.project ?? '')}&tab=lanes&lanes=${LANES_ALL}">${esc(n.lane)}</a>${n.stage ? ` · ${esc(n.stage)}` : ''}`;
+// ---------- the Runs page (owner 2026-11-19): running first, then queued, then ended; filter chips for state, kind and project, a lane
+// box and the window, all kept in the URL (index.html: S.runsView, runsViewOf / runsViewQs); 'ran' and 'ended' time columns ----------
+export const RUNS_STATES = [['running', 'running'], ['queued', 'queued'], ['finished', 'finished'], ['failed', 'failed']];
+export const RUNS_KINDS = [['worker', 'worker'], ['checkin', 'check-in'], ['helper', 'helper'], ['talk', 'talk']];
+export const RUNS_WINDOWS = [['2h', '2 h'], ['12h', '12 h'], ['24h', '24 h'], ['today', 'all today']];   // the server's RUN_WINDOWS
+const RUN_FAILED = ['crash', 'stopped', 'no-result', 'limit', 'auth'];   // an end outcome that did not finish the work
+/** a tree root's (or a queue entry's) state chip: running / queued / failed (lost, killed or a failed outcome) / finished */
+export const runStateOf = n => n.state === 'queued' ? 'queued' : n.state === 'running' || n.state === 'alive' ? 'running'
+  : n.state === 'lost' || n.state === 'killed' || RUN_FAILED.includes(n.outcome) ? 'failed' : 'finished';
+/** its kind chip: a helper (norn delegate), a check-in, a talk session (an interactive run too), else a worker (any executor) */
+export const runKindOf = n => n.kind === 'helper' || n.role === 'helper' ? 'helper' : n.kind === 'checkin' ? 'checkin' : n.kind === 'talk' || n.kind === 'interactive' ? 'talk' : 'worker';
+const isoMs = x => { const v = Date.parse(x ?? ''); return Number.isFinite(v) ? v : null; };
+/**
+ * A node's times in minutes: ran = start to end (start to now while running), ended = now minus its end (null while running),
+ * queued = now minus its queue time (queue entries only). A run's start / end are its own start and end events (agentsTree);
+ * a subagent's are its first and last transcript lines. An ended node with no end time has no ran either.
+ */
+export function runTimes(n, now) {
+  if (n.state === 'queued') { const q = isoMs(n.queued); return { ran_min: null, ended_min: null, queued_min: q === null ? null : Math.max(0, (now - q) / 60000) }; }
+  const live = runStateOf(n) === 'running', s = isoMs(n.started ?? n.first), e = live ? null : isoMs(n.ended ?? n.last);
+  return { ran_min: s === null || (!live && e === null) ? null : Math.max(0, ((e ?? now) - s) / 60000), ended_min: e === null ? null : Math.max(0, (now - e) / 60000), queued_min: null };
+}
+/** the default order: running (newest start first), then queued (longest waiting first: the fill order), then ended (latest end first) */
+export function runsOrder(roots) {
+  const g = n => ({ running: 0, queued: 1 })[runStateOf(n)] ?? 2, t = x => isoMs(x) ?? 0;
+  const key = n => g(n) === 0 ? -t(n.started ?? n.first) : g(n) === 1 ? t(n.queued) : -t(n.ended ?? n.last ?? n.started);
+  return [...roots].sort((a, b) => g(a) - g(b) || key(a) - key(b));
+}
+const allOf = l => new Set(l.map(x => x[0]));
+/** the page's view from the URL: &state= &kind= (a missing key = every chip on), &proj= (none = every project), &lane=, &window= */
+export function runsViewOf(qs) {
+  const set = (k, l) => { const v = qs.get(k); return v == null ? allOf(l) : new Set(v.split(',').filter(x => l.some(c => c[0] === x))); };
+  return { state: set('state', RUNS_STATES), kind: set('kind', RUNS_KINDS), proj: new Set((qs.get('proj') ?? '').split(',').filter(Boolean)), lane: qs.get('lane') ?? '',
+    window: RUNS_WINDOWS.some(w => w[0] === qs.get('window')) ? qs.get('window') : '2h' };
+}
+/** the view as URL params ('&state=running,queued...'): only what differs from the default, so a plain Runs link stays plain */
+export function runsViewQs(v) {
+  const full = (x, l) => x.size === l.length && l.every(c => x.has(c[0])), p = [];
+  if (!full(v.state, RUNS_STATES)) p.push(['state', [...v.state].join(',')]);
+  if (!full(v.kind, RUNS_KINDS)) p.push(['kind', [...v.kind].join(',')]);
+  if (v.proj.size) p.push(['proj', [...v.proj].join(',')]);
+  if (v.lane) p.push(['lane', v.lane]);
+  if (v.window !== '2h') p.push(['window', v.window]);
+  return p.map(([k, x]) => `&${k}=${encodeURIComponent(x)}`).join('');
+}
+/** the roots the view shows (children travel with their root) */
+export const runsFilter = (roots, v) => roots.filter(n => v.state.has(runStateOf(n)) && v.kind.has(runKindOf(n)) && (!v.proj.size || v.proj.has(n.project))
+  && (!v.lane || String(n.lane ?? '').toLowerCase().includes(v.lane.toLowerCase())));
+const queueNode = q => ({ id: q.id, name: q.name, kind: q.kind, role: q.role, state: 'queued', lane: q.lane, stage: q.stage, executor: q.executor, model: q.model, queued: q.queued, project: q.project, children: [] });
+const RUNS_HEAD = [['session', ''], ['lane', '', 'lanecol'], ['model · effort', ''], ['state', ''],
+  ['ran', 'How long the run ran: its start to its end, or to now while it runs. A queued run shows how long it has waited in the queue.'],
+  ['ended', 'How long ago the run ended. Empty while it runs.'], ['tokens', ''], ['context now (tick = hand-off, bar end = hard max)', ''], ['burn', '']];
 function runs(d, ctx) {
   const top = Object.fromEntries((d.top || []).map(t => [t.id, t]));
-  const name = n => n.kind === 'subagent' ? `${esc(n.agentType ?? 'subagent')}${n.description ? ` "${esc(n.description)}"` : ''}`
-    : n.kind === 'helper' ? `<span class="id">${esc(n.id)}</span>${aname(n.name)} helper${n.class ? ' · ' + esc(n.class) : ''}${n.q ? ` "${esc(n.q)}"` : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}`
-    : `<span class="id">${esc(n.id)}</span>${aname(n.name)} ${esc(n.lane ?? '')}${n.stage ? ' · ' + esc(n.stage) : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}${n.helpers ? ` · helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok` : ''}`;
+  const v = ctx.runsView ?? runsViewOf(new URLSearchParams());
+  // RM-34: Session = what identifies the session (its id + name); the rest of the old line (class, question, outcome, helpers) is its
+  // title, and the lane it works for has its own column
+  const name = n => n.kind === 'subagent' ? esc(n.agentType ?? 'subagent') : n.kind === 'talk' ? esc(n.id) : `<span class="id">${esc(n.id)}</span>${aname(n.name)}${n.kind === 'helper' ? ' helper' : ''}`;
+  const more = n => (n.kind === 'subagent' ? [n.description] : [n.kind === 'helper' && 'helper', n.class, n.q && `"${n.q}"`, n.lane && [n.lane, n.stage].filter(Boolean).join(' · '),
+    n.outcome && String(n.outcome).toUpperCase(), n.helpers && `helpers ${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok`]).filter(Boolean).join(' · ');
   const tok = n => n.tokens === '-' ? '-' : fin(n.tokens) ? `${int(n.tokens)}${n.tokens_src ? ` (${esc(n.tokens_src)})` : ''}` : fin(n.cacheR) ? `${mTok(n.cacheR)} cacheR` : String(n.executor ?? '').startsWith('codex') ? 'at end' : '-';
-  const age = n => fin(n.age_min) ? fmtMin(n.age_min) : n.first ? fmtMin(minsSince(n.first, ctx.now)) : n.started ? fmtMin(minsSince(n.started, ctx.now)) : '-';
+  const times = n => { const t = runTimes(n, ctx.now);
+    return `<div class="small run-ran">${fin(t.queued_min) ? `queued for ${fmtMin(t.queued_min)}` : fmtMin(t.ran_min)}</div><div class="small run-ended">${fin(t.ended_min) ? `${fmtMin(t.ended_min)} ago` : ''}</div>`; };
   const one = (n, lvl, kids, pid) => {
     const b = top[n.id];
-    const feed = /^RUN-\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
-    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
-     <div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
+    const feed = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(n.id) && n.state !== 'queued' && !n.readonly ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
+    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t" title="${esc(more(n))}">${projTag(ctx, n.project)}${name(n)}</span>${homeChip(n)}${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${n.pause ? ` ${pauseAct(n.pause, n.project, n.id)}` : ''}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
+     <div class="lanecol small">${lvl ? '' : laneCard(n.lane_card, runLane(n))}${progLine(n.progress)}</div><div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div>${times(n)}<div class="mono small">${tok(n)}</div>
      <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
   };
   // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it
   const refusedRows = n => (n.refused || []).map(x => `<div class="node lvl1 refusedrow" data-p="p-${esc(n.id)}"><div class="small" style="grid-column:1/-1">${chip('refused', `refused: ${x.words}`)} ${esc([x.lane, x.stage ?? x.answers].filter(Boolean).join(' '))} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div></div>`).join('');
-  const tree = d.tree || [], rows = tree.map(n => one(n, 0, (n.children || []).length || (n.refused || []).length, 'p-' + n.id) + refusedRows(n) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
-    || '<div class="node"><div class="mute">No running or recent (2 h) sessions.</div></div>';
-  const by = k => tree.filter(n => exClass(n.executor) === k).length;
-  return `<div class="legend small mute"><span>Tree = every run of the last 2 h (workers, check-ins, Codex, own-account executors), talk sessions and their subagents. Click a run for its live feed.</span>
+  const tree = d.tree || [], all = [...tree, ...(d.queue || []).map(queueNode)], win = (RUNS_WINDOWS.find(w => w[0] === (d.window ?? v.window)) ?? RUNS_WINDOWS[0])[1];
+  const rows = runsOrder(runsFilter(all, v)).map(n => one(n, 0, (n.children || []).length || (n.refused || []).length, 'p-' + n.id) + refusedRows(n) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
+    || `<div class="node"><div class="mute">${all.length ? 'No runs under these filters.' : `No running, queued or recent (${esc(win)}) sessions.`}</div></div>`;
+  const by = k => tree.filter(n => exClass(n.executor) === k).length, projs = [...new Set(all.map(n => n.project).filter(Boolean))].sort();
+  const chips = (group, l, has, of) => `<span class="lane-show" role="group" aria-label="${esc(group)}">${l.map(([k, t]) => `<button class="hf" data-act="runs-show" data-group="${group}" data-show="${esc(k)}" aria-pressed="${has(k)}">${esc(t)} <b>${all.filter(n => of(n) === k).length}</b></button>`).join('')}</span>`;
+  const filters = `<div class="filters runs-filters">${chips('state', RUNS_STATES, k => v.state.has(k), runStateOf)}${chips('kind', RUNS_KINDS, k => v.kind.has(k), runKindOf)}${projs.length > 1 ? chips('proj', projs.map(p => [p, p]), k => v.proj.has(k), n => n.project) : ''}
+    <span class="lane-show" role="group" aria-label="window">${RUNS_WINDOWS.map(([k, t]) => `<button class="hf" data-act="runs-window" data-window="${k}" aria-pressed="${k === v.window}" title="ended runs from the last ${esc(t)}">${esc(t)}</button>`).join('')}</span>
+    <input type="search" data-runs-lane placeholder="filter by lane" value="${esc(v.lane)}"></div>`;
+  return `<div class="legend small mute"><span>Running first (newest start first), then queued, then ended (latest end first). Tree = every run running, queued or ended in the last ${esc(win)} (workers, check-ins, Codex, own-account executors), talk sessions and their subagents. Click a run for its live feed.</span>
     <span>Sources: RUN records + transcript <span class="mono">&lt;session&gt;.jsonl</span>, <span class="mono">subagents/agent-*.meta.json</span>, Codex log banner / rollout.</span></div>
-   <div class="tree"><div class="node head"><div>session</div><div>model · effort</div><div>state</div><div>age</div><div>tokens</div><div>context now (tick = hand-off, bar end = hard max)</div><div>burn</div></div>${rows}</div>
-   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. Runs waiting to start: the Plan tab.</p>`;
+   ${filters}
+   <div class="tree"><div class="node head">${RUNS_HEAD.map(([h, t, c]) => `<div${c ? ` class="${c}"` : ''}${t ? ` title="${esc(t)}"` : ''}>${esc(h)}</div>`).join('')}</div>${rows}</div>
+   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>`;
 }
 // ---------- META-TEND P6: the Guard (REPORT s.5.0-5.1) - every open advisory across types, a query that owns no data ----------
 // Chips in place: guardOn(guard, pick) = the rows of one owning thing; guardChip = ONE chip shape on every tab (severity colour, the
@@ -559,8 +885,11 @@ export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="
 const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
+// RM-27: a SloppaChoppa finding explains itself - its rule's what / why / what to do and the waiver path, folded under the row
+const slopExplain = x => `<details class="sexplain"><summary class="small">what this is, why it matters, what to do</summary><dl class="small">
+    <dt>What</dt><dd>${esc(x.what)}</dd><dt>Why</dt><dd>${esc(x.why)}</dd><dt>What to do</dt><dd>${esc(x.fix)}</dd>${x.waiver ? `<dt>If it must stay</dt><dd>only the owner or the controller waives it: <code>${esc(x.waiver)}</code></dd>` : ''}</dl></details>`;
 const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
-    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div>${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
+    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div>${r.explain ? slopExplain(r.explain) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
 // META-UX-BUILD S5 (REPORT s.2-3): To fix = ONE list in batches (check + the kind of fix the check declares), the kinds apart:
 // ready (the exact text is known), to draft (a worker writes the text), your call (two ways), and the rows that only count (folded).
 // A batch shows its first rows; "all n" opens it (one batch at a time, every row, capped + show more). The two ways are named here;
@@ -602,21 +931,20 @@ function fixItem(i, sel) {
 }
 // META-UX-BUILD S7 (REPORT s.3 step 4): the fixer's ONE result card per run - every file (Skip this file), every hunk as a diff, Apply all n
 // (minus skipped files) / Discard = POST /api/fixresult (one decision + one directive: the audit accept path); the rest = a new tap.
-// A run with no parsable hunk is failed: Discard only.
-const fxDiff = p => `<pre class="fxdiff inspatch">${String(p ?? '').split('\n').map(l => { const c = /^[+](?![+][+])/.test(l) ? 'fxadd' : /^-(?!--)/.test(l) ? 'fxdel' : ''; return c ? `<span class="${c}">${esc(l)}</span>` : esc(l); }).join('\n')}</pre>`;
-export function fixResultCard(c, project) {
+// A run with no parsable hunk is failed: Discard only. Each hunk is the shared diff component (diffview.mjs; RM-35), Open = the diff viewer.
+export function fixResultCard(c, project, px = { project }) {
   const pj = ` data-project="${esc(project)}" data-run="${esc(c.run)}"`, failed = c.state === 'failed', st = c.status || [];
   const count = ['drafted', 'skipped', 'missing'].map(k => [k, st.filter(x => x.state === k).length]).filter(([, n]) => n).map(([k, n]) => `${int(n)} ${k}`).join(' · ');
   const why = st.filter(x => x.state !== 'drafted'), fn = f => f.n ?? f.hunks.filter(h => h.applies !== false).length;
   const files = (c.files || []).map(f => `<div class="fxfile" data-file="${esc(f.file)}" data-n="${int(fn(f))}"><div class="fxfilehead"><span class="mono">${esc(f.file)}</span> <span class="small mute">${plural(f.hunks.length, 'hunk')}</span><span class="spacer"></span>${fn(f) ? `<button class="ghost" data-act="fx-skip" data-file="${esc(f.file)}"${pj} aria-pressed="false">Skip this file</button>` : ''}</div>
-    ${f.hunks.map(h => `<div class="small mute">${esc(f.file)}${h.line ? ':' + esc(h.line) : ''}</div>${h.applies === false ? `<p class="small fxmisfit">${chip('bad', 'does not apply')} ${esc(h.why ?? '')} · not in Apply all; its finding stays open</p>` : ''}${fxDiff(h.patch)}`).join('')}</div>`).join('');
+    ${f.hunks.map(h => `${h.applies === false ? `<p class="small fxmisfit">${chip('bad', 'does not apply')} ${renderProse(h.why ?? '', { ...px, inline: true })} · not in Apply all; its finding stays open</p>` : ''}${diffBlock({ patch: h.patch }, { title: f.file + (h.line ? ':' + h.line : ''), sub: 'fixer hunk', cls: 'fxdiff' })}`).join('')}</div>`).join('');
   const rest = c.more ? `<p class="small"><button class="lnk" data-act="fixall-rest" data-dir="${esc(c.directive)}" data-project="${esc(project)}">${int(c.left)} left: send the fixer for the rest (${plural(c.more, 'run')})</button></p>` : '';
   return `<li class="fxcard" id="fxcard-${esc(c.run)}"><div class="fxtop">${chip(failed ? 'bad' : 'needs', failed ? `failed: ${c.fail || 'no parsable hunk'}` : 'to apply')} <b>Fixer result ${esc(c.run)}</b> <span class="small mute">${esc(c.directive)} · ${esc(c.dec ?? '')} · ${plural(c.n, 'hunk')} in ${plural((c.files || []).length, 'file')}</span></div>
-    ${count || c.bad ? `<p class="small">${[count, c.bad ? `${plural(c.bad, 'hunk')} ${c.bad === 1 ? 'does' : 'do'} not apply` : ''].filter(Boolean).join(' · ')}</p>` : ''}${why.length ? `<details><summary class="small">not drafted (${int(why.length)})</summary><ul class="small">${why.map(x => `<li><span class="mono">${esc(x.id)}</span> ${esc(x.state)}${x.why ? ': ' + esc(x.why) : ''}</li>`).join('')}</ul></details>` : ''}
+    ${count || c.bad ? `<p class="small">${[count, c.bad ? `${plural(c.bad, 'hunk')} ${c.bad === 1 ? 'does' : 'do'} not apply` : ''].filter(Boolean).join(' · ')}</p>` : ''}${why.length ? `<details><summary class="small">not drafted (${int(why.length)})</summary><ul class="small">${why.map(x => `<li><span class="mono">${esc(x.id)}</span> ${esc(x.state)}${x.why ? ': ' + renderProse(x.why, { ...px, inline: true }) : ''}</li>`).join('')}</ul></details>` : ''}
     ${failed ? `<p class="small">${c.fail === 'no hunk applies' ? 'No hunk applies to the files as they are: nothing to apply. Discard it; the findings stay open.' : 'The run ended without one hunk in the audit format: nothing to apply. Discard it; the findings stay open.'}</p>${c.fail === 'no hunk applies' ? files : ''}` : files}
     <div class="fxbtns">${failed ? '' : `<button class="primary" data-act="fixresult" data-choice="apply"${pj}>Apply all <span class="fx-kept">${int(c.n)}</span></button> `}<button data-act="fixresult" data-choice="discard"${pj}>Discard</button></div>${rest}</li>`;
 }
-const fxSection = (cards, id, wrap) => (cards.length ? `<section class="${wrap}" id="${id}" style="margin-bottom:12px"><h3>Fixer results <span class="mute small">${plural(cards.length, 'run')} to decide · Apply = the check-in applies the hunks; Norn edits nothing</span></h3><ul class="fxres">${cards.map(([c, p]) => fixResultCard(c, p)).join('')}</ul></section>` : '');
+const fxSection = (cards, id, wrap) => (cards.length ? `<section class="${wrap}" id="${id}" style="margin-bottom:12px"><h3>Fixer results <span class="mute small">${plural(cards.length, 'run')} to decide · Apply = the check-in applies the hunks; Norn edits nothing</span></h3><ul class="fxres">${cards.map(([c, p, px]) => fixResultCard(c, p, px)).join('')}</ul></section>` : '');
 // where a sent Fix all is (server.mjs fixSent: fixer.at); a failed run never reads "with the fixer"
 function fixerWords(x) {
   const f = x.fixer || {}, run = esc(f.run ?? '');
@@ -635,8 +963,8 @@ function fixAll(sh, sent, sel = null) {
     ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${sh.usage?.batch ? `<b id="fx-runs" data-batch="${int(sh.usage.batch)}">${plural(Math.ceil(on / sh.usage.batch), 'fixer run')}</b> of at most ${int(sh.usage.batch)} findings ${esc(sh.usage.run ?? '')}` : esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
     <button class="strong" data-act="fixall-send" data-sig="${esc(sh.sig)}"${sent || !on ? ' disabled' : ''}>Send the fixer (<span id="fx-n">${int(on)}</span>)</button></span></div></section>`;
 }
-// META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / Is it
-// growing?, the chosen part. d = the summary (guardparts.mjs) + d[d.sub] once its part is here (parts_loading until then).
+// META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / By
+// age, the chosen part. d = the summary (guardparts.mjs) + d[d.sub] once its part is here (parts_loading until then).
 // META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays); the numbers are open + the three kinds of fix.
 function guard(d, ctx) {
   const fresh = d.new || 0, total = d.total ?? 0, labels = d.labels || {}, K = d.kinds || {};
@@ -702,7 +1030,8 @@ function planPart(p, ctx) {
   if (p.error) return `${head}<div class="card pl-sec"><p class="mute">The plan could not be worked out: ${esc(p.error)}</p></div>`;
   const up = (p.upnext || []).map(u => {
     const [c, w] = PL_STATUS[u.status] ?? ['idle', u.status];
-    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${aname(u.name)}</span>
+    const prio = (p.priorities || []).length ? ` <select class="pl-prio" data-act="prio" data-project="${esc(p.project)}" data-run="${esc(u.id)}" aria-label="priority of ${esc(u.id)}" title="re-queue at this priority (its conditions are kept)">${p.priorities.map(x => `<option${x === (u.priority ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>` : '';
+    return `<div class="pl-row" id="pl-${esc(u.id)}"><span class="mono pl-pos">#${esc(u.position)}</span><span class="pl-what"><b>${esc(u.label)}</b> <span class="id">${esc(u.id)}</span>${aname(u.name)}${prio}</span>
       ${chip(c, w)}<span class="small pl-est" title="${esc(plBasis(u.estimate))}">${esc(u.estimate.word)}</span><span class="small pl-start"${u.start.why ? ` title="${esc(u.start.why)}"` : ''}>start ${esc(u.start.at && u.start.word !== 'now' ? `~${plAt(u.start.at, now)}` : u.start.word)}</span>
       <span class="pl-holds small">${u.holds.map((h, i) => esc(u.holdAt?.[i] ? `not before ${plAt(u.holdAt[i], now)}` : h)).join('<br>')}</span></div>`;
   }).join('');
@@ -723,7 +1052,7 @@ function planPart(p, ctx) {
     <p><b>${esc(f.lineAt ? `${f.linePre}${plAt(f.lineAt, now)}${f.linePost}` : f.line)}</b>${f.costLine ? `<br><span class="small">${esc(f.costLine)}</span>` : ''}</p></div>`;
   return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
     ${plSection('pl-chains', 'Chains', 'runs that wait for other runs', chains || plEmpty('No queued run waits for another run.'))}
-    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`))}
+    ${plSection('pl-land', 'Landing next', 'heading to main, in merge order', backlogLine(p.backlog) + (land || plEmpty(`Nothing is heading to main.${p.landing_error ? ` (${p.landing_error})` : ''}`)))}
     ${plSection('pl-fc', 'Forecast', 'usage', fc)}<p class="small mute pl-method">${esc(p.method ?? '')}</p>`;
 }
 function plan(d, ctx) {
@@ -793,20 +1122,23 @@ function map(d, ctx) {
 }
 
 // ---------- deliverables (DELIVERABLES-SPEC 3): "Done, not installed" card (Overview + Inbox), the drawer, the Map band pill ----------
-const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed' };
+const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed', unknown: 'cannot tell if merged' };
 const dlvChip = r => r.record_state === 'parked'
   ? chip('parked', `parked ${Math.floor(r.park?.days ?? 0)} d${r.park?.expired ? ' (expired)' : ''}`)
-  : chip(r.state === 'done' ? 'warn' : r.state === 'merged' ? 'running' : 'ok', DLV_WORD[r.state] ?? r.state);
+  : chip(r.state === 'done' ? 'warn' : r.state === 'unknown' ? 'needs' : r.state === 'merged' ? 'running' : 'ok', `${DLV_WORD[r.state] ?? r.state}${r.merged_how === 'equivalent' ? ' (equivalent)' : ''}`);
+const onMain = r => r.state === 'merged' || r.state === 'installed';
+// DLV-MERGED-TRUTH: why Norn cannot tell, and the one Inbox ruling that settles it
+const dlvWhy = r => r.state === 'unknown' ? `<div class="small mute">${esc(r.unknown_why ?? '')}${r.ruling ? ` · ruling <a href="#" data-rid="${esc(r.ruling)}">${esc(r.ruling)}</a> in the Inbox` : ' · the next check-in asks you'}</div>` : '';
 const dlvNative = r => (r.native === true ? chip('bad', 'native') : r.native === false ? '<span class="small mute">no</span>' : '<span class="small mute">?</span>');
 export function deliverablesCard(dl, ctx = {}) {
   const rows = (dl?.rows || []).filter(r => !r.at_target).sort((a, b) => (b.days ?? 0) - (a.days ?? 0));
-  const body = rows.map(r => `<tr id="dlv-${esc(r.id)}"><td><b>${projTag(ctx, r.project)}${esc(r.branch)}</b><div class="small mute"><span class="id">${esc(r.id)}</span> ${esc(r.lane ?? '')}</div></td>
-    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}</td>
+  const body = rows.map(r => `<tr id="dlv-${esc(r.id)}"><td><b>${projTag(ctx, r.project)}${esc(r.branch)}</b> ${homeChip(r)}<div class="small mute"><span class="id">${esc(r.id)}</span> ${esc(r.lane ?? '')}</div></td>
+    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}</td>
     <td class="mono">${fin(r.days) ? r.days.toFixed(1) + ' d' : '-'}</td>
-    <td class="mono">${fin(r.behind) ? r.behind + ' behind' : r.state === 'done' ? '-' : 'on main'}</td>
+    <td class="mono">${fin(r.behind) ? r.behind + ' behind' : onMain(r) ? 'on main' : '-'}</td>
     <td>${dlvNative(r)}</td>
     <td>${dlvChip(r)}${r.due ? ' ' + chip('open', 'question due') : r.asked ? ` <span class="small mute">asked ${esc(r.asked)}</span>` : ''}</td>
-    <td><button data-dlv="${esc(r.id)}" data-project="${esc(r.project)}">Open</button></td></tr>`).join('');
+    <td>${r.readonly ? '' : `<button data-dlv="${esc(r.id)}" data-project="${esc(r.project)}">Open</button>`}</td></tr>`).join('');
   if (dl?.pending && !rows.length) return `<section class="card" id="deliverables"><h2>Done, not installed <b>-</b></h2><div class="small mute">reading git and the install receipts ... (the next refresh shows them)</div></section>`;
   return `<section class="card" id="deliverables"><h2>Done, not installed <b>${rows.length}</b> <span class="mute small">oldest first · state from git + the last install receipt</span></h2>
    ${dl?.error ? `<div class="small" style="color:var(--bad)">${esc(dl.error)}</div>` : ''}
@@ -815,7 +1147,7 @@ export function deliverablesCard(dl, ctx = {}) {
 }
 export function renderDeliverable(r, ctx = {}) {
   if (!r) return '<div class="small mute">deliverable not found (refresh the page)</div>';
-  const reached = { done: 1, merged: 2, installed: 3 }[r.state] ?? 0;
+  const reached = { done: 1, unknown: 1, merged: 2, installed: 3 }[r.state] ?? 0;
   const steps = ['done', 'merged', 'installed'].map((s, i) => chip(i < reached ? 'ok' : 'idle', s.toUpperCase())).join(' <span class="mute">&rarr;</span> ');
   const kv = (k, v) => `<span class="mute small">${esc(k)}</span><div>${v}</div>`;
   const nat = r.native === null ? '<span class="mute">unknown (no native globs for this repo)</span>' : r.native
@@ -824,7 +1156,9 @@ export function renderDeliverable(r, ctx = {}) {
    <div style="margin:6px 0 12px">${steps} <span class="small mute">target ${esc(r.target)}${r.at_target ? ' · reached' : ''}</span></div>
    <div class="kv">${kv('repo', `<span class="mono small">${esc(r.repo)}</span>`)}${kv('tip', `<span class="mono">${esc(String(r.tip ?? '-').slice(0, 9))}</span>${r.branch_exists === false ? ' <span class="small mute">(branch gone: the tip recorded at DONE)</span>' : ''}`)}
    ${kv('lane / run', `${esc(r.lane ?? '-')} · ${esc(r.run ?? '-')}`)}${kv('done', `${esc(fmtTime(r.done_utc, ctx.now ?? Date.now()))} · ${fin(r.days) ? r.days.toFixed(1) + ' d ago' : '-'}`)}
-   ${kv('vs main', fin(r.behind) ? `${r.behind} behind · ${r.ahead ?? '?'} ahead` : r.state === 'done' ? '-' : 'on main')}${kv('native', nat)}
+   ${kv('vs main', fin(r.behind) ? `${r.behind} behind · ${r.ahead ?? '?'} ahead` : onMain(r) ? 'on main' : '-')}${kv('native', nat)}
+   ${onMain(r) ? kv('merged', `${esc(r.state_word ?? r.state)}${r.merge_commit ? ` · <span class="mono">${esc(String(r.merge_commit).slice(0, 9))}</span>` : ''}${r.merged_at ? ` · ${esc(fmtTime(r.merged_at, ctx.now ?? Date.now()))}` : ''}`) : ''}
+   ${r.state === 'unknown' ? kv('merged?', `${chip('needs', 'cannot tell')} ${dlvWhy(r)}`) : ''}
    ${r.rehearsal ? kv('merge rehearsal', r.rehearsal.clean ? chip('ok', 'clean') : `${chip('bad', 'conflict')}<div class="mono small">${r.rehearsal.files.map(esc).join('<br>')}</div>`) : ''}
    ${kv('park', r.park ? `${chip('parked', `parked ${Math.floor(r.park.days)} d`)} ${esc(r.park.why)} <span class="small mute">by ${esc(r.park.by ?? '-')}${r.park.expired ? ' · expired: back on the list' : ''}</span>` : '<span class="mute">not parked</span>')}
    ${kv('question', r.asked ? `<a href="#" data-rid="${esc(r.asked)}">${esc(r.asked)}</a> (one per deliverable)` : r.due ? chip('open', 'question due: the next check-in asks') : '<span class="mute">none</span>')}</div>
@@ -832,7 +1166,7 @@ export function renderDeliverable(r, ctx = {}) {
 norn deliverables unpark ${esc(r.id)}
 norn deliverables ask ${esc(r.id)}      (the check-in: one question per deliverable)${r.resolve ? `
 norn deliverables resolve ${esc(r.id)}  (${esc(r.resolve.why)}; native = door work)` : ''}</div>
-   <div class="small mute" style="margin-top:8px">DONE / MERGED / INSTALLED come from git and the last install receipt - nobody types them.</div></div>`;
+   <div class="small mute" style="margin-top:8px">MERGED comes from the PR on GitHub, else git, else the change itself found on main (equivalent); INSTALLED from the last install receipt. Only a 'cannot tell' asks you.</div></div>`;
 }
 function dlvPill(b, project) {
   const r = b.deliverables?.[0];
@@ -860,9 +1194,42 @@ export function renderFeedHead(h, now = Date.now()) {
 }
 const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };
 const FEED_KINDS = ['tool', 'text', 'step', 'marker', 'error'];
+// RM-36: an Edit / Write line opens to its diff (old -> new; a Write: its content as added lines), drawn by the shared diff component (RM-35)
+const editDiff = i => (i && (typeof i.new_string === 'string' || typeof i.content === 'string')
+  ? diffBlock({ before: i.old_string ?? '', after: i.new_string ?? i.content ?? '' }, { title: String(i.file_path ?? '').split(/[\\/]/).pop(), sub: typeof i.new_string === 'string' ? 'edit' : 'write', cls: 'fxdiff' }) : '');
 export function renderFeedEvent(e) {
-  const k = FEED_KINDS.includes(e.kind) ? e.kind : 'text';
-  return `<div class="fl k-${k}"${k === 'tool' && e.id ? ` data-tid="${esc(e.id)}"` : ''}><span class="ts">${hms(e.ts)}</span><span class="fk">${esc(k === 'tool' ? e.name ?? 'tool' : k)}</span><span class="fs">${esc(e.summary)}</span><span class="dur"></span></div>`;
+  const k = FEED_KINDS.includes(e.kind) ? e.kind : 'text', diff = k === 'tool' && (e.name === 'Edit' || e.name === 'Write') ? editDiff(e.input) : '';
+  const tid = k === 'tool' && e.id ? ` data-tid="${esc(e.id)}"` : '', line = `<span class="ts">${hms(e.ts)}</span><span class="fk">${esc(k === 'tool' ? e.name ?? 'tool' : k)}</span><span class="fs">${esc(e.summary)}</span><span class="dur"></span>`;
+  return diff ? `<details class="fl fl-x k-${k}"${tid}><summary>${line}</summary>${diff}</details>` : `<div class="fl k-${k}"${tid}>${line}</div>`;
+}
+
+// RM-36: the activity view (activity.mjs activityView) - Now (the open call as a sentence, how long, the worker's latest words),
+// Plan, Files (Read / Edited / Created; a file opens in the Docs reader, an edited one shows its edits), Commands (duration,
+// outcome, test counts), Commits. A component: the feed drawer paints it, a lane's page can embed it. <details data-k> keep their
+// open state across repaints (the page restores them by key).
+const CMD_CHIP = { ok: ['ok', 'ok'], error: ['bad', 'failed'], background: ['idle', 'background'] };
+const testWords = t => `${int(t.pass ?? 0)} pass, ${int(t.fail)} fail${t.failed?.length ? ` - ${t.failed[0]}${t.failed.length > 1 ? ` (+${t.failed.length - 1})` : ''}` : ''}`;
+export function renderActivity(v, o = {}) {
+  const n = v.now, sec = (k, open, head, body) => `<details class="fa-sec" data-k="${k}"${open ? ' open' : ''}><summary>${head}</summary>${body}</details>`;
+  const now = `<section class="fa-now" id="fa-now">${n ? `<div><b>Now</b> <span class="fa-sent">${esc(n.text)}</span>${n.since && !o.ended ? ` <span class="mute" id="fa-dur" data-since="${esc(n.since)}">${esc(fmtDur(n.secs))}</span>` : ''}${n.more > 0 ? ` <span class="small mute">+${int(n.more)} more running</span>` : ''}</div>` : '<div class="mute">nothing yet</div>'}
+    ${v.words?.text ? `<div class="fa-words small" title="its latest own words, ${esc(hms(v.words.ts))} UTC">${esc(v.words.text)}</div>` : ''}</section>`;
+  const p = v.plan, pdone = p.items.filter(i => i.state === 'done').length;
+  const plan = p.items.length ? sec('plan', true, `<b>Plan</b> <span class="small mute">${int(pdone)} of ${int(p.items.length)} done · ${p.source === 'todos' ? 'its todo list' : "the brief's items (done = named in its NOTES or a commit)"}</span>`,
+    `<ol class="fa-plan small">${p.items.map(i => `<li class="fa-p-${i.state}">${chip(i.state === 'done' ? 'ok' : i.state === 'current' ? 'run' : 'idle', i.state)} ${esc(i.text)}</li>`).join('')}</ol>`) : '';
+  const f = v.files, nf = f.read.length + f.edited.length + f.created.length;
+  const fileRow = r => `<li><button class="ghost fa-file" data-act="feed-doc" data-path="${esc(r.path)}" title="${esc(r.path)}">${esc(r.rel)}</button>
+    <span class="small mute">${[r.reads ? plural(r.reads, 'read') : '', r.edits ? plural(r.edits, 'edit') : '', r.writes ? plural(r.writes, 'write') : ''].filter(Boolean).join(' · ')} · ${esc(hms(r.last))}</span>
+    ${r.diffs.length ? `<details class="fa-diff" data-k="d:${esc(r.path)}"><summary class="small">${r.group === 'created' ? 'content' : plural(r.diffs.length, 'edit')}</summary>${r.diffs.map(d => `<div class="small mute">${esc(hms(d.ts))}${d.all ? ' · every match' : ''}${d.lines ? ` · ${int(d.lines)} lines` : ''}</div>${editDiff(d.write ? { content: d.new } : { old_string: d.old, new_string: d.new })}`).join('')}</details>` : ''}</li>`;
+  const grp = (k, label, rows) => (rows.length ? `<h4 class="small" id="fa-g-${k}">${label} <span class="mute">${int(rows.length)}</span></h4><ul class="fa-files">${rows.slice(0, 60).map(fileRow).join('')}</ul>${rows.length > 60 ? `<p class="small mute">+${int(rows.length - 60)} more</p>` : ''}` : '');
+  const files = sec('files', true, `<b>Files</b> <span class="small mute">${int(nf)} touched this run · tap one to open it in Docs</span>`,
+    nf ? grp('edited', 'Edited', f.edited) + grp('created', 'Created', f.created) + grp('read', 'Read', f.read) : '<p class="small mute">none yet</p>');
+  const tests = v.cmds.filter(c => c.tests), cmdRow = c => { const [cls, word] = CMD_CHIP[c.outcome] ?? ['idle', c.outcome];
+    return `<li class="fa-cmd">${chip(cls, word)}${c.tests ? ` ${chip(c.tests.fail ? 'bad' : 'ok', testWords(c.tests))}` : ''} <code class="fa-c">${esc(c.cmd)}</code> <span class="small mute">${esc(hms(c.ts))}${fin(c.secs) ? ` · ${esc(fmtDur(c.secs))}` : ''}</span></li>`; };
+  const cmds = sec('cmds', false, `<b>Commands and tests</b> <span class="small mute">${int(v.cmds.length)} commands · ${int(tests.length)} test runs${tests[0] ? ` · last: ${esc(testWords(tests[0].tests))}` : ''}</span>`,
+    v.cmds.length ? `<ul class="fa-cmds">${v.cmds.slice(0, 40).map(cmdRow).join('')}</ul>${v.cmds.length > 40 ? `<p class="small mute">+${int(v.cmds.length - 40)} older</p>` : ''}` : '<p class="small mute">none yet</p>');
+  const commits = sec('commits', true, `<b>Commits</b> <span class="small mute">${int(v.commits.length)} this run</span>`,
+    v.commits.length ? `<ul class="fa-commits small">${v.commits.map(c => `<li>${c.sha ? `<span class="mono">${esc(c.sha)}</span> ` : ''}${esc(c.subject)} <span class="mute">${esc(hms(c.ts))}</span></li>`).join('')}</ul>` : '<p class="small mute">none yet</p>');
+  return `<div class="fa" id="fa">${now}${plan}${files}${cmds}${commits}</div>`;
 }
 
 function history(r, ctx) {
@@ -879,10 +1246,10 @@ function records(d, ctx) {
   const why = r => { if (!r.data.why) return { html: '', lines: 0 }; const b = blk(r.data.why, 50); return { html: `<div class="rwhy small mute">${b.html}</div>`, lines: b.lines }; };
   // META-UX-BUILD S6: a Fix all record (decision + directive) carries the finding ids it was sent with - folded under the text
   const fids = r => (Array.isArray(r.data.findings) && r.data.findings.length ? `<details class="small recids"><summary>${int(r.data.findings.length)} finding ids${r.data.fixall ? ` · ${esc(r.data.fixall)}` : ''}</summary><span class="mono">${esc(r.data.findings.join(' '))}</span></details>` : '');
-  const dir = d.directives.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}</td><td class="rt">${recText(`${r.id}:text`, [blk(r.data.text, 110)])}${fids(r)}${r.superseded_by ? `<div class="small mute">superseded by ${esc(r.superseded_by)}</div>` : ''}${history(r, ctx)}</td>
+  const dir = d.directives.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)} ${homeChip(r)}${pendingChips(r)}</td><td class="rt">${recText(`${r.id}:text`, [blk(r.data.text, 110)])}${fids(r)}${r.superseded_by ? `<div class="small mute">superseded by ${esc(r.superseded_by)}</div>` : ''}${history(r, ctx)}</td>
     <td class="small mute rnw">${fmtTime(r.created, ctx.now)} · ${esc(r.data.via ?? r.by)}</td><td>${r.state === 'active' ? `<button class="ghost" data-act="revoke" data-project="${esc(d.project)}" data-id="${esc(r.id)}">Revoke</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="5" class="mute">no directives</td></tr>';
-  const dec = d.decisions.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}${r.data.fyi ? ' ' + chip('needs', 'FYI') : ''}</td><td>${esc(r.data.lane ?? '-')}</td><td class="rt" data-label="question">${recText(`${r.id}:q`, [blk(r.data.question, 50)])}</td>
+  const dec = d.decisions.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}${r.data.fyi ? ' ' + chip('needs', 'FYI') : ''}${decMark(r)} ${homeChip(r)}${pendingChips(r)}</td><td>${esc(r.data.lane ?? '-')}</td><td class="rt" data-label="question">${recText(`${r.id}:q`, [blk(r.data.question, 50)])}</td>
     <td class="rt" data-label="choice + why">${recText(`${r.id}:c`, [blk(r.data.choice, 50), why(r)])}${history(r, ctx)}</td><td class="small mute rnw">${esc(r.by)} · ${fmtTime(r.created, ctx.now)}</td><td class="small mute">${esc(r.data.source ?? '-')}</td>
     <td>${r.state === 'in-force' ? `<button class="ghost" data-act="overrule" data-project="${esc(d.project)}" data-id="${esc(r.id)}">Overrule</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="8" class="mute">no decisions</td></tr>';
@@ -1026,7 +1393,7 @@ function insLadder(L) {
   for (const a of adv) { if (!by.has(a.key)) by.set(a.key, []); by.get(a.key).push(a); }
   const KEY = { 'rule-several-homes': 'one rule in several homes', 'rule-drift-claim': 'says enforced, nothing found', 'rule-drift-policy': 'line vs the policy', 'rule-drift-path': 'points at code that is gone', 'rule-path-unknown': 'path not found (a runtime file or a typo)', 'enforcement-unexplained': 'enforcement no rule explains' };
   const finds = [...by].map(([k, xs]) => `<li><details class="rulegroup insgroup"><summary>${chip(xs[0].severity === 'medium' ? 'warn' : 'idle', xs[0].severity)} <b>${int(L.adv_counts?.[k] ?? xs.length)}</b> × ${esc(KEY[k] ?? k)} <span class="small mute">${esc(xs[0].source)}</span><div class="small">fix: <i>${esc(xs[0].fix.action)}</i></div></summary>
-    <ul>${xs.slice(0, INS_CAPS.advisories).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? `<pre class="inspatch">${esc(a.fix.patch)}</pre>` : ''}</li>`).join('')}</ul></details></li>`).join('');
+    <ul>${xs.slice(0, INS_CAPS.advisories).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? diffBlock({ patch: a.fix.patch }, { title: baseName(a.path) || a.surface, sub: 'proposed fix' }) : ''}</li>`).join('')}</ul></details></li>`).join('');
   return `<div class="tablecard" id="ins-ladder"><h3>The ladder <span class="mute small">${int(LADDER_STATES.reduce((n, st) => n + (L.counts[st] ?? 0), 0))} must / never rules by state · prose only ${int(L.counts.prose)} → repeated ${int(L.counts.repeated)} → enforced ${int(L.counts.enforced)} → retired ${int(L.counts.retired)} · tap a home to open its line</span></h3>
     ${board(cols, { id: 'ins-board', aria: 'rules by state' })}
     ${finds ? `<ul id="ins-rule-findings">${finds}</ul>` : ''}</div>`;
@@ -1035,7 +1402,7 @@ function insLadder(L) {
 function auditCard(c, project) {
   const pj = project ? ` data-project="${esc(project)}"` : '';
   return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
-    <pre class="inspatch">${esc(c.fix.patch ?? '')}</pre>
+    ${diffBlock({ patch: c.fix.patch ?? '' }, { title: `${baseName(c.path)}:${c.line}`, sub: 'vendor audit hunk' })}
     <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
 }
 const AUD_OUT = { done: 'ok', crash: 'bad', stopped: 'warn', limit: 'warn', auth: 'warn' };
@@ -1076,11 +1443,28 @@ function insStrip(f) {
     <div class="stklegend">${AGE_BANDS.map(([, c, w]) => `<span><i class="stkdot ${c}"></i>${esc(w)}</span>`).join('')}<span><i class="pread inl"></i>read</span><span><i class="pcite inl"></i>cited (its line)</span><b>${esc(said)}</b></div></div>`;
 }
 // META-TEND P3 (REPORT 3.6): the repeat detector's cards - one per cluster, ranked; approve = a directive (the one approvals path)
-function enforceCard(c, project) {
-  return `<li class="insfind" id="enf-${esc(c.id)}">${chip(c.severity === 'medium' ? 'warn' : 'idle', c.severity)} <b>${esc(c.why)}</b>
-    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${esc(x.text)}</li>`).join('')}</ul><pre class="inspatch">${esc(c.fix.patch ?? '')}</pre></details>
-    <div class="small mute">${esc(c.fix.action)}</div>
-    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button></li>`;
+// RM-30 S1: a card its directive already asks for (rules.mjs askedBy) reads "Asked as DIR-n (state) - date" with a link and has no
+// Approve; Approve is one tap (the directive is the record and can be revoked) and sends the card id, which the directive keeps
+function enforceCard(c, project, px = { project }) {
+  const a = c.asked;
+  return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
+    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
+    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
+    : `<div class="small mute">${esc(c.fix.action)}</div>
+    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;
+}
+/**
+ * RM-30 S1: a directive the page sent was refused as a restatement of an active one (/api/directive 409 { dup }). x = { text, dup:
+ * { id, line, why } } -> the plain-words notice: which directive it matches, Open it, Replace it with this wording (supersede, recorded),
+ * Keep both (new: true), Cancel. '' when there is nothing to say.
+ */
+export function dupRefusal(x) {
+  if (!x?.dup?.id) return '';
+  const id = esc(x.dup.id);
+  return `<div class="dupask" role="alert"><b>Not written: this says the same as ${id}, an active directive.</b>
+    <div class="dupcmp small"><div><span class="olab">${id} says</span>${renderProse(x.dup.line ?? '')}</div><div><span class="olab">you wrote</span>${renderProse(String(x.text ?? '').slice(0, 400))}</div></div>
+    <div class="small mute">Matched by ${esc(x.dup.why ?? 'its words')}. Two active directives that say the same thing get read twice at every check-in.</div>
+    <div class="dupbtns"><button data-act="dup-open" data-id="${id}">Open ${id}</button><button class="primary" data-act="dup-replace" data-id="${id}">Replace it with this wording</button><button class="ghost" data-act="dup-new">Keep both</button><button class="ghost" data-act="dup-close">Cancel</button></div></div>`;
 }
 function insRepeats(L) {
   if (!L) return '';
@@ -1197,8 +1581,10 @@ function insMemory(m) {
 const docFind = x => `<div class="insfind">${chip(SEV_CHIP[x.severity] ?? 'idle', x.severity ?? 'note')} <span class="mute">${x.check ? `C${esc(x.check)} ` : ''}${x.line ? `L${esc(x.line)}` : 'whole file'}${x.surface ? ` · ${esc(x.surface)}` : ''}</span> ${esc(x.why)}${x.fix?.action ? `<div class="small mute">fix: ${esc(x.fix.action)}</div>` : ''}</div>`;
 const docAside = xs => (xs?.length ? `<aside class="docfind">${xs.map(docFind).join('')}</aside>` : '');
 const ageBadge = p => ((p.age_days !== null && p.age_days !== undefined) || p.changed || p.stated ?`<span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> ` : '');
+// a JSON file, or a source file a run touched (f.code: its language, RM-36), is one code block; the fence outruns any ``` inside it
 function docReader(f, ctx, d = {}) {
-  const json = /\.json$/i.test(f.path), text = f.text ?? '', src = json ? '```json\n' + text + '\n```' : text, lines = text.split(/\r?\n/);
+  const lang = /\.json$/i.test(f.path) ? 'json' : f.code ?? null, text = f.text ?? '', lines = text.split(/\r?\n/);
+  const fence = lang ? '`'.repeat([...text.matchAll(/`{3,}/g)].reduce((n, m) => Math.max(n, m[0].length + 1), 3)) : '', src = lang ? `${fence}${lang}\n${text}\n${fence}` : text, json = !!lang;
   const findings = f.findings || [], L = d.line, foc = (a, b) => (L && a <= L && L <= b ? ' focus" data-focus="1' : '');
   let body, whole, toc = [];
   if (d.src) {   // Source: every line numbered, its findings beside it
@@ -1238,9 +1624,22 @@ export function ledgerRows(entries, d, ctx, compact = false) {
     return `<tr${compact ? '' : ` id="led-${entries.length - 1 - i}" data-state="${esc(e.kind)}"`}><td class="small mute ledt">${e.ts ? fmtTime(e.ts, ctx.now) : ''}</td><td class="ledk">${chip(LED_CHIP[e.kind], e.kind === 'other' ? 'note' : e.kind)}${who}</td><td class="ledb">${body}</td></tr>`;
   }).join('');
 }
+// RM-46 S3: a synced project's Homes + Claims blocks, above the ledger lines on the same page (no new tab); secs = a duration in words
+const secs = v => v == null ? '-' : v < 120 ? `${v} s` : v < 7200 ? `${Math.round(v / 60)} min` : `${Math.round(v / 3600)} h`;
+function syncBlocks(d, ctx) {
+  if (!d.homes) return '';
+  const h = d.homes, c = d.claims || { work: [] };
+  const homes = `<div class="tablecard" id="ledger-homes"><h3>Homes <span class="mute small">this home: ${esc(h.home)} · last fetch ${h.fetched_at ? fmtTime(h.fetched_at, ctx.now) : 'never'}${h.fetch_error ? ` · ${esc(h.fetch_error)}` : ''}</span></h3>
+   <table><thead><tr><th>home</th><th>head</th><th>lag</th><th>clock ahead</th></tr></thead><tbody>${h.rows.map(r => `<tr><td>${homeChip(r)}</td><td class="id">${esc(String(r.head).slice(0, 10))}</td><td>${secs(r.lag_s)}</td><td>${secs(r.ahead_s)}</td></tr>`).join('') || '<tr><td colspan="4" class="mute">no other home fetched yet</td></tr>'}</tbody></table></div>`;
+  const work = c.work.map(w => `<tr><td>${homeChip(w)}<b>${esc(w.lane)}</b></td><td class="id">${esc(w.run ?? '-')} n=${esc(w.n)}</td><td class="small">${w.renewed_at ? fmtTime(w.renewed_at, ctx.now) : '-'}</td>
+    <td>${w.stale ? `${chip('bad', 'stale')} <button class="ghost" data-act="claim-take" data-project="${esc(ctx.project ?? '')}" data-lane="${esc(`${w.home}/${w.lane}`)}">Take over</button>` : chip('ok', 'active')}</td></tr>`).join('');
+  const claims = `<div class="tablecard" id="ledger-claims"><h3>Claims <span class="mute small">merge leader: ${c.leader ? `${esc(c.leader.home)} · renewed ${fmtTime(c.leader.renewed_at, ctx.now)}` : 'none'}</span></h3>
+   <table><thead><tr><th>lane</th><th>run</th><th>renewed</th><th>state</th></tr></thead><tbody>${work || '<tr><td colspan="4" class="mute">no work claims</td></tr>'}</tbody></table></div>`;
+  return homes + claims;
+}
 function ledger(d, ctx) {
   const entries = parseLedger(d.ledger), more = d.more ? `<button class="ghost" data-act="ledger-more">Show older (${esc(d.count ?? 100)} more lines)</button>` : '';
-  return `<div class="filters"><input type="search" data-filter="ledger" placeholder="search text, ids  (e.g. RUN-12, merged)"><select data-filter-state="ledger"><option value="">all kinds</option>${LEDGER_KINDS.map(k => `<option value="${k}">${k === 'other' ? 'notes / headings' : k}</option>`).join('')}</select>
+  return `${syncBlocks(d, ctx)}<div class="filters"><input type="search" data-filter="ledger" placeholder="search text, ids  (e.g. RUN-12, merged)"><select data-filter-state="ledger"><option value="">all kinds</option>${LEDGER_KINDS.map(k => `<option value="${k}">${k === 'other' ? 'notes / headings' : k}</option>`).join('')}</select>
     <span class="small mute">${entries.length} entries · ${esc(d.ledger.length)} of ${esc(d.total ?? d.ledger.length)} lines</span></div>
    <div class="tablecard"><h3>Ledger <span class="mute small">${esc(d.file ?? 'no ledger file in project.json')} · newest first</span></h3>
    <table class="ledtab" id="ledger-lines" data-rows="ledger"><thead><tr><th>when</th><th>kind</th><th>entry</th></tr></thead><tbody>${ledgerRows(entries, d, ctx) || '<tr><td colspan="3" class="mute">empty</td></tr>'}</tbody></table>
@@ -1310,7 +1709,7 @@ function notifyPane(d) {
 // the paired devices (Revoke) and, on the desktop only, Pair a device (a single-use code).
 function remotePane(r) {
   const head = '<h3>Reach Norn from your phone <span class="help">machine.json dash.remote, all projects - your own private network (Tailscale Serve); the dashboard stays on 127.0.0.1</span></h3>';
-  const wrap = (body, sc = '') => `<div class="ssub" id="sub-notify-remote">${head}<div class="srow" id="set-remote" data-basic="1" data-search="remote phone tailscale pair device" data-mod="0"><div class="sl">${body}</div><div class="sc">${sc}</div></div></div>`;
+  const wrap = (body, sc = '') => `<div class="ssub" id="sub-notify-phone">${head}<div class="srow" id="set-remote" data-basic="1" data-search="remote phone tailscale pair device" data-mod="0"><div class="sl">${body}</div><div class="sc">${sc}</div></div></div>`;
   if (!r) return wrap(`<b>Phone access</b> <span class="tag">machine</span> ${chip('warn', 'off')}
     <span class="help">Off: this dashboard answers on this computer only. To reach it from your phone through Tailscale (free, about 10 minutes), run <span class="mono">norn remote setup</span>: it checks, prints each command and changes nothing until you add <span class="mono">--apply</span>. SETUP.md "Reach Norn from your phone" has the steps and the Cloudflare Access option.</span>`);
   const dev = d => `<li><b>${esc(d.name)}</b>${d.id === r.viewer ? ' <span class="tag">this device</span>' : ''} <span class="mute">${esc(d.login)} · paired ${esc(fmtTime(d.created))} · seen ${esc(fmtTime(d.last_seen))}</span>
@@ -1353,6 +1752,16 @@ function profileBar(d, level) {
     ${billingBar(d)}
     <span class="lvl">Show ${lv('basic', 'Basic')}${lv('all', 'All')}</span></div>`;
 }
+// RM-26 the mark "below floor": a decision a check-in recorded while its run's model / effort was below the check-in floor
+// (records.mjs made_under.below_floor). A record without made_under is unmarked.
+const BELOW_FLOOR = '<span class="chip warn below-floor">below floor</span>';
+export const decMark = r => (r.data?.made_under?.below_floor ? ` <span class="chip warn below-floor" title="${esc(`made under ${r.data.made_under.model}, effort ${r.data.made_under.effort ?? 'default'}`)}">below floor</span>` : '');
+// RM-26: while the check-in model / effort in force is below the check-in floor (policy checkinBelowFloor) a notice heads Settings;
+// a warning, nothing is refused. The decisions such a check-in records carry the mark (decMark).
+function checkinNotice(rows) {
+  if (!rows?.length) return '';
+  return `<div class="banner" id="checkin-floor-notice"><b>Check-in below the floor.</b> ${rows.map(r => `${r.kind === 'model' ? 'Model' : 'Effort'} ${esc(r.value)} (floor ${esc(r.to)})`).join(' · ')}: ${esc(rows[0].text)}. Its decisions are marked ${BELOW_FLOOR}.</div>`;
+}
 function settings(d, ctx) {
   const sections = d.sections || [], at = s => (s.section || []).join('/'), sel = sections.some(c => c.id === ctx.setCat) ? ctx.setCat : sections[0]?.id;
   const nav = sections.map(c => {
@@ -1368,7 +1777,7 @@ function settings(d, ctx) {
     }).join('');
     return `<section class="scat" id="cat-${esc(c.id)}" data-cat="${esc(c.id)}"${c.id === sel ? '' : ' hidden'}><h2>${esc(c.label)}</h2><p class="small mute">${esc(c.help)}</p>${subs}</section>`;
   }).join('');
-  return `${profileBar(d, ctx.setLevel ?? 'basic')}<div class="settings"><aside class="snav"><input type="search" id="set-search" data-set-search placeholder="Search settings  ·  @modified" aria-label="Search settings">${nav}</aside>
+  return `${checkinNotice(d.checkin_below)}${profileBar(d, ctx.setLevel ?? 'basic')}<div class="settings"><aside class="snav"><input type="search" id="set-search" data-set-search placeholder="Search settings  ·  @modified" aria-label="Search settings">${nav}</aside>
    <div class="spane"><p class="small mute" id="set-nohit" hidden>No setting matches.</p>${panes}</div></div>
    <div class="savebar"><span class="small" id="dirty-count">No unsaved changes</span><button class="strong" data-act="settings-review" data-project="${esc(d.project)}" data-version="${esc(d.version)}">Review changes</button><button class="ghost" data-act="settings-discard">Discard</button>
    <span class="small mute">Review shows a diff; Save writes atomically and refuses a stale version (409).</span><div id="settings-diff"></div></div>`;
@@ -1585,7 +1994,7 @@ export function parseRmHash(h) {
   if (v) s = s.slice(v.length + 1);
   if (!s) return o;
   if (RM_SCOPES.includes(s)) return { ...o, scope: s };
-  const m = s.match(/^rm-(RM-\d+)$/);
+  const m = s.match(/^rm-(RM-(?:[a-z][a-z0-9]{0,15}-)?\d+)$/);
   return m ? { ...o, item: m[1] } : {};
 }
 /** one item against the filters (scope, theme, status, live only, drift only, text over title / id / links / branches); pure */
@@ -1652,7 +2061,7 @@ function rmTime(i, win) {
   const label = spans.length ? `${spans.length} run${spans.length === 1 ? '' : 's'} since ${rmDay(spans[0].from)}` : i.phase === 'future' ? `${i.status}, no dates yet` : 'no runs';
   return `<div class="rmtl${spans.length ? '' : ' empty'}" role="img" aria-label="${esc('time line: ' + label)}" title="${esc(label)}"><i class="rmtrack"></i>${parts.join('')}<i class="rmnow"></i></div>`;
 }
-const rmHead = (i, ctx, par, compact) => `<div class="rmh">${rmChip(i)}${par}<b class="rmt">${esc(i.title)}</b><span class="id">${esc(i.id)}</span>${i.horizon ? `<span class="tg tg-hz">${esc(i.horizon)}</span>` : ''}${rmLive(i, ctx)}${(i.flags?.drift || []).length ? '<span class="chip bad">drift</span>' : ''}${i.stuck?.flag ? `<span class="chip bad" title="${esc('stuck since ' + i.stuck.flag.ts.slice(0, 16) + 'Z: ' + i.stuck.flag.why.join(', ') + ' - further rounds wait for an approach review')}">stuck</span>` : ''}${compact ? '' : rmProg(i)}${rmEditBtn(i)}</div>`;
+const rmHead = (i, ctx, par, compact) => `<div class="rmh">${rmChip(i)}${par}<b class="rmt">${esc(i.title)}</b><span class="id">${esc(i.id)}</span>${homeChip(i)}${pendingChips(i)}${i.horizon ? `<span class="tg tg-hz">${esc(i.horizon)}</span>` : ''}${rmLive(i, ctx)}${(i.flags?.drift || []).length ? '<span class="chip bad">drift</span>' : ''}${i.stuck?.flag ? `<span class="chip bad" title="${esc('stuck since ' + i.stuck.flag.ts.slice(0, 16) + 'Z: ' + i.stuck.flag.why.join(', ') + ' - further rounds wait for an approach review')}">stuck</span>` : ''}${compact ? '' : rmProg(i)}${rmEditBtn(i)}</div>`;
 function rmRow(i, ctx, win, compact) {
   const f = ctx.rm || {}, hit = f.item === i.id ? ' hit' : '';
   const par = i.depth ? `<span class="rmpar mute small" title="nested item">${'&#8250; '.repeat(i.depth)}</span>` : '';
