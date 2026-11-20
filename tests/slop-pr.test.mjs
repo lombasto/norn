@@ -17,10 +17,10 @@ import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const ROOT = path.join(import.meta.dirname, '..'), NORN = path.join(ROOT, 'engine', 'bin', 'norn.mjs');
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const put = (dir, files) => { for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); } };
 // a commit at a fixed date: the landing window is read from commit dates
-const gitAt = (cwd, at, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const gitAt = (cwd, at, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const commit = (dir, files, msg, at = '2026-11-01T10:00:00Z') => { put(dir, files); git(dir, 'add', '-A'); gitAt(dir, at, 'commit', '-q', '-m', msg); return git(dir, 'rev-parse', 'HEAD'); };
 function repoWith(base = { 'a.txt': 'a\n' }) {
   const dir = mkTmp('meta-slop-pr-');
@@ -49,7 +49,7 @@ test('the machine flag is rule data: K14 carries it, and a check with machine of
 test('norn slop check --ci --diff base..HEAD: exit 1 on a BLOCK, the machine rule listed as skipped; exit 0 on a clean diff', () => {
   const repo = repoWith(), base = git(repo, 'rev-parse', 'HEAD'), root = mkTmp('meta-slop-pr-root-');
   git(repo, 'checkout', '-q', '--detach');   // a CI checkout: detached at the PR's head
-  const env = { ...process.env, META_ROOT: root }, run = (...a) => spawnSync(process.execPath, [NORN, 'slop', 'check', ...a], { cwd: repo, env, encoding: 'utf8' });
+  const env = { ...process.env, META_ROOT: root }, run = (...a) => spawnSync(process.execPath, [NORN, 'slop', 'check', ...a], { cwd: repo, env, encoding: 'utf8', windowsHide: true });
   commit(repo, { 'ok.txt': 'fine\n' }, 'clean');
   let r = run('--ci', '--diff', `${base}..HEAD`);
   assert.equal(r.status, 0, r.stdout + r.stderr);
