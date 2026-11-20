@@ -240,7 +240,7 @@ test('proc-hygiene derelicts: orphaned watchers, git, scans, kill helpers, Claud
     { pid: 13, ppid: 997, name: 'powershell.exe', created: h(3), cmd: 'powershell.exe -Command "Get-CimInstance Win32_Process | ..."' },
     { pid: 14, ppid: 996, name: 'getprocaddr64.exe', created: h(3), cmd: 'getprocaddr64 ExitProcess 143 5' },
     { pid: 15, ppid: 995, name: 'node.exe', created: h(20), cmd: '"C:/n/node.exe" "C:/norn/engine/bin/norn.mjs" mail check --inject --run RUN-1 --state "C:/s"' },
-    { pid: 16, ppid: 994, name: 'bash.exe', created: h(4), cmd: 'bash -c -l source C:/Users/x/.claude/shell-snapshots/snapshot-bash-1.sh' },
+    { pid: 16, ppid: 994, name: 'bash.exe', created: h(4), cmd: 'bash -c -l source C:/h/.claude/shell-snapshots/snapshot-bash-1.sh' },
     { pid: 20, ppid: 1, name: 'git.exe', created: h(9), cmd: 'git fetch' },   // parent alive
     { pid: 21, ppid: 999, name: 'git.exe', created: h(1), cmd: 'git status' },   // young
     { pid: 22, ppid: 999, name: 'grep.exe', created: h(9), cmd: 'grep foo' },   // not a watcher

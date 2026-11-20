@@ -83,9 +83,11 @@ test('the Slop row explains its finding on a phone: what / why / what to do / th
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=slop&sub=fix`, 60000);
     assert.ok(await pg.until(`!!document.querySelector('#slop-S-0123456789abcdef .sexplain')`, 60000), 'the row and its explanation are painted');
-    await pg.ev(`document.querySelectorAll('#slop-sub details').forEach(d => { d.open = true; })`);
-    const text = await pg.ev(`document.querySelector('#slop-S-0123456789abcdef .sexplain').innerText`);
+    // open, read and measure in ONE evaluation: a stream re-render between separate evaluations rebuilds the row with its details
+    // closed, and a closed details' text is not in innerText (CI 44730970218, both OSes)
+    const { text, width } = JSON.parse(await pg.ev(`(() => { document.querySelectorAll('#slop-sub details').forEach(d => { d.open = true; });
+      return JSON.stringify({ text: document.querySelector('#slop-S-0123456789abcdef .sexplain').innerText, width: document.documentElement.scrollWidth }); })()`));
     for (const s of [explainOf('K2').what, explainOf('K2').fix, 'norn rec add waiver --rule K2 --scope 0123456789abcdef']) assert.ok(text.includes(s), s);
-    assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on a phone');
+    assert.equal(width, 390, 'no sideways scroll on a phone');
   } finally { await pg.close(); await f.done(); }
 });

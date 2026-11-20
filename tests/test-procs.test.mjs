@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { suiteEnv } from '../engine/lib/cisuite.mjs';
-import { procsNaming, leakText } from '../engine/lib/testprocs.mjs';
+import { procsNaming, leakText, orphanHolds } from '../engine/lib/testprocs.mjs';
 import { killTree } from '../engine/lib/runs.mjs';
 import { listProcs } from '../engine/lib/strays.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -80,4 +80,19 @@ test('leakText names each leftover with its parent pid, its creation time and wh
     'pid 11 (node fake.mjs) [parent 20 alive, created ?]');
   assert.equal(leakText([{ pid: 12, cmd: 'x' }], []), 'pid 12 (x) [parent ? gone, created ?]', 'no ppid known');
   assert.deepEqual(Object.keys(procsNaming(['fake.mjs'], procs)[0]).sort(), ['cmd', 'created', 'name', 'pid', 'ppid']);
+});
+
+// CI 44658557500 (delegate LEAK RED): a supervisor killed while its jobguard hold was starting left the hold alive past the file;
+// the hold names no mkTmp dir (only its exe in os.tmpdir() and the held pid), so reapTmp also reaps a hold whose held pid is gone
+test('orphanHolds: a jobguard hold whose held pid is gone or reused is an orphan; a live run\'s hold is not', () => {
+  const at = Date.parse('2026-11-20T02:11:41.605Z'), exe = 'C:\T\meta-jobguard-c45ee2b19bda.exe';
+  const procs = [
+    { pid: 8900, ppid: 7820, name: 'meta-jobguard-c45ee2b19bda.exe', created: at, cmd: `${exe} hold 7820 meta-run-7820-1` },   // supervisor gone
+    { pid: 8901, ppid: 30, name: 'meta-jobguard-c45ee2b19bda.exe', created: at, cmd: `"${exe}" hold 30 meta-run-30-1` },      // supervisor lives
+    { pid: 30, ppid: 1, name: 'node.exe', created: at - 1000, cmd: 'node supervisor.mjs' },
+    { pid: 8902, ppid: 40, name: 'meta-jobguard-c45ee2b19bda.exe', created: at, cmd: `${exe} hold 40 meta-run-40-1` },        // pid 40 reused
+    { pid: 40, ppid: 1, name: 'git.exe', created: at + 5000, cmd: 'git status' },
+    { pid: 8903, ppid: 1, name: 'meta-jobguard-c45ee2b19bda.exe', created: at, cmd: `${exe} reap meta-run-9 9 r.jsonl k why` },
+  ];
+  assert.deepEqual(orphanHolds(procs).map(p => p.pid), [8900, 8902]);
 });

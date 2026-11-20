@@ -147,7 +147,7 @@ test('batch: policy.merge.suite = skip -> the batch gate does not run; clean mem
   assert.match(brief, /gate skipped \(policy merge\.suite = skip\) \+ smoke green/);
   assert.doesNotMatch(brief, /ran GREEN/);
   f.project.policy = { merge: { suite: 'never' } };
-  await assert.rejects(mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks }), /merge\.suite must be one of full, skip/);
+  await assert.rejects(mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks }), /merge\.suite must be one of changed, skip/);
 });
 
 test('bisect: a red batch retries once, then ceil(log2 K) gate runs pin the culprit; the branches before it go on; the culprit gets a fix ask', async () => {

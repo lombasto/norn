@@ -22,13 +22,14 @@ export const PROFILE_DEFAULTS = {
 };
 export const PROFILE_ROLES = ['worker', 'merge', 'checkin', 'chat'];
 // proc-hygiene (4, census 2026-11-19: 8 ansys-mechanical-mcp + ~32 python + agentmemory for 6 workers that never use them): a worker
-// or merge loads no MCP server of the owner's own setup unless the project or lane names it (mcpServersOf). A profile that sets mcp
-// itself ('all' included) wins; a check-in or the chat keeps the profile's default.
+// or merge loads no MCP server of the owner's own setup unless the project or lane names it (mcpServersOf). DEC-30 (owner Q-45 / DEC-21):
+// only under a lean or named profile - the full profile stays byte-same with a launch without one. A profile that sets mcp itself
+// ('all' included) wins; a check-in or the chat keeps the profile's default.
 const STRICT_MCP_ROLES = ['worker', 'merge'];
-/** the launch profile of a role under a project's policy: { name, ...switches } ("full" = today's launch, strict MCP for workers) */
+/** the launch profile of a role under a project's policy: { name, ...switches } ("full" = today's launch; lean / named: strict MCP for workers) */
 export function profileOf(policy, role) {
   const L = policy?.launch || {}, name = L.roles?.[role] ?? L.default ?? 'full';
-  return { name, ...(STRICT_MCP_ROLES.includes(role) ? { mcp: 'none' } : {}), ...(PROFILE_DEFAULTS[name] || {}), ...(L.profiles?.[name] || {}) };
+  return { name, ...(name !== 'full' && STRICT_MCP_ROLES.includes(role) ? { mcp: 'none' } : {}), ...(PROFILE_DEFAULTS[name] || {}), ...(L.profiles?.[name] || {}) };
 }
 /** the MCP servers a lane's run may load, by name: policy.launch.mcp_servers (every lane) + launch.lane_mcp_servers { <lane glob>: [names] } */
 export function mcpServersOf(policy, lane) {
