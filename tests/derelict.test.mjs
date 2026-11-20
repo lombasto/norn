@@ -194,5 +194,5 @@ fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify(r)); setInterval(() => {
     const gone = await waitFor(() => !alive(r.pid) && !alive(p.pid) && !alive(p.grandchild), 60000);
     assert.ok(gone, `still alive: supervisor ${alive(r.pid)} executor ${alive(p.pid)} grandchild ${alive(p.grandchild)}`);
     assert.match(logOf(d, r.run), new RegExp(`supervisor exits: its test process ${owner.pid} is gone; the executor's tree is killed`));
-  } finally { try { owner.kill('SIGKILL'); } catch { /* gone */ } }
+  } finally { try { owner.kill('SIGKILL'); } catch { /* the owner already exited: nothing to kill, the test ends */ } }
 });

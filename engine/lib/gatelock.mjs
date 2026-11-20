@@ -7,15 +7,15 @@
 // under its runGate's lock); a process inside a test (META_TEST_OWNER, tests/helpers/tmp.mjs) takes no machine lock (a fixture suite).
 import fs from 'node:fs';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { metaRoot } from './config.mjs';
 import { running, procStart } from './legacy.mjs';
 import { testOwner, SAME_START_MS } from './derelict.mjs';
+import { readJsonS as readJson } from './fsnap.mjs';   // never inside a dash request snapshot: a plain sync read of the lock
 
 export const GATE_FILE = 'gate.lock', HELD_ENV = 'META_GATE_HELD';
 export const GATE_WAIT_MIN = 90, GATE_POLL_MS = 5000, GATE_SAY_MS = 5 * 60e3;
 const TORN_MS = 10000;   // a lock file with no readable JSON for this long is a crashed write, not a holder
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** the machine's locks dir: the state root of the calling run (META_RUN_STATE's parent), else <META_ROOT or the engine root>/state */
 export const gateLocksDir = (env = process.env) => env.META_RUN_STATE ? path.join(path.dirname(path.resolve(env.META_RUN_STATE)), 'locks') : path.join(metaRoot(env), 'state', 'locks');
@@ -47,7 +47,7 @@ export async function acquireGate({ what = 'gate', locksDir, env = process.env, 
     try {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(file, JSON.stringify({ pid, started, what, cwd: process.cwd().split(path.sep).join('/'), at: new Date().toISOString() }), { flag: 'wx' });
-      const release = () => { const c = readJson(file); if (c?.pid === pid && c.started === started) { try { fs.unlinkSync(file); } catch { /* gone */ } } process.off('exit', release); };
+      const release = () => { const c = readJson(file); if (c?.pid === pid && c.started === started) { try { fs.unlinkSync(file); } catch { /* already removed by a taker-over: nothing left to free */ } } process.off('exit', release); };
       process.on('exit', release);
       if (said > -Infinity) say(`gate lock: taken after ${(waited / 60e3).toFixed(1)} min`);
       return { held: true, file, why: 'held', waited_ms: waited, env: { [HELD_ENV]: file }, release };
