@@ -14,12 +14,12 @@ These are tech debt. SloppaChoppa reports them as slop. If removing one really b
 
 ## Tests
 
+The testing rules (tiers, the run budget, load reds, quarantine, waiting on a test) are in docs/TESTING.md, the one full copy. Here only what is specific to this repo:
+
 - Run one file, or a few: `META_ROOT="$TEMP/emptyroot-<name>" node --test tests/<file>.test.mjs`. Create the empty folder first. `META_ROOT` keeps the tests away from this machine's live state.
 - Never run `node --test tests/`. It starts hundreds of processes at once.
-- In a run (worker, MERGE, resumed, check-in), run only the relevant test files: those of the modules you changed and any test you added, or `node engine/bin/ci-suite.mjs --changed origin/main`. Never the full suite (`node engine/bin/ci-suite.mjs` without `--changed`), even if a hand-off says to: it runs in GitHub CI on every PR and on main, and Norn's scope hook refuses it in a run.
+- In a run, the changed-file command is `node engine/bin/ci-suite.mjs --changed origin/main`; `norn tests for <file>` names the test files that cover a file. The full suite (`node engine/bin/ci-suite.mjs` without `--changed`) runs only in GitHub CI; Norn's scope hook refuses it in a run, even when a hand-off asks for it.
 - Every temp folder comes from `mkTmp` (tests/helpers/tmp.mjs); dashboard tests use tests/helpers/dash-fixture.mjs.
-- Under heavy load (several workers testing at once), browser and timing tests can time out. Rerun the file on its own before you call a failure real.
-- Wait for a long command by waiting on its exit, not by watching its log with `tail -f | grep`. `tail -f` never exits, so the watcher outlives you. If you need a watcher, make it end by itself (`timeout N`, `grep -m1`).
 
 ## Git
 
