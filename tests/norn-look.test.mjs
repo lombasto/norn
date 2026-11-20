@@ -145,6 +145,7 @@ test('the Norn page bar (stage NAV): one row of 4 links + More, the open one fil
   const act = ':root.norn .pagebar>[aria-current=page]';
   n(act, /background\s*:\s*var\(--accent\)/); n(act, /color\s*:\s*var\(--ninv\)/);
   n(':root.norn .pagebar>a:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/accent/.test(body(':root.norn .pagebar>a:hover')), 'hover is not the active fill');
+  n(':root.norn .pagebar>button', /border\s*:\s*0/);   // More reads as one of the bar's items, not a framed button (the norn button rule)
   n(':root.norn .pagebar>a:focus-visible', /outline\s*:[^;]*solid var\(--ink\)/); n(`${act}:focus-visible`, /outline-color\s*:\s*var\(--ninv\)/);
   // RM-18 S1: the tones stay the three time colours and the Health states (the status strip's parts, the More dot)
   for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['ok', 'ok'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));

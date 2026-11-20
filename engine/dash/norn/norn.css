@@ -114,6 +114,7 @@
    colours (Roadmap time colours, the Home tags). */
 :root.norn[data-ground=dark] { --nv: #eec24a; --nu: #52b8a0; --ns: #93aec6; --ninv: #0b0e1a; }
 :root.norn[data-ground=light] { --nv: #6e430f; --nu: #17504f; --ns: #425a7d; --ninv: #f7f0dc; }
+:root.norn .pagebar>button { border: 0; }
 :root.norn .pagebar>a:hover, :root.norn .pagebar>button:hover { background: var(--soft); color: var(--ink); }
 :root.norn .pagebar>[aria-current=page] { background: var(--accent); color: var(--ninv); border-bottom-color: var(--accent); }
 :root.norn .pagebar>a:focus-visible, :root.norn .pagebar>button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
