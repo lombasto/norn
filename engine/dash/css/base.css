@@ -307,6 +307,7 @@ a.rid.r-dlv{background:var(--warn-bg);color:var(--warn)}
 .tg{display:inline-block;padding:0 5px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.03em;border:1px solid currentColor}
 .tg-proposed{color:var(--warn)}.tg-decided{color:var(--ok)}.tg-measured,.tg-verified{color:var(--run)}.tg-guess{color:var(--bad);border-style:dashed}
 .dlvd .kv{grid-template-columns:110px 1fr}
+.dlvwhy{margin-top:3px;overflow-wrap:anywhere}.dlvwhy .link{text-decoration:underline;cursor:pointer}
 /* Live feed drawer (LANE-MAP-DESIGN 2): fixed right panel outside #main, so a stream re-render never wipes it */
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,94vw);z-index:5;background:var(--panel);border-left:1px solid var(--line);box-shadow:-6px 0 18px var(--shadow);display:flex;flex-direction:column;gap:8px;padding:12px 14px}
 .drawer .dh{display:flex;align-items:center;gap:10px}

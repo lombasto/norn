@@ -35,6 +35,7 @@ import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/life
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
+import { listProcsAsync } from '../lib/strays.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
@@ -84,6 +85,7 @@ import { repoFile } from '../lib/testtimes.mjs';
 import { projectHome, subdirOf, inDir } from '../lib/monorepo.mjs';
 import { guardChips } from '../lib/guard.mjs';
 import { usageWeek } from '../lib/usageweek.mjs';
+import { runCounts, countsLine } from '../lib/runcount.mjs';
 import { classCost } from '../lib/classcost.mjs';
 import { advise, decidedKeys, writeAdviceCache, loadAdviceDataAsync } from '../lib/advice.mjs';
 import { replayReportFile } from '../lib/eval/report.mjs';
@@ -501,6 +503,11 @@ export function createDashboard(o) {
     cpuPrev = t;
     return cpuPct;
   };
+  // a run that reads "stalled" may be in one long background test: its live child processes say so (progress.mjs testRunning). The
+  // listing costs seconds on Windows, so it is never awaited: a stalled run starts a refresh (at most every 30 s) and the next read
+  // of the dash uses it (null at first, like the CPU sample)
+  let procsAt = 0, procsNow = null, procsBusy = false;
+  const procsSample = () => { if (!procsBusy && Date.now() - procsAt >= 30000) { procsBusy = true; listProcsAsync().then(ps => { procsNow = ps; procsAt = Date.now(); procsBusy = false; }); } return procsNow; };
   const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
   const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
   /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
@@ -515,8 +522,14 @@ export function createDashboard(o) {
     const gc = guardChips(p.state), cpu = cpuNow(), out = new Map();
     for (const r of rs) {
       const work = mergeWork(sess.get(r.id).map(x => files.has(x.id) ? cache.get(PKEY + files.get(x.id)) : null));
-      out.set(r.id, runProgress(r, { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
-        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] }));
+      const o = { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
+        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] };
+      let g = runProgress(r, o);
+      if (g.pace.state === 'stalled') {   // the run's pid (its heartbeat) + the process sample: a background test is activity
+        const procs = procsSample(), pid = procs ? await fs.promises.readFile(hbPath(p.state, r.id), 'utf8').then(t => JSON.parse(t).pid, () => null) : null;
+        if (procs && Number.isInteger(pid)) g = runProgress(r, { ...o, procs, pid });
+      }
+      out.set(r.id, g);
     }
     return out;
   }
@@ -1868,13 +1881,16 @@ data: ${JSON.stringify(l)}
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
-          return send(200, { window: w, tree: (await Promise.all(ps.map(p => agents(p, win, { homes: true })))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
+          // OVERVIEW-TRUTH (6): the window's runs counted by the one rule (runcount.mjs): bookkeeping apart, hand-off chains as one piece
+          const inWin = ps.flatMap(p => runsOf(st(p)).filter(r => ['queued', 'claimed', 'running'].includes(r.state) || Date.now() - Date.parse(r.updated) <= win));
+          const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
+          return send(200, { window: w, counts, tree: (await Promise.all(ps.map(p => agents(p, win, { homes: true })))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) });
         }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {
           const ps = pick(url, { all: true }), vs = ps.map(deliverablesOf);   // RM-46 S3: + the other homes' DLVs (read-only copies)
           const away = (await Promise.all(ps.map(async p => (await copyItemsAsync(p.state, 'deliverable')).map(it => ({ ...dlvCopyRow(it), project: p.name }))))).flat();
-          return send(200, { rows: [...vs.flatMap(v => v.rows), ...away], pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
+          return send(200, { rows: [...vs.flatMap(v => v.rows), ...away], backlog: backlogOf(ps), pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
         }
         if (route === '/api/records') return send(200, records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));

@@ -7,7 +7,7 @@
 // LANES and RUNS build on: BAR / MORE ids, renderBar / renderMore / renderStatus markup ids (#tabs, #tab-<id>, #more-sheet,
 // #status-strip), PAGE_KEYS (add or narrow a page's keys here), routeTab.
 import { TABS } from './ui.mjs';
-import { esc, fin, int, pct, fmtTime, worstState } from './cells.mjs';
+import { esc, fin, int, pct, fmtTime, worstState, scopeWords } from './cells.mjs';
 
 // the bar's 4 pages, in order: [id, label, glyph]. Glyphs pass the blind-label test (a list of rows, play, a tray, a speech
 // bubble, ⋯ for More), always beside the word; drawn as SVG in currentColor so both looks and grounds colour them
@@ -46,7 +46,8 @@ export function renderMore(tab, o = {}) {
 
 // ---- the status strip: n running / cap, usage vs the weekly guard and the hourly cap, the next check-in, the needs-you count. Each
 // field shows "…" until /api/strip answers (index.html keeps the last answer while a newer one loads). Norn look: the three Norns -
-// Urd what was (landed today, usage spent), Verdandi what is (running, parked), Skuld what shall be (needs you, queued, next check-in)
+// Urd what was (landed today, usage spent), Verdandi what is (running, parked), Skuld what shall be (needs you, queued, next check-in).
+// OVERVIEW-TRUTH (4): the strip names its scope - the counts are the page's project(s), the usage is the account's (every project)
 const WAIT = '<span class="mute">…</span>';
 function fields(s, ctx) {
   if (!s) return { running: WAIT, usage: WAIT, checkin: WAIT, needs: WAIT };
@@ -58,14 +59,14 @@ function fields(s, ctx) {
 }
 /** s: the /api/strip answer (null = not come yet); ctx: { look, project, now } */
 export function renderStatus(s, ctx = {}) {
-  const f = fields(s, { now: ctx.now ?? Date.now() }), st = s?.strip, link = (id, html) => `<a href="${href(ctx.project, id)}" data-tab="${id}">${html}</a>`;
+  const f = fields(s, { now: ctx.now ?? Date.now() }), st = s?.strip, scope = ` title="counts for ${esc(scopeWords(ctx))}; usage: your Claude account (every project)"`, link = (id, html) => `<a href="${href(ctx.project, id)}" data-tab="${id}">${html}</a>`;
   if (ctx.look === 'norn') {
     const part = (tone, name, html) => `<span class="np tone-${tone}"><b>${name}</b><span>${html}</span></span>`;
-    return `<div class="sstrip norns" id="status-strip" aria-label="Status">${part('urd', 'Urd', `${st ? `${int(st.landed_today)} landed today · ` : ''}${f.usage}`)}`
+    return `<div class="sstrip norns" id="status-strip" aria-label="Status"${scope}>${part('urd', 'Urd', `${st ? `${int(st.landed_today)} landed today · ` : ''}${f.usage}`)}`
       + `${part('verd', 'Verdandi', `${link('runs', f.running)}${st ? ` · ${int(st.parked)} parked` : ''}`)}`
       + `${part('skuld', 'Skuld', `${link('inbox', f.needs)}${st ? ` · ${int(st.queued)} queued` : ''} · ${f.checkin}`)}</div>`;
   }
-  return `<div class="sstrip" id="status-strip" aria-label="Status">${link('runs', f.running)}<span>${f.usage}</span><span>${f.checkin}</span>${link('inbox', f.needs)}</div>`;
+  return `<div class="sstrip" id="status-strip" aria-label="Status"${scope}>${link('runs', f.running)}<span>${f.usage}</span><span>${f.checkin}</span>${link('inbox', f.needs)}</div>`;
 }
 
 // ---- keyed refetch (SPEC 4.1 item 2, concepts/AUDIT.md A-02): the state stream's events as keys - 'strip' (the status strip), a

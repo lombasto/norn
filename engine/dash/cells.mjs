@@ -47,6 +47,8 @@ export function stateOf(text) {
   if (t.startsWith('killed')) return ['bad', 'killed'];
   if (t.startsWith('waiting')) return ['warn', 'waiting'];
   if (t === 'no runs') return ['idle', 'no runs'];
+  if (t.startsWith('shipped')) return ['done', 'shipped'];   // OVERVIEW-TRUTH (5): the lane's work is on main
+  if (t.startsWith('withdrawn')) return ['idle', 'withdrawn'];
   return ['idle', t || '-'];
 }
 export const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
@@ -87,9 +89,9 @@ export function laneCard(c, label) {
     ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
     <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
 }
-// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan); over
+// MERGE-FIRST (4): "done, not merged: N (oldest Xh)" - the finished work not on its way to main yet (Lanes, Plan); over
 // policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
-export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
+export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">done, not merged: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 export const guardOn = (g, pick) => (g?.rows || []).filter(pick);
 export function guardChip(rows, go = null) {
@@ -144,9 +146,11 @@ const kTok = n => fin(n) ? `${Math.round(n / 1000)}k` : '-';
 // yet committed by its home = "answered on a, pending b" (the server's foreign(): home, pending [{ ev, home, primary }])
 const PAST = { answer: 'answered', say: 'said', archive: 'archived', unarchive: 'unarchived', revoke: 'revoked', overrule: 'overruled', edit: 'edited', move: 'moved', link: 'linked', unlink: 'unlinked', drop: 'dropped', reopen: 'reopened' };
 const RANK = { ok: 0, warn: 1, bad: 2 };
+// OVERVIEW-TRUTH (4): the scope words of a page's figures - what the page shows (one project or all) vs the machine / account
+export const scopeWords = ctx => (ctx.project === 'all' ? 'all projects' : ctx.project ? `project ${ctx.project}` : 'this project');
 // RM-39: a run's progress against its brief (progress.mjs runProgress) - ONE short line on a row: the pace as a chip ("on track" /
-// "slow" / "stalled") and "2 of 5 items done, testing item 3"; its title = why slow
-const PACE_CLS = { 'on track': 'ok', slow: 'warn', stalled: 'bad' };
+// "slow" / "stalled" / "testing": one long test running, not stalled) and "2 of 5 items done, testing item 3"; its title = why slow
+const PACE_CLS = { 'on track': 'ok', testing: 'ok', slow: 'warn', stalled: 'bad' };
 /** the detail: the checklist with its evidence, the pace, why slow, the alarms in words and the owner's moves */
 export const progDetail = g => !g ? '' : `<ol class="prog-items small">${g.items.map(it => `<li class="prog-${esc(it.state)}"><span aria-hidden="true">${ITEM_MARK[it.state]}</span> ${esc(it.title)}<span class="mute"> - ${esc(it.state)}${it.evidence ? `: ${esc(it.evidence)}` : ''}</span></li>`).join('')}</ol>
   <div class="small"><b>Pace</b> ${esc(g.pace.words)}</div>${g.slow?.line ? `<div class="small"><b>Why</b> ${esc(g.slow.line)}</div>` : ''}
