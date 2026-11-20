@@ -259,8 +259,9 @@ export const SECTIONS=[
   {id:'voice',label:'Slop voice',help:'SloppaChoppa on the Slop page: his pop-ups and how often (DEC-264).',subs:[
     {id:'onoff',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
     {id:'popups',label:'Pop-ups',help:'Off by default until the owner review of SloppaChoppa (DIR-36).'}]},
-  // NORN-UI-SYNC: multi-home sync - a pane sub renders from the server's sync block (ui.mjs syncPane); the leases are normal rows
-  {id:'sync',label:'Sync',help:'Multi-home sync: this machine as one home of a project built on several machines (docs/MULTI-HOME.md).',subs:[
+  // NORN-UI-SYNC: multi-home sync - a pane sub renders from the server's sync block (ui.mjs syncPane); the leases are normal rows; basic: set up from
+  // the page, like Notifications
+  {id:'sync',label:'Sync',basic:true,help:'Multi-home sync: this machine as one home of a project built on several machines (docs/MULTI-HOME.md).',subs:[
     {id:'home',label:'This machine',pane:true,help:'Solo or a home, the ledger remote, the last publish and fetch, the doorbell.'},
     {id:'setup',label:'Set up / join',pane:true,help:'Make this machine the first home, or join another home\'s ledger: check, dry run, apply.'},
     {id:'reconcile',label:'Duplicates',pane:true,help:'Likely duplicate items, directives and decisions across homes: one owner card per pair.'},
