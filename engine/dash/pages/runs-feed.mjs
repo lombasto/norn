@@ -37,8 +37,11 @@ function rawShow(on) { $('#feed-list').hidden = !on; $('#feed-raw-tog').setAttri
 $('#feed-raw-tog').onclick = () => rawShow($('#feed-list').hidden);
 function markFeed() { document.querySelectorAll('[data-feed].sel').forEach(x => x.classList.remove('sel'));
   if (F.run) document.querySelectorAll(`[data-feed="${CSS.escape(F.run)}"]`).forEach(x => x.classList.add('sel')); }
-function closeFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearTimeout(F.tick); F.tick = null;
-  $('#feed').hidden = true; markFeed(); onClose(); }
+// stop = end the stream and hide the drawer; closeFeed = a close the owner asked for (onClose clears the run URL). openFeed only stops
+// the previous run: an onClose there would drop the &run= it is opening (the run URL, stage NAV)
+function stopFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearTimeout(F.tick); F.tick = null;
+  $('#feed').hidden = true; markFeed(); }
+function closeFeed() { stopFeed(); onClose(); }
 function addEv(e) {
   const list = $('#feed-list');
   if (F.act) { activityAdd(F.act, e); F.n++; actSoon(); }
@@ -77,7 +80,7 @@ function feedEnded(project, run, tries = 0) {
     es.onerror = () => { es.close(); feedEnded(project, run, tries + 1); }; }, 3000);
 }
 function openFeed(project, run) {
-  closeFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear(); markFeed();
+  stopFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear(); markFeed();
   $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = ''; $('#feed-act').innerHTML = '';
   $('#feed-status').textContent = 'connecting ...'; rawShow(!narrow()); F.tick = setTimeout(tickDur, 1000);   // a phone: the activity view is the first screen
   const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}&full=1`);

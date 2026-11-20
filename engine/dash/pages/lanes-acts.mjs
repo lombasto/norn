@@ -1,10 +1,10 @@
 // The Lanes page's handlers (moved verbatim from index.html, stage NAV): data-act -> fn(el, c); index.html dispatches every click on a
-// [data-act] through one registry (pages/*-acts.mjs `acts`), c = { S, render, post, $, go, act, tabUrl, lanesRepaint, openFeed, map }.
+// [data-act] through one registry (pages/*-acts.mjs `acts`), c = { S, render, post, $, go, act, tabUrl, lanesRepaint, openFeed, feedGo, map }.
 import { laneKey } from './lanes.mjs';
 const P = f => (b, c) => f(b.dataset, b.dataset.project, c, b);
 export const acts = {
   'map-more': P((d, p, { S, render }) => { const l = d.lane; if (S.mapMore.has(l)) S.mapMore.delete(l); else S.mapMore.add(l); render(); }),
-  'lane-feed': P((d, p, { openFeed }) => { openFeed(d.project || p, d.run); }),   // a Lanes row's Feed: the same drawer a Runs row opens
+  'lane-feed': P((d, p, { feedGo }) => { feedGo(d.project || p, d.run); }),   // a Lanes row's Feed: the run URL (?tab=runs&run=), so Back returns to Lanes
   'map-zoom': P((d, p, { S, render }) => { S.mapZoom = Number(d.z); render(); }),
   'map-view': P((d, p, { S, render }) => { S.mapView = d.view; try { localStorage.setItem('meta-mapview', d.view); } catch { /* private mode */ } render(); }),
   'map-nz': P((d, p, { S, map }, b) => { S.nornZoom = Number(d.z); map()?.map.zoom(S.nornZoom); document.querySelectorAll('[data-act="map-nz"]').forEach(x => { const on = x === b; x.classList.toggle('strong', on); x.setAttribute('aria-pressed', on); }); }),
