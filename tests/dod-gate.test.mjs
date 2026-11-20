@@ -10,6 +10,8 @@ import { spawnSync } from 'node:child_process';
 import { readyGate, doneCheck, gateProgress, dodPrompt } from '../engine/lib/dod.mjs';
 import { parseReady } from '../engine/lib/ready.mjs';
 import { dodChips } from '../engine/dash/widgets.mjs';
+import { agentsTree } from '../engine/lib/agents.mjs';
+import { renderTab } from '../engine/dash/ui.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const SUITE = path.join(import.meta.dirname, '..', 'engine', 'bin', 'ci-suite.mjs').split(path.sep).join('/');
@@ -84,4 +86,13 @@ test('the run card\'s Done evidence shows the gate mode, its files and its time'
   assert.match(dodChips(null, { ok: true, why: null, tests }, { evidence: true }), /gate exit 0, 9 pass 0 fail \(gate: changed, 6 files, 41 s\)/);
   const cut = [{ name: 'gate', code: null, counts: null, log: 'L', ms: 1200000, suite: { mode: 'changed', files: 227, done: 209 } }];
   assert.match(dodChips(null, { ok: false, why: 'x', tests: cut }, { evidence: true }), /gate: changed, 209\/227 files, 1200 s/);
+});
+
+test('the Runs card carries the Done gate entry\'s mode, files and time (agentsTree passes ms + suite)', () => {
+  const now = Date.now(), at = new Date(now - 60000).toISOString();
+  const runs = [{ id: 'RUN-1', kind: 'run', state: 'ended', created: at, data: { lane: 'x', executor: 'fake' }, history: [],
+    end: { outcome: 'done', dod: { ok: true, why: null, tests: [{ name: 'gate', code: 0, counts: { pass: 9, fail: 0 }, log: 'L', ms: 41000, suite: { mode: 'changed', files: 6, done: 6 } }] } } }];
+  const tree = agentsTree(runs, { now });
+  assert.deepEqual(tree[0].dod.tests[0].suite, { mode: 'changed', files: 6, done: 6 }); assert.equal(tree[0].dod.tests[0].ms, 41000);
+  assert.match(renderTab('runs', { tree }, { now, projects: [] }), /gate exit 0, 9 pass 0 fail \(gate: changed, 6 files, 41 s\)/);
 });
