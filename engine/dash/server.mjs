@@ -104,6 +104,8 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'three.mod
 // the Norn look (META-VISUAL-B): its modules + stylesheet, served from norn/ by allowlist; art files only by the asset map
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
+// stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
+const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
 export const TABS = ['home', 'overview', 'inbox', 'work', 'lanes', 'runs', 'map', 'plan', 'roadmap', 'health', 'usage', 'slop', 'tests', 'context', 'history', 'records', 'ledger', 'docs', 'settings'];
@@ -1811,6 +1813,8 @@ data: ${JSON.stringify(l)}
         if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
+        const pg = route.match(/^\/(pages|css)\/([a-z.-]+)$/);   // the pages' modules and the sheets (stage NAV), allowlist only
+        if (pg && (pg[1] === 'pages' ? PAGES : SHEETS).includes(pg[2])) return send(200, await readA(path.join(DASH, pg[1], pg[2])), typeOf(pg[2]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
         if (nm && NORN.includes(nm[1])) return send(200, await readA(path.join(DASH, 'norn', nm[1])), typeOf(nm[1]));
         if (route === '/norn/assets.json') { const has = await Promise.all(ART_FILES.map(f => existsA(path.join(ART, f)))); return send(200, { present: ART_FILES.filter((f, i) => has[i]).map(f => f.replace(/\.png$/, '')) }); }

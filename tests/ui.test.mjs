@@ -10,6 +10,7 @@ import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { TABS, NAV, destOf, loadTab, renderTab, renderNav, healthStates, worstState, navTone, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
 import { ledgerInline } from '../engine/dash/ledger.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const getter = f => async r => { const x = await f.get(r); if (x.status !== 200) throw new Error(`${r} -> ${x.status} ${x.data.error}`); return x.data; };
 const clean = (html, where) => {
@@ -143,24 +144,26 @@ test('GET / serves the UI shell with the token; /ui.mjs is the same module; no t
     assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
     const m = await fetch(f.url + '/ui.mjs'); assert.equal(m.status, 200); assert.match(m.headers.get('content-type'), /javascript/);
     assert.equal(await m.text(), fs.readFileSync(path.join(ENGINE, 'dash', 'ui.mjs'), 'utf8'));
-    const all = html + fs.readFileSync(path.join(ENGINE, 'dash', 'ui.mjs'), 'utf8');
+    const all = html + fs.readFileSync(path.join(ENGINE, 'dash', 'ui.mjs'), 'utf8') + dashCss();
+    const sheet = await fetch(f.url + '/css/base.css'); assert.equal(sheet.status, 200); assert.match(sheet.headers.get('content-type'), /text\/css/);
     assert.ok(!/animation\s*:|transition\s*:|@keyframes/.test(all), 'no animation');
     assert.deepEqual([...all.matchAll(/setInterval\(([^)]*)\)/g)].length, 0, 'no refetch timer'); assert.ok(!/requestAnimationFrame/.test(all), 'no frame loop');
     assert.match(html, /new EventSource\(`\/api\/stream/);
-    assert.match(html, /prefers-color-scheme:dark/); assert.match(html, /:root\.light/); assert.match(html, /:root\.dark/);
-    assert.match(html, /font-variant-numeric:tabular-nums/);
+    assert.match(dashCss(), /prefers-color-scheme:dark/); assert.match(dashCss(), /:root\.light/); assert.match(dashCss(), /:root\.dark/);
+    assert.match(dashCss(), /font-variant-numeric:tabular-nums/);
   } finally { await f.done(); }
 });
 
 test('phone width (<= 700 px, both looks): the header wraps, the project select shrinks, nav / cards / setting rows scroll or reflow; no page-level overflow mask', () => {
   const html = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
-  const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
   const phone = [...css.matchAll(/@media \(max-width:700px\)\{([\s\S]*?\})\}/g)].map(m => '}' + m[1]).join('\n');
   const rule = sel => [...phone.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(m => m[1].split(',').map(s => s.trim()).includes(sel)).map(m => m[2]).join(';');
   assert.match(rule('header'), /flex-wrap:wrap/, 'header row wraps');
   assert.match(rule('header select'), /min-width:0/); assert.match(rule('header select'), /max-width:100%/);
   assert.match(rule('nav'), /overflow-x:auto/, 'the tab bar scrolls inside itself');
-  assert.match(phone, /\.card,\.tablecard,\.mapwrap\{[^}]*min-width:0[^}]*overflow-x:auto/, 'wide tables scroll inside their card');
+  assert.match(phone, /\.card,\.tablecard\{[^}]*min-width:0[^}]*overflow-x:auto/, 'wide tables scroll inside their card');
+  assert.match(css, /@media \(max-width:700px\)\{\.mapwrap\{min-width:0;overflow-x:auto\}\}/, 'and the map inside its frame');
   assert.match(rule('.srow'), /grid-template-columns:minmax\(0,1fr\)/, 'setting rows stack');
   assert.ok(!/(?:html|body)[^{]*\{[^}]*overflow(?:-x)?:(?:hidden|clip)/.test(css), 'no overflow mask on html / body');
 });

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderFeedHead, renderFeedEvent, loadTab, renderTab } from '../engine/dash/ui.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const DASH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'dash');
 const clean = (html, where) => assert.ok(!/undefined|NaN|\[object Object\]/.test(html.replace(/<[^>]*>/g, m => m.replace(/"[^"]*"/g, '""'))), `${where}: undefined / NaN in text`);
@@ -42,9 +43,8 @@ test('Agents rows of runs open the feed (data-feed); subagents and talk sessions
 });
 
 test('shell: the drawer sits outside #main, one EventSource on /api/feed, closed on end / close; follow toggle; Esc closes', () => {
-  const html = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8');
-  const main = html.indexOf('<main id="main">'), drawer = html.indexOf('id="feed"');
-  assert.ok(drawer > 0 && !html.slice(main, html.indexOf('</main>', main)).includes('id="feed"'), 'not re-rendered by the 15 s tick');
+  const page = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8'), mod = fs.readFileSync(path.join(DASH, 'pages', 'runs-feed.mjs'), 'utf8'), html = page + mod + dashCss();
+  assert.ok(/id="feed"/.test(mod) && mod.includes("$('#main').insertAdjacentHTML('afterend', FEED_HTML)") && !page.includes('id="feed"'), 'the drawer is built after #main: not re-rendered by the 15 s tick');
   assert.match(html, /new EventSource\(`\/api\/feed\?/);
   assert.match(html, /addEventListener\('end'/); assert.match(html, /\.close\(\)/);
   assert.match(html, /id="feed-follow"/); assert.match(html, /Escape/);

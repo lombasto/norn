@@ -13,11 +13,12 @@ import { HEX, artScale, glyphPixels, GLYPHS, RAMP } from '../engine/dash/norn/pi
 import { ASSETS, ART_FILES, TOKENS, EMPTIES, CHIP_TOKEN } from '../engine/dash/norn/assets.mjs';
 import { createScheduler, motionAllowed } from '../engine/dash/norn/motion.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const N = path.join(ENGINE, 'dash', 'norn'), DASH = path.join(ENGINE, 'dash');
 const css = fs.readFileSync(path.join(N, 'norn.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 const html = fs.readFileSync(path.join(DASH, 'index.html'), 'utf8');
-const classic = html.slice(html.indexOf('<style>') + 7, html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+const classic = dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
 const rules = text => [...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => ({ sel: m[1].trim(), body: m[2] }));
 const PAL = new Set(HEX);
 
@@ -150,7 +151,7 @@ test('the Norn tab bar (UX review 2, was META-NAV R2): the plain destinations + 
   const navRules = rules(css).filter(r => r.sel.split(',').map(s => s.trim()).includes(':root.norn nav'));
   const last = navRules.filter(r => /overflow-x/.test(r.body)).at(-1);
   assert.match(last.body, /overflow-x\s*:\s*visible/); assert.ok(navRules.some(r => /flex-wrap\s*:\s*wrap/.test(r.body)), 'nav wraps');
-  assert.match(html, /nav \.dests,nav \.pages\{display:flex;flex-wrap:wrap;[^}]*max-width:100%/, 'both rows wrap inside the bar');
+  assert.match(dashCss(), /nav \.dests,nav \.pages\{display:flex;flex-wrap:wrap;[^}]*max-width:100%/, 'both rows wrap inside the bar');
   // RM-18 S1: the tones - the three time colours and the Health states, a thin underline, the open one filled in the inverse ink
   for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['ok', 'ok'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));
   const tb = ':root nav button[class*=tone-]', ts = `${tb}[aria-selected=true]`;

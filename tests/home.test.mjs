@@ -175,12 +175,13 @@ test('C2 /api/file: images inside the allow-listed roots (project root, state, r
 });
 
 // ---------- the phone width (SPEC row: scrollWidth == width at 390) ----------
-const css = () => { const h = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8'); return h.slice(h.indexOf('<style>'), h.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, ''); };
+const css = () => dashCss().replace(/\/\*[\s\S]*?\*\//g, '');
 
 // CI-RED-44384DB (windows): this test drove its own CDP socket with unbounded waits (the load event, the ready poll, every reply), so a
 // stalled step ran into the 120 s test timeout without a word and the finally (browser + server close) never ran - the file hung to
 // the 600 s cap. The shared openPage: every wait bounded, a timeout fails naming the page's state, pg.close in the finally.
 import { openPage, skipWhy } from './helpers/cdp.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 test('C2 the Home tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
   skip: skipWhy, timeout: 120000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);

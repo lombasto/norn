@@ -5,15 +5,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const D = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'dash');
-const html = fs.readFileSync(path.join(D, 'index.html'), 'utf8'), norn = fs.readFileSync(path.join(D, 'norn', 'norn.css'), 'utf8');
+const html = dashCss(), norn = fs.readFileSync(path.join(D, 'norn', 'norn.css'), 'utf8');
 const vars = block => Object.fromEntries([...block.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,6})\b/g)].map(m => [m[1], m[2].toLowerCase()]));
 const grab = (src, re) => { const m = src.match(re); assert.ok(m, String(re)); return vars(m[1]); };
 const THEMES = {
   'classic light': grab(html, /:root\.light\{([^}]*)\}/),
   'classic dark': grab(html, /:root\.dark\{([^}]*)\}/),
-  'classic system light': grab(html, /<style>[^]*?\n:root\{([^}]*)\}/),
+  'classic system light': grab(html, /^[^]*?\n:root\{([^}]*)\}/),
   'classic system dark': grab(html, /@media \(prefers-color-scheme:dark\)\{:root\{([^}]*)\}/),
   'norn dark': grab(norn, /:root\.norn\[data-ground=dark\] \{([^}]*)\}/),
   'norn light': grab(norn, /:root\.norn\[data-ground=light\] \{([^}]*)\}/),

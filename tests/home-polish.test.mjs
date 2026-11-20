@@ -10,6 +10,7 @@ import { homeEvents, renderThread, checkinFacts, checkinLine, pickProject, threa
 import { parseLedgerLine } from '../engine/dash/ledger.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
+import { dashCss } from './helpers/dash-css.mjs';
 
 const T = m => new Date(Date.parse('2026-11-13T14:00:00.000Z') + m * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
 let seq = 0;
@@ -79,7 +80,7 @@ test('renderThread: the check-in is ONE line (never the ledger prose) that expan
   const idx = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
   assert.match(idx, /details\.ck\[open\]/, 'homeKeep collects the open check-in keys');
   assert.match(idx, /open: S\.homeOpen/, 'and every thread paint hands them back');
-  const css = idx.slice(idx.indexOf('<style>'), idx.indexOf('</style>'));
+  const css = dashCss();
   for (const m of css.matchAll(/@media \(max-width[^{]*\{/g)) { let i = m.index + m[0].length, depth = 1; while (depth && i < css.length) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
     const blk = css.slice(m.index, i);
     assert.ok(!/details\.ck|ck-full/.test(blk), 'the phone uses the same check-in markup and rules'); }
