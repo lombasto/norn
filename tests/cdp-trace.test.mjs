@@ -26,6 +26,8 @@ async function serve() {
   return { url: `http://127.0.0.1:${s.address().port}`, close: () => new Promise(res => { s.closeAllConnections(); s.close(res); }) };
 }
 
+// CI 44335427788 (ubuntu, HANG RED): openPage threw (no DevTools port in 30 s) before the try, so the server made before it
+// stayed open and held the file to the 600 s cap. openPage runs inside the try; the finally closes what was made.
 test('a slow go() report carries the browser trace of the gap: a page busy-loop is named as a long renderer task with its function', { skip: skipWhy, timeout: 120000 }, async () => {
   const srv = await serve(); let pg;
   try {
