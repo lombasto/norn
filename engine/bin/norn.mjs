@@ -20,12 +20,14 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
+import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
+import { collisions, staleCaveats, hitLines, ahead, UNREADABLE } from '../lib/collide.mjs';
+import { gatherIntents, briefIntent } from '../lib/intents.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
@@ -61,7 +63,7 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
+import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -1429,6 +1431,7 @@ Plan and land work:
   norn crew                        the dwarves who take the worker runs: list, pin to a lane, retire, recall
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
+  norn collide                     lane collisions: what a run would meet now, and SloppaChoppa's pick (plan)
   norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
   norn asks                        post the rulings a lane's notes ask of the owner as Inbox questions (the run end does it by itself)
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
@@ -1479,7 +1482,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, collide: COLLIDE_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1540,6 +1543,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'crew') return crewCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'collide') return collideCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'asks') return asksCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'pause') return pauseCmd(argv.slice(1), env, out, err);
@@ -2273,6 +2277,56 @@ function stuckCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + STUCK_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
+const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)';
+function collideCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if (k === 'json') { flags.json = true; continue; }
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    if (pos[0] !== 'plan') throw new RunError(pos[0] ? `unknown verb ${pos[0]} (plan)` : 'collide needs a verb (plan)');
+    if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
+    if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
+    const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
+    const g = gatherIntents({ state, repo: P.root, main: cfg.main, remote: cfg.remote, now, home }), ctx = { tracked: g.tracked, items: loadRoadmap(state).items };
+    const note = x => (x.role === 'work' && x.scope === null ? [`note: ${UNREADABLE.replace(':', ` (${x.scope_why}):`)}`] : []);
+    if (flags.lane) {
+      const me = briefIntent({ lane: flags.lane, brief: flags.brief, item: flags.item, stage: flags.stage, role: flags.role, now, home }, g, { repo: P.root });
+      const hits = collisions(me, g.intents, ctx), notes = note(me);
+      if (flags.json) { out(JSON.stringify({ me, hits, notes }, null, 1)); return 0; }
+      out(`lane ${me.lane}${me.stage ? `, stage ${me.stage}` : ''}: items ${me.items.join(' ') || '-'}; Scope ${me.scope === null ? '(not readable)' : me.scope.join(' ') || 'none'}`);
+      if (!hits.length) out(`no collision: ${g.intents.length} open lane${g.intents.length === 1 ? '' : 's'} checked`);
+      for (const h of hits) out(hitLines(h, me).join('\n'));
+      for (const n of notes) out(n);
+      return 0;
+    }
+    // every pair of open lanes once, from the later side (a tie: the later name); the caveats that name a dead run; the free items
+    const pairs = g.intents.flatMap(x => collisions(x, g.intents, ctx).filter(h => { const o = g.intents.find(y => y.lane === h.other); return ahead(o, x) || (!ahead(x, o) && x.lane > o.lane); }).map(h => ({ lane: x.lane, ...h, me: x })));
+    const openDlvRuns = new Set(Object.values(g.dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state)).flatMap(x => (x.history || []).map(e => e.data?.run).filter(Boolean)));
+    const hbAge = id => { try { return now - fs.statSync(hbPath(state, id)).mtimeMs; } catch { return null; } };
+    const stale = staleCaveats(ctx.items, { runs: g.runs, hbAge, openDlvRuns, staleMs: STALE_MS });
+    const held = new Set(g.intents.flatMap(x => x.items)), free = itemsOf(buildTree({ stateDir: state, project: P, now })).filter(n => n.phase !== 'past' && !n.live?.length && !n.queued?.length && !held.has(n.id));
+    if (flags.json) { out(JSON.stringify({ intents: g.intents, hits: pairs.map(({ me: _m, ...h }) => h), stale, free: free.map(n => ({ id: n.id, title: n.title })) }, null, 1)); return 0; }
+    const by = s => g.intents.filter(x => x.state === s).length, counts = ['running', 'queued', 'unlanded'].map(s => by(s) && `${by(s)} ${s}`).filter(Boolean);
+    out(`collide plan ${P.name ?? path.basename(state)}: ${g.intents.length} open lane${g.intents.length === 1 ? '' : 's'}${counts.length ? ` (${counts.join(', ')})` : ''}`);
+    if (!pairs.length) out('no collision between open lanes');
+    for (const h of pairs) out(hitLines(h, h.me).map((l, i) => (i ? `  ${l}` : `${h.lane}: ${l}`)).join('\n'));
+    for (const h of stale) out(hitLines(h).join('\n'));
+    for (const n of g.intents.filter(x => note(x).length)) out(`${n.lane}: ${note(n)[0]}`);
+    for (const n of free) out(`Free: ${n.id} ${n.title}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + COLLIDE_USAGE); return 2; }
     throw e;
   }
 }
