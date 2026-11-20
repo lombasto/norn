@@ -1,6 +1,7 @@
 // META-TEND (REPORT s.5.3): the shared chart widgets, built once - `meter` (one value against a max), `bars` (a ranked list, one horizontal bar each), `columns` (one
-// value over time, a column per point) and `stack` (one bar split into its parts + a legend). Pure: data -> HTML on the palette's
-// CSS variables (index.html .wbars / .wcols / .wstack); every chart carries its numbers as text and an aria-label.
+// value over time, a column per point), `stack` (one bar split into its parts + a legend) and `capStrip` (the Claude worker pool per
+// project). Pure: data -> HTML on the palette's CSS variables (index.html .wbars / .wcols / .wstack / .wcap); every chart carries its
+// numbers as text and an aria-label.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fin = v => typeof v === 'number' && Number.isFinite(v);
 const w = (v, max) => (fin(v) && max > 0 ? Math.max(0, Math.min(100, 100 * v / max)).toFixed(1) : '0');
@@ -20,6 +21,22 @@ export function bars(rows, { fmt = String, max, id = '' } = {}) {
 export function hoChip(h, self = null, { short = false } = {}) {
   if (!h?.text) return '';
   return `<span class="ho ${h.phase === 'resumed' ? 'resumed' : 'pending'}" role="status"${short ? ` title="${esc(h.text)}"` : ''}><span class="pulse" aria-hidden="true"></span><span>${esc(short ? h.short ?? h.text : h.text)}${h.run && self && h.run !== self ? ` <span class="id">${esc(h.run)}</span>` : ''}</span></span>`;
+}
+
+/**
+ * fair-slots item 8c: the machine's Claude worker pool per project (runs.mjs capacityView: { cap, rows: [{ project, reserved, using,
+ * queued, ceiling }] }) -> one line per project: a slot strip (one cell per slot of the cap: filled = in use, ringed = reserved and
+ * free, faded = past the project's ceiling) and its numbers as text. Each line wraps under its name, so it fits a phone. mine = the
+ * project the page shows (its name in bold).
+ */
+export function capStrip(v, { id = 'capstrip', mine = null } = {}) {
+  if (!v?.rows?.length) return '';
+  const cap = fin(v.cap) ? v.cap : null, used = v.rows.reduce((n, r) => n + (r.using || 0), 0);
+  const words = r => `${r.using} using · ${r.queued} queued · reserve ${r.reserved} · max ${fin(r.ceiling) ? r.ceiling : 'any'}`;
+  const cells = r => cap === null ? '' : `<span class="wslots" aria-hidden="true">${Array.from({ length: cap }, (_, i) => `<i class="${i < r.using ? 'use' : i < r.reserved ? 'res' : fin(r.ceiling) && i >= r.ceiling ? 'off' : ''}"></i>`).join('')}</span>`;
+  const aria = `Claude worker pool: ${cap === null ? 'no machine cap' : `${used} of ${cap} in use`}; ${v.rows.map(r => `${r.project} ${words(r)}`).join('; ')}`;
+  return `<div class="wcap"${id ? ` id="${esc(id)}"` : ''} role="group" aria-label="${esc(aria)}"><div class="small wtitle">Claude worker pool <b>${cap === null ? 'no machine cap' : `${used} of ${cap}`}</b>${cap === null ? '' : ' in use'} <span class="mute">· every project on this machine</span></div>
+    <ol class="wcaprows">${v.rows.map(r => `<li data-project="${esc(r.project)}" title="${esc(`${r.project}: ${words(r)} (max = its ceiling; reserve = slots kept for it while it has queued work)`)}"><span class="wcapn">${r.project === mine ? `<b>${esc(r.project)}</b>` : esc(r.project)}</span>${cells(r)}<span class="small mute mono">${esc(words(r))}</span></li>`).join('')}</ol></div>`;
 }
 
 /** one value against a max -> a single bar, an optional tick at `mark` (a p90, a hand-off line); no data = a dash */

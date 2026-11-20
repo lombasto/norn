@@ -73,3 +73,5 @@ details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>
 /* Norn look: square corners, the woven panel frame stays on the group (theme in the frame + style only) */
 :root.norn .lgroup,:root.norn .ltile,:root.norn .bd,:root.norn .pace,:root.norn .waits,:root.norn .ebar,:root.norn .fl-run,:root.norn .lhelp>summary,:root.norn .lhelp>div,:root.norn .lrow .rowacts a.btn{border-radius:0}
 :root.norn .ltrack i{border-radius:0}:root.norn .lgh{font-family:var(--pix);font-weight:400}
+/* fair-slots item 3: a lane run's priority + fill position (pages/lanes.mjs prioChip) in the row head; the default P2 is faded */
+.chip.prio{font-family:ui-monospace,Consolas,monospace;box-shadow:inset 0 0 0 1px var(--line)}.chip.prio.dflt{opacity:.6;font-style:italic}

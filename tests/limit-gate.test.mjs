@@ -146,9 +146,11 @@ test('limit gate: norn run refuses a closed executor (exit 4, names the reset) a
   const q = startRun(d.opts({ worktree: d.wt(3), queue: true, now: BEFORE, brief: d.brief('mode: done\n', 'q.md') }));
   assert.equal(q.queued, true);
   assert.match(q.why, /out of quota until/);
-  const r = startRun(d.opts({ now: AFTER }));
-  assert.ok(r.run);
-  assert.equal((await d.ended(r.run)).end.outcome, 'done');
+  // after the reset the queued run goes first (fair-slots item 4: a direct start never passes a ready run of its priority); the fill starts it
+  assert.throws(() => startRun(d.opts({ now: AFTER })), e => e instanceof RunRefused && e.code === 4 && new RegExp(`go first: demo ${q.run} P2 #1`).test(e.message));
+  const got = fillQueue(d.state, { now: AFTER });
+  assert.deepEqual(got.map(x => x.queued), [q.run]);
+  assert.equal((await d.ended(got[0].next)).end.outcome, 'done');
 });
 
 test('limit gate: queue fill skips a closed executor until its reset, then starts it', async () => {

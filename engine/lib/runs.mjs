@@ -33,6 +33,7 @@ import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
 import { withCrew, pickDwarf, readCrew, crewState, projectOf, CrewError } from './crew.mjs';
+import { shareOf, slotVerdict } from './share.mjs';
 import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
@@ -460,17 +461,17 @@ export function lostNotice(rows, project = '') {
   return { title: `${project ? project + ': ' : ''}${head}`, body: `${head}: ${rows.length} run${rows.length === 1 ? '' : 's'} lost, ${m} relaunched (${list})` };
 }
 
-// every sibling state dir with runs.jsonl (account-wide, D11): this machine's projects
-function machineStates(state) {
+/** the state dir and every sibling state dir with runs.jsonl: the projects that share this machine's worker caps (D11) */
+export function projectStates(state) {
   const parent = path.dirname(path.resolve(state));
   const states = new Set([path.resolve(state)]);
   for (const d of fs.existsSync(parent) ? fs.readdirSync(parent) : []) if (fs.existsSync(path.join(parent, d, 'runs.jsonl'))) states.add(path.join(parent, d));
-  return states;
+  return [...states];
 }
 // running, non-interactive runs with a fresh (or late: hbLate) heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
 export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
   const live = [];
-  for (const s of machineStates(state)) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs, cpu: sweptCpu(s, { now }) }))) live.push({ ...it, state_dir: s });
+  for (const s of projectStates(state)) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs, cpu: sweptCpu(s, { now }) }))) live.push({ ...it, state_dir: s });
   return live;
 }
 // ---------- the crew (DWARVES.md 1.3): a lane's worker run takes a dwarf; Norn's own steps and helpers take none ----------
@@ -479,7 +480,7 @@ export const takesDwarf = o => !['checkin', 'audit', 'interactive'].includes(o.k
 export function crewLoad(state, staleMs = STALE_MS) {
   const busy = {}, past = [];
   for (const r of liveRuns(state, { staleMs })) if (r.data.dwarf) busy[r.data.dwarf] = r.id;
-  for (const s of machineStates(state)) for (const r of runsOf(s)) if (r.data.dwarf) past.push({ dwarf: r.data.dwarf, project: projectOf(s), lane: r.data.lane ?? null, at: r.created, run: r.id, state: r.state });
+  for (const s of projectStates(state)) for (const r of runsOf(s)) if (r.data.dwarf) past.push({ dwarf: r.data.dwarf, project: projectOf(s), lane: r.data.lane ?? null, at: r.created, run: r.id, state: r.state });
   return { busy, past };
 }
 /** the wait term of run spec o (a busy pinned dwarf, or an unreadable crew store), else null; the dry check of the fill walk */
@@ -503,6 +504,20 @@ function withDwarf(o, info, staleMs, write) {
       return write(p.dwarf ?? c.hire(p.hire));
     });
   } catch (e) { if (e instanceof CrewError) throw new RunRefused(e.message, 3); throw e; }
+}
+const onClaudeCap = data => data.kind !== 'checkin' && capsOfRun(data).includes('max_claude_workers');
+/**
+ * fair-slots item 8c: the Claude worker pool per project, machine-wide -> { cap, rows: [{ project, reserved, using, queued, ceiling }] }
+ * (every project with a state dir; ceiling null = no ceiling). budget: the machine budget in force.
+ */
+export function capacityView(state, budget, { staleMs = STALE_MS, now = Date.now() } = {}) {
+  const live = liveRuns(state, { staleMs, now });
+  const rows = projectStates(state).map(s => {
+    const project = path.basename(s), sh = shareOf(budget, project);
+    return { project, reserved: sh.reserve, using: live.filter(r => r.state_dir === s && onClaudeCap(r.data)).length,
+      queued: runsOf(s).filter(r => r.state === 'queued' && onClaudeCap(r.data)).length, ceiling: sh.ceiling };
+  });
+  return { cap: Number.isInteger(budget?.max_claude_workers) ? budget.max_claude_workers : null, rows };
 }
 
 // META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief
@@ -549,6 +564,15 @@ function capFull(o, staleMs, extra = [], reserve = 0) {   // extra: run data tha
   return null;
 }
 function capCheck(o, staleMs) { const full = capFull(o, staleMs); if (full) throw new RunRefused(full, 4); }
+// fair-slots item 8: a direct start obeys its project's ceiling and the reserves of the projects with queued work (exit 4); the
+// waited-longest order is the fill's (a direct start already queues behind same-or-higher priority runs: queuedAhead)
+function shareCheck(o, staleMs) {
+  if (o.kind === 'checkin' || o.role === 'helper' || !(infoOf(o)?.caps || []).includes('max_claude_workers')) return;
+  if (!Number.isInteger(o.budget?.max_claude_workers)) return;   // no machine cap: no share to keep (slotVerdict's rule), no walk of the other projects
+  const me = path.basename(path.resolve(o.state));
+  const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me), waiting: slotWaiters(o.state, { now: o.now ?? Date.now(), resources: o.resources || sampleResources }), mine: -Infinity });
+  if (sv) throw new RunRefused(sv, 4);
+}
 
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
 const stamp = () => new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
@@ -676,6 +700,27 @@ export function busyDoor(o) {
   noteRefusal(o.state, why, { guard: 'busy', lane: o.lane ?? null, stage: o.stage ?? null });
   throw new RunRefused(why, BUSY_EXIT);
 }
+// fair-slots item 4 (11-19 14:53Z: norn run --queue --priority P1 started RUN-251 at once while the older P1 runs RUN-244 / RUN-247 stayed
+// queued, held for CPU > fill.max_cpu_pct): a run that would start now first reads every project's queue (their dry walks, fair: false).
+// A queued run on a cap it uses, of the same or a higher priority, that is ready or waits only for capacity (a cap, resources) goes
+// first: the new run joins the queue in fill order (--queue) or is refused like a full cap (exit 4). Returns those runs, oldest first.
+export function queuedAhead(o) {
+  const caps = infoOf(o)?.caps || [], mine = PRIORITIES.indexOf(PRIORITIES.includes(o.priority) ? o.priority : DEFAULT_PRIORITY);
+  if (!caps.length || o.kind === 'checkin' || o.role === 'helper') return [];
+  // a sibling project whose runs.jsonl does not read is skipped (its own fill reports it), never a refusal of this project's start
+  const out = [];
+  for (const s of projectStates(o.state)) {
+    let rows;
+    try { if (!runsOf(s).some(r => r.kind === 'run' && r.state === 'queued')) continue; rows = walkQueue(s, { now: o.now ?? Date.now(), act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
+    for (const r of rows) {
+      const rc = EXECUTORS[r.executor]?.caps ?? [];
+      if (!rc.some(k => caps.includes(k)) || PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
+      if (r.ready || (r.terms.length && r.terms.every(x => CAPACITY_TERM.test(x)))) out.push({ id: r.id, project: path.basename(s), priority: r.priority ?? DEFAULT_PRIORITY, position: r.position });
+    }
+  }
+  return out;
+}
+const aheadWords = a => `${a.length} queued run(s) of the same or a higher priority go first: ${a.slice(0, 3).map(x => `${x.project} ${x.id} ${x.priority} #${x.position}`).join(', ')}${a.length > 3 ? ', ...' : ''}`;
 // the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
 const noCaller = ({ caller: _c, ...o }) => o;
 
@@ -780,6 +825,7 @@ export function startRun(o) {
     if (sf) return { ...queueRun(rest), queued: true, why: sf };
     const dw = dwarfWait(rest, rest.staleMs ?? STALE_MS);   // DWARVES 1.3 rule 1: the lane's pinned dwarf is busy
     if (dw) return { ...queueRun(rest), queued: true, why: dw };
+    { const a = queuedAhead(rest); if (a.length) return { ...queueRun(rest), queued: true, why: aheadWords(a) }; }   // fair-slots item 4
     // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
     const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
     if (refused) return { ...queueRun(rest), queued: true, why: refused };
@@ -788,6 +834,7 @@ export function startRun(o) {
   // META-LIMIT-GATE: an executor out of quota dies in seconds (RUN-562) - refused like a full cap (exit 4), naming its reset and an open
   // executor; a queued run was gated by the fill's walk (its clock), so a fill start is not checked twice
   if (!o.fromQueue) { const lr = limitRefusal(o.state, o, { now: o.now }); if (lr) throw new RunRefused(lr, 4); }
+  if (!o.fromQueue && !o.claim_of) { const a = queuedAhead(o); if (a.length) throw new RunRefused(`${aheadWords(a)} (norn run --queue joins the queue)`, 4); }   // fair-slots item 4
   if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {   // META-AUTH: while the login is down a launch dies in 0.1 s - it waits queued
     const a = authGate(o);
     if (a) return { ...queueRun(o), queued: true, why: a };
@@ -810,6 +857,7 @@ export function startRun(o) {
   try {
     if (isMergeWtSpec(o) && o.lock !== false) lock = handleOf([...lock.hs, acquireSlot(o, { run: 'pending', staleMs })]);   // GAP-6: one merge slot of the repo
     capCheck(o, staleMs);
+    if (!o.fromQueue) shareCheck(o, staleMs);
     if (isMergeWtSpec(o)) prepareMergeWt(o);   // GAP-6: its own merge worktree (kept on a resume), the leftovers swept
     const base = path.join(o.state, 'logs', `${o.lane}-${stamp()}-${crypto.randomBytes(3).toString('hex')}`);
     const log = base + '.log', final = base + (info.harness === 'codex' ? '.md' : '.json');
@@ -1000,6 +1048,22 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
     if (!flagged()) return started;
   }
 }
+/**
+ * fair-slots item 1: fill every project's queue on this machine, not only `state`'s - the worker caps are machine-wide, so a slot one
+ * project's run frees belongs to whichever project the walk's share rule picks (slotVerdict). Each project fills under its own queue
+ * lock; another project's fill error is logged in the result (never the caller's). Returns fillQueue's rows + project.
+ */
+export function fillAll(state, o = {}) {
+  const here = path.resolve(state), out = [];
+  for (const s of projectStates(state)) {
+    const project = path.basename(s);
+    if (s === here) { out.push(...fillQueue(s, o).map(f => ({ ...f, project }))); continue; }
+    try { out.push(...fillQueue(s, o).map(f => ({ ...f, project }))); } catch (e) { out.push({ project, error: e.message }); }
+  }
+  return out;
+}
+/** one line per fillAll row (the CLI, the tick, the supervisor log) */
+export const fillWords = (f, own) => (f.error ? `queue ${f.project}: fill failed: ${f.error}` : `queue: ${f.project && f.project !== own ? f.project + ' ' : ''}${f.queued} -> STARTED ${f.next}`);
 // META-QUEUE-SPEC R1: a queued run launches with the policy of NOW (launchpolicy.mjs); the start record names what was resolved (at_fill).
 // A project.json that no longer loads keeps the run queued (refused, exit 3), never a launch on the old spec.
 function atFill(spec) {
@@ -1136,10 +1200,40 @@ const resourceGate = (spec, sample) => { if (!spec.policy?.fill) return null; co
 /** readiness(state, { now }) -> the dry walk's rows in fill order: { id, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
 export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null });
 
-function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth } = {}) {
+// fair-slots items 1 + 8: the Claude pool is machine-wide, so a slot one project frees is offered to every project (fillAll), and before
+// a queued run takes one the walk asks share.mjs slotVerdict: the project's ceiling, the reserves of the projects that wait, then the
+// project that has waited longest. The other projects' waiting runs come from their own dry walks (fair: false, no recursion): a row
+// that is ready or waits only for capacity (cap, resources) is waiting for a slot.
+const CAPACITY_TERM = /^(cap[: ]|resources: )/;
+const lastStart = runs => Math.max(0, ...runs.filter(r => r.kind === 'run' && r.history?.[0]?.ev === 'start' && onClaudeCap(r.data)).map(r => Date.parse(r.created) || 0));
+const slotWaiting = r => r.account && (r.ready || (r.terms.length > 0 && r.terms.every(x => CAPACITY_TERM.test(x))));
+/** { project: { n, since } } of the projects beside `state` that have queued Claude runs waiting only for a slot */
+export function slotWaiters(state, o = {}) {
+  const out = {}, here = path.resolve(state);
+  for (const s of projectStates(state)) {
+    if (s === here) continue;
+    let rows, runs;
+    try { rows = walkQueue(s, { ...o, act: null, fair: false }); runs = runsOf(s); } catch { continue; }
+    const at = new Map(runs.map(r => [r.id, Date.parse(r.created) || 0])), w = rows.filter(slotWaiting);
+    if (w.length) out[path.basename(s)] = { n: w.length, since: Math.max(Math.min(...w.map(r => at.get(r.id) ?? 0)), lastStart(runs)) };
+  }
+  return out;
+}
+const claudeLive = (state, staleMs, pending, me) => {
+  const live = {};
+  for (const r of liveRuns(state, { staleMs })) if (onClaudeCap(r.data)) { const p = path.basename(r.state_dir); live[p] = (live[p] ?? 0) + 1; }
+  for (const d of pending) if (onClaudeCap(d)) live[me] = (live[me] ?? 0) + 1;
+  return live;
+};
+function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
-  let E = null, R, L;
+  let E = null, R, L, W = null, mine = Infinity, last = null;
   const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
+  const me = path.basename(path.resolve(state));
+  const shareGate = (spec, q, staleMs) => {   // null = this row may take a Claude slot
+    mine = Math.min(mine, Math.max(Date.parse(q.queued) || 0, (last ??= lastStart(runsOf(state)))));
+    return slotVerdict({ budget: spec.budget, project: me, live: claudeLive(state, staleMs, pending, me), waiting: fair ? (W ??= slotWaiters(state, { now, resources: res, authProbe })) : {}, mine });
+  };
   const queue = queueOf(runsOf(state));
   // MERGE-FIRST: the landing runs that hold the merge reserve - queued, and not waiting on a condition or a clock (those may wait for hours)
   const landing = new Set(queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now)
@@ -1185,6 +1279,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const reserve = !isLandingStage(q.stage) && landing.size ? Math.max(0, Number({ ...FILL_DEFAULTS, ...(spec.policy?.fill || {}) }.merge_reserve) || 0) : 0;
     const full = capFull(spec, staleMs, pending, reserve);
     if (full) { row.terms.push(`cap: ${full}`); if (!full.includes('fill.merge_reserve')) for (const k of caps) blocked.set(k, q.id); continue; }   // a reserve refusal holds no cap
+    { const sv = caps.includes('max_claude_workers') && spec.kind !== 'checkin' ? shareGate(spec, q, staleMs) : null; if (sv) { row.terms.push(sv); for (const k of caps) blocked.set(k, q.id); continue; } }
     const rr = resourceGate(spec, res);   // piece 5: machine pressure is global, so it holds no cap for later rows
     if (rr) { row.terms.push(rr); continue; }
     // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)

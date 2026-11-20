@@ -20,7 +20,7 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
@@ -512,7 +512,7 @@ function runCmd(argv, env, out, err) {
         notBefore: nb === 'none' ? null : nb, priority: flags.priority });
       const what = [flags.after !== undefined ? `after ${flags.after}` : 'its after: kept', ...(nb ? [`not before: ${nb}`] : []), ...(flags.priority ? [`priority ${r.priority}`] : [])];
       out(`REQUEUED ${r.run} -> ${r.next} (${what.join('; ')})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
-      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // met now = starts now (as norn run --after)
+      for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // met now = starts now (as norn run --after)
       return 0;
     }
     if (cmd === 'stop') {
@@ -555,7 +555,7 @@ function runCmd(argv, env, out, err) {
     if (r.queued) {
       out(`QUEUED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} position ${r.position} (${r.why})`);
       for (const c of holds) out(`WAITS ${r.run} for the plan review ${c.id} (after run:${c.id}:reviewed: a clean review releases it, findings wait for the check-in's review)`);
-      if (o.after?.length || o.labels?.length) for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // S4: met now = starts now; FED: served here = starts now
+      if (o.after?.length || o.labels?.length) for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // S4: met now = starts now; FED: served here = starts now
       return 0;
     }
     out(`STARTED ${r.run} lane ${o.lane} ${ex}${o.model === ex ? '' : ' ' + o.model} ${o.effort} supervisor pid ${r.pid} log ${r.log}`);
@@ -732,7 +732,7 @@ function s5Cmd(argv, env, out, err) {
     const { project, state } = where(flags, env);
     if (cmd === 'status') {
       if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
-      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // a slot a kill / lost run freed (META-GT12)
+      for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // a slot a kill / lost run freed (META-GT12)
       const s = writeStatus({ state, project: project?.name, providers: providersOf(project), budget: m.budget, projectsDir: projectsDirOf(m.machine, env), usageJson: m.machine?.usage || {}, ci: project?.ci,
         cacheFile: path.join(state, 'usage-cache.json'), digest: tryDigest(state, project || {}) }, flags.out || path.join(state, 'STATUS.md'));
       out(s.line);
@@ -1961,7 +1961,7 @@ function flowCmd(argv, env, out, err) {
       return startRun(after.length ? o : { ...o, queue: true });   // no need = starts at once (a full cap / the usage guard queues it)
     };
     const row = s => `  ${s.id}  ${s.run ?? '-'}  ${s.run ? (s.queued ? `QUEUED (${s.why})` : 'STARTED') : 'dry'}${s.after.length ? `  after ${s.after.join(',')}` : ''}  ${fwd(s.brief)}`;
-    const fills = () => { if (!flags['dry-run']) for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`); };
+    const fills = () => { if (!flags['dry-run']) for (const q of fillAll(state)) out(fillWords(q, path.basename(state))); };
     if (sub === 'start') {
       const by = flags.as || env.META_ROLE;
       if (!by && !flags['dry-run']) throw new RunError('no role: pass --as <role> or set META_ROLE');
@@ -2155,13 +2155,13 @@ function pauseCmd(argv, env, out, err, { resume = false } = {}) {
         out(r.cleared ? `RELEASED ${r.cleared.label}` : 'no pause of this project to release');
         if (r.still) out(`still paused: ${r.still.label} (${r.still.file}) - the machine-level file; delete it to release every project`);
         for (const x of r.resumed) out(x.next ? `RESUME ${x.run} queued as ${x.next}` : `${x.run}: ${x.error}`);
-        for (const q of r.started) out(`queue: ${q.queued} -> STARTED ${q.next}`);
+        for (const q of r.started) out(fillWords(q, path.basename(state)));
         return 0;
       }
       if (pos.length !== 1) throw new RunError('resume needs one RUN id, or --all');
       const r = resumeRun(state, { run: pos[0], by, priority: flags.priority || 'P0' });
       out(`RESUME ${r.run} queued as ${r.next} (${flags.priority || 'P0'})`);
-      for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);
+      for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));
       return 0;
     }
     if (flags.half) {

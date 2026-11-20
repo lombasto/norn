@@ -7,7 +7,7 @@ import { renderProse } from './prose.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter, capStrip } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
@@ -1229,6 +1229,9 @@ function profileBar(d, level) {
     ${billingBar(d)}
     <span class="lvl">Show ${lv('basic', 'Basic')}${lv('all', 'All')}</span></div>`;
 }
+// fair-slots item 8: Settings > Capacity - the pool as it is now (every project, widgets.mjs capStrip) above the reserve + ceiling rows
+// of every project, and the Undo of the last capacity change while its values are still in force (server.mjs capUndoOf)
+const capPane = d => `${d.capacity?.rows?.length ? `<div class="srow" id="set-capstrip-row" data-search="capacity pool reserve ceiling ${esc(d.capacity.rows.map(r => r.project).join(' '))}" data-mod="0" data-basic="1"><div class="sl">${capStrip(d.capacity, { id: 'set-capstrip', mine: d.project })}</div></div>` : ''}${d.capacity_undo ? `<div class="banner" id="cap-undo">Last capacity change <span class="id">${esc(d.capacity_undo.id)}</span>: ${esc(d.capacity_undo.choice)}. <button data-act="cap-undo" data-project="${esc(d.project)}" data-id="${esc(d.capacity_undo.id)}">Undo</button></div>` : ''}`;
 // RM-26 the mark "below floor": a decision a check-in recorded while its run's model / effort was below the check-in floor
 // (records.mjs made_under.below_floor). A record without made_under is unmarked.
 const BELOW_FLOOR = '<span class="chip warn below-floor">below floor</span>';
@@ -1251,7 +1254,7 @@ function settings(d, ctx) {
       if (x.pane) return syncPane(x, d, ctx.syncOut);
       const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
       const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'usage', jump: 'usage-advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
-      return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${body}</div>`;
+      return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${x.id === 'capacity' ? capPane(d) : ''}${body}</div>`;
     }).join('');
     return `<section class="scat" id="cat-${esc(c.id)}" data-cat="${esc(c.id)}"${c.id === sel ? '' : ' hidden'}><h2>${esc(c.label)}</h2><p class="small mute">${esc(c.help)}</p>${subs}</section>`;
   }).join('');
