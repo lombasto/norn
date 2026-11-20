@@ -49,7 +49,6 @@ import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
 import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
 import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
 import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, AGENT_FILES, laneNameOf } from '../lib/adopt.mjs';
-import { subdirOf } from '../lib/monorepo.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
@@ -79,7 +78,9 @@ import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
-import { testsView, testsFiles, suiteOf } from '../lib/testscli.mjs';
+import { testsView, testsFiles, suiteOf, testsPart } from '../lib/testscli.mjs';
+import { repoFile } from '../lib/testtimes.mjs';
+import { projectHome, subdirOf, inDir } from '../lib/monorepo.mjs';
 import { guardChips } from '../lib/guard.mjs';
 import { usageWeek } from '../lib/usageweek.mjs';
 import { classCost } from '../lib/classcost.mjs';
@@ -969,6 +970,50 @@ export function createDashboard(o) {
     if (name === 'sheet') return { sheet: { ...fixSheet(g), usage: fixUsage(p) } };   // S6: the Fix all sheet
     return name === 'summary' ? guardSummary(g) : guardPart(g, name, Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP, url.searchParams.get('batch'));
   }
+  // TESTS-RUNTIME: the Tests tab = a summary (testsView + the open Inbox questions the test machinery raised: data.area 'tests') and the
+  // chosen sub-view's part (?part=suite|costs|impact|trends&limit=). Impact takes &files=a,b or &lane=<name> (that lane's changed files:
+  // its worktree against the merge base with the main branch, uncommitted work included); Costs adds the merge queue's batches.
+  const gitCwd = (cwd, args) => new Promise((ok, no) => execFile('git', ['-C', cwd, ...args], { timeout: 10000, windowsHide: true, maxBuffer: 16 << 20 }, (e, out) => (e ? no(e) : ok(String(out).trim()))));
+  async function laneFiles(p, lane) {
+    const at = lanePaths(p, lane), wt = inDir(at.worktree, subdirOf(p)), main = p.ci?.branch || 'main';
+    if (!(await existsA(at.worktree))) return { error: `lane ${lane} has no worktree (${fwdP(at.worktree)})` };
+    try { const mb = await gitCwd(wt, ['merge-base', main, 'HEAD']); return { files: (await gitCwd(wt, ['diff', '--name-only', '--relative', mb])).split('\n').filter(Boolean).map(fwdP) }; }
+    catch (e) { return { error: `git diff of lane ${lane} failed: ${String(e.message).split('\n')[0].slice(0, 200)}` }; }
+  }
+  async function mergeBatches(p) {
+    const dir = path.join(p.state, 'mq'), names = (await fs.promises.readdir(dir).catch(() => [])).filter(f => /^batch-\d+\.json$/.test(f)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0])).slice(0, 12);
+    const recs = await Promise.all(names.map(f => fs.promises.readFile(path.join(dir, f), 'utf8').then(JSON.parse, () => null)));
+    return recs.filter(Boolean).map(b => ({ n: b.n, status: b.status, result: b.result ?? null, gate: b.gate ?? null, skipped: b.gate_skipped ?? null, built: b.built, done: b.done_at ?? null,
+      members: (b.members || []).map(m => m.id ?? m.branch), runs: (b.runs || []).map(r => ({ label: r.label, ok: r.ok, ms: r.ms, timedOut: !!r.timedOut })), gate_ms: (b.runs || []).reduce((n, r) => n + (r.ms || 0), 0) }));
+  }
+  async function testsAt(p, url) {
+    const name = url.searchParams.get('part'), lim = Number(url.searchParams.get('limit')), limit = Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP;
+    await prime({ files: testsFiles(p.state, name) });
+    if (name === null) {
+      const items = Object.values((await stAsync(p)).items);
+      const alerts = items.filter(i => i.kind === 'question' && i.state === 'open' && i.data?.area === 'tests').map(q => ({ id: q.id, title: q.data.title, options: q.data.options ?? [], recommend: q.data.recommend ?? null, created: q.created }));
+      return { project: p.name, ...testsView(p.state, await suiteOf(p)), alerts };
+    }
+    if (name === 'impact') {
+      const lanes = Object.values((await stAsync(p)).items).filter(i => i.kind === 'lane' && i.state !== 'archived').map(i => i.id.slice(2)).sort();
+      const lane = url.searchParams.get('lane'), files = (url.searchParams.get('files') || '').split(',').map(s => s.trim()).filter(Boolean);
+      const lf = lane ? (lanes.includes(lane) ? await laneFiles(p, lane) : { error: `no lane ${lane} in ${p.name}` }) : null;
+      return testsPart(p.state, 'impact', { picked: { lanes, lane, files: lf ? lf.files ?? [] : files, error: lf?.error ?? null } });
+    }
+    return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [] });
+  }
+  // TESTS-RUNTIME: a test's file for the code viewer - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
+  // no .. or link out, nothing under .git), text only, at most 2 MB
+  async function testSource(p, url) {
+    if (!p.root) throw fail(404, 'This project has no repository folder');
+    const rel = String(url.searchParams.get('file') ?? ''), real = repoFile(projectHome(p), rel);
+    if (!real) throw fail(403, 'Only a file inside the project repository opens here');
+    const st8 = await fs.promises.stat(real);
+    if (st8.size > 2 * 1024 * 1024) throw fail(413, 'File larger than 2 MB');
+    const text = await fs.promises.readFile(real, 'utf8');
+    if (text.includes('\0')) throw fail(415, 'Not a text file');
+    return { file: rel.split('\\').join('/'), text, lines: text.split(/\r?\n/).length };
+  }
   // META-UX-BUILD S6 (REPORT s.3 step 2): the usage a Send approves - one run of the docs class as Settings routes it today, with the
   // measured median cache reads of that class's runs (classCost, the Usage tab's table; 7 days)
   function fixUsage(p) {
@@ -1759,7 +1804,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1798,7 +1843,8 @@ data: ${JSON.stringify(l)}
         if (route === '/api/docs') { const p = one(url), kp = docKeyPath(p, url.searchParams.get('file') ?? ''); if (kp) await prime({ files: [kp] }); return send(200, docsAt(p, url)); }   // META-UX-BUILD S3
         if (route === '/api/instructions') return send(200, insOf(one(url), url));
         if (route === '/api/guard') return send(200, await guardAt(one(url), url));   // META-TEND P6
-        if (route === '/api/tests') { const p = one(url); await prime({ files: testsFiles(p.state) }); return send(200, { project: p.name, ...testsView(p.state, await suiteOf(p)) }); }   // META-TEND TESTS
+        if (route === '/api/tests') return send(200, await testsAt(one(url), url));   // META-TEND TESTS; TESTS-RUNTIME: the summary or one sub-view's part
+        if (route === '/api/tests/source') return send(200, await testSource(one(url), url));   // TESTS-RUNTIME: the code viewer
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
         if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));

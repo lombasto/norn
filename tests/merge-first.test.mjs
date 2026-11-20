@@ -102,7 +102,9 @@ test('merge reserve: while a merge waits (here on its held worktree), other runs
 
 test('norn requeue --priority keeps the after: conditions (and the dashboard role may set it)', () => {
   const d = sandbox();
-  const up = d.q({ lane: 'up', stage: 'BUILD' });
+  // the upstream never starts (a full worker cap): the CLI requeue fills the queue, and on an idle host it started 'up'; its fake run
+  // ended done at once, met the MERGE's after: and the exit fill started that MERGE before its requeue (exit 3, CI 44655770879 ubuntu)
+  const up = d.q({ lane: 'up', stage: 'BUILD', budget: { max_claude_workers: 0 } });
   const after = parseAfter(`run:${up}:done`);
   const w = d.q({ lane: 'w', stage: 'BUILD', after });
   const r = requeueRun({ state: d.state, run: w, by: 'dashboard', why: 'priority from the Plan page', priority: 'P0' });
@@ -118,6 +120,7 @@ test('norn requeue --priority keeps the after: conditions (and the dashboard rol
   const next = cli.out.match(/-> (RUN-\d+)/)[1];
   assert.deepEqual(d.item(next).data.after, d.item(w).data.after);
   assert.equal(meta(['requeue', next, '--why', 'nothing', '--as', 'owner', '--state', d.state]).code, 2, 'nothing to change: refused');
+  assert.equal(d.item(up).state, 'queued', 'the upstream is held: every after: stays unmet');
   const m = d.q({ lane: 'land', stage: 'MERGE', after });
   const cm = meta(['requeue', m, '--priority', 'P3', '--why', 'x', '--as', 'owner', '--state', d.state, '--locks', d.locks]);
   assert.equal(cm.code, 0, cm.err);
