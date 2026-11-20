@@ -95,7 +95,7 @@ import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
-import { effectiveRules, explainOf } from '../lib/slop/check.mjs';
+import { effectiveRules, explainOf, primeRules } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
 import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
 import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
@@ -1102,7 +1102,7 @@ export function createDashboard(o) {
     return { v: c.v ?? (c.error ? { error: c.error } : null), pending: !c.v && !c.error };
   }
   async function guardOf(p) {
-    await prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] });   // META-DASH-ASYNC R1: the parts' files on fs.promises
+    await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
     const ig = insForGuard(p), ins = ig.v?.error ? (errors.push(ig.v.error), null) : ig.v, tests = part('tests', () => testsView(p.state), null), advice = await adviceOf(p).catch(e => { errors.push(`models: ${String(e.message).slice(0, 200)}`); return null; });
     // META-BETA-PREP (DIR-52): the project's one SloppaChoppa switch (Settings) - off = no slop rows; his recorded holds stay on disk

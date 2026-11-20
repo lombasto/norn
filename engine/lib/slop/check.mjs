@@ -13,6 +13,7 @@ import { runTool, LINT_RULES } from './tools.mjs';
 import { norm, lineAt, lineText, isReason, masked } from './scan.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
+import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RULES_DIR = path.join(HERE, 'rules');
@@ -41,9 +42,17 @@ function checkRule(r, f) {
   if (r.key && r.key !== 'match') throw new Error(`${f}: key is "match" or absent (the line)`);
   return r;
 }
-const readRule = file => checkRule(JSON.parse(fs.readFileSync(file, 'utf8')), path.basename(file));
+// rule reads go through fsnap (META-DASH-ASYNC R1): a snapshot lookup inside a dash GET that awaited primeRules, the sync form elsewhere
+const readRule = file => checkRule(JSON.parse(readText(file)), path.basename(file));
+const jsonNames = (dir, re = /\.json$/) => readdirS(dir).map(d => d.name).filter(f => re.test(f)).sort();
 export function loadRules(dir = RULES_DIR) {
-  return fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort().map(f => readRule(path.join(dir, f)));
+  return jsonNames(dir).map(f => readRule(path.join(dir, f)));
+}
+/** read every rule file effectiveRules / explainOf will read into the request snapshot, on fs.promises (the dash Guard) */
+export async function primeRules(projectDir = null, dir = RULES_DIR) {
+  const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null;
+  await prime({ dirs: [dir, ...(own ? [own] : [])], stats: own ? [own] : [] });
+  await prime({ files: [...jsonNames(dir).map(f => path.join(dir, f)), ...(own ? jsonNames(own).map(f => path.join(own, f)) : [])] });
 }
 
 /**
@@ -52,15 +61,16 @@ export function loadRules(dir = RULES_DIR) {
  * params of that kind } }. A patch can switch, relevel or retune a rule, never replace its text. Disabled rules are left out.
  */
 export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
-  const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null, has = own && fs.existsSync(own);
-  const rules = [...loadRules(dir), ...(has ? fs.readdirSync(own).filter(f => /^P-.*\.json$/.test(f)).sort().map(f => {
+  const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null, has = own && existsS(own);
+  const rules = [...loadRules(dir), ...(has ? jsonNames(own, /^P-.*\.json$/).map(f => {
     const r = readRule(path.join(own, f));
     if (r.id !== f.slice(0, -5) || !PROJECT_KINDS.includes(r.kind)) throw new Error(`${f}: a project rule's id is its file name (P-...) and its kind one of ${PROJECT_KINDS.join(', ')}`);
     return r;
   }) : [])];
   const of = new Map(rules.map(r => [r.id, r]));
-  if (has && fs.existsSync(path.join(own, 'overrides.json'))) {
-    for (const [id, p] of Object.entries(JSON.parse(fs.readFileSync(path.join(own, 'overrides.json'), 'utf8')))) {
+  const over = has ? readText(path.join(own, 'overrides.json')) : null;
+  if (over !== null) {
+    for (const [id, p] of Object.entries(JSON.parse(over))) {
       const r = of.get(id), bad = Object.keys(p).filter(k => !['enabled', 'level', 'shadow', 'params'].includes(k));
       if (!r) throw new Error(`overrides.json: no rule ${id}`);
       if (bad.length) throw new Error(`overrides.json ${id}: only enabled, level, shadow and params may change (not ${bad.join(', ')})`);
@@ -81,7 +91,7 @@ let shipped = null;
 export function explainOf(id, projectDir = null) {
   if (!String(id).startsWith('P-')) return (shipped ||= new Map(loadRules().map(r => [r.id, r.explain]))).get(id) ?? null;
   const f = projectDir && path.join(projectDir, 'rules', 'slop', `${id}.json`);
-  return f && fs.existsSync(f) ? readRule(f).explain : null;
+  return f && existsS(f) ? readRule(f).explain : null;
 }
 
 // ---------- git ----------
