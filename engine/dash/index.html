@@ -730,8 +730,9 @@ document.addEventListener('click', e => {
       const flagged = r.lines.filter(l => l.flags.length).length;
       box.innerHTML = `<div class="card" id="settings-review" style="margin-top:10px">${S.setProfile ? `<p class="small">From the profile <b>${esc(S.setProfile.name)}</b> (${esc(S.setProfile.cost)}); Save records the pick.</p>` : ''}<ul class="small">${r.lines.map(l => `<li>${l.flags.length ? '<span class="chip warn">check</span> ' : ''}${esc(l.text)}${l.flags.map(x => `<div class="mute">${esc(x)}</div>`).join('')}</li>`).join('')}</ul>${flagged ? `<p class="small"><b>${flagged} change${flagged === 1 ? '' : 's'} to check</b> before you Save.</p>` : ''}</div><button class="primary" id="settings-save" style="margin-top:8px">Save</button>`;
       $('#settings-save').onclick = () => act(async () => { await post('/api/settings', { project: p, version: d.version, changes, ...(S.setProfile ? { profile: S.setProfile } : {}) }); S.setDirty = 0; S.setVersion = null; S.setProfile = null; });
-    }, e => err(e.message));
+    }, e => { box.innerHTML = `<p class="small lane-refused" id="settings-refused" role="alert">Not saved: ${esc(e.message)}</p>`; err(e.message); });   // fair-slots 8a: e.g. the reserves overflow the cap, named
   }
+  if (d.act === 'cap-undo') act(() => post('/api/settings/capacity-undo', { project: p, id: d.id }));   // fair-slots 8d: the before-values, through the save path
 });
 $('#pause').onclick = () => { S.pauseOpen = !S.pauseOpen; S.half = null; pausePaint(); };
 // RM-37: the pause menu paints from the last overview (header() repaints it, so an open menu follows the live state)

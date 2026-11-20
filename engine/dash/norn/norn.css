@@ -81,6 +81,8 @@
 :root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
 :root.norn .fxfile.fxoff .fxdiff, :root.norn .fxmisfit+.fxdiff { opacity: 1; color: var(--dim); }
 :root.norn tr.old { opacity: 1; color: var(--dim); }
+:root.norn .chip.prio.dflt { opacity: 1; color: var(--dim); }
+:root.norn .wslots i.off { opacity: 1; background: var(--bg); }
 :root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now, :root.norn .fa-now { border-radius: 0; }
 
 /* the woven rule under section headings */

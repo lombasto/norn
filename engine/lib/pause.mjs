@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { record, readEvents, recordsFile, fold, RecordError } from './records.mjs';
-import { queueRun, fillQueue, renameRetry } from './runs.mjs';
+import { queueRun, fillAll, renameRetry } from './runs.mjs';
 import { sendMail } from './mail.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -127,5 +127,5 @@ export function resumeAll(state, { by }) {
   pauser(by, 'resume');
   const was = readPause([path.join(state, 'PAUSED')]), still = clearPause(state);
   const resumed = pausedHandoffs(state).map(r => { try { return resumeRun(state, { run: r.id, by, priority: isMergeStage(r.data.stage) ? 'P0' : 'P1' }); } catch (e) { if (e instanceof PauseError) return { run: r.id, error: e.message }; throw e; } });
-  return { cleared: was, still, resumed, started: fillQueue(state) };
+  return { cleared: was, still, resumed, started: fillAll(state) };
 }

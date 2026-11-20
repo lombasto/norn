@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startRun, liveRuns, stopOrphans, fillQueue, readiness, sweepLost, relaunchLost, endLost, lostNotice, STALE_MS, killTree, hbPath, touchedOf } from './runs.mjs';
+import { startRun, liveRuns, stopOrphans, fillAll, fillWords, readiness, sweepLost, relaunchLost, endLost, lostNotice, STALE_MS, killTree, hbPath, touchedOf } from './runs.mjs';
 import { trackHold, holdNoticeDue, noticeMin } from './holds.mjs';
 import { writeStatus } from './status.mjs';
 import { tryDigest } from './digest.mjs';
@@ -37,6 +37,7 @@ import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
+import { tickDerelicts } from './derelict.mjs';
 import { tickLanes, lanesProbe } from './lifecycle.mjs';
 import { tickPaths } from './lanepaths.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
@@ -138,7 +139,7 @@ function takeLock(file, note) {
 
 /**
  * One tick for one project. o: { project (loaded project.json), machine, budget, budgetFile, reason, dry (FAKE claude),
- * hbMs?, staleMs?, fakeMs? }. Returns { code, msg }; every "nothing to do" path is code 0 (scheduler IgnoreNew semantics).
+ * hbMs?, staleMs?, fakeMs?, derelicts (false = no derelict sweep), listProcs / killProc (the sweep's listing + kill, for tests) }. Returns { code, msg }; every "nothing to do" path is code 0 (scheduler IgnoreNew semantics).
  */
 export function tick(o) {
   let r;
@@ -296,6 +297,8 @@ function tickPass(o, g = {}) {
       for (const id of endLost(state, o.now ? { now: o.now().getTime() } : {})) tickLog(state, `${tag}: lost ${id}: supervisor and executor gone -> ended (crash)`);   // after the relaunch: it judges first
     } catch (e) { tickLog(state, `${tag}: dead runs: ${e.message}`); }
     stopOrphans(state);   // helpers of a lost / ended parent (metadelegate sec. 2)
+    // fair-slots 5c: derelict test processes (derelict.mjs; once per window machine-wide) - a dry tick only with o.listProcs
+    if (o.derelicts !== false && (!o.dry || o.listProcs)) { try { for (const l of tickDerelicts(state, { list: o.listProcs, ...(o.killProc ? { kill: o.killProc } : {}), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: ${l}`); } catch (e) { tickLog(state, `${tag}: derelict sweep: ${e.message}`); } }
     // META-GUARD R1: the usage watch before the status - a new GRD alarm is in this tick's digest and wakes the check-in (gate probe); never fails the tick
     try { const w = guardWatch(state, p, { projectsDir: o.machine?.claude?.projects_dir }); g.raised = w.raised; g.push = guardPolicy(p.policy).push; } catch (e) { tickLog(state, `${tag}: guard: ${e.message}`); }
     // RM-46 S2b: renew, fence, release, observe the work claims before the fill (which claims with the claims just fetched)
@@ -305,7 +308,7 @@ function tickPass(o, g = {}) {
       if (c && (c.fenced.length || c.taken.length || c.released.length)) tickLog(state, `${tag}: claims: fenced ${c.fenced.join(' ') || '-'}; taken over ${c.taken.join(' ') || '-'}; released ${c.released.join(' ') || '-'}`);
       if (c?.leader) { leader = c.leader; if (c.leader.took || c.leader.fenced.length) tickLog(state, `${tag}: merge leader: ${c.leader.took ? `took over from stale ${c.leader.took}` : ''}${c.leader.fenced.length ? ` MERGE ${c.leader.fenced.join(' ')} stopped` : ''}`); }
     } catch (e) { tickLog(state, `${tag}: claims: ${e.message}`); leader = homeOf(state) ? { leader: false, why: `claims: ${e.message}` } : null; }
-    for (const f of fillQueue(state)) tickLog(state, `${tag}: queue: ${f.queued} -> STARTED ${f.next}`);   // a due not_before or a freed slot (META-GT12)
+    for (const f of fillAll(state)) tickLog(state, `${tag}: ${fillWords(f, path.basename(state))}`);   // a due not_before or a freed slot (META-GT12)
     holdStep(state, tag);   // GAP-1: before the status, so this tick's digest carries the hold row
     // META-GTP-MERGEQ piece 5: the merge queue right after the fill - a detached `norn mergeq --run` (code only; a dry tick only with o.spawnMergeq)
     if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq, leader }); if (m) tickLog(state, `${tag}: ${m}`); }

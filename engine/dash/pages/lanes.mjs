@@ -2,7 +2,8 @@
 // tile, name, the now line, progress and pace, the run strip (the retired Map's lane band as beads), the PR track and at most 3
 // actions; the chevron opens the lane's flow and brief in place (S.laneOpen keeps it open through a stream repaint). No timer:
 // the elapsed bar is a CSS animation, rows redraw on stream events only.
-import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho } from '../cells.mjs';
+import { esc, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip } from '../cells.mjs';
+import { capStrip } from '../widgets.mjs';
 
 // GAP-12: a running lane whose changed files overlap upstream work (a remote branch or an open PR; overlap.mjs) - one small chip each,
 // a PR one links to the PR; the shared files are its tooltip
@@ -136,7 +137,7 @@ function row(l, ctx) {
   const word = `${groupWord(l.board)}${late ? ', heartbeat late' : ''}`;
   return `<article class="lrow b-${esc(l.board)}" id="lane-${esc(l.name)}" data-type="${esc(l.lane_type?.type ?? '')}">
     <span class="ltile t-${tok}" role="img" aria-label="${esc(word)}" title="${esc(word)}">${shape(tok)}</span>
-    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
+    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${l.land ? ` ${landChip(l)}` : ''}${l.priority ? ` ${prioChip(l)}` : ''}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
       <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
     ${progress(l, ctx.now) || '<span class="lprog"></span>'}${strip(l)}${track(l.dlv)}
     <div class="rowacts">${actions(l).join(' ')}</div>
@@ -148,6 +149,9 @@ const LEGEND = `<div class="llegend small" aria-label="Strip legend"><span class
   <span class="lg-i">${['running', 'done', 'handoff', 'stopped', 'idle'].map(t => `<span class="bd t-${t}">${shape(t)}</span>`).join('')} running · done · hand-off · stopped / lost · queued</span>
   <span class="lg-i"><span class="ltrack" aria-hidden="true"><i class="on"></i><i class="on at"></i><i></i><i></i></span> done → PR → merged → installed</span></div>`;
 
+// fair-slots item 3: the queued / running run's priority + its place in the fill order, one short chip in the row head; a run
+// with no priority shows the default P2, faded and said so in its title
+export const prioChip = l => !l.priority ? '' : `<span class="chip idle prio${l.priority.dflt ? ' dflt' : ''}" title="${esc(`priority ${l.priority.p}${l.priority.dflt ? ' (default: the run has no priority)' : ''}${l.position ? ` · #${l.position} in this project's fill order` : ''}`)}">${esc(l.priority.p)}${l.position ? ` #${l.position}` : ''}</span>`;
 export function lanes(d, ctx) {
   const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), undo = ctx.laneUndo;
   const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => l.board === k).length;
@@ -161,6 +165,7 @@ export function lanes(d, ctx) {
   const help = `<details class="lhelp"><summary aria-label="About this list">?</summary><div class="small">Lanes come from LANE records only (no folder scan). A lane's state is its latest run, whatever executor owns it. <b>Needs you</b> holds only the lanes an Inbox row names; <b>Old</b> = ended more than 7 days ago without DONE, or done before today.</div></details>`;
   return `${backlogLine(d.backlog)}
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
+   ${d.capacity?.rows?.length ? `<div class="card" id="lanes-cap" style="margin-bottom:12px">${capStrip(d.capacity, { id: 'lanes-capstrip', mine: ctx.project })}</div>` : ''}
    <div class="filters lfilters"><span class="lane-show" role="group" aria-label="Show lane groups">${LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(gbtn).join('')}</span>
     <input type="search" data-filter="lanes" placeholder="filter lanes" aria-label="Filter lanes"><span class="lane-show lane-links">${LANE_SHOW.filter(g => LINKS.includes(g[0])).map(gbtn).join(' · ')}</span>${help}
     ${kinds.length > 1 || kind ? `<span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span>` : ''}</div>

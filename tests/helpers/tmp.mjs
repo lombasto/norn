@@ -9,12 +9,17 @@ import { procsNaming, orphanHolds } from '../../engine/lib/testprocs.mjs';
 import { listProcs } from '../../engine/lib/strays.mjs';
 import { killTree } from '../../engine/lib/runs.mjs';
 import { CALLER_ENV } from '../../engine/lib/cisuite.mjs';
+import { TEST_OWNER, testOwnerValue } from '../../engine/lib/derelict.mjs';
 
 // MAIL-33: the suite is hermetic however it is started. `node --test` run straight from a Norn worker inherits the worker's
 // META_RUN_ID / META_RUN_STATE / META_JOB / ...: 4 tests in cli / digest / delegate went red and mail.test hung. Every spawning test
 // file imports this helper, so importing it drops the calling run identity (CALLER_ENV, the list ci-suite's suiteEnv drops) from
 // process.env before any test body runs; test knobs (META_WALL_STEP_MS, ...) pass through.
 for (const k of Object.keys(process.env)) if (CALLER_ENV.includes(k.toUpperCase())) delete process.env[k];
+// fair-slots 6a: this process is the test owner of everything it starts (META_TEST_OWNER=<pid>:<start>, engine/lib/derelict.mjs): a
+// supervisor started under it exits once it is gone - a test file killed at ci-suite's cap runs no teardown, and its detached
+// supervisors used to poll for days. Set on every import: a nested test process owns its own children.
+process.env[TEST_OWNER] = testOwnerValue();
 
 // META-TEST-PROCS (DEC-219, SPEC 9.6 PR-14): the teardown of every test that spawns. Every temp dir a test makes comes from mkTmp, and
 // a Norn process a test starts (supervisor, fake executor, MCP server, dash, browser, ...) names its temp dir on its command line.
