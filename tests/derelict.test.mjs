@@ -23,7 +23,7 @@ async function waitFor(fn, ms = 30000) {
 }
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const NOW = Date.parse('2026-11-19T16:10:00Z'), h = n => NOW - n * 3600e3;
-const TMP = 'C:/Users/u1/AppData/Local/Temp';
+const TMP = 'C:/Work/Temp';
 
 test('the test owner: tests/helpers/tmp.mjs names this process (pid + start); ownerGoneWhy - a dead pid, a failed probe, a reused pid (other start time) are gone', () => {
   assert.deepEqual(testOwner(process.env), { pid: process.pid, started: testOwner(process.env).started });
@@ -40,12 +40,12 @@ test('the test owner: tests/helpers/tmp.mjs names this process (pid + start); ow
 
 test('testDirOf: the deepest test temp dir a command line names (ci-suite-X[/parallel-n[/meta-Y]] or meta-Y), never the jobguard exe, never outside the temp root', () => {
   const win = { win: true };
-  assert.equal(testDirOf(String.raw`node C:\Users\u1\AppData\Local\Temp\ci-suite-Jb1Xo1\parallel-4\meta-tp-abc\state\kestrel\runs\RUN-1.spec.json`, [TMP], win),
-    `C:/Users/u1/AppData/Local/Temp/ci-suite-Jb1Xo1/parallel-4/meta-tp-abc`);
-  assert.equal(testDirOf(String.raw`"C:\Program Files\msedge.exe" --headless=new --user-data-dir=c:\users\u1\appdata\local\temp\meta-shot-XjdDP8 --x`, [TMP], win), 'c:/users/u1/appdata/local/temp/meta-shot-XjdDP8');
-  assert.equal(testDirOf(String.raw`node.exe -e "setInterval(() => {}, 1e6)" C:\Users\u1\AppData\Local\Temp\meta-leak-q1`, [TMP], win), `${TMP}/meta-leak-q1`);
-  assert.equal(testDirOf(String.raw`node x.mjs C:\Users\u1\AppData\Local\Temp\ci-suite-a1\parallel-7 --y`, [TMP], win), `${TMP}/ci-suite-a1/parallel-7`);
-  assert.equal(testDirOf(String.raw`C:\Users\u1\AppData\Local\Temp\meta-jobguard-0123456789ab.exe hold 12 meta-run-12-1`, [TMP], win), null, 'the job helper exe');
+  assert.equal(testDirOf(String.raw`node C:\Work\Temp\ci-suite-Jb1Xo1\parallel-4\meta-tp-abc\state\kestrel\runs\RUN-1.spec.json`, [TMP], win),
+    `C:/Work/Temp/ci-suite-Jb1Xo1/parallel-4/meta-tp-abc`);
+  assert.equal(testDirOf(String.raw`"C:\Program Files\msedge.exe" --headless=new --user-data-dir=c:\work\temp\meta-shot-XjdDP8 --x`, [TMP], win), 'c:/work/temp/meta-shot-XjdDP8');
+  assert.equal(testDirOf(String.raw`node.exe -e "setInterval(() => {}, 1e6)" C:\Work\Temp\meta-leak-q1`, [TMP], win), `${TMP}/meta-leak-q1`);
+  assert.equal(testDirOf(String.raw`node x.mjs C:\Work\Temp\ci-suite-a1\parallel-7 --y`, [TMP], win), `${TMP}/ci-suite-a1/parallel-7`);
+  assert.equal(testDirOf(String.raw`C:\Work\Temp\meta-jobguard-0123456789ab.exe hold 12 meta-run-12-1`, [TMP], win), null, 'the job helper exe');
   assert.equal(testDirOf('node --test tests/livecost.test.mjs', [TMP], win), null);
   assert.equal(testDirOf(String.raw`node D:\work\meta-tp-x\a.mjs`, [TMP], win), null, 'a meta-* dir outside the temp root');
   assert.equal(testDirOf('node /tmp/meta-agn-p7poxu/state/x', ['/tmp'], { win: false }), '/tmp/meta-agn-p7poxu');
@@ -56,20 +56,20 @@ test('testDirOf: the deepest test temp dir a command line names (ci-suite-X[/par
 const P = (pid, ppid, name, hours, cmd) => ({ pid, ppid, name, created: h(hours), cmd });
 const EVIDENCE = [
   P(1, 0, 'System', 200, ''),
-  P(43596, 9001, 'node.exe', 23, String.raw`node.exe engine\lib\supervisor.mjs C:\Users\u1\AppData\Local\Temp\ci-suite-Jb1Xo1\parallel-4\meta-tp-q\state\kestrel\runs\RUN-1.spec.json`),
-  P(64056, 43596, 'node.exe', 23, String.raw`node.exe engine\bin\fake-executor.mjs --brief C:\Users\u1\AppData\Local\Temp\ci-suite-Jb1Xo1\parallel-4\meta-tp-q\b.md`),
-  P(56356, 9002, 'node.exe', 22, String.raw`node.exe engine\lib\supervisor.mjs C:\Users\u1\AppData\Local\Temp\meta-agn-p7poxu\state\kestrel\runs\RUN-2.spec.json`),
-  P(30220, 12068, 'msedge.exe', 22, String.raw`msedge.exe --headless=new --user-data-dir=C:\Users\u1\AppData\Local\Temp\meta-shot-XjdDP8`),
+  P(43596, 9001, 'node.exe', 23, String.raw`node.exe engine\lib\supervisor.mjs C:\Work\Temp\ci-suite-Jb1Xo1\parallel-4\meta-tp-q\state\kestrel\runs\RUN-1.spec.json`),
+  P(64056, 43596, 'node.exe', 23, String.raw`node.exe engine\bin\fake-executor.mjs --brief C:\Work\Temp\ci-suite-Jb1Xo1\parallel-4\meta-tp-q\b.md`),
+  P(56356, 9002, 'node.exe', 22, String.raw`node.exe engine\lib\supervisor.mjs C:\Work\Temp\meta-agn-p7poxu\state\kestrel\runs\RUN-2.spec.json`),
+  P(30220, 12068, 'msedge.exe', 22, String.raw`msedge.exe --headless=new --user-data-dir=C:\Work\Temp\meta-shot-XjdDP8`),
   P(12068, 9003, 'node.exe', 22, 'node.exe --test guard-dash.test.mjs'),
-  P(39280, 9004, 'node.exe', 23, String.raw`node.exe -e "setInterval(() => {}, 1e6)" C:\Users\u1\AppData\Local\Temp\meta-leak-z9`),
-  P(500, 1, 'node.exe', 0.5, String.raw`node.exe supervisor.mjs C:\Users\u1\AppData\Local\Temp\meta-young-a\runs\RUN-1.spec.json`),   // young
-  P(600, 601, 'node.exe', 5, String.raw`node.exe supervisor.mjs C:\Users\u1\AppData\Local\Temp\meta-alive-b\runs\RUN-1.spec.json`),     // parent lives, dir there
+  P(39280, 9004, 'node.exe', 23, String.raw`node.exe -e "setInterval(() => {}, 1e6)" C:\Work\Temp\meta-leak-z9`),
+  P(500, 1, 'node.exe', 0.5, String.raw`node.exe supervisor.mjs C:\Work\Temp\meta-young-a\runs\RUN-1.spec.json`),   // young
+  P(600, 601, 'node.exe', 5, String.raw`node.exe supervisor.mjs C:\Work\Temp\meta-alive-b\runs\RUN-1.spec.json`),     // parent lives, dir there
   P(601, 1, 'node.exe', 6, 'node.exe --test x.test.mjs'),
-  P(700, 701, 'node.exe', 5, String.raw`node.exe x.mjs C:\Users\u1\AppData\Local\Temp\meta-run-c\x`),       // under a live run
+  P(700, 701, 'node.exe', 5, String.raw`node.exe x.mjs C:\Work\Temp\meta-run-c\x`),       // under a live run
   P(701, 9005, 'node.exe', 6, 'node.exe supervisor.mjs D:/norn/state/norn/runs/RUN-9.spec.json'),
-  P(800, 802, 'node.exe', 5, String.raw`node.exe x.mjs C:\Users\u1\AppData\Local\Temp\meta-reuse-d\x`),      // its parent pid now names a younger process
+  P(800, 802, 'node.exe', 5, String.raw`node.exe x.mjs C:\Work\Temp\meta-reuse-d\x`),      // its parent pid now names a younger process
   P(802, 1, 'node.exe', 1, 'node.exe unrelated.mjs'),
-  P(900, 901, 'node.exe', 5, String.raw`node.exe x.mjs C:\Users\u1\AppData\Local\Temp\meta-gone-e\x`),       // parent lives, dir deleted
+  P(900, 901, 'node.exe', 5, String.raw`node.exe x.mjs C:\Work\Temp\meta-gone-e\x`),       // parent lives, dir deleted
   P(901, 1, 'node.exe', 6, 'node.exe holder.mjs'),
 ];
 const EXISTS = new Set([`${TMP}/meta-alive-b`, `${TMP}/meta-run-c`, `${TMP}/meta-reuse-d`, `${TMP}/meta-young-a`].map(d => d.toLowerCase()));
@@ -102,7 +102,7 @@ test('derelictFacts + sweepDerelicts on the 11-19 evidence: the orphaned supervi
   assert.equal(r.dir, `${TMP}/ci-suite-Jb1Xo1/parallel-4/meta-tp-q`);
   assert.match(r.why, /^parent 9001 gone; .*meta-tp-q deleted; no live run owns it; 23\.0 h old$/);
   assert.equal(r.created, new Date(h(23)).toISOString());
-  assert.match(rows.find(x => x.pid === 900).why, /^C:\/Users\/u1\/AppData\/Local\/Temp\/meta-gone-e deleted; no live run owns it; 5\.0 h old$/);
+  assert.match(rows.find(x => x.pid === 900).why, /^C:\/Work\/Temp\/meta-gone-e deleted; no live run owns it; 5\.0 h old$/);
   // the sweeper itself (and its ancestors) is never derelict
   const self = sweepDerelicts([P(77, 76, 'node.exe', 9, `node.exe tick ${TMP}/meta-me-f`)], { ...factsOpts, self: 77, kill: () => assert.fail('killed itself') });
   assert.deepEqual(self, []);
