@@ -473,6 +473,27 @@ export const roadmapViewPath = (stateDir, project = {}) => path.resolve(project?
 /** write the view under the hand-edit guard -> written | unchanged | refused */
 export const writeRoadmapView = (stateDir, tree, file = roadmapViewPath(stateDir)) =>
   writeGuarded(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));
+// issue #87: the view derives a run's word ("1 run live: RUN-x") at render time, so a linked run's state change (start / end / requeue /
+// kill) renders it again. The signature = each item-linked run's state; the last rendered one sits beside the view's hashes, so an
+// unchanged call costs two folds and no git. -> written | unchanged | refused | fresh (nothing linked changed: no render)
+const RUNSIG_FILE = 'roadmap-runs.json';
+export function refreshRoadView(stateDir, project = {}) {
+  const ids = new Set(Object.values(loadRoadmap(stateDir).items).flatMap(it => it.links.filter(l => l.startsWith('run:')).map(l => l.slice(4))));
+  const runs = loadState(stateDir).items, sig = [...ids].sort().map(id => `${id}=${runs[id]?.state ?? 'gone'}`).join(' ');
+  const f = path.join(stateDir, 'views', RUNSIG_FILE);
+  let last = ''; try { last = JSON.parse(fs.readFileSync(f, 'utf8')).sig ?? ''; } catch { /* never rendered here */ }
+  if (sig === last) return 'fresh';
+  const r = writeRoadmapView(stateDir, buildTree({ stateDir, project }), roadmapViewPath(stateDir, project));
+  fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ sig }));
+  return r;
+}
+/** issue #87: may a run of `lane` link to item `id`? null = the lane (or an earlier run of it) is linked; else { lanes } = the other
+ * lanes the item has (its lane: links + the lanes of its linked runs; [] = none) - the launcher warns, or refuses those without --why */
+export function laneFit(stateDir, id, lane) {
+  const it = loadRoadmap(stateDir).items[id], runs = loadState(stateDir).items;
+  const lanes = new Set((it?.links || []).map(l => l.startsWith('lane:') ? l.slice(5) : l.startsWith('run:') ? runs[l.slice(4)]?.data?.lane : null).filter(Boolean));
+  return lanes.has(lane) ? null : { lanes: [...lanes].sort() };
+}
 /** META-DASH-ASYNC R1: the dash server's form (fs.promises); the CLI and adopt keep writeRoadmapView */
 export const writeRoadmapViewAsync = (stateDir, tree, file = roadmapViewPath(stateDir)) =>
   writeGuardedAsync(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree), { role: 'dashboard' });

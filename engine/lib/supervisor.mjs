@@ -16,6 +16,8 @@ import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
 import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillAll, fillWords, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
+import { refreshRoadView } from './roadmap.mjs';
+import { loadProject } from './config.mjs';
 import { ingestRead } from './adopt.mjs';
 import { holdJob, reapJob, reapGroup, spawnOutside, holdGone } from './jobguard.mjs';
 import { killNames } from './kills.mjs';
@@ -294,6 +296,9 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     }
     await holdGone(job); process.exit(0);
   }
+  // issue #87: an item-linked run's end renders the roadmap view again (its project's views.roadmap); never fails the exit
+  try { const v = refreshRoadView(state, spec.refill?.project_file ? loadProject(spec.refill.project_file, spec.refill.meta ? { meta: spec.refill.meta } : {}) : {}); if (v !== 'fresh') logLine(`roadmap view ${v}`); }
+  catch (e) { logLine(`roadmap view not rendered: ${e.message}`); }
   // DELIVERABLES-SPEC 1: a DONE run's branch becomes (or refreshes) its deliverable; never fails the exit
   if (outcome === 'done') { try { const d = onRunDone(state, run); if (d) logLine(`deliverable ${d.id} ${d.ev}`); } catch (e) { logLine(`deliverable not recorded: ${e.message}`); } }
   // lane-outputs items 7, 9, 10a: every ruling the run's notes ask of the owner becomes an Inbox question, whatever the outcome

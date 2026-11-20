@@ -24,7 +24,7 @@ import { startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, 
 import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
-import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
+import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
@@ -369,7 +369,7 @@ function setupCmd(argv, env, out, err) {
 
 // ---------- S4: norn run / norn stop / norn hook session ----------
 const RUN_USAGE = {
-  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
+  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n [--why W] (links the run to its roadmap item; a lane the item does not link warns, and is refused without --why when the item links other lanes)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
   requeue: 'norn requeue RUN-n [--after "<conditions as norn run --after> | none"] [--priority P0-P4] [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions or priority: same launch args, a flag left out keeps the old value (a MERGE / resolve stays at P1 or above); the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
@@ -515,6 +515,7 @@ function runCmd(argv, env, out, err) {
       const what = [flags.after !== undefined ? `after ${flags.after}` : 'its after: kept', ...(nb ? [`not before: ${nb}`] : []), ...(flags.priority ? [`priority ${r.priority}`] : [])];
       out(`REQUEUED ${r.run} -> ${r.next} (${what.join('; ')})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
       for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // met now = starts now (as norn run --after)
+      roadView(state, project, err);   // issue #87
       return 0;
     }
     if (cmd === 'stop') {
@@ -523,6 +524,7 @@ function runCmd(argv, env, out, err) {
       if (!by) throw new RunError('no role: pass --as <role>');
       const ev = stopRun({ state, locksDir: locks, run: pos[0], by, why: flags.why });
       out(`${pos[0]} ${ev.ev === 'withdraw' ? 'withdrawn' : 'killed'}`);
+      roadView(state, project, err);   // issue #87
       return 0;
     }
     if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
@@ -537,7 +539,7 @@ function runCmd(argv, env, out, err) {
     const rg = readyGate({ brief: o.brief, policy: project?.policy, stage: o.stage, gate: project ? mergeConfig(project).gate : null });
     if (rg.refused) throw new RunRefused(rg.refused, 6);
     if (rg.dod) o.dod = { ...rg.dod, ...(o.notes ? { notes: o.notes } : {}) };
-    if (flags.item) openItem(state, flags.item);   // META-ROADMAP S3: refuse before any run is recorded
+    const fit = flags.item ? itemFit(state, flags.item, o.lane, flags.why) : null;   // META-ROADMAP S3 + issue #87: refuse before any run is recorded
     // META-CATCH S2: a look item's round >= 2 / MERGE / INSTALL brief names its before / after sheet (Look:) or is refused (exit 6)
     const looks = lookItemsFor(loadRoadmap(state), { item: flags.item, lane: o.lane });
     if (looks.length) {
@@ -553,7 +555,7 @@ function runCmd(argv, env, out, err) {
     const holds = critiqueHolds(state, o.brief);
     if (holds.length) o.after = [...(o.after || []), ...holds];
     const r = startRun(flags.queue ? { ...o, queue: true } : o);
-    if (flags.item) linkItem(state, flags.item, 'run:' + r.run, 'launcher', err);
+    if (flags.item) { if (fit) err(`warning: ${fit.warn}`); linkItem(state, flags.item, 'run:' + r.run, 'launcher', err, { why: fit?.why, project }); }
     if (r.queued) {
       out(`QUEUED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} position ${r.position} (${r.why})`);
       for (const c of holds) out(`WAITS ${r.run} for the plan review ${c.id} (after run:${c.id}:reviewed: a clean review releases it, findings wait for the check-in's review)`);
@@ -594,9 +596,25 @@ function openItem(state, id) {
   if (!it) throw new RunError(`--item ${id} does not exist (norn road list)`);
   if (it.state !== 'open') throw new RunError(`--item ${id} is ${it.state}`);
 }
-function linkItem(state, id, term, by, err) {
-  try { record(state, { kind: 'item', ev: 'link', id, by, data: { links: [term] } }, { views: false }); }
-  catch (e) { if (!(e instanceof RecordError)) throw e; err(`warning: ${term} not linked to ${id}: ${e.message} (it shows under Unplaced)`); }
+// issue #87: a run of a lane the item does not link (nor an earlier run of that lane) is linked with a why and a warning; refused
+// without --why when the item links other lanes (a perf lane's runs must not drive a look item's status) -> null | { warn, why }
+function itemFit(state, id, lane, why) {
+  openItem(state, id);
+  const f = laneFit(state, id, lane);
+  if (!f) return null;
+  const warn = `lane ${lane} is not linked to ${id}${f.lanes.length ? ` (its lanes: ${f.lanes.join(', ')})` : ' (it links no lane yet)'}`;
+  if (f.lanes.length && !why) throw new RunError(`${warn}: pass --why W to link this run anyway, or link the lane first (norn road link ${id} lane:${lane})`);
+  return { warn: `${warn}: linked${why ? '' : ' as its first lane'}`, why: why || `the first run of lane ${lane} on ${id} (no lane linked)` };
+}
+function linkItem(state, id, term, by, err, { why, project } = {}) {
+  try { record(state, { kind: 'item', ev: 'link', id, by, data: { links: [term], ...(why ? { why } : {}) } }, { views: false }); }
+  catch (e) { if (!(e instanceof RecordError)) throw e; err(`warning: ${term} not linked to ${id}: ${e.message} (it shows under Unplaced)`); return; }
+  roadView(state, project, err);
+}
+// issue #87: a linked run's state change renders the roadmap view again (refreshRoadView: only when a linked run's state moved)
+function roadView(state, project, err) {
+  try { if (refreshRoadView(state, project || {}) === 'refused') err(`warning: ${roadmapViewPath(state, project || {})} was edited by hand - not rewritten (edit with norn road)`); }
+  catch (e) { err(`warning: roadmap view not rendered: ${e.message}`); }
 }
 
 // Claude Code hook: SessionStart registers a RUN kind interactive, SessionEnd ends it. Never fails the session (exit 0).
@@ -710,6 +728,7 @@ function s5Cmd(argv, env, out, err) {
         const r = tick({ project: proj, machine: { ...(m.machine || {}), claude: { ...(m.machine?.claude || {}), projects_dir: projectsDirOf(m.machine, env) } },
           budget: m.budget, budgetFile: m.budgetFile, reason: flags.reason || 'manual', dry: !!flags.dry, ledger: ledgerConfig(m.machine, { metaRoot: m.root, machineFile: m.mf }), ...(env.META_HB_MS ? { hbMs: Number(env.META_HB_MS) } : {}) });
         (r.code ? err : out)(r.msg);
+        if (!flags.dry) roadView(proj.state, proj, err);   // issue #87: a run the sweep ended / a fill started shows in the roadmap view
         if (r.notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.notice.title, body: r.notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))   // META-AUTH: once per outage
           .then(x => out(`tick ${proj.name}: notify: ${r.notice.cls === 'vendor' ? 'vendor outage' : 'login'} notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (login) failed: ${e.message}`)));
         // GAP-1: ONE notice per hold of all queued work (holds.mjs: hold.json notified) - the owner must act, so class alert
