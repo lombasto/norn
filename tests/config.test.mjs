@@ -90,4 +90,3 @@ test('META-ONBOARD S3: machine.json may carry projects_home (${home} expands)', 
   fs.writeFileSync(f, JSON.stringify(m));
   assert.equal(loadMachine(f, { home: H, meta: M }).projects_home, H + '/.norn/projects');
 });
-
