@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseAudit } from './audit.mjs';
+import { readJsonS } from './fsnap.mjs';
 
 export const FIX_LANE = 'fixall';
 export const fixerDir = state => path.join(state, 'fixer');
@@ -151,11 +152,10 @@ export function findingStatus(text, ids) {
 export const findingSig = (row, text) => createHash('sha1').update(JSON.stringify([row.id, row.action ?? null, row.patch ?? null, plain(text)])).digest('hex').slice(0, 12);
 export const sigsFile = brief => String(brief).replace(/\.brief\.md$/, '.sigs.json');
 export const fixerSigs = (rows, readFile = readOrNull) => Object.fromEntries(rows.map(r => [r.id, findingSig(r, r.path ? readFile(r.path) : null)]));
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 export const DECLINE_LANE = 'fixall-decline';
 /** the standing declines: Map id -> { run, why, sig, at } from every ended fixer run (oldest first; a later run's line replaces an earlier
  *  one, a later "drafted" ends it). A run without its sigs file has no fingerprint to hold a decline to: it declines nothing. */
-export function fixDeclines(items, { readNotes = readText, readBrief = readRunBrief, readSigs = r => readJson(sigsFile(r.data.brief)) } = {}) {
+export function fixDeclines(items, { readNotes = readText, readBrief = readRunBrief, readSigs = r => readJsonS(sigsFile(r.data.brief)) } = {}) {
   const out = new Map();
   for (const r of Object.values(items).filter(i => i.kind === 'run' && i.data?.lane === FIX_LANE && i.end && i.end.outcome !== 'crash' && i.state !== 'cancelled' && i.data.notes).sort(byCreated)) {
     const sigs = readSigs(r) || {};
