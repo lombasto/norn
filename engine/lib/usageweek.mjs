@@ -6,6 +6,7 @@
 import { usageOfRun, costRollup, weekStart, parseReset } from './cost.mjs';
 import { measureRun, runTranscript, transcriptTrace } from './standing.mjs';
 import { contextSources, M } from './guard.mjs';
+import { runCounts, countsLine, BOOKKEEPING } from './runcount.mjs';
 
 const DAY = 86400000;
 const OUTS = ['done', 'stopped', 'handoff'];
@@ -20,9 +21,11 @@ export function usageWeek(parts, o = {}) {
   const now = o.now ?? Date.now(), resetMs = Date.parse(parseReset(o.resetAt) ?? o.resetAt ?? '');
   const week = !!o.week && Number.isFinite(resetMs), since = week ? weekStart(resetMs, now) : now - 7 * DAY;
   const cache = o.cache || new Map(), memo = o.memo || new Map(), smemo = o.smemo || new Map(), perPct = o.cacheRPerPct || null;
-  const rows = new Map(), runsOut = [], prod = new Map();
+  const rows = new Map(), runsOut = [], prod = new Map(), windowRuns = [];
   for (const p of parts) {
-    const runs = (p.items || []).filter(i => i.kind === 'run' && Date.parse(i.created) >= since && Date.parse(i.created) <= now);
+    const inWin = (p.items || []).filter(i => i.kind === 'run' && Date.parse(i.created) >= since && Date.parse(i.created) <= now);
+    windowRuns.push(...inWin);
+    const runs = inWin.filter(r => !BOOKKEEPING.includes(r.state));   // OVERVIEW-TRUTH (6): a queue entry is no run of the group
     const ro = { now, days: Math.max(1, Math.ceil((now - since) / DAY)), cacheRPerPct: perPct, projectsDir: o.projectsDir, codexDir: o.codexDir, cache, memo, project: p.project };
     const mix = costRollup(runs, ro).calib.mix;
     const merged = new Map();
@@ -71,7 +74,8 @@ export function usageWeek(parts, o = {}) {
   const totals = { runs: out.reduce((a, x) => a + x.runs, 0), tokens: out.reduce((a, x) => { for (const k of Object.keys(a)) a[k] += x.tokens[k]; return a; }, zero()),
     pct: out.some(x => x.pct !== null) ? out.reduce((a, x) => a + (x.pct ?? 0), 0) : null, merged: out.reduce((a, x) => a + x.merged, 0) };
   const top = runsOut.sort((a, b) => b.weighted - a.weighted).slice(0, 5);
-  const res = { now: new Date(now).toISOString(), since: new Date(since).toISOString(), days: Math.round((now - since) / DAY * 10) / 10, window: week ? 'week' : 'rolling', rows: out, totals, top };
+  const c = runCounts(windowRuns), counts = { ...c, text: countsLine(c) };   // OVERVIEW-TRUTH (6): the one count rule (runcount.mjs)
+  const res = { now: new Date(now).toISOString(), since: new Date(since).toISOString(), days: Math.round((now - since) / DAY * 10) / 10, window: week ? 'week' : 'rolling', rows: out, totals, counts, top };
   if (o.sources) {
     const all = [...prod.values()], byKey = new Map();
     for (const z of all) { const k = byKey.get(z.key) || { key: z.key, cls: z.cls, tokens: 0, reread: 0, runs: 0 }; k.tokens += z.tokens; k.reread += z.reread; k.runs += z.runs; byKey.set(z.key, k); }
@@ -86,6 +90,7 @@ const pc = x => (x === null || x === undefined ? '-' : '~' + (x < 1 ? x.toFixed(
 /** text for `norn usage` */
 export function formatUsageWeek(u) {
   const L = [`Where the tokens went: ${u.window === 'week' ? 'this plan week' : 'last 7 days'} since ${u.since.slice(0, 16)}Z (${u.days} d) - ${u.totals.runs} runs, ~plan ${pc(u.totals.pct)}, ${u.totals.merged} merged`];
+  L.push(`  ${u.counts.text}`);
   L.push('lane          stage    runs  input  cache-w  cache-r  output  ~plan     done/stop/hand  merged  per merged (cache-r / output)');
   for (const r of u.rows) {
     const t = r.tokens;

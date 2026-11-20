@@ -4,7 +4,7 @@
 // runs' leftovers). Read-only: it lists, it never kills (the job / process group of S5 prevents new ones).
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
 import { boundedSync } from './jobguard.mjs';
 import { loadState } from './records.mjs';
 
@@ -13,22 +13,28 @@ const BROWSER = /^(msedge|chrome|chromium|chromium-browser|google-chrome|firefox
 const NODE = /^node(\.exe)?$/i;
 const norm = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
+// the listing command and its parse, shared by the sync form (norn doctor, ci-suite) and the async one (the dash: never blocks a request)
+const PS_LIST = "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = $_.ProcessId; q = $_.ParentProcessId; n = $_.Name; c = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null }; l = $_.CommandLine; t = $_.ThreadCount; u = [double]$_.UserModeTime + [double]$_.KernelModeTime } } | ConvertTo-Json -Compress";
+const listCmd = platform => platform === 'win32' ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PS_LIST]] : ['ps', ['-eo', 'pid=,ppid=,etimes=,comm=,args=']];
+const parseProcs = (platform, out) => {
+  if (platform === 'win32') return [].concat(JSON.parse(out || '[]')).map(x => ({ pid: x.p, ppid: x.q, name: x.n || '', created: x.c ? Date.parse(x.c) : null, cmd: x.l || '', threads: x.t ?? null, cpu: x.u ?? null }));
+  const now = Date.now();
+  return String(out).split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(Boolean)
+    .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), created: now - +m[3] * 1000, cmd: m[5] }));
+};
 /** every process: [{ pid, ppid, name, created (ms), cmd }]; [] when the listing fails */
 export function listProcs({ platform = process.platform } = {}) {
   try {
-    if (platform === 'win32') {
-      const ps = "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = $_.ProcessId; q = $_.ParentProcessId; n = $_.Name; c = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null }; l = $_.CommandLine; t = $_.ThreadCount; u = [double]$_.UserModeTime + [double]$_.KernelModeTime } } | ConvertTo-Json -Compress";
-      // proc-hygiene: a tree-killing timeout (7 of these were found orphaned, suspended at birth: their caller was killed mid-spawn)
-      const r = boundedSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 30000, maxBuffer: 64 << 20 });
-      if (r.status !== 0) return [];
-      return [].concat(JSON.parse(r.stdout || '[]')).map(x => ({ pid: x.p, ppid: x.q, name: x.n || '', created: x.c ? Date.parse(x.c) : null, cmd: x.l || '', threads: x.t ?? null, cpu: x.u ?? null }));
-    }
-    const r = spawnSync('ps', ['-eo', 'pid=,ppid=,etimes=,comm=,args='], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 << 20 });
-    if (r.status !== 0) return [];
-    const now = Date.now();
-    return r.stdout.split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(Boolean)
-      .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), created: now - +m[3] * 1000, cmd: m[5] }));
+    // proc-hygiene: on Windows a tree-killing timeout (7 of these were found orphaned, suspended at birth: their caller was killed mid-spawn)
+    const [cmd, args] = listCmd(platform), r = platform === 'win32' ? boundedSync(cmd, args, { timeout: 30000, maxBuffer: 64 << 20 })
+      : spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 << 20 });
+    return r.status !== 0 ? [] : parseProcs(platform, r.stdout);
   } catch { return []; }
+}
+/** listProcs without blocking the thread: resolves the same rows; [] when the listing fails */
+export function listProcsAsync({ platform = process.platform } = {}) {
+  const [cmd, args] = listCmd(platform);
+  return new Promise(res => { try { execFile(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 << 20 }, (e, out) => { try { res(e ? [] : parseProcs(platform, out)); } catch { res([]); } }); } catch { res([]); } });
 }
 
 /** live run pids + ended runs' worktrees of the given state dirs */

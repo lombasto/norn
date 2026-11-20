@@ -170,7 +170,7 @@ test, which runs on all three systems.
   this. Only a conflict, a red check or a slop block queues a MERGE run, and that run's brief describes the failure. A MERGE or
   resolve run is queued at the priority of the work it lands, never below P1. It goes ahead of build and plan runs of its own priority and the next one up, and `policy.fill.merge_reserve` slots (default 1)
   stay free for it while it waits. `norn requeue RUN-n --priority P0-P4` (or the priority control in Plan > Up next) changes a
-  queued run's priority and keeps its `--after` conditions. Lanes, Plan and Overview show `merge backlog: N, oldest Xh`. When the
+  queued run's priority and keeps its `--after` conditions. Lanes, Plan and Overview show `done, not merged: N (oldest Xh)`. When the
   backlog is above `policy.merge.backlog_max` (default 3), the check-in is told to land work before it starts new lanes.
 - **Records.** Questions, decisions, directives, lanes and runs are append-only events, written only through `norn rec`,
   `norn run` and the dashboard. The markdown views are generated from them.

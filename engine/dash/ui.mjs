@@ -70,6 +70,8 @@ export function stateOf(text) {
   if (t.startsWith('killed')) return ['bad', 'killed'];
   if (t.startsWith('waiting')) return ['warn', 'waiting'];
   if (t === 'no runs') return ['idle', 'no runs'];
+  if (t.startsWith('shipped')) return ['done', 'shipped'];   // OVERVIEW-TRUTH (5): the lane's work is on main
+  if (t.startsWith('withdrawn')) return ['idle', 'withdrawn'];
   return ['idle', t || '-'];
 }
 const runChip = s => chip({ running: 'running', exited: 'done', finished: 'done', alive: 'running', stopped: 'idle', lost: 'lost', killed: 'bad' }[s] ?? 'idle', s ?? '-');
@@ -475,11 +477,13 @@ export function ctxMeter(n, { codexNote = false } = {}) {
   return `<span class="ctxm${over ? ' ' + over : ''}">${meter(n.ctx, Math.max(hard ?? 150000, n.ctx), lim, over)}<span class="small mute">${kTok(n.ctx)} ctx${lim ? ` / hand-off ${kTok(lim)}${/_1m$/.test(n.ctx_role ?? '') ? ' (1M tier)' : ''}` : ''}${hard ? ` · max ${kTok(hard)}` : ''}${peak}</span>${flag}</span>`;
 }
 // API billing (lib/billing.mjs): no weekly limit - the Burn card shows the last 24 h of spend against the daily $ cap instead
+// OVERVIEW-TRUTH (4): every figure names its scope - this spend is the whole machine's (every project; billing.mjs spendUsd), the
+// Usage page's API spend is one project's by lane (spendBreakdown), today = since local midnight
 function apiBurn(b) {
   const $ = v => `$${(Number(v) || 0).toFixed(2)}`, cap = fin(b.cap) && b.cap > 0 ? b.cap : null, over = cap !== null && b.usd >= cap;
   const c = over ? chip('bad', 'daily cap reached: no new Claude work') : cap === null ? chip('warn', 'no daily cap') : chip('ok', 'under the daily cap');
-  return `<div class="kv" id="burn-api"><span class="mute small">last 24 h</span><div><span class="big">${$(b.usd)}</span> <span class="mute">${cap === null ? 'spent' : `of the ${$(cap)} daily cap`}</span> ${c}${cap === null ? '' : meter(b.usd, cap, null, over || b.usd > cap * 0.8 ? 'hot' : '')}</div>
-     <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
+  return `<div class="kv" id="burn-api"><span class="mute small">last 24 h, this machine (every project)</span><div><span class="big">${$(b.usd)}</span> <span class="mute">${cap === null ? 'spent' : `of the ${$(cap)} daily cap`}</span> ${c}${cap === null ? '' : meter(b.usd, cap, null, over || b.usd > cap * 0.8 ? 'hot' : '')}</div>
+     <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h (every project) · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
      <span class="mute small">guard</span><div class="small mute">none weekly: API billing has no weekly limit${cap === null ? '. Set a daily cap in Settings (API daily cap) to stop spend past it' : ''}</div></div>`;
 }
 // RM-37: the header's pause menu (index.html #pause-pop) from the overview: the mode in force (who, when, why), one button per mode with
@@ -508,10 +512,12 @@ export function overviewStrip(s, ctx = {}) {
   const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
   const ll = s.last_landed, ck = s.checkin || {};
   const next = ctx.checkinsPaused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
-  return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
+  return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be" title="counts for ${esc(scopeWords(ctx))}">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
     + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
     + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
 }
+// OVERVIEW-TRUTH (4): the scope words of the Overview's figures - what the page shows (one project or all) vs the machine / account
+export const scopeWords = ctx => (ctx.project === 'all' ? 'all projects' : ctx.project ? `project ${ctx.project}` : 'this project');
 function overview(d, ctx) {
   const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
   const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
@@ -543,15 +549,15 @@ function overview(d, ctx) {
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
   return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}${backlogLine(o.backlog)}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
-   <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
+   <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex <span class="mute small" id="running-scope">runs in ${esc(scopeWords(ctx))} · the cap is this machine's</span></h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
    <section class="card" id="burn"><h2>Burn${u.billing ? ` <span class="mute small" id="burn-billing">${esc(u.billing.label)}</span>` : ''}</h2>
-     ${u.billing?.type === 'api' ? apiBurn(u.billing) : `<div class="kv"><span class="mute small">weekly</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${meter(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
+     ${u.billing?.type === 'api' ? apiBurn(u.billing) : `<div class="kv"><span class="mute small">weekly, your Claude account (every project)</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${meter(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
      <span class="mute small">trailing 2 h</span><div><b>${fin(u.rate) ? u.rate.toFixed(2) + ' %/h' : '-'}</b> <span class="mute">vs cap ${fin(u.cap) ? u.cap.toFixed(2) + ' %/h' : '-'}</span> ${rateChip}</div>
      <span class="mute small">guard trips</span><div>${trip}</div>
      <span class="mute small">reset</span><div>${esc(fmtLocal(u.resetAt))}</div>
      <span class="mute small">source</span><div class="small mute">${esc(u.source)}${u.source === 'live' && u.estimate && fin(u.estimate.weekly) ? ` (estimate ${pct(u.estimate.weekly)})` : ''}</div></div>`}
-     <h2 style="margin-top:14px">Top burners (last 30 min)</h2>${burners}${provLine}</section></div>
+     <h2 style="margin-top:14px">Top burners <span class="mute small">last 30 min, ${esc(scopeWords(ctx))}</span></h2>${burners}${provLine}</section></div>
    ${d.deliverables ? deliverablesCard(d.deliverables, ctx) : ''}
    ${d.records ? `<div class="grid2"><div class="tablecard"><h3>Latest records <span class="mute small">newest first</span></h3><table><tbody>${recs || '<tr><td class="mute">no records yet</td></tr>'}</tbody></table></div>
    <div class="tablecard"><h3>Ledger <span class="mute small">last 4 entries, newest first</span></h3><table class="ledtab compact"><tbody>${led || '<tr><td class="mute">no ledger file</td></tr>'}</tbody></table></div></div>` : ''}`;
@@ -691,8 +697,8 @@ export const laneKind = l => { const t = l.lane_type, o = l.output; if (!t && !o
   const out = !o ? '' : o.href ? `<a class="lane-out" href="${esc(o.href)}" target="_blank" rel="noopener">${esc(o.text)}</a>` : `<span class="lane-out">${esc(o.text)}</span>`;
   return `<div class="lane-kind small"><span class="chip ${t?.type ? 'idle' : 'warn'}" title="${esc(`type from ${t?.signal ?? '-'}`)}">${esc(t?.type ?? 'no type')}</span>${t?.now ? ` ${chip('running', t.now)}` : ''} ${out}</div>`; };
 // RM-39: a run's progress against its brief (progress.mjs runProgress) - ONE short line on a row: the pace as a chip ("on track" /
-// "slow" / "stalled") and "2 of 5 items done, testing item 3"; its title = why slow
-const PACE_CLS = { 'on track': 'ok', slow: 'warn', stalled: 'bad' };
+// "slow" / "stalled" / "testing": one long test running, not stalled) and "2 of 5 items done, testing item 3"; its title = why slow
+const PACE_CLS = { 'on track': 'ok', testing: 'ok', slow: 'warn', stalled: 'bad' };
 // worker-speed: "tok/s 42 · model 35 % · tests 40 %" (the server's words; a live run's are its last 10 min)
 export const speedLine = s => !s ? '' : `<div class="speed small mute" title="output tokens per second of model time; shares of the run's wall time${s.rolling ? ', last 10 min' : ''} (norn speed)">${esc(s.line)}${s.rolling ? ' (10 min)' : ''}</div>`;
 export const progLine = g => !g ? '' : `<div class="prog small" title="${esc(g.slow?.line ?? g.pace?.words ?? '')}">${chip(PACE_CLS[g.pace?.state] ?? 'idle', g.pace?.state ?? '-')} ${esc(g.line)}</div>`;
@@ -715,9 +721,9 @@ export function laneCard(c, label) {
     ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
     <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
 }
-// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
+// MERGE-FIRST (4): "done, not merged: N (oldest Xh)" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
 // policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
-export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
+export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">done, not merged: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
@@ -869,7 +875,8 @@ function runs(d, ctx) {
     <span>Sources: RUN records + transcript <span class="mono">&lt;session&gt;.jsonl</span>, <span class="mono">subagents/agent-*.meta.json</span>, Codex log banner / rollout.</span></div>
    ${filters}
    <div class="tree"><div class="node head">${RUNS_HEAD.map(([h, t, c]) => `<div${c ? ` class="${c}"` : ''}${t ? ` title="${esc(t)}"` : ''}>${esc(h)}</div>`).join('')}</div>${rows}</div>
-   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>`;
+   <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. What a queued run waits for: the Plan tab.</p>
+   ${d.counts ? `<p class="small" id="runs-counts">${esc(d.counts.scope)}: ${esc(d.counts.text)}</p>` : ''}`;
 }
 // ---------- META-TEND P6: the Guard (REPORT s.5.0-5.1) - every open advisory across types, a query that owns no data ----------
 // Chips in place: guardOn(guard, pick) = the rows of one owning thing; guardChip = ONE chip shape on every tab (severity colour, the
@@ -1138,18 +1145,27 @@ const dlvChip = r => r.record_state === 'parked'
 const onMain = r => r.state === 'merged' || r.state === 'installed';
 // DLV-MERGED-TRUTH: why Norn cannot tell, and the one Inbox ruling that settles it
 const dlvWhy = r => r.state === 'unknown' ? `<div class="small mute">${esc(r.unknown_why ?? '')}${r.ruling ? ` · ruling <a href="#" data-rid="${esc(r.ruling)}">${esc(r.ruling)}</a> in the Inbox` : ' · the next check-in asks you'}</div>` : '';
+// OVERVIEW-TRUTH (2): why a DONE row is not merged (deliverablesView why_not, dlvwhy.mjs), in words with its link: the run opens in the
+// live feed drawer, the PR on GitHub; 'no merge queued' and a stopped merge are warn chips
+const whyLink = (w, r) => w.url ? ` <a href="${esc(w.url)}" target="_blank" rel="noopener">open</a>`
+  : w.run ? ` <span class="link" role="button" tabindex="0" data-feed="${esc(w.run)}" data-project="${esc(r.project)}" title="Open ${esc(w.run)} in the live feed">${esc(w.run)}</span>` : '';
+export const dlvWhyNot = r => (!r.why_not ? '' : `<div class="small dlvwhy" data-why="${esc(r.why_not.kind)}">${r.why_not.warn ? chip('warn', r.why_not.text) : `<span class="mute">${esc(r.why_not.text)}</span>`}${whyLink(r.why_not, r)}</div>`);
 const dlvNative = r => (r.native === true ? chip('bad', 'native') : r.native === false ? '<span class="small mute">no</span>' : '<span class="small mute">?</span>');
 export function deliverablesCard(dl, ctx = {}) {
   const rows = (dl?.rows || []).filter(r => !r.at_target).sort((a, b) => (b.days ?? 0) - (a.days ?? 0));
   const body = rows.map(r => `<tr id="dlv-${esc(r.id)}"><td><b>${projTag(ctx, r.project)}${esc(r.branch)}</b> ${homeChip(r)}<div class="small mute"><span class="id">${esc(r.id)}</span> ${esc(r.lane ?? '')}</div></td>
-    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}</td>
+    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}${dlvWhyNot(r)}</td>
     <td class="mono">${fin(r.days) ? r.days.toFixed(1) + ' d' : '-'}</td>
     <td class="mono">${fin(r.behind) ? r.behind + ' behind' : onMain(r) ? 'on main' : '-'}</td>
     <td>${dlvNative(r)}</td>
     <td>${dlvChip(r)}${r.due ? ' ' + chip('open', 'question due') : r.asked ? ` <span class="small mute">asked ${esc(r.asked)}</span>` : ''}</td>
     <td>${r.readonly ? '' : `<button data-dlv="${esc(r.id)}" data-project="${esc(r.project)}">Open</button>`}</td></tr>`).join('');
+  // OVERVIEW-TRUTH (3): the heading's count is mergeBacklog's (deliverables.mjs, server backlogOf) - the one count Lanes and Plan show too
+  const b = dl?.backlog, k = n => rows.filter(n).length, pr = k(r => r.state === 'done' && r.pr), mi = k(r => r.state === 'merged');
+  const head = b && !b.pending ? `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute small">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}` : '';
   if (dl?.pending && !rows.length) return `<section class="card" id="deliverables"><h2>Done, not installed <b>-</b></h2><div class="small mute">reading git and the install receipts ... (the next refresh shows them)</div></section>`;
-  return `<section class="card" id="deliverables"><h2>Done, not installed <b>${rows.length}</b> <span class="mute small">oldest first · state from git + the last install receipt</span></h2>
+  return `<section class="card" id="deliverables"><h2>Done, not installed <b>${rows.length}</b> <span class="mute small">this project's deliverables not at their target, oldest first · state from git, the PR and the last install receipt</span></h2>
+   ${head || pr || mi ? `<p class="small" id="dlv-counts">${head}${pr ? ` <span class="mute">· ${int(pr)} with a PR open</span>` : ''}${mi ? ` <span class="mute">· ${int(mi)} merged, not installed</span>` : ''}</p>` : ''}
    ${dl?.error ? `<div class="small" style="color:var(--bad)">${esc(dl.error)}</div>` : ''}
    ${rows.length ? `<table><thead><tr><th>branch</th><th>delivers</th><th>done</th><th>vs main</th><th>native</th><th>state</th><th></th></tr></thead><tbody>${body}</tbody></table>`
     : `<div class="item">${art(ctx, 'empty-all-delivered', 'empty')}${chip('ok', 'all clear')}<span>Nothing done-not-installed</span></div>`}</section>`;
@@ -1170,7 +1186,7 @@ export function renderDeliverable(r, ctx = {}) {
    ${r.state === 'unknown' ? kv('merged?', `${chip('needs', 'cannot tell')} ${dlvWhy(r)}`) : ''}
    ${r.rehearsal ? kv('merge rehearsal', r.rehearsal.clean ? chip('ok', 'clean') : `${chip('bad', 'conflict')}<div class="mono small">${r.rehearsal.files.map(esc).join('<br>')}</div>`) : ''}
    ${kv('park', r.park ? `${chip('parked', `parked ${Math.floor(r.park.days)} d`)} ${esc(r.park.why)} <span class="small mute">by ${esc(r.park.by ?? '-')}${r.park.expired ? ' · expired: back on the list' : ''}</span>` : '<span class="mute">not parked</span>')}
-   ${kv('question', r.asked ? `<a href="#" data-rid="${esc(r.asked)}">${esc(r.asked)}</a> (one per deliverable)` : r.due ? chip('open', 'question due: the next check-in asks') : '<span class="mute">none</span>')}</div>
+   ${r.why_not ? kv('not merged', dlvWhyNot(r)) : ''}${kv('question', r.asked ? `<a href="#" data-rid="${esc(r.asked)}">${esc(r.asked)}</a> (one per deliverable)` : r.due ? chip('open', 'question due: the next check-in asks') : '<span class="mute">none</span>')}</div>
    <h3 style="margin:14px 0 4px">Move it</h3><div class="mono small" style="white-space:pre-wrap">norn deliverables park ${esc(r.id)} --why "&lt;the owner's reason&gt;"
 norn deliverables unpark ${esc(r.id)}
 norn deliverables ask ${esc(r.id)}      (the check-in: one question per deliverable)${r.resolve ? `
@@ -1837,7 +1853,7 @@ function apiSpend(s) {
   const tot = k => lanes.reduce((a, g) => a + g[k], 0) + (s.chats?.[k] || 0);
   const rows = lanes.map(g => `<tr><td><b>${esc(g.lane)}</b>${g.live ? ' ' + chip('running', 'live') : ''}</td><td class="mono">${g.live ? '~' : ''}${$(g.today)}</td><td class="mono">${g.live ? '~' : ''}${$(g.week)}</td></tr>`).join('');
   const chat = s.chats && (s.chats.week > 0) ? `<tr id="usage-spend-chats"><td><b>dashboard chats</b></td><td class="mono">${$(s.chats.today)}</td><td class="mono">${$(s.chats.week)}</td></tr>` : '';
-  return `<section class="card" id="usage-spend"><h2>API spend <b>${$(tot('today'))}</b> today <span class="mute small">${$(tot('week'))} in 7 days · per lane · ~ = a run still running (estimate from its tokens at list price)</span></h2>
+  return `<section class="card" id="usage-spend"><h2>API spend <b>${$(tot('today'))}</b> today <span class="mute small">this project (${esc(s.project ?? '-')}) · today = since local midnight · ${$(tot('week'))} in the last 7 days · per lane · the Overview's 24 h figure is the whole machine's · ~ = a run still running (estimate from its tokens at list price)</span></h2>
    <table><thead><tr><th>lane</th><th>today</th><th>7 days</th></tr></thead><tbody>${rows + chat || '<tr><td colspan="3" class="mute">No spend in 7 days.</td></tr>'}</tbody></table></section>`;
 }
 function usagePart(p, ctx) {
@@ -1889,6 +1905,7 @@ function weekCard(w) {
     || '<tr><td colspan="11" class="mute">No runs in the window.</td></tr>';
   const top = (w.top || []).map(t => `<li><span class="id">${esc(t.id)}</span> <b>${esc(t.lane)}</b> ${esc(t.stage)} ${chip(t.outcome === 'done' ? 'done' : t.state === 'running' ? 'running' : 'idle', t.outcome ?? t.state)} <span class="mono">${pcA(t.pct)}</span> · ${mTok(t.cache_read)} cache read <span class="small mute">- ${esc(t.why)}</span></li>`).join('');
   return `<div class="tablecard" id="usage-week"><h3>Where the tokens went <span class="mute small">${w.window === 'week' ? 'since the weekly reset' : 'last 7 days'} · ${plural(w.totals.runs, 'run')} · ${fin(w.totals.pct) ? pcA(w.totals.pct) + ' of your weekly Claude limit' : '% of your weekly Claude limit not known'} · ${w.totals.merged} merged into main · the four token types are counted apart, never added up</span></h3>
+   ${w.counts ? `<p class="small" id="usage-counts" style="padding:0 12px">${esc(w.counts.text)}</p>` : ''}
    <table><thead><tr><th>lane</th><th>stage</th><th>runs</th><th>input</th><th>cache write</th><th>cache read</th><th>output</th><th>~% of week</th><th>how the runs ended</th><th>merged</th><th>tokens per merged branch</th></tr></thead><tbody>${body}</tbody></table>
    <h3 style="margin-top:10px">Top 5 spenders <span class="mute small">the runs that used the most; why = turns x average context size (every turn re-reads the whole context)</span></h3><ol id="usage-top" class="small">${top || '<li class="mute">none</li>'}</ol></div>`;
 }
