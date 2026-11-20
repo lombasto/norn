@@ -20,7 +20,7 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
@@ -81,6 +81,7 @@ import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_A
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { stageSizes, verdict, sizingThresholds } from '../lib/sizing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
+import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
@@ -1389,6 +1390,7 @@ Plan and land work:
                                    (suggest: ranked tightening candidates; confirm <file>#<anchor>: "still true"; apply <S-id>: the owner's tap)
   norn usage                        where the week's tokens went: per lane + stage, top 5 spenders (--sources: what fills the contexts)
   norn guard                        the usage guard: live runs vs their peers, open alarms (watch / rule / sources)
+  norn speed                        worker speed: tok/s, model / tools / tests / idle per ended run, by workers running (the cap's data)
   norn size                         the sessions of a lane stage: floor, first edit, peak against the marks they ran under, a verdict
   norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
   norn deliverables                follow finished work to main and to an install
@@ -1512,6 +1514,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
   if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {
     if (argv[0] !== 'rec') { err(`error: unknown command ${argv[0]} - see norn help`); return 2; }
     let rest = argv.slice(1);
@@ -2601,6 +2604,37 @@ function usageCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err(USAGE_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// ---------- worker-speed: norn speed - tok/s and the wall split of each ended worker run, by the number of workers running beside it ----------
+const SPEED_USAGE = 'usage: norn speed [--hours N] [--json] [--project project.json | --state D] [--machine F] [--now UTC]    (read-only; default the last 24 h; no --project / --state = every project in machine.json)';
+function speedCmd(argv, env, out, err) {
+  try {
+    const flags = {};
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--json') { flags.json = true; continue; }
+      if (!['--hours', '--project', '--state', '--machine', '--now'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    const hours = flags.hours === undefined ? 24 : Number(flags.hours);
+    if (!(hours > 0)) throw new RunError(`--hours ${flags.hours}: want a number > 0`);
+    const now = flags.now ? Date.parse(flags.now) : Date.now();
+    if (!Number.isFinite(now)) throw new RunError(`--now ${flags.now} is not a date`);
+    const m = machineOf(flags, env);
+    let targets;
+    if (flags.project || flags.state) { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    else if (m.machine?.projects?.length) targets = m.machine.projects.map(p => { const project = loadProject(p.config, { meta: m.root }); return { project, state: project.state }; });
+    else { const { project, state } = where(flags, env); targets = [{ project, state }]; }
+    const parts = targets.map(t => ({ project: t.project?.name || path.basename(path.resolve(t.state)), items: Object.values(loadState(t.state).items) }));
+    const rep = speedReport(parts, { now, hours, projectsDir: projectsDirOf(m.machine, env), cpu: readCpu({ file: cpuLogFile(m.root), from: now - (hours + 48) * 3600000, to: now }) });
+    out(flags.json ? JSON.stringify(rep, null, 1) : formatSpeed(rep));
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err(SPEED_USAGE); return 2; }
     throw e;
   }
 }

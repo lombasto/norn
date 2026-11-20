@@ -50,6 +50,17 @@ test('the API: a Lanes row and a Runs node carry the run\'s progress and the lan
     const rhtml = renderTab('runs', { tree: runs.data.tree }, { project: 'kestrel', now: Date.now() }), rnode = rhtml.split('id="node-').find(x => x.startsWith(`${id}"`));
     assert.match(rnode, /<div class="lanecol small"><span class="lhov"><a class="lanelink" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
     assert.match(rnode, /<div class="prog small"[^>]*>.*1 of 4 items done/);
+    // worker-speed: a worker run with model requests shows its tok/s line; a live one its last 10 min
+    const now = Date.now(), ts = s => new Date(now - s * 1000).toISOString(), sid = 'aaaaaaaa-2222-4333-8444-555555555555';
+    const lines = [{ type: 'user', timestamp: ts(130), message: { role: 'user', content: 'go' } }, { type: 'api-request', id: 'r1', timestamp: ts(120) },
+      { type: 'assistant', timestamp: ts(110), requestId: 'q1', requestRef: 'r1', message: { id: 'm1', model: 'claude-opus-5-5', usage: { output_tokens: 500 }, content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'node --test tests/a.test.mjs' } }] } },
+      { type: 'user', timestamp: ts(50), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }];
+    fs.writeFileSync(path.join(f.root, 'claude-projects', 'C--fx-wt', sid + '.jsonl'), lines.map(j => JSON.stringify(j)).join('\n') + '\n');
+    const sp = record(f.pa.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'render', session_id: sid } }, { now: () => new Date(now - 140000) }).id;
+    const snode = (await f.get('/api/agents?project=kestrel')).data.tree.find(n => n.id === sp);
+    assert.equal(snode.speed.rolling, true); assert.equal(snode.speed.tok_s, 50, '500 tokens in 10 s');
+    assert.match(snode.speed.line, /^tok\/s 50 · model \d+ % · tests \d+ %$/);
+    assert.match(renderTab('runs', { tree: [snode] }, { project: 'kestrel', now }), /<div class="speed small mute"[^>]*>tok\/s 50 · model \d+ % · tests \d+ % \(10 min\)<\/div>/);
   } finally { await f.done(); }
 });
 

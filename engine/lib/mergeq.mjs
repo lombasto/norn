@@ -216,7 +216,7 @@ export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
 /** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state), then adds gate.env */
-export function runGate(gate, { cwd, log }) {
+export function runGate(gate, { cwd, log, state }) {
   cwd = inDir(cwd, gate.dir);
   return new Promise(resolve => {
     const t0 = Date.now();
@@ -225,7 +225,7 @@ export function runGate(gate, { cwd, log }) {
     const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'VIRTUAL_ENV' && !k.startsWith('META_'))), ...(gate.env || {}) };
     let child, timedOut = false, done = false;
     const end = (code, extra = {}) => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(fd); } catch { /* closed */ } resolve({ ok: code === 0 && !timedOut, code, ms: Date.now() - t0, timedOut, log: fwd(log), ...extra }); };
-    const timer = setTimeout(() => { timedOut = true; killTree(child?.pid); }, (gate.timeout_min ?? 30) * 60e3);
+    const timer = setTimeout(() => { timedOut = true; killTree(child?.pid, { state, killer: `merge gate pid ${process.pid}`, reason: `gate past ${gate.timeout_min ?? 30} min: ${gate.cmd} (log ${fwd(log)})` }); }, (gate.timeout_min ?? 30) * 60e3);
     try { child = spawn(gate.cmd, { cwd, shell: true, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', fd, fd], env }); }
     catch (e) { end(-1, { error: e.message }); return; }
     child.on('error', e => end(-1, { error: e.message }));
@@ -465,7 +465,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       let k = 0;
       const gateAt = async (commit, label) => {
         git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach', commit]);
-        return gateRunner(cfg.gate, { cwd: cfg.scratch, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
+        return gateRunner(cfg.gate, { cwd: cfg.scratch, state: stateDir, log: path.join(mqDir(stateDir), `batch-${n}-gate-${++k}-${label}.log`) });
       };
       // skip: the members merged clean (buildBatch drops a conflicting pick), so nothing runs; the MERGE stage keeps its smoke
       const res = skip ? { status: 'green', runs: [], green_prefix: b.members.length } : await gateBatch(b, gateAt);

@@ -2,7 +2,8 @@
 // left 20 headless Edge alive 10 h: their parents had exited), so membership is decided at birth:
 //   Windows: the supervisor puts ITSELF in a named Job Object before it spawns the executor (jobguard.cs `hold`, KILL_ON_JOB_CLOSE);
 //            every process born below it is in the job, parent alive or not. At its end `reap` kills all but the supervisor and
-//            clears KILL_ON_JOB_CLOSE (its after-end spawns - tick, auto-resume - live on). The supervisor dying = the hold process
+//            clears KILL_ON_JOB_CLOSE (its after-end spawns - tick, auto-resume - live on); DEC-1088: only through a handle re-checked
+//            as a job member, each target receipted in <state>/kills.jsonl first (kills.mjs). The supervisor dying = the hold process
 //            sees stdin EOF, its handle closes, the job kills the rest. An independent run started from inside (norn run / a queue
 //            fill) breaks away (jobguard `spawn`, CREATE_BREAKAWAY_FROM_JOB); a helper of the run stays inside and dies with it.
 //   POSIX:   the executor is its own process group (spawn detached); the end kills the group (setsid escapes: documented gap).
@@ -12,8 +13,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { receiptsOf, writeReceipts, jsonLines } from './kills.mjs';
+import { listProcs } from './strays.mjs';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'jobguard.cs');
 const CSC = ['Framework64', 'Framework'].map(f => path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', f, 'v4.0.30319', 'csc.exe'));
@@ -33,6 +36,26 @@ function jobguardSettle(p, ok) {
   if (!ok || !fs.existsSync(p.tmp)) { try { fs.unlinkSync(p.tmp); } catch { /* none */ } return null; }
   try { fs.renameSync(p.tmp, p.exe); } catch { try { fs.unlinkSync(p.tmp); } catch { /* a racer won */ } }
   return fs.existsSync(p.exe) ? p.exe : null;
+}
+
+/** the helper's path when it is already compiled (never compiles), else null: kills.mjs lists processes with it, without a stall */
+export function jobguardCached({ platform = process.platform, dir = os.tmpdir(), csc = CSC } = {}) {
+  const p = jobguardPlan({ platform, dir, csc });
+  return p && !p.c ? p.exe : null;
+}
+
+/** every process now, [{ pid, ppid, name, cmd }] (a kill's receipts, kills.mjs): the compiled helper's `procs` (~0.2 s), else
+ * strays.listProcs (PowerShell CIM / ps) */
+export function procList() {
+  const exe = jobguardCached();
+  if (exe) { const r = spawnSync(exe, ['procs'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 64 << 20 }); if (r.status === 0) return jsonLines(r.stdout); }
+  return listProcs();
+}
+/** procList off the event loop (killTreeAsync: the dash server) */
+export function procListAsync() {
+  const exe = jobguardCached();
+  if (!exe) return Promise.resolve(listProcs());
+  return new Promise(ok => execFile(exe, ['procs'], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 64 << 20 }, (e, out) => ok(e ? listProcs() : jsonLines(out))));
 }
 
 /** the compiled helper's path (compiled once per source version), or null off Windows / without csc. Blocks while it compiles:
@@ -80,14 +103,16 @@ export async function holdJob(pid, { exe, name = `meta-run-${pid}-${Date.now()}`
   });
 }
 
-/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off afterwards. Returns { killed: [pids], procs: [{ pid, name }] } or { error } */
-export function reapJob(job, keep = process.pid) {
+/** kill every process of the job but `keep`; KILL_ON_JOB_CLOSE off afterwards. Each target is receipted first in rc's file
+ * (kills.mjs receiptsOf: rc { file | state, killer, reason }); a pid whose handle is no job member is skipped (`also`: pids added to
+ * the job's list, the test seam). Returns { killed: [{ pid, image }], skipped: [{ pid, image }] } or { error } */
+export function reapJob(job, keep = process.pid, rc = {}) {
   if (!job?.name) return { error: job?.error || 'no job' };
-  const r = spawnSync(job.exe, ['reap', job.name, String(keep)], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
-  const m = /^reaped (\d+) ?(\S*)/m.exec(r.stdout || '');
+  const args = ['reap', job.name, String(keep), receiptsOf(rc), rc.killer || `supervisor ${keep}`, rc.reason || 'reap', ...(rc.also?.length ? [rc.also.join(',')] : [])];
+  const r = spawnSync(job.exe, args, { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+  const out = String(r.stdout || ''), rows = verb => [...out.matchAll(new RegExp(`^${verb} (\\d+) ?(.*?)\\r?$`, 'gm'))].map(m => ({ pid: Number(m[1]), image: m[2] }));
   try { job.proc?.stdin?.end(); } catch { /* gone */ }
-  const procs = m?.[2] ? m[2].split(',').map(t => { const [pid, name] = t.split(':'); return { pid: Number(pid), name: name || '?' }; }) : [];
-  return m ? { killed: procs.map(p => p.pid), procs } : { error: String(r.stdout || r.error?.message || `exit ${r.status}`).trim().slice(0, 200) };
+  return /^reaped \d+/m.test(out) ? { killed: rows('killed'), skipped: rows('skipped') } : { error: String(out || r.error?.message || `exit ${r.status}`).trim().slice(0, 200) };
 }
 
 // MSVCRT command-line quoting of one argument (CommandLineToArgvW rules)
@@ -148,8 +173,16 @@ export function holdGone(job, ms = 5000) {
   return new Promise(r => { const t = setTimeout(() => r(false), ms); t.unref?.(); p.once('exit', () => { clearTimeout(t); r(true); }); });
 }
 
-/** POSIX: kill the executor's process group (it was spawned detached = group leader) */
-export function reapGroup(pgid) {
+/** POSIX: kill the executor's process group (it was spawned detached = group leader), its members receipted first (rc as reapJob;
+ * the group's own pids by `ps -o pgid`). Returns { killed: [{ pid, image }] } or { error } */
+export function reapGroup(pgid, rc = {}, { list = groupProcs } = {}) {
   if (!Number.isInteger(pgid) || pgid <= 0) return { killed: [] };
-  try { process.kill(-pgid, 'SIGKILL'); return { killed: [pgid] }; } catch (e) { return e.code === 'ESRCH' ? { killed: [] } : { error: e.message }; }
+  const rows = list(pgid);
+  try { writeReceipts(rows, rc); } catch (e) { return { error: `no receipt, no kill: ${e.message}` }; }
+  try { process.kill(-pgid, 'SIGKILL'); return { killed: rows.map(p => ({ pid: p.pid, image: p.name })) }; } catch (e) { return e.code === 'ESRCH' ? { killed: [] } : { error: e.message }; }
+}
+function groupProcs(pgid) {
+  const r = spawnSync('ps', ['-eo', 'pid=,ppid=,pgid=,comm=,args='], { encoding: 'utf8', timeout: 15000, maxBuffer: 64 << 20, windowsHide: true });
+  return String(r.stdout || '').split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/)).filter(m => m && +m[3] === pgid)
+    .map(m => ({ pid: +m[1], ppid: +m[2], name: path.basename(m[4]), cmd: m[5] }));
 }
