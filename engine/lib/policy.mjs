@@ -262,9 +262,9 @@ export const SECTIONS=[
   // NORN-UI-SYNC: multi-home sync - a pane sub renders from the server's sync block (ui.mjs syncPane); the leases are normal rows; basic: set up from
   // the page, like Notifications
   {id:'sync',label:'Sync',basic:true,help:'Multi-home sync: this machine as one home of a project built on several machines (docs/MULTI-HOME.md).',subs:[
-    {id:'home',label:'This machine',pane:true,help:'Solo or a home, the ledger remote, the last publish and fetch, the doorbell.'},
+    {id:'machine',label:'This machine',pane:true,help:'Solo or a home, the ledger remote, the last publish and fetch, the doorbell.'},
     {id:'setup',label:'Set up / join',pane:true,help:'Make this machine the first home, or join another home\'s ledger: check, dry run, apply.'},
-    {id:'reconcile',label:'Duplicates',pane:true,help:'Likely duplicate items, directives and decisions across homes: one owner card per pair.'},
+    {id:'duplicates',label:'Duplicates',pane:true,help:'Likely duplicate items, directives and decisions across homes: one owner card per pair.'},
     {id:'leases',label:'Claim leases',help:'How long a work claim holds on the ledger and when another home may take it over.'}]},
   {id:'notify',label:'Notifications',basic:true,help:'A phone or desktop ping when Norn needs you (machine.json notify; norn setup --notify).',info:true,subs:[
     {id:'ping',label:'Phone / desktop ping'},{id:'phone',label:'Reach Norn from your phone'}]},

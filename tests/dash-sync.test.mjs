@@ -61,7 +61,7 @@ test('Settings > Sync: solo state, the ledger form saves the remote and a write-
     assert.doesNotMatch(JSON.stringify(d), new RegExp(TOPIC));
     assert.equal(d.sync.remote, URL_); assert.equal(d.sync.doorbell, true);
     const html = renderTab('settings', d, { project: 'kestrel', setCat: 'sync' });
-    for (const id of ['sub-sync-home', 'sub-sync-setup', 'sub-sync-reconcile', 'sub-sync-leases', 'sync-topic', 'sync-home']) assert.match(html, new RegExp(`id="${id}"`));
+    for (const id of ['sub-sync-machine', 'sub-sync-setup', 'sub-sync-duplicates', 'sub-sync-leases', 'sync-topic', 'sync-home']) assert.match(html, new RegExp(`id="${id}"`));
     assert.match(html, /placeholder="set \(hidden\)"/); assert.doesNotMatch(html, new RegExp(TOPIC));
     assert.match(html, /data-key="policy\.sync\.lease_s"/);
     const stale = await A.post('/api/sync/ledger', { project: 'kestrel', version: s.version, topic: 'other-topic' });

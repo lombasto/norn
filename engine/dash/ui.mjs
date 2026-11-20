@@ -1158,14 +1158,14 @@ function remotePane(r) {
     <ul class="small devices">${r.devices.length ? r.devices.map(dev).join('') : '<li class="mute">No paired device yet.</li>'}</ul>`, pair);
 }
 // NORN-UI-SYNC: Settings > Sync's pane subs (policy.mjs SECTIONS sync, pane:true) from the server's sync block (server.mjs syncInfo).
-// home = the state + the ledger form (the topic is write-only: the page only knows on / off); setup = the guided cut --bare / join
-// (Check = the dry run, Apply = pause, cut, publish + fetch, resume); reconcile = Find duplicates (dry) / Write the cards. The buttons
+// machine = the state + the ledger form (the topic is write-only: the page only knows on / off); setup = the guided cut --bare / join
+// (Check = the dry run, Apply = pause, cut, publish + fetch, resume); duplicates = Find duplicates (dry) / Write the cards. The buttons
 // post /api/sync/* (index.html); the answers land in the role=status <pre> below each.
 const ago = s => (s == null ? 'never' : s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`);
 function syncPane(x, d, said = {}) {
   const s = d.sync || {}, id = `sub-sync-${x.id}`, out = k => `<pre class="small sync-out" id="sync-${k}-out" role="status">${esc(said[k] ?? '')}</pre>`;
   const head = `<h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>`, wrap = (body, search) => `<div class="ssub" id="${id}">${head}<div class="srow" data-basic="1" data-search="${esc(search)}" data-mod="0">${body}</div></div>`;
-  if (x.id === 'home') {
+  if (x.id === 'machine') {
     const st = s.home ? chip('ok', `home ${s.home}`) : chip('idle', 'solo');
     const pub = s.stopped ? chip('bad', `stopped: ${s.stopped}`) : s.head ? `published ${esc(String(s.head).slice(0, 8))}${s.pushed ? ' · pushed' : ' · not pushed yet'}` : 'nothing published yet';
     const fetched = s.fetch_error ? chip('bad', `fetch failed: ${s.fetch_error}`) : s.fetched_at ? `fetched ${esc(fmtTime(s.fetched_at))}` : 'not fetched yet';
