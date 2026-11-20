@@ -6,14 +6,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, recordsFile, fold, RecordError, mailboxOf } from './records.mjs';
+import { Worker } from 'node:worker_threads';
+import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
 
 export const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
-const num = id => Number(String(id).replace(/\D/g, ''));
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
-export const loadMail = state => fold(readEvents(recordsFile(state, 'mail'))).items;
+// RM-46 S1d (SPEC 4.6): in a synced dir the merged mail - a home delivers what is addressed to it, whichever home sent it
+export const loadMail = state => loadShared(state, 'mail').items;
 const loadRuns = state => fold(readEvents(recordsFile(state, 'run'))).items;
 const byId = (a, b) => num(a.id) - num(b.id);
 
@@ -26,15 +27,15 @@ export function mailRole(state, env, as) {
   return as || (env.META_ROLE === 'checkin' ? 'checkin' : 'controller');
 }
 
-/** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>); returns the envelope */
+/** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>, role:<by>@<home> in a home); returns the envelope */
 export function sendMail(state, { by, run = null, to, subject, body, body_file, urgent }) {
-  const from = by === 'worker' ? run : `role:${by}`;
+  const from = by === 'worker' ? run : roleAddr(by, state);
   return record(state, { kind: 'mail', ev: 'create', by, data: drop({ from, to, subject, body, body_file, urgent: urgent ? true : undefined }) }, { run });
 }
 
 /** the addresses a reader takes mail for: a run's mailbox (records.mailboxOf), or one address (the controller's role:controller) */
 export function boxOf(state, { run, to }) {
-  if (run) return mailboxOf(loadRuns(state), run);
+  if (run) return mailboxOf(loadRuns(state), run, homeOf(state)?.id);
   return new Set(to ? [to] : []);
 }
 
@@ -106,6 +107,18 @@ export function nudgeDue(state, { run, now = Date.now(), afterMin = NUDGE_AFTER_
 export const nudgePrompt = (m, afterMin = NUDGE_AFTER_MIN) => `NUDGE: an urgent mail was not acked within ${afterMin} min, so meta stopped your run and resumed `
   + `this same session for you to read it now.\n\n${formatMail({ ...m, text: bodyOf(m) })}\n\nAct on it and ack it (norn mail ack ${m.id}), then continue `
   + 'your brief from where you were stopped: re-check the worktree HEAD + git status first (a tool call may have been cut off). End with `norn done` as before.';
+
+// proc-hygiene (D: two `mail check --inject` hooks hung for a day): the hook ends in bounded time whatever blocks it. A timer cannot
+// - a lock wait (records.withLock) blocks the event loop - so a worker thread kills the whole process at HOOK_MAX_MS (well inside
+// the hook's 30 s in mailSettings: Claude Code's own timeout kills the shell, not this node). NORN_HOOK_MAX_MS overrides (tests).
+export const HOOK_MAX_MS = 20000;
+export function hookWatchdog(ms = Number(process.env.NORN_HOOK_MAX_MS) || HOOK_MAX_MS) {
+  const w = new Worker(`const { workerData: d } = require('node:worker_threads'); setTimeout(() => {
+    try { require('node:fs').writeSync(2, 'norn mail check --inject: no answer in ' + d.ms + ' ms, ended\\n'); } catch { /* stderr gone: the kill below still ends the hook */ }
+    process.kill(d.pid, 'SIGKILL'); }, d.ms);`, { eval: true, workerData: { ms, pid: process.pid } });
+  w.unref();
+  return w;
+}
 
 /** the hook command line the launcher adds (claude runs hook commands in Git Bash / sh: $META_RUN_ID expands there; the CLI falls back to the env) */
 export const hookCommand = state => `"${fwd(process.execPath)}" "${fwd(META_BIN)}" mail check --inject --run $META_RUN_ID --state "${fwd(path.resolve(state))}"`;

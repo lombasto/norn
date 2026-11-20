@@ -44,7 +44,7 @@ const OFFERS = '/views/FED-OFFERS.json';
 export function listOffers(f, claims, served) {
   const out = [];
   for (const m of machineRefs(f)) {
-    const files = refFiles(f, m.ref, k => k.endsWith(OFFERS) || k.endsWith('/runs.jsonl') || /\/runs\/RUN-\d+\.queue\.json$/.test(k));
+    const files = refFiles(f, m.ref, k => k.endsWith(OFFERS) || k.endsWith('/runs.jsonl') || /\/runs\/RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+\.queue\.json$/.test(k));
     for (const key of Object.keys(files).filter(k => k.endsWith(OFFERS))) {
       const dir = key.slice(0, -OFFERS.length), project = path.posix.basename(dir);
       const items = foldText(files[`${dir}/runs.jsonl`]);
@@ -128,7 +128,8 @@ export async function nodeRun({ machine: m, machineFile, metaRoot, home, labels,
   const fence = why => {
     const hb = readJson(hbPath(state, cur)) || {};
     try { record(state, { kind: 'run', ev: 'lost', id: cur, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; }
-    killTree(hb.supervisor_pid); killTree(hb.pid);
+    const rc = { state, killer: `fed node pid ${process.pid}`, reason: `fence ${cur}: ${why}` };   // DEC-1088: receipted
+    killTree(hb.supervisor_pid, rc); killTree(hb.pid, rc);
     try { stopOrphans(state); } catch { /* best effort */ }
     out(`${cur} fenced: ${why}`);
     publish(`node ${f.host}: ${cur} fenced`);

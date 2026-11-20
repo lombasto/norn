@@ -236,7 +236,7 @@ test('one hunk applies, one does not: the card counts 1, says why for the other,
   assert.equal(c.files.find(f => f.file === 'CLAUDE.md').hunks[0].applies, true, 'CRLF file + exact context: applies');
   const page = renderTab('inbox', { items: [{ type: 'fixresult', id: 'RUN-1', project: 'k', card: c }] }, { project: 'k' });
   assert.match(page, /Apply all <span[^>]*>1</);
-  assert.match(page, /does not apply<\/span> no context line/);
+  assert.match(page, /does not apply<\/span> <span class="prose pinline">no context line/, 'the reason reads in the line (inline prose, not a block inside the <p>)');
   const t = verdictText(c, { choice: 'apply' });
   assert.match(t, /: 1 hunk\(s\) in CLAUDE\.md\./); assert.match(t, /leave the block\(s\) that do not apply \(AGENTS\.md:9\)/);
   // the verdict records the open id: the plan gives it back to the rest (a later batch)

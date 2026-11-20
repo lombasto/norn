@@ -117,7 +117,7 @@ export function authRefusal(state, harness, { now = Date.now(), spec, probe = pr
 /** OOTB-R2 N-5: the command the owner runs to log executor `name` in again (entry: its project.json executors entry, for a typed one) */
 export const loginCommand = (name, entry) => authPatterns(name, entry).login || `${name} login`;
 const harnessOf = (name, entry) => executorInfo(name, entry)?.harness ?? name;
-const hhmm = t => (t ? String(t).slice(11, 16) + 'Z' : '?');
+export const hhmm = t => (t ? String(t).slice(11, 16) + 'Z' : '?');
 const plural = n => `${n} run${n === 1 ? '' : 's'}`;
 const vendorOf = h => authPatterns(h)?.status?.vendor || 'The vendor';
 const lookup = (incident, state, h, o) => { try { return (incident || (x => vendorIncident(state, x, o)))(h) ?? null; } catch { return null; } };

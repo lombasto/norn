@@ -2,6 +2,11 @@
   "id": "K2", "level": "BLOCK", "kind": "swallow",
   "title": "a new empty or comment-only catch with no reason",
   "how": "JS files the diff touches: a catch block or .catch(() => {}) whose body is empty or only comments; the comment is a reason only when it says what happens next (two words or more) and does not start with a deny-list word",
+  "explain": {
+    "what": "A new catch block is empty, or holds only a comment that does not say what happens next.",
+    "why": "An empty catch hides the error. The code goes on as if the step worked, and the real fault shows up later, far from its cause.",
+    "fix": "Handle the error, rethrow it, or let it go up. If it is safe to drop, write a comment that says why and what happens next (two words or more, not \"ignore\" or \"ok\")."
+  },
   "files": ["**/*.mjs", "**/*.js", "**/*.cjs"],
   "deny": ["ignore", "ignored", "ok", "okay", "best effort", "nothing", "noop", "no-op", "empty", "todo", "fine", "whatever", "swallow"],
   "fixture": {

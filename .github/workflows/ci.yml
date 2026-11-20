@@ -1,8 +1,9 @@
-# The node suite on GitHub-hosted runners (Windows + Linux) on a push to main and on every pull request.
+# The full node suite on GitHub-hosted runners (Windows + Linux) after the merge: on a push to main and nightly. A pull request runs
+# the fast check instead (pr.yml, META-PR-FAST RM-29): slop, smoke and the tests of the files it changes.
 # engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt.
 name: ci
 
-# A docs-only change (markdown / docs / images / html) runs no suite; the nightly runs regardless.
+# A docs-only push (markdown / docs / images / html) runs no suite; the nightly runs regardless.
 on:
   push:
     branches: [main]
@@ -12,13 +13,9 @@ on:
       - '**/docs/**'
       - '**/*.png'
       - '**/*.html'
-  pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '**/docs/**'
-      - '**/*.png'
-      - '**/*.html'
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read

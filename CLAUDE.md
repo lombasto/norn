@@ -19,6 +19,7 @@ These are tech debt. SloppaChoppa reports them as slop. If removing one really b
 - Run the full suite with `node engine/bin/ci-suite.mjs`. It is slow; run it once before a merge, not in a loop.
 - Every temp folder comes from `mkTmp` (tests/helpers/tmp.mjs); dashboard tests use tests/helpers/dash-fixture.mjs.
 - Under heavy load (several workers testing at once), browser and timing tests can time out. Rerun the file on its own before you call a failure real.
+- Wait for a long command by waiting on its exit, not by watching its log with `tail -f | grep`. `tail -f` never exits, so the watcher outlives you. If you need a watcher, make it end by itself (`timeout N`, `grep -m1`).
 
 ## Git
 

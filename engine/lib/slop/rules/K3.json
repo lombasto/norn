@@ -1,8 +1,15 @@
 {
   "id": "K3", "level": "BLOCK", "kind": "eslint",
   "title": "a new unused variable or import",
-  "how": "ESLint no-unused-vars (engine/lib/slop/eslint.config.mjs: _x names, caught errors and rest siblings allowed) on the JS files the diff touches, at base and at head",
+  "how": "ESLint no-unused-vars (_x names, caught errors and rest siblings allowed) on the JS files the diff touches, at base and at head",
+  "explain": {
+    "what": "A variable, import or parameter the branch adds is never used (ESLint no-unused-vars).",
+    "why": "Unused code makes the reader look for a purpose that is not there. It is often the sign of an unfinished change or a left-over.",
+    "fix": "Delete it. If it must stay unused (a required parameter), start its name with an underscore: _x."
+  },
   "tool": "eslint",
+  "rules": { "no-unused-vars": ["error", { "vars": "all", "args": "after-used", "caughtErrors": "none", "ignoreRestSiblings": true,
+    "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }] },
   "files": ["**/*.mjs", "**/*.js", "**/*.cjs"],
   "fixture": {
     "hit": { "base": { "src/m.mjs": "import path from 'node:path';\nexport const a = x => path.join(x);\n" },

@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { tail } from './agents.mjs';
-import { findTranscript } from './harness/claude.mjs';
+import { findTranscript, usageCtx } from './harness/claude.mjs';
 import { findRollout, parseCodexLog } from './harness/codex.mjs';
 import { HEADLESS_CORE } from './harness/common.mjs';
 import { harnessOf } from './harness/index.mjs';
@@ -206,7 +206,10 @@ export function toolKey(name, input) {
 }
 const clen = c => (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((n, b) => n + (b?.type === 'text' ? String(b.text ?? '').length
   : b?.type === 'image' ? 6000 : JSON.stringify(b ?? '').length), 0) : c ? JSON.stringify(c).length : 0);
-const traceInit = () => ({ seen: new Set(), e: [], items: [], tools: {}, max: null });
+// WORK-SIZING S1: the MAIN chain's requests too - reqs = the context of each (usageCtx), uses = [request #, tool, path or command] of
+// each tool use - so sizing.mjs finds the first edit and the commits from this one tailed pass (no second read of the transcript)
+const traceInit = () => ({ seen: new Set(), e: [], items: [], tools: {}, max: null, reqs: [], uses: [] });
+const useArg = (name, i = {}) => (name === 'Bash' || name === 'PowerShell' ? String(i.command ?? '').slice(0, 400) : i.file_path ?? i.notebook_path ?? i.path ?? null);
 function onTrace(c, j) {
   const m = j.message, put = (src, n) => { if (n > 0) c.items.push([c.e.length, src, n]); };
   if (j.type === 'assistant' && m) {
@@ -214,8 +217,10 @@ function onTrace(c, j) {
     if (u && !c.seen.has(k)) {   // the call first: what it wrote is read from the NEXT call on
       c.seen.add(k);
       c.e.push([Date.parse(j.timestamp), num(u.cache_read_input_tokens), num(u.input_tokens), num(u.cache_creation_input_tokens), num(u.output_tokens)]);
+      if (!j.isSidechain) c.reqs.push(usageCtx(u));
     }
     for (const b of Array.isArray(m.content) ? m.content : []) {
+      if (b?.type === 'tool_use' && !j.isSidechain) c.uses.push([c.reqs.length - 1, String(b.name ?? ''), useArg(b.name, b.input ?? {})]);   // the lines of one message are contiguous: its request is the last
       if (b?.type === 'tool_use') { c.tools[b.id] = toolKey(b.name, b.input); put('model', JSON.stringify(b.input ?? {}).length); }
       else if (b?.type === 'text') put('model', String(b.text ?? '').length);
       else if (b?.type === 'thinking') put('model', String(b.thinking ?? '').length);

@@ -20,6 +20,7 @@ const advance = (cur, at) => { const o = { ...(cur || {}) }; for (const [k, v] o
 /**
  * o: { pollMs = 2000, lingerMs = 10000, max = 4 }. join(key, open, res, cursor): open() -> source { poll(cursor) -> { events, cursor },
  * head(ctx) -> object, ended() -> bool } or throws ({ status }); res = the http response. -> false when the cap is reached.
+ * o.full (RM-36, a fresh drawer): the catch-up reads the run from its start (poll(cursor, true)), not the backlog window.
  */
 export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
   const tailers = new Map();
@@ -68,7 +69,7 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
   }
 
   /** -> Promise<false at the cap | true> */
-  async function join(key, open, res, cursor = null) {
+  async function join(key, open, res, cursor = null, { full = false } = {}) {
     if (clients >= max) return false;
     let t = tailers.get(key);
     if (!t) {
@@ -81,10 +82,17 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
     res.on('close', () => leave(t, c));
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write('retry: 3000\n\n');
-    // catch-up from the client's own cursor (null = the backlog window); a fresh tailer continues from there
+    // catch-up from the client's own cursor (null = the backlog window, or the start with full); a fresh tailer continues from there.
+    // One poll reads at most FEED_MAX bytes: it polls again until the cursor stops moving, so a long run (or an old Last-Event-ID)
+    // is caught up whole - the shared tailer polls from ITS cursor, so a gap left here would never be filled
     const ended = await isEnded(t);
-    let r; try { r = await t.source.poll(c.cursor); } catch { r = { events: [], cursor: c.cursor || {} }; }
-    noteCtx(t, r.events); deliver(t, c, r.events); c.cursor = advance(c.cursor, r.cursor);
+    let r;
+    for (let i = 0, first = !c.cursor && full; i < 64; i++, first = false) {
+      const before = JSON.stringify(c.cursor);
+      try { r = await t.source.poll(c.cursor, first); } catch { r = { events: [], cursor: c.cursor || {} }; }
+      noteCtx(t, r.events); deliver(t, c, r.events); c.cursor = advance(c.cursor, r.cursor);
+      if (JSON.stringify(c.cursor) === before) break;
+    }
     if (!t.timer && tailers.get(key) === t) { t.cursor = r.cursor; t.timer = setInterval(() => tick(t), pollMs); t.timer.unref?.(); }
     await sendHead(t, c);
     if (ended) finish(t, c);
