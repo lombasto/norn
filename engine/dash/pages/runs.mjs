@@ -170,11 +170,11 @@ function runDoc(n, d, ctx) {
     ['refused', (n.refused || []).length ? n.refused.map(x => `<div>${chip('refused', `refused: ${x.words}`)} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div>`).join('') : null]]
     .filter(([, v]) => v != null).map(([k, v]) => `<span class="mute">${k}</span><span>${v}</span>`).join('');
   const feed = feedable(n) ? `<section id="run-feed-slot" ${at}></section>` : '';
-  return `<article class="rdoc" id="run-doc" data-run="${esc(n.id)}" data-project="${esc(n.project ?? '')}" aria-label="${esc(n.id)}">${head}${alarms ? `<section class="rd-sec rd-alarms">${alarms}</section>` : ''}${paceBand}${result}${list}
+  return `<article class="rdoc card" id="run-doc" data-run="${esc(n.id)}" data-project="${esc(n.project ?? '')}" aria-label="${esc(n.id)}">${head}${alarms ? `<section class="rd-sec rd-alarms">${alarms}</section>` : ''}${paceBand}${result}${list}
     <section class="rd-sec"><h3>Facts</h3><div class="kv small rd-facts">${facts}</div></section>${feed}</article>`;
 }
 // a run the URL names that the tree does not hold: it ended outside the window, or the Ended band is still loading
-const missingDoc = (id, d, ctx, win) => `<article class="rdoc" id="run-doc" data-run="${esc(id)}" data-project="${esc(ctx.project ?? '')}">${ctx.narrow ? `<button class="ghost" data-act="runs-back" data-run="${esc(id)}">‹ Runs</button>` : ''}
+const missingDoc = (id, d, ctx, win) => `<article class="rdoc card" id="run-doc" data-run="${esc(id)}" data-project="${esc(ctx.project ?? '')}">${ctx.narrow ? `<button class="ghost" data-act="runs-back" data-run="${esc(id)}">‹ Runs</button>` : ''}
   <p class="mute">${d.parts_loading ? `Loading the ended runs to find ${esc(id)} ...` : `${esc(id)} is not in this window (${esc(win)}). A wider window may hold it.`}</p>
   ${RUN_ID.test(id) && ctx.project && ctx.project !== 'all' ? `<section id="run-feed-slot" data-project="${esc(ctx.project)}" data-run="${esc(id)}"></section>` : ''}</article>`;
 
@@ -207,7 +207,7 @@ export function runs(d, ctx) {
   const list = `<div class="runs-list"><div class="tree">${empty}${bandHtml('live', 'Live', live.length, live.map(r).join('') || none('Nothing is running.'))}
     ${bandHtml('queued', 'Queued', queued.length, queued.map(r).join('') || none('Nothing is waiting to start.'))}
     ${bandHtml('ended', `Ended in the last ${win}`, loading && !d.ended ? '' : ended.length, (loading ? `<p class="rnone small mute">${d.ended ? 'refreshing ...' : 'loading the ended runs ...'}</p>` : '') + (endedRows || (loading ? '' : none('No run ended in this window.'))))}</div></div>`;
-  const doc = picked ? runDoc(picked, d, ctx) : pick ? missingDoc(pick, d, ctx, win) : `<article class="rdoc" id="run-doc" data-run=""><p class="mute">No run to show: none is running, queued or ended in the last ${esc(win)}.</p></article>`;
+  const doc = picked ? runDoc(picked, d, ctx) : pick ? missingDoc(pick, d, ctx, win) : `<article class="rdoc card" id="run-doc" data-run=""><p class="mute">No run to show: none is running, queued or ended in the last ${esc(win)}.</p></article>`;
   const head = `<div class="phead pagehead" id="runs-head"><h2 class="ptitle">Runs</h2></div>`;
   if (ctx.narrow && ctx.run) return `<div class="runs one">${doc}</div>`;
   return `${head}${sum}${bar}<div class="runs-split${ctx.narrow ? ' one' : ''}">${list}${ctx.narrow ? '' : doc}</div>`;
