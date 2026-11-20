@@ -289,11 +289,12 @@ export function mergeBacklog(rows = [], { now = Date.now(), max = POLICY_DEFAULT
 export const backlogMax = policy => policy?.merge?.backlog_max ?? POLICY_DEFAULTS.merge.backlog_max;
 export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean'
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
-// one listing line: id, state, age, behind main, native, branch, its PR, how it merged / why Norn cannot tell, why it is not merged,
+// one listing line: id, state, age, behind main, native, branch, its PR, how it merged / why Norn cannot tell, why it is not merged (not when
+// that why is its open PR: the PR column already says so),
 // park / question, merge rehearsal, what it delivers
 export function formatDeliverable(r) {
   const how = r.state === 'unknown' ? `${r.state_word}${r.ruling ? ` (ruling ${r.ruling})` : ''}` : r.merged_how === 'equivalent' || r.merged_how === 'ruling' ? `merged (${r.merged_how})` : '';
-  const flag = [how, r.why_not?.text, r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : ''].filter(Boolean).join(' | ');
+  const flag = [how, r.why_not?.kind === 'pr' ? '' : r.why_not?.text, r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : ''].filter(Boolean).join(' | ');
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
     pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
