@@ -190,7 +190,7 @@ test('the lanes view: a live supervisor\'s late beat under a busy CPU reads "hea
   assert.match(view({ cpu: 98 }), /^running .* - heartbeat late \(210 s, CPU 98 %\)$/);
   assert.equal(view({}), 'lost');
   assert.equal(view({ cpu: 30 }), 'lost');
-  const { stateOf } = await import('../engine/dash/ui.mjs');
+  const { stateOf } = await import('../engine/dash/cells.mjs');
   assert.deepEqual(stateOf(view({ cpu: 98 })), ['warn', 'heartbeat late']);
 });
 
