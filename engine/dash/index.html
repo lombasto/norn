@@ -51,10 +51,11 @@
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, matchText, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import { fmtTime, esc } from '/cells.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards, syncLines } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards } from '/ui.mjs';
+import { matchText, syncLines } from '/pages/settings.mjs';
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
@@ -676,7 +677,7 @@ document.addEventListener('click', e => {
     if (el) { el.value = Array.isArray(v) ? v.join(', ') : String(v ?? ''); dirty(); el.focus(); } return; }
   if (d.act === 'notify-test') { const o = $('#notify-test-out'); o.textContent = 'Sending...';
     post('/api/notify-test', { project: p }).then(r => { o.textContent = r.sent ? `Sent via ${r.backend}: check your phone / desktop.` : 'Not sent.'; }, e => { o.textContent = e.message; }); return; }
-  // NORN-UI-SYNC: Settings > Sync - each button posts /api/sync/* and shows the answer's lines (ui.mjs syncLines) in its pane's <pre>
+  // NORN-UI-SYNC: Settings > Sync - each button posts /api/sync/* and shows the answer's lines (pages/settings.mjs syncLines) in its pane's <pre>
   if (d.act?.startsWith('sync-')) { syncAct(d); return; }
   if (d.act === 'remote-pair') { const o = $('#remote-code'); o.textContent = 'Making a code ...';   // C6: a single-use code for one phone
     post('/api/remote/pair', {}).then(r => { o.innerHTML = `<div class="rc mono">${esc(r.code)}</div><div class="small mute">On your phone open the address above and type this code. It works once, until ${esc(new Date(r.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}.</div>`; }, e => { o.textContent = e.message; }); return; }
