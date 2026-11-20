@@ -63,3 +63,5 @@
 .pl-step{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}.pl-sep{margin:0 2px}.pl-meta{flex-basis:100%;margin-top:4px}
 .pl-empty{padding:10px 14px;margin:0}.pl-fc{padding:10px 14px}.pl-fc .kv>span>.bar{display:inline-block;width:160px;vertical-align:middle;margin-right:6px}
 @media (max-width:700px){.pl-row{grid-template-columns:32px 1fr auto}.pl-est,.pl-start{grid-column:2}.pl-holds{grid-column:2 / -1}.pl-step{white-space:normal}}
+/* the feed head inside the run document: its words need a gap; the executor line repeats the document head, so it goes */
+#feed-head .fh-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center}#feed-head .fh-ex{display:none}
