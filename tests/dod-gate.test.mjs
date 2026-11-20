@@ -15,7 +15,7 @@ import { renderTab } from '../engine/dash/ui.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const SUITE = path.join(import.meta.dirname, '..', 'engine', 'bin', 'ci-suite.mjs').split(path.sep).join('/');
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const READY = parseReady('Scope: src/**, tests/**\nTests: `node -e ""`\nDone: ## DONE\n');
 const PASS = "import test from 'node:test';\ntest('ok', () => {});\n", FAIL = name => `import test from 'node:test';\ntest('${name}', () => { throw new Error('red'); });\n`;
 
