@@ -1,11 +1,12 @@
 // The small cells every page shares - formatters, chips, the run / lane lines, the feed head and activity: moved down out of ui.mjs so
 // that ui.mjs and pages/*.mjs both import them and no import goes back up (pages -> ui.mjs -> pages was a cycle).
-import { meter, hoChip } from './widgets.mjs';
+import { meter, hoChip, fin } from './widgets.mjs';
+import { esc } from './docs.mjs';
 import { fmtDur } from './activity.mjs';
 import { diffBlock } from './diffview.mjs';
+// esc and fin have one home each (docs.mjs, widgets.mjs); a page takes them from here with the other cells
+export { esc, fin };
 // ---------- formatting ----------
-export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const fin = v => typeof v === 'number' && Number.isFinite(v);
 export const dash = '<span class="mute">-</span>';
 export const int = n => fin(n) ? Math.round(n).toLocaleString('en-US') : '-';
 export const pct = (n, d = 1) => fin(n) ? `${n.toFixed(d)} %` : '-';

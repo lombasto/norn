@@ -1482,9 +1482,8 @@ function rmRow(i, ctx, win, compact) {
     : `<div class="rmw small">${why} ${rmLinks(i, ctx)}</div>${rmStages(i)}${(i.flags?.drift || []).length || (i.flags?.gone || []).length ? `<div class="rmdrift">${i.flags.drift.map(d => `<div>Drift: ${esc(d)}</div>`).join('')}${(i.flags.gone || []).map(g => `<div>Link gone: ${esc(g)}</div>`).join('')}</div>` : ''}`;
   return `<div class="rmi${compact ? ' c' : ''} ph-${esc(i.phase)}${hit}" id="rm-${esc(i.id)}" data-rm-row>${head}${rmTime(i, win)}${body}</div>`;   // desktop: the time line in its own column; phone: under the title
 }
-const rmPlural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const rmFoldText = (items, phase) => (phase === 'past' ? [['shipped', 'shipped'], ['dropped', 'dropped']] : [['queued', 'queued'], ['planned', 'planned'], ['idea', 'idea']])
-  .map(([k, w]) => [items.filter(i => i.status === k).length, w]).filter(([n]) => n).map(([n, w]) => (w === 'idea' ? rmPlural(n, 'idea') : `${n} ${w}`)).join(' · ');
+  .map(([k, w]) => [items.filter(i => i.status === k).length, w]).filter(([n]) => n).map(([n, w]) => (w === 'idea' ? plural(n, 'idea') : `${n} ${w}`)).join(' · ');
 const rmFutOrder = i => ['queued', 'planned', 'idea'].indexOf(i.status) * 10 + ({ now: 0, next: 1, later: 3 }[i.horizon] ?? 2);
 const RM_SORT = { past: (a, b) => String(b.last || '').localeCompare(String(a.last || '')), present: (a, b) => ((b.live || []).length - (a.live || []).length) || String(b.last || '').localeCompare(String(a.last || '')),
   future: (a, b) => rmFutOrder(a) - rmFutOrder(b) };
@@ -1499,7 +1498,7 @@ function rmTheme(t, d, ctx, nThemes) {
   const live = all.filter(i => (i.live || []).length).length, c = t.counts || {}, tot = Math.max(1, all.length);
   const open = filtered || deep(f.item) >= 0 || live > 0 || (nThemes <= 5 && (c.present || 0) > 0);
   const rows = (xs, compact) => xs.map(i => rmRow(i, ctx, win, compact)).join('');
-  const fold = (xs, ph, isOpen) => (xs.length ? `<details class="rmfold f-${ph}"${isOpen ? ' open' : ''}><summary>${rmFoldText(xs, ph) || rmPlural(xs.length, 'item')}${ph === 'past' ? `<span class="mute small"> · latest ${rmAgo(xs[0].last, now) || 'n/a'}</span>` : ''}</summary>${rows(xs, true)}</details>` : '');
+  const fold = (xs, ph, isOpen) => (xs.length ? `<details class="rmfold f-${ph}"${isOpen ? ' open' : ''}><summary>${rmFoldText(xs, ph) || plural(xs.length, 'item')}${ph === 'past' ? `<span class="mute small"> · latest ${rmAgo(xs[0].last, now) || 'n/a'}</span>` : ''}</summary>${rows(xs, true)}</details>` : '');
   const winText = win ? `time line ${rmDay(new Date(win.t0).toISOString())} to now` : 'no run yet';
   return `<details class="rmth" id="rmt-${esc(t.id)}"${open ? ' open' : ''}><summary><span class="tw"></span><b>${esc(t.title)}</b><span class="id">${esc(t.id)}</span>${t.state === 'dropped' ? '<span class="chip idle">dropped</span>' : ''}${rmEditBtn(t)}
     <span class="rmthread mini" aria-hidden="true"><i class="th-past" style="flex:${(c.past || 0) / tot}"></i><i class="th-present" style="flex:${(c.present || 0) / tot}"></i><i class="th-future" style="flex:${(c.future || 0) / tot}"></i></span>
