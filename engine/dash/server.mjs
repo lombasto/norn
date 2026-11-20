@@ -292,7 +292,7 @@ export function createDashboard(o) {
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
     prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), ...pausedFiles(p), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
-      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
+      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path), ...agentPaths(p).map(([abs]) => abs)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
   // RM-37: the pause in force (pausemode.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
@@ -1371,7 +1371,8 @@ data: ${JSON.stringify(l)}
     return (p.root && scans.get(keyOf(p.root))?.facts) || null;
   }
   /** the repo's own agent rules files (CLAUDE.md, AGENTS.md ...) at its root and its subdir: every worker's own tool reads them, so they ARE rules */
-  const agentFilesIn = p => !p.root ? [] : [...new Set(['', subdirOf(p)])].flatMap(d => AGENT_FILES.filter(f => existsS(path.join(p.root, d, f))).map(f => (d ? d + '/' : '') + f));
+  const agentPaths = p => !p.root ? [] : [...new Set(['', subdirOf(p)])].flatMap(d => AGENT_FILES.map(f => [path.join(p.root, d, f), (d ? d + '/' : '') + f]));   // [abs, shown]; primeFor stats them
+  const agentFilesIn = p => agentPaths(p).filter(([abs]) => existsS(abs)).map(([, shown]) => shown);
   /** where the caps were chosen: a caps profile decision, else a cap in budget.json (Settings writes it) that is not the starter cap
    *  `norn setup` wrote unasked (the default profile's), else null - nobody chose them */
   function capsChosen(p, s, items) {
