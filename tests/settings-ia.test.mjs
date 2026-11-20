@@ -48,7 +48,7 @@ test('search filters rows by label, key, help, value and @modified; empty query 
   const hits = q => rows.filter(s => settingsMatch(s, q)).map(s => s.key);
   assert.equal(hits('').length, rows.length);
   assert.deepEqual(hits('max_codex'), ['max_codex']);
-  assert.ok(hits('hand-off').every(k => k.startsWith('policy.context.')) && hits('hand-off').length >= 4);
+  assert.ok(hits('hand-off').every(k => /^policy\.(context|sizing)\./.test(k)) && hits('hand-off').length >= 4);   // sizing: measured against the hand-off mark (WORK-SIZING S1)
   assert.ok(hits('HAND-OFF').length === hits('hand-off').length, 'case-insensitive');
   assert.deepEqual(hits('@modified'), ['policy.critical_effort']);
   assert.deepEqual(hits('@modified critical'), ['policy.critical_effort']);

@@ -44,7 +44,8 @@ test('the Ledger tab: newest first, one row per entry, time + kind chip, search 
 });
 
 test('shownRunIds = the runs the Agents tree lists (live, or ended within 2 h; never queue entries)', () => {
-  const now = Date.parse('2026-01-02T05:00Z'), r = (id, state, updated) => ({ kind: 'run', id, state, updated, created: updated, data: {} });
+  // an ended run carries its end event: the window counts from the run's own end, not its last record (7f2927b)
+  const now = Date.parse('2026-01-02T05:00Z'), r = (id, state, updated) => ({ kind: 'run', id, state, updated, created: updated, data: {}, history: state === 'exited' ? [{ ev: 'end', ts: updated }] : [] });
   const ids = shownRunIds([r('RUN-1', 'running', '2026-01-01T00:00Z'), r('RUN-2', 'exited', '2026-01-02T04:00Z'), r('RUN-3', 'exited', '2026-01-02T01:00Z'), r('RUN-4', 'queued', '2026-01-02T04:59Z')], now);
   assert.deepEqual([...ids].sort(), ['RUN-1', 'RUN-2']);
 });

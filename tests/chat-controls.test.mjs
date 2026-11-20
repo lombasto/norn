@@ -7,8 +7,9 @@ import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
 test('R1 the browser: a Home filter stays pressed and applied across a live re-render', { skip: skipWhy, timeout: 120000 }, async () => {
-  const f = await fixture(), pg = await openPage();
+  const f = await fixture(); let pg;
   try {
+    pg = await openPage();
     assert.equal(await pg.go(`${f.url}/?project=kestrel&tab=home`), 'home');
     await pg.until('!!document.querySelector("[data-act=home-filter][data-filter=talk]")');
     await pg.ev('document.querySelector("[data-act=home-filter][data-filter=talk]").click()');
@@ -18,7 +19,7 @@ test('R1 the browser: a Home filter stays pressed and applied across a live re-r
     record(f.pa.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'a live change', via: "cli" } });
     assert.ok(await pg.until('!document.querySelector("#main .home")?.closest("#main") || document.querySelector("#main").dataset.mark !== "old" || !document.querySelector("#main [data-act=home-filter]")?.isConnected || [...document.querySelectorAll(".home-r .hrow")].some(r => r.textContent.includes("a live change"))'), 'the page re-rendered live');
     assert.equal(await pg.ev(pressed), 'talk', 'still pressed after the live re-render');
-  } finally { await pg.close(); await f.done(); }
+  } finally { await pg?.close(); await f.done(); }
 });
 
 // ---------- the chat engine: the picker (a pick line) and the slash commands (engine/lib/chat.mjs) ----------
@@ -193,8 +194,9 @@ test('R1 the "/" menu: Norn\'s commands first (with what they do), then the sess
 
 // ---------- the browser: the filter across a reload, the "/" menu, the picker, the shell line's tap ----------
 test('R1 the browser: the filter survives a reload (URL); the empty "you + controller" view; "/" opens the menu; the picker applies a model; the shell line opens its Settings row', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture(), pg = await openPage();
+  const f = await fixture(); let pg;
   try {
+    pg = await openPage();
     assert.equal(await pg.go(`${f.url}/?project=kestrel&tab=home`), 'home');
     await pg.until('!!document.querySelector("[data-act=home-filter][data-filter=talk]")');
     await pg.ev('document.querySelector("[data-act=home-filter][data-filter=talk]").click()');
@@ -208,6 +210,10 @@ test('R1 the browser: the filter survives a reload (URL); the empty "you + contr
     assert.match(menu, /\/model[\s\S]*\/effort[\s\S]*\/clear[\s\S]*\/help/);
     await pg.ev('document.querySelector("#slash-menu [data-slash=\'/effort\']").click()');
     assert.equal(await pg.ev('document.querySelector("#chat-text").value'), '/effort ');
+    // CI-RED-44384DB: the details 'toggle' event is a queued task, so a live repaint (a stream poke) landing between the open and that
+    // task rebuilt the picker closed; here the repaint (a filter tap: paintMain, synchronous) runs in the same task as the open
+    await pg.ev('(d => { d.open = true; document.querySelector("[data-act=home-filter][aria-pressed=true]").click(); })(document.querySelector("details.hpick"))');
+    assert.equal(await pg.ev('new Promise(r => setTimeout(() => r(document.querySelector("details.hpick").open), 50))'), true, 'a repaint before the toggle event keeps the picker open');
     // the picker: open, choose sonnet, apply -> the chip says sonnet
     await pg.ev('document.querySelector("details.hpick").open = true');
     await pg.ev('(() => { const s = document.querySelector("#pick-model"); s.value = "claude-sonnet-5-5"; s.dispatchEvent(new Event("change", { bubbles: true })); })()');
@@ -219,7 +225,7 @@ test('R1 the browser: the filter survives a reload (URL); the empty "you + contr
     await pg.ev('document.querySelector("button.hnote[data-act=open-setting]").click()');
     assert.equal(await pg.until('document.body.dataset.ready === "settings" && document.body.dataset.ready'), 'settings');
     assert.equal(await pg.until('(e => e && e.offsetParent !== null)(document.querySelector("#set-chat_raw_shell"))'), true, 'the chat_raw_shell row is shown');
-  } finally { await pg.close(); await f.done(); }
+  } finally { await pg?.close(); await f.done(); }
 });
 
 import { adapterFor } from '../engine/lib/harness/index.mjs';
@@ -239,15 +245,16 @@ test('R2 a stalled page: go() and until() fail naming the step, the pending fetc
     Promise.reject(new Error('toy-rejected')); document.body.dataset.step = 'fetch'; await fetch('/api/never'); document.body.dataset.ready = 'home';</script></body>`;
   const srv = http.createServer((q, r) => { if (q.url === '/api/never') return; r.writeHead(200, { 'content-type': 'text/html' }); r.end(html); });
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
-  const pg = await openPage();
+  let pg;
   try {
+    pg = await openPage();
     await assert.rejects(pg.go(`http://127.0.0.1:${srv.address().port}/`, 1500), e => {
       assert.match(e.message, /body\.dataset\.ready.*1500 ms/); assert.match(e.message, /readyState[^\n]*complete/); assert.match(e.message, /"step":"fetch"/);
       assert.match(e.message, /pending[^\n]*\/api\/never[^\n]*\d+ ms/); assert.match(e.message, /toy-boom/); assert.match(e.message, /toy-rejected/);
       return true;
     });
     await assert.rejects(pg.until('document.body.dataset.ready', 500), /until\(document\.body\.dataset\.ready\) still falsy after 500 ms[\s\S]*"step":"fetch"/);
-  } finally { await pg.close(); srv.closeAllConnections(); await new Promise(r => srv.close(r)); }
+  } finally { await pg?.close(); srv.closeAllConnections(); await new Promise(r => srv.close(r)); }
 });
 
 // META-CI-WORKCLASS R3 (DEC-333): a go() timeout also tells WHOSE stall it was - the test process's own event loop (its max gap,
@@ -260,8 +267,9 @@ test('R3 a stalled test process: a go() timeout names the event-loop gap, the CP
     r.writeHead(200, { 'content-type': 'text/html' }); r.end(html); });
   watchServer(srv);
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
-  const pg = await openPage();
+  let pg;
   try {
+    pg = await openPage();
     const going = pg.go(`http://127.0.0.1:${srv.address().port}/`, 3000);
     setTimeout(() => { const t = Date.now(); while (Date.now() - t < 1200) { /* the blocked loop */ } }, 50);
     await assert.rejects(going, e => {
@@ -272,7 +280,7 @@ test('R3 a stalled test process: a go() timeout names the event-loop gap, the CP
       assert.match(e.message, /busiest stack: [^\n]*chat-controls\.test\.mjs:\d+[^\n]* \d+ ms/, `the profile names the blocking frame: ${e.message}`);
       return true;
     });
-  } finally { await pg.close(); srv.closeAllConnections(); await new Promise(r => srv.close(r)); }
+  } finally { await pg?.close(); srv.closeAllConnections(); await new Promise(r => srv.close(r)); }
 });
 
 // META-CI-WORKCLASS R4 (DEC-336): name the blocking CALL. (a) any CDP wait (not only pg.go) logs the loop report when slow;

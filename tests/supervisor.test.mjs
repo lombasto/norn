@@ -100,7 +100,7 @@ process.exit(0);`;
 test('jobguard hold: ends when the held process exits even while its stdin stays open; holdGone waits for its exit', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
   const exe = jobguardExe({ dir: mkTmp('meta-jgh-') });
   assert.ok(exe, 'csc.exe of .NET Framework 4 compiles the helper');
-  const held = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+  const held = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true });
   await new Promise(r => held.once('spawn', r));
   const hold = spawn(exe, ['hold', String(held.pid), `meta-test-${held.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
   try {
@@ -110,6 +110,16 @@ test('jobguard hold: ends when the held process exits even while its stdin stays
     held.kill();   // the held process ends; the hold's stdin is still open here
     assert.equal(await Promise.race([gone.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]), true, 'the hold exited with the held process');
   } finally { try { hold.kill(); } catch { /* gone */ } try { held.kill(); } catch { /* gone */ } }
+  // CI 44343850063 (queue: a stop right after the start): the supervisor died while its hold started. A hold given a pid that is gone
+  // (or reused by a later process) refuses with "err" and exits, its stdin still open here - it never waits on a stranger
+  const dead = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
+  await new Promise(r => dead.once('exit', r));
+  const late = spawn(exe, ['hold', String(dead.pid), `meta-test-${dead.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  try {
+    let out = ''; late.stdout.on('data', d => { out += d; });
+    const code = await Promise.race([new Promise(r => late.once('exit', r)), new Promise(r => setTimeout(() => r('alive'), 20000))]);
+    assert.equal(code, 1, `the hold of a gone pid exits 1 (${out.trim()})`); assert.match(out, /^err /m);
+  } finally { late.kill(); }   // a no-op (false) once it has exited
   const p = spawn(process.execPath, ['-e', 'process.stdin.resume(); process.stdin.on("end", () => setTimeout(() => process.exit(0), 200))'], { stdio: ['pipe', 'ignore', 'ignore'] });
   await new Promise(r => p.once('spawn', r));
   assert.equal(await holdGone({ proc: p }), true, 'holdGone ends its stdin and resolves at its exit');
@@ -131,6 +141,29 @@ test('jobguard: the first-use csc compile does not block the event loop (the hea
   assert.ok(ticks >= 3, `the timer ran ${ticks} time(s) during the compile`);
   assert.equal(await jobguardExeAsync({ dir }), exe, 'cached: the same exe, no second compile');
   assert.equal(jobguardExe({ dir }), exe, 'the sync lookup finds the same cache');
+});
+
+// CI-RED-7D65D2D (DEC-383, Windows LEAK RED): a `hold` outlived its supervisor - it waited only for stdin EOF, and while anything
+// still held the write end of its stdin it never saw one. The hold also waits on the supervisor's process handle (SYNCHRONIZE) and
+// exits on whichever comes first; a supervisor already gone at start = exit at once.
+test('jobguard hold exits when its supervisor dies even while its stdin write end stays open elsewhere', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
+  const exe = jobguardExe({ dir: mkTmp('meta-jgp-') });
+  assert.ok(exe, 'csc.exe of .NET Framework 4 compiles the helper');
+  const sup = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true });
+  const hold = spawn(exe, ['hold', String(sup.pid), `meta-jgp-${sup.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  const exited = new Promise(r => hold.on('exit', r));
+  try {
+    let out = '';
+    await new Promise((res, rej) => { hold.stdout.on('data', d => { out += d; if (/^(ok|err)/m.test(out)) res(); }); hold.on('exit', () => rej(new Error(`hold exited: ${out}`))); });
+    assert.match(out, /^ok/m);
+    sup.kill();   // the supervisor dies; this test still holds the hold's stdin write end open
+    const r = await Promise.race([exited.then(() => 'exited'), sleep(5000).then(() => 'alive')]);
+    assert.equal(r, 'exited', `hold ${hold.pid} still alive 5 s after its supervisor ${sup.pid} died`);
+    const gone = spawn(exe, ['hold', String(sup.pid), `meta-jgp-gone-${Date.now()}`], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    const r2 = await Promise.race([new Promise(res => gone.on('exit', () => res('exited'))), sleep(5000).then(() => 'alive')]);
+    if (r2 !== 'exited') gone.kill();
+    assert.equal(r2, 'exited', 'a hold whose supervisor is already gone exits at once');
+  } finally { try { hold.stdin.end(); } catch { /* the hold already exited and closed its stdin: nothing to end, the kills below still run */ } if (hold.exitCode === null) hold.kill(); if (sup.exitCode === null) sup.kill(); }
 });
 
 test('K3 round 2: a run the supervisor starts itself (auto-resume) breaks away from the supervisor\'s own job', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {

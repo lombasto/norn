@@ -31,8 +31,9 @@ export function judge(fails, known) {
 // own META_RUN_ID / META_ROLE / META_STATE turned 4 CLI test files red and hung the suite (RUN-471 / RUN-477 / RUN-481 / RUN-505).
 // Test knobs (META_UPDATE_GOLDEN, META_WALL_STEP_MS, META_TEST_*, ...) are not identity and pass through.
 // MAIL-33: META_JOB (the worker's reap job: runs.mjs spawns inside it) and META_PARENT_RUN (a helper's depth-1 mark) are identity too.
+// wt-reds: META_RESULT / META_RESULT_DIR (the worker's own result file): a fake executor a test spawns would write into it (or throw).
 export const CALLER_ENV = ['META_RUN_ID', 'META_RUN_STATE', 'META_ROLE', 'META_STATE', 'META_PROJECT', 'META_SESSION_ID', 'META_RESUMES',
-  'META_NOTES', 'META_JOB', 'META_PARENT_RUN', 'CLAUDECODE'];
+  'META_NOTES', 'META_JOB', 'META_PARENT_RUN', 'META_RESULT', 'META_RESULT_DIR', 'CLAUDECODE'];
 // META-TEST-TRIM: git's auto maintenance (gc / maintenance --auto after a commit, fetch or push) is one more process per git write
 // in the suite's temp repos and nothing under test; on Windows it cost ~1/4 of a git-heavy test (mergeq main-red 70 s -> 54 s).
 const SUITE_GIT = [['maintenance.auto', 'false'], ['gc.auto', '0']];
@@ -45,3 +46,41 @@ export const suiteEnv = env => {
   e.GIT_CONFIG_COUNT = String(n);
   return e;
 };
+
+
+// META-PR-FAST (RM-29): the test files a pull request touches, for the fast PR job (`ci-suite --changed BASE`); the full suite runs
+// after the merge (push to main) and nightly. A test file is picked when (1) it changed, (2) it imports a changed file directly
+// (`from '../engine/lib/x.mjs'`, or a changed tests/helpers module), (3) its name starts with the stem of a changed module
+// (engine/lib/mergeq.mjs -> mergeq.test.mjs, mergeq-batch.test.mjs) or (4) it names a changed fixture's folder (`fixtures/<dir>`).
+// One import level only, and no basename search: through tests/helpers/tmp.mjs nearly every file reaches runs.mjs, and ~90 files
+// name norn.mjs or server.mjs - a closure or a name search picks the whole suite (measured on PRs #11-#17: 79-157 files).
+// Even one level picks 60-120 files when a PR touches a hub (server.mjs, records.mjs, policy.mjs), so the importers are capped
+// (max): (1), (3) and (4) always run; the importers run most-changed-imports first, and the rest is named as left to the full suite.
+const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g;
+const norm = p => { const out = []; for (const s of p.split('/')) { if (s === '..') out.pop(); else if (s && s !== '.') out.push(s); } return out.join('/'); };
+/** the repo-relative files a module imports by a relative specifier (file: its repo-relative path; text: its source) */
+export const importsOf = (file, text) => {
+  const dir = file.split('/').slice(0, -1).join('/');
+  return [...new Set([...text.matchAll(IMPORT)].map(m => norm(`${dir}/${m[1]}`)))];
+};
+const base = f => f.split('/').at(-1);
+const stemOf = f => /\.m?js$/.test(f) && !f.startsWith('tests/') ? base(f).replace(/\.m?js$/, '') : null;
+const fixtureOf = f => { const p = f.split('/'); return p[0] === 'tests' && p[1] === 'fixtures' && p.length > 3 ? `fixtures/${p[2]}` : null; };
+/** changed: repo-relative paths; tests: the suite's test files (repo-relative); read(f) -> text | null; max: the importers' cap (Infinity
+ *  = none). -> { run: the test files to run, sorted; left: the importers past the cap, sorted } */
+export function pickTests(changed, tests, read, max = Infinity) {
+  const ch = new Set(changed.map(fwd)), stems = [...ch].map(stemOf).filter(Boolean), fx = [...ch].map(fixtureOf).filter(Boolean);
+  const close = [], importers = [];
+  for (const t of tests.map(fwd)) {
+    const name = base(t);
+    if (ch.has(t) || stems.some(s => name === `${s}.test.mjs` || name.startsWith(`${s}-`))) { close.push(t); continue; }
+    const text = read(t);
+    if (text == null) continue;
+    if (fx.some(k => text.includes(k))) { close.push(t); continue; }
+    const n = importsOf(t, text).filter(f => ch.has(f)).length;
+    if (n) importers.push({ t, n });
+  }
+  importers.sort((a, b) => b.n - a.n || a.t.localeCompare(b.t));
+  const cut = importers.slice(0, max).map(x => x.t);
+  return { run: [...close, ...cut].sort(), left: importers.slice(max).map(x => x.t).sort() };
+}

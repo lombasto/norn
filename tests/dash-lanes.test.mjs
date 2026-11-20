@@ -90,7 +90,7 @@ test('lanesView: done - awaiting merge, awaiting PR approval; the run priority (
   const queue = (lane, extra = {}) => record(s, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane, ...extra } });
   run('mrg', {}, 'done'); queue('mrg', { stage: 'MERGE' });         // build DONE, its MERGE queued (no priority: P2)
   run('prd', {}, 'done'); run('prd', { stage: 'MERGE' }, 'done');   // merged by merge-land: a PR is open
-  queue('fast', { priority: 'P1' });                                // a queued build at P1: first in the fill order
+  queue('fast', { priority: 'P1' });                                // a queued build at P1: after the P2 MERGEs (MERGE-FIRST)
   run('live', { priority: 'P0' });                                  // running at P0
   run('red', {}, 'stopped'); queue('red', { stage: 'MERGE' });      // the build did not finish: its queued MERGE is plain queued
   const v = lanesView(loadState(s), { prs: { prd: { url: 'https://github.com/o/r/pull/7', number: 7 } } }), by = n => v.find(l => l.name === n);
@@ -101,7 +101,8 @@ test('lanesView: done - awaiting merge, awaiting PR approval; the run priority (
   assert.deepEqual(by('mrg').priority, { p: 'P2', dflt: true }, 'no priority: the default P2, marked as the default');
   assert.deepEqual(by('fast').priority, { p: 'P1', dflt: false }); assert.deepEqual(by('live').priority, { p: 'P0', dflt: false });
   assert.equal(by('prd').priority, null, 'an ended run has no priority to show');
-  assert.deepEqual([by('fast').position, by('mrg').position, by('red').position], [1, 2, 3], 'the fill order: P1 first, then FIFO');
+  // MERGE-FIRST (runs.mjs fillKey): a landing run outranks the runs of one priority level above, so the two P2 MERGEs go before the P1 build
+  assert.deepEqual([by('mrg').position, by('red').position, by('fast').position], [1, 2, 3], 'the fill order: landing first (FIFO), then the P1 build');
   assert.equal(by('live').position, null, 'a running run has no queue position');
   assert.equal(lanesView(loadState(s)).find(l => l.name === 'prd').land, null, 'no PR known: no awaiting PR approval');
 });

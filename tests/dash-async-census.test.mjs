@@ -33,7 +33,7 @@ const ROUTES = ['/', '/ui.mjs', '/norn/assets.json', '/api/projects', '/api/over
   '/api/map?project=kestrel', '/api/deliverables?project=kestrel', '/api/records?project=kestrel', '/api/roadmap?project=kestrel',
   '/api/usage', '/api/plan', '/api/docs?project=kestrel', '/api/instructions?project=kestrel', '/api/guard?project=kestrel',
   '/api/tests?project=kestrel', '/api/ledger?project=kestrel', '/api/settings?project=kestrel', '/api/sessions',
-  '/api/home?project=kestrel', '/api/adopt?project=kestrel', '/api/adopt/repos'];
+  '/api/home?project=kestrel', '/api/adopt?project=kestrel', '/api/adopt/repos', '/api/timing'];
 
 test('no warmed GET route makes a sync fs call', async () => {
   const f = await fixture();
@@ -92,8 +92,8 @@ test('no warmed POST write route makes a sync fs write or a sync child process',
     ['/api/directive', () => ({ project: 'kestrel', text: 'census directive' })],
     ['/api/directive/revoke', async () => ({ project: 'kestrel', id: (await f.post('/api/directive', { project: 'kestrel', text: 'to revoke' })).data.id })],
     ['/api/lane/archive', warm => ({ project: 'kestrel', lane: 'seabed', unarchive: !warm })],   // archive (warm), then unarchive
-    ['/api/pause', () => ({ project: 'kestrel', paused: true })],
-    ['/api/pause', () => ({ project: 'kestrel', paused: false })],
+    ['/api/pause', () => ({ project: 'kestrel', mode: 'queue' })],
+    ['/api/pause', () => ({ project: 'kestrel', resume: 'all' })],
     // HANDOFF R1 resume 3 step 1: Settings saves (machine budget, project policy + its marked lines, a caps-profile decision) and a roadmap add
     ['/api/settings', async warm => ({ project: 'kestrel', version: (await f.get('/api/settings?project=kestrel')).data.version, changes: { max_claude_workers: warm ? 3 : 2 } })],
     ['/api/settings', async warm => ({ project: 'kestrel', version: (await f.get('/api/settings?project=kestrel')).data.version, changes: { 'policy.context.implementer.handoff_k': warm ? 100 : 120 } })],

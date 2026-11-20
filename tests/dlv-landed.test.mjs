@@ -1,5 +1,5 @@
 // META-DLV-LANDED R1: a deliverable whose WORK is on main is merged everywhere it is derived (deliverablesView -> `norn deliverables`,
-// the merge queue -> Plan "Landing next", digest, dashboard), by the one rule of after.mjs workOnMain (ancestry / patch-id / squash /
+// the merge queue -> Plan "Landing next", digest, dashboard), by the one rule of dlvgit.mjs workOnMain (ancestry / patch-id / squash /
 // a branch that adds nothing to main). The live case (DLV-45, 11-13): merged as 7b3d67d, then the merge queue's update step merged main
 // into the branch (8a919e3), so the branch tip was no ancestor of main and the DLV read "ready to merge" for hours.
 // Synthetic repos in temp dirs only; no live state.

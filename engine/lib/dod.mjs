@@ -11,7 +11,7 @@ import { branchBase } from './slop/runend.mjs';
 import { runGate } from './mergeq.mjs';
 import { parseReady, inScope, clean } from './ready.mjs';
 
-// The paths CI's ci.yml ignores (push + pull_request paths-ignore; tests/dod.test.mjs pins the two lists equal): a change only here is docs.
+// The paths CI's ci.yml ignores (its push paths-ignore; tests/dod.test.mjs pins the lists equal): a change only here is docs.
 export const DOCS_ONLY = ['**/*.md', 'docs/**', '**/docs/**', '**/*.png', '**/*.html'];
 
 export const READY_MODES = ['off', 'warn', 'refuse'];

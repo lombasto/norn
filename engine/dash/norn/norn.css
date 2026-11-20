@@ -42,7 +42,7 @@
 :root.norn .md tr:nth-child(2n) td { background: var(--zebra); }
 :root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--line); }
 :root.norn button.primary { color: var(--on-accent); }
-:root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn .opt, :root.norn .tg { border-radius: 0; }
+:root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn span.rid, :root.norn .opt, :root.norn .okey, :root.norn .pba, :root.norn .ppath .pp, :root.norn .tg { border-radius: 0; }
 :root.norn #error { background: var(--bad-bg); color: var(--bad); }
 
 /* state tokens on chips: the token (16 art px at 1 device px each) + word + colour; the art map supplies --tk-<state> */
@@ -81,7 +81,7 @@
 :root.norn tr.old { opacity: 1; color: var(--dim); }
 :root.norn .chip.prio.dflt { opacity: 1; color: var(--dim); }
 :root.norn .wslots i.off { opacity: 1; background: var(--bg); }
-:root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now { border-radius: 0; }
+:root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now, :root.norn .fa-now { border-radius: 0; }
 
 /* the woven rule under section headings */
 :root.norn .card h2 { padding-bottom: calc(4 * var(--px)); background: var(--rule) repeat-x left bottom / calc(96 * var(--px)) calc(3 * var(--px)); }
@@ -309,3 +309,12 @@
 :root.norn.motion .pulse, :root.norn.motion .chat-live::before { animation: norn-blink 1.2s steps(1, end) infinite; }
 @keyframes norn-blink { 50% { visibility: hidden; } }
 :root.norn .lbl .ho { margin: 0 0 0 4px; padding: 0 4px; font-size: 11px; }
+/* RM-35: the diff viewer (diffview.mjs; index.html .dv / #dvpip) - the panel in the drawer's 9-slice chrome, its title in the pixel font,
+   square marks and rows; the inline box ruled on the pixel grid. Colours are the tokens above (palette-locked); a still panel, no motion */
+:root.norn .dvpip { border: calc(8 * var(--px)) solid transparent; border-radius: 0; border-image: var(--pn) 8 fill / calc(8 * var(--px)) repeat; box-shadow: none; }
+:root.norn .dvpip-bar { border-bottom: calc(2 * var(--px)) solid var(--line); }
+:root.norn .dvpip-ttl b { font-family: var(--pix); font-weight: 400; font-size: calc(8 * var(--px)); letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
+:root.norn .dvbox { border: calc(2 * var(--px)) solid var(--line); border-radius: 0; }
+:root.norn .dv-head { border-bottom: calc(1 * var(--px)) solid var(--line); }
+:root.norn mark.dv-w, :root.norn .dvpip-tools button { border-radius: 0; }
+:root.norn .dv-row.dv-cur { outline: calc(2 * var(--px)) solid var(--gold); }

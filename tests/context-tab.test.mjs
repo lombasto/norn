@@ -112,8 +112,9 @@ test('the loader: the summary alone for Per role / growing / check-ins; the file
 });
 
 test('the browser: tab=context opens Context; a sub-view tap is in the URL (Back returns); the phone has no sideways scroll', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture(), pg = await openPage([390, 844]);
+  const f = await fixture(); let pg;
   try {
+    pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=context`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'context' && !!document.querySelector('#context-subs')`, 90000), 'tab=context opens Context');
@@ -133,5 +134,5 @@ test('the browser: tab=context opens Context; a sub-view tap is in the URL (Back
     await pg.ev(`document.querySelector('[data-sub=checks]').click()`);
     assert.ok(await pg.until(`!!document.querySelector('#ins-ladder') && !!document.querySelector('#ins-findings-card')`, 60000), 'the checks stay reachable');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (checks)');
-  } finally { await pg.close(); await f.done(); }
+  } finally { await pg?.close(); await f.done(); }
 });

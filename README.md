@@ -164,6 +164,14 @@ test, which runs on all three systems.
   lists the executors.
 - **Check-ins.** A scheduled `norn tick` runs one short agent turn after each event and on a timer. It reviews finished runs,
   queues merges, starts the next steps and asks you what only you can decide.
+- **Landing comes first.** Finished work lands before new work starts. After each tick, `norn mergeq --run` takes a clean, pushed
+  deliverable, merges it with main in its own merge worktree, runs a quick check (the syntax of the changed files and their own
+  test files, one at a time; never the full suite, which runs in CI) and opens the lane branch's pull request. No agent runs for
+  this. Only a conflict, a red check or a slop block queues a MERGE run, and that run's brief describes the failure. A MERGE or
+  resolve run is queued at the priority of the work it lands, never below P1. It goes ahead of build and plan runs of its own priority and the next one up, and `policy.fill.merge_reserve` slots (default 1)
+  stay free for it while it waits. `norn requeue RUN-n --priority P0-P4` (or the priority control in Plan > Up next) changes a
+  queued run's priority and keeps its `--after` conditions. Lanes, Plan and Overview show `merge backlog: N, oldest Xh`. When the
+  backlog is above `policy.merge.backlog_max` (default 3), the check-in is told to land work before it starts new lanes.
 - **Records.** Questions, decisions, directives, lanes and runs are append-only events, written only through `norn rec`,
   `norn run` and the dashboard. The markdown views are generated from them.
 - **Executors.** A project's `project.json` defines them: `claude-compatible` (Claude Code against a compatible endpoint),

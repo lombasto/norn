@@ -134,7 +134,7 @@ test('digest: a CI-red row (run, sha, failing tests) while main is red; it leave
   assert.match(md, /CI red on main \(1\)/);
   assert.match(md, /CI-42667438887 example\/norn run 42667438887 e48344a01 failure created 2026-11-09T17:43:00Z/);
   assert.match(md, /tests\/queue-after\.test\.mjs :: CLI: norn run/);
-  assert.match(md, /fix task: queue a lane, never a re-run/);
+  assert.match(md, /fix task \(never a re-run\): fix it on lane ci-fix stage CI-42667438887 round 1 - META rec add lane --name ci-fix/, 'the ONE ci-fix lane (lifecycle.mjs ciFixPlan)');
   gh.runs = [run(42668000000, '', '2026-11-09T18:05:00Z'), ...gh.runs];
   assert.equal(digest(state, p, opt(11)).sections.ci.length, 1, 'still red while the next run is in progress');
   gh.runs[0] = run(42668000000, 'success', '2026-11-09T18:05:00Z');

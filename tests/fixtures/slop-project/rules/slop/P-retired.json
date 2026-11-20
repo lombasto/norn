@@ -1,0 +1,46 @@
+{
+  "id": "P-retired",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "key": "match",
+  "title": "a retired term written again",
+  "how": "the retired names (synthetic: oldtool is the name before newtool), keyed on the term tree-wide: new only when no file of the base tree has it, so editing a line that still carries an old term is no finding",
+  "explain": {
+    "what": "A retired term is written again.",
+    "why": "The term was renamed. Old names confuse readers and point to things that are gone.",
+    "fix": "Write the new term (newtool) instead of the old one."
+  },
+  "files": [
+    "engine/**",
+    "docs/**",
+    "README.md",
+    "SETUP.md"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ],
+  "patterns": [
+    "\\boldtool (?:start|stop)\\b",
+    "\\$\\{oldtool\\}"
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "docs/guide.md": "# Guide\n\nRun `newtool start`.\n"
+      },
+      "head": {
+        "docs/guide.md": "# Guide\n\nRun `newtool start`, then `oldtool stop`.\n",
+        "engine/lib/t.mjs": "export const t = '${oldtool}/x';\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "docs/guide.md": "# Guide\n\nThe old `oldtool start` is gone.\n"
+      },
+      "head": {
+        "docs/guide.md": "# Guide\n\nThe old `oldtool start` is gone; oldtools are not a term.\n",
+        "docs/b.md": "oldtool start was its name.\n"
+      }
+    }
+  }
+}

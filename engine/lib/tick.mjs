@@ -1,4 +1,4 @@
-// `norn tick` (META-GENERAL-DESIGN 9 checkin.ps1 row, 10.2, 12-S5): PAUSED -> tick lock -> one check-in at a time ->
+// `norn tick` (META-GENERAL-DESIGN 9 checkin.ps1 row, 10.2, 12-S5): the pause (RM-37 pausemode.mjs: Pause everything exits here) -> tick lock -> one check-in at a time ->
 // norn status -> CHECKIN rendering -> the check-in launched as RUN kind checkin through the S4 supervisor (`norn run` path).
 // Port of meta/checkin.ps1; the old synchronous claude -p becomes a supervised detached run (heartbeat, usage, transcript).
 import fs from 'node:fs';
@@ -6,25 +6,27 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startRun, liveRuns, stopOrphans, fillAll, fillWords, readiness, sweepLost, relaunchLost, lostNotice, STALE_MS } from './runs.mjs';
+import { startRun, liveRuns, stopOrphans, fillAll, fillWords, readiness, sweepLost, relaunchLost, lostNotice, STALE_MS, killTree, hbPath, touchedOf } from './runs.mjs';
 import { trackHold, holdNoticeDue, noticeMin } from './holds.mjs';
 import { writeStatus } from './status.mjs';
 import { tryDigest } from './digest.mjs';
 import { providersOf, executorInfo } from './executors.mjs';
 import { authRefusal, authNoticeDue, loginHolds } from './authguard.mjs';
 import { limitRefusal } from './limitgate.mjs';
-import { readEvents, recordsFile, fold, loadState } from './records.mjs';
+import { readEvents, recordsFile, fold, loadState, record, RecordError, homeOf, laneId } from './records.mjs';
 import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate, rateBand, idleProbe, STALL_IDLE_MIN } from './gate.mjs';
-import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './checkins.mjs';
+import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, metaCli, isMergeRun } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
-import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
+import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText, syncPolicy } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
 import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
-import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
+import { syncStep } from './sync.mjs';
+import { tickMergeq, mqProbe, spawnDetached, mergeqOn } from './mergeq.mjs';
+import { followerPrs, makeGh } from './mergeland.mjs';
 import { tickFix } from './fixer.mjs';
-import { closeLandedQuestions } from './deliverables.mjs';
+import { closeLandedQuestions, latchMerged } from './deliverables.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { tickTests } from './testscli.mjs';
 import { checkinCv } from './cv.mjs';
@@ -36,6 +38,12 @@ import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { tickDerelicts } from './derelict.mjs';
+import { tickLanes, lanesProbe } from './lifecycle.mjs';
+import { tickPaths } from './lanepaths.mjs';
+import { lateNotice, cleanMin } from './pause.mjs';
+import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
+import { fedOf } from './fed.mjs';
+import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync, claimLeader, leaderKey } from './claims.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');
@@ -112,7 +120,7 @@ export function gateProbes(p, machine = {}) {
   const m = p?.checkin?.stall_idle_min;
   return [watchProbe(p, machine), idleProbe({ minutes: Number.isInteger(m) ? m : STALL_IDLE_MIN, projectsDir: machine?.claude?.projects_dir }),
     p?.merge?.gate?.fast && p.state ? mqProbe(p.state) : null, p?.ci?.repo && p.state ? ciProbe(p) : null,
-    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null].filter(Boolean);   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
+    p?.state ? guardProbe(p.state) : null, p?.state ? stuckProbe(p.state) : null, lanesProbe(p?.policy, p?.state ? homeOf(p.state)?.id ?? null : null)].filter(Boolean);   // lifecycle.mjs: an idle / stopped lane = lanes:<rule>:L:x, MAJOR   // META-CATCH S1: an open stuck flag = stuck:RM-n, MAJOR   // META-GUARD R1: an open usage alarm wakes the check-in   // META-GTP-MERGEQ: a green batch / fix ask wakes the check-in
 }
 
 // NORN-WATCH S2: a project's checkin.max_quiet_min overrides the machine's checkin_max_quiet_min for that project (additive)
@@ -154,6 +162,9 @@ export function tick(o) {
       const h = holdNoticeDue(o.project.state, { min: noticeMin(o.project.policy), status, project: o.project.name });
       if (h) r = { ...r, hold_notice: h };
     } catch { /* a notice never fails the tick */ }
+    // RM-37: the one owner notice of a run asked to pause that has not reached a clean point within policy.pause.clean_min (never killed)
+    try { const n = lateNotice(o.project.state, { min: cleanMin(o.project.policy), project: o.project.name, ...(o.now ? { now: o.now().getTime() } : {}) }); if (n) r = { ...r, pause_notice: n }; }
+    catch { /* a notice never fails the tick */ }
     return r;
   }
   finally {
@@ -162,16 +173,114 @@ export function tick(o) {
       let note;
       try { note = ledgerStep(o.ledger, `tick ${o.project.name}${o.reason ? ' (' + o.reason + ')' : ''}`); } catch (e) { note = `ledger: failed: ${e.message}`; }
       if (note && /failed|refused/.test(note)) tickLog(o.project.state, note);
+      // RM-46 S1c (SPEC 4.1): then this home's shared logs onto home/<id> (sync off = null); only a trouble note reaches the tick log
+      const sn = syncStep(o.ledger, `tick ${o.project.name}`);
+      if (sn && /failed|refused|stopped|offline/.test(sn)) tickLog(o.project.state, sn);
     }
   }
 }
+// ---------- RM-46 S2b (multi-home SPEC 4.5): the tick's claims step, before the fill ----------
+// Only a synced project (home.json) with a ledger remote. One fetch (offline = the last fetched claims), then: release the own claims
+// of lanes done / archived; renew once the oldest confirmation is past renew_s; fence SECOND (a machine waking with network renews and
+// is not fenced): a live run whose claim is unconfirmed past fence_s is stopped and recorded lost. A renew that finds an own claim gone
+// or under another nonce = taken over: its run stops, the claim leaves the own list. Last the observer's clock (stale foreign claims).
+// Rows for the digest go to <state>/sync/claims-digest.json: events (drift, fenced, taken) for 72 h, stale claims as they are now.
+// S6a (SPEC 4.8): the merge leader rides the same pass - renewed in the same commit, fenced the same way (its live MERGE runs stop),
+// lost when the renew finds it taken over; a home whose project runs the merge queue claims it when free or stale (taken over at once).
+const EVENT_MS = 72 * 3600e3;
+function stopForClaim(state, run, why, kill) {
+  const hb = (() => { try { return JSON.parse(fs.readFileSync(hbPath(state, run.id), 'utf8')); } catch { return {}; } })();
+  try { record(state, { kind: 'run', ev: 'lost', id: run.id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
+  kill(hb.supervisor_pid); kill(hb.pid);
+  try { fs.unlinkSync(hbPath(state, run.id)); } catch { /* gone */ }
+  return true;
+}
+/** claimsPass(state, { ledger, policy, now, kill, mergeq }) -> null (not synced) | { renewed, fenced, taken, released, stale, offline?,
+ *  leader: { leader, holder, why, took?, fenced } } (mergeq: the project runs the merge queue, so it may claim the leader) */
+export function claimsPass(state, { ledger, policy, now = Date.now(), kill = killTree, mergeq = false } = {}) {
+  const home = homeOf(state)?.id, f = home ? fedOf(ledger) : null;
+  if (!f) return null;
+  const pol = syncPolicy(policy), items = loadState(state).items, out = { renewed: 0, fenced: [], taken: [], released: [], stale: [] };
+  const own = readSync(state, 'own'), events = (readSync(state, 'rows').events || []).filter(r => now - r.ms < EVENT_MS);
+  const event = (kind, id, why) => events.push({ kind, id, why, ms: now, at: new Date(now).toISOString() });
+  const runOf = lane => Object.values(items).find(i => i.kind === 'run' && i.state === 'running' && i.data.lane === lane && i.data.kind !== 'checkin' && i.data.role !== 'helper');
+  const project = path.basename(path.resolve(state)), lk = leaderKey(project), lead = { leader: false, holder: null, why: '', fenced: [] };
+  let led = readSync(state, 'leader').key === lk ? readSync(state, 'leader') : null;
+  const stopMerges = why => { for (const r of Object.values(items)) if (r.kind === 'run' && r.state === 'running' && isMergeRun(r.data) && stopForClaim(state, r, why, kill)) lead.fenced.push(r.id); };
+  let claims;
+  try { claims = listClaims(f); } catch { claims = localClaims(f); out.offline = true; }
+  for (const [k, c] of Object.entries(own)) {
+    if (!['done', 'archived'].includes(items[laneId(c.lane, state)]?.state) || runOf(c.lane)) continue;
+    let r = null;
+    try { r = releaseWork(f, c); } catch { /* offline: the next pass */ }
+    if (r?.ok || r?.gone) { delete own[k]; out.released.push(k); }
+  }
+  if ([...Object.values(own), ...(led ? [led] : [])].some(c => !(now - c.confirmed_ms < pol.renew_s * 1000))) {
+    const rn = renewWork(f, { ...Object.fromEntries(Object.entries(own).map(([k, c]) => { const r = runOf(c.lane); return [k, { nonce: c.nonce, run: r?.id, touched: r ? touchedOf(r.data.worktree) : undefined }]; })), ...(led ? { [lk]: { nonce: led.nonce } } : {}) }, { now });
+    if (rn.ok) {
+      if (led && rn.renewed[lk]) led = { ...led, n: rn.renewed[lk], confirmed_ms: now };
+      if (led && rn.gone.includes(lk)) {   // an old leader that comes back: its claim is gone, so its MERGE runs stop
+        const why = `merge leader taken over on ${new Date(now).toISOString()}`;
+        stopMerges(why);
+        event('taken', lk, `${led.home}/merge leader: ${why}${lead.fenced.length ? ` - ${lead.fenced.join(' ')} stopped` : ''}`);
+        led = null;
+      }
+      for (const [k, n] of Object.entries(rn.renewed)) if (k !== lk) { own[k] = { ...own[k], n, confirmed_ms: now }; out.renewed++; }
+      for (const d of rn.drift) event('drift', d.key, d.why);
+      for (const k of rn.gone.filter(x => x !== lk)) {
+        const c = own[k], r = runOf(c.lane), why = `claim taken over on ${new Date(now).toISOString()}`;
+        if (r) stopForClaim(state, r, why, kill);
+        event('taken', k, `${c.home}/${c.lane}: ${why}${r ? ` - ${r.id} stopped` : ''}; it claims again only through a normal dispatch`);
+        delete own[k]; out.taken.push(k);
+      }
+      try { claims = localClaims(f); } catch { /* keep the fetched */ }
+    }
+  }
+  for (const [k, c] of Object.entries(own)) {
+    const forS = Math.floor((now - c.confirmed_ms) / 1000), r = runOf(c.lane);
+    if (forS <= pol.fence_s || !r) continue;
+    const why = `fenced: claim not confirmed for ${forS} s`;
+    if (stopForClaim(state, r, why, kill)) { event('fenced', k, `${c.home}/${c.lane}: ${r.id} ${why}`); out.fenced.push(r.id); }
+  }
+  if (led && now - led.confirmed_ms > pol.fence_s * 1000) {
+    const forS = Math.floor((now - led.confirmed_ms) / 1000);
+    stopMerges(`fenced: merge leader claim not confirmed for ${forS} s`);
+    if (lead.fenced.length) event('fenced', lk, `${led.home}/merge leader: ${lead.fenced.join(' ')} fenced: claim not confirmed for ${forS} s`);
+    lead.why = `merge leader claim not confirmed for ${forS} s (fenced)`;
+  }
+  const seen = observeClaims(claims, readSync(state, 'seen'), { home, now });
+  if (!led && mergeq && !out.offline) {
+    const c = claimLeader(f, { project, home, seen, now, pol });
+    if (c.won) {
+      led = { key: lk, project, home, nonce: c.claim.nonce, n: c.n, confirmed_ms: now };
+      if (c.took) { lead.took = c.took; event('taken', lk, `${c.took}/merge leader was stale: taken over by ${home}`); }
+    } else lead.why = c.why;
+  }
+  if (led) writeSync(state, 'leader', led); else writeSync(state, 'leader', {});
+  if (led && !lead.why) Object.assign(lead, { leader: true, holder: home });
+  else if (!led) { const c = (() => { try { return localClaims(f)[lk]; } catch { return null; } })(); lead.holder = c?.home ?? null; lead.why ||= c ? `merge leader is ${c.home}` : 'no merge leader'; }
+  out.leader = lead;
+  const stale = Object.entries(seen).filter(([k]) => claims[k]?.kind === 'work' && isStale(seen[k], claims[k], now, pol)).map(([k]) => {
+    const c = claims[k];
+    return { kind: 'stale', id: k, why: `${c.home}/${c.lane} stale: n=${c.n} unchanged ${Math.floor((now - seen[k].first_seen_ms) / 60000)} min on this home's clock - the owner may take it over: norn claim take ${c.home}/${c.lane} --project ${c.project}` };
+  });
+  out.stale = stale.map(s => s.id);
+  // merged into the file as it is now: a dispatch may have claimed meanwhile (its entry stays; a later confirmation wins)
+  const left = [...out.released, ...out.taken];
+  updateSync(state, 'own', cur => Object.fromEntries(Object.entries({ ...cur, ...own }).filter(([k]) => !left.includes(k))
+    .map(([k]) => [k, cur[k] && own[k] && cur[k].nonce === own[k].nonce && cur[k].confirmed_ms > own[k].confirmed_ms ? cur[k] : (own[k] ?? cur[k])])));
+  writeSync(state, 'seen', seen); writeSync(state, 'rows', { events, stale });
+  return out;
+}
+
 // GAP-1 (holds.mjs): the hold episode of ALL queued work, from the dry fill walk after the fill (the PAUSED exit too); never fails the tick
 function holdStep(state, tag) { try { trackHold(state, readiness(state)); } catch (e) { tickLog(state, `${tag}: hold: ${e.message}`); } }
 function tickPass(o, g = {}) {
   const p = o.project, state = p.state, staleMs = o.staleMs ?? STALE_MS;
-  const paused = [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')];
+  const paused = pauseFiles(state);
   const tag = `tick ${p.name}${o.reason ? ' (' + o.reason + ')' : ''}`;
-  if (paused.some(f => fs.existsSync(f))) { notePaused(state); holdStep(state, tag); return { code: 0, msg: `${tag}: PAUSED - exit before status or check-in` }; }
+  // RM-37: Pause everything exits before the sweep, the status and the check-in; Pause check-ins runs all of it but the check-in (below)
+  { const pz = readPause(paused); if (stopsTick(pz)) { notePaused(state); holdStep(state, tag); return { code: 0, msg: `${tag}: PAUSED (${pz.label}) - exit before status or check-in` }; } }
   fs.mkdirSync(state, { recursive: true });
   const lockF = path.join(state, 'tick.lock');
   const held = takeLock(lockF, `pid ${process.pid} start ${new Date().toISOString()} reason ${o.reason || '-'}`);
@@ -190,10 +299,19 @@ function tickPass(o, g = {}) {
     if (o.derelicts !== false && (!o.dry || o.listProcs)) { try { for (const l of tickDerelicts(state, { list: o.listProcs, ...(o.killProc ? { kill: o.killProc } : {}), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: ${l}`); } catch (e) { tickLog(state, `${tag}: derelict sweep: ${e.message}`); } }
     // META-GUARD R1: the usage watch before the status - a new GRD alarm is in this tick's digest and wakes the check-in (gate probe); never fails the tick
     try { const w = guardWatch(state, p, { projectsDir: o.machine?.claude?.projects_dir }); g.raised = w.raised; g.push = guardPolicy(p.policy).push; } catch (e) { tickLog(state, `${tag}: guard: ${e.message}`); }
+    // RM-46 S2b: renew, fence, release, observe the work claims before the fill (which claims with the claims just fetched)
+    let leader = null;   // S6a: a synced home's merge leader state (null = not synced: the merge queue runs as on one home)
+    try {
+      const c = claimsPass(state, { ledger: o.ledger, policy: p.policy, mergeq: mergeqOn(p), ...(o.now ? { now: o.now().getTime() } : {}) });
+      if (c && (c.fenced.length || c.taken.length || c.released.length)) tickLog(state, `${tag}: claims: fenced ${c.fenced.join(' ') || '-'}; taken over ${c.taken.join(' ') || '-'}; released ${c.released.join(' ') || '-'}`);
+      if (c?.leader) { leader = c.leader; if (c.leader.took || c.leader.fenced.length) tickLog(state, `${tag}: merge leader: ${c.leader.took ? `took over from stale ${c.leader.took}` : ''}${c.leader.fenced.length ? ` MERGE ${c.leader.fenced.join(' ')} stopped` : ''}`); }
+    } catch (e) { tickLog(state, `${tag}: claims: ${e.message}`); leader = homeOf(state) ? { leader: false, why: `claims: ${e.message}` } : null; }
     for (const f of fillAll(state)) tickLog(state, `${tag}: ${fillWords(f, path.basename(state))}`);   // a due not_before or a freed slot (META-GT12)
     holdStep(state, tag);   // GAP-1: before the status, so this tick's digest carries the hold row
     // META-GTP-MERGEQ piece 5: the merge queue right after the fill - a detached `norn mergeq --run` (code only; a dry tick only with o.spawnMergeq)
-    if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq }); if (m) tickLog(state, `${tag}: ${m}`); }
+    if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq, leader }); if (m) tickLog(state, `${tag}: ${m}`); }
+    // RM-46 S6a: a home that is not the merge leader only opens PRs - its DONE pushed lane branches through openPrs (the slop door applies)
+    if (leader && !leader.leader && !o.dry && mergeqOn(p)) try { for (const x of followerPrs(p, state, { gh: o.gh })) tickLog(state, `${tag}: ${x.lane}: ${x.status === 'refused' ? `NOT OPENED ${x.branch}: ${x.why}` : `PR ${x.url} (${x.status})`}`); } catch (e) { tickLog(state, `${tag}: PRs: ${e.message}`); }
     // META-UX-BUILD S7: the fixer of an active Fix all directive starts by code - a detached `norn fix start DIR-n --queue` (a dry tick only with o.spawnFix)
     if (o.fix !== false && (!o.dry || o.spawnFix)) { try { for (const m of tickFix(p, state, { metaCmd: META_CMD, items: loadState(state).items, spawnFn: o.spawnFix ?? ((exe, args) => spawnDetached(exe, args, p.root)) })) tickLog(state, `${tag}: ${m}`); } catch (e) { tickLog(state, `${tag}: fix: ${e.message}`); } }
     // META-SLOP-A: the daily slop report on the same schedule - a detached `norn slop daily` once a day (a dry tick only with o.spawnSlop)
@@ -204,18 +322,27 @@ function tickPass(o, g = {}) {
     if (running) return { code: 0, msg: `${tag}: check-in ${running.id} running - exit` };
     const B = projectBudget(p, o.budget || {}), machine = o.machine || {}, cp = checkinPolicy(p.policy), nowMs = o.now ? o.now().getTime() : Date.now();
     // META-CHECKIN-DIET R1: routine ends (policy.checkin.routine) are handled here by code, each a launcher review record - no model
-    try { for (const x of handleRoutineEnds(state, p, { metaCmd: META_CMD, cli: o.cli, pushed: o.pushed })) tickLog(state, `${tag}: routine ${x.kind} ${x.id}: ${x.ok ? x.note : 'left for the check-in - ' + x.note}`); }
+    try { for (const x of handleRoutineEnds(state, p, { pushed: o.pushed })) tickLog(state, `${tag}: routine ${x.kind} ${x.id}: ${x.ok ? x.note : 'left for the check-in - ' + x.note}`); }
     catch (e) { tickLog(state, `${tag}: routine ends failed: ${e.message}`); }
     // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
     if (o.overlap !== false && !o.dry) projectOverlap(p);
+    // DLV-MERGED-TRUTH: each recorded PR asked on GitHub, every merge latched, the 'cannot tell' rulings asked / applied - before the
+    // stale questions and the digest read the deliverables (never fails the tick; the first tick after a deploy re-judges them all)
+    if (!o.dry) try { for (const c of latchMerged(state, { project: p, gh: o.gh || makeGh() })) tickLog(state, `${tag}: ${c.dlv} ${c.ev} - ${c.why}`); } catch (e) { tickLog(state, `${tag}: merge latch: ${e.message}`); }
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
+    // item 9 (MAIL-20, lanepaths.mjs tickPaths): finished work reaches a PR by code - unpushed commits pushed, the MERGE stage queued (P1)
+    if (!o.dry || o.lanes) try { for (const x of tickPaths(state, { project: p, dry: !!o.dry, cli: o.cli || metaCli(META_CMD), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: path to main ${x.id}: ${x.act} - ${x.note}`); } catch (e) { tickLog(state, `${tag}: path to main: ${e.message}`); }
+    // lane norn-lifecycle item 5 (lifecycle.mjs): no lane sits - the orphan / stopped-and-landed / done-merged-and-old lanes archived by code
+    // before the digest (which then lists the idle and stopped ones for the check-in); never fails the tick
+    if (!o.dry || o.lanes) try { for (const x of tickLanes(state, { project: p, ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, x.refused ? `${tag}: ${x.id} (${x.rule}) not archived: ${x.refused}` : `${tag}: archived ${x.id} (${x.rule}; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}) - ${x.why}`); } catch (e) { tickLog(state, `${tag}: lanes: ${e.message}`); }
     // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag
     try { const tr = Object.keys(loadRoadmap(state).items).length ? buildTree({ stateDir: state, project: p }) : null; const sw = stuckSweep(state, tr ? itemsOf(tr) : [], { project: p.name }); if (sw.notices.length) g.stuck = sw.notices; }
     catch (e) { tickLog(state, `${tag}: stuck sweep failed: ${e.message}`); }
     const start = new Date().toISOString();
     const s = writeStatus({ state, project: p.name, providers: providersOf(p), budget: B, projectsDir: machine.claude?.projects_dir, usageJson: machine.usage || {},
       cacheFile: path.join(state, 'usage-cache.json'), paused, staleMs, ci: p.ci, digest: tryDigest(state, p) });
+    { const pz = readPause(paused); if (stopsCheckins(pz)) { notePaused(state); tickLog(state, `${tag}: ${pz.label} - no check-in`); return { code: 0, msg: `${tag}: ${s.line}; PAUSED (${pz.label}) - no check-in` }; } }
     // META-CHECKIN-GATE: wake the LLM only on a material change since the last real check-in (or past checkin_max_quiet_min)
     const live = { band: Number.isFinite(s.weekly) ? Math.floor(s.weekly / 5) : null, rate_ok: s.rateOk, rate_band: rateBand(s.rate, B.usage_rate_cap_pct_per_h),
       quiet: fs.existsSync(quietFlag(p)) };
@@ -241,7 +368,7 @@ function tickPass(o, g = {}) {
     const minorModel = B.checkin_minor_model ?? MACHINE_DEFAULTS.checkin_minor_model, minor = gate.cls === 'minor' && !!minorModel;
     const ck = renderCheckin(p, { budgetFile: o.budgetFile, budget: B, statusFile: s.out, template: minor ? CHECKIN_MINOR_PROMPT : CHECKIN_PROMPT, wake: gate.why + stuckWake(state, gate.why),
       cv: checkinCv(p, { budget: B, projectsDir: machine.claude?.projects_dir }) });
-    if (paused.some(f => fs.existsSync(f))) { notePaused(state); return { code: 0, msg: `${tag}: PAUSED - exit` }; }
+    if (stopsCheckins(readPause(paused))) { notePaused(state); return { code: 0, msg: `${tag}: PAUSED - exit` }; }
     const cx = checkinExecutor({ B, machine, p, minor, dry: o.dry });   // H2 Setting + the H7 trial (piece 4)
     if (cx.error) return { code: 2, msg: `${tag}: ${cx.error}` };
     const { executor, model, effort } = cx;
@@ -268,5 +395,5 @@ function tickPass(o, g = {}) {
     const msg = `check-in ${r.run} ${executor} ${model} ${effort} supervisor pid ${r.pid} (gate: ${gate.cls ? gate.cls + ' ' : ''}${gate.why})`;
     tickLog(state, `${tag}: ${msg}`);
     return { code: 0, msg: `${tag}: ${s.line}; ${msg}` };
-  } finally { try { fs.unlinkSync(lockF); } catch { /* gone */ } }
+  } finally { try { fs.unlinkSync(lockF); } catch { /* already removed: nothing left to unlock, the next tick takes it */ } }
 }

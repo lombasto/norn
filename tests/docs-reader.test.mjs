@@ -113,8 +113,9 @@ test('GET /api/docs: the grouped list from the one scan (pending at first); ?par
 });
 
 test('the phone: the list, a tap opens the reader with Back (pushed), Back returns; an Instructions file link lands on the Docs reader', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture(), pg = await openPage([390, 844]);
+  const f = await fixture(); let pg;
   try {
+    pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     const shown = sel => `(() => { const e = document.querySelector('${sel}'); return !!e && e.getClientRects().length > 0; })()`;
     await pg.go(`${f.url}/?project=kestrel&tab=docs`);
@@ -138,5 +139,5 @@ test('the phone: the list, a tap opens the reader with Back (pushed), Back retur
     assert.ok(await pg.until(`document.body.dataset.ready === 'docs' && !!document.querySelector('.docsplit.picked #docs-head')`, 60000), 'a Context file link opens the Docs reader');
     assert.match(await pg.ev('location.search'), /tab=docs&doc=/);
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (list)');
-  } finally { await pg.close(); await f.done(); }
+  } finally { await pg?.close(); await f.done(); }
 });

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { fixture, budget0 } from './helpers/dash-fixture.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { record } from '../engine/lib/records.mjs';
+import { getProfile, profileBudget } from '../engine/lib/profiles.mjs';
 
 // Codex is installed (machine.codex.exe), Codex is open (max_codex 2) and codex-astra is retired (max_astra 0): the norn machine
 const RETIRED = { ...budget0, max_codex: 2, max_sol: 2, max_astra: 0 };
@@ -19,7 +20,7 @@ const heavy = (g, cost = 'balanced') => g.profiles.find(p => p.name === 'heavy')
 const getUi = f => async r => (await f.get(r)).data;
 
 test('a profile saved from Settings is recorded as the caps profile decision; the Overview caps row goes away', async () => {
-  const f = await fx();
+  const f = await fx({ ...RETIRED, ...profileBudget(getProfile('try-it')) });   // the starter caps norn setup writes: nobody chose them yet
   try {
     const before = (await f.get('/api/overview?project=kestrel')).data;
     assert.equal(before.setup.caps_chosen, false);
@@ -111,6 +112,12 @@ test('Review changes lists each change in plain words and flags a recorded rulin
     assert.ok(by.max_astra.flags.some(x => /retired/.test(x) && /codex-astra/.test(x)), JSON.stringify(by.max_astra.flags));
     assert.ok(by['policy.fallbacks.claude_over_guard'].flags.some(x => /retired/.test(x)));
     assert.deepEqual(by.max_claude_workers.flags, []);
+    // the check-in floor: a check-in model / effort below it is flagged (a warning, not a refusal); one at or above it is not
+    const ck = await f.post('/api/settings/review', { project: 'kestrel', version: g.version, changes: { checkin_model: 'claude-sonnet-5-5', checkin_effort: 'low' } });
+    assert.equal(ck.status, 200, JSON.stringify(ck.data));
+    for (const l of ck.data.lines) assert.ok(l.flags.some(x => /below the check-in floor \(claude-opus-5-5, effort medium\)/.test(x)), JSON.stringify(l));
+    const ok = await f.post('/api/settings/review', { project: 'kestrel', version: g.version, changes: { checkin_model: 'claude-opus-5-5', checkin_effort: 'high' } });
+    for (const l of ok.data.lines) assert.deepEqual(l.flags, [], JSON.stringify(l));
     assert.equal(fs.readFileSync(f.budgetFile, 'utf8'), JSON.stringify(RETIRED, null, 2) + '\n', 'review writes nothing');
   } finally { await f.done(); }
 });

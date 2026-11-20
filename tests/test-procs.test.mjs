@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { suiteEnv } from '../engine/lib/cisuite.mjs';
-import { procsNaming } from '../engine/lib/testprocs.mjs';
+import { procsNaming, leakText } from '../engine/lib/testprocs.mjs';
 import { killTree } from '../engine/lib/runs.mjs';
 import { listProcs } from '../engine/lib/strays.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -64,4 +64,20 @@ test('procsNaming matches a dir only at a path-segment boundary: parallel-2 does
   assert.deepEqual(procsNaming([String.raw`${base}\parallel-2`], procs).map(x => x.pid), [2, 3, 4]);
   assert.deepEqual(procsNaming([String.raw`${base}\parallel-25`], procs).map(x => x.pid), [1]);
   assert.deepEqual(procsNaming([`${base}/PARALLEL-2/`], procs).map(x => x.pid), [2, 3, 4]);
+});
+
+// CI-RED-7D65D2D (DEC-383): a LEAK RED named a bare pid (a jobguard hold whose supervisor was already gone) and the cause had to be
+// guessed. Each leftover now carries its parent pid, its creation time and whether that parent is still alive.
+test('leakText names each leftover with its parent pid, its creation time and whether the parent is alive', () => {
+  const at = Date.parse('2026-11-16T10:00:00.000Z');
+  const procs = [
+    { pid: 10, ppid: 3036, name: 'meta-jobguard-x.exe', created: at, cmd: 'jobguard hold 3036 meta-run-3036-1' },
+    { pid: 11, ppid: 20, name: 'node.exe', created: null, cmd: 'node fake.mjs' },
+    { pid: 20, ppid: 1, name: 'node.exe', created: at, cmd: 'node supervisor.mjs' },
+  ];
+  assert.equal(leakText([procs[0], procs[1]], procs),
+    'pid 10 (jobguard hold 3036 meta-run-3036-1) [parent 3036 gone, created 2026-11-16T10:00:00.000Z]; ' +
+    'pid 11 (node fake.mjs) [parent 20 alive, created ?]');
+  assert.equal(leakText([{ pid: 12, cmd: 'x' }], []), 'pid 12 (x) [parent ? gone, created ?]', 'no ppid known');
+  assert.deepEqual(Object.keys(procsNaming(['fake.mjs'], procs)[0]).sort(), ['cmd', 'created', 'name', 'pid', 'ppid']);
 });
