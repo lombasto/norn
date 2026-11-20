@@ -65,7 +65,7 @@ import { mergeConfig } from '../lib/mergecfg.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
-import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs } from '../lib/sync.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
@@ -2944,10 +2944,37 @@ function syncCutCmd(argv, env, out, err) {
   } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
 }
 
+// ---------- RM-46 S6b: norn sync join (multi-home SPEC 8 S6b; engine/lib/sync.mjs syncJoin calls the cut, register, publish + fetch stages) ----------
+const SYNC_JOIN_USAGE = 'norn sync join --home <id> --ledger <remote> [--doorbell-topic t] [--i-checked-private] [--machine F]    (this machine joins the synced projects of the ledger remote as home <id>, in order: check access, check the ledger repo is private (a public one is refused; when gh cannot say, --i-checked-private), register the home, write machine.json ledger { remote, home_id, doorbell.topic }, cut each local project the ledger names (the dry run shown, then applied; the projects must be paused), the first publish + fetch, then print the collaborator step for the ledger owner. A taken id is refused; a re-join is a no-op)';
+function syncJoinCmd(argv, env, out, err) {
+  const f = {}, rest = argv.slice(1);
+  const usage = msg => { err('error: ' + msg); err('usage: ' + SYNC_JOIN_USAGE); return 2; };
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--i-checked-private') { f.checked = true; continue; }
+    const k = { '--home': 'home', '--ledger': 'ledger', '--doorbell-topic': 'topic', '--machine': 'machine' }[rest[i]];
+    if (!k) return usage(`unexpected ${rest[i]}`);
+    if (rest[i + 1] === undefined) return usage(`${rest[i]} needs a value`);
+    f[k] = rest[++i];
+  }
+  if (!f.home || !f.ledger) return usage('sync join needs --home <id> and --ledger <remote>');
+  if (!HOME_RE.test(f.home)) return usage(`--home ${f.home}: want [a-z][a-z0-9]{0,7}`);
+  try {
+    const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
+    if (!fs.existsSync(mf)) { err(`error: no machine.json at ${fwd(mf)}: install Norn first (SETUP.md)`); return 1; }
+    const projects = [];
+    for (const p of loadMachine(mf, { meta: root }).projects || []) { try { projects.push(loadProject(p.config, { meta: root })); } catch (e) { err(`warning: project ${p.name} skipped: ${e.message}`); } }
+    const r = syncJoin({ home: f.home, remote: f.ledger, topic: f.topic || null, machineFile: mf, metaRoot: root, projects, iCheckedPrivate: !!f.checked });
+    for (const l of r.lines) out(l);
+    for (const w of r.refused) err('refused: ' + w);
+    return r.refused.length ? 1 : 0;
+  } catch (e) { if (e instanceof RunError || e instanceof ConfigError || e instanceof ClaimsError) { err('error: ' + e.message); return 2; } throw e; }
+}
+
 // ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE;
+const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE + '\n       ' + SYNC_JOIN_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
+  if (argv[0] === 'join') return syncJoinCmd(argv, env, out, err);
   const [sub, ...rest] = argv, f = {};
   for (let i = 0; i < rest.length; i++) {
     if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }
