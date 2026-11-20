@@ -33,8 +33,8 @@ it always has.
    norn sync cut --project demo --home a --bare
    ```
 
-3. Apply it: `norn sync cut --project demo --home a --bare --apply`. This registers `homes/a.json` and `projects/demo.json` on the
-   claims branch, renames the lane branches `norn/x` to `norn/a/x` (local and origin; a branch with an open PR keeps its name), rewrites
+3. Apply it: `norn sync cut --project demo --home a --bare --apply`. This registers home a and project demo on the
+   claims branch (one record file each in its homes and projects folders), renames the lane branches `norn/x` to `norn/a/x` (local and origin; a branch with an open PR keeps its name), rewrites
    the lanes `L:x` to `L:a/x`, and writes `<state>/home.json`, `machine.json` `ledger.home_id` and `<state>/ID-MAP.md` (old name to new
    name, for people reading old NOTES).
 4. Optional doorbell: add `"doorbell": { "topic": "example-topic-7f3a" }` to `machine.json` `ledger`. The topic is a secret: share it
@@ -57,7 +57,7 @@ it always has.
    |---|---|---|
    | 1. access | `git ls-remote` on the ledger | this machine cannot read it |
    | 2. private | `gh api repos/<owner>/<repo> --jq .private` | the repo is public; when gh cannot answer, pass `--i-checked-private` after checking by hand |
-   | 3. register | CAS-creates `homes/b.json` on the claims branch | the id is taken by another home |
+   | 3. register | CAS-creates home b's record on the claims branch | the id is taken by another home |
    | 4. machine.json | writes `ledger.remote`, `ledger.home_id` and `ledger.doorbell.topic` | `ledger.remote` already names another repo, or this machine is already another home |
    | 5. the cut | for each local project the ledger names (`projects/<p>.json`): the dry run is printed, then applied | a project is not paused, a run is live, a lane worktree is dirty |
    | 6. publish + fetch | pushes `home/b`, fetches `home/a` into `<state>/homes/a/` | the publish or the fetch fails |

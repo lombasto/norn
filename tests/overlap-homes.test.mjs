@@ -7,13 +7,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
-import { record } from '../engine/lib/records.mjs';
+import { record, loadState } from '../engine/lib/records.mjs';
 import { refreshOverlap, projectOverlap, readOverlap, overlapFile, overlapRows } from '../engine/lib/overlap.mjs';
 import { digest } from '../engine/lib/digest.mjs';
-import { loadState } from '../engine/lib/records.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_TERMINAL_PROMPT: '0' };
-const git = (cwd, ...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...a], { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (cwd, ...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...a], { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const fwd = p => p.split(path.sep).join('/');
 const BASE = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n') + '\n';
@@ -43,7 +42,7 @@ function fixture({ synced = true } = {}) {
 }
 const startLane = (state, wt, lane = 'feat') => record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane, worktree: fwd(wt) } }).id;
 const openDlv = (state, home) => record(state, { kind: 'deliverable', ev: 'create', by: 'launcher', data: { repo: fwd(home), branch: 'norn/a/held', lane: 'held', delivers: 'held work' } }).id;
-const counting = () => { const calls = []; const real = (a, b, cwd) => { const r = spawnSync('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', a, b], { cwd, encoding: 'utf8' }); return r.status === 0 ? { conflict: false, files: [] } : r.status === 1 ? { conflict: true, files: r.stdout.trim().split('\n').slice(1) } : null; };
+const counting = () => { const calls = []; const real = (a, b, cwd) => { const r = spawnSync('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', a, b], { cwd, encoding: 'utf8', windowsHide: true }); return r.status === 0 ? { conflict: false, files: [] } : r.status === 1 ? { conflict: true, files: r.stdout.trim().split('\n').slice(1) } : null; };
   return { calls, mergeTree: (a, b, cwd) => { calls.push(`${a} ${b}`); return real(a, b, cwd); } }; };
 
 test('cross-home conflict: a file-sharing pair with another home\'s branch that merge-tree says conflicts is one row; a clean merge, a non-home branch and the own home are not', () => {
