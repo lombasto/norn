@@ -7,7 +7,6 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { installPlan, tomlBlock, upsertToml, applyPlan } from '../engine/lib/harness.mjs';
-import { oldServerProblems } from '../engine/lib/harness/oldnames.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -94,36 +93,16 @@ test('setup profile: machine-scoped server args, server name norn-setup, claude 
   assert.throws(() => installPlan({ ...s, family: 'claude', project: 'C:/p/kestrel.json' }), /machine-scoped/);
 });
 
-// META-NAME-W2: a server registered under the pre-rename name (meta / meta-setup) is a STORED old name: install moves it in one step
-// (the new name in, the old one out), doctor names it with that command; a foreign "meta" server (not a Norn engine) is never touched
-test('NAME-W2: harness install removes the old-named Norn server it replaces; doctor names a left-over one with the command that moves it', () => {
-  const d = tmp(), home = path.join(d, 'home'), cj = path.join(home, '.claude.json'), toml = path.join(home, '.codex', 'config.toml'), oc = path.join(home, '.config', 'opencode', 'opencode.json');
-  const PJ = 'C:/p/kestrel.json', args = ['C:/inst/engine/bin/meta.mjs', 'mcp', '--project', PJ, '--profile', 'checkin', '--client', 'claude'];
+// RM-9 (Q-39): install registers the norn server only; every other server in the config (whatever its name) is kept as it is
+test('harness install adds the norn server and touches no other server', () => {
+  const d = tmp(), home = path.join(d, 'home'), toml = path.join(home, '.codex', 'config.toml'), oc = path.join(home, '.config', 'opencode', 'opencode.json');
   fs.mkdirSync(path.dirname(toml), { recursive: true }); fs.mkdirSync(path.dirname(oc), { recursive: true });
-  fs.writeFileSync(cj, JSON.stringify({ mcpServers: { 'meta-setup': { command: 'node', args: ['C:/inst/engine/bin/norn.mjs', 'mcp', '--profile', 'setup', '--client', 'claude'] }, other: { command: 'x', args: [] } },
-    projects: { 'C:/code/kestrel': { mcpServers: { meta: { command: 'node', args } } }, 'C:/code/else': { mcpServers: { meta: { command: 'python', args: ['meta_server.py'] } } } } }));
-  fs.writeFileSync(toml, `model = "gpt"\n\n[mcp_servers.meta]\ncommand = "node"\nargs = ${JSON.stringify(['C:/inst/engine/bin/norn.mjs', 'mcp', '--state', 'C:/s', '--profile', 'worker', '--client', 'codex'])}\n`);
-  fs.writeFileSync(oc, JSON.stringify({ mcp: { meta: { type: 'local', command: ['node', 'C:/inst/engine/bin/norn.mjs', 'mcp', '--state', 'C:/s', '--profile', 'worker', '--client', 'opencode'] } } }));
-  const probs = oldServerProblems({ home, env: {} });
-  assert.deepEqual(probs, [
-    "MCP server 'meta' (claude, local scope) is Norn's old name - run in C:/code/kestrel: norn harness install --family claude --project C:/p/kestrel.json --profile checkin --scope local",
-    "MCP server 'meta' (codex) is Norn's old name - run: norn harness install --family codex --state C:/s --profile worker",
-    "MCP server 'meta' (opencode) is Norn's old name - run: norn harness install --family opencode --state C:/s --profile worker",
-    "MCP server 'meta-setup' (claude, user scope) is Norn's old name - run: norn harness install --family claude --profile setup --scope user",
-  ], 'a foreign "meta" (python) is not ours');
-  const o = { node: 'C:/node/node.exe', meta: 'C:/inst/engine/bin/norn.mjs', claudeJson: cj };
-  // claude: add norn + remove the old name in the same scope; in another project dir the local entry is not this install's to touch
-  assert.deepEqual(installPlan({ ...o, family: 'claude', project: PJ, profile: 'checkin', cwd: 'c:/code/kestrel/' }).commands.map(c => c.slice(0, 6)),
-    [['claude', 'mcp', 'add', '--scope', 'local', 'norn'], ['claude', 'mcp', 'remove', '--scope', 'local', 'meta']]);
-  assert.equal(installPlan({ ...o, family: 'claude', project: PJ, profile: 'checkin', cwd: 'C:/code/else' }).commands.length, 1);
-  assert.deepEqual(installPlan({ ...o, family: 'claude', profile: 'setup', cwd: 'C:/x' }).commands[1], ['claude', 'mcp', 'remove', '--scope', 'user', 'meta-setup']);
-  assert.equal(installPlan({ ...o, family: 'claude', project: PJ, profile: 'checkin' }).commands.length, 1, 'no claude.json given: nothing read, nothing removed');
-  // codex / opencode: the old table / entry replaced by the new one, the rest kept
+  fs.writeFileSync(toml, `model = "gpt"\n\n[mcp_servers.meta]\ncommand = "node"\nargs = ["x.mjs"]\n`);
+  fs.writeFileSync(oc, JSON.stringify({ mcp: { meta: { type: 'local', command: ['node', 'x.mjs'] } } }));
+  const o = { node: 'C:/node/node.exe', meta: 'C:/inst/engine/bin/norn.mjs' };
+  assert.deepEqual(installPlan({ ...o, family: 'claude', state: 'C:/s', profile: 'worker', cwd: 'C:/x' }).commands.map(c => c.slice(0, 6)), [['claude', 'mcp', 'add', '--scope', 'local', 'norn']]);
   const t = installPlan({ ...o, family: 'codex', state: 'C:/s', profile: 'worker', codexConfig: toml }).files[0].content;
-  assert.match(t, /^model = "gpt"\n\n\[mcp_servers\.norn\]\n/); assert.doesNotMatch(t, /mcp_servers\.meta/);
+  assert.match(t, /^model = "gpt"\n\n\[mcp_servers\.meta\]\n/); assert.match(t, /\[mcp_servers\.norn\]\n/);
   const j = JSON.parse(installPlan({ ...o, family: 'opencode', state: 'C:/s', profile: 'worker', opencodeConfig: oc }).files[0].content);
-  assert.deepEqual(Object.keys(j.mcp), ['norn']);
-  // after the move: nothing left to name
-  fs.writeFileSync(toml, t); fs.writeFileSync(oc, JSON.stringify(j)); fs.writeFileSync(cj, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
-  assert.deepEqual(oldServerProblems({ home, env: {} }), []);
+  assert.deepEqual(Object.keys(j.mcp).sort(), ['meta', 'norn']);
 });

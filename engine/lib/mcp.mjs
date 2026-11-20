@@ -409,7 +409,7 @@ function machineOf(ctx) {
   if (!fs.existsSync(file)) return null;
   const m = loadMachine(file, { meta, home: ctx.env.USERPROFILE || ctx.env.HOME || undefined });
   return { file, projects: m.projects.map(pr => {
-    const config = expandVars(pr.config, { norn: meta, meta, home: m.home });   // ${meta} = the old name (META-NAME-W3)
+    const config = expandVars(pr.config, { norn: meta, home: m.home });
     try { return { name: pr.name, config, p: loadProject(config, { home: m.home, meta }), error: null }; } catch (e) { return { name: pr.name, config, p: null, error: e.message }; }
   }) };
 }

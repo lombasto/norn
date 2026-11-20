@@ -138,7 +138,7 @@ export function renderBatchBrief(p, b) {
       : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} (the batch tip) into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${batch}" --file <shot>\` per shot), write NOTES and end \`norn done --outcome stopped --why "shots sent before the merge"\` - do NOT do steps 3-5.`;
   const v = {
     batch, count: String(b.members.length), project: p.name, main: p.deliverables?.main || 'main', main_checkout: mainCo, meta_root: metaRoot,
-    norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`,   // meta = the old name (META-NAME-W3)
+    norn: `node "${metaRoot}/engine/bin/norn.mjs"`,
     suite: full ? `The gate \`${b.gate}\` ran GREEN${b.retried ? ' on its one retry (the first run was red: a flaky gate; recorded)' : ''} on`
       : 'No gate ran (project policy merge.suite = skip: every branch below merged clean, so no test file ran; "gated" below = built) on',
     suite_ran: full ? 'gate' : 'gate skipped (policy merge.suite = skip)',

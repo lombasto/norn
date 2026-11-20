@@ -1,4 +1,4 @@
-// H1 `norn harness install`: register the meta MCP server with one harness family. Names and paths only, never keys
+// H1 `norn harness install`: register the norn MCP server with one harness family. Names and paths only, never keys
 // (the server reads no secrets; META-EXEC-S1 rule). claude is registered through its own `mcp add` CLI, a configured cli executor
 // through the `mcp_add` template of its project.json entry (META-AGNOSTIC-EXEC: --family <cli name>);
 // codex (config.toml) and opencode (opencode.json) are config files this module edits in place, keeping everything else.
@@ -9,8 +9,10 @@ import { PROFILES } from './mcp.mjs';
 import { which, resolveShim } from './paths.mjs';
 import { isCli } from './executors.mjs';
 import { mcpAddCommand } from './harness/cli.mjs';
-import { normDir } from './sched/index.mjs';
-import { SERVER_NAME, SETUP_NAME, OLD_SERVER, runsNorn, oldRegistrations } from './harness/oldnames.mjs';
+
+const SERVER_NAME = 'norn';
+// META-ADOPT A4: the machine-scoped setup server sits beside a project's "norn" server, under its own name
+const SETUP_NAME = 'norn-setup';
 
 export const FAMILIES = ['claude', 'codex', 'opencode'];
 const NO_MCP = { pi: 'pi has no MCP (by design): use the CLI door (norn ...)' };
@@ -45,23 +47,20 @@ export function installPlan(o) {
   const setup = o.profile === 'setup', name = setup ? SETUP_NAME : SERVER_NAME;
   if (setup && (o.project || o.state)) throw new Error('profile setup is machine-scoped: no --project / --state');
   if (!setup && !o.project && !o.state) throw new Error('--project <project.json> or --state <dir> is required');
-  const [command, ...args] = serverArgs(o), old = OLD_SERVER[name];
+  const [command, ...args] = serverArgs(o);
   if (o.family === 'claude') {
     const scope = o.scope || (setup ? 'user' : 'local');
-    const gone = oldRegistrations({ claudeJson: o.claudeJson, cwd: o.cwd }).filter(r => r.name === old && r.scope === scope && (scope === 'user' || normDir(r.dir) === normDir(o.cwd)));
-    return { family: o.family, name, commands: [['claude', 'mcp', 'add', '--scope', scope, name, '--', command, ...args], ...(gone.length ? [['claude', 'mcp', 'remove', '--scope', scope, old]] : [])], files: [] };
+    return { family: o.family, name, commands: [['claude', 'mcp', 'add', '--scope', scope, name, '--', command, ...args]], files: [] };
   }
   if (cli) return { family: o.family, name, commands: [mcpAddCommand(cli, { name, scope: o.scope, command, args })], files: [] };
   if (o.family === 'codex') {
     const file = o.codexConfig || path.join(o.home, '.codex', 'config.toml');
     const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-    const mid = oldRegistrations({ codexConfig: file }).some(r => r.name === old) ? upsertToml(before, old, '') : before;
-    return { family: o.family, name, commands: [], files: [{ path: file, content: upsertToml(mid, name, tomlBlock(name, { command, args })) }] };
+    return { family: o.family, name, commands: [], files: [{ path: file, content: upsertToml(before, name, tomlBlock(name, { command, args })) }] };
   }
   const file = o.opencodeConfig || path.join(o.home, '.config', 'opencode', 'opencode.json');
   const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')) : { $schema: 'https://opencode.ai/config.json' };
   cfg.mcp = { ...(cfg.mcp || {}), [name]: { type: 'local', command: [command, ...args], enabled: true } };
-  if (runsNorn(cfg.mcp[old]?.command)) delete cfg.mcp[old];
   return { family: o.family, name, commands: [], files: [{ path: file, content: JSON.stringify(cfg, null, 2) + '\n' }] };
 }
 

@@ -1,4 +1,4 @@
-// cron fallback (D13, Linux without a systemd user manager): one crontab line tagged "# norn:<name>" (a pre-rename line: "# meta:<name>"); foreign lines are kept.
+// cron fallback (D13, Linux without a systemd user manager): one crontab line tagged "# norn:<name>"; foreign lines are kept.
 import { tickArgv, realIo, ownerOf } from './common.mjs';
 
 const sh = s => (/^[\w@%+=:,./-]+$/.test(s) ? String(s) : "'" + String(s).split("'").join("'\\''") + "'");
@@ -7,7 +7,7 @@ export function line(o) {
   if (!when) throw new Error(`cron cannot express every ${n} min (use < 60 or whole hours)`);
   return `${when} cd ${sh(o.meta)} && ${tickArgv(o).map(sh).join(' ')} >/dev/null 2>&1 # norn:${o.name}`;
 }
-const ours = (l, n) => { const t = l.trimEnd(); return t.endsWith(` # norn:${n}`) || t.endsWith(` # meta:${n}`); };
+const ours = (l, n) => { const t = l.trimEnd(); return t.endsWith(` # norn:${n}`); };
 export function plan(o) {
   return { files: [{ path: 'crontab', content: line(o) + '\n' }], install: [['crontab', '-l'], ['crontab', '-']], remove: [['crontab', '-l'], ['crontab', '-']] };
 }
