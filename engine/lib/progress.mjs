@@ -164,15 +164,26 @@ function nowDoing(work, now) {
 // ---------- pace ----------
 const endOf = r => (r.history || []).find(h => h.ev === 'end')?.ts ?? (r.state === 'running' || r.state === 'queued' ? null : r.updated);
 const isLanding = d => /^(merge\d*|resolve)$/i.test(String(d?.stage ?? '')) || d?.kind === 'merge';
+// the run index of one records fold, built once (NORN-UI-PERF: the per-run scans of every run were O(tree x done x runs), 75 % of a
+// big project's /api/agents). Keyed on the runs object itself: a records change folds a NEW object, so an index never outlives its fold.
+const IDX = new WeakMap();
+function indexOf(runs) {
+  let x = IDX.get(runs); if (x) return x;
+  const all = Object.values(runs).filter(r => r.kind === 'run').map(r => [num(r.id), r]).sort((a, b) => a[0] - b[0]);
+  const lanes = new Map(), stages = new Map(), at = (m, k, mk) => m.get(k) ?? (m.set(k, mk()), m.get(k));
+  for (const [n, r] of all) if (r.data?.lane && r.data.role !== 'helper') { at(lanes, r.data.lane, () => []).push(r); at(at(stages, r.data.lane, () => new Map()), r.data.stage, () => []).push([n, r]); }
+  const done = all.map(([, r]) => r).filter(r => r.state === 'exited' && r.end?.outcome === 'done' && !isLanding(r.data) && r.data?.role !== 'helper');
+  IDX.set(runs, x = { lanes, stages, done, whole: new Map() });
+  return x;
+}
 /** the sessions of this run's lane + stage up to it (a hand-off resumes the same stage in a new run), oldest first */
-export const sessionsOf = (run, runs) => Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane && r.data.lane === run.data?.lane
-  && r.data.stage === run.data?.stage && r.data.role !== 'helper' && num(r.id) <= num(run.id)).sort((a, b) => num(a.id) - num(b.id));
+export const sessionsOf = (run, runs) => { if (!run.data?.lane) return []; const n = num(run.id);
+  return (indexOf(runs).stages.get(run.data.lane)?.get(run.data.stage) ?? []).filter(([k]) => k <= n).map(([, r]) => r); };
 /** the median minutes of finished work like it: the lane's own ended stages (2 at least), else the same agent's done runs */
 function estimate(run, runs) {
-  const done = Object.values(runs).filter(r => r.kind === 'run' && r.state === 'exited' && r.end?.outcome === 'done' && !isLanding(r.data) && r.data?.role !== 'helper'
-    && r.data?.kind === run.data?.kind && r.id !== run.id);
-  // a stage's whole time = its sessions (the hand-offs before the done run)
-  const whole = r => sessionsOf(r, runs).reduce((s, x) => s + (Date.parse(endOf(x) ?? '') - Date.parse(x.created) || 0), 0) / 60000;
+  const ix = indexOf(runs), done = ix.done.filter(r => r.data?.kind === run.data?.kind && r.id !== run.id);
+  // a stage's whole time = its sessions (the hand-offs before the done run); one sum per run and fold
+  const whole = r => ix.whole.get(r.id) ?? ix.whole.set(r.id, sessionsOf(r, runs).reduce((s, x) => s + (Date.parse(endOf(x) ?? '') - Date.parse(x.created) || 0), 0) / 60000).get(r.id);
   const lane = done.filter(r => r.data?.lane === run.data?.lane), similar = done.filter(r => (r.data?.agent ?? null) === (run.data?.agent ?? null));
   const pick = lane.length >= 2 ? ['the lane\'s own stages', lane] : similar.length >= 2 ? [`similar runs (${run.data?.agent ?? 'no agent'})`, similar] : null;
   if (!pick) return null;
@@ -271,16 +282,30 @@ export function runProgress(run, { runs = {}, brief = null, notes = null, mails 
   return { run: run.id, line, items, done, total: items.length, now: doing ? { verb: doing.verb, item: which?.n ?? null } : null, pace, slow, alarms, done_when: plan.done };
 }
 
-/** the folds of a stage's sessions (oldest first) as one: a commit of session 1 still counts in session 2; the open calls are the last's */
-export const mergeWork = ws => ws.filter(Boolean).reduce((a, w) => ({ open: w.open, calls: [...a.calls, ...w.calls], commits: [...a.commits, ...w.commits.filter(c => !a.commits.some(x => x.sha === c.sha))],
-  seen: new Set([...a.seen, ...w.seen]), first: a.first ?? w.first, last: w.last ?? a.last }), workInit());
+/** the folds of a stage's sessions (oldest first) as one: a commit of session 1 still counts in session 2; the open calls are the last's.
+ *  Linear (NORN-UI-PERF: the pairwise sha check and the re-spread arrays were 22 % of a warm big-project GET); a single fold is
+ *  returned as a shallow copy, its seen set shared (read-only here: only onWork adds to a fold's own set) */
+export function mergeWork(ws) {
+  const xs = ws.filter(Boolean);
+  if (xs.length === 1) return { ...xs[0], calls: [...xs[0].calls], commits: [...xs[0].commits] };
+  const out = workInit(), shas = new Set();
+  for (const w of xs) {
+    const add = [];   // a commit dedupes against the earlier sessions only, as the stage's history reads
+    for (const c of w.commits) if (!shas.has(c.sha)) { out.commits.push(c); add.push(c.sha); }
+    for (const x of add) shas.add(x);
+    for (const c of w.calls) out.calls.push(c);
+    for (const k of w.seen) out.seen.add(k);
+    out.open = w.open; out.first ??= w.first; out.last = w.last ?? out.last;
+  }
+  return out;
+}
 
 /**
  * laneSteps(name, items, now) -> { last: "S1 done 2 h ago (RUN-148)" | null, next: "MERGE queued" | null }: the newest finished stage of
  * the lane and the run queued on it (a queued MERGE reads "merge queued"); the PR state is laneOutput's (purpose.mjs)
  */
 export function laneSteps(name, items = {}, now = Date.now()) {
-  const runs = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane === name && r.data.role !== 'helper').sort((a, b) => num(b.id) - num(a.id));
+  const runs = [...(indexOf(items).lanes.get(name) ?? [])].sort((a, b) => num(b.id) - num(a.id));
   const fin = runs.find(r => r.state === 'exited' && r.end?.outcome === 'done'), q = runs.filter(r => r.state === 'queued').at(-1);
   const ago = r => { const t = Date.parse(endOf(r) ?? ''); return Number.isFinite(t) ? ` ${fmtMin(mins(now - t))} ago` : ''; };
   return { last: fin ? `${fin.data.stage ?? 'a run'} done${ago(fin)} (${fin.id})` : null,
