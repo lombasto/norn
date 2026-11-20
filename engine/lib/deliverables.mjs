@@ -136,7 +136,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
     return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
       delivers: d.delivers ?? g.subject ?? '', subject: g.subject ?? null, tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
-      native: g.native, native_files: g.native_files, pr, prs: prsOf(it, state !== 'done', prCache), park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}),
+      native: g.native, native_files: g.native_files, pr, prs: prsOf(it, state === 'merged' || state === 'installed', prCache), park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}),
       merged_how: m?.how ?? null, merge_commit: m?.merge_commit ?? null, merged_at: m?.merged_at ?? null, merge_pr: m?.pr ?? null, merge_latched: !!m?.latched,
       unknown_why: j.unknown, ruling: rulingOf(it.id) };
     };
