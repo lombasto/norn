@@ -14,7 +14,7 @@ const wrap = (slow, ms) => `(() => { window.__req = []; const of = window.__of ?
 const tap = id => `(() => { document.body.dataset.ready = ''; document.querySelector('#tab-${id}').click(); return true; })()`;
 
 // the server's own timing log: Server-Timing on every answer; a slow request and a loop stall (with the requests in its window) in
-// GET /api/timing and <norn>/local/dash-timing.jsonl
+// GET /api/timing and <norn>/local/dash-timing-<port>.jsonl (A-21: one file per port, so a second dashboard never mixes into the live one's)
 test('timing log: Server-Timing on every answer, slow requests and loop stalls in /api/timing and the jsonl', async () => {
   const f = await fixture({ dash: { slowMs: 0, stallMs: 200 } });
   try {
@@ -31,31 +31,32 @@ test('timing log: Server-Timing on every answer, slow requests and loop stalls i
     assert.ok(st, JSON.stringify(d.stalls));
     assert.ok(st.requests.includes('GET /api/records?project=kestrel'), JSON.stringify(st));
     assert.deepEqual([d.file_lost, d.file_error], [0, null], 'every entry reached the jsonl');
+    const file = path.join(f.root, 'local', `dash-timing-${new URL(f.url).port}.jsonl`);
+    assert.equal(path.resolve(d.file), path.resolve(file));
     await f.app.close();
-    const lines = fs.readFileSync(path.join(f.root, 'local', 'dash-timing.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l));
     assert.ok(lines.some(l => l.kind === 'slow') && lines.some(l => l.kind === 'stalls' && l.ms >= 400), JSON.stringify(lines));
   } finally { await f.done(); }
 });
 
-// The count is of ONE render's requests: a stream event (a `derived` when an async cache the earlier tabs kicked lands late on a
-// loaded runner) re-renders 120 ms after it, a second legitimate /api/overview inside the window (CI 44675202239). The stream polls
-// once an hour here, so after its hello only the taps render.
-test('the browser: a tab render fetches the header and the tab at once, and /api/overview once', { skip: skipWhy, timeout: 180000 }, async () => {
-  const f = await fixture({ dash: { streamPollMs: 3600000 } }), pg = await openPage();
+test('the browser: a tab render fetches the header (/api/strip) and the tab at once; the header never asks for /api/overview', { skip: skipWhy, timeout: 180000 }, async () => {
+  const f = await fixture(), pg = await openPage();
   try {
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes'`, 90000), 'Lanes painted');
-    // the header's /api/overview is held 800 ms: the Inbox's own request must not wait behind it
-    await pg.ev(wrap('/api/overview\\?', 800)); await pg.ev(tap('inbox'));
+    // the header's /api/strip is held 800 ms: the Inbox's own request must not wait behind it
+    await pg.ev(wrap('/api/strip\\?', 800)); await pg.ev(tap('inbox'));
     assert.ok(await pg.until(`document.body.dataset.ready === 'inbox'`, 30000), 'Inbox painted');
-    const r = await pg.ev('window.__req'), ov = r.find(x => x.u.startsWith('/api/overview?')), ib = r.find(x => x.u.startsWith('/api/inbox?'));
+    const r = await pg.ev('window.__req'), ov = r.find(x => x.u.startsWith('/api/strip?')), ib = r.find(x => x.u.startsWith('/api/inbox?'));
     assert.ok(ov && ib, JSON.stringify(r));
     assert.ok(ib.t0 - ov.t0 < 400, `the Inbox request went out ${Math.round(ib.t0 - ov.t0)} ms after the header's: a waterfall`);
-    // the Overview tab reads /api/overview too: one request serves the header and the tab
-    await pg.ev(wrap('^$', 0)); await pg.ev(tap('overview'));
-    assert.ok(await pg.until(`document.body.dataset.ready === 'overview'`, 30000), 'Overview painted');
-    const o = (await pg.ev('window.__req')).filter(x => x.u.startsWith('/api/overview?'));
-    assert.equal(o.length, 1, JSON.stringify(o));
+    // a page change's render asks for the strip once (a state-stream event may refresh it later) and never for the run tree's
+    // /api/overview (the strip reads the run records)
+    await pg.ev(wrap('^$', 0)); await pg.ev(tap('talk'));
+    assert.ok(await pg.until(`document.body.dataset.ready === 'talk'`, 30000), 'Talk painted');
+    const o = await pg.ev('window.__req'), st = o.filter(x => x.u.startsWith('/api/strip?'));
+    assert.ok(st.length >= 1, JSON.stringify(o)); assert.equal(st.filter(x => x.t0 - st[0].t0 < 50).length, 1, `one strip request per render: ${JSON.stringify(o)}`);
+    assert.ok(!o.some(x => x.u.startsWith('/api/overview')), JSON.stringify(o));
   } finally { await pg.close(); await f.done(); }
 });
 

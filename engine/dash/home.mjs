@@ -1,6 +1,6 @@
-// META-CONTROLLER C2 (SPEC sec. 8 + 10, owner Q-25 = Look 3 "Thread home"): the Home tab is the thread - your messages, the
+// META-CONTROLLER C2 (SPEC sec. 8 + 10, owner Q-25 = Look 3 "Thread home"): the Talk page (was Home) is the thread - your messages, the
 // controller's, check-in events, runs, merges, needs-you cards and shots in ONE time-ordered list with filters; the side columns
-// (now / held / usage / next check-in | waiting / ruled today / standing orders) on a desktop, the bottom bar on a phone.
+// (now / held / usage / next check-in | waiting / ruled today / standing orders) on a desktop.
 // Pure: the same module runs in the browser (/home.mjs) and in node --test. homeEvents assembles (the server feeds it the thread
 // file, the run records, the ledger entries and the inbox rows); renderThread is the reusable component (Look 2's dock later
 // mounts the same list); renderHome is the Look 3 page around it. C3: approval cards (Approve once / Deny -> POST /api/chat/approve)
@@ -74,7 +74,7 @@ function checkinRunAt(ts, checkins) {
   return best?.id ?? null;
 }
 
-/** The project the Home opens on: the URL's, else the viewer's last pick (still registered), else the first that needs you, else the first. */
+/** The project the dashboard opens on: the URL's, else the viewer's last pick (still registered), else the first that needs you, else the first. */
 export function pickProject(projects = [], { url = null, saved = null } = {}) {
   const has = n => projects.some(p => p.name === n);
   if (url && (url === 'all' || has(url))) return url;
@@ -83,8 +83,8 @@ export function pickProject(projects = [], { url = null, saved = null } = {}) {
 }
 // pokes that only carry earlier ones along (a queued repeat, a catch-up after a hidden tab)
 const CARRY = new Set(['again', 'visible']);
-/** A re-render poked by chat lines alone (on the Home) repaints only the thread: no /api/overview, no page. */
-export const threadOnly = (why = [], tab) => tab === 'home' && why.some(r => r === 'chat') && why.every(r => r === 'chat' || CARRY.has(r));
+/** A re-render poked by chat lines alone (on Talk) repaints only the thread: no strip, no page. */
+export const threadOnly = (why = [], tab) => tab === 'talk' && why.some(r => r === 'chat') && why.every(r => r === 'chat' || CARRY.has(r));
 
 /**
  * One time-ordered thread. o: { thread (chat lines), runs (run items of the records fold), items (all items of the fold, for the
@@ -260,7 +260,7 @@ export function chatState(st = {}, now = Date.now()) {
 }
 /** the state line's class: the pulsing dot while the chat works */
 export const chatStateClass = (st = {}) => (st.busy || st.handing_off ? 'small chat-live' : 'mute small');
-/** The Home tab body. d: GET /api/home; ctx: { project, homeFilter, now } */
+/** The Talk page body. d: GET /api/home; ctx: { project, homeFilter, now } */
 export function renderHome(d, ctx = {}) {
   const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you, approvals = d.approvals;   // UX review 4: the Inbox's count; approvals by name beside it
   const harness = `${HARNESS[st.executor] ?? esc(st.executor ?? 'claude')}${st.model ? ` · ${esc(SHORT(st.model))}` : ''}${st.effort ? `<span class="heff"> · ${esc(st.effort)}</span>` : ''}`;
@@ -292,11 +292,4 @@ export function renderHome(d, ctx = {}) {
       <button type="button" class="ghost" disabled title="attachments come in a later stage">Attach</button><button type="button" class="primary send" data-act="chat-send">Send</button></form>
     ${costLine}<div class="hfoot small mute">An instruction becomes a DIRECTIVE in your words. Buttons write records directly - no model in between.</div>
   </section>${right(d.side || {}, ctx)}</div>`;
-}
-
-// ---------- the phone bottom bar (SPEC sec. 10: Talk / Inbox / Agents / Plan / More) ----------
-const BAR = [['home', 'Home', '✉'], ['inbox', 'Inbox', '⚑'], ['runs', 'Runs', '⚙'], ['plan', 'Plan', '☰']];
-export function renderBottomBar(tab, counts = {}) {
-  return BAR.map(([k, l, g]) => `<button data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}><span class="bg" aria-hidden="true">${g}</span>${counts[k] ? `<span class="count" aria-label="${counts[k]} need you">${counts[k]}</span>` : ''}<span class="bl">${l}</span></button>`).join('')
-    + `<button data-act="more" aria-expanded="false"><span class="bg" aria-hidden="true">⋯</span><span class="bl">More</span></button>`;
 }

@@ -646,6 +646,17 @@ export const TIGHTEN_FIX = {
   'one-role': { kind: 'drafts', title: 'Tighten: a one-role paragraph every session loads' }, large: { kind: 'drafts', title: 'Tighten: a large block loaded every time' },
   lean: { kind: 'call', ways: ['Switch the role to lean', 'Keep the full profile'], title: 'Tighten: a lean launch profile' },
 };
+// A block never moves out of a file that says it is read whole ("Every worker reads this file whole") nor out of a hard-stop or safety
+// section: a pointer there is a rule a worker may skip (solve-shack RUN-180 declined both moves, rightly). Such a block is trimmed in place.
+const READ_WHOLE = /\bread(?:s|ing)?\s+(?:this\s+(?:file|document)\s+|it\s+)?(?:whole|in\s+full|end\s+to\s+end)\b|\bmust\s+be\s+read\s+(?:whole|in\s+full)\b/i;
+const SAFETY = /\bhard[\s-]?stops?\b|\bsafety\b/i;
+/** why paragraph p stays in its file (null = it may move): the file is read whole, or p sits in a hard-stop / safety section */
+function keepIn(text, p, whole) {
+  if (whole) return 'the file says it is read whole';
+  const head = text.split(/\r?\n/).slice(0, p.line).reverse().find(l => /^#{1,6}\s/.test(l));
+  return SAFETY.test(head ?? '') || SAFETY.test(p.head) ? `it is in a hard-stop / safety section${head ? ` (${head.replace(/^#+\s*/, '').trim().slice(0, 60)})` : ''}` : null;
+}
+const trimAction = why => `trim it in place: shorten the wording, keep it in this file (${why}: never move it out)`;
 const LEAN_DROPS = { skills: s => s.skills === false, plugins: s => s.user_setup === false || s.skills === false, hooks: s => s.user_setup === false, mcp: s => s.mcp === 'norn' || s.mcp === 'none' };
 
 /**
@@ -661,7 +672,7 @@ export function suggest({ rows, hints = [], paras, perDay, standing = null, prof
     const ps = paras.get(r.id);
     if (!ps) continue;
     const text = readText(r.path) || '', pd = perDay.get(r.id) || { loads: 0, byRole: {} }, owner = !!r.machine_only;
-    const every = r.loads.some(sp => sp.class === 'session' && sp.part !== 'description');
+    const every = r.loads.some(sp => sp.class === 'session' && sp.part !== 'description'), whole = READ_WHOLE.test(text);
     const add = (cls, p, saved, why, action, patch, extra = {}) => out.push({ id: 'S-' + sha(`${cls}|${key(r.path)}|${p.anchor}`).slice(0, 8), class: cls, path: r.path, file: r.name,
       anchor: p.anchor, line: p.line, head: p.head, tokens: p.tokens, loads_per_day: pd.loads, saved_per_day: Math.round(saved), why, action, ...(patch ? { patch } : {}), owner_file: owner, ...extra });
     for (const p of ps) {
@@ -670,9 +681,12 @@ export function suggest({ rows, hints = [], paras, perDay, standing = null, prof
       else if (dup) add('duplicate', p, p.tokens * pd.loads, dup, 'keep one copy, delete this one', deletePatch(r, text, p));
       else if (p.stale) add('stale', p, p.tokens * pd.loads, p.why, `delete it, or confirm it: norn instructions confirm ${r.path}#${p.anchor}`, deletePatch(r, text, p));
       else if (every && roleOfPara(p.head)) {
-        const role = roleOfPara(p.head), others = Object.entries(pd.byRole).filter(([k]) => k !== role).reduce((n, [, v]) => n + v, 0);
-        add('one-role', p, p.tokens * others, `addressed to ${role} only, loaded by every session`, `move it to the ${role} prompt / an on-demand file`, null, { role });
-      } else if (p.tokens >= LARGE_TOKENS && pd.loads > 0) add('large', p, p.tokens * pd.loads, `~${p.tokens} tokens in one block, loaded ${pd.loads.toFixed(1)}x a day`, 'move it to an on-demand file and leave a one-line pointer', null);
+        const role = roleOfPara(p.head), others = Object.entries(pd.byRole).filter(([k]) => k !== role).reduce((n, [, v]) => n + v, 0), stay = keepIn(text, p, whole);
+        add('one-role', p, p.tokens * others, `addressed to ${role} only, loaded by every session`, stay ? trimAction(stay) : `move it to the ${role} prompt / an on-demand file`, null, { role, ...(stay ? { keep: stay } : {}) });
+      } else if (p.tokens >= LARGE_TOKENS && pd.loads > 0) {
+        const stay = keepIn(text, p, whole);
+        add('large', p, p.tokens * pd.loads, `~${p.tokens} tokens in one block, loaded ${pd.loads.toFixed(1)}x a day`, stay ? trimAction(stay) : 'move it to an on-demand file and leave a one-line pointer', null, stay ? { keep: stay } : {});
+      }
     }
   }
   // lean: what a lean launch profile drops from each role's measured standing context (only where the role runs "full" today)

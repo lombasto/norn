@@ -13,21 +13,18 @@ export const realIo = {
 };
 // OOTB F-4: two installs on one machine. The task name of an install = `norn-tick-` + a short hash of its dir (setup records it in
 // machine.json; an install that recorded a name keeps it). A Windows drive path compares case- and slash-insensitively.
-// META-NAME-W2: before the rename the task was `meta-controller-tick[-<hash>]`; a recorded old name moves to this install's norn-tick
-// name, and `sched install` / `sched remove` remove the old task of THIS install in the same step (never two ticks at once).
-export const TICK_NAME = 'norn-tick', OLD_NAME = 'meta-controller-tick';
+export const TICK_NAME = 'norn-tick';
 export const normDir = p => { const s = String(p).replace(/\\/g, '/').replace(/\/+$/, ''); return /^[a-z]:\//i.test(s) ? s.toLowerCase() : s; };
 const dirHash = meta => createHash('sha1').update(normDir(meta)).digest('hex').slice(0, 8);
 export const schedName = meta => `${TICK_NAME}-${dirHash(meta)}`;
-export const isOldName = n => n === OLD_NAME || String(n).startsWith(OLD_NAME + '-');
-// the name to use: the recorded one, unless it is a pre-rename name (or none) - then this install's own
-export const liveName = (recorded, meta) => (!recorded || isOldName(recorded) ? schedName(meta) : recorded);
+// the name to use: the recorded one, else this install's own
+export const liveName = (recorded, meta) => recorded || schedName(meta);
 // the install dir an installed task's text runs: its working dir (XML / unit / plist / `cd X &&`), else the dir of the norn.mjs it starts
 const unx = s => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 export function ownerOf(text) {
   if (!text) return null;
   const m = text.match(/<WorkingDirectory>([^<]+)<\/WorkingDirectory>/) || text.match(/<key>WorkingDirectory<\/key>\s*<string>([^<]+)<\/string>/)
-    || text.match(/^WorkingDirectory=(.+)$/m) || text.match(/\bcd ('(?:[^']|'\\'')*'|\S+) &&/) || text.match(/([^'"\s;&]+)\/engine\/bin\/(?:meta|norn)\.mjs/);
+    || text.match(/^WorkingDirectory=(.+)$/m) || text.match(/\bcd ('(?:[^']|'\\'')*'|\S+) &&/) || text.match(/([^'"\s;&]+)\/engine\/bin\/norn\.mjs/);
   return m ? unx(m[1].trim()).replace(/^'(.*)'$/, '$1').replace(/'\\''/g, "'") : null;
 }
 // { installed, owner, foreign }: foreign = installed AND it runs ANOTHER install; an owner the adapter cannot read is never foreign
@@ -35,14 +32,6 @@ export function schedState(a, o, io = realIo) {
   const installed = !!a.installed(o, io), owner = installed && a.owner ? a.owner(o, io) : null;
   return { installed, owner, foreign: !!owner && normDir(owner) !== normDir(o.meta) };
 }
-// the pre-rename tasks of THIS install still installed: its own hashed old name, and the bare old name only when it runs this install
-export function oldTasks(a, o, io = realIo) {
-  return [`${OLD_NAME}-${dirHash(o.meta)}`, OLD_NAME].filter(n => n !== o.name).filter(n => {
-    const s = schedState(a, { ...o, name: n }, io);
-    return s.installed && !s.foreign && (n !== OLD_NAME || (!!s.owner && normDir(s.owner) === normDir(o.meta)));
-  });
-}
-export function removeOld(a, o, io = realIo) { const gone = oldTasks(a, o, io); for (const n of gone) a.remove({ ...o, name: n }, io); return gone; }
 const readOwner = f => (o, io = realIo) => ownerOf(io.read ? io.read(f(o)) : null);   // file-based adapters (systemd / launchd)
 export { readOwner };
 // the scheduled command: one tick over every project in machine.json
