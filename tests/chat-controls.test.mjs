@@ -6,6 +6,8 @@ import { record } from '../engine/lib/records.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
+// CI 44335427788 (ubuntu, HANG RED): openPage threw (no DevTools port in 30 s) before the try, so the server made before it
+// stayed open and held the file to the 600 s cap. openPage runs inside the try; the finally closes what was made.
 test('R1 the browser: a Home filter stays pressed and applied across a live re-render', { skip: skipWhy, timeout: 120000 }, async () => {
   const f = await fixture(); let pg;
   try {
