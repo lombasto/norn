@@ -250,7 +250,8 @@ export const DEAD_CAUSES = ['boot', 'gone', 'no-start'];
 // a busy CPU is a stall, not a death. While the CPU is at LATE_CPU_PCT or more, a stale beat whose supervisor pid lives waits up to
 // LATE_FACTOR x the threshold before the sweep calls it lost. The sweep keeps its sample in hb/load.json: the pages name it.
 export const LATE_CPU_PCT = 90, LATE_FACTOR = 3;
-const loadPath = state => path.join(state, 'hb', 'load.json');
+/** the sweep's last CPU sample (hb/load.json); the dash primes it */
+export const loadPath = state => path.join(state, 'hb', 'load.json');
 /** the CPU % the last sweep sampled, when it is at most maxMs old, else null (the pages' "heartbeat late (N s, CPU x %)"); read: the dash's snapshot reader */
 export const sweptCpu = (state, { now = Date.now(), maxMs = 5 * 60e3, read = readJson } = {}) => { const l = read(loadPath(state)); return l && now - Date.parse(l.ts) <= maxMs ? l.cpu_pct : null; };
 // the run's heartbeat was written after its lost record (whose ts is whole seconds: a beat in a later second)

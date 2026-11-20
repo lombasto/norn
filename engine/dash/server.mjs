@@ -24,7 +24,7 @@ import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, PO
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, stopRunAsync, requeueRun, queueOf, sweptCpu, STALE_MS } from '../lib/runs.mjs';
+import { hbPath, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
@@ -259,7 +259,7 @@ export function createDashboard(o) {
       return Promise.all([prime({ files: [...auditFiles(p, x.items), ...live.map(r => resultPath(p.state, r.id))], stats: live.map(r => hbPath(p.state, r.id)) }),
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), loadPath(p.state), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
       stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
