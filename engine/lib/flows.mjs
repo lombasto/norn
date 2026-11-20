@@ -5,7 +5,7 @@
 // chained by after: (needs -> run:RUN-n:done | merged, or a q: / dir: / run: / dlv: term). The run records ARE the checkpoint.
 //
 // Schema (validateFlow refuses anything else):
-//   name, title (the epic title; placeholders allowed), priority? (P0-P3, default P2), vars: { <name>: { doc?, default?, required? } }
+//   name, title (the epic title; placeholders allowed), priority? (P0-P4, default P2), vars: { <name>: { doc?, default?, required? } }
 //   (a var with a default is optional; else required), defaults: { any step field }, steps: [{
 //     id, title, needs: [<step id> | "<kind>:<id>[:<state>]" after term | "{{var}}" holding terms; a term whose placeholder renders empty is dropped],
 //     need_state: done | merged (what this step waits for of its step needs; default done),
@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAfter, AfterError, checkRefs, makeEval } from './after.mjs';
-import { record, loadState, RecordError, idNum } from './records.mjs';
+import { record, loadState, RecordError, idNum, PRIORITIES } from './records.mjs';
 import { loadEpics } from './epics.mjs';
 import { renderMergeBrief } from './mergebrief.mjs';
 
@@ -39,7 +39,6 @@ const BUILTINS = {
 };
 const STEP_FIELDS = ['id', 'title', 'needs', 'need_state', 'class', 'executor', 'model', 'effort', 'agent', 'budget_min', 'stage', 'lane', 'worktree', 'notes', 'brief_template', 'ask'];
 const NEED_STATES = ['done', 'merged'];
-const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 const PH_RE = /\{\{(\w+)\}\}/g;
 const TERM_RE = /^((q|dir|run|dlv):|\{\{\w+\}\}$)/;   // a term, or one var holding term(s) ("run:RUN-5:done,q:Q-2"; empty = no need)

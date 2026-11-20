@@ -216,7 +216,7 @@ export function agentsTree(runs, o = {}) {
         if (u) { node.tokens = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].reduce((a, k) => a + (Number(u[k]) || 0), 0); node.tokens_src = 'end'; }
       }
     }
-    if (d.kind !== 'interactive' && d.kind !== 'cli') { const v = ctxView(d, o.policy); node.ctx_limit = v.ctx_limit; node.ctx_hard = v.ctx_hard; }
+    if (d.kind !== 'interactive' && d.kind !== 'cli') { const v = ctxView(d, o.policy); node.ctx_limit = v.ctx_limit; node.ctx_hard = v.ctx_hard; node.ctx_role = v.ctx_role; }
     if (d.role === 'helper') Object.assign(node, { kind: 'helper', parent: d.parent ?? null, q: d.q ?? null, class: d.class ?? null });
     if (node.tokens === null && end.usage) { node.tokens = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].reduce((a, k) => a + (Number(end.usage[k]) || 0), 0); node.tokens_src = 'end'; }
     roots.push(node);

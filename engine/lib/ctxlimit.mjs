@@ -13,10 +13,12 @@ export { usageCtx };
 export const CTX_ROLES = Object.keys(POLICY_DEFAULTS.context);
 export const kTok = n => `${Math.round(n / 1000)}k`;
 
-/** the policy.context row of a run (its start data or launch spec): check-ins their own row, the chat the controller's, else by agent name */
+/** the policy.context row of a run (its start data or launch spec): check-ins their own row, the chat the controller's, else by agent name;
+ *  NORN-CTX-1M: a run whose model has the 1M window (`[1m]`) reads its role's `_1m` row when the role has one - the model decides the tier */
 export function ctxRole(d = {}) {
   const a = String(d.agent || '');
-  return d.kind === 'checkin' ? 'checkin' : d.kind === 'chat' ? 'controller' : /planner/.test(a) ? 'planner' : /runner/.test(a) ? 'runner' : 'implementer';
+  const role = d.kind === 'checkin' ? 'checkin' : d.kind === 'chat' ? 'controller' : /planner/.test(a) ? 'planner' : /runner/.test(a) ? 'runner' : 'implementer';
+  return /\[1m\]/i.test(String(d.model || '')) && POLICY_DEFAULTS.context[`${role}_1m`] ? `${role}_1m` : role;
 }
 /** { role, no_new_step_k, handoff_k, hard_max_k } of `role` under `policy` (a project policy, defaults filled in) */
 export function ctxLimits(policy, role) {
