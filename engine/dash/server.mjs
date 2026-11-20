@@ -26,7 +26,7 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
+import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
@@ -238,6 +238,7 @@ export function createDashboard(o) {
   const st = p => snap.getStore()?.folds.get(p.state) ?? loadState(p.state);
   const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {}, { role: 'dashboard' });
   const hbAge = p => id => { const x = statS(hbPath(p.state, id)); return x ? Date.now() - x.mtimeMs : Infinity; };
+  const hbLateOf = p => (id, r) => hbLate(p.state, r);   // only asked for a stale .hb: the second signal before 'lost' (runs.hbLate)
   // the live hand-off state (lanes.mjs handoffOf, one home): wrote = the run's own result.json says HANDOFF, written since its start
   // (result.mjs readResult's rule); talked = its session's first model event (agents.mjs runTalked, the tree's tail cache)
   const wroteHandoff = p => id => { const j = readJsonS(resultPath(p.state, id)), r = st(p).items[id];
@@ -464,7 +465,7 @@ export function createDashboard(o) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
     const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
     const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
-    return lanesView(s, { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
+    return lanesView(s, { all, hbAge: hbAge(p), hbLate: hbLateOf(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';

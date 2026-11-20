@@ -11,6 +11,7 @@ import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf
 import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
+import { findTranscript } from './harness/claude.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
 import { writeQueueView, sleepMs } from './views.mjs';
@@ -227,6 +228,29 @@ function prepareMergeWt(o) {
 
 // ---------- heartbeats + lost sweep ----------
 export const hbPath = (state, run) => path.join(state, 'hb', run + '.hb');
+// Owner report 2026-11-19 (RUN-257 read lost while alive): on Windows the rename onto the .hb failed for about 3 min while another
+// process held it open without FILE_SHARE_DELETE (antivirus, an indexer, a PowerShell reader), and the beat swallowed the error. A beat
+// retries the transient codes, then writes the .hb in place, then (a holder that refuses writes too) touches its mtime: the age every
+// reader goes by. The first failure of a streak and the recovery are logged. No reader can be made harmless: MoveFileEx's replace fails
+// on ANY open handle of the target, FILE_SHARE_DELETE included (Node's own readers open with it; tests/heartbeat.test.mjs), so the
+// writer must get past a holder. Returns beat(obj) -> 'rename' | 'in place' | 'mtime' | null (not written).
+export function hbWriter(file, { log = () => {}, rename = fs.renameSync, write = fs.writeFileSync, touch = (f, t) => fs.utimesSync(f, t, t), tries = 4, waitMs = 25 } = {}) {
+  let streak = null;   // the current failure streak: { since, code, n }
+  const tmp = `${file}.${process.pid}.tmp`;
+  return obj => {
+    const body = JSON.stringify(obj);
+    let how = null, code = null;
+    try {
+      write(tmp, body);
+      for (let i = 0; ; i++) { try { rename(tmp, file); how = 'rename'; break; } catch (e) { if (!TRANSIENT.includes(e.code) || i >= tries) throw e; sleepMs(waitMs); } }
+    } catch (e) { code = e.code ?? e.message; try { fs.unlinkSync(tmp); } catch { /* not written */ } }
+    if (!how) { try { write(file, body); how = 'in place'; } catch { try { touch(file, new Date()); how = 'mtime'; } catch { /* not written */ } } }
+    if (how === 'rename') { if (streak) log(`heartbeat: rename works again after ${streak.n} failed beat${streak.n === 1 ? '' : 's'} (since ${streak.since})`); streak = null; }
+    else if (streak) streak.n++;
+    else { streak = { since: new Date().toISOString(), code, n: 1 }; log(`heartbeat: rename onto ${path.basename(file)} failed (${code}); ${how ? `wrote ${how === 'mtime' ? 'its mtime only' : 'it in place'}` : 'not written'}`); }
+    return how;
+  };
+}
 const runsOf = state => Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
 const hbAge = (state, it, now) => {
   const f = hbPath(state, it.id);
@@ -241,6 +265,25 @@ const BOOT_SLACK_MS = 60e3;   // record ts are whole seconds and uptime drifts: 
 export const pidGone = pid => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
 // the causes whose death is certain (the auto-resume policy relaunches them: relaunchLost); `stale` may be a stall, never relaunched
 export const DEAD_CAUSES = ['boot', 'gone', 'no-start'];
+// The second signal (owner report 2026-11-19): a stale .hb alone is never a death. The run's own output (its log, its transcript, the
+// newest mtime) -> ms, or null when there is none. Spec fields fill in what the start record lacks (projectsDir is the spec's only).
+export function runActivityMs(state, it) {
+  const spec = readJson(path.join(state, 'runs', it.id + '.spec.json')) || {}, d = it.data || {};
+  let t = null;
+  for (const f of [d.log ?? spec.log, d.transcript ?? findTranscript(spec.projectsDir, d.session_id ?? spec.session_id)]) {
+    if (!f) continue;
+    try { const m = fs.statSync(f).mtimeMs; if (t === null || m > t) t = m; } catch { /* not written yet */ }
+  }
+  return t;
+}
+/** a running run whose .hb is stale but whose supervisor pid (named by the .hb) lives and whose output advanced within staleMs: its
+ * heartbeat is late, it is not lost (shown as a warn chip, never recorded lost) -> { supervisor_pid, output_age } | null */
+export function hbLate(state, it, { now = Date.now(), staleMs = STALE_MS, gone = pidGone } = {}) {
+  const pid = readJson(hbPath(state, it.id))?.supervisor_pid;
+  if (!Number.isInteger(pid) || pid <= 0 || gone(pid)) return null;
+  const at = runActivityMs(state, it);
+  return at !== null && now - at <= staleMs ? { supervisor_pid: pid, output_age: Math.max(0, now - at) } : null;
+}
 export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date(), boot = bootMs, gone = pidGone } = {}) {
   const lost = [];
   const t = now().getTime(), bt = boot();
@@ -263,7 +306,7 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     let cause, why;
     if (Date.parse(it.created) < bt - BOOT_SLACK_MS) { cause = 'boot'; why = `machine rebooted at ${new Date(bt).toISOString().slice(0, 19)}Z after the run started`; }
     else if (hb && gone(hb.supervisor_pid)) { cause = 'gone'; why = `supervisor pid ${hb.supervisor_pid} gone without an end record`; }
-    else if (age <= staleMs) continue;
+    else if (age <= staleMs || (has && hbLate(state, it, { now: t, staleMs, gone }))) continue;   // a late heartbeat on a live run: not lost
     // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
     else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
     else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
@@ -322,13 +365,13 @@ export function lostNotice(rows, project = '') {
   return { title: `${project ? project + ': ' : ''}${head}`, body: `${head}: ${rows.length} run${rows.length === 1 ? '' : 's'} lost, ${m} relaunched (${list})` };
 }
 
-// running, non-interactive runs with a fresh heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
+// running, non-interactive runs with a fresh (or late: hbLate) heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
 export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
   const parent = path.dirname(path.resolve(state));
   const states = new Set([path.resolve(state)]);
   for (const d of fs.existsSync(parent) ? fs.readdirSync(parent) : []) if (fs.existsSync(path.join(parent, d, 'runs.jsonl'))) states.add(path.join(parent, d));
   const live = [];
-  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && hbAge(s, it, now).age <= staleMs) live.push({ ...it, state_dir: s });
+  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs }))) live.push({ ...it, state_dir: s });
   return live;
 }
 // META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief

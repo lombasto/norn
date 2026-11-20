@@ -58,6 +58,7 @@ export function exChip(ex, model, effort) {
 // Lane / run state text -> chip class + short word (lanes.mjs text grammar, design 5).
 export function stateOf(text) {
   const t = String(text ?? '');
+  if (t.startsWith('running') && t.includes(' - heartbeat late')) return ['warn', 'heartbeat late'];   // lanes.mjs: alive, its .hb behind
   if (t.startsWith('running')) return ['running', 'running'];
   if (t.startsWith('parked')) return ['parked', 'parked'];
   if (t === 'exited: DONE') return ['done', 'DONE'];
