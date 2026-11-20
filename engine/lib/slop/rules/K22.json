@@ -1,0 +1,54 @@
+{
+  "id": "K22",
+  "level": "BLOCK",
+  "kind": "pattern",
+  "title": "a new deferral with no open record id",
+  "how": "a deferral phrase (for now, stop-gap, interim, temporarily, remove once / when / after, in a later stage, comes later, not yet built, until then, slice / stage B-Z) in a comment or a string must cite a record id (RM- DEC- DIR- Q-) that resolves to an open item; quoted text is not read",
+  "explain": {
+    "what": "A comment or a string defers work (for now, interim, stop-gap, remove once, in a later stage) and cites no open record.",
+    "why": "A deferral with no record is forgotten. The temporary code becomes permanent.",
+    "fix": "Cite the open record that tracks the work (RM-n, DEC-n, DIR-n or Q-n), or add one. Or do the work now and delete the words."
+  },
+  "files": [
+    "**/*.mjs",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "exclude": [
+    "tests/**",
+    "**/vendor/**"
+  ],
+  "in": [
+    "comment",
+    "string"
+  ],
+  "patterns": [
+    "\\b(?:[Ff]or now|[Ss]top-?gap|[Ii]nterim|[Tt]emporarily|[Rr]emove (?:once|when|after)|in a later (?:stage|slice|round)|comes? later|not yet (?:built|wired|implemented)|[Uu]ntil then|[Ss]lice [B-Z]|[Ss]tage [B-Z])\\b"
+  ],
+  "cite": {
+    "id": "\\b(?:RM|DEC|DIR|Q)-\\d+\\b",
+    "open": [
+      "open",
+      "in-force",
+      "active"
+    ]
+  },
+  "fixture": {
+    "hit": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// for now the retry is off\nexport const label = 'attachments come in a later stage';\n// remove once nothing calls it (see the notes)\nexport const a = 1;\n"
+      }
+    },
+    "miss": {
+      "base": {
+        "src/a.mjs": "export const a = 1;\n"
+      },
+      "head": {
+        "src/a.mjs": "// the user wrote \"for now, skip it\" and the text stays as written\nexport const dir = 'a temporary worktree';\n// a stop-gap until RM-12 lands\nexport const a = 1;\n"
+      }
+    }
+  }
+}

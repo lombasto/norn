@@ -94,7 +94,7 @@ test('second signal: a stale .hb with a live supervisor and an advancing log or 
   assert.ok(hbLate(d.state, d.item(a))); assert.equal(hbLate(d.state, d.item(b)), null); assert.equal(hbLate(d.state, d.item(c)), null); assert.ok(hbLate(d.state, d.item(e)));
   // the dashboard's lane text and chip, with the same rule the server passes in
   const st = loadState(d.state);
-  const text = id => lanesView({ items: { 'L-demo': { kind: 'lane', id: 'L-demo', state: 'active', data: {}, history: [], created: st.items[id].created, updated: st.items[id].created }, [id]: st.items[id] } },
+  const text = id => lanesView({ items: { 'L:demo': { kind: 'lane', id: 'L:demo', state: 'active', data: {}, history: [], created: st.items[id].created, updated: st.items[id].created }, [id]: st.items[id] } },
     { hbAge: () => 300e3, hbLate: (_, r) => hbLate(d.state, r) })[0].text;
   assert.match(text(a), /^running .* - heartbeat late \(300 s\)$/); assert.deepEqual(stateOf(text(a)), ['warn', 'heartbeat late']);
   assert.equal(text(b), 'lost'); assert.deepEqual(stateOf(text(b)), ['lost', 'lost']);

@@ -15,6 +15,7 @@ import { startRun } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { POLICY_DEFAULTS, SETTINGS } from '../engine/lib/policy.mjs';
 import { injectJson } from '../engine/lib/mail.mjs';
+import { ctxMeter } from '../engine/dash/ui.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -127,4 +128,34 @@ test('fake run: past the hard max the supervisor ends the run as HANDOFF (its re
   const next = await waitFor(() => { const it = loadState(state).items[resumed.data.next]; return settled(it) && it; });
   assert.ok(next);
   assert.equal(JSON.parse(fs.readFileSync(path.join(state, 'runs', resumed.data.next + '.spec.json'), 'utf8')).ctx_from, pf, 'the resume keeps the policy source');
+});
+
+test('NORN-CTX-1M: a [1m] run reads its role\'s _1m row (hand-off 500k), a plain run the plain row (200k); every caller through ctxRole', () => {
+  const pol = { context: { implementer: { no_new_step_k: 170, handoff_k: 200, hard_max_k: 220 } } }, m1 = 'claude-opus-5-5[1m]';
+  assert.equal(ctxRole({ kind: 'worker', agent: 'kestrel-implementer', model: m1 }), 'implementer_1m');
+  assert.equal(ctxRole({ kind: 'worker', agent: 'kestrel-planner', model: m1 }), 'planner_1m');
+  assert.equal(ctxRole({ kind: 'worker', agent: 'kestrel-runner', model: m1 }), 'runner_1m');
+  assert.equal(ctxRole({ kind: 'checkin', model: m1 }), 'checkin', 'a role with no _1m row keeps its plain row');
+  assert.equal(ctxLimits(pol, ctxRole({ agent: 'kestrel-implementer', model: m1 })).handoff_k, 500);
+  assert.equal(ctxLimits(pol, ctxRole({ agent: 'kestrel-implementer', model: 'claude-opus-5-5' })).handoff_k, 200);
+  assert.deepEqual(POLICY_DEFAULTS.context.planner_1m, { no_new_step_k: 800, handoff_k: 900, hard_max_k: 950 });
+  assert.equal(ctxView({ kind: 'worker', agent: 'x-implementer', model: m1 }, pol).ctx_limit, 500000);
+  assert.equal(handoffK({ data: { agent: 'x-implementer', model: m1 } }, pol), 500, 'the guard reads the same tier');
+  const row = d => ctxMeter({ ctx: 300000, ...ctxView(d, pol) });
+  assert.ok(row({ agent: 'x-implementer', model: m1 }).includes('hand-off 500k (1M tier) · max 560k'), 'the run row names the tier');
+  assert.doesNotMatch(row({ agent: 'x-implementer', model: 'claude-opus-5-5' }), /1M tier/);
+});
+
+test('NORN-CTX-1M fake [1m] run: the supervisor\'s hard max is the _1m row (560k), not the plain 220k', async () => {
+  const t = mkTmp('meta-ctx-'), state = path.join(t, 'state', 'demo'), locks = path.join(t, 'state', 'locks'), wt = path.join(t, 'wt'), notes = path.join(t, 'NOTES.md');
+  const projects = path.join(t, 'projects');
+  for (const d of [state, locks, wt]) fs.mkdirSync(d, { recursive: true });
+  const pf = project(t, { implementer: { no_new_step_k: 170, handoff_k: 200, hard_max_k: 220 } });
+  const brief = path.join(t, 'brief.md');
+  fs.writeFileSync(brief, `mode: sleep\nms: 30000\nctx_dir: ${path.join(projects, 'C--wt')}\nctx_steps: 230000,570000\nctx_ms: 300\n`);
+  const r = startRun({ state, locksDir: locks, executor: 'fake', lane: 'demo', worktree: wt, notes, hbMs: 100, staleMs: 3000, projectsDir: projects, ctx_from: pf,
+    model: 'claude-opus-5-5[1m]', policy: { auto_resume_max: 0, trigger_on_exit: false }, budget: {}, brief });
+  const end = await waitFor(() => { const it = loadState(state).items[r.run]; return settled(it) && it.history.find(h => h.ev === 'end'); });
+  assert.deepEqual(end.data.ctx_forced, { ctx: 570000, hard_max_k: 560, role: 'implementer_1m' });
+  assert.equal(loadState(state).items[r.run].history.find(h => h.ev === 'start').data.ctx_marks.hard_max_k, 560, 'the start record\'s marks are the tier\'s');
 });

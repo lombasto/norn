@@ -6,13 +6,14 @@
 // it stays red while later runs are in progress or cancelled and leaves only when a LATER run on main is green.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
 
 export const CI_TTL_MS = 10 * 60000;
 const FIELDS = 'databaseId,conclusion,status,headSha,createdAt';
 const LIST_N = 10;
 const RED = ['failure', 'timed_out', 'startup_failure'];
-const ghCli = args => execFileSync('gh', args, { encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, maxBuffer: 64 * 2 ** 20 });
+// proc-hygiene: gh starts git; its timeout kills the tree (an orphaned 'git config --get-regexp ...gh-resolved' was gh's)
+const ghCli = args => { const r = boundedSync('gh', args, { timeout: 20000, maxBuffer: 64 * 2 ** 20 }); if (r.error || r.status !== 0) throw r.error || new Error(`gh exited ${r.status}`); return r.stdout; };
 export const ciCacheFile = state => path.join(state, 'ci-main.json');
 
 /** the red run of a run list (any order), or null */

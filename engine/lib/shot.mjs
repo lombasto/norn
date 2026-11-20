@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { listProcs } from './strays.mjs';
+import { writeReceipts } from './kills.mjs';
 
 export class ShotError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 
@@ -193,6 +194,8 @@ export async function killProfileProcs(profile, { platform = process.platform, l
     const l = left(), live = l.filter(p => exists(p.pid, probe));
     if (!l.length) return 0;
     if (live.length ? round++ >= 5 : performance.now() - t0 > RUNDOWN_GUARD_MS) return l.length;
+    // DEC-1088: a kill matched by command line (the unique temp profile) is receipted first, once per pid
+    try { writeReceipts(live.filter(p => !killed.has(p.pid)), { killer: `shot pid ${process.pid}`, reason: `browser profile ${profile} left alive` }); } catch { /* the cleanup goes on */ }
     for (const p of live) { killed.add(p.pid); try { kill(p.pid); } catch { /* gone */ } }
     await sleep(300);
   }
@@ -222,6 +225,17 @@ export async function closeBrowser(child, profile, { dir = profile, platform = p
     const r = await removeProfile(dir, { platform, list, kill });
     return left && !r.ok ? { ok: false, why: `${left} browser process(es) on ${profile} survived the kill; ${r.why}` } : r;
   } catch (e) { return { ok: false, why: `teardown: ${e.message}` }; }
+}
+/** CI 44335427788: on a fresh ubuntu runner the FIRST browser launch is slow (the first browser test of a file 25-36 s, later ones
+ * 8-10 s; two cold launches at once passed waitDevToolsPort's 30 s). One launch to the DevTools port and down, before the tests:
+ * the one-time cost is paid off any test's clock and measured. { ms, stderr (the browser's own, timestamped lines), error } */
+export async function warmBrowser({ browser, tmp = os.tmpdir(), platform = process.platform }) {
+  const profile = fs.mkdtempSync(path.join(tmp, 'meta-shot-')), t0 = Date.now(), child = launchBrowser({ browser, profile, platform });
+  let error = null;
+  try { await waitDevToolsPort({ browser, profile, child }); } catch (e) { error = e.message; }
+  const ms = Date.now() - t0, stderr = stderrTail(profile);
+  await closeBrowser(child, profile, { platform });
+  return { ms, stderr, error };
 }
 
 const CLICKABLE = 'button,a,[role=button],[role=tab],summary,label,input[type=submit]';

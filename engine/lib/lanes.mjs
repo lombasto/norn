@@ -3,8 +3,9 @@
 import { STALE_MS } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
+import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
+import { idNum as runNum, laneNameIn } from './records.mjs';
 
-const runNum = id => Number(String(id).slice(4));
 
 function runText(r, { now, hbAge, hbLate, staleMs, items = {} }) {
   const d = r.data || {}, end = r.end || {};
@@ -89,23 +90,35 @@ export const sortLanes = rows => rows.sort((a, b) => LANE_GROUPS.indexOf(a.group
 
 /**
  * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
- * executor, text, handoff, group, created, ended, at, old }.
+ * executor, text, handoff, group, created, ended, at, old, rule, path }.
  * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, hbLate (runId, run) -> truthy when a stale one is only late, staleMs, oldDays (policy.done_lanes.old_days),
- *   talked / wrote (handoffOf's hooks: the row's `handoff`) }
+ *   talked / wrote (handoffOf's hooks: the row's `handoff`), idleH / archiveDays / landed / merged (lifecycle.mjs laneRules: the row's
+ *   `rule` { rule, act, at, text } = which rule acts on it and when; landed / merged default to the rulings: the tick's git answer
+ *   comes in from lane-rules.json), path (lane, now) -> the row's `path` { state, text, red, ... } = its path to main (lane-paths.json) }.
+ * A lane idle by its rule reads "idle: no run" and sits under needs you, not queued.
  */
-export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbLate = null, staleMs = STALE_MS, oldDays = 2, talked, wrote } = {}) {
+export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbLate = null, staleMs = STALE_MS, oldDays = 2, talked, wrote,
+  idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = (_, r) => !!r.landed, merged = (_, r) => !!r.landed, path = () => null, home = null } = {}) {
+  const rules = new Map(laneRules(st, { now, idleH, archiveDays, landed, merged, home }).map(x => [x.lane, { rule: x.rule, act: x.act, at: x.at, text: x.text }]));
   const items = Object.values(st.items);
   const latest = {};
   for (const r of items) if (r.kind === 'run' && r.data?.lane && (!latest[r.data.lane] || runNum(r.id) > runNum(latest[r.data.lane].id))) latest[r.data.lane] = r;
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
-    const name = l.id.slice(2), r = latest[name];
+    const name = laneNameIn(l.id, home), r = latest[name];
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
-    const text = park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
-      : r ? runText(r, { now, hbAge, hbLate, staleMs, items: st.items }) : 'no runs';
-    const group = laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
+    // item 8 (MAIL-9): parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling
+    const ruled = park?.q && st.items[park.q]?.state === 'answered' ? st.items[park.q] : null;
+    // ... and once a check-in applied it (the lane unparked by that apply), the lane says who applied it and what it did until its next run
+    const unpark = !park && l.state === 'active' ? l.history.findLast(h => h.ev === 'unpark' && h.data?.q) : null, aq = unpark ? st.items[unpark.data.q] : null;
+    const ap = aq?.state === 'applied' && (!r || r.created < unpark.ts) ? aq.history.findLast(h => h.ev === 'apply') : null;
+    const text = ap ? `Applied by ${ap.run ?? ap.by}: your ruling on ${aq.id} (${aq.answer?.choice ?? aq.answer?.text ?? '?'}) -> ${(ap.data?.refs || []).join(', ') || 'no refs'}`
+      : ruled ? `waiting: your ruling is being applied (you ruled: ${ruled.answer?.choice ?? ruled.answer?.text ?? '?'}, ${ruled.updated}; the next check-in applies ${ruled.id})`
+      : park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
+      : r ? runText(r, { now, hbAge, hbLate, staleMs, items: st.items }) : rules.get(name)?.rule === 'idle' ? rules.get(name).text : 'no runs';
+    const group = ruled ? 'queued' : rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
     return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
-      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old };
+      handoff: park || !r ? null : handoffOf(r, st.items, { talked, wrote, now }),       group, created: l.created, ended, at, old, rule: rules.get(name) ?? null, path: path(name, now) };
   }));
 }

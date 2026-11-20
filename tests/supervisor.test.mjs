@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { jobguardExe, jobguardExeAsync, winQuote, holdGone } from '../engine/lib/jobguard.mjs';
+import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -57,7 +58,8 @@ test('S5 end evidence: a worktree git cannot read = no dirty / branch / head fie
   for (const k of ['dirty', 'branch', 'head']) assert.equal(e[k], undefined, k);
 });
 
-test('S5 reap: an orphaned grandchild (its parent already exited) dies with the run; the end records how many were reaped', { skip: process.platform !== 'win32' && 'job objects: Windows; POSIX = process group' }, async () => {
+// DEC-1088: the end record keeps WHICH processes were reaped (pid + image), not a count; each has its receipt in kills.jsonl
+test('S5 reap: an orphaned grandchild (its parent already exited) dies with the run; the end lists the reaped pids + images, each receipted', { skip: process.platform !== 'win32' && 'job objects: Windows; POSIX = process group' }, async () => {
   const d = sandbox();
   const pids = path.join(d.t, 'pids.json');
   const id = d.run(`mode: orphan\npids: ${pids}\n`);
@@ -65,7 +67,10 @@ test('S5 reap: an orphaned grandchild (its parent already exited) dies with the 
   const p = JSON.parse(fs.readFileSync(pids, 'utf8'));
   await waitFor(() => !alive(p.orphan), 5000).catch(() => {});
   assert.equal(alive(p.orphan), false, `orphan ${p.orphan} still alive after the run ended`);
-  assert.ok(e.reaped >= 1, `reaped ${e.reaped}`);
+  assert.ok(e.reaped.some(k => k.pid === p.orphan && /^node(\.exe)?$/i.test(k.image)), `reaped ${JSON.stringify(e.reaped)}`);
+  const rec = readKills(killsFile(d.state)).find(k => k.pid === p.orphan);
+  assert.equal(rec?.action, 'kill'); assert.equal(rec.reason, `reap: ${id} ended`); assert.match(rec.killer, new RegExp(`^${id} supervisor \\d+$`));
+  assert.match(rec.job, /^meta-run-/);
 });
 
 test('S5 jobguard: a held process keeps itself, reap kills its job; spawnOutside escapes the job', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
@@ -77,21 +82,68 @@ test('S5 jobguard: a held process keeps itself, reap kills its job; spawnOutside
 import { spawn } from 'node:child_process'; import fs from 'node:fs';
 const job = await holdJob(process.pid);
 const inside = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); inside.unref();
-const outside = spawnOutside(process.execPath, ['-e', 'setTimeout(()=>{},60000)']);
+const outside = spawnOutside(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { job: job.name });
+const after = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); after.unref();
 const r = reapJob(job);
-fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ error: job.error, inside: inside.pid, outside, r }));
+fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ error: job.error, inside: inside.pid, after: after.pid, outside, r }));
 process.exit(0);`;
   const f = path.join(t, 'held.mjs'); fs.writeFileSync(f, src);
   const c = spawn(process.execPath, [f], { stdio: 'ignore' });
   await new Promise(r => c.on('exit', r));
   const o = JSON.parse(fs.readFileSync(out, 'utf8'));
   assert.equal(o.error, undefined);
-  assert.ok(o.r.killed.includes(o.inside));
+  assert.ok(o.r.killed.some(k => k.pid === o.inside && /^node.exe$/i.test(k.image)), JSON.stringify(o.r.killed));
+  assert.ok(o.r.killed.some(k => k.pid === o.after), 'a child born after spawnOutside is inside again: the breakaway window closed');
   await waitFor(() => !alive(o.inside), 5000).catch(() => {});
   assert.equal(alive(o.inside), false);
   assert.equal(o.outside.breakaway, true);
   assert.equal(alive(o.outside.pid), true, 'the breakaway process lives on');
   process.kill(o.outside.pid);
+});
+
+// proc-hygiene (1): 84 tail.exe / grep.exe watchers outlived their runs - Git Bash starts children with CREATE_BREAKAWAY_FROM_JOB,
+// and the job allowed breakaway. It no longer does: a watcher a worker starts from Git Bash is in the job, and the reap kills it.
+const bashExe = process.platform === 'win32' ? ['C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files\\Git\\usr\\bin\\bash.exe'].find(f => fs.existsSync(f)) : null;
+test('proc-hygiene: a tail -f a Git Bash starts inside the run\'s job stays in it and is reaped by name', { skip: !bashExe && 'Windows + Git Bash only' }, async () => {
+  const t = mkTmp('meta-jgb-'), out = path.join(t, 'out.json'), pidf = path.join(t, 'tail.pid');
+  const lib = new URL('../engine/lib/jobguard.mjs', import.meta.url).href;
+  const src = `import { holdJob, reapJob } from ${JSON.stringify(lib)};
+import { spawn } from 'node:child_process'; import fs from 'node:fs';
+const job = await holdJob(process.pid);
+const b = spawn(${JSON.stringify(bashExe)}, ['-c', 'tail -f /dev/null & cat /proc/$!/winpid > "$1"; sleep 1', 'x', ${JSON.stringify(pidf.replace(/\\/g, '/'))}], { stdio: 'ignore', windowsHide: true });
+await new Promise(r => b.on('exit', r));
+const r = reapJob(job);
+fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ error: job.error, r }));
+process.exit(0);`;
+  const f = path.join(t, 'held.mjs'); fs.writeFileSync(f, src);
+  const c = spawn(process.execPath, [f], { stdio: 'ignore' });
+  await new Promise(r => c.on('exit', r));
+  const o = JSON.parse(fs.readFileSync(out, 'utf8')), tail = Number(fs.readFileSync(pidf, 'utf8').trim());
+  try {
+    assert.equal(o.error, undefined);
+    assert.ok(tail > 0, 'the tail started');
+    assert.ok(o.r.killed.some(k => k.pid === tail && /^tail\.exe$/i.test(k.image)), `tail ${tail} reaped: ${JSON.stringify(o.r.killed)}`);
+    await waitFor(() => !alive(tail), 5000).catch(() => { /* the assert below names it */ });
+    assert.equal(alive(tail), false, 'the watcher is dead');
+  } finally { if (tail > 0 && alive(tail)) process.kill(tail); }
+});
+
+// proc-hygiene (2): the orphaned git / powershell were children of a killed child (suspended at birth). boundedSync's timeout kills
+// the whole tree - the grandchild too - and keeps spawnSync's shape (exit code, stdout, input, ETIMEDOUT, ENOENT).
+test('proc-hygiene: boundedSync kills the whole tree at its timeout; exit code, output and input pass through', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
+  const { boundedSync } = await import('../engine/lib/jobguard.mjs');
+  const t = mkTmp('meta-bsy-'), gpid = path.join(t, 'g.pid');
+  const kid = `const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); require('fs').writeFileSync(${JSON.stringify(gpid)}, String(c.pid)); setTimeout(()=>{},60000);`;
+  const t0 = Date.now();
+  const r = boundedSync(process.execPath, ['-e', kid], { timeout: 1500 });
+  assert.ok(Date.now() - t0 < 12000, 'bounded');
+  assert.equal(r.error?.code, 'ETIMEDOUT'); assert.equal(r.status, null);
+  const g = Number(fs.readFileSync(gpid, 'utf8'));
+  await waitFor(() => !alive(g), 5000).catch(() => { /* the assert below names it */ });
+  try { assert.equal(alive(g), false, `grandchild ${g} died with the timeout`); } finally { if (alive(g)) process.kill(g); }
+  const ok = boundedSync(process.execPath, ['-e', 'process.stdin.pipe(process.stdout); process.stdin.on("end", () => process.exit(3))'], { timeout: 10000, input: 'a "b" c' });
+  assert.equal(ok.status, 3); assert.equal(ok.stdout, 'a "b" c');
+  assert.equal(boundedSync('no-such-program-zz', [], { timeout: 5000 }).error?.code, 'ENOENT');
 });
 
 // LEAK RED (CI 44141688462 mergelock, 43996467416 queue, Windows): a `jobguard hold` was alive after its test file, its supervisor
@@ -100,7 +152,7 @@ process.exit(0);`;
 test('jobguard hold: ends when the held process exits even while its stdin stays open; holdGone waits for its exit', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
   const exe = jobguardExe({ dir: mkTmp('meta-jgh-') });
   assert.ok(exe, 'csc.exe of .NET Framework 4 compiles the helper');
-  const held = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+  const held = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true });
   await new Promise(r => held.once('spawn', r));
   const hold = spawn(exe, ['hold', String(held.pid), `meta-test-${held.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
   try {
@@ -110,6 +162,16 @@ test('jobguard hold: ends when the held process exits even while its stdin stays
     held.kill();   // the held process ends; the hold's stdin is still open here
     assert.equal(await Promise.race([gone.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]), true, 'the hold exited with the held process');
   } finally { try { hold.kill(); } catch { /* gone */ } try { held.kill(); } catch { /* gone */ } }
+  // CI 44343850063 (queue: a stop right after the start): the supervisor died while its hold started. A hold given a pid that is gone
+  // (or reused by a later process) refuses with "err" and exits, its stdin still open here - it never waits on a stranger
+  const dead = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
+  await new Promise(r => dead.once('exit', r));
+  const late = spawn(exe, ['hold', String(dead.pid), `meta-test-${dead.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  try {
+    let out = ''; late.stdout.on('data', d => { out += d; });
+    const code = await Promise.race([new Promise(r => late.once('exit', r)), new Promise(r => setTimeout(() => r('alive'), 20000))]);
+    assert.equal(code, 1, `the hold of a gone pid exits 1 (${out.trim()})`); assert.match(out, /^err /m);
+  } finally { late.kill(); }   // a no-op (false) once it has exited
   const p = spawn(process.execPath, ['-e', 'process.stdin.resume(); process.stdin.on("end", () => setTimeout(() => process.exit(0), 200))'], { stdio: ['pipe', 'ignore', 'ignore'] });
   await new Promise(r => p.once('spawn', r));
   assert.equal(await holdGone({ proc: p }), true, 'holdGone ends its stdin and resolves at its exit');
@@ -133,6 +195,29 @@ test('jobguard: the first-use csc compile does not block the event loop (the hea
   assert.equal(jobguardExe({ dir }), exe, 'the sync lookup finds the same cache');
 });
 
+// CI-RED-7D65D2D (DEC-383, Windows LEAK RED): a `hold` outlived its supervisor - it waited only for stdin EOF, and while anything
+// still held the write end of its stdin it never saw one. The hold also waits on the supervisor's process handle (SYNCHRONIZE) and
+// exits on whichever comes first; a supervisor already gone at start = exit at once.
+test('jobguard hold exits when its supervisor dies even while its stdin write end stays open elsewhere', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
+  const exe = jobguardExe({ dir: mkTmp('meta-jgp-') });
+  assert.ok(exe, 'csc.exe of .NET Framework 4 compiles the helper');
+  const sup = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true });
+  const hold = spawn(exe, ['hold', String(sup.pid), `meta-jgp-${sup.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  const exited = new Promise(r => hold.on('exit', r));
+  try {
+    let out = '';
+    await new Promise((res, rej) => { hold.stdout.on('data', d => { out += d; if (/^(ok|err)/m.test(out)) res(); }); hold.on('exit', () => rej(new Error(`hold exited: ${out}`))); });
+    assert.match(out, /^ok/m);
+    sup.kill();   // the supervisor dies; this test still holds the hold's stdin write end open
+    const r = await Promise.race([exited.then(() => 'exited'), sleep(5000).then(() => 'alive')]);
+    assert.equal(r, 'exited', `hold ${hold.pid} still alive 5 s after its supervisor ${sup.pid} died`);
+    const gone = spawn(exe, ['hold', String(sup.pid), `meta-jgp-gone-${Date.now()}`], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    const r2 = await Promise.race([new Promise(res => gone.on('exit', () => res('exited'))), sleep(5000).then(() => 'alive')]);
+    if (r2 !== 'exited') gone.kill();
+    assert.equal(r2, 'exited', 'a hold whose supervisor is already gone exits at once');
+  } finally { try { hold.stdin.end(); } catch { /* the hold already exited and closed its stdin: nothing to end, the kills below still run */ } if (hold.exitCode === null) hold.kill(); if (sup.exitCode === null) sup.kill(); }
+});
+
 test('K3 round 2: a run the supervisor starts itself (auto-resume) breaks away from the supervisor\'s own job', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
   const d = sandbox();
   const id = d.run('mode: handoff-once\nms: 300\n', { policy: { auto_resume_max: 1, trigger_on_exit: false } });
@@ -140,6 +225,35 @@ test('K3 round 2: a run the supervisor starts itself (auto-resume) breaks away f
   await d.end(next);
   const log = fs.readFileSync(loadState(d.state).items[id].data.log, 'utf8');
   assert.match(log, new RegExp(`auto-resume -> ${next} \\(1/1\\) breakaway`), log);
+});
+
+// proc-hygiene (5): the census families under the sweep's evidence rules - parent gone (a reused pid counts as gone), no live run above,
+// older than 2 h - each with its evidence; a suspended-at-birth one says so
+test('proc-hygiene derelicts: orphaned watchers, git, scans, kill helpers, Claude shells, hooks; a live parent, a live run, youth or another program spare it', async () => {
+  const { derelicts, derelictLine } = await import('../engine/lib/strays.mjs');
+  const now = Date.parse('2026-11-19T16:40:00Z'), h = n => now - n * 3600e3;
+  const procs = [
+    { pid: 1, ppid: 0, name: 'explorer.exe', created: h(50), cmd: 'explorer' },
+    { pid: 10, ppid: 999, name: 'tail.exe', created: h(30), cmd: 'tail -n 0 -f C:/Temp/lp-suite.log' },
+    { pid: 11, ppid: 999, name: 'grep.exe', created: h(30), cmd: 'grep --line-buffered -E exit=|ALLDONE' },
+    { pid: 12, ppid: 998, name: 'git.exe', created: h(5), cmd: 'git -C C:/r rev-parse abc^{tree}', threads: 1, cpu: 0 },
+    { pid: 13, ppid: 997, name: 'powershell.exe', created: h(3), cmd: 'powershell.exe -Command "Get-CimInstance Win32_Process | ..."' },
+    { pid: 14, ppid: 996, name: 'getprocaddr64.exe', created: h(3), cmd: 'getprocaddr64 ExitProcess 143 5' },
+    { pid: 15, ppid: 995, name: 'node.exe', created: h(20), cmd: '"C:/n/node.exe" "C:/norn/engine/bin/norn.mjs" mail check --inject --run RUN-1 --state "C:/s"' },
+    { pid: 16, ppid: 994, name: 'bash.exe', created: h(4), cmd: 'bash -c -l source C:/Users/x/.claude/shell-snapshots/snapshot-bash-1.sh' },
+    { pid: 20, ppid: 1, name: 'git.exe', created: h(9), cmd: 'git fetch' },   // parent alive
+    { pid: 21, ppid: 999, name: 'git.exe', created: h(1), cmd: 'git status' },   // young
+    { pid: 22, ppid: 999, name: 'grep.exe', created: h(9), cmd: 'grep foo' },   // not a watcher
+    { pid: 23, ppid: 999, name: 'Code.exe', created: h(9), cmd: 'code' },   // not a family
+    { pid: 30, ppid: 31, name: 'tail.exe', created: h(9), cmd: 'tail -f x' },   // under a live run
+    { pid: 31, ppid: 999, name: 'node.exe', created: h(9), cmd: 'supervisor.mjs' },
+    { pid: 40, ppid: 41, name: 'git.exe', created: h(9), cmd: 'git log' },   // its parent pid now names a YOUNGER process: reused = gone
+    { pid: 41, ppid: 1, name: 'notepad.exe', created: h(1), cmd: 'notepad' },
+  ];
+  const d = derelicts(procs, { live: new Set([31]), now, self: -1 });
+  assert.deepEqual(d.map(x => [x.pid, x.kind]), [[10, 'watcher'], [11, 'watcher'], [12, 'git'], [13, 'process-scan'], [14, 'kill-helper'], [15, 'mail-hook'], [16, 'shell'], [40, 'git']]);
+  assert.match(derelictLine(d.find(x => x.pid === 12)), /^derelict git pid 12 git\.exe: parent 998 gone, no live run above it, 5\.0 h old, suspended at birth \(1 thread, no CPU\): stop it/);
+  assert.doesNotMatch(d.find(x => x.pid === 10).evidence, /suspended/);
 });
 
 test('S5 doctor strays: old headless browsers / node in an ended run\'s worktree with no live run above them; live, young or unrelated ones are not', async () => {

@@ -10,9 +10,22 @@ const names = (cmd, d) => {
   return false;
 };
 
-/** procs (default: every process now) whose command line names one of dirs; never this process. -> [{ pid, name, cmd }] */
+/** procs (default: every process now) whose command line names one of dirs; never this process. -> [{ pid, ppid, name, created, cmd }] */
 export function procsNaming(dirs, procs = listProcs()) {
   const ds = dirs.map(norm).filter(Boolean);
   if (!ds.length) return [];
-  return procs.filter(p => p.pid !== process.pid && ds.some(d => names(norm(p.cmd), d))).map(({ pid, name, cmd }) => ({ pid, name, cmd }));
+  return procs.filter(p => p.pid !== process.pid && ds.some(d => names(norm(p.cmd), d))).map(({ pid, ppid, name, created, cmd }) => ({ pid, ppid, name, created, cmd }));
+}
+
+// CI-RED-7D65D2D (DEC-383): a LEAK RED names the cause, not a bare pid - each leftover's parent pid, whether that parent is alive in
+// the same listing (a pid reused by a process born after the child does not count) and the leftover's creation time.
+const iso = ms => (Number.isFinite(ms) ? new Date(ms).toISOString() : '?');
+/** the LEAK line's body for `left` (from procsNaming), judged against the listing `procs` it came from */
+export function leakText(left, procs = listProcs()) {
+  const byPid = new Map(procs.map(p => [p.pid, p]));
+  return left.map(p => {
+    const par = Number.isInteger(p.ppid) ? byPid.get(p.ppid) : null;
+    const alive = !!par && !(Number.isFinite(par.created) && Number.isFinite(p.created) && par.created > p.created);
+    return `pid ${p.pid} (${p.cmd}) [parent ${p.ppid ?? '?'} ${alive ? 'alive' : 'gone'}, created ${iso(p.created)}]`;
+  }).join('; ');
 }

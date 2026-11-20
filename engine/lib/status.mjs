@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadState } from './records.mjs';
 import { renderDigest } from './views.mjs';
+import { threadStatus } from './qthread.mjs';
 import { liveRuns, sweepLost, STALE_MS } from './runs.mjs';
 import { cacheRSince, jsonCacheRSince } from './usage.mjs';
 import { capKey, capDefault, capsOfRun } from './executors.mjs';
@@ -14,6 +15,7 @@ import { ciMain } from './ciwatch.mjs';
 import { fedCacheR } from './fed.mjs';
 import { limitLines } from './limitgate.mjs';
 import { isApi, billingLine } from './billing.mjs';
+import { readPause, PAUSE_MODES, pauseFiles } from './pausemode.mjs';
 
 const pad = n => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -23,7 +25,6 @@ const localMd = d => `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHo
 const N = (x, d) => Number(x).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const ps = v => (v === undefined || v === null ? '' : String(v));   // PowerShell renders $null as ''
 const cs = capText;   // a cap: unset = no limit, said so (META-OOTB F-3: never an empty cap)
-const bool = b => (b ? 'True' : 'False');
 
 function lastMarker(notes) {
   if (!notes || !fs.existsSync(notes)) return '(no NOTES)';
@@ -74,7 +75,7 @@ export function weeklyEstimate(o, now = new Date(), { transcripts = true } = {})
  */
 export function buildStatus(o) {
   const B = o.budget || {}, now = o.now || new Date(), staleMs = o.staleMs ?? STALE_MS;
-  const paused = o.paused || [path.join(path.dirname(path.resolve(o.state)), 'PAUSED'), path.join(o.state, 'PAUSED')];
+  const paused = o.paused || pauseFiles(o.state);
   const lastTickF = path.join(o.state, 'last-tick.txt');
   const lastCk = fs.existsSync(lastTickF) ? new Date(fs.readFileSync(lastTickF, 'utf8').trim()) : new Date(now.getTime() - 12 * 3600000);
   sweepLost(o.state, { staleMs, by: 'status' });
@@ -86,7 +87,8 @@ export function buildStatus(o) {
   L.push('## Steering (BUDGET; future dispatch only)');
   L.push(`- caps: max_claude_workers=${cs(B.max_claude_workers)}; max_codex=${cs(B.max_codex)}; max_astra=${cs(astraCap)}; max_sol=${cs(solCap)}; usage_rate_cap_pct_per_h=${cs(B.usage_rate_cap_pct_per_h)}`);
   L.push(`- defaults: claude_model=${B.claude_model || 'claude-opus-5-5'}; claude_effort=${B.claude_effort || 'medium'}; checkin_model=${ps(B.checkin_model)}; checkin_effort=${ps(B.checkin_effort)}; codex_astra_effort=${B.codex_astra_effort || 'xhigh'}; codex_sol_effort=${B.codex_sol_effort || 'medium'}`);
-  L.push(`- check-ins paused: ${bool(paused.some(f => fs.existsSync(f)))}`);
+  const pz = readPause(paused);   // RM-37: the mode in force, who set it and why (pausemode.mjs)
+  L.push(`- pause: ${pz ? `${pz.label}${pz.by ? ` by ${pz.by}` : ''}${pz.at ? ` since ${pz.at.slice(0, 16)}Z` : ''}${pz.why ? ` (${pz.why})` : ''} - ${PAUSE_MODES[pz.mode].says}` : 'none'}`);
   const items = Object.values(st.items);
   const dirs = items.filter(i => i.kind === 'directive' && i.state === 'active');
   L.push(`- directive count: ${dirs.length} active (norn rec list --open --kind DIR; below DECISION-RULES stops and owner-only asks)`);
@@ -129,7 +131,7 @@ export function buildStatus(o) {
   L.push('## Records');
   const day = 24 * 3600000;
   const recs = [
-    ...items.filter(i => i.kind === 'question' && ['open', 'answered'].includes(i.state)).map(i => `- ${i.id} ${i.state}${i.state === 'open' && now - Date.parse(i.created) > day ? ' STALE' : ''} ${i.data.lane ?? '-'}: ${i.data.title}`),
+    ...items.filter(i => i.kind === 'question' && ['open', 'answered'].includes(i.state)).flatMap(i => [`- ${i.id} ${i.state}${i.state === 'open' && now - Date.parse(i.created) > day ? ' STALE' : ''} ${i.data.lane ?? '-'}: ${i.data.title}`, ...threadStatus(i)]),   // INBOX-REPLIES: + its thread's wait
     ...dirs.map(i => `- ${i.id} active: ${String(i.data.text).split('\n')[0].slice(0, 160)}`),
     ...items.filter(i => i.kind === 'lane' && i.state === 'parked').map(i => `- ${i.id} parked: ${i.history.at(-1).data.why ?? ''}`),
     ...items.filter(i => i.kind === 'run' && ['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive' && i.data.role !== 'helper')

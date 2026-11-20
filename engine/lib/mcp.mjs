@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, loadState, kindOfId, RecordError, KINDS, holdOf } from './records.mjs';
+import { record, loadState, kindOfId, kindNamed, RecordError, KINDS, holdOf, laneId, laneName } from './records.mjs';
 import { ConfigError, metaRoot, fwd, loadMachine, loadProject, expandVars } from './config.mjs';
 import { genAfterPolicy, projectNew, SetupError } from './setup.mjs';
 import { scan, interviewOf, proposalOf, adoptDecide, adoptApply, renderProposal, AdoptError, PARTS } from './adopt.mjs';
@@ -21,6 +21,8 @@ import { tierOf, promptTier, cliPlan, ownerSaid, emit, requestApproval, showRoot
 import { readThread } from './chat.mjs';
 import { splitRepo, projectHome } from './monorepo.mjs';
 import { dupOf, dupMessage } from './dupdirs.mjs';
+import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll } from './pause.mjs';
+import { PAUSE_MODES, MODE_NAMES, pauseFiles, readPause } from './pausemode.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
@@ -82,7 +84,6 @@ const obj = (properties, required = []) => ({ type: 'object', properties, requir
 const tail = (file, n) => { if (!n || !file) return ''; try { return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n').split('\n').filter((l, i, a) => i < a.length - 1 || l).slice(-n).join('\n'); } catch { return ''; } };
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 const lastSeq = i => i.history.at(-1)?.seq ?? 0;
-const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
 const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : Number(a.id.replace(/\D/g, '')) - Number(b.id.replace(/\D/g, '')));
 
@@ -116,7 +117,7 @@ export const TOOLS = [
   { name: 'norn_directive', profiles: CTL, description: "Record an OWNER directive (owner's words verbatim), optionally scoped to lanes.",
     schema: obj({ text: S.str('owner words verbatim'), scope: S.strs, expires: S.str('UTC time'), new: S.bool }, ['text']), run: directive },
   { name: 'norn_question_add', profiles: CK, description: 'Ask the owner one question (options with cost, a recommendation); parks the lanes it blocks. owner_only = a taste / owner pick no check-in may rule.',
-    schema: obj({ lane: S.str(), title: S.str(), body: S.str(), options: { type: 'array', items: obj({ key: S.str(), text: S.str(), cost: S.str() }, ['key', 'text']) },
+    schema: obj({ lane: S.str(), title: S.str(), body: S.str('short markdown: a lead sentence, then bullets; ids bare (the Inbox links them), backticks only for code (a command, a path)'), options: { type: 'array', description: 'every real alternative (3-4 if they exist, never padded)', items: obj({ key: S.str(), text: S.str(), cost: S.str() }, ['key', 'text']) },
       recommend: obj({ key: S.str(), why: S.str() }, ['key', 'why']), class: S.str('', { enum: ['i', 'ii', 'iii', 'iv', 'v'] }), blocks: S.strs, source: S.str(), owner_only: S.bool }, ['lane', 'title', 'options']), run: questionAdd },
   { name: 'norn_decision_add', profiles: CK, description: 'Record a controller decision (question, choice, why, cost, source).',
     schema: obj({ lane: S.str(), question: S.str(), choice: S.str(), why: S.str(), cost: S.str(), source: S.str(), answers: S.str('Q-n it answers (with owner_words: closes it in the same step)'), owner_words: S.str("the owner's words, verbatim (with answers)"), not_an_answer: S.bool, notify: S.bool }, ['lane', 'question', 'choice', 'why']), run: decisionAdd },
@@ -132,8 +133,9 @@ export const TOOLS = [
       executor: S.str('cold helper executor (ask)'), max_s: S.int(0, 540) }, ['run']), run: runShow },
   { name: 'norn_tick', profiles: CTL, description: 'Start one detached check-in tick now.',
     schema: obj({ reason: S.str() }, ['reason']), run: tickTool },
-  { name: 'norn_pause', profiles: CTL, description: 'Set or clear the PAUSED flag (paused = no new dispatches, no check-ins).',
-    schema: obj({ on: S.bool }, ['on']), run: pause },
+  { name: 'norn_pause', profiles: CTL, description: 'Pause (one of): a mode; runs to pause safely (they hand off, never auto-resumed); half (the pick, no act); resume RUN-n | all.',
+    schema: obj({ mode: S.str('checkins: no check-ins | queue: nothing new starts, resumes wait queued | all: both', { enum: MODE_NAMES }), runs: { ...S.strs, description: 'RUN-n each sent an urgent order: commit, hand off, end' },
+      half: S.bool, n: S.int(0), resume: S.str('RUN-n: its paused hand-off queued first | all: the pause released, paused hand-offs queued, merges first'), why: S.str() }), run: pause },
   { name: 'norn_settings', profiles: CK, description: 'Read Settings; the controller may also set one (validated, dry_run shows the diff).',
     schema: obj({ get: S.strs, set: obj({ key: S.str(), value: {} }, ['key', 'value']), dry_run: S.bool }), run: settings },
   // META-GTP-MAIL delivery (b): the mailbox of the run this server serves (META_RUN_ID) - for executors without the mail hook
@@ -206,7 +208,7 @@ function boot({ role }, ctx) {
   const digest = { project: ctx.project?.name ?? null, needs_you: items.filter(needsYou).length, digest: digestIds(resume),
     running: runs.filter(i => i.state === 'running').map(i => ({ run: i.id, lane: i.data.lane ?? null, executor: i.data.executor ?? i.data.kind })),
     last_checkin: lastCk ? { run: lastCk.id, state: lastCk.state, ts: lastCk.history[0].ts } : null,
-    other_controllers: otherControllers(ctx).map(h => ({ pid: h.pid, via: h.via, ts: h.ts })), paused: paused(ctx) };
+    other_controllers: otherControllers(ctx).map(h => ({ pid: h.pid, via: h.via, ts: h.ts })), pause: readPause(pauseFiles(ctx.state)) };   // RM-37: the mode in force (null = none)
   return { text: pack(ctx, role) + '\n\n## State digest\n' + JSON.stringify(digest, null, 1) + (resume ? '\n\n' + renderDigest(resume, { level: 2 }) : ''), data: { role, digest } };
 }
 function status(a, ctx) {
@@ -238,9 +240,9 @@ function inbox(a, ctx) {
   return { text: items.map(i => `${i.id}  ${i.why}  ${i.lane ?? '-'}  ${i.title}`).join('\n') + `\ncursor: since_seq=${cursor.seq} since_runs_seq=${cursor.runs_seq}`, data: { items, cursor } };
 }
 function records(a, ctx) {
-  const kind = a.kind && (KIND_ALIAS[a.kind] || a.kind);
+  const kind = a.kind && kindNamed(a.kind);
   let rows = Object.values(st(ctx).items).filter(i => (!kind || i.kind === kind) && (!a.state || i.state === a.state) && (!a.id || i.id === a.id)
-    && (!a.lane || i.data.lane === a.lane || i.id === 'L:' + a.lane)).sort(order);
+    && (!a.lane || i.data.lane === a.lane || i.id === laneId(a.lane, ctx.state))).sort(order);
   rows = rows.slice(-(a.limit ?? 50)).map(({ history, ...i }) => (a.id ? { ...i, history } : i));
   return { text: rows.map(i => `${i.id}  ${i.state}  ${i.data.lane ?? ''}  ${title(i)}`).join('\n') || '(none)', data: { rows } };
 }
@@ -260,7 +262,7 @@ function directive(a, ctx) {
 function questionAdd(a, ctx) {
   const options = a.options.map(o => ({ key: o.key, text: o.text, cost: o.cost ?? '' }));
   const e = write(ctx, { kind: 'question', ev: 'create', data: { title: a.title, lane: a.lane, ...(a.body !== undefined ? { body: a.body } : {}), options,
-    ...(a.recommend ? { recommend: a.recommend } : {}), ...(a.class ? { class: a.class } : {}), blocks: a.blocks || [], ...(a.source ? { source: a.source } : {}), ...(a.owner_only !== undefined ? { owner_only: a.owner_only } : {}) } });
+    ...(a.recommend ? { recommend: { ...a.recommend, from: ctx.writer } } : {}), ...(a.class ? { class: a.class } : {}), blocks: a.blocks || [], ...(a.source ? { source: a.source } : {}), ...(a.owner_only !== undefined ? { owner_only: a.owner_only } : {}) } });
   return { text: e.id, data: { id: e.id } };
 }
 function decisionAdd(a, ctx) {
@@ -286,7 +288,7 @@ function startRunTool(a, ctx) {
   for (const [k, f] of [['model', 'model'], ['effort', 'effort'], ['budget_min', 'budget-min'], ['parent', 'parent'], ['worktree', 'worktree'], ['notes', 'notes']]) if (a[k] !== undefined) args.push('--' + f, String(a[k]));
   const r = ctx.cliRun(args);
   if (r.code) throw new ToolError(r.code === 4 ? `cap: do it later (${r.out || r.err})` : (r.err || r.out), r.code);
-  const m = r.out.match(/^STARTED (RUN-\d+) lane \S+ (\S+) (\S+) (\S+)/m) || [];
+  const m = r.out.match(/^STARTED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) lane \S+ (\S+) (\S+) (\S+)/m) || [];
   return { text: r.out, data: { run: m[1], executor: m[2], model: m[3], effort: m[4] } };
 }
 function stop(a, ctx) {
@@ -300,7 +302,7 @@ function askTool(a, ctx) {
   const args = ['ask', a.run, '--q', a.ask, ...(a.executor ? ['--executor', a.executor] : []), ...(a.max_s !== undefined ? ['--max-s', String(a.max_s)] : [])];
   const r = ctx.cliRun(args);
   if (![0, 5].includes(r.code)) throw new ToolError(r.code === 4 ? `cap: ${r.out || r.err}` : (r.err || r.out), r.code);
-  const m = r.out.match(/^(RUN-\d+) asks \S+: (fork|cold)/m) || [];
+  const m = r.out.match(/^(RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) asks \S+: (fork|cold)/m) || [];
   return { text: r.out, data: { run: a.run, ask_run: m[1] ?? null, mode: m[2] ?? null, code: r.code } };
 }
 function runShow(a, ctx) {
@@ -320,12 +322,21 @@ function tickTool(a, ctx) {
   c.unref();
   return { text: `tick started (pid ${c.pid})`, data: { pid: c.pid } };
 }
-const pausedFile = ctx => path.join(ctx.state, 'PAUSED');
-const paused = ctx => [path.join(path.dirname(path.resolve(ctx.state)), 'PAUSED'), pausedFile(ctx)].some(f => fs.existsSync(f));
-function pause({ on }, ctx) {
-  const f = pausedFile(ctx);
-  if (on) { fs.mkdirSync(ctx.state, { recursive: true }); fs.writeFileSync(f, new Date().toISOString() + '\n'); } else { try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
-  return { text: on ? 'PAUSED' : 'resumed', data: { paused: paused(ctx) } };
+// RM-37: one tool for every pause (the controller profile is capped at 16 tools): the modes, a run's safe pause, pause half, resume
+function pause(a, ctx) {
+  const by = ctx.writer, asks = ['mode', 'runs', 'half', 'resume'].filter(k => a[k] !== undefined);
+  if (asks.length !== 1) bad(`give exactly one of mode | runs | half | resume (got ${asks.join(', ') || 'none'})`);
+  try {
+    if (a.mode) { const p = setPause(ctx.state, { mode: a.mode, by, why: a.why }); return { text: `PAUSED: ${p.label} - ${PAUSE_MODES[p.mode].says}`, data: { pause: p } }; }
+    if (a.half) { const pk = pickHalf(ctx.state, { n: a.n, nearEnd: nearEndMin(ctx.project?.policy) }); return { text: pk.line, data: pk }; }
+    if (a.runs) { const r = pauseRuns(ctx.state, a.runs, { by, why: a.why }); return { text: r.map(x => (x.error ? `${x.run}: ${x.error}` : `PAUSE ${x.run}: order ${x.mail} sent`)).join('\n'), data: { runs: r } }; }
+    if (a.resume === 'all') {
+      const r = resumeAll(ctx.state, { by });
+      return { text: `${r.cleared ? 'RELEASED ' + r.cleared.label : 'no pause to release'}${r.still ? `; still paused: ${r.still.label} (${r.still.file})` : ''}; ${r.resumed.length} paused hand-off(s) queued`, data: r };
+    }
+    const r = resumeRun(ctx.state, { run: a.resume, by });
+    return { text: `RESUME ${r.run} queued as ${r.next}`, data: { ...r, pause: readPause(pauseFiles(ctx.state)) } };
+  } catch (e) { if (e instanceof PauseError || e instanceof RecordError) bad(e.message); throw e; }
 }
 const budgetFile = ctx => path.join(metaRoot(ctx.env), 'local', 'budget.json');
 function readBudget(ctx) { try { return JSON.parse(fs.readFileSync(budgetFile(ctx), 'utf8').replace(/^﻿/, '')); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; } }
@@ -565,7 +576,8 @@ async function approveTool(a, ctx) {
 // what a tier-2 card says (a Settings change shows its diff first: a dry run)
 function cardOf(t, a, ctx) {
   const who = ctx.project?.name ?? 'the project';
-  if (t.name === 'norn_pause') return a.on ? { title: `Pause ${who}`, text: 'No new dispatches and no check-ins until you resume.' } : { title: `Resume ${who}`, text: 'Dispatches and check-ins start again.' };
+  if (t.name === 'norn_pause') return a.mode ? { title: `${PAUSE_MODES[a.mode].label}: ${who}`, text: PAUSE_MODES[a.mode].says } : a.runs ? { title: `Pause ${a.runs.join(', ')} safely`, text: 'Each gets an urgent order: finish the step, commit, hand off and end. Its hand-off waits for your resume.' }
+    : a.resume === 'all' ? { title: `Resume all: ${who}`, text: 'The pause is released and every paused hand-off is queued, merges first.' } : { title: `Resume ${a.resume}`, text: 'Its hand-off is queued at the front.' };
   if (t.name === 'norn_settings') return { title: `Change setting ${a.set.key}`, text: settings({ ...a, dry_run: true }, ctx).text };
   if (t.name === 'norn_cli') return { title: `norn ${cliPlan(a.args).sub}`, command: 'norn ' + a.args.join(' '),
     text: a.args.includes('--batching') ? 'The merge-queue kill switch.' : 'Builds and gates a merge batch; its MERGE run moves main.' };
@@ -576,7 +588,7 @@ function doneCard(t, a, r, ctx) {
   if (t.name === 'norn_directive') return emit(ctx.state, { kind: 'done', title: `${r.data.id} saved in your words`, lines: [a.text], undo: { verb: 'revoke', id: r.data.id } });
   if (t.name === 'norn_answer') return emit(ctx.state, { kind: 'done', title: `${a.q} answered in your words`, lines: [a.text] });
   if (t.name !== 'norn_cli') return undefined;
-  const out = r.data.out ?? '', q = out.match(/^QUEUED (RUN-\d+)/m), rq = out.match(/^REQUEUED (RUN-\d+) -> (RUN-\d+)/m), d = out.match(/^directive (DIR-\d+).*$/m);
+  const out = r.data.out ?? '', q = out.match(/^QUEUED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/m), rq = out.match(/^REQUEUED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) -> (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/m), d = out.match(/^directive (DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+).*$/m);
   if (q) emit(ctx.state, { kind: 'done', title: `${q[1]} queued`, lines: [q.input.split('\n').find(l => l.startsWith('QUEUED'))], undo: { verb: 'stop', run: q[1] } });
   if (rq) emit(ctx.state, { kind: 'done', title: `${rq[1]} re-queued as ${rq[2]}`, lines: [rq[0]], undo: { verb: 'requeue', run: rq[2], from: rq[1] } });
   if (d) emit(ctx.state, { kind: 'done', title: `${d[1]} saved in your words`, lines: [d[0]], undo: { verb: 'revoke', id: d[1] } });
@@ -604,7 +616,7 @@ function gated(t, a, ctx) {
 // ---------- META-CONTROLLER C4 (SPEC sec. 2 item 1): a controller's act on a lane sets or extends its hold ----------
 // the lane an act writes on (null = none / not a lane act); norn_cli lane claim / release are the hold itself
 function actLane(name, a, ctx) {
-  const ofId = id => (!id ? null : String(id).startsWith('L:') ? String(id).slice(2) : st(ctx).items[id]?.data?.lane ?? null);
+  const ofId = id => (!id ? null : String(id).startsWith('L:') ? laneName(id, ctx.state) : st(ctx).items[id]?.data?.lane ?? null);
   if (['norn_run', 'norn_decision_add', 'norn_question_add'].includes(name)) return a.lane ?? null;
   if (name === 'norn_stop') return ofId(a.run);
   if (name === 'norn_answer') return ofId(a.q);
@@ -621,7 +633,7 @@ const isoMin = min => new Date(Date.now() + min * 60000).toISOString().replace(/
 function autoHold(t, a, ctx) {
   let lane = null;
   try { if (tierOf(t.name, a) < 1) return; lane = actLane(t.name, a, ctx); } catch { return; }
-  const l = lane && st(ctx).items['L:' + lane];
+  const l = lane && st(ctx).items[laneId(lane, ctx.state)];
   if (!l || !KINDS.lane.events.claim.from.includes(l.state)) return;   // no LANE record (nothing to hold) or done / archived
   const h = holdOf(l), holder = ctx.profile === 'chat' ? 'chat' : 'controller';
   if (h?.holder === 'owner') return;   // your hold stays yours

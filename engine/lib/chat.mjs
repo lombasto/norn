@@ -20,9 +20,9 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { adapterFor, capsOf, harnessOf } from './harness/index.mjs';
 import { drain as drainOutbox, decide as decideApproval, approvalsDir, readVerdict, readRequest, chatDir, threadFile } from './chatact.mjs';
-import { readEvents, recordsFile, fold, loadState, heldLanes, holdWho, hhmm } from './records.mjs';
+import { readEvents, recordsFile, fold, loadState, heldLanes, holdWho, hhmm, roleAddr } from './records.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
-import { HANDOFF_PROMPT, ctxLevel } from './ctxlimit.mjs';
+import { HANDOFF_PROMPT, ctxLevel, kTok } from './ctxlimit.mjs';
 import { tryDigest } from './digest.mjs';
 import { renderDigest } from './views.mjs';
 import { checkMail } from './mail.mjs';
@@ -153,7 +153,7 @@ export function newsBlock(state) {
   try { cur = JSON.parse(fs.readFileSync(cursorFile(state), 'utf8')); } catch { /* the first turn */ }
   const { lines, cursor } = newsSince(state, cur);
   const shown = lines.length > NEWS_MAX ? [...lines.slice(0, NEWS_MAX), `- (${lines.length - NEWS_MAX} more: norn_records / norn_inbox)`] : lines;
-  const mail = checkMail(state, { by: 'controller', to: 'role:controller', via: 'chat' })
+  const mail = checkMail(state, { by: 'controller', to: roleAddr('controller', state), via: 'chat' })
     .map(m => `- ${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n  ${clip(String(m.text).trim(), 1200).replace(/\n/g, '\n  ')}`);
   fs.mkdirSync(chatDir(state), { recursive: true });
   fs.writeFileSync(cursorFile(state), JSON.stringify(cursor));
@@ -200,7 +200,6 @@ const HANDOFF_MS = 10 * 60000;   // a hand-off turn that has not ended by then i
 const TURNS_CARRIED = 10, TURN_CLIP = 2000;
 // the fixed hand-off turn ({ctx} / {limit} filled in): ONE copy with the run orders (ctxlimit.mjs, META-CTX-ENFORCE R1)
 export { HANDOFF_PROMPT };
-const kTok = n => `${Math.round(n / 1000)}k`;
 /** the "- x" lines under "## Open threads" ("- none" is none) */
 export function openThreads(md) {
   const out = [];
@@ -393,7 +392,7 @@ export function createChat(o) {
     const md = [`# Hand-off ${h.n} - project ${p.name}, segment ${h.from_seg} -> ${h.from_seg + 1}`, '',
       `Written ${new Date().toISOString()} at context ${kTok(h.ctx)}.${h.forced ? ` FORCED: ${forcedWhy} - no hand-off from the model; Norn wrote this from the thread and the records.` : ''}`, '',
       ...(said ? ["# The controller's hand-off", '', said, ''] : []),
-      '# Norn: carried mechanically', '', '## Lanes held by this chat', ...(holds.length ? holds.map(x => `- L:${x.lane} held by ${holdWho(x)} until ${hhmm(x.until)}${x.why ? `: ${x.why}` : ''}`) : ['- none']), '',
+      '# Norn: carried mechanically', '', '## Lanes held by this chat', ...(holds.length ? holds.map(x => `- ${x.id} held by ${holdWho(x)} until ${hhmm(x.until)}${x.why ? `: ${x.why}` : ''}`) : ['- none']), '',
       "## Cards waiting for the owner's tap", ...(cards.length ? cards.map(c => `- ${c.id}: ${c.title}`) : ['- none']), '',
       '## The last turns, verbatim', ...(turns.length ? turns : ['(none)']), ''].join('\n');
     fs.mkdirSync(chatDir(p.state), { recursive: true });

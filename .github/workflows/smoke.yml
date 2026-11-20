@@ -1,11 +1,11 @@
 # norn smoke + node tests on the three desktop OSes (META-GENERAL-DESIGN section 8).
-# Hosted-runner minutes on a private repo are spending (owner-only): this runs ONLY on demand or on a pull request to main -
-# never on a branch push.
+# Hosted-runner minutes on a private repo are spending (owner-only): this runs ONLY on demand or on a push to main (after the merge,
+# with ci.yml's full suite) - never on a lane branch push. A pull request runs the fast check instead (pr.yml, META-PR-FAST RM-29).
 name: smoke
 
 on:
   workflow_dispatch:
-  pull_request:
+  push:
     branches: [main]
 
 permissions:
