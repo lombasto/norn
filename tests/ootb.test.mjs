@@ -246,7 +246,7 @@ function fakeSched(tasks, files = {}) {
     run: (cmd, args) => {
       calls.push([cmd, ...args].join(' '));
       if (cmd === 'schtasks' && args[0] === '/Query') { const n = args[args.indexOf('/TN') + 1]; return n in tasks ? { status: 0, stdout: args.includes('/XML') ? winTask(tasks[n]) : n } : { status: 1, stdout: '' }; }
-      if (cmd === 'crontab' && args[0] === '-l') return { status: 0, stdout: Object.entries(tasks).map(([n, d]) => `*/15 * * * * cd ${d.includes(' ') ? `'${d}'` : d} && /n/node ${d}/engine/bin/norn.mjs tick --reason schedule >/dev/null 2>&1 # meta:${n}`).join('\n') + '\n' };
+      if (cmd === 'crontab' && args[0] === '-l') return { status: 0, stdout: Object.entries(tasks).map(([n, d]) => `*/15 * * * * cd ${d.includes(' ') ? `'${d}'` : d} && /n/node ${d}/engine/bin/norn.mjs tick --reason schedule >/dev/null 2>&1 # norn:${n}`).join('\n') + '\n' };
       if (cmd === 'systemctl') { const n = args.at(-1).replace(/\.timer$/, ''); return { status: n in tasks ? 0 : 1, stdout: '' }; }
       if (cmd === 'launchctl') return { status: args[1] in tasks ? 0 : 1, stdout: '' };
       return { status: 0, stdout: '' };
