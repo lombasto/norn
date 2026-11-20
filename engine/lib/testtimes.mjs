@@ -30,7 +30,7 @@ const firstWord = cmd => { const s = String(cmd ?? '').trim(), m = s.match(/^"([
  *  .venv -> { python, args (the gate's pytest arguments, when it runs `python -m pytest ...`), from } | { error } */
 export function pythonOf(gateCmd, repo) {
   const w = firstWord(gateCmd);
-  if (w && PY.test(path.basename(w.word))) {
+  if (w && PY.test(path.win32.basename(w.word))) { // win32: splits on \ and / alike - a gate command names a Windows path on any host
     const m = w.rest.match(/^-m\s+pytest\b\s*(.*)$/);
     return { python: w.word, args: m ? splitArgs(m[1]) : null, from: 'project.json merge.gate.cmd' };
   }
@@ -214,7 +214,7 @@ export function testsFor(impact, files) {
 /** a test's file for the viewer: only a file inside the project repo (repo-relative path; no absolute path, no '..' out, no link out,
  *  nothing under .git) -> its real absolute path | null */
 export function repoFile(repo, rel) {
-  const r = String(rel ?? '');
+  const r = String(rel ?? '').replace(/\\/g, '/'); // a backslash is a separator on every host (POSIX would read `tests\a` as one name)
   if (!r || r.includes('\0') || path.isAbsolute(r) || /^[a-z]:/i.test(r) || /^[\\/]/.test(r)) return null;
   let root, real;
   try { root = fs.realpathSync.native(path.resolve(repo)); real = fs.realpathSync.native(path.resolve(root, r)); } catch { return null; }
