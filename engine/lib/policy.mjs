@@ -144,6 +144,11 @@ export const SETTINGS=[
   S('agents','policy.idle_lanes.hours','Idle lane after (hours)',int(1,168),'An active lane with no queued or running run - none at all, or none ended for this many hours - is idle: the Lanes page says so and the check-in must start it, park it with a reason, or archive it in its next pass.','6','Shorter = the check-in is woken sooner for a lane nobody works on.',['norn tick (gate wake, digest section 13)','dashboard Lanes',CHECKIN]),
   ...['worker','merge','checkin','chat'].map(r=>S('agents',`policy.launch.roles.${r}`,`Launch profile: ${{worker:'workers',merge:'merge runs',checkin:'check-ins',chat:'the chat'}[r]}`,en(['full','lean']),"full = today's launch (everything the user setup loads). lean = only Norn's MCP server, no user-level settings (plugins with their hooks and skills; ~/.claude/skills stay), no dynamic system-prompt sections, no Artifact / Workflow / ScheduleWakeup / ReportFindings tools (Claude Code flags; never --bare; calibrated 46.6k -> 20.5k turn 1). The doctor lists what lean drops that a brief or agent file names.",'full','lean cuts the standing context every turn re-reads (see NOTES / meta instructions suggest); a role that needs a skill or MCP server it drops loses it.',['meta run / meta tick / the chat (harness adapter flags)'])),
   S('agents','policy.overlap.enabled','Overlap check (upstream work on the same files)',bool,'On: when a lane starts and at each check-in, Norn fetches the project origin (at most every 10 min; offline = the last fetched refs) and lists the remote branches and open pull requests (gh, GitHub only) that change the same files as a running lane: a row in the check-in digest and a chip on the lane in Lanes. Off: no fetch, no gh call, no rows.','on','One git fetch and one gh call per 10 min per project, plus a git diff per new remote branch tip; nothing while no lane runs.',['the run supervisor (lane start)','norn tick (digest row overlap)','norn overlap','dashboard Lanes']),
+  // RM-46 S2b / NORN-UI-SYNC: the work-claim lease of multi-home sync (claims.mjs reads policy.sync; Settings > Sync > Claim leases)
+  S('sync','policy.sync.lease_s','Work claim lease (s)',int(300,86400),'A home renews its work claims on the ledger; another home calls a claim stale when it stays unchanged this long plus the stale grace, and the owner may then take it over.','3600','Shorter = a quiet home frees its work sooner, but a slow renewal can lose a live claim.',['engine/lib/claims.mjs (work claims, the merge leader)']),
+  S('sync','policy.sync.renew_s','Renew a claim after (s)',int(60,86400),'A running lane renews its claim (and the merge leader its lead) once this long has passed since the last renewal.','600','Lower = more pushes to the ledger; higher = closer to the lease.',['engine/lib/claims.mjs (work claims, the merge leader)']),
+  S('sync','policy.sync.fence_s','Stop an unconfirmed run after (s)',int(60,86400),'A home that has not confirmed its claim this long stops its run there: another home may be about to take the work. Keep it below the lease.','3000','Higher = a lost claim keeps running longer; at or over the lease two homes can work on one claim.',['engine/lib/claims.mjs (work claims, the merge leader)']),
+  S('sync','policy.sync.stale_grace_s','Stale grace (s)',int(0,3600),'The extra time past the lease before another home calls a claim stale (on its own clock, so clock offsets between machines cancel out).','300','Higher = a slower take over of a quiet home\'s work.',['engine/lib/claims.mjs (work claims, the merge leader)']),
   S('agents','policy.agents.max_lane_writers','Max writers per lane',int(1,1),'One writer per worktree; meta run refuses a second.','1','Fixed at 1: two writers in one tree corrupt each other.',['worker.ps1 (worktree refusal)'],{readonly:true}),
   ...Object.entries(WORK_CLASSES).flatMap(([k,label])=>[
     S('executors',`policy.executors.${k}.executor`,`${label}: executor`,en(EXECUTORS),`Who does ${label.toLowerCase()} work (auto = by load).`,POLICY_DEFAULTS.executors[k].executor,'A stronger executor costs more usage per task.',['the dispatch skill (policy:executors)',CHECKIN]),
@@ -254,6 +259,12 @@ export const SECTIONS=[
   {id:'voice',label:'Slop voice',help:'SloppaChoppa on the Slop page: his pop-ups and how often (DEC-264).',subs:[
     {id:'onoff',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
     {id:'popups',label:'Pop-ups',help:'Off by default until the owner review of SloppaChoppa (DIR-36).'}]},
+  // NORN-UI-SYNC: multi-home sync - a pane sub renders from the server's sync block (ui.mjs syncPane); the leases are normal rows
+  {id:'sync',label:'Sync',help:'Multi-home sync: this machine as one home of a project built on several machines (docs/MULTI-HOME.md).',subs:[
+    {id:'home',label:'This machine',pane:true,help:'Solo or a home, the ledger remote, the last publish and fetch, the doorbell.'},
+    {id:'setup',label:'Set up / join',pane:true,help:'Make this machine the first home, or join another home\'s ledger: check, dry run, apply.'},
+    {id:'reconcile',label:'Duplicates',pane:true,help:'Likely duplicate items, directives and decisions across homes: one owner card per pair.'},
+    {id:'leases',label:'Claim leases',help:'How long a work claim holds on the ledger and when another home may take it over.'}]},
   {id:'notify',label:'Notifications',basic:true,help:'A phone or desktop ping when Norn needs you (machine.json notify; norn setup --notify).',info:true,subs:[
     {id:'ping',label:'Phone / desktop ping'},{id:'phone',label:'Reach Norn from your phone'}]},
   {id:'files',label:'Project & files',help:'Where each setting is stored and the generated policy lines.',info:true,subs:[
@@ -294,6 +305,7 @@ export const SECTION_RULES=[
   [/^(checkin_executor|checkin_executor_trial)$/,'advanced/harness'],
   [/^chat_(executor|model|effort|idle_min)$/,'chat/session'],
   [/^chat_(hold_min|raw_shell)$/,'chat/acting'],
+  [/^policy\.sync\./,'sync/leases'],
   [/^policy\.speed_mode\./,'rules/switches'],
   [/^rules\./,'rules/house'],
   [/^policy\.allowed_classes\./,'advanced/classes']];

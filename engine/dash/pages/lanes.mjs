@@ -14,6 +14,11 @@ const overlapChip = o => {
 // owner 2026-11-18: two or more overlaps become ONE summary chip that opens (a native <details>) to the per-branch chips
 const overlapChips = os => !(os || []).length ? '' : os.length === 1 ? `<div class="lane-overlap">${overlapChip(os[0])}</div>`
   : `<details class="lane-overlap"><summary class="chip warn" title="this lane's changed files overlap ${os.length} other branches / PRs">overlaps ${os.length} upstream: ${os.reduce((n, o) => n + (o.n || 0), 0)} files</summary><div class="lane-overlap-list">${os.map(overlapChip).join(' ')}</div></details>`;
+// NORN-UI-SYNC (S6b follow-up #2): a lane whose branch is predicted to conflict with another home's open branch (overlap.mjs: git
+// merge-tree on the two tips) carries one "conflicts with <home>" chip per home in its row; the branches and files are its tooltip
+export const conflictChips = cs => [...new Set((cs || []).map(c => c.home))].map(h => {
+  const mine = cs.filter(c => c.home === h), tip = mine.flatMap(c => [`${c.ref}: ${c.n} file${c.n === 1 ? '' : 's'}`, ...(c.files || []).map(x => '  ' + x)]).join('\n');
+  return ` <span class="chip bad lane-conflict" title="${esc(tip)}">conflicts with ${esc(h)}</span>`; }).join('');
 // The board groups in page order (lib/lanes.mjs boardOf splits the rows; the server sets row.board). The group buttons are the filter,
 // kept in S.laneShow and the URL as &show=; Parked and Done today start collapsed, Old and Archived are links with counts.
 export const LANE_SHOW = [['needs', 'Needs you'], ['running', 'Running'], ['stopped', 'Stopped'], ['waiting', 'Waiting'], ['land', 'To land'],
@@ -131,7 +136,7 @@ function row(l, ctx) {
   const word = `${groupWord(l.board)}${late ? ', heartbeat late' : ''}`;
   return `<article class="lrow b-${esc(l.board)}" id="lane-${esc(l.name)}" data-type="${esc(l.lane_type?.type ?? '')}">
     <span class="ltile t-${tok}" role="img" aria-label="${esc(word)}" title="${esc(word)}">${shape(tok)}</span>
-    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
+    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
       <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
     ${progress(l, ctx.now) || '<span class="lprog"></span>'}${strip(l)}${track(l.dlv)}
     <div class="rowacts">${actions(l).join(' ')}</div>
