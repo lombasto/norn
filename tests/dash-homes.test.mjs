@@ -16,7 +16,7 @@ import { openPage, skipWhy } from './helpers/cdp.mjs';
 const GENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (dir, args, input) => execFileSync('git', args, { env: { ...GENV, GIT_DIR: dir }, input, encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 const NOW = Date.now(), iso = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
-// a ledger bare repo as the fetch leaves it: refs/sync/home/b and refs/sync/claims (b's work claim on slop, stale on a's clock; a's merge leader)
+// a ledger bare repo as the fetch leaves it: b's fetched home ref (under refs/sync/home/) and refs/sync/claims (b's work claim on slop, stale on a's clock; a's merge leader)
 function ledgerRepo(L, stateRoot) {
   execFileSync('git', ['init', '-q', '--bare', L], { env: GENV, windowsHide: true });
   const tree = files => git(L, ['mktree'], Object.entries(files).map(([n, v]) => typeof v === 'string' ? `040000 tree ${v}\t${n}` : `100644 blob ${git(L, ['hash-object', '-w', '--stdin'], JSON.stringify(v))}\t${n}`).join('\n') + '\n');
@@ -26,7 +26,7 @@ function ledgerRepo(L, stateRoot) {
   const claims = tree({ work: tree({ kestrel: tree({ b: tree({ 'slop.json': work }) }) }), leader: tree({ kestrel: tree({ 'merge.json': leader }) }),
     homes: tree({ 'b.json': { v: 1, kind: 'home', id: 'b', branch: 'home/b', projects: ['kestrel'], joined_at: iso(NOW - 864e5) } }) });
   git(L, ['update-ref', 'refs/sync/claims', git(L, ['commit-tree', claims, '-m', 'claims'])]);
-  git(L, ['update-ref', 'refs/sync/home/b', git(L, ['commit-tree', tree({ 'x.json': { v: 1 } }), '-m', 'home/b: publish'])]);
+  git(L, ['update-ref', 'refs/sync/home/' + 'b', git(L, ['commit-tree', tree({ 'x.json': { v: 1 } }), '-m', 'home/b: publish'])]);
   fs.writeFileSync(path.join(L, 'sync-fetch.json'), JSON.stringify({ fetched_at: iso(NOW - 30e3), fetch_error: null, failed_at: null, gone: [] }));
   // the observer's clock: b's claim seen at n=4 for 3 h on a (lease 1 h + grace = stale)
   fs.mkdirSync(path.join(stateRoot, 'kestrel', 'sync'), { recursive: true });
