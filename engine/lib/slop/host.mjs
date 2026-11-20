@@ -3,7 +3,7 @@
 //   holds.json   { [branch]: { lane, run, base, head, at, blocks, resumed? } } - a branch with BLOCK findings; the merge waits on it
 //   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends)
 //   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level) } - the door reads it
-//   REPORT.md + report.json - the daily report and its one digest line; daily.started / daily.missed - a daily start, the ones that wrote nothing
+//   REPORT.md + report.json - the daily report, its one digest line and the main it read to; daily.started / daily.missed - a daily start, the ones that wrote nothing
 // Waivers are records (WVR-n, waivers.jsonl); a block is open while no active waiver covers it.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,7 +43,7 @@ export const slopChecks = state => (readText(checksFile(state)) || '').split('\n
  * The one host write. payload.type:
  *  check  { branch, lane?, run?, base, head, hash (the rule set's), blocks, findings, skipped? } -> one line in checks.jsonl
  *         (the new findings of every level) + the branch's hold set (blocks) or dropped (none); -> { open, check }
- *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }) } -> the report files
+ *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }), main (the sha the landed-unchecked list ran to) } -> the report files
  */
 export function hostWrite(state, payload) {
   if (payload.type === 'check') {
@@ -64,7 +64,7 @@ export function hostWrite(state, payload) {
     const dir = slopDir(state);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'REPORT.md'), payload.report);
-    writeJ(path.join(dir, 'report.json'), { day: payload.day, at: new Date().toISOString(), line: payload.line });
+    writeJ(path.join(dir, 'report.json'), { day: payload.day, at: new Date().toISOString(), line: payload.line, main: payload.main ?? null });
     const s = slopSeries(state);
     s.days[payload.day] = payload.point;
     writeJ(path.join(dir, 'series.json'), s);
