@@ -1,5 +1,5 @@
 // UX review 4: one name and one count per thing. The words are the glossary in engine/dash/README.md ("Words"); the counts of the same
-// thing come from these functions only, so the Overview card, the Inbox, the tab badge, the page title and the Home filter agree.
+// thing come from these functions only, so the status strip, the Inbox, the bar badge, the page title, the Lanes needs and the Talk filter agree.
 // Pure, no I/O: the server (server.mjs) and the browser (ui.mjs, home.mjs) both load it.
 
 /** an Inbox row that waits for you: every row but an answered question and a lane parked on one (they wait for the next check-in, not for you),

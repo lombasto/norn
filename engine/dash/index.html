@@ -218,7 +218,7 @@ async function render(force = false, why = []) {
     if (threadOnly(why, S.tab) && $('#thread')) { await paintThread(); return; }   // META-HOME-POLISH R1: a chat line repaints the thread only
     const re = refetchFor(S.tab, why); if (!re.page) { if (re.strip) await header(); return; }   // NORN-UI-NAV: a pulse = the strip only
     // dash-latency: the header and the tab load at once (they were a waterfall: the header's /api/overview, then the tab's), and one
-    // render fetches a URL once (the Overview, Runs, Work and Health tabs read the header's /api/overview); a render a newer one
+    // render fetches a URL once; a render a newer one
     // overtook (a click while a slow fetch was out) never paints
     const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
     const tab = S.project ? S.tab : 'adopt';
@@ -763,7 +763,7 @@ async function adoptAct(b, d) {
   if (d.act === 'adopt-review') { if (d.project && d.project !== S.project) { S.project = d.project; $('#project').value = S.project; openStream(); } adoptGo(); render(); return; }
   if (d.act === 'adopt-goto') { S.project = d.project; $('#project').value = S.project; adoptGo(); openStream(); render(); return; }
   if (d.act === 'adopt-again') { adoptGo({ ask: 'scan' }); render(); return; }
-  if (d.act === 'adopt-later') { S.tab = 'overview'; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=overview`); await render(); err('Saved: every decision is recorded as you make it. "Review the draft setup" waits in Needs you.'); return; }
+  if (d.act === 'adopt-later') { S.tab = 'lanes'; history.replaceState(null, '', tabUrl()); await render(); err('Saved: every decision is recorded as you make it. "Review the draft setup" waits in Needs you.'); return; }
   if (d.act === 'adopt-use') { const box = $('#main [data-adopt="root"]'); if (box) box.value = d.root; }
   if (d.act === 'adopt-use' || d.act === 'adopt-scan') {
     const root = $('#main [data-adopt="root"]')?.value.trim();

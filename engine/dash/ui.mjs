@@ -181,7 +181,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
 }
 
 // ---------- tabs ----------
-/** the cards that read the status strip (/api/strip, ctx.strip), not the page's endpoint - the Overview's onboarding on Lanes (the first
+/** the cards that read the status strip (/api/strip, ctx.strip), not the page's endpoint - the retired Overview's onboarding on Lanes (the first
  *  task, the setup gaps) and the API spend on Usage. index.html repaints #strip-cards when a newer strip lands. */
 export const stripCards = (tab, s) => `<div id="strip-cards">${!s ? '' : tab === 'lanes' ? firstTask(s.first_run) + setupGaps(s.setup)
   : tab === 'usage' && s.usage?.billing?.type === 'api' ? `<section class="card" id="usage-burn" style="margin-bottom:12px"><h2>Last 24 h <span class="mute small">API billing, against the daily cap</span></h2>${apiBurn(s.usage.billing)}</section>` : ''}</div>`;
@@ -574,7 +574,7 @@ export function laneCard(c, label) {
     ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
     <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
 }
-// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan, Overview); over
+// MERGE-FIRST (4): "merge backlog: N, oldest Xh" - the finished work not on its way to main yet (Lanes, Plan); over
 // policy.merge.backlog_max it warns: the check-in lands work before it starts new lanes
 export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">merge backlog: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
