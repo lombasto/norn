@@ -29,7 +29,7 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax } from '../lib/deliverables.mjs';
-import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
+import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
@@ -489,7 +489,7 @@ export function createDashboard(o) {
   function withDriver(p, rows) {
     const o = { items: st(p).items, roadmap: loadRoadmap(p.state), briefTitle: briefHead, briefsDir: briefsDirOf(p), project: p.name }, dl = deliverablesOf(p).rows || [];
     return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
-      return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
+      return { ...l, driver: laneDriver(l.name, o), lane_type, dlv: prStep(dv), output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
   }
   // RM-39: each run's progress against its brief, pace, why slow and alarms in words (progress.mjs). The files are read on
   // fs.promises first (the brief, NOTES, every session's transcript - tailed into the shared cache under its own key), then the
@@ -1877,7 +1877,8 @@ data: ${JSON.stringify(l)}
         if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
           const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           const need = new Map(); for (const i of (await Promise.all(ps.map(inbox))).flat().filter(isNeed)) if (i.lane) need.set(`${i.project}|${i.lane}`, (need.get(`${i.project}|${i.lane}`) ?? 0) + 1);
-          return send(200, { lanes: rows.map(l => ({ ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 })), backlog: backlogOf(ps) }); }
+          const now = Date.now();   // stage LANES: the board group needs the Inbox's needs count (boardOf)
+          return send(200, { lanes: rows.map(l => { const r = { ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 }; return { ...r, board: boardOf(r, now) }; }), backlog: backlogOf(ps) }); }
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           const w = url.searchParams.get('window') ?? '2h'; if (!RUN_WINDOWS.includes(w)) throw fail(400, `window must be one of ${RUN_WINDOWS.join(', ')}`);
           const ps = pick(url, { all: true }), win = windowMs(w);
