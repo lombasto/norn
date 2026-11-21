@@ -77,7 +77,8 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
   try { w = where(f); } catch (e) { err('error: ' + e.message); return 2; }
   const dir = path.join(w.state, 'tests');
   // gap #7: a monorepo project (project.subdir; not with an explicit --repo) measures its own folder: its tests/, its history
-  const top = fwd(git(f.repo || w.project?.root || process.cwd(), ['rev-parse', '--show-toplevel']));
+  // `run` tests the checkout it is called in (a worker's worktree, not the project's main checkout); the other verbs the project's
+  const top = fwd(git(f.repo || (verb === 'run' ? process.cwd() : w.project?.root) || process.cwd(), ['rev-parse', '--show-toplevel']));
   const repo = !f.repo && subdirOf(w.project) ? fwd(inDir(top, subdirOf(w.project))) : top;
   const sha = () => git(repo, ['rev-parse', '--short=12', 'HEAD']);
   const print = (v, text) => (f.json ? out(JSON.stringify(v, null, 1)) : text.forEach(l => out(l)));
