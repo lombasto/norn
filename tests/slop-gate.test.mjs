@@ -297,14 +297,14 @@ test('F4 + F5 at the CLI: a broken tool is a BLOCK "could not run" (exit 1); a -
 });
 
 test('F5: a check with a broken tool holds the merge at all three doors (merge-brief, the merge queue, merge-land)', () => {
-  const root = brokenRoot(), repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), state = path.join(root, 'state', 'kestrel');
+  const root = brokenRoot(), repo = path.join(root, 'repo'), wt = path.join(root, 'wt');
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
   commit(repo, { 'a.txt': 'a\n' }, 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   const head = commit(wt, { 'b.mjs': 'export const b = 1;\n' }, 'js');
   const r = spawnSync(process.execPath, [NORN, 'merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', path.join(root, 'N.md'),
-    '--out', path.join(root, 'MB.md'), '--sha', head], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
+    '--out', path.join(root, 'MB.md'), '--sha', head], { encoding: 'utf8', windowsHide: true, env: { ...process.env, META_ROOT: root } });
   assert.equal(r.status, 3, r.stdout + r.stderr);
   assert.match(r.stdout, /REFUSED: merge-brief feat\/x: \d+ open slop BLOCK finding\(s\) at [0-9a-f]{7}[\s\S]*K3 `\*` could not run/);
   const down = () => { throw new Error('npx not found on PATH'); }, st2 = stateDir();
