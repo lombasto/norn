@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
-import { normSubdir, splitRepo, projectHome, inDir, gateText, SubdirError } from '../engine/lib/monorepo.mjs';
+import { normSubdir, subdirOf, splitRepo, projectHome, inDir, gateText, SubdirError } from '../engine/lib/monorepo.mjs';
 import { scan, draftFacts } from '../engine/lib/adopt.mjs';
 import { laneBranch, lanePaths } from '../engine/lib/lanenew.mjs';
 import { runGate } from '../engine/lib/mergeq.mjs';
@@ -61,6 +61,7 @@ test('normSubdir: repo-relative forward-slash folders; .. and absolute paths ref
   assert.equal(normSubdir('./app/'), 'app');
   assert.equal(normSubdir('apps\\web'), 'apps/web');
   for (const bad of ['../x', 'a/../b', '/abs', 'C:/x', 'a//b']) assert.throws(() => normSubdir(bad), SubdirError, bad);
+  assert.throws(() => subdirOf({ subdir: 'web/..' }), SubdirError);   // L-05: never the whole repo in its place
   assert.equal(projectHome({ root: '/r', subdir: 'app' }).endsWith('/r/app'), true);
   assert.equal(gateText({ cmd: 'npm test', dir: 'app' }), 'cd app && npm test');
   assert.equal(gateText({ cmd: 'npm test' }), 'npm test');
