@@ -33,6 +33,9 @@ test('why not merged: each reason from a fixture, in words with its link, render
   const cases = [
     ['pr', row({ pr: { url: 'https://github.com/o/r/pull/15', number: 15 } }), {}, 'PR #15 open, awaiting approval'],
     ['queued', row(), { items: items(lane('a'), run(9, { stage: 'MERGE', state: 'queued', h: -1 })), queue: [{ id: 'RUN-9', position: 2 }] }, 'merge queued as RUN-9 (#2)'],
+    // merge-slot: the fill's own words for why the queued merge has not started (mqwhy.mjs loadFillWhy)
+    ['queued', row(), { items: items(lane('a'), run(9, { stage: 'MERGE', state: 'queued', h: -1 })), queue: [{ id: 'RUN-9', position: 1 }], fill: { 'RUN-9': { why: 'cap: 4 claude workers running, budget max_claude_workers=3 + merge_workers=1 (1 merging)' } } },
+      'merge queued as RUN-9 (#1), waits: cap: 4 claude workers running, budget max_claude_workers=3 + merge_workers=1 (1 merging)'],
     ['stopped', row(), { items: items(lane('a'), run(235, { stage: 'MERGE', outcome: 'stopped', h: -2, data: { notes } })), readNotes: x => fs.readFileSync(x, 'utf8') },
       'merge stopped by RUN-235: main moved; conflict in engine/lib/x.mjs needs a design call'],
     ['build', row(), { items: items(lane('a'), run(7, { state: 'running', h: -1 })) }, 'waits for build RUN-7 on the same lane'],

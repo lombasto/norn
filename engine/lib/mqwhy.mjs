@@ -22,3 +22,15 @@ export function noteMqWhy(state, edits, { by = 'mergeq', now = Date.now() } = {}
 }
 /** the skip of a deliverables row (branch + tip) | null */
 export const mqWhyOf = (map, row) => { const e = row?.branch ? map?.[row.branch] : null; return e && (!e.tip || !row.tip || e.tip === row.tip) ? e : null; };
+
+// merge-slot (owner 11-21: "things getting done but not merged"): why a QUEUED landing run (MERGE / resolve) has not started, in the
+// fill's own words - <state>/mq/fill.json { RUN-n: { why, at } }, rewritten whole by every fill pass (runs.mjs fillQueue) from its dry walk
+// (a run that started or left the queue drops out). whyNotMerged adds it to "merge queued as RUN-n", so the Lanes "to land" row says why.
+const fillWhyFile = state => path.join(state, 'mq', 'fill.json');
+export const loadFillWhy = state => { try { return JSON.parse(fs.readFileSync(fillWhyFile(state), 'utf8')); } catch { return {}; } };
+/** rows: the fill walk's rows (runs.mjs readiness); isLanding: stage -> bool */
+export function noteFillWhy(state, rows, isLanding, { now = Date.now() } = {}) {
+  const at = new Date(now).toISOString(), cur = Object.fromEntries(rows.filter(r => isLanding(r.stage) && !r.ready && r.terms.length).map(r => [r.id, { why: r.terms.join('; '), at }]));
+  const f = fillWhyFile(state), t = `${f}.${process.pid}.tmp`;
+  try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(t, JSON.stringify(cur, null, 1)); fs.renameSync(t, f); } catch { /* the next pass writes it */ }
+}

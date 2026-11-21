@@ -26,7 +26,7 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
+import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile, isLandingStage, mergeWorkers } from '../lib/runs.mjs';
 import { SHARE_KEY, RESERVE, shareOf } from '../lib/share.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax, loadDeliverables, isLanded } from '../lib/deliverables.mjs';
@@ -880,13 +880,16 @@ export function createDashboard(o) {
   // NORN-UI-NAV: the shell's status strip (GET /api/strip) - light: running runs counted from the run records (never agents(), the
   // run tree: it took 40-60 s on a big project), the needs-you count (terms.mjs), usage vs the guard and the hourly cap, the next
   // check-in, the pause; + the first-run box and the setup gaps the landing shows. Same numbers as the Overview's fields.
+  // merge-slot: the Claude pool as the fill splits it - the merges in the merge slots (budget.merge_workers) apart from the lane workers
+  const claudePool = (stages, m) => { const merge = Math.min(stages.filter(isLandingStage).length, mergeWorkers(m));
+    return { claude: { n: stages.length - merge, cap: m.max_claude_workers ?? null }, merge: { n: merge, cap: mergeWorkers(m) } }; };
   async function statusStrip(ps) {
     const m = withDefaults(settingsState(ps[0]).view), live = ps.flatMap(p => runsOf(st(p)).filter(r => r.state === 'running').map(r => ({ ...r, project: p.name })));
     const codexR = r => String(r.data.executor).startsWith('codex'), claudeR = r => !codexR(r) && (r.data.kind === 'worker' || r.data.kind === 'fake');
     let needs = 0; for (const p of ps) needs += needsYou(await inbox(p));
     const lanesRunning = ps.flatMap(p => lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running')));
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needs,
-      running: { claude: { n: live.filter(claudeR).length, cap: m.max_claude_workers ?? null }, codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
+      running: { ...claudePool(live.filter(claudeR).map(r => r.data.stage), m), codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
       usage: usage(ps[0], m), checkin: stripOf(ps, lanesRunning, m).checkin, strip: stripOf(ps, lanesRunning, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
@@ -899,7 +902,7 @@ export function createDashboard(o) {
     for (const p of ps) { needs.push(...(await inbox(p)).filter(isNeed)); running.push(...lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running'))); tree.push(...await agents(p)); }
     const live = tree.filter(n => n.state === 'running');
     const isCodex = n => String(n.executor).startsWith('codex'), isClaude = n => n.kind === 'worker' || n.kind === 'fake';
-    const codex = live.filter(isCodex).length, claude = live.filter(isClaude).length;
+    const codex = live.filter(isCodex).length;
     // the Running table lists exactly the runs its header counts (VISUAL-B S1 bug 1): a counted run whose lane has no LANE record
     // (or whose lane row is not "running") gets a row from its agents-tree node; a LANE row keeps its fields
     const laneRow = new Map(running.map(l => [`${l.project}|${l.run}`, l]));
@@ -910,7 +913,7 @@ export function createDashboard(o) {
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
       .sort((a, b) => b.burn30 - a.burn30).slice(0, 5);
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
-      running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
+      running: { ...claudePool(live.filter(isClaude).map(n => n.stage), m), codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
       strip: stripOf(ps, running, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)

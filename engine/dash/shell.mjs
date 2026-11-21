@@ -51,11 +51,11 @@ export function renderMore(tab, o = {}) {
 const WAIT = '<span class="mute">…</span>';
 function fields(s, ctx) {
   if (!s) return { running: WAIT, usage: WAIT, checkin: WAIT, needs: WAIT };
-  const r = s.running || {}, n = (r.claude?.n ?? 0) + (r.codex?.n ?? 0), caps = [r.claude?.cap, r.codex?.cap].filter(fin), u = s.usage || {}, ck = s.checkin || {};
+  const r = s.running || {}, n = (r.claude?.n ?? 0) + (r.codex?.n ?? 0), mg = r.merge?.cap ? ` · merge <b>${int(r.merge.n)}</b> / ${int(r.merge.cap)}` : '', caps = [r.claude?.cap, r.codex?.cap].filter(fin), u = s.usage || {}, ck = s.checkin || {};
   const usage = u.billing?.type === 'api' ? esc(u.billing.label ?? 'API billing')
     : `usage <b>${pct(u.weeklyUsed)}</b> of ${pct(u.weeklyStopPct, 0)}${fin(u.rate) ? ` · ${u.rate.toFixed(2)} %/h of ${fin(u.cap) ? u.cap.toFixed(2) : '-'}` : ''}`;
   const checkin = s.pause?.checkins ? 'check-ins paused' : ck.next ? `next check-in <b>${esc(fmtTime(ck.next, ctx.now))}</b>` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
-  return { running: `<b>${int(n)} running</b> / ${caps.length ? int(caps.reduce((a, b) => a + b, 0)) : '-'}`, usage, checkin, needs: `<b>${int(s.needs_you ?? 0)}</b> need you` };
+  return { running: `<b>${int(n)} running</b> / ${caps.length ? int(caps.reduce((a, b) => a + b, 0)) : '-'}${mg}`, usage, checkin, needs: `<b>${int(s.needs_you ?? 0)}</b> need you` };
 }
 /** s: the /api/strip answer (null = not come yet); ctx: { look, project, now } */
 export function renderStatus(s, ctx = {}) {

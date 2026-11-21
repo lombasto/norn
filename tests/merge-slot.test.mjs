@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { queueRun, readiness, fillQueue, hbPath, resourceRefusal, mergeWorkers } from '../engine/lib/runs.mjs';
 import { record } from '../engine/lib/records.mjs';
+import { loadFillWhy } from '../engine/lib/mqwhy.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { runEnded } from './helpers/wait.mjs';
 
@@ -69,13 +70,18 @@ test('a merge may take a normal slot when one is free; there the CPU gate holds 
   assert.match(a.row(merge, HOT).terms.join(), /^resources: CPU busy 95 % > fill\.max_cpu_pct 90$/);
 });
 
-test('the memory gate still holds a merge in the merge slot', () => {
+test('the memory gate still holds a merge in the merge slot; the fill notes why the merge waits (the Lanes "to land" words)', () => {
   const m = machine({ max_claude_workers: 1, merge_workers: 1 });
   const a = m.project('norn');
   a.live();
-  const merge = a.queue({ stage: 'MERGE' });
-  assert.match(a.row(merge, { free_gb: 1, cpu_pct: 95 }).terms.join(), /^resources: free RAM 1\.0 GB < fill\.min_free_gb 4$/);
+  const merge = a.queue({ stage: 'MERGE' }), LOW = { free_gb: 1, cpu_pct: 95 };
+  a.queue({ stage: 'BUILD' });
+  assert.match(a.row(merge, LOW).terms.join(), /^resources: free RAM 1\.0 GB < fill\.min_free_gb 4$/);
   assert.equal(resourceRefusal(HOT, {}, { cpu: false }), null);
+  assert.deepEqual(fillQueue(a.state, { resources: () => LOW }), []);
+  const w = loadFillWhy(a.state);
+  assert.deepEqual(Object.keys(w), [merge], 'only the landing runs');
+  assert.equal(w[merge].why, 'resources: free RAM 1.0 GB < fill.min_free_gb 4');
 });
 
 test('reserve across projects: a merge waiting in project B is reserved against project A\'s lane once the merge slots are taken', () => {

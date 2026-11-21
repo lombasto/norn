@@ -11,7 +11,7 @@ import { pathKey } from './config.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv, fwd } from './dlvmerge.mjs';
 import { whyNotMerged } from './dlvwhy.mjs';
-import { loadMqWhy } from './mqwhy.mjs';
+import { loadMqWhy, loadFillWhy } from './mqwhy.mjs';
 import { queueOf } from './runs.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
@@ -150,8 +150,8 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
   const st = (() => { try { return loadState(stateDir); } catch { return { items: {} }; } })(), queue = queueOf(Object.values(st.items));
   const readNotes = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
-  const mq = loadMqWhy(stateDir);   // land-push: the merge queue's skip of each branch
-  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r), why_not: whyNotMerged(r, { items: st.items, queue, readNotes, mq }) }));
+  const mq = loadMqWhy(stateDir), fill = loadFillWhy(stateDir);   // land-push: the merge queue's skip of each branch; merge-slot: why each queued merge waits
+  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r), why_not: whyNotMerged(r, { items: st.items, queue, readNotes, mq, fill }) }));
   scanner.finish();
   writeCache(stateDir, cache, before);
   rows.sort((a, b) => b.days - a.days);
