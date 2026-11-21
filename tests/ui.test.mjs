@@ -26,12 +26,12 @@ test('the UI tab list is the server tab list (Lanes ... Settings)', () => {
 
 test('Health states: each Health page its own state, the worst one dots More (shell.mjs); unknown = neutral', () => {
   // Health: each page its own state, the destination the worst; unknown = neutral
-  assert.deepEqual(healthStates({}), { usage: null, slop: null, tests: null, context: null });
+  assert.deepEqual(healthStates({}), { spend: null, slop: null, tests: null, context: null });
   const h = healthStates({ usage: { guard: 'ok' }, rows: [{ type: 'tests', severity: 'low' }, { type: 'memory', severity: 'medium' }] });
-  assert.deepEqual(h, { usage: 'ok', slop: 'ok', tests: 'ok', context: 'warn' });
+  assert.deepEqual(h, { spend: 'ok', slop: 'ok', tests: 'ok', context: 'warn' });
   assert.equal(worstState(h), 'warn'); assert.equal(worstState({ a: 'ok', b: 'bad', c: 'warn' }), 'bad'); assert.equal(worstState({ a: null }), null);
-  assert.equal(healthStates({ usage: { guard: 'ok', rateOK: false } }).usage, 'bad'); assert.equal(healthStates({ usage: { guard: 'STOP' } }).usage, 'bad');
-  assert.equal(healthStates({ usage: { guard: 'ok', billing: { type: 'api' } } }).usage, null, 'API billing: no weekly guard to colour');
+  assert.equal(healthStates({ usage: { guard: 'ok', rateOK: false } }).spend, 'bad'); assert.equal(healthStates({ usage: { guard: 'STOP' } }).spend, 'bad');
+  assert.equal(healthStates({ usage: { guard: 'ok', billing: { type: 'api' } } }).spend, null, 'API billing: no weekly guard to colour');
   assert.equal(healthStates({ rows: [{ type: 'code', severity: 'high' }] }).slop, 'warn');
 });
 
