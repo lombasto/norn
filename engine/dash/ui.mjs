@@ -19,11 +19,11 @@ import { esc, fin, dash, int, mTok, fmtMin, pct, plural, runWho, chip, exClass, 
 import { diffBlock } from './diffview.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
-import { plan, forecastCard } from './pages/plan.mjs';
+import { forecastCard } from './pages/plan.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
 export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
   ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
-  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['settings', 'Settings']];
+  ['roadmap', 'Roadmap'], ['settings', 'Settings']];
 export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
@@ -82,11 +82,13 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
   if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
-  if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table, or every branch / worktree of the repo (branches.mjs, the cached scan)
+  if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table (+ the queue's plan: Up next on the Waiting lanes), or every branch / worktree of the repo (branches.mjs, the cached scan)
     const sub = pickSub(LANES_SUBS, ctx.sub), limit = ctx.limit || SUB_CAP;
-    return { ...(await get(sub === 'lanes' ? `/api/lanes?${q}` : `/api/branches?${q}`)), sub, limit };
+    if (sub !== 'lanes') return { ...(await get(`/api/branches?${q}`)), sub, limit };
+    const [l, plan] = await Promise.all([get(`/api/lanes?${q}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null)]);
+    return { ...l, plan, sub, limit };
   }
-  if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (Plan's up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
+  if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
     const [a, plan, guard] = await Promise.all([get(`/api/agents?${q}&part=live${runsWin(ctx.runsWindow)}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null), guardGet(get, q, all)]);
     const old = ctx.parts?.runs, ended = old && old.key.startsWith(`${project}|${a.window}|`) ? old.data.ended : undefined;
     return { ...a, plan, guard, ended, parts_loading: true }; }
@@ -116,7 +118,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const [d, remote, guard] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null), guardGet(get, q, all)]);
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
-  // Usage carries the forecast (moved from Plan, stage NAV): /api/plan's forecast per project, beside the usage parts
+  // Usage carries the forecast: /api/plan's forecast per project, beside the usage parts
   if (tab === 'usage') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])) }; }
   if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
     const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
@@ -131,7 +133,6 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const sheet = ctx.fixall ? (await get(`/api/guard?${q}&part=sheet`)).sheet : null;
     return { ...d, ...(have || {}), parts_loading: !have, ...(sheet ? { sheet, sheet_sent: ctx.fixall.sent ?? null, sheet_sel: ctx.fixall } : {}) };
   }
-  if (tab === 'plan') return get(`/api/plan?${q}`);
   throw new Error('unknown tab ' + tab);
 }
 
@@ -145,7 +146,6 @@ export function renderTab(tab, d, ctx = {}) {
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
   if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanesPage(d, { ...ctx, now })));
-  if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
   return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }

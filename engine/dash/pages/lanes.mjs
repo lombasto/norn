@@ -1,9 +1,10 @@
 // The Lanes page (stage LANES, SPEC 4.2: "the attention board"): one list grouped by what the owner must do. Each row: a state
 // tile, name, the now line, progress and pace, the run strip (the retired Map's lane band as beads), the PR track and at most 3
 // actions; the chevron opens the lane's flow and brief in place (S.laneOpen keeps it open through a stream repaint). No timer:
-// the elapsed bar is a CSS animation, rows redraw on stream events only. Its Branches / Worktrees sub-views list every branch and worktree.
-import { esc, fin, dash, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime } from '../cells.mjs';
-import { capStrip } from '../widgets.mjs';
+// the elapsed bar is a CSS animation, rows redraw on stream events only. Waiting holds the queued lanes in fill order with the
+// retired Plan page's Up next (priority control, estimate, start, hold-ups; /api/plan). Its Branches / Worktrees sub-views list
+// every branch and worktree.
+import { esc, fin, dash, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime, filterChips } from '../cells.mjs';
 import { renderMarkdown } from '../docs.mjs';
 import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
 
@@ -59,10 +60,9 @@ const tileToken = l => l.board === 'old' ? (l.outcome === 'done' ? 'done' : 'sto
 const groupWord = id => LANE_SHOW.find(g => g[0] === id)?.[1] ?? id;
 
 // ---------- the now line (one plain sentence with numbers and times) ----------
-const hm = iso => (iso ? `${String(iso).slice(11, 16)}Z` : '');
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 export function nowLine(l, now) {
-  const t = String(l.text ?? ''), at = l.ended ? ` at ${hm(l.ended)}` : '', ago = l.ended ? `, ${laneAge(now - Date.parse(l.ended))} ago` : '';
+  const t = String(l.text ?? ''), at = l.ended ? ` at ${fmtTime(l.ended, now)}` : '', ago = l.ended ? `, ${laneAge(now - Date.parse(l.ended))} ago` : '';
   const rule = !l.rule || l.rule.text === t ? '' : ` ${cap(l.rule.text)}.`;   // lifecycle.mjs: which rule acts on it and when
   let m;
   if (l.board === 'needs' && l.ask) return `Waits for your answer to ${l.ask}.${rule}`;
@@ -136,24 +136,32 @@ function expand(l, ctx, open) {
     <div class="lexp-cols"><div>${g ? `<div class="small"><b>${esc(g.stage ?? 'Brief')}</b>: ${esc(g.line)}</div>${progDetail(g)}${g.slow?.line ? `<p class="small lslow"><b>Why slow:</b> ${esc(g.slow.line)}</p>` : ''}` : '<p class="small mute">No brief checklist for this run.</p>'}</div>
     <div>${laneWhy(l.driver)}${laneKind(l)}${overlapChips(l.overlap)}${path}<div class="small lfacts">${facts}</div><div class="rowacts">${detailBtn(l, ctx)}${l.board !== 'archived' ? btn('archive', l, 'Archive', 'ghost') : ''}</div></div></div></div>`;
 }
-function row(l, ctx) {
+// the retired Plan page's Up next on a queued lane (owner 2026-11-20: "set on queued lanes in the lane tab"): its run's entry in the
+// project's /api/plan part - the priority control with its place in the fill order, and the estimate, start and hold-ups in words
+const upOf = (d, l) => { const part = (d.plan?.parts || []).find(p => p.project === l.project), u = l.run && (part?.upnext || []).find(x => x.id === l.run); return u ? { u, priorities: part.priorities } : null; };
+const prioCtl = (l, up) => !up?.priorities?.length ? prioChip(l) : `${prioSelect(l.project, l.run, up.u.priority ?? l.priority?.p, up.priorities)}${l.position ? ` <span class="small mute" title="its place in this project's fill order">#${l.position}</span>` : ''}`;
+function upLine(up, now) {
+  if (!up) return '';
+  const u = up.u, holds = (u.holds || []).map((h, i) => (u.holdAt?.[i] ? `not before ${fmtTime(u.holdAt[i], now)}` : h));
+  const start = u.start ? (u.start.at && u.start.word !== 'now' ? `start ~${fmtTime(u.start.at, now)}` : `start ${u.start.word}`) : '';
+  const words = [u.estimate?.word, start && !holds.includes(u.start.word) ? start : '', ...holds].filter(Boolean);
+  return words.length ? `<div class="lane-up small mute">${words.map(esc).join(' · ')}</div>` : '';
+}
+function row(l, ctx, up = null) {
   const k = laneKey(l.project, l.name), open = ctx.laneOpen?.has(k), why = ctx.laneRefused?.[k], tok = tileToken(l), late = /heartbeat late/.test(l.text ?? '');
   const tag = l.executor && exClass(l.executor) !== 'claude' ? ` ${chip(exClass(l.executor), l.executor)}` : '';   // the executor only when not the default
   const word = `${groupWord(l.board)}${late ? ', heartbeat late' : ''}`;
   return `<article class="lrow b-${esc(l.board)}" id="lane-${esc(l.name)}" data-type="${esc(l.lane_type?.type ?? '')}">
     <span class="ltile t-${tok}" role="img" aria-label="${esc(word)}" title="${esc(word)}">${shape(tok)}</span>
-    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${l.land ? ` ${landChip(l)}` : ''}${l.priority ? ` ${prioChip(l)}` : ''}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
-      <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${nextLine(l)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
+    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${l.land ? ` ${landChip(l)}` : ''}${l.priority ? ` ${up ? prioCtl(l, up) : prioChip(l)}` : ''}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
+      <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${upLine(up, ctx.now)}${nextLine(l)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
     ${progress(l, ctx.now) || '<span class="lprog"></span>'}${strip(l)}${track(l.dlv)}
     <div class="rowacts">${actions(l).join(' ')}</div>
     <button class="lopen" data-act="lane-open" data-project="${esc(l.project)}" data-lane="${esc(l.name)}" aria-expanded="${!!open}" aria-controls="lx-${esc(l.name)}" aria-label="${esc(`${open ? 'Close' : 'Open'} ${l.name}`)}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
     ${expand(l, ctx, open)}</article>`;
 }
-const LEGEND = `<div class="llegend small" aria-label="Strip legend"><span class="lg-i"><span class="bd t-done">${shape('done')}</span><span class="bd t-done cont">${shape('handoff')}</span> joined = a hand-off chain, a gap = a fresh start</span>
-  <span class="lg-i"><span class="bd t-running">${shape('running')}<b class="hc">2</b></span> helpers working for the run</span><span class="lg-i"><span class="bd t-needs">${shape('needs')}</span> an open question</span>
-  <span class="lg-i">${['running', 'done', 'handoff', 'stopped', 'idle'].map(t => `<span class="bd t-${t}">${shape(t)}</span>`).join('')} running · done · hand-off · stopped / lost · queued</span>
-  <span class="lg-i"><span class="ltrack" aria-hidden="true"><i class="on"></i><i class="on at"></i><i></i><i></i></span> done → PR → merged → installed</span></div>`;
-
+/** the priority control of a queued run (index.html: a change posts /api/requeue; Runs and Lanes): re-queued at that priority, its conditions kept */
+export const prioSelect = (project, run, p, priorities) => !(priorities || []).length ? '' : `<select class="pl-prio" data-act="prio" data-project="${esc(project)}" data-run="${esc(run)}" aria-label="priority of ${esc(run)}" title="re-queue at this priority (its conditions are kept)">${priorities.map(x => `<option${x === (p ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
 // fair-slots item 3: the queued / running run's priority + its place in the fill order, one short chip in the row head; a run
 // with no priority shows the default P2, faded and said so in its title
 export const prioChip = l => !l.priority ? '' : `<span class="chip idle prio${l.priority.dflt ? ' dflt' : ''}" title="${esc(`priority ${l.priority.p}${l.priority.dflt ? ' (default: the run has no priority)' : ''}${l.position ? ` · #${l.position} in this project's fill order` : ''}`)}">${esc(l.priority.p)}${l.position ? ` #${l.position}` : ''}</span>`;
@@ -205,18 +213,19 @@ export function lanes(d, ctx) {
   const kind = ctx.laneType ?? null, typeOf = l => l.lane_type?.type ?? 'no type', shown = all.filter(l => show.has(l.board));
   const kinds = [...new Set([...shown.map(typeOf), ...(kind ? [kind] : [])])].sort();
   const rows = shown.filter(l => !kind || typeOf(l) === kind);
-  const groups = LANE_SHOW.filter(([k]) => show.has(k)).map(([k, w]) => { const rs = rows.filter(l => l.board === k);
-    return !rs.length ? '' : `<section class="lgroup g-${k}" aria-labelledby="lg-${k}"><h2 class="lgh" id="lg-${k}">${esc(w)} <b>${rs.length}</b></h2>${rs.map(l => row(l, ctx)).join('')}</section>`; }).join('');
-  const gbtn = ([k, w]) => `<button class="${LINKS.includes(k) ? 'lnk' : 'hf'}" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(w)} <b>${n(k)}</b></button>`;
-  const help = `<details class="lhelp"><summary aria-label="About this list">?</summary><div class="small">Lanes come from LANE records only (no folder scan). A lane's state is its latest run, whatever executor owns it. <b>Needs you</b> holds only the lanes an Inbox row names; <b>Old</b> = ended more than 7 days ago without DONE, or done before today.</div></details>`;
+  // Waiting = the queued lanes in the order they will start (their place in the fill order; none last)
+  const fill = (a, b) => (a.position ?? Infinity) - (b.position ?? Infinity);
+  const groups = LANE_SHOW.filter(([k]) => show.has(k)).map(([k, w]) => { const rs = rows.filter(l => l.board === k); if (k === 'waiting') rs.sort(fill);
+    return !rs.length ? '' : `<section class="lgroup g-${k}" aria-labelledby="lg-${k}"><h2 class="lgh" id="lg-${k}">${esc(w)} <b>${rs.length}</b></h2>${rs.map(l => row(l, ctx, k === 'waiting' ? upOf(d, l) : null)).join('')}</section>`; }).join('');
+  const link = ([k, w]) => `<button class="lnk" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(w)} <b>${n(k)}</b></button>`;
+  const help = `<details class="lhelp"><summary aria-label="About this list">?</summary><div class="small">Lanes come from LANE records only (no folder scan). A lane's state is its latest run, whatever executor owns it. <b>Needs you</b> holds only the lanes an Inbox row names; <b>Old</b> = ended more than 7 days ago without DONE, or done before today. <b>Waiting</b> = the queued lanes in the order they start. The beads are the lane's runs, oldest first (joined = a hand-off, a gap = a fresh start, "!" = an open question); the pips are done → PR → merged → installed. Hover any of them for its words.</div></details>`;
   return `${backlogLine(d.backlog)}
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
-   ${d.capacity?.rows?.length ? `<div class="card" id="lanes-cap" style="margin-bottom:12px">${capStrip(d.capacity, { id: 'lanes-capstrip', mine: ctx.project })}</div>` : ''}
-   <div class="filters lfilters"><span class="lane-show" role="group" aria-label="Show lane groups">${LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(gbtn).join('')}</span>
-    <input type="search" data-filter="lanes" placeholder="filter lanes" aria-label="Filter lanes"><span class="lane-show lane-links">${LANE_SHOW.filter(g => LINKS.includes(g[0])).map(gbtn).join(' · ')}</span>${help}
-    ${kinds.length > 1 || kind ? `<span class="lane-show lane-types" role="group" aria-label="Lane type">${kinds.map(k => `<button class="hf" data-act="lane-type" data-type="${esc(k)}" aria-pressed="${k === kind}">${esc(k)} <b>${shown.filter(l => typeOf(l) === k).length}</b></button>`).join('')}</span>` : ''}</div>
+   <div class="filters lfilters">${filterChips('Show lane groups', LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(([k, w]) => ({ act: 'lane-show', data: { show: k }, text: w, n: n(k), on: show.has(k) })))}
+    <input type="search" data-filter="lanes" placeholder="filter lanes" aria-label="Filter lanes"><span class="fchips lane-links">${LANE_SHOW.filter(g => LINKS.includes(g[0])).map(link).join(' · ')}</span>${help}
+    ${kinds.length > 1 || kind ? filterChips('Lane type', kinds.map(k => ({ act: 'lane-type', data: { type: k }, text: k, n: shown.filter(l => typeOf(l) === k).length, on: k === kind })), 'lane-types') : ''}</div>
    ${ctx.laneDetail ? laneDetail(ctx.laneDet, ctx, ctx.laneFile) : ''}
-   <div class="lboard" data-rows="lanes">${groups || `<p class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</p>`}</div>${all.length ? LEGEND : ''}`;
+   <div class="lboard" data-rows="lanes">${groups || `<p class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</p>`}</div>`;
 }
 
 // owner ask 2026-11-19 ("see what lane they belong to, if it's stale or in progress, merged, lost, unknown, not part of a lane"): the
@@ -229,9 +238,7 @@ export const BR_WHERE = [['all', 'All'], ['local', 'Local only'], ['remote', 'Or
 const brOf = (d, sub) => (d.rows || []).filter(r => (sub === 'worktrees' ? !!r.worktree : r.kind === 'branch'));
 export function lanesPage(d, ctx) {
   const sub = d.sub ?? 'lanes', n = k => (sub === 'lanes' ? (k === 'lanes' ? (d.lanes || []).length : undefined) : k === 'lanes' ? undefined : brOf(d, k).length);
-  const c = d.counts || {}, nums = sub === 'lanes' ? [] : [{ n: c['in progress'] ?? 0, label: 'in progress' }, { n: c['awaiting merge'] ?? 0, label: 'awaiting merge', cls: c['awaiting merge'] ? 'warn' : '' },
-    { n: (c.unknown ?? 0) + (c.lost ?? 0), label: 'unknown / lost', cls: c.lost ? 'bad' : '' }, { n: (c.stale ?? 0) + (c.merged ?? 0), label: 'merged / stale' }];
-  return subviewPage('lanes', { title: 'Lanes', numbers: nums, views: LANES_SUBS.map(([k, l]) => [k, l, n(k)]), active: sub, body: sub === 'lanes' ? lanes(d, ctx) : branchesPart(d, ctx, sub) });
+  return subviewPage('lanes', { title: 'Lanes', views: LANES_SUBS.map(([k, l]) => [k, l, n(k)]), active: sub, body: sub === 'lanes' ? lanes(d, ctx) : branchesPart(d, ctx, sub) });
 }
 const brAge = (ms, now) => (fin(ms) ? laneAge(now - ms) : '-');
 function branchesPart(d, ctx, sub) {
@@ -241,8 +248,8 @@ function branchesPart(d, ctx, sub) {
   const base = brOf(d, sub), lanesIn = [...new Set(base.map(r => r.lane?.name).filter(Boolean))].sort();
   const pass = r => (!states || states.has(r.state)) && (where === 'all' || r.where === where) && (!lane || (lane === '-' ? !r.lane : r.lane?.name === lane));
   const shown = base.filter(pass), rows = shown.slice(0, limit);
-  const stChips = (d.states || []).map(k => `<button class="hf" data-act="br-state" data-state="${esc(k)}" aria-pressed="${!states || states.has(k)}">${esc(k)} <b>${base.filter(r => r.state === k).length}</b></button>`).join('');
-  const whChips = sub === 'worktrees' ? '' : `<span class="lane-show" role="group" aria-label="Local or origin">${BR_WHERE.map(([k, t]) => `<button class="hf" data-act="br-where" data-where="${k}" aria-pressed="${where === k}">${esc(t)}</button>`).join('')}</span>`;
+  const stChips = filterChips('States', (d.states || []).map(k => ({ act: 'br-state', data: { state: k }, text: k, n: base.filter(r => r.state === k).length, on: !states || states.has(k) })));
+  const whChips = sub === 'worktrees' ? '' : filterChips('Local or origin', BR_WHERE.map(([k, t]) => ({ act: 'br-where', data: { where: k }, text: t, on: where === k })));
   const laneSel = `<select data-br="lane" aria-label="Lane"><option value="">every lane</option><option value="-"${lane === '-' ? ' selected' : ''}>not part of a lane</option>${lanesIn.map(l => `<option value="${esc(l)}"${lane === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const P = r => `data-project="${esc(r.project)}"`;
   const acts = r => [r.acts?.includes('delete') ? `<button class="ghost" data-act="br-delete" ${P(r)} data-branch="${esc(r.name)}" title="delete ${r.where === 'both' ? 'the local and origin copies' : r.where === 'remote' ? 'the origin copy' : 'the local branch'} (its work is on main; Undo puts it back)">Delete branch</button>` : '',
@@ -263,10 +270,9 @@ function branchesPart(d, ctx, sub) {
     <td data-label="PR">${pr(r)}</td><td><div class="rowacts">${acts(r)}</div></td></tr>`;
   const scanned = (d.scans || []).some(x => x.at);
   const empty = !scanned ? 'Not scanned yet: the tick scans every 10 minutes, or press Scan now.' : base.length ? 'Nothing under these filters.' : sub === 'worktrees' ? 'No worktree.' : 'No branch besides main.';
-  return `<div class="banner">Every ${sub === 'worktrees' ? 'git worktree' : 'local and origin branch'} of the repo, from the last scan (git, refreshed by the tick): its lane, its state, ahead / behind main, its PR and deliverable. Nothing here is cleaned up by itself.</div>
-   ${undo ? `<div class="banner" id="br-undo">${esc(undo.text)} <button data-act="br-undo" data-project="${esc(undo.project)}">Undo</button></div>` : ''}
+  return `${undo ? `<div class="banner" id="br-undo">${esc(undo.text)} <button data-act="br-undo" data-project="${esc(undo.project)}">Undo</button></div>` : ''}
    <div class="filters brfilters"><span class="small mute">${scans || 'not scanned yet'}</span>${one ? ` <button class="ghost" data-act="br-scan" data-project="${esc(ctx.project)}">Scan now</button>` : ''}</div>
-   <div class="filters brfilters"><span class="lane-show" role="group" aria-label="States">${stChips}</span>${whChips}${laneSel}</div>
+   <div class="filters brfilters">${stChips}${whChips}${laneSel}</div>
    <div class="tablecard"><table class="brtab" data-rows="branches"><thead><tr><th>${sub === 'worktrees' ? 'worktree / branch' : 'branch'}</th><th>state</th><th>where</th><th>lane</th><th>worktree</th><th>ahead / behind</th><th>last commit</th><th>PR</th><th></th></tr></thead>
    <tbody>${rows.map(tr).join('') || `<tr><td colspan="9" class="mute">${esc(empty)}</td></tr>`}</tbody></table>${subMore(rows.length, shown.length)}</div>`;
 }
