@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { claimWork, workKey, registerHome, registerProject, allowPair, releaseWork, listClaims, overlapOf } from '../engine/lib/claims.mjs';
+import { claimWork, workKey, registerHome, registerProject, allowPair, releaseWork, listClaims, overlapOf, localClaims, readSync, writeSync, SYNC_FILES } from '../engine/lib/claims.mjs';
+import { ClaimsError } from '../engine/lib/claimsref.mjs';
 import { claimRun } from '../engine/lib/fed.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
@@ -167,4 +168,19 @@ test('cli: norn claim list | allow | release on the ledger remote; release takes
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(g.files().sort(), ['work/demo/b/y.json']);
   assert.equal(run(['claim', 'take', 'b/y', '--machine', mf]).code, 2, 'take is S2b');
+});
+
+test('C12: the local claims are {} only before this machine has a ledger repo; a git failure and a corrupt own-claims file throw', () => {
+  const g = rig(), fa = g.ep('a');
+  assert.deepEqual(localClaims(fa), {}, 'no ledger repo yet');
+  claimWork(fa, me('a', 'x'));
+  assert.ok(localClaims(fa)['work/demo/a/x.json'], 'the fetched claim');
+  const broken = { ...fa, dir: path.join(g.t, 'broken.git') };
+  fs.mkdirSync(broken.dir); fs.writeFileSync(path.join(broken.dir, 'HEAD'), 'not a ref\n');
+  assert.throws(() => localClaims(broken), ClaimsError, 'read as {} it restarts every foreign claim\'s stale timer');
+  const state = path.join(g.t, 'state', 'demo');
+  assert.deepEqual(readSync(state, 'own'), {}, 'no own claims yet');
+  writeSync(state, 'own', { k: { lane: 'x' } });
+  fs.writeFileSync(path.join(state, 'sync', SYNC_FILES.own), '{"k": {"la');
+  assert.throws(() => readSync(state, 'own'), SyntaxError, 'read as {} the home forgets its own claims and stops renewing them');
 });
