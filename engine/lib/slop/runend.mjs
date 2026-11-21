@@ -1,7 +1,7 @@
 // META-SLOP-A (REVIEW-FABLE 3.1-3.2): the run-end backstop. Every lane run end that leaves commits is checked on its branch's diff
 // against main (the merge base; RM-44 D1: stopped, Done-red and hand-off too); a DONE's open BLOCK findings go back to the SAME lane
 // as one resume with the list (the supervisor). The merge doors (door.mjs) check the head they merge.
-import { gitRun, slopCheck, effectiveRules } from './check.mjs';
+import { gitRun, slopCheck, effectiveRules, fingerprint } from './check.mjs';
 import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
 import { findingLine, explainLines } from './host.mjs';
@@ -51,6 +51,15 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
   if (!bb) return null;
   const ps = projectSlop({ state, projectDir });
   return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules, brief, machine }) };
+}
+
+/** SPEC 1.3 F7: the hold of a run-end check that threw - one BLOCK "could not check" on the branch, stored under a hash no rule set has
+ * (no door reads it as a check: the door runs its own) -> a hostWrite check payload | null (no lane branch, or no commits past main) */
+export function couldNotCheck(repo, why) {
+  const bb = branchBase(repo), head = bb && gitRun(repo, ['rev-parse', 'HEAD']).trim();
+  if (!bb || bb.base === head) return null;
+  const f = { rule: 'check', level: 'BLOCK', file: '*', line: 0, msg: `could not check: ${why}`, snippet: 'could-not-check', fp: fingerprint('check', '*', 'could-not-check'), new: true };
+  return { type: 'check', branch: bb.branch, base: bb.base, head, hash: 'could-not-check', blocks: [f], findings: [f] };
 }
 
 // the resume prompt names at most SLOP_GROUPS (rule, file) groups and SLOP_FIRST lines of each: a BLOCK list of thousands of hits

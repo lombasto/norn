@@ -21,7 +21,7 @@ const G = {
 };
 export const BAR = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk']];
 // the More sheet: [group heading ('' = none), page ids]. Map and Plan stay until LANES and RUNS re-home them (SPEC 4.1 item 2)
-export const MORE = [['Health', ['usage', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap', 'plan']], ['', ['settings']]];
+export const MORE = [['Health', ['usage', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap']], ['', ['settings']]];
 const HEALTH = MORE[0][1];
 const LABEL = Object.fromEntries(TABS);
 
@@ -75,7 +75,7 @@ export function renderStatus(s, ctx = {}) {
 export const PAGE_KEYS = {
   lanes: ['records', 'runs', 'deliverables', 'derived'], runs: ['runs', 'records', 'derived'], inbox: ['records', 'runs', 'deliverables', 'derived', 'state'],
   talk: ['records', 'runs', 'state'], usage: ['records', 'runs', 'derived'], slop: ['derived'], tests: ['runs', 'derived'], context: ['derived'],
-  records: ['records'], ledger: ['derived'], docs: ['derived'], roadmap: ['records', 'runs', 'deliverables'], plan: ['records', 'runs'],
+  records: ['records'], ledger: ['derived'], docs: ['derived'], roadmap: ['records', 'runs', 'deliverables'],
   settings: ['derived', 'state'], adopt: ['records', 'derived'],
 };
 /** a stream event -> its keys */

@@ -46,21 +46,26 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
       repo = lane.data.worktree;
     }
     repo = toplevel(repo);
-    const [base, head] = f.diff ? f.diff.split('..') : [null, 'HEAD'];
-    if (f.diff && !(base && head)) { err('error: --diff wants base..head'); return 2; }
+    const [typed, head] = f.diff ? f.diff.split('..') : [null, 'HEAD'];
+    if (f.diff && (f.diff.includes('...') || !(typed && head))) { err('error: --diff wants base..head (two dots: the check starts at their merge base)'); return 2; }
+    // SPEC 1.3 F2: the diff starts at the merge base, as at every door - never the typed tip (main's later changes would read as the branch's)
+    const base = typed && gitRun(repo, ['merge-base', typed, head], { ok: [0, 1, 128] }).trim();
+    if (f.diff && !base) { err(`error: --diff ${f.diff}: no merge base (a revision that does not resolve, or no common history)`); return 2; }
     const c = checkBranch({ repo, state, base, head, projectDir: project?.project_dir, machine: !f.ci });
     if (!c) { out('slop check: no lane branch here (detached, on main, or no main to diff against): nothing to check'); return 0; }
+    const at = `${c.result.base.slice(0, 7)}..${c.result.head.slice(0, 7)}`;
     const ws = state ? activeWaivers(state) : [];
     const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id, explain: explainOf(b.rule, project?.project_dir) }));
-    if (state && !f.diff) hostWrite(state, { type: 'check', branch: c.branch, lane: f.lane, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped });
+    if (state && !f.diff) hostWrite(state, { type: 'check', branch: c.branch, lane: f.lane, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings });
+    if (!c.result.files.length) { out(`slop check: nothing to check: ${at} changes no file`); return 0; }
     const open = blocks.filter(b => !b.waived);
     if (f.json) out(JSON.stringify({ branch: c.branch, ...c.result, blocks }, null, 1));
     else {
       // RM-27: each open finding says what / why / what to do - once per rule (the first of its findings), so ten K2s are not ten copies
       const told = new Set();
-      for (const b of blocks) { out((b.waived ? `waived (${b.waived}) ` : 'BLOCK ') + findingLine(b)); if (!b.waived && !told.has(b.rule)) { told.add(b.rule); for (const l of explainLines(b, { projectDir: project?.project_dir })) out(l); } }
-      for (const s of c.result.skipped) out(`skipped ${s.rule}: ${s.why}`);
-      out(`slop check: ${open.length} BLOCK${blocks.length > open.length ? ` (+${blocks.length - open.length} waived)` : ''} on ${c.branch ?? head} ${c.base.slice(0, 7)}..${c.result.head.slice(0, 7)} (${c.result.ran.join(' ')})`);
+      for (const b of blocks) { out((b.waived ? `waived (${b.waived}) ` : 'BLOCK ') + findingLine(b)); if (!b.waived && !b.unrun && !told.has(b.rule)) { told.add(b.rule); for (const l of explainLines(b, { projectDir: project?.project_dir })) out(l); } }
+      const unrun = c.result.findings.filter(x => x.unrun).map(x => x.rule);
+      out(`slop check: ${open.length} BLOCK${blocks.length > open.length ? ` (+${blocks.length - open.length} waived)` : ''} on ${c.branch ?? head} ${at}, ${c.result.files.length} file(s); ran: ${c.result.ran.join(' ')}${unrun.length ? `; could not run: ${unrun.join(' ')}` : ''}`);
     }
     return open.length ? 1 : 0;
   }
@@ -95,9 +100,9 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
         const key = r => r.blocks.map(b => `${b.file}:${b.line}`).sort().join(' ');
         const real = slopCheck({ repo: dir, base: 'main', only: [rule.id], tool: makeTool({ env }) });
         const rec = slopCheck({ repo: dir, base: 'main', only: [rule.id], tool: (r, side) => (fx.recorded[side] === undefined ? null : JSON.stringify(fx.recorded[side])) });
-        const same = key(real) === key(rec) && real.skipped.length === 0;
+        const same = key(real) === key(rec);   // a rule that could not run is a BLOCK at `*`: never the recorded key
         if (!same) bad++;
-        out(`${same ? 'ok  ' : 'DIFF'} ${rule.id} ${which}: real [${key(real)}]${real.skipped.map(s => ' skipped: ' + s.why).join('')} recorded [${key(rec)}]`);
+        out(`${same ? 'ok  ' : 'DIFF'} ${rule.id} ${which}: real [${key(real)}]${real.findings.filter(x => x.unrun).map(x => ' ' + x.msg).join('')} recorded [${key(rec)}]`);
       } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     }
   }

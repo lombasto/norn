@@ -81,7 +81,7 @@ export function holdWords(term, { billing = null, status = '' } = {}) {
   if ((m = t.match(/^dwarf: (.+) is busy on (RUN-\d+)$/))) return { reason: `the lane is pinned to ${m[1]}, who is busy on ${m[2]}`, clears: `by itself when ${m[2]} ends`,   // DWARVES 1.3 rule 1
     fix: 'wait, or unpin the dwarf: norn crew unpin <id>', command: 'norn crew unpin <id>' };
   if (t.startsWith('crew store ')) return { reason: t, clears: null, fix: 'repair or move the crew store file: no worker run starts without a dwarf' };
-  return { reason: t, clears: null, fix: 'see the Plan tab' };
+  return { reason: t, clears: null, fix: 'see norn plan (the Waiting lanes on the dashboard)' };
 }
 
 const minsOf = (rec, now) => Math.max(0, Math.floor((now - Date.parse(rec.since)) / 60000));
