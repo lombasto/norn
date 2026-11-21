@@ -388,7 +388,7 @@ export function projectList({ json = false, env = process.env, out }) {
 export function projectRemove({ name, purgeState = false, dryRun = false, env = process.env, out, io = schedIo }) {
   const meta = metaRoot(env);
   if (!exists(machineFile(meta))) throw new SetupError('no machine.json: run norn setup first');
-  const machine = loadMachine(machineFile(meta), { meta }), raw = rawMachine(meta);
+  const machine = loadMachine(machineFile(meta), { meta });
   const pr = machine.projects.find(x => x.name === name);
   if (!pr) throw new SetupError(`no project named ${name} (norn project list)`);
   const f = projectFacts(meta, machine, pr);

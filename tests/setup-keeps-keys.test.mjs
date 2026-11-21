@@ -29,7 +29,7 @@ function sandbox() {
     LOCALAPPDATA: path.join(d.home, 'AppData', 'Local'), APPDATA: path.join(d.home, 'AppData', 'Roaming'), META_ROOT: d.root };
   delete env.NPM_CONFIG_PREFIX; delete env.npm_config_prefix;
   const mf = path.join(d.root, 'local', 'machine.json');
-  const run = (...a) => { const r = spawnSync(process.execPath, [META, ...a], { env, encoding: 'utf8' }); return { code: r.status, out: r.stdout + r.stderr }; };
+  const run = (...a) => { const r = spawnSync(process.execPath, [META, ...a], { env, encoding: 'utf8', windowsHide: true }); return { code: r.status, out: r.stdout + r.stderr }; };
   return { ...d, mf, run, text: () => fs.readFileSync(mf, 'utf8'), json: () => JSON.parse(fs.readFileSync(mf, 'utf8')) };
 }
 /** a machine.json setup wrote, plus the keys setup does not own (unknown: also keys the schema lacks, one nested in its claude block) */
