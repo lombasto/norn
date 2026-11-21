@@ -92,6 +92,7 @@ import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
+import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
 import { voiceRoute } from '../lib/slop/voice.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
@@ -1980,6 +1981,9 @@ function doneCmd(argv, env, out, err) {
     if (flags.handoff !== undefined && flags['handoff-file'] !== undefined) throw new RunError('--handoff and --handoff-file: give one');
     let handoff = flags.handoff;
     if (flags['handoff-file'] !== undefined) { try { handoff = fs.readFileSync(flags['handoff-file'], 'utf8'); } catch (e) { throw new RunError(`--handoff-file ${flags['handoff-file']}: ${e.code || e.message}`); } }
+    // SloppaChoppa 2 S2: a DONE is checked in the worker's own session (a fix costs it a few turns; a resume round costs a new process);
+    // open BLOCK findings refuse it: the list, no result, exit 4. stopped and handoff are never refused (the run end checks them).
+    if ((flags.outcome ?? 'done') === 'done' && doneSlop(state, run, out, err)) return 4;
     // the supervisor's directory when it is this run's (META_RESULT_DIR), else the state's
     const dir = (env.META_RESULT_DIR && env.META_RUN_ID === run ? env.META_RESULT_DIR : null) || resultDir(state, run);
     const r = writeResult(dir, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary, handoff, look: flags.look });
@@ -1989,6 +1993,20 @@ function doneCmd(argv, env, out, err) {
     if (e instanceof RunError || e instanceof ResultError) { err('error: ' + e.message); err('usage: ' + DONE_USAGE); return 2; }
     throw e;
   }
+}
+// the branch check of a DONE (endCheck: stored, so the run end does not run it again) -> true = refused (the list is printed).
+// The skips are the run end's (supervisor slopEnd); a check that throws does not refuse: the run end checks again and holds the branch.
+function doneSlop(state, run, out, err) {
+  const spec = readJsonFile(path.join(state, 'runs', `${run}.spec.json`)), pd = spec.policy?.slop?.project_dir;
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy)) return false;
+  let c, brief = null;
+  try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch { /* the model rules read without it, as at the run end */ }
+  try { c = endCheck({ repo: spec.worktree, state, projectDir: pd, voice: spec.policy?.slop?.voice ?? null, brief, lane: spec.lane, run }); }
+  catch (e) { err(`slop: could not check (${e.message.split('\n')[0]}): the run end checks the branch again`); return false; }
+  if (!c?.open.length) return false;
+  out(slopPrompt(c.open, null, { projectDir: pd }));
+  out(`${run} DONE refused: ${c.open.length} open slop BLOCK finding(s) on ${c.branch}, no result written. Fix them, commit, and run \`norn done\` again.`);
+  return true;
 }
 // ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
 const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P4] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
