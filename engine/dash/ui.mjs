@@ -12,7 +12,7 @@ import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
-import { esc, fin, dash, int, fmtMin, pct, plural, chip, homeChip, pendingChips, pauseAct, fmtTime, guardOn, guardChip, art } from './cells.mjs';
+import { esc, fin, dash, int, fmtMin, pct, plural, chip, homeChip, pendingChips, pauseAct, fmtTime, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
 import { SEV_CHIP, baseName, auditCard, enforceCard } from './cards.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
