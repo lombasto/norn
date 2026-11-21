@@ -94,7 +94,7 @@ const writeHb = hbWriter(hbPath(state, run), { log: logLine });
 const lockLost = new Set();
 const refresh = lf => {
   let why = null;
-  try { if (!refreshLock(lf, run, { pid: process.pid })) { let cur = null; try { cur = JSON.parse(read(lf)); } catch { /* gone */ } why = `names ${cur?.run ?? 'no run'} now, not ${run}: not refreshed`; } }
+  try { if (!refreshLock(lf, run, { pid: process.pid })) { let cur = null; try { cur = JSON.parse(read(lf)); } catch { cur = { run: 'no run (the lock file went or does not parse)' }; } why = `names ${cur?.run ?? 'no run'} now, not ${run}: not refreshed`; } }
   catch (e) { why = `refresh failed (${e.code ?? e.message})`; }
   if (!why) lockLost.delete(lf); else if (!lockLost.has(lf)) { lockLost.add(lf); logLine(`lock ${lf} ${why}`); }
 };
