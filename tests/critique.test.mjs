@@ -14,7 +14,6 @@ import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { agentsTree } from '../engine/lib/agents.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
-import { mapGraph } from '../engine/lib/map.mjs';
 import { settled } from './helpers/settled.mjs';
 import { waitFor, stateBusy, supervisorAlive } from './helpers/wait.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -124,28 +123,19 @@ test('a clean review (No findings.) releases the build by itself; a brief that n
   await waitFor(() => settled(loadState(p.state).items['RUN-3']), { producer: supervisorAlive(p.state, () => loadState(p.state).items['RUN-3']), what: 'RUN-3 (the build) ends' });
 });
 
-test('Agents: the plan row shows its review (queued / running / reviewed ✓ (n findings))', () => {
+test('Runs: the plan run\'s drawer shows its review (review running / reviewed ✓ (n findings))', () => {
   const now = Date.now(), at = new Date(now - 60000).toISOString();
   const run = (id, state, data, end) => ({ id, kind: 'run', state, created: at, updated: at, data: { lane: 'water', executor: 'fake', ...data }, ...(end ? { end } : {}), history: [] });
   const runs = [run('RUN-1', 'exited', { class: 'planning' }, { outcome: 'done' }),
     run('RUN-2', 'exited', { class: 'review', critique: { of: 'RUN-1', plan: '/p/PLAN.md' } }, { outcome: 'done', critique: { of: 'RUN-1', plan: '/p/PLAN.md', file: '/p/PLAN-CRITIQUE.md', findings: 2 } }),
     run('RUN-3', 'exited', { class: 'planning' }, { outcome: 'done' }),
-    run('RUN-4', 'running', { class: 'review', critique: { of: 'RUN-3', plan: '/p/B.md' } })];
+    run('RUN-4', 'running', { class: 'review', critique: { of: 'RUN-3', plan: '/p/B.md' } }),
+    run('RUN-5', 'exited', { class: 'planning' }, { outcome: 'done' }),
+    run('RUN-6', 'exited', { lane: 'review', class: 'review', critique: { of: 'RUN-5', plan: '/p/C.md' } }, { outcome: 'done', critique: { of: 'RUN-5', plan: '/p/C.md', file: '/p/C-CRITIQUE.md', findings: 1 } })];
   const tree = agentsTree(runs, { now });
   assert.deepEqual(tree.find(n => n.id === 'RUN-1').critique, { run: 'RUN-2', state: 'exited', outcome: 'done', findings: 2, file: '/p/PLAN-CRITIQUE.md' });
-  const html = renderTab('runs', { tree }, { now, projects: [] });
-  assert.match(html, /reviewed ✓ \(2 findings\)/);
-  assert.match(html, /review running/);
-});
-
-test('Map: the plan run node carries its review; its sub line says reviewed ✓ (n findings)', () => {
-  const at = new Date(Date.now() - 60000).toISOString();
-  const run = (id, state, data, end) => ({ id, kind: 'run', state, created: at, updated: at, data: { lane: 'water', executor: 'fake', ...data }, ...(end ? { end } : {}), history: [] });
-  const items = { 'L:water': { id: 'L:water', kind: 'lane', state: 'active', data: { name: 'water' }, history: [] },
-    'RUN-1': run('RUN-1', 'exited', { class: 'planning' }, { outcome: 'done' }),
-    'RUN-2': run('RUN-2', 'exited', { lane: 'review', class: 'review', critique: { of: 'RUN-1', plan: '/p/PLAN.md' } }, { outcome: 'done', critique: { of: 'RUN-1', plan: '/p/PLAN.md', file: '/p/PLAN-CRITIQUE.md', findings: 1 } }) };
-  const m = mapGraph({ items });
-  assert.deepEqual(m.nodes.find(n => n.id === 'RUN-1').critique, { run: 'RUN-2', state: 'exited', outcome: 'done', findings: 1, file: '/p/PLAN-CRITIQUE.md' });
-  const html = renderTab('map', { project: 'kestrel', ...m }, { project: 'kestrel' });
-  assert.match(html, /RUN-1 · reviewed ✓ \(1 finding\)/);
+  const doc = id => renderTab('runs', { tree }, { now, projects: [], run: id }).split('id="run-doc"')[1] ?? '';
+  assert.match(doc('RUN-1'), /reviewed ✓ \(2 findings\)/);
+  assert.match(doc('RUN-3'), /review running/);
+  assert.match(doc('RUN-5'), /reviewed ✓ \(1 finding\)</,'a review run on its own lane still lands on its plan run');
 });
