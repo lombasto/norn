@@ -1,8 +1,8 @@
-// META-SLOP-A: `norn slop` - check | loc | sweep | daily | fixtures. Code only, no model; every write goes through hostWrite.
+// META-SLOP-A: `norn slop` - check | loc | sweep | daily | fixtures | replay (SloppaChoppa 2 S1b). Code only, no model; every write goes through hostWrite.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadRules, slopCheck, gitRun, explainOf } from './check.mjs';
+import { loadRules, slopCheck, gitRun, explainOf, replay } from './check.mjs';
 import { loadState, laneId } from '../records.mjs';
 import { checkBranch } from './runend.mjs';
 import { hostWrite, activeWaivers, covers, findingLine, explainLines } from './host.mjs';
@@ -12,9 +12,10 @@ import { sweep, formatSweep } from './sweep.mjs';
 import { dailyReport } from './daily.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
-export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | daily | fixtures    '
-  + '[--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings; --ci skips the rules that read the machine state; fixtures: the real tools on the rule fixtures, nightly)';
-const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], daily: [], fixtures: [] };
+export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | daily | fixtures'
+  + ' | replay <rule> --as <ids,...> [--main REF] [--last N] [--config FILE] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
+  + ' --ci skips the rules that read the machine state; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2)';
+const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'json!'] };
 
 function parse(verb, argv) {
   const spec = [...(FLAGS[verb] || []), 'project', 'state', 'repo'], f = {};
@@ -32,7 +33,12 @@ const toplevel = dir => gitRun(dir, ['rev-parse', '--show-toplevel']).trim();
 export function slopCmd(argv, { env = process.env, out = console.log, err = console.error, where = () => null } = {}) {
   const verb = argv[0];
   let f;
-  try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); }
+  try {
+    if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb');
+    const pos = verb === 'replay' && argv[1] && !argv[1].startsWith('--') ? argv[1] : null;   // replay's rule id comes first
+    f = { ...parse(verb, argv.slice(pos ? 2 : 1)), rule: pos };
+    if (verb === 'replay' && !(f.rule && f.as)) throw new Error('replay wants <rule> --as <ids,...> (the new form: rule or sub-rule ids, LJ/no-console)');
+  }
   catch (e) { err('error: ' + e.message); err(SLOP_USAGE); return 2; }
   const w = where(f), state = w?.state || null, project = w?.project || null;
   const repoOf = () => toplevel(f.repo || project?.deliverables?.repo || project?.root || process.cwd());
@@ -83,6 +89,14 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     if (!state) { err('error: daily needs --project / --state (it writes the report there)'); return 2; }
     const r = dailyReport({ repo: repoOf(), state, own, main: project?.deliverables?.main, remote: project?.deliverables?.remote, projectDir: project?.project_dir });
     out(`slop daily: ${r.line} -> ${r.file}`);
+    return 0;
+  }
+  if (verb === 'replay') {
+    const rows = replay({ repo: repoOf(), old: f.rule, as: f.as.split(','), main: f.main || 'HEAD', last: f.last ? Number(f.last) : 50, config: f.config ? fs.readFileSync(f.config, 'utf8') : null, tool: makeTool({ env }) });
+    const sum = k => rows.reduce((a, r) => a + r[k].length, 0);
+    if (f.json) out(JSON.stringify(rows, null, 1));
+    else for (const r of rows) out([`${r.merge} ${r.subject}`, `  old [${r.old.join(' ')}]  new [${r.new.join(' ')}]`, ...r.missed.map(m => `  MISSED ${m}`), ...r.added.map(a => `  added ${a}`), ...r.unrun.map(u => `  could not run: ${u}`)].join('\n'));
+    out(`slop replay ${f.rule} as ${f.as}: ${rows.length} merges; old ${sum('old')}, new ${sum('new')}, missed ${sum('missed')}, added ${sum('added')} (label each by hand), could not run ${sum('unrun')}`);
     return 0;
   }
   // fixtures: each tool rule's real tool on its fixture, compared with the recorded output (nightly; needs the network once)
