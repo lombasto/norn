@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, stopRun, RunRefused, hbPath, fillQueue } from '../engine/lib/runs.mjs';
+import { parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, queueRun, stopRun, RunRefused, hbPath, fillQueue } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { resolveShim } from '../engine/lib/paths.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
@@ -155,6 +155,21 @@ test('auto-resume cap: refusal is a run event naming "cap n/n"', async () => {
   assert.deepEqual(it.resume, { refused: 'cap 1/1', count: 1, max: 1 });
   assert.equal(d.runs().length, 2);
   await waitFor(() => fs.existsSync(d.tickFile));
+});
+
+// land-push: RUN-b-544 / RUN-b-545 (started directly, not by the fill) handed off while a P1 run sat queued: the resume met queuedAhead
+// (exit 4) and was dropped; RUN-b-549 (a fill's start) carried fromQueue into its resume and passed. A resume now joins the queue.
+test('a hand-off resume with a queued run ahead joins the queue, never refused and dropped', async () => {
+  const d = sandbox();
+  const gate = path.join(d.t, 'go');
+  const r = startRun(d.opts({ brief: d.brief(`mode: handoff-once\nuntil: ${gate}\n`), policy: { auto_resume_max: 2 } }));
+  const ahead = queueRun(d.opts({ lane: 'other', worktree: d.wt2, brief: d.brief('mode: done\n', 'b2.md'), priority: 'P1' })).run;
+  fs.writeFileSync(gate, '');
+  const it = await waitFor(() => { const x = d.item(r.run); return x.resume && x; });
+  assert.equal(it.resume.refused, undefined, `the resume was refused: ${it.resume.refused}`);
+  assert.equal(d.item(it.resume.next).data.resume_of, r.run);
+  assert.equal(d.item(it.resume.next).data.from_queue ?? null, null, 'the resume is no fill start');
+  for (const id of [it.resume.next, ahead]) { const x = await waitFor(() => { const y = d.item(id); return y.state === 'filled' ? d.item(y.fill.next) : y; }); await d.ended(x.id); }
 });
 
 // RM-37: a pause HOLDS a hand-off resume (queued, ahead of new work), never refuses it - it starts on release (it sat for ever before)
