@@ -315,8 +315,10 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
   for (let i = 0; i < X.length; i++) for (let j = i + 1; j < X.length; j++) if (X[i].tip && X[j].tip && X[i].tip !== X[j].tip && X[i].touched.some(f => X[j].touched.includes(f))) pairs.push([X[i].tip, X[j].tip]);
   const conflicts = pairs.length && repo ? laneConflicts(state, repo, pairs, { now, ...(mergeTree ? { mergeTree } : {}) }) : {};
   const ctx = { policy: p.policy?.collide, tracked: g.tracked, items: itemStages(g.itemEvents), rulings: rulingsOf(cases), conflicts, now };
-  // each pair once, from the later side: first come, and between two running lanes the later start
-  const later = (x, o) => ahead(o, x) || (!ahead(x, o) && (x.since > o.since || (x.since === o.since && x.lane > o.lane)));
+  // each pair once, from the later side: first come, and between two running lanes the later start; an unlanded side (DONE work) is
+  // always the earlier, though its since (done_utc) may be later than a running run's start
+  const done = y => y.state === 'unlanded';
+  const later = (x, o) => done(x) !== done(o) ? done(o) : ahead(o, x) || (!ahead(x, o) && (x.since > o.since || (x.since === o.since && x.lane > o.lane)));
   for (const x of X) for (const h of collisions(x, X, ctx)) {
     const o = X.find(y => y.lane === h.other);
     if (!later(x, o) || h.verdict === 'shadow') continue;
