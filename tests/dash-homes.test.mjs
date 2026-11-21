@@ -54,7 +54,7 @@ test('rows, chips and pending: Inbox, Lanes, Runs, Records, Roadmap and Delivera
     assert.deepEqual([r.home, r.readonly, r.state, r.lane], ['b', true, 'running', 'b/slop']);
     const runsHtml = renderTab('runs', ag, { now: Date.now() });
     has(runsHtml, /id="node-RUN-b-1"[\s\S]*?class="chip onhome"[^>]*>on b</, 'the run row shows "on b"');
-    assert.doesNotMatch(runsHtml.match(/<div class="rrow [^"]*" id="node-RUN-b-1"[^>]*>/)[0], /data-feed/, 'a foreign run opens no live feed (read-only)');
+    assert.doesNotMatch(runsHtml.match(/<tr class="rrow [^"]*" id="node-RUN-b-1"[^>]*>/)[0], /data-feed/, 'a foreign run opens no live feed (read-only)');
 
     const dl = (await f.get('/api/deliverables?project=kestrel')).data, d = dl.rows.find(x => x.id === 'DLV-b-1');
     assert.deepEqual([d?.home, d?.readonly, d?.lane], ['b', true, 'b/slop'], JSON.stringify(dl.rows));

@@ -221,20 +221,22 @@ test('limit exit: outcome limit + reset; re-queued, held by the limit gate until
 });
 
 // ---------- dash ----------
-// META-PLAN R1: the queue moved from the Runs page to the Plan tab (Up next)
-test('dash Plan tab: queued runs are listed (position, not before); not agentsTree roots; the Runs page shows them as queued rows', () => {
+// the queue: queued rows on Runs; Up next (position, not before, priority) on the Waiting lanes of Lanes (owner 2026-11-20: the Plan tab goes)
+test('dash: queued runs are not agentsTree roots; Runs shows them as queued rows; the Waiting lane shows its Up next (place, not before)', () => {
   const d = sandbox();
   queueRun(d.opts({ brief: d.brief('mode: done\n'), lane: 'qlane', notBefore: '2026-11-09T18:16:00.000Z' }));
   const runs = d.runs();
   assert.equal(agentsTree(runs, {}).length, 0);
   const queue = queueOf(runs);
   assert.equal(queue[0].not_before, '2026-11-09T18:16:00.000Z');
-  // owner 2026-11-19: the Runs page lists queued runs after the running ones (a queued row, 'waited' since queued); what they wait for stays on Plan
-  assert.match(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo', now: Date.now() }), /id="runs-queued"[^]*?id="node-RUN-1"[^]*?qlane[^]*?waited \d+ min/);
+  // owner 2026-11-19: the Runs page lists queued runs after the running ones (a queued row, 'waited' since queued)
+  assert.match(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo', now: Date.now() }), /<tr class="rrow queued" id="node-RUN-1"[^]*?qlane[^]*?waited \d+ min/);
   const now = Date.parse('2026-11-09T12:00:00Z');
-  const html = renderTab('plan', { parts: [buildPlan({ project: 'demo', runs, ready: readiness(d.state, { now, resources: () => ({ free_gb: 64, cpu_pct: 0 }) }), now })] }, { project: 'demo', now });
-  assert.match(html, /Up next/);
-  assert.match(html, /RUN-1/); assert.match(html, /Qlane/); assert.match(html, /#1/); assert.match(html, /not before/);
+  const plan = { parts: [buildPlan({ project: 'demo', runs, ready: readiness(d.state, { now, resources: () => ({ free_gb: 64, cpu_pct: 0 }) }), now })] };
+  const lanes = [{ project: 'demo', name: 'qlane', board: 'waiting', run: 'RUN-1', run_state: 'queued', text: 'queued', priority: { p: 'P2', dflt: true }, position: 1, runs: [] }];
+  const html = renderTab('lanes', { lanes, plan, sub: 'lanes' }, { project: 'demo', now, laneShow: ['waiting'] });
+  assert.match(html, /<select class="pl-prio" data-act="prio" data-project="demo" data-run="RUN-1"/, 'the priority control on the queued lane');
+  assert.match(html, /#1</, 'its place in the fill order'); assert.match(html, /class="lane-up small mute">[^<]*not before/, 'what it waits for');
 });
 
 // CHECKIN-V2 piece 0 (GT-PARITY FINDING): the fill obeys the weekly guard and RATE_OK like a dispatch; a MERGE stage keeps
