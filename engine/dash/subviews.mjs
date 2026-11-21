@@ -20,7 +20,7 @@ export const pickSub = (views, id) => (views.some(([k]) => k === id) ? id : view
 export const subMore = (shown, n) => (n > shown ? `<p class="small mute subshown">showing ${esc(shown)} of ${esc(n)} · <button class="lnk" data-act="sub-more">show more</button></p>` : '');
 
 /**
- * subviewPage(tab, { title, lead (HTML under the header), numbers: [{ n, label, cls? }] (<= 4), views: [[id, label, count?]] (3-4), active,
+ * subviewPage(tab, { title, lead (HTML under the header), numbers: [{ n, label, cls?, mark? (a word chip beside n) }] (<= 4), views: [[id, label, count?]] (3-4), active,
  * body (the part's HTML), loading (the part is not here yet) }) -> HTML: #<tab>-head (the page title line: the title + #<tab>-subs, the
  * view switch), the lead, #<tab>-sum, #<tab>-sub[data-sub] (the part). The switch is never a row under the nav (SPEC stage NAV item 4):
  * buttons with aria-pressed (A-10), not a tablist - each press is a URL step (&sub=), so Tab + Enter is the keyboard model.
@@ -29,7 +29,7 @@ export const subMore = (shown, n) => (n > shown ? `<p class="small mute subshown
 export function subviewPage(tab, { title = tab, lead = '', numbers = [], views, active, body = '', loading = false }) {
   if (numbers.length > SUB_MAX) throw new Error(`a dense tab shows at most 4 numbers (${tab}: ${numbers.length})`);
   if (views.length < 3 || views.length > SUB_MAX) throw new Error(`a dense tab has 3-4 sub-views (${tab}: ${views.length})`);
-  const sum = numbers.length ? `<div class="subsum" id="${esc(tab)}-sum">${numbers.map(x => `<div class="subnum ${esc(x.cls ?? '')}"><b class="mono">${esc(x.n)}</b><span class="small mute">${esc(x.label)}</span></div>`).join('')}</div>` : '';
+  const sum = numbers.length ? `<div class="subsum" id="${esc(tab)}-sum">${numbers.map(x => `<div class="subnum ${esc(x.cls ?? '')}"><b class="mono">${esc(x.n)}${x.mark ? ` <span class="chip ${esc(x.cls || 'idle')} submark">${esc(x.mark)}</span>` : ''}</b><span class="small mute">${esc(x.label)}</span></div>`).join('')}</div>` : '';
   const nav = `<div class="subnav" id="${esc(tab)}-subs" role="group" aria-label="${esc(title)} views">${views.map(([k, label, count]) => `<button type="button" id="${esc(tab)}-sub-${esc(k)}" data-act="sub" data-sub="${esc(k)}" aria-pressed="${k === active}" class="${k === active ? 'strong' : ''}">${esc(label)}${count === null || count === undefined ? '' : ` <span class="mute">${esc(count)}</span>`}</button>`).join('')}</div>`;
   const part = loading ? `<p class="small mute" id="${esc(tab)}-sub-loading"><span class="chip idle">loading</span> ${esc(views.find(([k]) => k === active)?.[1] ?? active)} ...</p>` : body;
   return `<div class="phead pagehead" id="${esc(tab)}-head"><h2 class="ptitle">${esc(title)}</h2>${nav}</div>${lead}${sum}<div class="subpart" id="${esc(tab)}-sub" data-sub="${esc(active)}">${part}</div>`;

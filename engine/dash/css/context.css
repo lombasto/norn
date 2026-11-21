@@ -1,0 +1,11 @@
+/* The Context page (pages/context.mjs): the summary marks, Per file's one card (chips, the named map, the table). Docs' gutter and
+   finding popover (pages/docs.mjs) and the Roadmap Gantt's status labels (ui.mjs rmTime) live here too. */
+.subnum b .submark{font-size:11px;vertical-align:middle;margin-left:4px;font-family:inherit}
+.subnum.bad b{color:var(--bad)}
+.ctxmap{padding:4px 12px}
+/* every block carries its file's name: a floor wide enough for a short name, the full name in its title */
+.ctxmap .fmblk{min-width:6.5em}
+.fmblk.st-measured{background:var(--mute);cursor:default;display:inline-flex;align-items:center}
+.stkdot.st-measured{background:var(--mute)}
+.ctxmeas td:first-child{color:var(--mute)}
+.ctxfhead{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 12px 0}

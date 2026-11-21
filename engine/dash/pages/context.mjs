@@ -2,10 +2,10 @@
 // numbers once under the view switch, Per role / Per file / Is it growing? / Check-ins per day, and the checks page one link away
 // (sub=checks: findings, the ladder, said again, audits, memory). Every file name opens the Docs reader. ui.mjs keeps the dispatch line.
 // The shared steering-file cells (load words and chips, ~tokens, severity chips, the memory gauge) live here; pages/docs.mjs imports them.
-import { esc, fin, dash, int, chip, fmtTime } from '../cells.mjs';
+import { esc, fin, dash, int, plural, chip, fmtTime, goAttrs, filterChips } from '../cells.mjs';
 import { bars, stack, board, lines } from '../widgets.mjs';
 import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
-import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from '../insparts.mjs';
+import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextNumbers, standingRows, perDay, worstFiles, measuredRows } from '../insparts.mjs';
 import { diffBlock } from '../diffview.mjs';
 import { auditCard, enforceCard } from '../ui.mjs';
 
@@ -24,10 +24,10 @@ function insRefreshing(d, now) {
   return `${d.refreshing ? `<div class="small" id="ins-refreshing" style="margin:0 0 6px">${chip('run', 'refreshing')} <span class="mute">the scan runs in the background; shown: the view of ${esc(fmtTime(d.at, now))}</span></div>` : ''}${d.error ? `<div class="small" style="margin:0 0 6px">${chip('bad', 'scan failed')} <span class="mute">${esc(d.error)}</span></div>` : ''}`;
 }
 const insMore = (shown, n, where) => (n > shown ? `<p class="small mute" style="padding:0 12px">showing ${int(shown)} of ${int(n)}${where ? ` · ${where}` : ''}</p>` : '');
-// META-UX-BUILD S4 (REPORT s.2): Context = what a session loads before any work and what it costs. The sub-view pattern: 4 numbers,
-// Per role (what one session loads + the ONE standing table) / Per file (the count card, the file map, most tokens per day, the files)
-// / Is it growing? / Check-ins per day. Reading is in the Docs reader (every file link lands there); the checks (Managed, Findings,
-// Said again, the ladder, Audits, Memory, Hints, Tighten) are one link away (`sub=checks`, no fifth sub-view) until Slop takes them.
+// META-UX-BUILD S4 (REPORT s.2): Context = what a session loads before any work and what it costs. The sub-view pattern: the 4 numbers
+// ONCE under the view switch (each marked low / medium / high), then Per role (what one session loads + the ONE standing table) / Per
+// file (the files and their map in one view) / Is it growing? / Check-ins per day. Reading is in the Docs reader (every file name lands
+// there); the checks page (`sub=checks`, no fifth sub-view) is reached from Slop › Rules.
 export function context(d, ctx) {
   const now = ctx.now ?? Date.now();
   if (d.pending || (d.error && !d.at)) return `${insRefreshing(d, now)}`;
@@ -35,35 +35,61 @@ export function context(d, ctx) {
   const none = w => `<p class="small mute">${esc(w)}</p>`;
   const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growing' ? insTrend(d.measured) || none('no measured session in the last 30 days')
     : d.sub === 'checkins' ? insCheckins(d.checkins) || none('no check-in recorded yet') : `${insLoads(d)}${ctxRoles(d)}`;
-  const n = d.counts || {}, checks = (n.findings ?? 0) + (n.advisories ?? 0) + (n.hints ?? 0) + (n.suggest ?? 0);
-  return `${subviewPage('context', { title: 'Context', lead: `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>`, numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
-   <div class="small mute" id="context-links">Read the files in <button class="lnk" data-tab="docs">Docs</button> · their checks (findings, rules, audits, memory): <button class="lnk" data-act="sub" data-sub="checks">open the checks</button> · every finding, hint and tightening candidate, in batches: <button class="lnk" data-go="slop" data-gosub="fix">Slop</button> (${int(checks)})</div>`;
+  return subviewPage('context', { title: 'Context', lead: insRefreshing(d, now), numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? d.counts?.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading });
 }
-// Per file: the count card, the file map + most tokens per day, the files (capped, show more); a name opens the Docs reader
+// Per file (UI redesign 2026-11-20: Files and the file map are ONE view): the files to look at first, then one card - the map's groups
+// as filter chips, the chosen group's blocks (each named, sized by tokens x loads per day; a tap opens the file in Docs) and the same
+// files in the table under them. The skills list and the MCP servers join "always loaded" as measured rows: no file, so no link.
+// The chosen group lives here (one per page): pages/context-acts.mjs flips it, a stream repaint keeps it.
+export const ctxView = { show: 'all' };
+export const FILE_SHOWS = [['session', 'always loaded'], ['role', 'per role'], ['on-demand', 'on demand'], ['top', 'most tokens per day'], ['all', 'all']];
+const SHOW_LOADS = { session: ['session'], role: ['checkin', 'chat', 'role'], 'on-demand': ['on-demand'] };
+const MAP_STATE = { fresh: 'fresh', stale: 'stale paragraphs', conflict: 'conflict (two files say it)', 'generated-stale': 'generated, out of sync' };
+const TOP_N = 10;
+const stOf = r => (MAP_STATE[r.map_state] ? r.map_state : 'fresh');
+/** the files of one group: a load class, the most tokens per day (the TOP_N that cost anything), or all; most tokens per day first */
+export function filesOf(rows, show) {
+  const xs = (rows || []).filter(r => r.load !== 'source').sort((a, b) => perDay(b) - perDay(a) || (b.tokens ?? 0) - (a.tokens ?? 0));
+  return show === 'top' ? xs.filter(r => perDay(r) > 0).slice(0, TOP_N) : SHOW_LOADS[show] ? xs.filter(r => SHOW_LOADS[show].includes(r.load)) : xs;
+}
+// one group's blocks: sized by tokens per day; a group nothing loaded today (on demand) by size, and its line says how often a run opened one
+function fmGroup(name, xs) {
+  const live = xs.filter(r => r.exists);
+  if (!live.length) return '';
+  const sum = live.reduce((n, r) => n + perDay(r), 0), tsum = live.reduce((n, r) => n + (r.tokens ?? 0), 0) || 1, reads = live.reduce((n, r) => n + (r.reads || 0), 0);
+  const blk = r => `<button class="fmblk st-${esc(stOf(r))}" data-ins="${esc(r.id)}" style="flex-basis:${(100 * (sum > 0 ? perDay(r) / sum : (r.tokens ?? 0) / tsum)).toFixed(2)}%" title="${esc(`${r.name} · ${tk(r.tokens)} tokens x ${r.loads_day || 0} loads/day = ${tk(perDay(r))} / day · ${MAP_STATE[stOf(r)]}${r.findings ? ` · ${r.findings} findings` : ''}`)}">${esc(r.name)}</button>`;
+  return `<div class="fmgroup"><div class="small">${name ? `<b>${esc(name)}</b> ` : ''}<span class="mute">${plural(live.length, 'file')} · ${sum > 0 ? `${tk(sum)} tokens / day` : `opened ${int(reads)}x in 30 d`}</span></div><div class="fmblocks">${live.map(blk).join('')}</div></div>`;
+}
+const MEASURED_ROLES = { chat: 'chat', checkin: 'check-ins', worker: 'workers', merge: 'merge runs' };
 function ctxFile(d, now) {
+  const show = FILE_SHOWS.some(([k]) => k === ctxView.show) ? ctxView.show : 'all', all = filesOf(d.rows, 'all'), xs = filesOf(d.rows, show), shown = xs.slice(0, d.limit || SUB_CAP);
+  const worst = worstFiles(all), hot = new Set(worst.map(x => x.r.id)), meas = show === 'session' || show === 'all' ? measuredRows(d.measured) : [];
+  const chips = filterChips('Files', FILE_SHOWS.map(([k, text]) => ({ act: 'ctx-show', data: { show: k }, text, n: filesOf(d.rows, k).length + (k === 'session' || k === 'all' ? measuredRows(d.measured).length : 0), on: k === show })), 'ctxshow');
+  const map = show === 'all' ? [['always loaded', 'session'], ['per role', 'role'], ['on demand', 'on-demand']].map(([n, k]) => fmGroup(n, filesOf(d.rows, k))).join('') : fmGroup('', xs);
+  const mblk = meas.length ? `<div class="fmgroup"><div class="small"><b>measured</b> <span class="mute">skills and MCP servers, per session</span></div><div class="fmblocks">${meas.map(m => `<span class="fmblk st-measured" style="flex-basis:${(100 * m.tokens / meas.reduce((n, x) => n + x.tokens, 0)).toFixed(2)}%" title="${esc(`${m.name} · ${tk(m.tokens)} tokens per session · ${m.roles.map(r => MEASURED_ROLES[r] ?? r).join(', ')}`)}">${esc(m.name)}</span>`).join('')}</div></div>` : '';
+  const n = k => (d.rows || []).filter(r => r.exists && r.load !== 'source' && stOf(r) === k).length;
+  const legend = `<div class="stklegend small">${Object.entries(MAP_STATE).map(([k, w]) => `<span><i class="stkdot st-${k}"></i>${esc(w)} <b>${int(n(k))}</b></span>`).join('')}</div>`;
+  const help = `<details class="lhelp"><summary aria-label="How these sizes are counted">?</summary><div class="small">${esc(d.method ?? '')}. Per day = size x loads per day (last 7 days); today = size x the sessions that loaded it today. An on-demand file loads only when a run opens it. Measured = the skills list and MCP servers in the newest first request of each role.</div></details>`;
   const load = r => r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : INS_LOAD[r.load] ?? r.load;
-  // the files that cost the most per day first (then size); the worst offenders are marked in the table and named on top with advice
-  const all = [...(d.rows || [])].sort((a, b) => perDay(b) - perDay(a) || (b.tokens ?? 0) - (a.tokens ?? 0)), shown = all.slice(0, d.limit || SUB_CAP);
-  const worst = worstFiles(all), hot = new Set(worst.map(x => x.r.id));
   const rows = shown.map(r => `<tr id="ins-row-${esc(r.id)}"${hot.has(r.id) ? ' class="ins-hot"' : ''}>
-    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div>${hot.has(r.id) ? `<div class="small ins-advice">${esc(fileAdvice(r)[0].text)}</div>` : ''}</td>
-    <td>${chip(INS_CHIP[r.load] ?? 'idle', load(r))}</td><td class="insopt">${esc((r.harness || []).join(', ') || 'any')}</td>
-    <td class="num">${tk(r.tokens)}</td><td class="num">${r.cost_today ? `${tk(r.cost_today)}${r.via ? ' <span class="mute small">via</span>' : ''}<div class="small mute">${int(r.loads_today)} load(s)</div>` : dash}</td>
-    <td class="insopt">${r.changed ? `${esc(fmtTime(r.changed, now))} <span class="small mute">${esc(r.changed_by)}</span>` : dash}</td>
-    <td class="num">${r.hints ? chip('warn', `${r.hints} hint${r.hints > 1 ? 's' : ''}`) : dash}</td></tr>`).join('');
-  return `<div class="card" id="ins-count"><b>${int(d.counts?.files ?? all.length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
-     <div class="small mute">${esc(d.method)}. Cost today = size x the sessions that loaded it (runs.jsonl + the chat's starts). Read-only: hints are never applied.</div></div>
-   ${ctxWorst(worst)}
-   ${insFileMap(d)}
-   <div class="tablecard"><h3>Files <span class="mute small">most tokens per day first · highlighted = a worst offender · tap a name to read it in Docs</span></h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div>${subMore(shown.length, all.length)}</div>`;
+    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div></td>
+    <td>${chip(INS_CHIP[r.load] ?? 'idle', load(r))}</td><td class="num">${tk(r.tokens)}</td><td class="num">${perDay(r) ? tk(perDay(r)) : r.load === 'on-demand' && r.reads ? `<span class="small mute">opened ${int(r.reads)}x</span>` : dash}</td>
+    <td class="num insopt">${r.cost_today ? `${tk(r.cost_today)}${r.via ? ' <span class="mute small">via</span>' : ''}<div class="small mute">${int(r.loads_today)} load(s)</div>` : dash}</td>
+    <td class="insopt">${r.changed ? `${esc(fmtTime(r.changed, now))} <span class="small mute">${esc(r.changed_by)}</span>` : dash}</td></tr>`).join('');
+  const mrows = meas.map(m => `<tr class="ctxmeas"><td>${esc(m.name)}<div class="inspath mute">${esc(m.roles.map(r => MEASURED_ROLES[r] ?? r).join(', '))}</div></td><td>${chip('idle', 'measured')}</td><td class="num">${tk(m.tokens)}</td><td class="num">${dash}</td><td class="num insopt">${dash}</td><td class="insopt">${dash}</td></tr>`).join('');
+  return `${ctxWorst(worst)}
+   <div class="tablecard" id="ins-files"><div class="ctxfhead">${chips}${help}</div>
+   <div class="ctxmap" id="ins-filemap">${legend}${map}${mblk}</div>
+   <div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th>size</th><th>per day</th><th class="insopt">today</th><th class="insopt">changed</th></tr></thead><tbody>${rows + mrows || `<tr><td colspan="6" class="mute">no files in this group</td></tr>`}</tbody></table></div>${subMore(shown.length, xs.length)}</div>`;
 }
-// the worst offenders: the few files to look at first - what each costs a day and what to do about it, the worst problem first
+// the worst offenders: the few files to look at first - what each costs a day and what to do about it, the worst problem first; "in Slop"
+// opens Slop at that file's row (&finding=<id>, bug 5)
 function ctxWorst(worst) {
-  if (!worst.length) return `<div class="card" id="ins-worst">${chip('ok', 'all clear')} <b>No file needs attention.</b> <span class="small mute">Every loaded file is within budget and has no open finding.</span></div>`;
+  if (!worst.length) return `<div class="card" id="ins-worst">${chip('ok', 'all clear')} <b>No file needs attention.</b></div>`;
   const li = worst.map(({ r, adv, day }, i) => `<li class="insworst"><div class="insworsthead"><span class="insrank">${i + 1}</span> <button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}><b>${esc(r.name)}</b></button>
     <span class="small mute">${day ? `${tk(day)} tokens / day` : `${tk(r.tokens)} tokens`} · ${esc(INS_LOAD[r.load] ?? r.load)}</span></div>
-    <ul class="insadv">${adv.map(a => `<li>${chip(a.sev, a.sev === 'bad' ? 'fix' : a.sev === 'warn' ? 'improve' : 'minor')} ${esc(a.text)}${a.go ? ` <button class="lnk" data-go="${esc(a.go)}" data-gosub="fix">in Slop</button>` : ''}</li>`).join('')}</ul></li>`).join('');
-  return `<div class="tablecard" id="ins-worst"><h3>Look at these first <span class="mute small">the ${int(worst.length)} file${worst.length > 1 ? 's' : ''} where a fix saves the most: tokens loaded per day, and what the checks found</span></h3><ol class="insworstlist">${li}</ol></div>`;
+    <ul class="insadv">${adv.map(a => `<li>${chip(a.sev, a.sev === 'bad' ? 'fix' : a.sev === 'warn' ? 'improve' : 'minor')} ${esc(a.text)}${a.go ? ` <button class="lnk" ${goAttrs({ tab: a.go, sub: 'fix', finding: a.finding })}>in Slop</button>` : ''}</li>`).join('')}</ul></li>`).join('');
+  return `<div class="tablecard" id="ins-worst"><h3>Look at these first</h3><ol class="insworstlist">${li}</ol></div>`;
 }
 // Per role: ONE standing table (META-UX-BUILD S4: "Standing context (measured)" + "Standing context per role" were two views of it) -
 // each measured role (median per session, last 7 days) with the steering files' estimate per launch profile of that role beneath it
@@ -207,30 +233,6 @@ function insLoads(d) {
       ${s ? stack(segs, { fmt: tk }) : `<div class="small mute">no session measured in the last ${int(d.measured?.window_days ?? 7)} days</div>`}</li>`;
   }).join('');
   return `<div class="tablecard" id="ins-loads"><h3>What one session loads <span class="mute small">before any work, per role · the newest measured first request · memory on / off = the launch switch (policy.launch.memory)</span></h3><ul class="insloads">${li}</ul></div>`;
-}
-// META-TEND P1-VISUAL (REPORT 5.3 view 3): the file map - each steering file a block sized by ~tokens x loads per day (7-day mean),
-// coloured by its state, grouped by load class; a click opens the file with its findings. Generator sources are not loaded: left out.
-const MAP_GROUPS = [['always loaded', ['session']], ['per role', ['checkin', 'chat', 'role']], ['on demand', ['on-demand']]];
-const MAP_STATE = { fresh: 'fresh', stale: 'stale paragraphs', conflict: 'conflict (two files say it)', 'generated-stale': 'generated, out of sync' };
-function insFileMap(d) {
-  const rows = (d.rows || []).filter(r => r.exists && r.load !== 'source'), cost = r => Math.round((r.standing_tokens ?? r.tokens) * (r.loads_day || 0));
-  if (!rows.length) return '';
-  const groups = MAP_GROUPS.map(([name, loads]) => {
-    const xs = rows.filter(r => loads.includes(r.load)).sort((a, b) => cost(b) - cost(a) || b.tokens - a.tokens);
-    if (!xs.length) return '';
-    const sum = xs.reduce((n, r) => n + cost(r), 0), tsum = xs.reduce((n, r) => n + r.tokens, 0) || 1;
-    const blk = r => {
-      const share = sum > 0 ? cost(r) / sum : r.tokens / tsum, st = MAP_STATE[r.map_state] ? r.map_state : 'fresh';
-      return `<button class="fmblk st-${esc(st)}" data-ins="${esc(r.id)}" style="flex-basis:${(100 * share).toFixed(2)}%" title="${esc(`${r.name} · ${tk(r.tokens)} tokens x ${r.loads_day || 0} loads/day = ${tk(cost(r))} / day · ${MAP_STATE[st]}${r.findings ? ` · ${r.findings} findings` : ''}`)}">${share >= 0.06 ? esc(r.name) : ''}</button>`;
-    };
-    return `<div class="fmgroup"><div class="small"><b>${esc(name)}</b> <span class="mute">${int(xs.length)} files · ${tk(sum)} tokens / day</span></div><div class="fmblocks">${xs.map(blk).join('')}</div></div>`;
-  }).join('');
-  const n = k => rows.filter(r => (MAP_STATE[r.map_state] ? r.map_state : 'fresh') === k).length;
-  const legend = Object.entries(MAP_STATE).map(([k, w]) => `<span><i class="stkdot st-${k}"></i>${esc(w)} <b>${int(n(k))}</b></span>`).join('');
-  const top = rows.filter(r => cost(r) > 0).sort((a, b) => cost(b) - cost(a)).slice(0, 6);
-  return `<div class="tablecard" id="ins-filemap"><h3>The file map <span class="mute small">a block per file, sized by ~tokens x loads per day (last 7 days) · tap a block to open the file and its findings</span></h3>
-   <div class="stklegend small" style="padding:0 12px">${legend}</div><div style="padding:4px 12px">${groups}</div>
-   ${top.length ? `<div style="padding:0 12px 8px"><div class="small"><b>Most tokens per day</b></div>${bars(top.map(r => ({ label: r.name, value: cost(r), cls: `st-${MAP_STATE[r.map_state] ? r.map_state : 'fresh'}` })), { fmt: v => `${tk(v)} / day` })}</div>` : ''}</div>`;
 }
 // META-TEND P1-VISUAL (REPORT 5.3 view 5): memory - the 200-line / 25 KB gauge, MEMORY.md -> topic files, entries in no index, broken links
 // the MEMORY.md gauge (% of its load limit; over = full + red): Instructions' memory card and the head of the Docs Memory group
