@@ -413,6 +413,15 @@ function pickProject(flags, env) {
   return reg.length === 1 ? reg[0].config : null;
 }
 const noProjectHint = env => { const n = registeredProjects(env).map(p => p.name); return n.length ? ` (registered: ${n.join(', ')})` : ' (none registered: norn project new --root <repo>)'; };
+// test-diet S1: `norn tests run` inside a run with no --project / --state: the run's own state and project (its spec's ctx_from, whose
+// policy.tests applies) - a worker on a machine with several projects registered names neither, and must not need to
+function runWhere(flags, env) {
+  if (flags.project || flags.state || !env.META_RUN_STATE || !env.META_RUN_ID) return null;
+  let spec = null;
+  try { spec = JSON.parse(fs.readFileSync(path.join(env.META_RUN_STATE, 'runs', `${env.META_RUN_ID}.spec.json`), 'utf8')); } catch { return null; }
+  const project = spec?.ctx_from && fs.existsSync(spec.ctx_from) ? loadProject(spec.ctx_from) : null, state = env.META_RUN_STATE;
+  return { project, state, locks: path.join(path.dirname(path.resolve(state)), 'locks') };
+}
 function where(flags, env) {
   const pf = pickProject(flags, env);
   const project = pf ? loadProject(pf) : null;
@@ -1574,7 +1583,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'size') return sizeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
-  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, env, where: f => where(f, env) });
+  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, env, where: f => runWhere(f, env) ?? where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {
