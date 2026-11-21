@@ -7,18 +7,17 @@ import { renderProse } from './prose.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter, capStrip } from './widgets.mjs';
+import { bars, columns, stack, meter, capStrip } from './widgets.mjs';
 import { CONTEXT_SUBS, contextParts } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-import { esc, fin, dash, int, fmtMin, pct, plural, runWho, chip, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, guardOn, guardChip } from './cells.mjs';
-import { diffBlock } from './diffview.mjs';
+import { esc, fin, int, fmtMin, pct, plural, runWho, chip, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, guardOn, guardChip } from './cells.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
-import { context, SEV_CHIP, baseName } from './pages/context.mjs';
+import { context, auditCard, enforceCard } from './pages/context.mjs';
 import { docs } from './pages/docs.mjs';
 import { roadmap } from './pages/roadmap.mjs';
 import { spend, adviceRow } from './pages/spend.mjs';
@@ -30,8 +29,6 @@ export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], [
 export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
-const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
-  const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
 
 const panel = (tab, html) => `<div id="panel-${tab}">${html}</div>`;
 const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose one project in the header: the ${esc(tab)} tab belongs to one project (its own records / files).</p></div>`);
@@ -559,24 +556,6 @@ function records(d, ctx) {
    <div class="tablecard"><h3>Decisions</h3><table class="rectab" data-rows="records"><thead><tr><th>id</th><th>state</th><th>lane</th><th>question</th><th>choice + why</th><th>by</th><th>source</th><th></th></tr></thead><tbody>${dec}</tbody></table></div>`;
 }
 
-// META-TEND P5 (REPORT 3.3): one vendor-audit hunk = one card; accept = a decision + a directive (the check-in applies it), decline = a decision
-export function auditCard(c, project) {
-  const pj = project ? ` data-project="${esc(project)}"` : '';
-  return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
-    ${diffBlock({ patch: c.fix.patch ?? '' }, { title: `${baseName(c.path)}:${c.line}`, sub: 'vendor audit hunk' })}
-    <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
-}
-// META-TEND P3 (REPORT 3.6): the repeat detector's cards - one per cluster, ranked; approve = a directive (the one approvals path)
-// RM-30 S1: a card its directive already asks for (rules.mjs askedBy) reads "Asked as DIR-n (state) - date" with a link and has no
-// Approve; Approve is one tap (the directive is the record and can be revoked) and sends the card id, which the directive keeps
-export function enforceCard(c, project, px = { project }) {
-  const a = c.asked;
-  return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
-    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
-    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
-    : `<div class="small mute">${esc(c.fix.action)}</div>
-    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;
-}
 /**
  * RM-30 S1: a directive the page sent was refused as a restatement of an active one (/api/directive 409 { dup }). x = { text, dup:
  * { id, line, why } } -> the plain-words notice: which directive it matches, Open it, Replace it with this wording (supersede, recorded),

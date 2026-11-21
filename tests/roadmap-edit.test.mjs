@@ -142,7 +142,7 @@ test('digest: a project with a roadmap carries "Unplaced on the roadmap" (the au
 
 // ---------- the edit drawer (ui.mjs, pure) + the page wiring ----------
 const { renderTab } = await import('../engine/dash/ui.mjs');
-const { renderRmEditor, rmEditBody, rmFind } = await import('../engine/dash/pages/roadmap.mjs');
+const { renderRmEditor } = await import('../engine/dash/pages/roadmap.mjs');
 const uiNode = (id, title, o = {}) => ({ id, kind: 'item', title, state: o.state || 'open', rev: o.rev ?? 1, parent: o.parent ?? null, phase: o.phase || 'future', status: o.status || 'idea',
   why: 'no evidence', note: o.note || '', horizon: o.horizon ?? null, links: o.links || [], live: [], queued: [], stages: [], branches: [], spans: [], progress: { done: 0, total: 0 },
   flags: { claimed: null, drift: [], idle: null, gone: [] }, dropped: o.dropped || null, children: [] });

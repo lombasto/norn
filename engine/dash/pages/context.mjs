@@ -7,10 +7,10 @@ import { bars, stack, board, lines } from '../widgets.mjs';
 import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextNumbers, standingRows, perDay, worstFiles, measuredRows } from '../insparts.mjs';
 import { diffBlock } from '../diffview.mjs';
-import { auditCard, enforceCard } from '../ui.mjs';
+import { renderProse } from '../prose.mjs';
 
 // META-INSTRUCTIONS R1: every file that steers the agents - load class, ~size, what it cost today, drift, read-only hints; a row
-// opens the file rendered. R2 (the chat's verbs) adds "ask the controller to tighten this": a disabled stub until then.
+// opens the file rendered.
 export const INS_LOAD = { session: 'every session', checkin: 'check-ins', chat: 'chat', role: 'role', 'on-demand': 'on demand', source: 'source' };
 export const INS_CHIP = { session: 'warn', checkin: 'claude', chat: 'claude', role: 'prov', 'on-demand': 'idle', source: 'idle' };
 const DRIFT_CHIP = { ok: 'ok', missing: 'bad', drift: 'bad', unmanaged: 'bad', stale: 'warn', adoptable: 'idle', same: 'idle' };
@@ -261,4 +261,25 @@ function insMemory(m) {
    ${orphans ? `<div class="small" style="margin-top:6px"><b>In no index</b> <span class="mute">(a session never finds them)</span></div><div class="small" style="overflow-wrap:anywhere">${orphans}</div>` : ''}
    <details style="margin:6px 0"><summary class="small">all ${int(m.topics.length)} topic files, last opened first</summary><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>index</th><th>last opened</th><th class="insopt">last changed</th></tr></thead><tbody>${tops}</tbody></table></div></details>
    <div class="small mute" style="padding-bottom:6px">${esc(m.opened_method)}</div></div></div>`;
+}
+
+const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
+  const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
+// META-TEND P5 (REPORT 3.3): one vendor-audit hunk = one card; accept = a decision + a directive (the check-in applies it), decline = a decision
+export function auditCard(c, project) {
+  const pj = project ? ` data-project="${esc(project)}"` : '';
+  return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
+    ${diffBlock({ patch: c.fix.patch ?? '' }, { title: `${baseName(c.path)}:${c.line}`, sub: 'vendor audit hunk' })}
+    <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
+}
+// META-TEND P3 (REPORT 3.6): the repeat detector's cards - one per cluster, ranked; approve = a directive (the one approvals path)
+// RM-30 S1: a card its directive already asks for (rules.mjs askedBy) reads "Asked as DIR-n (state) - date" with a link and has no
+// Approve; Approve is one tap (the directive is the record and can be revoked) and sends the card id, which the directive keeps
+export function enforceCard(c, project, px = { project }) {
+  const a = c.asked;
+  return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
+    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
+    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
+    : `<div class="small mute">${esc(c.fix.action)}</div>
+    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;
 }
