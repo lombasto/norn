@@ -20,7 +20,7 @@ function lintSide(ctx, side) {
   ctx.lint ||= {};
   if (side in ctx.lint) { if (ctx.lint[side] instanceof Error) throw ctx.lint[side]; return ctx.lint[side]; }
   try {
-    const rules = ctx.lintRules, texts = new Map(), held = rules.filter(r => r.kind === 'lint' || r.kind === 'eslint'), cfg = held.find(r => r.config)?.config;
+    const rules = ctx.lintRules, texts = new Map(), held = rules.filter(r => r.kind === 'lint'), cfg = held.find(r => r.config)?.config;
     for (const r of rules) for (const x of sideFiles(r, ctx, side)) texts.set(x.e.path, x.text);
     if (!texts.size) return (ctx.lint[side] = new Map());
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
@@ -57,8 +57,7 @@ export function lint(rule, ctx) {
     return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
       // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6, 3.4: LJ/parse)
       const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK', ...(rule.kind === 'lint' ? { sub: PARSE } : {}) } : null)
-        : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule) })
-          : rule.kind === 'eslint' ? (x.rule in rule.rules ? { msg: x.msg } : null) : astHit(rule, x, text);
+        : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule) }) : astHit(rule, x, text);
       return f ? [{ file: e.path, line: x.line, snippet: lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
     }));
   });

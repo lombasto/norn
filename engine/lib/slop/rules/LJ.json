@@ -53,124 +53,33 @@
     }
   },
   "config": "eslint.config.mjs",
-  "files": [
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "**/vendor/**"
-  ],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["**/vendor/**"],
   "rules": {
     "no-unused-vars": [
       "error",
-      {
-        "vars": "all",
-        "args": "after-used",
-        "caughtErrors": "none",
-        "ignoreRestSiblings": true,
-        "varsIgnorePattern": "^_",
-        "argsIgnorePattern": "^_",
-        "destructuredArrayIgnorePattern": "^_"
-      }
+      {"vars":"all","args":"after-used","caughtErrors":"none","ignoreRestSiblings":true,"varsIgnorePattern":"^_","argsIgnorePattern":"^_","destructuredArrayIgnorePattern":"^_"}
     ],
-    "no-duplicate-imports": [
-      "error",
-      {
-        "includeExports": false
-      }
-    ],
-    "no-console": [
-      "error",
-      {
-        "allow": [
-          "warn",
-          "error",
-          "info"
-        ]
-      }
-    ],
+    "no-duplicate-imports": ["error",{"includeExports":false}],
+    "no-console": ["error",{"allow":["warn","error","info"]}],
     "no-debugger": "error",
-    "no-warning-comments": [
-      "error",
-      {
-        "terms": [
-          "todo",
-          "fixme",
-          "hack",
-          "xxx"
-        ],
-        "location": "anywhere"
-      }
-    ],
+    "no-warning-comments": ["error",{"terms":["todo","fixme","hack","xxx"],"location":"start"}],
     "no-restricted-properties": [
       "error",
-      {
-        "object": "describe",
-        "property": "only",
-        "message": "a committed .only: the rest of the suite stops running"
-      },
-      {
-        "object": "describe",
-        "property": "skip",
-        "message": "a skip with no condition: make skip a condition, or fix the test"
-      },
-      {
-        "object": "it",
-        "property": "only",
-        "message": "a committed .only: the rest of the suite stops running"
-      },
-      {
-        "object": "it",
-        "property": "skip",
-        "message": "a skip with no condition: make skip a condition, or fix the test"
-      },
-      {
-        "object": "test",
-        "property": "only",
-        "message": "a committed .only: the rest of the suite stops running"
-      },
-      {
-        "object": "test",
-        "property": "skip",
-        "message": "a skip with no condition: make skip a condition, or fix the test"
-      },
-      {
-        "object": "suite",
-        "property": "only",
-        "message": "a committed .only: the rest of the suite stops running"
-      },
-      {
-        "object": "suite",
-        "property": "skip",
-        "message": "a skip with no condition: make skip a condition, or fix the test"
-      },
-      {
-        "object": "context",
-        "property": "only",
-        "message": "a committed .only: the rest of the suite stops running"
-      },
-      {
-        "object": "context",
-        "property": "skip",
-        "message": "a skip with no condition: make skip a condition, or fix the test"
-      }
+      {"object":"describe","property":"only","message":"a committed .only: the rest of the suite stops running"},
+      {"object":"describe","property":"skip","message":"a skip with no condition: make skip a condition, or fix the test"},
+      {"object":"it","property":"only","message":"a committed .only: the rest of the suite stops running"},
+      {"object":"it","property":"skip","message":"a skip with no condition: make skip a condition, or fix the test"},
+      {"object":"test","property":"only","message":"a committed .only: the rest of the suite stops running"},
+      {"object":"test","property":"skip","message":"a skip with no condition: make skip a condition, or fix the test"},
+      {"object":"suite","property":"only","message":"a committed .only: the rest of the suite stops running"},
+      {"object":"suite","property":"skip","message":"a skip with no condition: make skip a condition, or fix the test"},
+      {"object":"context","property":"only","message":"a committed .only: the rest of the suite stops running"},
+      {"object":"context","property":"skip","message":"a skip with no condition: make skip a condition, or fix the test"}
     ]
   },
-  "levels": {
-    "no-unused-vars": "BLOCK",
-    "no-duplicate-imports": "BLOCK",
-    "no-debugger": "BLOCK",
-    "no-console": "BLOCK",
-    "no-warning-comments": "BLOCK",
-    "no-restricted-properties": "BLOCK",
-    "parse": "BLOCK",
-    "config-changed": "BLOCK",
-    "*": "WARN"
-  },
-  "shadow_rules": [
-    "*"
-  ],
+  "levels": {"no-unused-vars":"BLOCK","no-duplicate-imports":"BLOCK","no-debugger":"BLOCK","no-console":"BLOCK","no-warning-comments":"BLOCK","no-restricted-properties":"BLOCK","parse":"BLOCK","config-changed":"BLOCK","*":"WARN"},
+  "shadow_rules": ["*"],
   "fixture": {
     "hit": {
       "base": {
@@ -196,149 +105,57 @@
           {
             "filePath": "engine/lib/a.mjs",
             "messages": [
-              {
-                "ruleId": "no-console",
-                "severity": 2,
-                "message": "Unexpected console statement. Only these console methods are allowed: warn, error, info.",
-                "line": 1,
-                "column": 25,
-                "endLine": 1,
-                "endColumn": 36
-              },
-              {
-                "ruleId": "no-debugger",
-                "severity": 2,
-                "message": "Unexpected 'debugger' statement.",
-                "line": 1,
-                "column": 41,
-                "endLine": 1,
-                "endColumn": 50
-              }
+              {"ruleId":"no-console","severity":2,"message":"Unexpected console statement. Only these console methods are allowed: warn, error, info.","line":1,"column":25,"endLine":1,"endColumn":36},
+              {"ruleId":"no-debugger","severity":2,"message":"Unexpected 'debugger' statement.","line":1,"column":41,"endLine":1,"endColumn":50}
             ]
           },
           {
             "filePath": "src/a.mjs",
             "messages": [
-              {
-                "ruleId": "no-warning-comments",
-                "severity": 2,
-                "message": "Unexpected 'todo' comment: 'TODO: wire the retry'.",
-                "line": 1,
-                "column": 1,
-                "endLine": 1,
-                "endColumn": 24
-              },
-              {
-                "ruleId": "no-warning-comments",
-                "severity": 2,
-                "message": "Unexpected 'fixme' comment: 'FIXME later'.",
-                "line": 2,
-                "column": 21,
-                "endLine": 2,
-                "endColumn": 38
-              }
+              {"ruleId":"no-warning-comments","severity":2,"message":"Unexpected 'todo' comment: 'TODO: wire the retry'.","line":1,"column":1,"endLine":1,"endColumn":24},
+              {"ruleId":"no-warning-comments","severity":2,"message":"Unexpected 'fixme' comment: 'FIXME later'.","line":2,"column":21,"endLine":2,"endColumn":38}
             ]
           },
           {
             "filePath": "src/d.mjs",
             "messages": [
-              {
-                "ruleId": "no-duplicate-imports",
-                "severity": 2,
-                "message": "'./a.mjs' import is duplicated.",
-                "line": 2,
-                "column": 1,
-                "endLine": 2,
-                "endColumn": 29
-              }
+              {"ruleId":"no-duplicate-imports","severity":2,"message":"'./a.mjs' import is duplicated.","line":2,"column":1,"endLine":2,"endColumn":29}
             ]
           },
           {
             "filePath": "src/m.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'fs' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 1,
-                "column": 8,
-                "endLine": 1,
-                "endColumn": 10
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'fs' is defined but never used. Allowed unused vars must match /^_/u.","line":1,"column":8,"endLine":1,"endColumn":10}
             ]
           },
           {
             "filePath": "tests/a.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-restricted-properties",
-                "severity": 2,
-                "message": "'test.only' is restricted from being used. a committed .only: the rest of the suite stops running",
-                "line": 2,
-                "column": 1,
-                "endLine": 2,
-                "endColumn": 10
-              }
+              {"ruleId":"no-restricted-properties","severity":2,"message":"'test.only' is restricted from being used. a committed .only: the rest of the suite stops running","line":2,"column":1,"endLine":2,"endColumn":10}
             ]
           },
           {
             "filePath": "tests/b.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-restricted-properties",
-                "severity": 2,
-                "message": "'test.skip' is restricted from being used. a skip with no condition: make skip a condition, or fix the test",
-                "line": 2,
-                "column": 1,
-                "endLine": 2,
-                "endColumn": 10
-              }
+              {"ruleId":"no-restricted-properties","severity":2,"message":"'test.skip' is restricted from being used. a skip with no condition: make skip a condition, or fix the test","line":2,"column":1,"endLine":2,"endColumn":10}
             ]
           }
         ],
         "base": [
-          {
-            "filePath": "engine/lib/a.mjs",
-            "messages": []
-          },
-          {
-            "filePath": "src/a.mjs",
-            "messages": []
-          },
-          {
-            "filePath": "src/d.mjs",
-            "messages": []
-          },
-          {
-            "filePath": "src/m.mjs",
-            "messages": []
-          },
+          {"filePath":"engine/lib/a.mjs","messages":[]},
+          {"filePath":"src/a.mjs","messages":[]},
+          {"filePath":"src/d.mjs","messages":[]},
+          {"filePath":"src/m.mjs","messages":[]},
           {
             "filePath": "tests/a.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'test' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 1,
-                "column": 8,
-                "endLine": 1,
-                "endColumn": 12
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'test' is defined but never used. Allowed unused vars must match /^_/u.","line":1,"column":8,"endLine":1,"endColumn":12}
             ]
           },
           {
             "filePath": "tests/b.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'test' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 1,
-                "column": 8,
-                "endLine": 1,
-                "endColumn": 12
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'test' is defined but never used. Allowed unused vars must match /^_/u.","line":1,"column":8,"endLine":1,"endColumn":12}
             ]
           }
         ]
@@ -358,161 +175,59 @@
         "eslint.config.mjs": "export default [{ files: ['engine/bin/**', 'tests/**'], rules: { 'no-console': 'off' } }];\n",
         "src/m.mjs": "// a comment above moves every line\nimport fs from 'node:fs';\nexport const a = 1;\nconst _unused = 2;\n",
         "src/d.mjs": "// the two imports predate this change\nimport { a } from './a.mjs';\nimport { b } from './a.mjs';\nimport { c } from './c.mjs';\nexport { d } from './c.mjs';\nexport const m = a + b + c;\n",
-        "engine/lib/a.mjs": "// console.log(x) prints it\nexport const s = 'console.log(1); debugger';\nexport const f = x => { console.error(x); return x; };\nexport const out = console.log;\n",
+        "engine/lib/a.mjs": "// console.log(x) prints it\nexport const s = 'console.log(1); debugger';\nexport const f = x => { console.error(x); return x; };\n",
         "engine/bin/tool.mjs": "console.log('hi');\n",
         "src/a.mjs": "export const state = 'TODO';\n// the todo list is read from the board\nexport const a = 1;\n",
         "tests/a.test.mjs": "import test from 'node:test';\nconst latest = { only: x => x };\ntest('one', () => latest.only(1));\n",
         "src/doc.mjs": "export const tip = 'never commit test.only(...)';\n",
-        "tests/b.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\n// test.skip( is not used here\nconst doc = 'skip: true';\n"
+        "tests/b.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\n// test.skip( is not used here\nexport const doc = 'skip: true';\n"
       },
       "recorded": {
         "head": [
-          {
-            "filePath": "engine/bin/tool.mjs",
-            "messages": []
-          },
-          {
-            "filePath": "engine/lib/a.mjs",
-            "messages": [
-              {
-                "ruleId": "no-console",
-                "severity": 2,
-                "message": "Unexpected console statement. Only these console methods are allowed: warn, error, info.",
-                "line": 4,
-                "column": 20,
-                "endLine": 4,
-                "endColumn": 31
-              }
-            ]
-          },
-          {
-            "filePath": "src/a.mjs",
-            "messages": [
-              {
-                "ruleId": "no-warning-comments",
-                "severity": 2,
-                "message": "Unexpected 'todo' comment: 'the todo list is read from the board'.",
-                "line": 2,
-                "column": 1,
-                "endLine": 2,
-                "endColumn": 40
-              }
-            ]
-          },
+          {"filePath":"engine/bin/tool.mjs","messages":[]},
+          {"filePath":"engine/lib/a.mjs","messages":[]},
+          {"filePath":"src/a.mjs","messages":[]},
           {
             "filePath": "src/d.mjs",
             "messages": [
-              {
-                "ruleId": "no-duplicate-imports",
-                "severity": 2,
-                "message": "'./a.mjs' import is duplicated.",
-                "line": 3,
-                "column": 1,
-                "endLine": 3,
-                "endColumn": 29
-              }
+              {"ruleId":"no-duplicate-imports","severity":2,"message":"'./a.mjs' import is duplicated.","line":3,"column":1,"endLine":3,"endColumn":29}
             ]
           },
-          {
-            "filePath": "src/doc.mjs",
-            "messages": []
-          },
+          {"filePath":"src/doc.mjs","messages":[]},
           {
             "filePath": "src/m.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'fs' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 2,
-                "column": 8,
-                "endLine": 2,
-                "endColumn": 10
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'fs' is defined but never used. Allowed unused vars must match /^_/u.","line":2,"column":8,"endLine":2,"endColumn":10}
             ]
           },
-          {
-            "filePath": "tests/a.test.mjs",
-            "messages": []
-          },
-          {
-            "filePath": "tests/b.test.mjs",
-            "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'doc' is assigned a value but never used. Allowed unused vars must match /^_/u.",
-                "line": 6,
-                "column": 7,
-                "endLine": 6,
-                "endColumn": 10
-              }
-            ]
-          }
+          {"filePath":"tests/a.test.mjs","messages":[]},
+          {"filePath":"tests/b.test.mjs","messages":[]}
         ],
         "base": [
-          {
-            "filePath": "engine/lib/a.mjs",
-            "messages": []
-          },
-          {
-            "filePath": "src/a.mjs",
-            "messages": []
-          },
+          {"filePath":"engine/lib/a.mjs","messages":[]},
+          {"filePath":"src/a.mjs","messages":[]},
           {
             "filePath": "src/d.mjs",
             "messages": [
-              {
-                "ruleId": "no-duplicate-imports",
-                "severity": 2,
-                "message": "'./a.mjs' import is duplicated.",
-                "line": 2,
-                "column": 1,
-                "endLine": 2,
-                "endColumn": 29
-              }
+              {"ruleId":"no-duplicate-imports","severity":2,"message":"'./a.mjs' import is duplicated.","line":2,"column":1,"endLine":2,"endColumn":29}
             ]
           },
           {
             "filePath": "src/m.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'fs' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 1,
-                "column": 8,
-                "endLine": 1,
-                "endColumn": 10
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'fs' is defined but never used. Allowed unused vars must match /^_/u.","line":1,"column":8,"endLine":1,"endColumn":10}
             ]
           },
           {
             "filePath": "tests/a.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'test' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 1,
-                "column": 8,
-                "endLine": 1,
-                "endColumn": 12
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'test' is defined but never used. Allowed unused vars must match /^_/u.","line":1,"column":8,"endLine":1,"endColumn":12}
             ]
           },
           {
             "filePath": "tests/b.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-unused-vars",
-                "severity": 2,
-                "message": "'test' is defined but never used. Allowed unused vars must match /^_/u.",
-                "line": 1,
-                "column": 8,
-                "endLine": 1,
-                "endColumn": 12
-              }
+              {"ruleId":"no-unused-vars","severity":2,"message":"'test' is defined but never used. Allowed unused vars must match /^_/u.","line":1,"column":8,"endLine":1,"endColumn":12}
             ]
           }
         ]

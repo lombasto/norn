@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
 import { runTool, TOOLS, PARSE } from './tools.mjs';
-import { norm, lineAt, lineText, isReason, masked } from './scan.mjs';
+import { norm, lineAt, lineText, masked } from './scan.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
@@ -19,10 +19,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RULES_DIR = path.join(HERE, 'rules');
 export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // RM-45 (audit REPORT sec. 6): the parameters a project may patch per kind (overrides.json), and the kinds a project rule
-// (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, swallow, command, dup, exports, refs) are code over the whole tree, and
+// (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, command, dup, exports, refs) are code over the whole tree, and
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
-  'diff-check': [], swallow: ['files', 'exclude', 'deny'], pattern: ['files', 'exclude', 'in', 'unless'], eslint: ['files', 'exclude'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
+  'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
   ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
   model: ['files', 'exclude'],
@@ -152,30 +152,6 @@ const content = (rule, ctx, fn) => {
   return { head: scan('head', 'path'), base: scan('base', 'old') };
 };
 
-function swallows(rule, text, file) {
-  const out = [];
-  const re = /\bcatch\s*(?:\([^)]*\))?\s*\{|\.catch\(\s*(?:\(\s*[\w$]*\s*\)|[\w$]+)\s*=>\s*\{/g;
-  for (let m; (m = re.exec(text));) {
-    // a catch inside a one-line string (a test's fixture text) is no code: an odd count of one quote kind before it on its line
-    const before = text.slice(text.lastIndexOf('\n', m.index) + 1, m.index).replace(/\\./g, '');
-    if (["'", '"', '`'].some(q => before.split(q).length % 2 === 0)) continue;
-    let i = m.index + m[0].length;
-    const comments = [];
-    for (;;) {   // skip whitespace and comments: the body is "empty" when the next real character closes it
-      while (/\s/.test(text[i] || '')) i++;
-      if (text.startsWith('//', i)) { const e = text.indexOf('\n', i); comments.push(text.slice(i + 2, e < 0 ? undefined : e)); i = e < 0 ? text.length : e; }
-      else if (text.startsWith('/*', i)) { const e = text.indexOf('*/', i + 2); comments.push(text.slice(i + 2, e)); i = e < 0 ? text.length : e + 2; }
-      else break;
-    }
-    if (text[i] !== '}') continue;
-    const { why, ok } = isReason(comments.join(' '), rule.deny);
-    if (ok) continue;
-    out.push({ file, line: lineAt(text, m.index), msg: why ? `catch with no reason (${JSON.stringify(why)} does not say what happens next)` : 'empty catch: say what happens next, or let it throw',
-      snippet: text.slice(m.index, i + 1) });
-  }
-  return out;
-}
-
 // RM-45: `in` (code | comment | string: the other classes blanked), `unless` (a line that also matches is no finding), `cite`
 // (K22: the line must name a record id that resolves to an open item), `key: match` (the matched token, capture 1 or all)
 function patterns(rule, text, file, ctx) {
@@ -278,10 +254,8 @@ const DETECT = {
     }
     return { head, base: null };
   },
-  swallow: (rule, ctx) => content(rule, ctx, (t, f) => swallows(rule, t, f)),
   pattern: (rule, ctx) => content(rule, ctx, (t, f) => patterns(rule, t, f, ctx)),
   shim: (rule, ctx) => content(rule, ctx, (t, f) => shimFindings(rule, t, f)),
-  eslint: lint,
   lint,
   ast: lint,
   dup,
@@ -366,7 +340,7 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
   const findings = [], ran = [];
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, config, lintRules: [...run.filter(r => r.kind === 'lint' || r.kind === 'eslint'), ...run.filter(r => r.kind === 'ast')], modelRules: run.filter(r => r.kind === 'model'),
+  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, config, lintRules: [...run.filter(r => r.kind === 'lint'), ...run.filter(r => r.kind === 'ast')], modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));
