@@ -84,20 +84,20 @@ test('the input is ranked and capped: rule-hit hunks first, then code, then test
   assert.equal(parseHunks('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n a\n-b\n+c\n+d\n').map(h => h.added.map(a => a.line)).join(), '2,3');
 });
 
-test('the run end calls the routed executor once, no tools (the fake executor); with no route the model rules are skipped, never invented', () => {
+test('the run end calls the routed executor once, no tools (the fake executor); with no route each model rule is a WARN could-not-run, never invented', () => {
   const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'src/a.mjs': 'export const a = 1;\nexport const t = () => new Promise(r => setTimeout(r, 45000));\n' });
   const ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');
   fs.writeFileSync(ans, 'Here it is:\n```json\n' + answer([{ rule: 'M6', file: 'src/a.mjs', quote: 'export const t = () => new Promise(r => setTimeout(r, 45000));', why: 'a timeout the owner tunes' }]) + '\n```\n');
   const route = voiceRoute({ project: { policy: { executors: { review: { executor: 'fake', model: '', effort: '' } } } }, author: 'claude' });
   assert.equal(route.executor, 'fake');
   const r = slopCheck({ repo, base: 'main', rules: MODEL, tool: makeTool({ voice: route, env: { ...process.env, FAKE_RESULT: ans } }) });
-  assert.deepEqual(r.skipped, []);
+  assert.ok(!r.findings.some(f => f.unrun), 'every model rule ran');
   assert.deepEqual(r.findings.map(f => [f.rule, f.line, f.shadow]), [['M6', 2, true]]);
   assert.match(r.findings[0].msg, /a timeout the owner tunes/);
   const none = slopCheck({ repo, base: 'main', rules: MODEL, tool: makeTool() });
-  assert.deepEqual(none.findings, []);
-  assert.deepEqual(none.skipped.map(s => s.rule), MODEL.map(m => m.id));
-  assert.match(none.skipped[0].why, /no second voice routed here/);
+  assert.deepEqual(none.findings.map(f => [f.rule, f.level, f.unrun, f.voice]), MODEL.map(m => [m.id, 'WARN', true, undefined]), 'no route: each model rule is a WARN "could not run", never an invented finding');
+  assert.match(none.findings[0].msg, /^could not run: no second voice routed here/);
+  assert.deepEqual(none.blocks, [], 'the voice is advisory: it holds nothing (SPEC 3.4)');
 });
 
 test('the route: another model family than the author when the policy table has one, else the review route', () => {
