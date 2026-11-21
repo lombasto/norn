@@ -4,7 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { fixture, budget0 } from './helpers/dash-fixture.mjs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fixture, budget0, projectFile } from './helpers/dash-fixture.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
+import { loadProject } from '../engine/lib/config.mjs';
+import { adoptStart, adoptDecide, adoptApply } from '../engine/lib/adopt.mjs';
 import { renderTab, loadTab, stripCards } from '../engine/dash/ui.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { getProfile, profileBudget } from '../engine/lib/profiles.mjs';
@@ -116,4 +121,23 @@ test('Review changes lists each change in plain words and flags a recorded rulin
     for (const l of ok.data.lines) assert.deepEqual(l.flags, [], JSON.stringify(l));
     assert.equal(fs.readFileSync(f.budgetFile, 'utf8'), JSON.stringify(RETIRED, null, 2) + '\n', 'review writes nothing');
   } finally { await f.done(); }
+});
+
+// L-04: adopt applies a picked profile through the same function as setup - the machine's Codex caps survive, a corrupt budget.json is refused
+test('adopt applies a profile as setup does: Codex present keeps its caps; an unreadable budget.json is refused, never overwritten', async () => {
+  const meta = mkTmp('meta-adpp-'), p = loadProject(projectFile(meta, 'demo'), { home: meta, meta });
+  const git = (...a) => assert.equal(spawnSync('git', ['-C', p.root, '-c', 'user.name=t', '-c', 'user.email=t@t.test', '-c', 'commit.gpgsign=false', ...a], { windowsHide: true }).status, 0, a.join(' '));
+  fs.writeFileSync(path.join(p.root, 'README.md'), '# demo\n'); git('init', '-q', '-b', 'main'); git('add', '-A'); git('commit', '-q', '-m', 'init');
+  fs.mkdirSync(path.join(meta, 'local'), { recursive: true });
+  fs.writeFileSync(path.join(meta, 'local', 'machine.json'), JSON.stringify({ schema: 1, home: meta, codex: { exe: 'codex.cmd' } }));
+  const bf = path.join(meta, 'local', 'budget.json');
+  adoptStart(p.state, { project: p, by: 'owner' });
+  adoptDecide(p.state, { part: 'profile', verdict: 'approve', pick: 'heavy', by: 'owner' });
+  fs.writeFileSync(bf, '{"max_codex": 0,');
+  await assert.rejects(adoptApply(p.state, { project: p, by: 'owner', metaRoot: meta }), /budget\.json/);
+  assert.equal(fs.readFileSync(bf, 'utf8'), '{"max_codex": 0,', 'a corrupt budget is left for the owner, not replaced');
+  fs.writeFileSync(bf, '{}');
+  await adoptApply(p.state, { project: p, by: 'owner', metaRoot: meta });
+  const b = JSON.parse(fs.readFileSync(bf, 'utf8'));
+  for (const k of ['max_codex', 'max_sol', 'max_astra']) assert.ok(b[k] > 0, `${k} = ${b[k]}: the machine has Codex`);
 });
