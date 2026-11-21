@@ -18,6 +18,15 @@ header{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var
 header h1{font-size:15px;margin:0;font-weight:650}
 /* A-15: a header button never breaks onto 2 lines */
 header button,header select{white-space:nowrap}
+/* UI redesign 2026-11-20: the header's worker pool (widgets.mjs poolLine), the check-ins group box (status, Pause, Run tick now) and the
+   cog that opens Settings over the page (#setview, a wide drawer) */
+.pool{display:flex;gap:4px 12px;flex-wrap:wrap;white-space:nowrap}.pool>span{cursor:default}
+.ckbox{display:flex;align-items:center;gap:8px;margin:-6px 0 0;padding:0 8px 4px;border:1px solid var(--line);border-radius:6px;min-width:0}
+.ckbox legend{font-size:11px;color:var(--mute);padding:0 4px}
+.cog{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;flex:none;border-radius:6px;color:var(--ink)}.cog svg{width:20px;height:20px}
+.cog:hover,.cog[aria-current=page]{background:var(--run-bg)}
+.drawer.wide{width:min(1180px,100vw)}#setview-body{flex:1;min-height:0;overflow:auto}
+.slook{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px}
 select,button,input{font:inherit;color:inherit;background:var(--soft);border:1px solid var(--field-line);border-radius:6px;padding:4px 10px}
 select,button{cursor:pointer}button:disabled{cursor:default;opacity:.7}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
@@ -25,7 +34,7 @@ button.ghost{background:transparent}
 button.strong{border-color:var(--ink);font-weight:600}
 a{color:inherit}
 .spacer{flex:1}.mute{color:var(--mute)}.small{font-size:12px}.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
-/* NORN-UI-NAV: the bar (shell.mjs renderBar) - Lanes, Runs, Inbox, Talk, More on every page, one row, a glyph beside each word; a
+/* NORN-UI-NAV: the bar (shell.mjs renderBar) - Talk, Lanes, Runs, Inbox, More on every page, one row, a glyph beside each word; a
    phone pins it to the bottom (thumb reach). The More sheet: a popover under More on a desktop, a bottom sheet on a phone. The status
    strip under the header (renderStatus): running / cap, usage, the next check-in, the needs count */
 .pagebar{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
@@ -138,7 +147,7 @@ tr:last-child td{border-bottom:0}
   color:var(--bg);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-align:left}
 .inssug{margin:6px 0;overflow-wrap:anywhere}.inspara{border-left:3px solid transparent;padding-left:6px;margin:4px 0}.inspara.stale{border-left-color:var(--warn)}.agebadge{font-size:11px}.instab td{vertical-align:top}.instab .inspath{overflow-wrap:anywhere;word-break:break-all;font-size:12px}.instab button.lnk{background:none;border:0;padding:0;color:var(--ink);font-weight:600;cursor:pointer;text-align:left}.inshint{overflow-wrap:anywhere}
 /* META-TEND P4: on a phone the advice card's Apply / Keep go below its text (beside it they squeezed the text to one word a line) */
-@media (max-width:700px){.item.advice{flex-wrap:wrap}.item.advice>.spacer{display:none}.item.advice>div:last-child{flex-basis:100%}#usage-replay-side thead{display:none}#usage-replay-side tr{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:8px 10px;border-bottom:1px solid var(--line)}#usage-replay-side td{padding:0;border:0}#usage-replay-side td[data-label]{grid-column:1 / -1}#usage-replay-side td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--mute)}}
+@media (max-width:700px){.item.advice{flex-wrap:wrap}.item.advice>.spacer{display:none}.item.advice>div:last-child{flex-basis:100%}}
 @media (max-width:700px){.instab .insopt{display:none}.instab{width:100%;table-layout:fixed}.instab th:first-child{width:38%}.instab td,.instab th{padding-left:6px;padding-right:6px}.instab .chip{white-space:normal}}
 /* META-TEND P5: on a phone the Audits run table drops started + declined (8 fixed columns overlapped) */
 @media (max-width:700px){#ins-audit-runs th:nth-child(2),#ins-audit-runs td:nth-child(2),#ins-audit-runs th:nth-child(6),#ins-audit-runs td:nth-child(6){display:none}#ins-audit-runs th:first-child{width:22%}#ins-audit-runs th,#ins-audit-runs td{white-space:normal;font-size:12px}#ins-audit-runs .chip{white-space:nowrap}#ins-audit-runs th:nth-child(3){width:20%}}
@@ -429,5 +438,6 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
  .sheet{top:auto;left:0;right:0;bottom:58px;width:auto;max-height:70vh;border-radius:10px 10px 0 0}.sheet a{min-height:44px}
  .sstrip{padding:6px 10px;gap:2px 12px}
  button,select,input:not([type=checkbox]):not([type=radio]):not([type=range]),.hf{min-height:44px}.hfilters{gap:8px}
- body:not(.more) header>#status,body:not(.more) header>#look,body:not(.more) header>#theme,body:not(.more) header>#pause,body:not(.more) header>#pause-pop,body:not(.more) header>#tick{display:none}
+ body:not(.more) header>#pool,body:not(.more) header>#ckbox,body:not(.more) header>#pause-pop{display:none}
+ .ckbox{flex-wrap:wrap;max-width:100%}.cog{width:44px;height:44px}
  #needs-btn:not([hidden]){display:inline-block;margin-left:auto}}

@@ -49,16 +49,16 @@ const tk = n => (!Number.isFinite(n) ? '-' : n >= 1000 ? `~${(n / 1000).toFixed(
 // (the file map's measure); its problems = what the checks found. Advice is plain: one line per problem, the worst first.
 export const FILE_BUDGET = 3000;   // a file every session loads, past this many tokens, is a candidate to slim (audit.mjs AUDIT_BUDGET_TOKENS)
 export const perDay = r => Math.round((r.standing_tokens ?? r.tokens ?? 0) * (r.loads_day || 0));
-/** a file row -> [{ sev: bad | warn | idle, text, go? }] (empty = nothing to do) */
+/** a file row -> [{ sev: bad | warn | idle, text, go?, finding? (the Slop row it opens at) }] (empty = nothing to do) */
 export function fileAdvice(r) {
   const out = [], st = r.standing_tokens ?? r.tokens ?? 0;
   if (!r.exists && !r.generated) out.push({ sev: 'bad', text: 'listed as loaded, but the file is missing: restore it or drop the reference' });
   if (r.generated && ['drift', 'missing', 'unmanaged'].includes(r.drift)) out.push({ sev: 'bad', text: 'a generated copy out of sync with its source: regenerate it' });
   if (r.load === 'session' && st > FILE_BUDGET) out.push({ sev: 'warn', text: `every session loads it at ${tk(st)} tokens (budget ${tk(FILE_BUDGET).slice(1)}): move detail that only some tasks need into an on-demand doc or a skill` });
   if (r.map_state === 'conflict') out.push({ sev: 'warn', text: 'says something another loaded file also says: keep it in one place' });
-  if (r.stale) out.push({ sev: 'warn', text: `${r.stale} paragraph${r.stale > 1 ? 's' : ''} no run has read lately: delete or confirm ${r.stale > 1 ? 'them' : 'it'}`, go: 'slop' });
-  if (r.findings) out.push({ sev: 'warn', text: `${r.findings} finding${r.findings > 1 ? 's' : ''} from the checks`, go: 'slop' });
-  if (r.hints) out.push({ sev: 'idle', text: `${r.hints} lint hint${r.hints > 1 ? 's' : ''}`, go: 'slop' });
+  if (r.stale) out.push({ sev: 'warn', text: `${r.stale} paragraph${r.stale > 1 ? 's' : ''} no run has read lately: delete or confirm ${r.stale > 1 ? 'them' : 'it'}`, go: 'slop', finding: r.slop?.stale });
+  if (r.findings) out.push({ sev: 'warn', text: `${r.findings} finding${r.findings > 1 ? 's' : ''} from the checks`, go: 'slop', finding: r.slop?.finding });
+  if (r.hints) out.push({ sev: 'idle', text: `${r.hints} lint hint${r.hints > 1 ? 's' : ''}`, go: 'slop', finding: r.slop?.hint });
   return out;
 }
 const SEV_W = { bad: 3, warn: 2, idle: 1 };
@@ -71,14 +71,33 @@ export function worstFiles(rows = [], n = 5) {
 }
 const roleOf = (m, key) => (m?.roles || []).find(r => r.key === key);
 
-/** the summary numbers (4): one check-in and one worker before any work (measured median), today's load, the check-in load trend */
+// the mark of one session's load before any work (low / medium / high on its summary number): under 20k tokens low, under 40k medium,
+// else high - 10 % and 20 % of a 200k window, re-read on every turn
+export const LOAD_MARKS = [[20000, 'low', 'ok'], [40000, 'medium', 'warn'], [Infinity, 'high', 'bad']];
+export const loadMark = n => { if (!Number.isFinite(n) || n <= 0) return {}; const [, mark, cls] = LOAD_MARKS.find(([t]) => n < t); return { mark, cls }; };
+/** the summary numbers (4), shown once under the view switch: one check-in and one worker before any work (measured median), today's
+ *  load (marked by its mean per session), the check-in load trend; each { n, label, mark?, cls? } */
 export function contextNumbers(v) {
-  const m = v.measured, c = roleOf(m, 'checkin'), w = roleOf(m, 'worker');
+  const m = v.measured, c = roleOf(m, 'checkin'), w = roleOf(m, 'worker'), each = v.sessions ? v.total / v.sessions : null;
   const pts = (m?.trend?.rows || []).filter(r => r.key === 'checkin' && Number.isFinite(r.median_turn1) && r.median_turn1 > 0).sort((a, b) => a.day.localeCompare(b.day));
   const pct = pts.length > 1 ? Math.round(100 * (pts.at(-1).median_turn1 - pts[0].median_turn1) / pts[0].median_turn1) : null;
-  return [{ n: tk(c?.median_turn1), label: 'tokens: one check-in, before any work' }, { n: tk(w?.median_turn1), label: 'tokens: one worker, before any work' },
-    { n: tk(v.total), label: `tokens loaded today by ${v.sessions ?? 0} sessions` },
-    pct === null ? { n: '-', label: 'check-in load: no trend yet' } : { n: `${pct > 0 ? '+' : ''}${pct} %`, label: `check-in load since ${pts[0].day} (${pct < 0 ? 'shrinking' : pct > 0 ? 'growing' : 'flat'})`, cls: pct < 0 ? 'ok' : pct > 0 ? 'warn' : '' }];
+  return [{ n: tk(c?.median_turn1), label: 'tokens: one check-in, before any work', ...loadMark(c?.median_turn1) }, { n: tk(w?.median_turn1), label: 'tokens: one worker, before any work', ...loadMark(w?.median_turn1) },
+    { n: tk(v.total), label: `tokens loaded today by ${v.sessions ?? 0} sessions${each ? ` (${tk(Math.round(each))} each)` : ''}`, ...loadMark(each) },
+    pct === null ? { n: '-', label: 'check-in load: no trend yet' } : { n: `${pct > 0 ? '+' : ''}${pct} %`, label: `check-in load since ${pts[0].day}`, mark: pct < 0 ? 'shrinking' : pct > 0 ? 'growing' : 'flat', cls: pct < 0 ? 'ok' : pct > 0 ? 'warn' : 'idle' }];
+}
+/**
+ * the skills list and each MCP server as one Per file row, from the measured first request of each role (standing.mjs parts: no file
+ * to open, so Norn knows their load only where a session was measured) -> [{ key, name, kind: skills | mcp, tokens (the most one role
+ * loads), roles }], biggest first
+ */
+export function measuredRows(m) {
+  const by = new Map();
+  const put = (key, name, kind, role, n) => { if (!(n > 0)) return; const x = by.get(key) || { key, name, kind, per: {} }; x.per[role] = (x.per[role] || 0) + n; by.set(key, x); };
+  for (const [role, s] of Object.entries(m?.parts || {})) for (const p of s?.parts || []) {
+    if (p.key === 'mcp') for (const it of p.items || []) { const srv = /^mcp__/.test(it.name) ? it.name.split('__')[1] : null; put(srv ? `mcp:${srv}` : 'mcp', srv ? `MCP server ${srv}` : 'MCP server instructions', 'mcp', role, it.tokens); }
+    else if (p.key === 'skills' || p.key === 'plugins') put(p.key, p.key === 'skills' ? 'skills list (descriptions)' : 'plugins (their skills)', 'skills', role, p.tokens);
+  }
+  return [...by.values()].map(({ per, ...x }) => ({ ...x, tokens: Math.max(...Object.values(per)), roles: Object.keys(per) })).sort((a, b) => b.tokens - a.tokens);
 }
 
 // a launch profile (instructions.mjs profileKey: checkin:<tick> | chat | worker:<family>[:<agent>]) -> the measured role key (standing.mjs keyOf)

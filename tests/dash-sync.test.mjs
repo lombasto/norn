@@ -11,7 +11,8 @@ import { fixture } from './helpers/dash-fixture.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { syncOp } from '../engine/dash/syncwork.mjs';
 import { snap } from '../engine/lib/fsnap.mjs';
-import { renderTab, syncLines } from '../engine/dash/ui.mjs';
+import { renderTab } from '../engine/dash/ui.mjs';
+import { syncLines } from '../engine/dash/pages/settings.mjs';
 import { conflictChips } from '../engine/dash/pages/lanes.mjs';
 import { homeOf, record } from '../engine/lib/records.mjs';
 

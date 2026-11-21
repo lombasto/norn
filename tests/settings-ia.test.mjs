@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { SECTIONS, sectionOf, settingsFor, settingsView, applySettings, withDefaults, getPath, split } from '../engine/lib/policy.mjs';
-import { renderTab, loadTab, settingsMatch } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { settingsMatch } from '../engine/dash/pages/settings.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 
 const PV = ['glm', 'kimi'], PROJECTS = ['norn', 'solve-shack'];   // the registered projects: one Capacity row pair each (fair-slots item 8)

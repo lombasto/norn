@@ -104,16 +104,29 @@ export function fixPick(g, { keys = [], picks = {} } = {}) {
   const all = [...ids].sort();
   return { ids: all, picks: out, batches: new Set(keys).size + out.length, set: fnv(JSON.stringify([all, out.map(p => [p.key, p.way])])) };
 }
+/** ui-context-docs: ONE finding from the Docs reader's line popover ({ id, way? }) -> fixPick's shape, from the same offered rows (sent,
+ *  declined and count rows are not offered); a your-call finding needs one of its ways */
+export function fixOne(g, { id, way = null } = {}) {
+  const r = (g.rows || []).filter(OFFER).find(x => x.id === id);
+  if (!r) throw bad(`${id} is not open to fix: sent already, declined, or a count. Reload.`);
+  const b = batchesOf([r])[0], picks = b.kind === 'call' ? [{ key: b.key, way, ids: [id] }] : [];
+  if (b.kind === 'call' && !(b.ways || []).includes(way)) throw bad(`${id} is your call: pick one of ${(b.ways || []).join(' | ')}`);
+  return { ids: [id], picks, batches: 1, set: fnv(JSON.stringify([[id], picks.map(p => [p.key, p.way])])) };
+}
 
 /** one sub-view's part of the guard view; throws (400) on an unknown name. fix: the batches (capped at the limit), each with its first
- * BATCH_ROWS rows - the open one (batch = its key) with every row up to the limit */
-export function guardPart(g, name, limit = SUB_CAP, batch = null) {
+ * BATCH_ROWS rows - the open one (batch = its key) with every row up to the limit. finding = one row's id (Slop &finding=): its batch
+ * opens, with that row kept past the caps; found = it is open (else the page says so) */
+export function guardPart(g, name, limit = SUB_CAP, batch = null, finding = null) {
   if (name === 'fix') {
-    const all = batchesOf(g.rows || []), open = all.some(b => b.key === batch) ? batch : null, c = capList(all, limit);
-    const batches = c.rows.map(b => { const x = capList(b.rows, b.key === open ? limit : BATCH_ROWS); return { ...b, rows: x.rows }; });
-    return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}) } };
+    const all = batchesOf(g.rows || []), home = finding ? all.find(b => b.rows.some(r => r.id === finding)) : null;
+    const want = batch ?? home?.key ?? null, open = all.some(b => b.key === want) ? want : null, c = capList(all, limit);
+    const shown = home && !c.rows.includes(home) ? [...c.rows, home] : c.rows;
+    const batches = shown.map(b => { const x = capList(b.rows, b.key === open ? limit : BATCH_ROWS), miss = b === home && !x.rows.some(r => r.id === finding);
+      return { ...b, rows: miss ? [...x.rows, b.rows.find(r => r.id === finding)] : x.rows }; });
+    return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}), ...(finding ? { finding, found: !!home } : {}) } };
   }
-  if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length } };
+  if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length, hist: g.hist ?? null } };   // hist: lib/slophist.mjs histTypes
   if (name === 'rules') return { rules: { ledger: g.ledger ?? null, precision: g.precision ?? [], ...capList(ruleRows(g), limit) } };
   if (name === 'age') return { age: { trend: g.trend ?? null } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });

@@ -1,5 +1,5 @@
 /* The Runs page (stage RUNS): one table of every run (a card per row under 700 px, no sideways scroll), its time bars, and the
-   run document in the drawer a row opens, with its live feed. The forecast card (.pl-fc, pages/plan.mjs) is shown on Usage. */
+   run document in the drawer a row opens, with its live feed. */
 .runs-filters{gap:6px 10px;margin:0 0 8px}.runs-filters input[type=search]{width:9em;min-width:0}
 .runtab td{vertical-align:middle}.runtab .rnum{text-align:right;font-variant-numeric:tabular-nums}.runtab .rwho{min-width:10em;overflow-wrap:anywhere}.runtab .rwho .aname{font-size:14px}
 .runtab .rlane{overflow-wrap:anywhere}.runtab .rpace{min-width:14em}.rnone td{padding:10px 12px}
@@ -53,5 +53,3 @@
 @media (max-width:700px){.fl,.fl-x>summary{grid-template-columns:56px minmax(0,72px) minmax(0,1fr) auto;gap:6px}}
 /* the feed head inside the run document: its words need a gap; the executor line repeats the document head, so it goes */
 #feed-head .fh-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center}#feed-head .fh-ex{display:none}
-/* the forecast card (pages/plan.mjs forecastCard, on Usage) */
-.pl-empty{padding:10px 14px;margin:0}.pl-fc{padding:10px 14px}.pl-fc .kv>span>.bar{display:inline-block;width:160px;vertical-align:middle;margin-right:6px}

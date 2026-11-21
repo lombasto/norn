@@ -7,40 +7,42 @@ import { renderProse } from './prose.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter, capStrip } from './widgets.mjs';
-import { orcLine, badgeLabel } from './norn/orc.mjs';
-import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
+import { bars, columns, stack, meter } from './widgets.mjs';
+import { CONTEXT_SUBS, contextParts } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
-import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
+import { firstDoc } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-import { esc, fin, dash, int, mTok, fmtMin, pct, plural, runWho, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip, filterChips } from './cells.mjs';
-import { diffBlock } from './diffview.mjs';
+import { esc, fin, int, fmtMin, pct, plural, runWho, chip, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, filterChips } from './cells.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
-import { forecastCard } from './pages/plan.mjs';
-// NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
-export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
-  ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
+import { context, auditCard, enforceCard } from './pages/context.mjs';
+import { docs } from './pages/docs.mjs';
+import { roadmap } from './pages/roadmap.mjs';
+import { spend, adviceRow } from './pages/spend.mjs';
+import { slopPage, fxSection } from './pages/slop.mjs';
+import { settings, decMark } from './pages/settings.mjs';
+// NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE), then Settings (the header's
+// cog, shell.mjs COG). Label = id = URL (?tab=<id>)
+export const TABS = [['talk', 'Talk'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'],
+  ['spend', 'Spend'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
   ['roadmap', 'Roadmap'], ['settings', 'Settings']];
 export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
-const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
-  const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
 
 const panel = (tab, html) => `<div id="panel-${tab}">${html}</div>`;
 const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose one project in the header: the ${esc(tab)} tab belongs to one project (its own records / files).</p></div>`);
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-/** the Health pages' states from what the header holds: usage = the overview's burn.usage (guard STOP or over the hourly cap = bad,
+/** the Health pages' states from what the header holds: spend = the overview's burn.usage (guard STOP or over the hourly cap = bad,
  *  guard ok = ok), slop / tests / context = the Guard rows of their types (a warn-level row = warn, else ok); null = not known */
 export function healthStates({ usage = null, rows = null } = {}) {
   const u = !usage || usage.billing?.type === 'api' ? null : usage.guard === 'STOP' || usage.rateOK === false ? 'bad' : usage.guard === 'ok' ? 'ok' : null;
   const of = types => (rows ? (rows.some(r => types.includes(r.type) && (r.severity === 'high' || r.severity === 'medium')) ? 'warn' : 'ok') : null);
-  return { usage: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
+  return { spend: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
 const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(name, cls) : '');
@@ -61,10 +63,10 @@ const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve
 const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub], runs: () => ['history'] };
 const PART_API = { context: 'instructions', slop: 'guard', runs: 'agents' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
 const runsWin = w => (w && w !== '2h' ? `&window=${w}` : '');
-export const partsKey = (tab, project, d) => (tab === 'runs' ? `${project}|${d.window}|${d.at}` : tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
+export const partsKey = (tab, project, d) => (tab === 'runs' ? `${project}|${d.window}|${d.at}` : tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.times?.at}|${(d.history || []).length}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}|${d.finding ?? ''}`);
 export async function loadParts(tab, project, d, get) {
   const pick = b => (b.startsWith('lane:') ? `&lane=${encodeURIComponent(b.slice(5))}` : `&files=${encodeURIComponent(b.slice(6))}`);
-  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}` : '';
+  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}${d.finding ? `&finding=${encodeURIComponent(d.finding)}` : ''}` : '';
   if (tab === 'runs') return { ended: (await get(`/api/agents?${q}&part=history${runsWin(d.window)}`)).tree };   // the Ended band (its own key: `tree` is the live part's)
   const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
@@ -118,16 +120,16 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const [d, remote, guard] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null), guardGet(get, q, all)]);
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
-  // Usage carries the forecast: /api/plan's forecast per project, beside the usage parts
-  if (tab === 'usage') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])) }; }
+  // Spend carries the forecast: /api/plan's forecast per project, beside the usage parts; sub = the open drawer view
+  if (tab === 'spend') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])), sub: ctx.sub ?? null }; }
   if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
     const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
     const have = partsHave(ctx, 'tests', project, d);
     return { ...d, ...(have || {}), parts_loading: !have };
   }
   if (tab === 'slop') {   // META-TEND P6. META-UX-BUILD S2: the summary first, then the chosen sub-view's part. S5: Slop (was Guard); one open batch
-    const sub = pickSub(GUARD_SUBS, ctx.sub);
-    const d = { ...(await get(`/api/guard?${q}&part=summary`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'fix' && ctx.batch ? { batch: ctx.batch } : {}) };
+    const sub = ctx.finding ? 'fix' : pickSub(GUARD_SUBS, ctx.sub), finding = ctx.finding || null;   // &finding=<id>: To fix, unfiltered, its batch open
+    const d = { ...(await get(`/api/guard?${q}&part=summary`)), sub, kind: finding ? null : ctx.kind ?? null, ...(finding ? { finding } : {}), limit: ctx.limit || SUB_CAP, ...(sub === 'fix' && ctx.batch ? { batch: ctx.batch } : {}) };
     const have = partsHave(ctx, 'slop', project, d);
     // META-UX-BUILD S6: the Fix all sheet, open (ctx.fixall) = its own part of the same view, fetched when it opens
     const sheet = ctx.fixall ? (await get(`/api/guard?${q}&part=sheet`)).sheet : null;
@@ -138,16 +140,15 @@ export async function loadTab(tab, project, get, ctx = {}) {
 
 // ---------- tabs ----------
 /** the cards that read the status strip (/api/strip, ctx.strip), not the page's endpoint - the retired Overview's onboarding on Lanes (the first
- *  task, the setup gaps) and the API spend on Usage. index.html repaints #strip-cards when a newer strip lands. */
-export const stripCards = (tab, s) => `<div id="strip-cards">${!s ? '' : tab === 'lanes' ? firstTask(s.first_run) + setupGaps(s.setup)
-  : tab === 'usage' && s.usage?.billing?.type === 'api' ? `<section class="card" id="usage-burn" style="margin-bottom:12px"><h2>Last 24 h <span class="mute small">API billing, against the daily cap</span></h2>${apiBurn(s.usage.billing)}</section>` : ''}</div>`;
+ *  task, the setup gaps). index.html repaints #strip-cards when a newer strip lands. */
+export const stripCards = (tab, s) => `<div id="strip-cards">${!s ? '' : tab === 'lanes' ? firstTask(s.first_run) + setupGaps(s.setup) : ''}</div>`;
 export function renderTab(tab, d, ctx = {}) {
   if (tab === 'adopt') return panel(tab, renderAdopt(adoptStep(d, ctx.adoptAsk), d, ctx));
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
-  if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanesPage(d, { ...ctx, now })));
+  if (tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + lanesPage(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: slopPage, spend })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of 4 numbers, the open alerts
@@ -328,16 +329,6 @@ const editRow = (i, ctx, px = { project: i.project, sanitize: ctx.sanitize }) =>
   ${i.recommend === 'takeback' ? `<div class="small"><b>Recommended: Let Norn take it back</b> - ${esc(i.why)}.</div>` : ''}
   <div class="small mute"><b>Let Norn take it back</b>: the current text is saved beside it as .bak and Norn updates the file again. <b>Keep my version</b>: Norn never updates this file again, until you take it back.</div></div>
   <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.diff ? `<button class="ghost" data-act="diff-open" data-dv-url="/api/handedit/diff?project=${encodeURIComponent(i.project ?? '')}&amp;file=${encodeURIComponent(i.file)}" data-dv-title="${esc(i.file.split('/').pop())}" data-dv-sub="last written by Norn vs now">View diff</button>` : ''}<button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
-// META-TEND P4: one model-advice card - what, why (the measured numbers), the vendor source and the day it was read (stale = past the
-// re-read date), the proposed Settings change and one tap: apply it, or keep the setting. Both write a decision record; nothing is automatic.
-export function adviceRow(i, ctx) {
-  const s = i.source || {}, ch = Object.entries(i.change || {}).map(([k, v]) => `${k} = ${v}`).join(', ');
-  return `<div class="item advice" id="adv-${esc(i.key ?? i.id)}">${chip(i.severity === 'low' ? 'idle' : 'warn', 'advice')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b>
-    <div class="small">${esc(i.text)}</div>
-    <div class="small mute">${projTag(ctx, i.project)}source <b>${esc(s.ref ?? '-')}</b> ${esc(s.title ?? '')} · read <span class="mono">${esc(s.read ?? '-')}</span>${s.stale ? ' ' + chip('warn', 'stale: re-read it') : ` (${s.age_d ?? '-'} d ago)`}</div>
-    <div class="small">Change: <span class="mono">${esc(ch)}</span> <span class="mute">- ${esc(i.trial ?? '')}</span></div></div>
-    <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="advice-apply" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Apply</button><button class="ghost" data-act="advice-keep" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Keep as is</button></div></div>`;
-}
 // META-ADOPT A3: ONE needs-you row while a drafted setup waits (Review / Not now = a close with the reason)
 const setupRow = (i, ctx) => `<div class="item">${chip('open', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}drafted ${fmtMin(minsSince(i.created, ctx.now))} ago · nothing is applied before you approve it</div></div><span class="spacer"></span><button class="primary" data-act="adopt-review" data-project="${esc(i.project)}">Review</button><button data-act="adopt-notnow" data-project="${esc(i.project)}">Not now</button></div>`;
 // META-ADOPT A3 (SPEC sec. 5): the setup gaps of one project - each names what is missing in one line and offers the next action
@@ -369,16 +360,6 @@ function firstTask(f) {
    <div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="first-task-text" placeholder="e.g. Add a usage section to the README" style="flex:1;min-width:260px"><button class="primary" data-act="first-task" data-project="${esc(f.project)}">Start</button></div>
    <p class="small" style="margin:10px 0 0">Or let Norn look at the repo and draft a roadmap, rules and a first task <button data-tab="adopt">Look at the repo</button></p>
    <div class="small mute" style="margin-top:8px">Caps in force: <b>${esc(capShown(c.max_claude_workers))}</b> Claude worker(s) · <b>${esc(capShown(c.max_codex))}</b> Codex · weekly stop <b>${esc(unit(c.weekly_stop_pct, '%'))}</b> · rate cap <b>${esc(unit(c.usage_rate_cap_pct_per_h, '%/h'))}</b> (Settings, Workers &amp; budget)</div></section>`;
-}
-// API billing (lib/billing.mjs): no weekly limit - the Spend card (Usage) shows the last 24 h of spend against the daily $ cap instead
-// OVERVIEW-TRUTH (4): every figure names its scope - this spend is the whole machine's (every project; billing.mjs spendUsd), the
-// Usage page's API spend is one project's by lane (spendBreakdown), today = since local midnight
-function apiBurn(b) {
-  const $ = v => `$${(Number(v) || 0).toFixed(2)}`, cap = fin(b.cap) && b.cap > 0 ? b.cap : null, over = cap !== null && b.usd >= cap;
-  const c = over ? chip('bad', 'daily cap reached: no new Claude work') : cap === null ? chip('warn', 'no daily cap') : chip('ok', 'under the daily cap');
-  return `<div class="kv" id="burn-api"><span class="mute small">last 24 h, this machine (every project)</span><div><span class="big">${$(b.usd)}</span> <span class="mute">${cap === null ? 'spent' : `of the ${$(cap)} daily cap`}</span> ${c}${cap === null ? '' : meter(b.usd, cap, null, over || b.usd > cap * 0.8 ? 'hot' : '')}</div>
-     <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h (every project) · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
-     <span class="mute small">guard</span><div class="small mute">none weekly: API billing has no weekly limit${cap === null ? '. Set a daily cap in Settings (API daily cap) to stop spend past it' : ''}</div></div>`;
 }
 // RM-37: the header's pause menu (index.html #pause-pop) from the overview: the mode in force (who, when, why), one button per mode with
 // its one-line effect, what waits on the pause (queued runs held, runs asked to pause, paused hand-offs with a Resume each), Pause half
@@ -486,7 +467,7 @@ function inbox(d, ctx) {
     ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${renderProse(i.title, proseCx(d, ctx, i.project))}<div class="small mute">${esc(rulingWords({ q: i.id, choice: i.answer?.choice, text: i.answer?.text, at: i.updated }, ctx))}</div>`)),
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
-  const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
+  const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Spend) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
   const rsv = items.filter(i => i.type === 'resolved'), nNeeds = needsYou(items), nInfo = items.length - nNeeds - rsv.length;   // UX review 4: the one needs-you count (terms.mjs)
   return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice; cards already asked for)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${props}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>
@@ -495,139 +476,7 @@ function inbox(d, ctx) {
 
 // item 8 (MAIL-9 a): an answered question in plain words wherever it shows - the owner's part is done, a check-in applies it
 const rulingWords = (r, ctx) => `You ruled: ${r.choice ?? r.text ?? '?'} (${fmtTime(r.at, ctx.now)}) on ${r.q} - waiting for the next check-in to apply it (an answer starts one at once)`;
-const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
-const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
-const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
-// RM-43: a second-voice row is rated here (thumbs: the finding is right / wrong), not fixed; its quote is the added line it read
-const voiceThumbs = r => `<button class="ghost" data-act="slop-rate" data-fp="${esc(r.rate.fp)}" data-up="1" aria-label="right">&#128077; right</button> <button class="ghost" data-act="slop-rate" data-fp="${esc(r.rate.fp)}" data-up="0" aria-label="wrong">&#128078; wrong</button>`;
-// a finding the fixer declined with a reason (fixer.mjs markDeclines): the reason, and the owner's two answers - accept the decline (the
-// finding closes) or re-scope it (a new fix sentence, e.g. "trim in place" for "move to an on-demand file": Fix all offers it again)
-const declinedLine = r => `<div class="small gdecl">${chip('idle', 'declined')} declined by ${esc(r.declined.run)}: ${esc(r.declined.why)}
-    <div class="fxbtns"><button data-act="fixdecline" data-verdict="accept" data-id="${esc(r.id)}">Accept the decline</button> <input class="gscope" id="gscope-${esc(r.id)}" aria-label="the new fix" placeholder="the new fix, e.g. trim it in place" value="">
-    <button data-act="fixdecline" data-verdict="rescope" data-id="${esc(r.id)}">Re-scope</button></div></div>`;
-// RM-27: a SloppaChoppa finding explains itself - its rule's what / why / what to do and the waiver path, folded under the row
-const slopExplain = x => `<details class="sexplain"><summary class="small">what this is, why it matters, what to do</summary><dl class="small">
-    <dt>What</dt><dd>${esc(x.what)}</dd><dt>Why</dt><dd>${esc(x.why)}</dd><dt>What to do</dt><dd>${esc(x.fix)}</dd>${x.waiver ? `<dt>If it must stay</dt><dd>only the owner or the controller waives it: <code>${esc(x.waiver)}</code></dd>` : ''}</dl></details>`;
-const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
-    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} ${r.rate ? voiceThumbs(r) : `<button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button>`}</div>${r.quote ? `<code class="small">${esc(r.quote)}</code>` : ''}${r.explain ? slopExplain(r.explain) : ''}${r.declined ? declinedLine(r) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
-// META-UX-BUILD S5 (REPORT s.2-3): To fix = ONE list in batches (check + the kind of fix the check declares), the kinds apart:
-// ready (the exact text is known), to draft (a worker writes the text), your call (two ways), and the rows that only count (folded).
-// A batch shows its first rows; "all n" opens it (one batch at a time, every row, capped + show more). The two ways are named here;
-// picking one is the Fix all sheet (slice 6).
-const bat = n => `${int(n)} batch${n === 1 ? '' : 'es'}`;
-const KIND_HEAD = { ready: ['Ready', 'the exact new text is known'], drafts: ['To draft', 'the fix is one sentence; a worker writes the text'],
-  call: ['Your call', 'two ways: you pick one'] };
-function slopBatch(b, labels, open) {
-  const paths = b.rows.filter(r => r.path).map(r => `${shortPath(r.path)}${r.line ? ':' + r.line : ''}`);
-  const all = b.n > b.rows.length ? ` <button class="lnk" data-act="slop-batch" data-batch="${esc(b.key)}">all ${int(b.n)}</button>` : '';
-  return `<li class="sbatch" id="slop-b-${esc(b.key.replace(/[^\w-]/g, '_'))}"><div><b>${esc(b.title)}</b> <span class="mute">× ${int(b.n)}</span> ${chip(G_SEV[b.severity] ?? 'idle', b.severity)}${b.new ? ' ' + chip('needs', `${int(b.new)} new`) : ''}</div>
-    ${open ? '' : `<div class="small mute sbpaths">${esc(paths.join(' · '))}${b.n > paths.length && paths.length ? ` +${int(b.n - paths.length)}` : ''}</div>`}
-    ${b.action ? `<div class="small"><i>fix: ${esc(b.action)}</i></div>` : ''}${b.ways ? `<div class="small sbways">${b.ways.map(w => chip('prov', w)).join(' ')}</div>` : ''}
-    ${open ? `<ol class="glist">${b.rows.map(r => guardRow(r, labels)).join('')}</ol>${subMore(b.rows.length, b.n)} <button class="lnk" data-act="slop-batch" data-batch="">close</button>`
-      : `<details class="sbrows"><summary class="small">the first ${int(b.rows.length)}</summary><ol class="glist">${b.rows.map(r => guardRow(r, labels)).join('')}</ol></details>${all}`}</li>`;
-}
-function slopFix(P, d, labels) {
-  const of = k => P.batches.filter(b => b.kind === k), rows = k => of(k).reduce((n, b) => n + b.n, 0);
-  const sec = k => !of(k).length ? '' : `<section class="card slopkind" id="slop-${k}" data-kind="${k}"><h2>${KIND_HEAD[k][0]} <span class="mute small">${int(rows(k))} · ${bat(of(k).length)} · ${KIND_HEAD[k][1]}</span></h2>
-    <ul class="sblist">${of(k).map(b => slopBatch(b, labels, P.open === b.key)).join('')}</ul></section>`;
-  const counts = of('count'), nc = rows('count');
-  const fold = counts.length ? `<details class="small" id="slop-count"${P.open && counts.some(b => b.key === P.open) ? ' open' : ''}><summary>${plural(nc, 'more row')} only count something (${esc(counts.map(b => b.title).join(', '))}): nothing to fix</summary>
-    <ul class="sblist">${counts.map(b => slopBatch(b, labels, P.open === b.key)).join('')}</ul></details>` : '';
-  const empty = P.n ? '' : `<p class="mute">${chip('ok', 'all clear')} nothing open</p>`;
-  const more = P.nb > P.batches.length ? subMore(P.batches.length, P.nb) : '';
-  return `<div class="small mute" id="slop-fixhead">${plural(P.n, 'open finding')} in ${bat(P.nb)} by check and kind of fix · ${int(d.warn ?? 0)} at warn level or above</div>
-    ${sec('ready')}${sec('drafts')}${sec('call')}${fold}${empty}${more}`;
-}
-// META-UX-BUILD S6 (REPORT s.3 "End to end" 1-2, DIR-65 Q2 A): the Fix all sheet - ready + to draft ticked, your call as its two ways
-// (a pick adds it), the owner's own files offered unticked; Send the fixer (n) = one decision + one directive (POST /api/fixall). Nothing
-// is edited and no run starts on this tap; the fixer's one result card (slice 7) is where a change lands, on Apply.
-const FX_HEAD = { ready: 'Ready now · the exact text is known', drafts: 'The fixer drafts these', call: 'Your call · not included until you pick' };
-function fixItem(i, sel) {
-  const head = `<b>${esc(i.title)}</b> <span class="mute">× ${int(i.n)}</span> ${chip(G_SEV[i.severity] ?? 'idle', i.severity)}${i.new ? ' ' + chip('needs', `${int(i.new)} new`) : ''}${i.own ? ' ' + chip('parked', 'your own file: not ticked for you') : ''}`;
-  const more = `<div class="small mute">${esc(i.paths.join(' · '))}${i.n > i.paths.length && i.paths.length ? ` +${int(i.n - i.paths.length)}` : ''}</div>${i.action ? `<div class="small"><i>fix: ${esc(i.action)}</i></div>` : ''}`;
-  if (i.kind === 'call') return `<li class="fxitem fxcall"><div class="fxbody"><span class="fxq" aria-hidden="true">?</span> ${head}${more}</div>
-    <div class="fxways">${i.ways.map(w => `<button class="ghost" data-act="fx-way" data-key="${esc(i.key)}" data-way="${esc(w)}" data-n="${i.n}" aria-pressed="${sel?.picks?.[i.key] === w}">${esc(w)}</button>`).join('')}</div></li>`;
-  return `<li class="fxitem"><label class="fxbody"><input type="checkbox" data-fx-key="${esc(i.key)}" data-n="${i.n}"${(sel?.keys ? sel.keys.has(i.key) : i.tick) ? ' checked' : ''}> ${head}${more}</label></li>`;
-}
-// META-UX-BUILD S7 (REPORT s.3 step 4): the fixer's ONE result card per run - every file (Skip this file), every hunk as a diff, Apply all n
-// (minus skipped files) / Discard = POST /api/fixresult (one decision + one directive: the audit accept path); the rest = a new tap.
-// A run with no parsable hunk is failed: Discard only. A run that skipped every finding with a reason is declined (not failed): Close
-// only; each decline stands on its finding on the Slop page. Each hunk is the shared diff component (diffview.mjs; RM-35), Open = the diff viewer.
-export function fixResultCard(c, project, px = { project }) {
-  const pj = ` data-project="${esc(project)}" data-run="${esc(c.run)}"`, failed = c.state === 'failed', declined = c.state === 'declined', st = c.status || [];
-  const count = ['drafted', 'skipped', 'missing'].map(k => [k, st.filter(x => x.state === k).length]).filter(([, n]) => n).map(([k, n]) => `${int(n)} ${k}`).join(' · ');
-  const why = st.filter(x => x.state !== 'drafted'), fn = f => f.n ?? f.hunks.filter(h => h.applies !== false).length;
-  const files = (c.files || []).map(f => `<div class="fxfile" data-file="${esc(f.file)}" data-n="${int(fn(f))}"><div class="fxfilehead"><span class="mono">${esc(f.file)}</span> <span class="small mute">${plural(f.hunks.length, 'hunk')}</span><span class="spacer"></span>${fn(f) ? `<button class="ghost" data-act="fx-skip" data-file="${esc(f.file)}"${pj} aria-pressed="false">Skip this file</button>` : ''}</div>
-    ${f.hunks.map(h => `${h.applies === false ? `<p class="small fxmisfit">${chip('bad', 'does not apply')} ${renderProse(h.why ?? '', { ...px, inline: true })} · not in Apply all; its finding stays open</p>` : ''}${diffBlock({ patch: h.patch }, { title: f.file + (h.line ? ':' + h.line : ''), sub: 'fixer hunk', cls: 'fxdiff' })}`).join('')}</div>`).join('');
-  const rest = c.more ? `<p class="small"><button class="lnk" data-act="fixall-rest" data-dir="${esc(c.directive)}" data-project="${esc(project)}">${int(c.left)} left: send the fixer for the rest (${plural(c.more, 'run')})</button></p>` : '';
-  return `<li class="fxcard" id="fxcard-${esc(c.run)}"><div class="fxtop">${failed ? chip('bad', `failed: ${c.fail || 'no parsable hunk'}`) : declined ? chip('idle', 'declined') : chip('needs', 'to apply')} <b>Fixer result ${esc(c.run)}</b> <span class="small mute">${esc(c.directive)} · ${esc(c.dec ?? '')} · ${plural(c.n, 'hunk')} in ${plural((c.files || []).length, 'file')}</span></div>
-    ${count || c.bad ? `<p class="small">${[count, c.bad ? `${plural(c.bad, 'hunk')} ${c.bad === 1 ? 'does' : 'do'} not apply` : ''].filter(Boolean).join(' · ')}</p>` : ''}${why.length && !declined ? `<details><summary class="small">not drafted (${int(why.length)})</summary><ul class="small">${why.map(x => `<li><span class="mono">${esc(x.id)}</span> ${esc(x.state)}${x.why ? ': ' + renderProse(x.why, { ...px, inline: true }) : ''}</li>`).join('')}</ul></details>` : ''}
-    ${declined ? `<p class="small">The fixer declined every finding, each with a reason: nothing to apply. The reasons stand on the findings (Slop page): accept a decline or re-scope it; the fixer is not offered them again until the finding or its file changes.</p><ul class="small fxdecl">${st.map(x => `<li><span class="mono">${esc(x.id)}</span>: ${esc(x.why ?? '')}</li>`).join('')}</ul>` : failed ? `<p class="small">${c.fail === 'no hunk applies' ? 'No hunk applies to the files as they are: nothing to apply. Discard it; the findings stay open.' : 'The run ended without one hunk in the audit format: nothing to apply. Discard it; the findings stay open.'}</p>${c.fail === 'no hunk applies' ? files : ''}` : files}
-    <div class="fxbtns">${failed || declined ? '' : `<button class="primary" data-act="fixresult" data-choice="apply"${pj}>Apply all <span class="fx-kept">${int(c.n)}</span></button> `}<button data-act="fixresult" data-choice="discard"${pj}>${declined ? 'Close' : 'Discard'}</button></div>${rest}</li>`;
-}
-const fxSection = (cards, id, wrap) => (cards.length ? `<section class="${wrap}" id="${id}" style="margin-bottom:12px"><h3>Fixer results <span class="mute small">${plural(cards.length, 'run')} to decide · Apply = the check-in applies the hunks; Norn edits nothing</span></h3><ul class="fxres">${cards.map(([c, p, px]) => fixResultCard(c, p, px)).join('')}</ul></section>` : '');
-// where a sent Fix all is (server.mjs fixSent: fixer.at); a failed run never reads "with the fixer"
-function fixerWords(x) {
-  const f = x.fixer || {}, run = esc(f.run ?? '');
-  const w = { queued: [chip('prov', 'with the fixer'), `fixer ${run} queued`], running: [chip('prov', 'with the fixer'), `fixer ${run} running`], card: [chip('needs', 'to apply'), `${run} drafted: apply on its card`],
-    failed: [chip('bad', 'failed'), `${run} failed: no parsable hunk (Discard it on its card)`], declined: [chip('idle', 'declined'), `${run} declined every finding with a reason (Close its card; accept or re-scope each on its row)`], starting: [chip('prov', 'with the fixer'), 'the engine starts the fixer'], rest: [chip('needs', 'to send'), `${int(f.left)} left: send the fixer for the rest`] }[f.at];
-  return w ? `${w[0]} ${esc(x.id)} + ${esc(x.directive)}: ${int(x.open)} finding(s), ${w[1]}` : `${chip('ok', 'sent')} ${esc(x.id)} + ${esc(x.directive)}: ${int(x.open)} finding(s)`;
-}
-function fixAll(sh, sent, sel = null) {
-  const of = k => sh.items.filter(i => i.kind === k), n = k => of(k).reduce((a, i) => a + i.n, 0);
-  const on = sh.items.reduce((a, i) => a + ((i.kind === 'call' ? sel?.picks?.[i.key] : sel?.keys ? sel.keys.has(i.key) : i.tick) ? i.n : 0), 0);
-  const sec = k => (of(k).length ? `<h3 class="fxhead" id="fixall-${k}">${FX_HEAD[k]} <span class="mute small">${int(n(k))}</span></h3><ul class="fxlist">${of(k).map(i => fixItem(i, sel)).join('')}</ul>` : '');
-  const done = sent ? `<p class="small" id="fixall-sent">${chip('ok', 'sent')} ${esc(sent.id)} + ${esc(sent.directive)}: ${int(sent.n)} finding(s)${sent.again ? ' (sent already: no second record)' : ''}. Nothing is edited; the check-in starts the one fixer run, and its card is where you apply.</p>` : '';
-  return `<section class="card fixall" id="fixall"><h2>Fix all <span class="mute small">${int(sh.ticked)} ticked of ${int(n('ready') + n('drafts') + n('call'))} · nothing is edited when you tap</span></h2>
-    <p class="small">The fixer drafts every change. You get <b>one card</b> with the exact text, and you apply it there.</p>
-    ${sec('ready')}${sec('drafts')}${sec('call')}${sh.items.length ? '' : `<p class="mute">${chip('ok', 'all clear')} nothing to fix or decide</p>`}
-    ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${sh.usage?.batch ? `<b id="fx-runs" data-batch="${int(sh.usage.batch)}">${plural(Math.ceil(on / sh.usage.batch), 'fixer run')}</b> of at most ${int(sh.usage.batch)} findings ${esc(sh.usage.run ?? '')}` : esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
-    <button class="strong" data-act="fixall-send" data-sig="${esc(sh.sig)}"${sent || !on ? ' disabled' : ''}>Send the fixer (<span id="fx-n">${int(on)}</span>)</button></span></div></section>`;
-}
-// RM-43: the second voice's precision per model rule (thumbs rated); the promotion / demotion line is for the owner or the controller to record
-const VOICE_SUGGEST = { BLOCK: ['ok', 'may go to BLOCK'], TREND: ['warn', 'drop to TREND'] };
-function voicePrecisionCard(rows = []) {
-  if (!rows.length) return '';
-  const row = p => `<tr id="slop-voice-${esc(p.rule)}"><td><b>${esc(p.rule)}</b> ${esc(p.title)}</td><td>${esc(p.level)}${p.shadow ? ' · shadow' : ''}</td><td>${p.precision === null ? '<span class="mute">none rated</span>' : `${int(Math.round(p.precision * 100))} % <span class="mute small">(${int(p.up)} of ${int(p.rated)})</span>`}</td><td>${p.suggest ? chip(...VOICE_SUGGEST[p.suggest]) : ''}</td></tr>`;
-  return `<h3>The second voice <span class="mute small">precision per question from your thumbs · at 90 % over 20 rated a question may go to BLOCK, under 50 % it drops to TREND - set it in the project's rules/slop/overrides.json</span></h3><div class="tablecard"><table id="slop-voice"><tbody>${rows.map(row).join('')}</tbody></table></div>`;
-}
-// META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / By
-// age, the chosen part. d = the summary (guardparts.mjs) + d[d.sub] once its part is here (parts_loading until then).
-// META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays); the numbers are open + the three kinds of fix.
-function guard(d, ctx) {
-  const fresh = d.new || 0, total = d.total ?? 0, labels = d.labels || {}, K = d.kinds || {};
-  const portrait = ctx.look === 'norn' && ctx.art ? '<span class="orc-portrait" aria-hidden="true"></span>' : '';
-  const voice = d.voice || {}, pop = voice.popups ?? 'off', on = d.slop !== false;
-  const offer = d.offer ?? (K.ready ?? 0) + (K.drafts ?? 0) + (K.call ?? 0), sentL = d.sent || [];
-  const fixBtn = offer ? `<button class="primary" data-act="fixall-open" id="slop-fixall">Fix all (${int(d.fixable ?? 0)})</button> ` : '';
-  // findings already sent (an active Fix all directive): said here, so a Send is not lost when the tab is left; Fix all leaves them out
-  const sentLine = sentL.length ? `<div class="small" id="slop-sent">${sentL.map(fixerWords).join(' · ')}. The engine starts the fixer by code; its card is where you apply. ${offer ? 'Fix all offers only the rest.' : 'Nothing else to send.'}</div>` : '';
-  const cards = fxSection((d.fixcards || []).map(c => [c, d.project]), 'slop-fixcards', 'card');
-  // META-BETA-PREP (DIR-52): SloppaChoppa off for the project = a plain list with a plain count badge, no orc, no pop-up line
-  const plain = `<section class="card" id="slop-plain"><h2>Slop ${chip(fresh ? 'warn' : 'ok', fresh ? `${int(fresh)} new` : 'nothing new')}</h2>
-    <p class="small mute">Code checks at run end, their merge hold and pop-ups are off for this project · <button class="lnk" data-tab="settings">Settings</button> (Slop voice) turns them back on; code findings show again from the next check.</p>${fixBtn ? `<div>${fixBtn}</div>` : ''}${sentLine}</section>`;
-  // UX review 5: ONE status line (the compact portrait, his line, the new-findings chip) + ONE primary action (Fix all); calling him up,
-  // muting and the pop-up settings sit in a small "More" menu. A sent Fix all stays in view (a line under it) so a Send is never lost.
-  const him = !on ? plain : `<section class="card orc-section" id="slop-orc">${portrait}<div class="orc-head"><p class="orc-line" id="slop-line"><b>SloppaChoppa</b> ${esc(orcLine({ rows: d.top || [], total, fresh, pending: d.pending }))}</p>
-    <div class="small orc-acts">${chip(fresh ? 'warn' : 'ok', fresh ? badgeLabel(fresh).replace(/^SloppaChoppa: /, '') : 'nothing new')}
-     ${fixBtn}<details class="kmenu" id="slop-menu"><summary class="ghost">More</summary><div class="kpop"><button data-act="orc-call">Call him up</button><button class="ghost" data-act="orc-mute" data-days="1">Mute 1 day</button><button class="ghost" data-act="orc-mute" data-days="7">Mute 7 days</button><button class="ghost" data-act="orc-mute" data-days="0" id="slop-unmute">Unmute</button>
-     <div class="small mute" id="slop-popups">Pop-ups: <b>${esc(pop)}</b>${pop === 'off' ? ' (they ship off until the owner review on 2026-11-21, DIR-36)' : ''} · at most ${esc(voice.daily_cap ?? 3)} a day · only a new finding at warn level or above, once each · <button class="lnk" data-tab="settings">Settings</button>. Muted = silent, not blind: findings are still recorded.</div></div></details></div>
-    ${sentLine}</div></section>`;
-  const about = `<p class="small mute" id="slop-about">Slop: every open finding of every check (instruction files, memory, rules, docs, tests, models, the lint's hints and the tightening candidates${on ? ", and SloppaChoppa's code checks" : ''}) in one list, in batches by check and the kind of fix the check declares. It owns no data: each row is fixed on the tab that owns the thing, where it also shows as a chip. Only a NEW finding warns.${d.pending ? ' The instruction-file scan is running: its rows follow.' : ''}</p>`;
-  const P = d[d.sub];
-  const body = !P ? '' : d.sub === 'fix' ? `<div id="slop-rows">${slopFix(P, d, labels)}${about}</div>`
-    : d.sub === 'types' ? `<section class="card" id="slop-count-types"><h2>Open per type <span class="mute small">${plural(total, 'open finding')} · ${fresh} new at warn level</span></h2>${bars(P.rows.map(t => ({ label: t.label, value: t.open, cls: t.warn ? 'hot' : '',
-      note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'slop-types', fmt: n => `${n} open` })}</section>`
-    : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
-    <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}
-    ${voicePrecisionCard(P.precision)}<h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
-    : `<section class="card" id="slop-trend-card"><h2>Open findings by age <span class="mute small">the findings open now, per type, counted from the day each was first seen · last ${int(P.trend?.days?.length ?? 30)} days</span></h2>
-    <p class="small mute" id="slop-trend-note">Each line climbs on the day a finding still open today was first seen. Fixed findings are not in it, so it is not the open count over time: a flat line means nothing still open is that old.</p>${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'findings open now, by the day first seen', unit: 'findings' }) : '<p class="small mute">No open finding.</p>'}</section>`;
-  const numbers = [{ n: int(total), label: `open · ${int(fresh)} new${K.count ? ` · ${int(K.count)} only count` : ''}`, cls: fresh ? 'warn' : '' }, { n: int(K.ready ?? 0), label: 'ready: the text is known', cls: K.ready ? 'ok' : '' },
-    { n: int(K.drafts ?? 0), label: 'to draft: a worker writes it' }, { n: int(K.call ?? 0), label: 'your call: two ways' }];
-  if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
-  return subviewPage('slop', { title: 'Slop', lead: `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}${him}${cards}`, numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P });
-}
+
 
 
 const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed', unknown: 'cannot tell if merged' };
@@ -713,198 +562,6 @@ function records(d, ctx) {
    <div class="tablecard"><h3>Decisions</h3><table class="rectab" data-rows="records"><thead><tr><th>id</th><th>state</th><th>lane</th><th>question</th><th>choice + why</th><th>by</th><th>source</th><th></th></tr></thead><tbody>${dec}</tbody></table></div>`;
 }
 
-// META-UX-BUILD S3 (REPORT s.2): Docs = the one reader. A side list of every file the agents read + the project's own docs, grouped by
-// who loads it (docparts.mjs; each group capped, "show more"); the Memory group is headed by its gauge. The open file is its own part:
-// Rendered (each paragraph with its age badge and its findings beside it) or Source (each finding beside its line). A wide screen shows
-// list + reader; a phone shows the list, a tap opens the reader with Back (index.html: the file is in the URL, &doc=).
-function docs(d, ctx) {
-  const now = ctx.now ?? Date.now(), sel = d.doc?.key ?? d.file;
-  const wait = d.pending ? `<div class="small" id="docs-pending" style="margin:0 0 6px">${chip('run', 'refreshing')} <span class="mute">the first scan of the instruction files is running: they join this list when it lands</span></div>`
-    : d.error ? `<div class="small" style="margin:0 0 6px">${chip('bad', 'scan failed')} <span class="mute">${esc(d.error)}</span></div>` : '';
-  const row = r => `<li><button class="docfile${r.key === sel ? ' sel' : ''}" id="docf-${esc(r.key)}" data-docfile="${esc(r.key)}" aria-current="${r.key === sel}" title="${esc(r.path)}"${r.exists ? '' : ' disabled'}>
-    <span class="dfname">${esc(r.name)}${r.note ? ` <span class="mute small">(${esc(r.note)})</span>` : ''}${r.linked === 0 ? ` ${chip('warn', 'in no index')}` : ''}${r.exists ? '' : ` ${chip('bad', 'missing')}`}</span>
-    ${r.findings ? `<span class="gchip" title="${esc(`${r.findings} finding${r.findings === 1 ? '' : 's'} on this file`)}">${chip('warn', `${int(r.findings)} finding${r.findings === 1 ? '' : 's'}`)}</span>` : ''}<span class="mute small dftk">${r.tokens === null || r.tokens === undefined ? '' : tk(r.tokens)}</span></button></li>`;
-  const grp = g => `<div class="docgrp" id="docs-g-${esc(g.id)}"><h4 class="small"><span>${esc(g.label)}</span><span class="mute">${int(g.n)}</span></h4>${g.id === 'memory' && d.memory ? memGauge(d.memory, 'docs-memory') : ''}
-    <ul>${g.rows.map(row).join('')}</ul>${subMore(g.rows.length, g.n)}</div>`;
-  const list = `<div class="card doclist" id="docs-list" role="navigation" aria-label="Files">${(d.groups || []).map(grp).join('') || '<p class="small mute">no files yet</p>'}</div>`;
-  const reader = !d.file ? '<p class="small mute" id="docs-none">Pick a file on the left.</p>' : d.parts_loading ? `<p class="small mute" id="docs-loading">${chip('idle', 'loading')} the file ...</p>` : d.doc ? docReader(d.doc, { ...ctx, now }, d) : '';
-  return `<div class="dochead"><b>Docs</b> <span class="small mute">every file the agents read, and the project's own docs · ${int(d.files ?? 0)} files · rendered · findings beside the text</span></div>${wait}
-   <div class="docsplit${d.picked ? ' picked' : ''}" id="docs-split">${list}<section class="docread" id="docs-reader">${reader}</section></div>`;
-}
-// META-INSTRUCTIONS R1: every file that steers the agents - load class, ~size, what it cost today, drift, read-only hints; a row
-// opens the file rendered. R2 (the chat's verbs) adds "ask the controller to tighten this": a disabled stub until then.
-const INS_LOAD = { session: 'every session', checkin: 'check-ins', chat: 'chat', role: 'role', 'on-demand': 'on demand', source: 'source' };
-const INS_CHIP = { session: 'warn', checkin: 'claude', chat: 'claude', role: 'prov', 'on-demand': 'idle', source: 'idle' };
-const DRIFT_CHIP = { ok: 'ok', missing: 'bad', drift: 'bad', unmanaged: 'bad', stale: 'warn', adoptable: 'idle', same: 'idle' };
-const tk = n => (!fin(n) ? '-' : n >= 1000 ? `~${(n / 1000).toFixed(1)}k` : `~${n}`);
-// META-UX-BUILD S1: a rebuild in the worker (or the first scan) shows a chip, never a blank page; a part not here yet says so
-const INS_TITLE = { files: 'Files', rules: 'The ladder', findings: 'Findings', hints: 'Hints', suggest: 'Tighten' };
-const insWait = k => `<div class="tablecard" id="ins-wait-${k}"><h3>${INS_TITLE[k]}</h3><p class="small mute inspart">loading ...</p></div>`;
-function insRefreshing(d, now) {
-  if (d.pending) return `<div class="card" id="ins-refreshing">${chip('run', 'refreshing')} <b>The first scan of ${esc(d.project ?? 'this project')} is running</b> in the background
-    <div class="small mute">Every steering file is read once (a big project: under a minute); this page fills in when it lands. Other tabs answer meanwhile.</div></div>`;
-  return `${d.refreshing ? `<div class="small" id="ins-refreshing" style="margin:0 0 6px">${chip('run', 'refreshing')} <span class="mute">the scan runs in the background; shown: the view of ${esc(fmtTime(d.at, now))}</span></div>` : ''}${d.error ? `<div class="small" style="margin:0 0 6px">${chip('bad', 'scan failed')} <span class="mute">${esc(d.error)}</span></div>` : ''}`;
-}
-const insMore = (shown, n, where) => (n > shown ? `<p class="small mute" style="padding:0 12px">showing ${int(shown)} of ${int(n)}${where ? ` · ${where}` : ''}</p>` : '');
-// META-UX-BUILD S4 (REPORT s.2): Context = what a session loads before any work and what it costs. The sub-view pattern: 4 numbers,
-// Per role (what one session loads + the ONE standing table) / Per file (the count card, the file map, most tokens per day, the files)
-// / Is it growing? / Check-ins per day. Reading is in the Docs reader (every file link lands there); the checks (Managed, Findings,
-// Said again, the ladder, Audits, Memory, Hints, Tighten) are one link away (`sub=checks`, no fifth sub-view) until Slop takes them.
-function context(d, ctx) {
-  const now = ctx.now ?? Date.now();
-  if (d.pending || (d.error && !d.at)) return `${insRefreshing(d, now)}`;
-  if (d.sub === 'checks') return `${insRefreshing(d, now)}${ctxChecks(d)}`;
-  const none = w => `<p class="small mute">${esc(w)}</p>`;
-  const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growing' ? insTrend(d.measured) || none('no measured session in the last 30 days')
-    : d.sub === 'checkins' ? insCheckins(d.checkins) || none('no check-in recorded yet') : `${insLoads(d)}${ctxRoles(d)}`;
-  const n = d.counts || {}, checks = (n.findings ?? 0) + (n.advisories ?? 0) + (n.hints ?? 0) + (n.suggest ?? 0);
-  return `${subviewPage('context', { title: 'Context', lead: `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>`, numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
-   <div class="small mute" id="context-links">Read the files in <button class="lnk" data-tab="docs">Docs</button> · their checks (findings, rules, audits, memory): <button class="lnk" data-act="sub" data-sub="checks">open the checks</button> · every finding, hint and tightening candidate, in batches: <button class="lnk" data-go="slop" data-gosub="fix">Slop</button> (${int(checks)})</div>`;
-}
-// Per file: the count card, the file map + most tokens per day, the files (capped, show more); a name opens the Docs reader
-function ctxFile(d, now) {
-  const load = r => r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : INS_LOAD[r.load] ?? r.load;
-  // the files that cost the most per day first (then size); the worst offenders are marked in the table and named on top with advice
-  const all = [...(d.rows || [])].sort((a, b) => perDay(b) - perDay(a) || (b.tokens ?? 0) - (a.tokens ?? 0)), shown = all.slice(0, d.limit || SUB_CAP);
-  const worst = worstFiles(all), hot = new Set(worst.map(x => x.r.id));
-  const rows = shown.map(r => `<tr id="ins-row-${esc(r.id)}"${hot.has(r.id) ? ' class="ins-hot"' : ''}>
-    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div>${hot.has(r.id) ? `<div class="small ins-advice">${esc(fileAdvice(r)[0].text)}</div>` : ''}</td>
-    <td>${chip(INS_CHIP[r.load] ?? 'idle', load(r))}</td><td class="insopt">${esc((r.harness || []).join(', ') || 'any')}</td>
-    <td class="num">${tk(r.tokens)}</td><td class="num">${r.cost_today ? `${tk(r.cost_today)}${r.via ? ' <span class="mute small">via</span>' : ''}<div class="small mute">${int(r.loads_today)} load(s)</div>` : dash}</td>
-    <td class="insopt">${r.changed ? `${esc(fmtTime(r.changed, now))} <span class="small mute">${esc(r.changed_by)}</span>` : dash}</td>
-    <td class="num">${r.hints ? chip('warn', `${r.hints} hint${r.hints > 1 ? 's' : ''}`) : dash}</td></tr>`).join('');
-  return `<div class="card" id="ins-count"><b>${int(d.counts?.files ?? all.length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
-     <div class="small mute">${esc(d.method)}. Cost today = size x the sessions that loaded it (runs.jsonl + the chat's starts). Read-only: hints are never applied.</div></div>
-   ${ctxWorst(worst)}
-   ${insFileMap(d)}
-   <div class="tablecard"><h3>Files <span class="mute small">most tokens per day first · highlighted = a worst offender · tap a name to read it in Docs</span></h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div>${subMore(shown.length, all.length)}</div>`;
-}
-// the worst offenders: the few files to look at first - what each costs a day and what to do about it, the worst problem first
-function ctxWorst(worst) {
-  if (!worst.length) return `<div class="card" id="ins-worst">${chip('ok', 'all clear')} <b>No file needs attention.</b> <span class="small mute">Every loaded file is within budget and has no open finding.</span></div>`;
-  const li = worst.map(({ r, adv, day }, i) => `<li class="insworst"><div class="insworsthead"><span class="insrank">${i + 1}</span> <button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}><b>${esc(r.name)}</b></button>
-    <span class="small mute">${day ? `${tk(day)} tokens / day` : `${tk(r.tokens)} tokens`} · ${esc(INS_LOAD[r.load] ?? r.load)}</span></div>
-    <ul class="insadv">${adv.map(a => `<li>${chip(a.sev, a.sev === 'bad' ? 'fix' : a.sev === 'warn' ? 'improve' : 'minor')} ${esc(a.text)}${a.go ? ` <button class="lnk" data-go="${esc(a.go)}" data-gosub="fix">in Slop</button>` : ''}</li>`).join('')}</ul></li>`).join('');
-  return `<div class="tablecard" id="ins-worst"><h3>Look at these first <span class="mute small">the ${int(worst.length)} file${worst.length > 1 ? 's' : ''} where a fix saves the most: tokens loaded per day, and what the checks found</span></h3><ol class="insworstlist">${li}</ol></div>`;
-}
-// Per role: ONE standing table (META-UX-BUILD S4: "Standing context (measured)" + "Standing context per role" were two views of it) -
-// each measured role (median per session, last 7 days) with the steering files' estimate per launch profile of that role beneath it
-function ctxRoles(d) {
-  const m = d.measured, lab = k => esc(String(k).replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w));
-  const reads = n => (n >= 1e6 ? `~${(n / 1e6).toFixed(1)}M` : tk(n));
-  // the estimates of a role: one profile inline; several = their range, each profile (label, sessions today, ~tokens) one tap away
-  const est = ps => {
-    if (!ps.length) return `<td class="num">${dash}</td><td class="num">${dash}</td>`;
-    const ts = ps.map(p => p.tokens), lo = Math.min(...ts), hi = Math.max(...ts), n = ps.reduce((k, p) => k + p.sessions, 0);
-    if (ps.length === 1) return `<td class="num">${int(n)}</td><td class="num">${tk(hi)}</td>`;
-    return `<td class="num">${int(n)}</td><td class="num"><details class="ctxprofs"><summary>${lo === hi ? tk(hi) : `${tk(lo)}-${tk(hi).slice(1)}`} <span class="small mute">${int(ps.length)} profiles</span></summary>
-      <ul class="small">${ps.map(p => `<li>${esc(p.label)} · ${int(p.sessions)} today · ${tk(p.tokens)}</li>`).join('')}</ul></details></td>`;
-  };
-  const rows = standingRows(m, d.standing).map(r => {
-    const x = r.measured;
-    return `<tr class="ctxrole"><td><b>${lab(r.key)}</b>${r.profiles.length === 1 ? `<div class="small mute">${esc(r.profiles[0].label)}</div>` : ''}</td>${x ? `<td class="num">${int(x.runs)}</td><td class="num"><b>${tk(x.median_turn1)}</b></td><td class="num insopt">${tk(x.median_create1)}</td><td class="num insopt">${x.median_turns ?? dash}</td><td class="num">${reads(x.cache_read)}</td>` : `<td class="num">${dash}</td><td class="num mute small">not measured</td><td class="insopt"></td><td class="insopt"></td><td class="num">${dash}</td>`}${est(r.profiles)}</tr>`;
-  }).join('');
-  return `<div class="tablecard" id="ctx-standing"><h3>Standing context per role <span class="mute small">measured: what one session loads before any work, re-read every turn, median per session, last ${int(m?.window_days ?? 7)} days · from files: the steering files' estimate per launch profile, today (tap a range for each profile)</span></h3>
-   <div class="inswrap"><table class="instab" id="ctx-roles"><thead><tr><th>role</th><th>runs</th><th>turn 1</th><th class="insopt">cache create</th><th class="insopt">turns</th><th>cache reads</th><th>sessions today</th><th>~tokens from files</th></tr></thead><tbody>${rows || `<tr><td colspan="8">${dash}</td></tr>`}</tbody></table></div>
-   ${m?.method ? `<div class="small mute" style="padding:6px 12px;overflow-wrap:anywhere">${esc(m.method)}</div>` : ''}</div>`;
-}
-// the checks page (one link from Context, not a sub-view): every check the Instructions tab showed, until the Slop slice moves them
-function ctxChecks(d) {
-  const wait = k => d.parts_loading && (k === 'rules' ? d.rules === undefined : k === 'files' ? d.rows === undefined : d[k] === undefined);
-  return `<div class="small" id="ctx-checks-head"><button class="lnk" data-act="sub" data-sub="role">‹ Context</button> · <b>The checks</b> <span class="mute">of the files a session loads; tap a file to read it in Docs</span> · the lint's hints and the tightening candidates are rows in <button class="lnk" data-go="slop" data-gosub="fix">Slop › To fix</button></div>
-   ${insManaged(d.managed)}
-   ${wait('findings') ? insWait('findings') : insFindings(d)}
-   ${wait('rules') ? insWait('rules') : `${insRepeats(d.rules)}${insLadder(d.rules)}`}
-   ${insAudits(d.audits)}
-   ${insMemory(d.memory_map)}
-`;
-}
-// META-TEND P3 (REPORT 5.3 view 6): the ladder - every must / never rule as a card in its state's column (prose only -> repeated n
-// times -> enforced -> retired): its home (a click opens the source line), its enforcement, when that last fired. Built on board().
-const ENF_LABEL = { prose: 'prose only', hook: 'hook', deny: 'deny rule', test: 'test', lint: 'lint', gate: 'gate', 'git-hook': 'git hook' };
-const baseName = p => String(p ?? '').split('/').pop();
-function insRuleChips(c) {
-  if (!c?.total) return '';
-  return ` ${chip('idle', `${c.total} rule${c.total > 1 ? 's' : ''}`)}${c.prose ? ` ${chip('warn', `${c.prose} prose only`)}` : ''}${c.repeated ? ` ${chip('bad', `${c.repeated} repeated`)}` : ''}${c.enforced ? ` ${chip('ok', `${c.enforced} enforced`)}` : ''}`;
-}
-function ruleCard(r) {
-  const h = r.home || {}, where = `${h.path?.startsWith('records:') ? h.path.slice(8) : baseName(h.path)}${h.line ? `:${h.line}` : ''}`;
-  const e = r.enforcement || { kind: 'prose' };
-  const enf = e.kind === 'prose' ? chip(e.by_choice ? 'idle' : 'warn', e.by_choice ? 'prose only, by choice' : 'prose only') : `${chip('ok', ENF_LABEL[e.kind] ?? e.kind)} <span class="small mute" title="${esc(e.path ?? '')}">${esc(e.target ?? '')}</span>`;
-  const fired = r.state === 'retired' ? `retired ${esc(String(r.retired_at ?? '').slice(0, 10))}` : e.kind === 'prose' ? 'nothing fires: no enforcement' : r.fired ? `fired ${esc(String(r.fired.at).slice(0, 10))} <span class="mute">(${esc(r.fired.what)})</span>` : 'last fired: unknown <span class="mute">(no log of it)</span>';
-  return `<div class="wbtext">${esc(r.text.length > 160 ? r.text.slice(0, 157) + '...' : r.text)}</div>
-    <div class="small">${h.row ? `<button class="lnk" data-ins="${esc(h.row)}" data-line="${esc(h.line ?? '')}" title="${esc(h.path)}">${esc(where)}</button>` : `<b>${esc(where)}</b>`}${r.homes?.length > 1 ? ` ${chip('warn', `${r.homes.length} homes`)}` : ''}${r.repeats ? ` ${chip('bad', `said ${r.repeats}x`)}` : ''} · ${enf}</div>
-    <div class="small mute">${fired}</div>`;
-}
-function insLadder(L) {
-  if (!L) return '';
-  const NOTE = { prose: 'every rule is enforced or retired', repeated: 'no rule said again', enforced: 'nothing enforces a rule yet', retired: 'no rule retired since the first scan' };
-  const cols = LADDER_STATES.map(st => { const xs = L.rules.filter(r => r.state === st).sort(LADDER_ORDER[st]).slice(0, INS_CAPS.ladder);   // the rules part: each column capped
-    return { key: st, label: st === 'prose' ? 'prose only' : st, cards: xs.map(ruleCard), more: Math.max(0, (L.counts[st] ?? 0) - xs.length), note: NOTE[st] }; });
-  const adv = L.advisories || [], by = new Map();
-  for (const a of adv) { if (!by.has(a.key)) by.set(a.key, []); by.get(a.key).push(a); }
-  const KEY = { 'rule-several-homes': 'one rule in several homes', 'rule-drift-claim': 'says enforced, nothing found', 'rule-drift-policy': 'line vs the policy', 'rule-drift-path': 'points at code that is gone', 'rule-path-unknown': 'path not found (a runtime file or a typo)', 'enforcement-unexplained': 'enforcement no rule explains' };
-  const finds = [...by].map(([k, xs]) => `<li><details class="rulegroup insgroup"><summary>${chip(xs[0].severity === 'medium' ? 'warn' : 'idle', xs[0].severity)} <b>${int(L.adv_counts?.[k] ?? xs.length)}</b> × ${esc(KEY[k] ?? k)} <span class="small mute">${esc(xs[0].source)}</span><div class="small">fix: <i>${esc(xs[0].fix.action)}</i></div></summary>
-    <ul>${xs.slice(0, INS_CAPS.advisories).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? diffBlock({ patch: a.fix.patch }, { title: baseName(a.path) || a.surface, sub: 'proposed fix' }) : ''}</li>`).join('')}</ul></details></li>`).join('');
-  return `<div class="tablecard" id="ins-ladder"><h3>The ladder <span class="mute small">${int(LADDER_STATES.reduce((n, st) => n + (L.counts[st] ?? 0), 0))} must / never rules by state · prose only ${int(L.counts.prose)} → repeated ${int(L.counts.repeated)} → enforced ${int(L.counts.enforced)} → retired ${int(L.counts.retired)} · tap a home to open its line</span></h3>
-    ${board(cols, { id: 'ins-board', aria: 'rules by state' })}
-    ${finds ? `<ul id="ins-rule-findings">${finds}</ul>` : ''}</div>`;
-}
-// META-TEND P5 (REPORT 3.3): one vendor-audit hunk = one card; accept = a decision + a directive (the check-in applies it), decline = a decision
-function auditCard(c, project) {
-  const pj = project ? ` data-project="${esc(project)}"` : '';
-  return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
-    ${diffBlock({ patch: c.fix.patch ?? '' }, { title: `${baseName(c.path)}:${c.line}`, sub: 'vendor audit hunk' })}
-    <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
-}
-const AUD_OUT = { done: 'ok', crash: 'bad', stopped: 'warn', limit: 'warn', auth: 'warn' };
-function insAudits(a) {
-  if (!a) return '';
-  const runs = a.runs.map(r => `<tr><td class="id">${esc(r.id)}</td><td class="small">${esc(String(r.created).slice(0, 16).replace('T', ' '))}</td><td>${chip(r.state === 'running' ? 'run' : AUD_OUT[r.outcome] ?? 'idle', r.state === 'running' ? 'running' : r.outcome ?? r.state)}</td>
-    <td class="num">${int(r.accepted + r.declined + r.open)}</td><td class="num">${int(r.accepted)}</td><td class="num">${int(r.declined)}</td><td class="num">${int(r.open)}</td>
-    <td class="small">${r.watch.length ? r.watch.map(w => (w.alarms.length ? chip('bad', `${w.alarms.length} alarm(s)`) : chip(w.done ? 'ok' : 'idle', `${w.seen} of ${w.of} runs ${w.done ? 'clean' : 'watched'}`))).join(' ') : dash}</td></tr>`).join('');
-  const trig = a.triggers.map(t => `<li>${chip(t.key === 'never' ? 'idle' : 'warn', t.key)} ${esc(t.why)}</li>`).join('');
-  return `<div class="tablecard" id="ins-audits"><h3>Audits <span class="mute small">the vendor prompt audit (/doctor prompt-audit), read-only · one card per proposed hunk · ${esc(a.rule.why)}</span></h3>
-   <div style="padding:0 12px"><div class="small"><b>Triggers now</b> ${a.triggers.length ? `<span class="mute">(${a.rule.mode === 'auto' ? 'they may start an audit' : 'manual: start it with'} <span class="mono">${esc(a.command)}</span>)</span>` : '<span class="mute">none: no event calls for an audit</span>'}</div>${trig ? `<ul class="small" id="ins-audit-triggers">${trig}</ul>` : ''}</div>
-   <div class="inswrap"><table class="instab" id="ins-audit-runs"><thead><tr><th>run</th><th>started</th><th>outcome</th><th>hunks</th><th>accepted</th><th>declined</th><th>open</th><th>watch after apply</th></tr></thead><tbody>${runs || '<tr><td colspan="8" class="mute">no audit has run yet</td></tr>'}</tbody></table></div>
-   ${a.cards.length ? `<ul>${a.cards.map(c => auditCard(c, null)).join('')}</ul>` : ''}</div>`;
-}
-// META-TEND P5 (REPORT 5.3 view 1): is it growing forever? - the median standing context per session, one line per role, 30 days
-function insTrend(m) {
-  const rows = m?.trend?.rows || [];
-  if (!rows.length) return '';
-  const end = Date.parse(rows.map(r => r.day).sort().at(-1) + 'T00:00:00Z'), n = m.trend.days;
-  const days = Array.from({ length: n }, (_, i) => new Date(end - (n - 1 - i) * 86400000).toISOString().slice(0, 10));
-  const keys = [...new Set(rows.map(r => r.key))], lab = k => k.replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w);
-  const series = keys.map(k => ({ key: k, label: lab(k), points: rows.filter(r => r.key === k && r.median_turn1 !== null).map(r => ({ x: r.day, y: r.median_turn1 })) }));
-  return `<div class="tablecard" id="ins-trend"><h3>Is it growing forever? <span class="mute small">standing tokens per session (the median first request), per role and day, last ${int(n)} days</span></h3>
-   <div style="padding:0 12px 8px">${lines(series, { days, fmt: tk, title: 'standing tokens per session', unit: 'tokens' })}</div></div>`;
-}
-// META-TEND P5 (REPORT 5.3 view 4): per file - a strip of its paragraphs (width = tokens) coloured by age, with read and cite marks
-const AGE_BANDS = [[7, 'age-new', 'under 7 d'], [30, 'age-mid', '7-30 d'], [Infinity, 'age-old', 'over 30 d']];
-function insStrip(f) {
-  if (!f.paras?.length) return '';
-  const tot = f.paras.reduce((n, p) => n + Math.max(1, p.tokens), 0), ev = f.evidence;
-  const segs = f.paras.map(p => {
-    const cls = p.age_days === null || p.age_days === undefined ? 'age-unk' : AGE_BANDS.find(([d]) => p.age_days < d)[1], cited = p.cited || [];
-    return `<a class="psg ${cls}${p.stale ? ' stale' : ''}" href="#ins-${esc(p.anchor)}" style="flex-basis:${(100 * Math.max(1, p.tokens) / tot).toFixed(2)}%" title="${esc(`L${p.line}-${p.end} · ${p.age_days ?? '?'} d · ~${p.tokens} tokens · read ${p.read ?? 0}x${cited.length ? ` · cited by ${cited.join(', ')}` : ''}${p.stale ? ' · STALE' : ''}`)}">${p.read ? '<i class="pread"></i>' : ''}${cited.length ? '<i class="pcite"></i>' : ''}</a>`;
-  }).join('');
-  const cites = [...new Set((ev?.cites || []).map(c => c.id))];
-  const said = ev ? `read ${int(ev.reads)}x in ${int(f.read_days ?? 30)} days${ev.last ? ` (last ${fmtTime(ev.last)})` : ''} · ${cites.length ? `cited by ${cites.join(', ')}` : 'cited by no decision'}` : 'no read evidence';
-  return `<div id="ins-strip" class="small" style="margin:0 0 8px"><div class="pstrip" role="img" aria-label="${esc(`${f.paras.length} paragraphs by age; ${said}`)}">${segs}</div>
-    <div class="stklegend">${AGE_BANDS.map(([, c, w]) => `<span><i class="stkdot ${c}"></i>${esc(w)}</span>`).join('')}<span><i class="pread inl"></i>read</span><span><i class="pcite inl"></i>cited (its line)</span><b>${esc(said)}</b></div></div>`;
-}
-// META-TEND P3 (REPORT 3.6): the repeat detector's cards - one per cluster, ranked; approve = a directive (the one approvals path)
-// RM-30 S1: a card its directive already asks for (rules.mjs askedBy) reads "Asked as DIR-n (state) - date" with a link and has no
-// Approve; Approve is one tap (the directive is the record and can be revoked) and sends the card id, which the directive keeps
-function enforceCard(c, project, px = { project }) {
-  const a = c.asked;
-  return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
-    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
-    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
-    : `<div class="small mute">${esc(c.fix.action)}</div>
-    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;
-}
 /**
  * RM-30 S1: a directive the page sent was refused as a restatement of an active one (/api/directive 409 { dup }). x = { text, dup:
  * { id, line, why } } -> the plain-words notice: which directive it matches, Open it, Replace it with this wording (supersede, recorded),
@@ -917,148 +574,6 @@ export function dupRefusal(x) {
     <div class="dupcmp small"><div><span class="olab">${id} says</span>${renderProse(x.dup.line ?? '')}</div><div><span class="olab">you wrote</span>${renderProse(String(x.text ?? '').slice(0, 400))}</div></div>
     <div class="small mute">Matched by ${esc(x.dup.why ?? 'its words')}. Two active directives that say the same thing get read twice at every check-in.</div>
     <div class="dupbtns"><button data-act="dup-open" data-id="${id}">Open ${id}</button><button class="primary" data-act="dup-replace" data-id="${id}">Replace it with this wording</button><button class="ghost" data-act="dup-new">Keep both</button><button class="ghost" data-act="dup-close">Cancel</button></div></div>`;
-}
-function insRepeats(L) {
-  if (!L) return '';
-  const cs = L.cards || [];
-  return `<div class="tablecard" id="ins-repeats"><h3>Said again <span class="mute small">${int(cs.length)} repeated correction(s), ranked · each card drafts the enforcement; Norn installs nothing (the Inbox holds the same cards)</span></h3>
-    ${cs.length ? `<ul>${cs.map(c => enforceCard(c, null)).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no correction said 3 times</p>'}</div>`;
-}
-// META-PRACTICE-P1: the static checks in place - one "managed" line, then the findings per file (severity chips, counts, the fix)
-const SEV_CHIP = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' }, SEVS = ['high', 'medium', 'low', 'count'];
-function insManaged(m) {
-  if (!m) return '';
-  const sev = SEVS.filter(s => m.by_severity?.[s]).map(s => chip(SEV_CHIP[s], `${m.by_severity[s]} ${s}`)).join(' ');
-  const on = Object.entries(m.memory || {}).filter(([, v]) => v === 'on').map(([r]) => ROLE_LABEL[r] ?? r), off = Object.entries(m.memory || {}).filter(([, v]) => v === 'off').map(([r]) => ROLE_LABEL[r] ?? r);
-  return `<div class="card" id="ins-managed"><b>Managed:</b> ${int(m.files)} files scanned · <b>${int(m.open)}</b> findings open ${sev} · ${int(m.fixed)} fixed since the last scan${m.since ? ` <span class="small mute">(${esc(String(m.since).slice(0, 16).replace('T', ' '))}Z)</span>` : ''} · memory loaded by ${esc(on.join(', ') || 'no role')}${off.length ? ` <span class="mute">(off: ${esc(off.join(', '))})</span>` : ''}
-    <div class="small mute">Static checks 1-19 + 21-23 (free, no model call; check 20 comes with the audits). Read-only: a finding names the fix, nothing is edited.</div></div>`;
-}
-function insFindings(d) {
-  const fs2 = d.findings || [];
-  if (!fs2.length) return '<div class="tablecard" id="ins-findings-card"><h3>Findings</h3><p class="mute" style="padding:0 12px">none</p></div>';
-  const groups = new Map();
-  for (const f of fs2) { if (!groups.has(f.path)) groups.set(f.path, []); groups.get(f.path).push(f); }
-  const li = [...groups].map(([p, xs]) => {
-    const cnt = SEVS.filter(s => xs.some(x => x.severity === s)).map(s => chip(SEV_CHIP[s], `${xs.filter(x => x.severity === s).length} ${s}`)).join(' ');
-    const name = p.split('/').pop(), id = xs.find(x => x.row)?.row;
-    // DEC-273: one row per file x check (count, the check's title, the fix once); its lines in an expandable list
-    const byCheck = new Map();
-    for (const x of xs) { if (!byCheck.has(x.check)) byCheck.set(x.check, []); byCheck.get(x.check).push(x); }
-    const rows = [...byCheck].map(([c, ys]) => {
-      const top = SEVS.find(s => ys.some(y => y.severity === s)), fixes = [...new Set(ys.map(y => y.fix.action))];
-      return `<li><details class="insgroup"><summary>${chip(SEV_CHIP[top], top)} <b>${int(ys.length)}</b> × ${esc(ys[0].surface)} <span class="small mute">C${esc(c)} · L${esc(ys.map(y => y.line).slice(0, 8).join(', '))}${ys.length > 8 ? ' …' : ''}</span>${fixes.length === 1 ? `<div class="small">fix: <i>${esc(fixes[0])}</i></div>` : ''}</summary>
-        <ul>${ys.map(y => `<li class="insfind">${chip(SEV_CHIP[y.severity], y.severity)} <span class="small mute">L${esc(y.line)}</span> ${esc(y.why)}${fixes.length > 1 ? `<div class="small">fix: <i>${esc(y.fix.action)}</i></div>` : ''}</li>`).join('')}</ul></details></li>`;
-    }).join('');
-    return `<li class="insfile"><div>${id ? `<button class="lnk" data-ins="${esc(id)}">${esc(name)}</button>` : `<b>${esc(name)}</b>`} ${cnt} <span class="inspath mute">${esc(p)}</span></div><ul>${rows}</ul></li>`;
-  }).join('');
-  return `<div class="tablecard" id="ins-findings-card"><h3>Findings <span class="mute small">${int(d.findings_n ?? fs2.length)} · static checks, read-only</span></h3><ul id="ins-findings">${li}</ul>${insMore(fs2.length, d.findings_n ?? 0, 'the Guard lists every one')}</div>`;
-}
-// META-STANDING-CONTEXT R1: the measured standing context (median per session, last 7 days) per role + where it goes (the parts)
-const ROLE_LABEL = { worker: 'workers', merge: 'merge runs', checkin: 'check-ins', chat: 'chat' };
-// META-CHECKIN-DIET R1: per day "check-ins: n (m mechanical, k minor, j full)" - mechanical = a routine end the tick handled by code
-function insCheckins(days) {
-  if (!days?.length) return '';
-  const li = days.map(x => `<tr><td>${esc(x.day)}</td><td>check-ins: <b>${int(x.n)}</b> (${int(x.mechanical)} mechanical, ${int(x.minor)} minor, ${int(x.full)} full)</td></tr>`).join('');
-  return `<div class="tablecard" id="ins-checkins"><h3>Check-ins per day <span class="mute small">mechanical = a routine end handled by code, no model · minor = the reduced tick · full = the full check-in</span></h3><div class="inswrap"><table class="instab"><tbody>${li}</tbody></table></div></div>`;
-}
-// META-TEND P1-VISUAL (REPORT 5.3 view 2): what one session loads - a stacked bar per role (the newest measured first request), the
-// memory switch per role (policy.launch.memory). Parts in the REPORT's order; Norn's prompt, the agents list and the prompt follow.
-const LOAD_ROLES = [['chat', 'controller / chat'], ['checkin', 'check-ins'], ['worker', 'workers'], ['merge', 'merge runs']];
-const PART_ORDER = ['base', 'plugins', 'memory', 'skills', 'claude_md', 'hooks', 'agent', 'mcp', 'norn', 'agents', 'prompt'];
-function insLoads(d) {
-  const ps = d.measured?.parts || {}, mem = d.managed?.memory || {};
-  const li = LOAD_ROLES.map(([role, name]) => {
-    const s = ps[role], sw = mem[role] ? chip(mem[role] === 'on' ? 'warn' : 'ok', `memory ${mem[role]}`) : '';
-    const segs = s ? [...(s.parts || [])].sort((a, b) => PART_ORDER.indexOf(a.key) - PART_ORDER.indexOf(b.key)).map(x => ({ key: x.key, label: x.ours === false ? `${x.label} (fixed)` : x.label, value: x.tokens })) : [];
-    return `<li class="insload"><div><b>${esc(name)}</b> ${sw} ${s ? `<span class="mute small">${tk(s.total)} tokens · ${esc(s.run)}</span>` : ''}</div>
-      ${s ? stack(segs, { fmt: tk }) : `<div class="small mute">no session measured in the last ${int(d.measured?.window_days ?? 7)} days</div>`}</li>`;
-  }).join('');
-  return `<div class="tablecard" id="ins-loads"><h3>What one session loads <span class="mute small">before any work, per role · the newest measured first request · memory on / off = the launch switch (policy.launch.memory)</span></h3><ul class="insloads">${li}</ul></div>`;
-}
-// META-TEND P1-VISUAL (REPORT 5.3 view 3): the file map - each steering file a block sized by ~tokens x loads per day (7-day mean),
-// coloured by its state, grouped by load class; a click opens the file with its findings. Generator sources are not loaded: left out.
-const MAP_GROUPS = [['always loaded', ['session']], ['per role', ['checkin', 'chat', 'role']], ['on demand', ['on-demand']]];
-const MAP_STATE = { fresh: 'fresh', stale: 'stale paragraphs', conflict: 'conflict (two files say it)', 'generated-stale': 'generated, out of sync' };
-function insFileMap(d) {
-  const rows = (d.rows || []).filter(r => r.exists && r.load !== 'source'), cost = r => Math.round((r.standing_tokens ?? r.tokens) * (r.loads_day || 0));
-  if (!rows.length) return '';
-  const groups = MAP_GROUPS.map(([name, loads]) => {
-    const xs = rows.filter(r => loads.includes(r.load)).sort((a, b) => cost(b) - cost(a) || b.tokens - a.tokens);
-    if (!xs.length) return '';
-    const sum = xs.reduce((n, r) => n + cost(r), 0), tsum = xs.reduce((n, r) => n + r.tokens, 0) || 1;
-    const blk = r => {
-      const share = sum > 0 ? cost(r) / sum : r.tokens / tsum, st = MAP_STATE[r.map_state] ? r.map_state : 'fresh';
-      return `<button class="fmblk st-${esc(st)}" data-ins="${esc(r.id)}" style="flex-basis:${(100 * share).toFixed(2)}%" title="${esc(`${r.name} · ${tk(r.tokens)} tokens x ${r.loads_day || 0} loads/day = ${tk(cost(r))} / day · ${MAP_STATE[st]}${r.findings ? ` · ${r.findings} findings` : ''}`)}">${share >= 0.06 ? esc(r.name) : ''}</button>`;
-    };
-    return `<div class="fmgroup"><div class="small"><b>${esc(name)}</b> <span class="mute">${int(xs.length)} files · ${tk(sum)} tokens / day</span></div><div class="fmblocks">${xs.map(blk).join('')}</div></div>`;
-  }).join('');
-  const n = k => rows.filter(r => (MAP_STATE[r.map_state] ? r.map_state : 'fresh') === k).length;
-  const legend = Object.entries(MAP_STATE).map(([k, w]) => `<span><i class="stkdot st-${k}"></i>${esc(w)} <b>${int(n(k))}</b></span>`).join('');
-  const top = rows.filter(r => cost(r) > 0).sort((a, b) => cost(b) - cost(a)).slice(0, 6);
-  return `<div class="tablecard" id="ins-filemap"><h3>The file map <span class="mute small">a block per file, sized by ~tokens x loads per day (last 7 days) · tap a block to open the file and its findings</span></h3>
-   <div class="stklegend small" style="padding:0 12px">${legend}</div><div style="padding:4px 12px">${groups}</div>
-   ${top.length ? `<div style="padding:0 12px 8px"><div class="small"><b>Most tokens per day</b></div>${bars(top.map(r => ({ label: r.name, value: cost(r), cls: `st-${MAP_STATE[r.map_state] ? r.map_state : 'fresh'}` })), { fmt: v => `${tk(v)} / day` })}</div>` : ''}</div>`;
-}
-// META-TEND P1-VISUAL (REPORT 5.3 view 5): memory - the 200-line / 25 KB gauge, MEMORY.md -> topic files, entries in no index, broken links
-// the MEMORY.md gauge (% of its load limit; over = full + red): Instructions' memory card and the head of the Docs Memory group
-function memBars(m) {
-  const g = (label, v, max, unit) => ({ label, value: 100 * v / max, cls: v > max ? 'over' : 'st-fresh', note: esc(`${v} of ${max} ${unit}`) });
-  return bars([g('lines', m.lines, m.max_lines, 'lines'), g('size', m.kb, m.max_kb, 'KB')], { fmt: v => `${Math.round(v)} %`, max: 100 });
-}
-function memGauge(m, id) {
-  const over = m.lines > m.max_lines || m.kb > m.max_kb;
-  return `<div class="docmem" id="${esc(id)}"><div class="small">${over ? `${chip('bad', 'over the limit')} past ${int(m.max_lines)} lines / ${int(m.max_kb)} KB the rest of MEMORY.md is not loaded` : `MEMORY.md loads whole: under ${int(m.max_lines)} lines and ${int(m.max_kb)} KB`}</div>${memBars(m)}
-    <div class="small mute">${int(m.topics)} topic files${m.orphans ? ` · ${int(m.orphans)} in no index` : ''}${m.broken ? ` · ${int(m.broken)} broken links` : ''}</div></div>`;
-}
-function insMemory(m) {
-  if (!m) return '<div class="tablecard" id="ins-memory"><h3>Memory</h3><p class="small mute" style="padding:0 12px">No MEMORY.md for this repo: its auto-memory folder is empty, so no session loads memory.</p></div>';
-  const lk = m.topics.filter(t => t.linked).length, ago = iso => (iso ? esc(fmtTime(iso)) : '<span class="mute">not in 30 days</span>');
-  const over = m.lines > m.max_lines || m.kb > m.max_kb, gauge = memBars(m);
-  const shape = stack([{ key: 'linked', label: 'topic files in the index', value: lk }, { key: 'orphan', label: 'topic files in no index', value: m.orphans.length },
-    { key: 'broken', label: 'broken links', value: m.broken.length }], { fmt: int });
-  const broken = m.broken.map(e => `<li>${chip('bad', 'missing')} <span class="mute">L${esc(e.line)}</span> ${esc(e.title)} -&gt; ${esc(e.file)}</li>`).join('');
-  const orphans = m.orphans.map(o => `<button class="lnk" data-ins="${esc(o.id)}">${esc(o.name)}</button>`).join(' · ');
-  const tops = [...m.topics].sort((a, b) => String(b.opened ?? '').localeCompare(String(a.opened ?? '')) || a.name.localeCompare(b.name)).map(t => `<tr><td><button class="lnk" data-ins="${esc(t.id)}">${esc(t.name)}</button></td>
-    <td>${t.linked ? chip('ok', `in index${t.linked > 1 ? ` x${t.linked}` : ''}`) : chip('warn', 'in no index')}</td><td>${ago(t.opened)}</td><td class="insopt">${t.changed ? esc(fmtTime(t.changed)) : dash}</td></tr>`).join('');
-  return `<div class="tablecard" id="ins-memory"><h3>Memory <span class="mute small">MEMORY.md -&gt; ${int(m.topics.length)} topic files · the index last opened ${ago(m.index_opened)}</span></h3>
-   <div style="padding:0 12px"><div class="small">${over ? `${chip('bad', 'over the limit')} past 200 lines / 25 KB the rest of MEMORY.md is silently not loaded` : 'MEMORY.md loads whole: under 200 lines and 25 KB'}</div>${gauge}${shape}
-   ${broken ? `<div class="small" style="margin-top:6px"><b>Broken links</b></div><ul class="small">${broken}</ul>` : ''}
-   ${orphans ? `<div class="small" style="margin-top:6px"><b>In no index</b> <span class="mute">(a session never finds them)</span></div><div class="small" style="overflow-wrap:anywhere">${orphans}</div>` : ''}
-   <details style="margin:6px 0"><summary class="small">all ${int(m.topics.length)} topic files, last opened first</summary><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>index</th><th>last opened</th><th class="insopt">last changed</th></tr></thead><tbody>${tops}</tbody></table></div></details>
-   <div class="small mute" style="padding-bottom:6px">${esc(m.opened_method)}</div></div></div>`;
-}
-
-// the Docs reader (META-UX-BUILD S3): head (name, load, size, path) + Rendered / Source; the paragraph strip (META-TEND P5); findings
-// about the whole file on top; each other finding beside its paragraph (Rendered) or its line (Source). ctx.sanitize = DOMPurify.
-const docFind = x => `<div class="insfind">${chip(SEV_CHIP[x.severity] ?? 'idle', x.severity ?? 'note')} <span class="mute">${x.check ? `C${esc(x.check)} ` : ''}${x.line ? `L${esc(x.line)}` : 'whole file'}${x.surface ? ` · ${esc(x.surface)}` : ''}</span> ${esc(x.why)}${x.fix?.action ? `<div class="small mute">fix: ${esc(x.fix.action)}</div>` : ''}</div>`;
-const docAside = xs => (xs?.length ? `<aside class="docfind">${xs.map(docFind).join('')}</aside>` : '');
-const ageBadge = p => ((p.age_days !== null && p.age_days !== undefined) || p.changed || p.stated ?`<span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> ` : '');
-// a JSON file, or a source file a run touched (f.code: its language, RM-36), is one code block; the fence outruns any ``` inside it
-function docReader(f, ctx, d = {}) {
-  const lang = /\.json$/i.test(f.path) ? 'json' : f.code ?? null, text = f.text ?? '', lines = text.split(/\r?\n/);
-  const fence = lang ? '`'.repeat([...text.matchAll(/`{3,}/g)].reduce((n, m) => Math.max(n, m[0].length + 1), 3)) : '', src = lang ? `${fence}${lang}\n${text}\n${fence}` : text, json = !!lang;
-  const findings = f.findings || [], L = d.line, foc = (a, b) => (L && a <= L && L <= b ? ' focus" data-focus="1' : '');
-  let body, whole, toc = [];
-  if (d.src) {   // Source: every line numbered, its findings beside it
-    const by = findingsByLine(findings, lines.length); whole = by.whole;
-    body = `<div class="card docsrc" id="doc-src"><table><tbody>${lines.map((t, i) => `<tr id="docl-${i + 1}" class="${foc(i + 1, i + 1)}"><td class="ln mute">${i + 1}</td><td class="lt"><code>${esc(t)}</code></td><td>${docAside(by.at.get(i + 1))}</td></tr>`).join('')}</tbody></table></div>`;
-  } else {
-    const r = renderMarkdown(src, { sanitize: ctx.sanitize }); toc = r.toc;
-    if (f.paras?.length && !json) {   // each paragraph rendered on its own, its age badge + its findings beside it
-      const at = placeFindings(f.paras, findings); whole = at.whole;
-      body = f.paras.map(p => `<div class="inspara docpara${p.stale ? ' stale' : ''}${at.at.has(p.anchor) ? ' hasfind' : ''}${foc(p.line, p.end)}" id="ins-${esc(p.anchor)}"><div class="docptext">${ageBadge(p)}<span class="small mute">L${esc(p.line)}</span>${renderMarkdown(lines.slice(p.line - 1, p.end).join('\n'), { sanitize: ctx.sanitize }).html}</div>${docAside(at.at.get(p.anchor))}</div>`).join('');
-    } else { whole = findings; body = r.html; }
-    body = `<article class="card md" id="doc-body">${body}</article>`;
-  }
-  const links = toc.map(t => `<a class="toc${t.depth}" href="#${esc(t.id)}">${esc(t.text)}</a>`).join('');
-  const load = f.load ? ` ${chip(INS_CHIP[f.load] ?? 'idle', f.load === 'role' ? `role ${f.role}` : INS_LOAD[f.load] ?? f.load)}` : '';
-  const on = v => (v === 'src') === !!d.src;
-  const btn = (v, label) => `<button data-act="doc-view" data-view="${v}" aria-pressed="${on(v)}" class="${on(v) ? 'strong' : ''}">${label}</button>`;
-  return `<div class="dochd" id="docs-head"><button class="docback" data-act="doc-back">&larr; Back</button> <b class="dfname">${esc(f.name ?? f.tab)}</b>${load}
-    <span class="small mute">${f.tokens ? `${tk(f.tokens)} tokens · ` : ''}${int(f.lines ?? lines.length)} lines${f.changed ? ` · changed ${esc(fmtTime(f.changed, ctx.now))}` : ''} · <span class="inspath">${esc(f.path)}</span></span></div>
-   <div class="filters" id="docs-mode">${btn('md', 'Rendered')}${btn('src', 'Source')}<span class="small mute">${findings.length ? `${int(findings.length)} finding${findings.length === 1 ? '' : 's'} beside the text` : 'no findings on this file'}</span></div>
-   ${insStrip(f)}${whole.length ? `<div class="card small" id="doc-file-findings"><b>About the whole file</b>${whole.map(docFind).join('')}</div>` : ''}
-   ${d.src ? body : `<div class="docwrap"><nav class="doctoc" id="doc-toc" aria-label="Contents"><b class="small">Contents</b>${links || '<span class="small mute">no headings</span>'}</nav>${body}</div>`}`;
 }
 
 // Ledger (LEDGER-UX R1): one row per entry in the Records look, newest first - time, kind chip, headline + labelled sub-lines;
@@ -1096,645 +611,4 @@ function ledger(d, ctx) {
    <div class="tablecard"><h3>Ledger <span class="mute small">${esc(d.file ?? 'no ledger file in project.json')} · newest first</span></h3>
    <table class="ledtab" id="ledger-lines" data-rows="ledger"><thead><tr><th>when</th><th>kind</th><th>entry</th></tr></thead><tbody>${ledgerRows(entries, d, ctx) || '<tr><td colspan="3" class="mute">empty</td></tr>'}</tbody></table>
    ${more ? `<div style="padding:10px 14px">${more}</div>` : ''}</div>`;
-}
-
-// ---------- Settings (META-UX-R1): categories -> sub-categories from the schema (policy.mjs SECTIONS, served in /api/settings),
-// left nav + search, one-line help per row, modified-from-default marker + reset, danger zone. Controls keep data-key = the key.
-const showVal = v => Array.isArray(v) ? v.join(', ') || '(none)' : typeof v === 'boolean' ? (v ? 'on' : 'off') : v === '' ? '(default)' : v;
-const ctlVal = v => Array.isArray(v) ? v.join(', ') : v ?? '';
-/** Search text of one setting row (label, key, help, value, recommended) - the browser filters on the same string. */
-export const searchText = s => [s.label, s.key, s.help, showVal(s.value), s.recommended].join(' ').toLowerCase();
-/** All words of q in the text; the token @modified also requires the modified flag. Empty q matches everything. */
-export function matchText(text, q, modified) {
-  const words = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean);
-  return words.every(w => w === '@modified' ? !!modified : text.includes(w));
-}
-export const settingsMatch = (s, q) => matchText(searchText(s), q, s.modified);
-function input(s) {
-  const id = esc(s.key), dis = s.readonly || s.scope === 'file' ? ' disabled' : '', orig = esc(JSON.stringify(s.value ?? null));
-  const attrs = `id="in-${id}" data-key="${id}" data-type="${esc(s.type)}" data-orig="${orig}"${dis}`;
-  if (s.type === 'bool') return `<select ${attrs}><option value="true"${s.value ? ' selected' : ''}>on</option><option value="false"${s.value ? '' : ' selected'}>off</option></select>`;
-  // an unset enum (no value, no blank option) shows "(unset)": the browser must not read the first option as a change
-  const unset = s.type === 'enum' && (s.value === undefined || s.value === null) && !(s.options || []).includes('');
-  if (s.type === 'enum') return `<select ${attrs}>${unset ? '<option value="" selected>(unset)</option>' : ''}${(s.options || []).map(o => `<option value="${esc(o)}"${o === s.value ? ' selected' : ''}>${esc(o || '(default)')}</option>`).join('')}</select>`;
-  if (s.type === 'classes') return `<input type="text" ${attrs} value="${esc(ctlVal(s.value))}" placeholder="none" title="${esc((s.options || []).join(', '))}" class="wide">`;
-  if (s.type === 'int' || s.type === 'num') return `<input type="number" ${attrs} value="${esc(s.value)}" placeholder="unset" min="${esc(s.min)}" max="${esc(s.max)}" step="${s.type === 'int' ? 1 : 0.01}" class="num">`;
-  if (s.scope === 'file') return `<span class="small mono">${esc(s.value)}</span>`;
-  return `<input type="text" ${attrs} value="${esc(ctlVal(s.value))}" placeholder="unset" class="text">`;
-}
-const modChip = s => s.modified ? ` <span class="mod" title="default ${esc(showVal(s.default))}">modified</span>` : '';
-const resetBtn = s => s.default !== undefined && !s.readonly && s.scope !== 'file'
-  ? `<button class="ghost reset" data-act="set-reset" data-for="${esc(s.key)}" data-default="${esc(JSON.stringify(s.default))}" title="Reset to the default ${esc(showVal(s.default))}"${s.modified ? '' : ' hidden'}>&#8634;</button>` : '';
-const tip = s => esc(`${s.key} (${s.scope === 'machine' ? 'machine, all projects' : s.scope === 'project' ? 'project policy' : 'rules file'})\nRecommended: ${s.recommended}\nCost: ${s.cost}\nRead by: ${(s.readers || []).join('; ')}`);
-const scopeTag = s => `<span class="tag" title="${esc(s.home ?? '')}">${s.scope === 'machine' ? 'machine' : s.scope === 'project' ? 'project' : 'rules file'}</span>`;
-function row(s) {
-  return `<div class="srow${s.modified ? ' modrow' : ''}" id="set-${esc(s.key)}"${s.basic ? ' data-basic="1"' : ''} data-search="${esc(searchText(s))}" data-mod="${s.modified ? 1 : 0}"><div class="sl"><label for="in-${esc(s.key)}" title="${tip(s)}"><b>${esc(s.label)}</b></label>${modChip(s)} ${scopeTag(s)}<span class="key">${esc(s.key)}</span><span class="help">${esc(s.help)}${s.recommended ? ` <span class="rec">Recommended: ${esc(s.recommended)}.</span>` : ''}</span></div><div class="sc">${input(s)}${resetBtn(s)}</div></div>`;
-}
-function inlineGroup(cat, sub, x, items, extra = '') {
-  const short = s => String(s.label).replace(/^[^:]+:\s*/, ''), mod = items.some(s => s.modified);
-  const cells = items.map(s => `<span class="mini" id="set-${esc(s.key)}" title="${tip(s)}"><span><label for="in-${esc(s.key)}">${esc(short(s))}</label>${modChip(s)}</span><span>${input(s)}${resetBtn(s)}</span></span>`).join('');
-  return `<div class="srow inline${mod ? ' modrow' : ''}" id="grp-${esc([cat.id, sub.id, x.id].join('-'))}" data-search="${esc([x.label, ...items.map(searchText)].join(' ').toLowerCase())}" data-mod="${mod ? 1 : 0}"><div class="sl"><b>${esc(x.label)}</b>${extra} ${scopeTag(items[0])}<span class="help">${esc(items[0].help)}</span></div><div class="sc">${cells}</div></div>`;
-}
-function filesPane(d) {
-  const tg = d.targets.map(t => `<div class="item">${t.exists ? chip('ok', `${t.markers.length} markers`) : chip('bad', 'missing')}<span class="mono small">${esc(t.file)}</span>${t.markers.length ? `<span class="small mute">${esc(t.markers.join(', '))}</span>` : ''}</div>`).join('');
-  return `<div class="ssub" id="sub-files-sources"><h3>Source files <span class="help">every key keeps one home; the tag on each row says which file</span></h3>
-    <div class="kv"><span class="tag">machine</span><span class="mono small" id="settings-machine">${esc(d.files.machine)} <span class="mute">(all projects)</span></span>
-    <span class="tag">project</span><span class="mono small" id="settings-project">${esc(d.files.project)} <span class="mute">policy</span></span>
-    <span class="tag">rules file</span><span class="small mute">read-only rows, edited by hand</span></div></div>
-   <div class="ssub" id="sub-files-targets"><h3>Policy targets <span class="help">generated lines (&lt;!-- policy:key --&gt;) rewritten on Save</span></h3>${tg || '<span class="mute">none</span>'}</div>`;
-}
-// META-NOTIFY-SETUP R1: the Notifications row (machine.json notify; changed with norn setup --notify) + "send a test"
-const PING_EVENTS = [['Questions to you', 'at once'], ['Work finished (merged / ready)', 'at once'], ['CI red on main, a killed or crashed run', 'at once, high']];
-function notifyPane(d) {
-  const n = d.notify || { backend: 'none' }, on = n.backend && n.backend !== 'none';
-  const what = { ntfy: 'ntfy (phone app)', toast: 'desktop toast (Windows)', desktop: 'desktop notification', pushover: 'Pushover' }[n.backend] || 'off';
-  const where = n.backend === 'ntfy' ? ` <span class="small mute">${esc(n.server)} · topic ${n.topic_set ? 'set (private)' : 'MISSING'}</span>` : '';
-  const ev = PING_EVENTS.map(([e, w]) => `<li>${esc(e)} <span class="mute">- ${esc(w)}</span></li>`).join('')
-    + `<li>FYI notes (rulings, other news) <span class="mute">- batched: one digest every ${esc(n.batch_h ?? 3)} h</span></li>`;
-  return `<div class="ssub" id="sub-notify-ping"><h3>Phone / desktop ping <span class="help">machine.json notify, all projects - change it with norn setup --notify ntfy|toast|desktop|pushover|none</span></h3>
-    <div class="srow" id="set-notify" data-basic="1" data-search="notifications notify ping phone desktop ntfy toast pushover ${esc(n.backend)}" data-mod="0"><div class="sl"><b>Notifications</b> <span class="tag">machine</span> ${on ? chip('ok', what) : chip('warn', 'off')}${where}
-      <span class="help">${on ? 'Norn pings you when it needs you:' : 'Off: questions can sit unseen. Turn on with <span class="mono">norn setup --notify ntfy</span> (the free ntfy phone app) or <span class="mono">--notify toast</span> (this computer).'}</span>
-      ${on ? `<ul class="small ping-events">${ev}</ul>` : ''}</div>
-     <div class="sc">${on ? '<button class="ghost" data-act="notify-test">Send a test</button>' : ''}<span class="small mute" id="notify-test-out" role="status"></span></div></div></div>`;
-}
-// META-CONTROLLER C6 (SPEC sec. 5): reach Norn from your phone. r = /api/remote, or null when off. Off: how to start. On: the address,
-// the paired devices (Revoke) and, on the desktop only, Pair a device (a single-use code).
-function remotePane(r) {
-  const head = '<h3>Reach Norn from your phone <span class="help">machine.json dash.remote, all projects - your own private network (Tailscale Serve); the dashboard stays on 127.0.0.1</span></h3>';
-  const wrap = (body, sc = '') => `<div class="ssub" id="sub-notify-phone">${head}<div class="srow" id="set-remote" data-basic="1" data-search="remote phone tailscale pair device" data-mod="0"><div class="sl">${body}</div><div class="sc">${sc}</div></div></div>`;
-  if (!r) return wrap(`<b>Phone access</b> <span class="tag">machine</span> ${chip('warn', 'off')}
-    <span class="help">Off: this dashboard answers on this computer only. To reach it from your phone through Tailscale (free, about 10 minutes), run <span class="mono">norn remote setup</span>: it checks, prints each command and changes nothing until you add <span class="mono">--apply</span>. SETUP.md "Reach Norn from your phone" has the steps and the Cloudflare Access option.</span>`);
-  const dev = d => `<li><b>${esc(d.name)}</b>${d.id === r.viewer ? ' <span class="tag">this device</span>' : ''} <span class="mute">${esc(d.login)} · paired ${esc(fmtTime(d.created))} · seen ${esc(fmtTime(d.last_seen))}</span>
-    <button class="ghost" data-act="remote-revoke" data-id="${esc(d.id)}" data-name="${esc(d.name)}">Revoke</button></li>`;
-  const pair = r.viewer ? '<span class="small mute">You are on a paired device: a new device is paired from the desktop.</span>'
-    : '<button class="strong" data-act="remote-pair">Pair a device</button><div id="remote-code" class="remote-code" role="status"></div>';
-  return wrap(`<b>Phone access</b> <span class="tag">machine</span> ${chip('ok', r.trust === 'tailscale' ? 'on · Tailscale Serve' : 'on · Cloudflare Access')}
-    <span class="small mute"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a> · ${r.logins.length ? esc(r.logins.join(', ')) : 'any login of your private network'}</span>
-    <span class="help">Open the address on a phone signed in to the same private network and pair it once with a code from here. Approvals and every other write from a phone count only on a paired device, and each is stamped with it.</span>
-    <ul class="small devices">${r.devices.length ? r.devices.map(dev).join('') : '<li class="mute">No paired device yet.</li>'}</ul>`, pair);
-}
-// NORN-UI-SYNC: Settings > Sync's pane subs (policy.mjs SECTIONS sync, pane:true) from the server's sync block (server.mjs syncInfo).
-// machine = the state + the ledger form (the topic is write-only: the page only knows on / off); setup = the guided cut --bare / join
-// (Check = the dry run, Apply = pause, cut, publish + fetch, resume); duplicates = Find duplicates (dry) / Write the cards. The buttons
-// post /api/sync/* (index.html); the answers land in the role=status <pre> below each.
-const ago = s => (s == null ? 'never' : s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`);
-function syncPane(x, d, said = {}) {
-  const s = d.sync || {}, id = `sub-sync-${x.id}`, out = k => `<pre class="small sync-out" id="sync-${k}-out" role="status">${esc(said[k] ?? '')}</pre>`;
-  const head = `<h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>`, wrap = (body, search) => `<div class="ssub" id="${id}">${head}<div class="srow" data-basic="1" data-search="${esc(search)}" data-mod="0">${body}</div></div>`;
-  if (x.id === 'machine') {
-    const st = s.home ? chip('ok', `home ${s.home}`) : chip('idle', 'solo');
-    const pub = s.stopped ? chip('bad', `stopped: ${s.stopped}`) : s.head ? `published ${esc(String(s.head).slice(0, 8))}${s.pushed ? ' · pushed' : ' · not pushed yet'}` : 'nothing published yet';
-    const fetched = s.fetch_error ? chip('bad', `fetch failed: ${s.fetch_error}`) : s.fetched_at ? `fetched ${esc(fmtTime(s.fetched_at))}` : 'not fetched yet';
-    const lag = (s.homes || []).map(h => `<li>home <b>${esc(h.home)}</b> <span class="mute">last record ${esc(ago(h.lag_s))} ago${h.ahead_s ? ` · ${esc(ago(h.ahead_s))} not merged here yet` : ''}</span></li>`).join('');
-    return wrap(`<div class="sl"><b>This machine</b> <span class="tag">machine</span> ${st} ${s.doorbell ? chip('ok', 'doorbell on') : chip('idle', 'doorbell off')}
-      <span class="help">${s.home ? `${pub} · ${fetched}` : 'Solo: this project is built on this machine only. Set up / join below makes it a home.'}</span>
-      ${lag ? `<ul class="small">${lag}</ul>` : ''}</div>
-     <div class="sc sync-form"><label>Ledger remote <input type="text" id="sync-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"${s.home_id ? ' disabled title="one ledger repo: move it by hand (docs/MULTI-HOME.md)"' : ''}></label>
-      <label>Doorbell topic <input type="password" id="sync-topic" placeholder="${s.doorbell ? 'set (hidden)' : 'not set'}" autocomplete="off"></label>
-      <button class="ghost" data-act="sync-ledger" data-version="${esc(s.version ?? '')}">Save</button>${out('ledger')}</div>`, 'sync home ledger remote doorbell topic publish fetch lag solo');
-  }
-  if (x.id === 'setup') {
-    if (s.home) return wrap(`<div class="sl"><b>Set up</b> ${chip('ok', `home ${s.home}`)}<span class="help">This project is home ${esc(s.home)} of its ledger. Another machine joins with its own home id (docs/MULTI-HOME.md).</span></div>`, 'sync set up join home');
-    return wrap(`<div class="sl"><b>Set up or join</b> <span class="tag">machine</span> ${chip('idle', 'solo')}
-      <span class="help">Check runs the dry run: access, that the ledger repo is PRIVATE, the home id, the renames. Apply pauses the project, cuts, publishes + fetches, then resumes it.</span></div>
-     <div class="sc sync-form"><label>Home id <input type="text" id="sync-home" placeholder="a, b, laptop" maxlength="8" autocomplete="off" spellcheck="false"></label>
-      <label>Ledger remote <input type="text" id="sync-setup-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"></label>
-      <label>Doorbell topic <input type="password" id="sync-setup-topic" placeholder="optional" autocomplete="off"></label>
-      <label><input type="checkbox" id="sync-bare"> The first home (this project starts the ledger)</label>
-      <label><input type="checkbox" id="sync-checked"> I checked the ledger repo is private</label>
-      <span><button class="ghost" data-act="sync-plan">Check</button> <button class="strong" data-act="sync-apply">Apply</button></span>${out('setup')}</div>`, 'sync set up join first home cut bare private');
-  }
-  return wrap(`<div class="sl"><b>Duplicates across homes</b> <span class="help">${s.home ? 'Find shows the likely pairs; Write puts one owner card per pair in the Inbox.' : 'Solo: nothing to reconcile.'}</span></div>
-   <div class="sc">${s.home ? '<button class="ghost" data-act="sync-reconcile" data-dry="1">Find duplicates</button> <button class="ghost" data-act="sync-reconcile" data-dry="0">Write the cards</button>' : ''}${out('reconcile')}</div>`, 'sync reconcile duplicates pairs cards');
-}
-/** the answer of a /api/sync/* post as lines (index.html shows them in the pane's <pre>) */
-export function syncLines(r) {
-  if (r.pairs) return [`${r.pairs.length} likely duplicate pair(s)${r.carded ? `, ${r.carded} carded before` : ''}${r.written?.length ? `: ${r.written.length} card(s) written to the Inbox` : ''}`, ...r.pairs.map(p => `${p.kind} ${p.a} ~ ${p.b}: ${p.why}`)];
-  if (r.off) return ['Solo: nothing to reconcile.'];
-  if (r.changed !== undefined) return [r.changed ? `Saved. Doorbell ${r.doorbell ? 'on' : 'off'}.` : 'No change.'];
-  return [...(r.lines || []), ...(r.refused || []).map(x => `REFUSED: ${x}`), r.noop ? 'Nothing to do: already a home.' : r.refused?.length ? '' : r.dry ? 'Dry run: nothing written. Apply to do it.' : 'Done.'].filter(Boolean);
-}
-// META-OOTB-POLISH F-6: start from a profile (fills the form only: Review + Save stay the human step) and a basic / all split
-// (basic = the rows flagged by policy.mjs BASIC_KEYS; the browser hides the rest, setFilter)
-// META-PROFILE-BUG R1: the profile in force in words (Overview line + the top of Settings), from the latest caps profile decision
-export function profileWords(n, now = Date.now()) {
-  if (!n || n.kind === 'none') return 'your own settings (no profile)';
-  if (n.kind === 'kept') return `${n.label}, ${fmtTime(n.at, now)}`;
-  const name = `${n.label}${n.cost && n.cost !== 'balanced' ? ` · ${n.cost}` : ''}`;
-  return n.own ? `${name} + ${n.own} of your own changes` : `${name}, saved ${fmtTime(n.at, now)}`;
-}
-// billing modes (lib/billing.mjs): how the Claude account is paid for - a plan's weekly limit or API billing. The pick fills the
-// billing key and the caps that fit it, like a profile; Review changes + Save stay the human step
-function billingBar(d) {
-  const bs = d.billing || [];
-  if (!bs.length) return '';
-  const cur = bs.find(b => b.name === d.billing_now), pick = cur ?? bs.find(b => b.default) ?? bs[0];
-  const opt = b => `<option value="${esc(b.name)}" title="${esc(b.summary)}"${b === pick ? ' selected' : ''}>${esc(b.label)}</option>`;
-  return `<div class="sbilling" id="set-billing" style="flex-basis:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <label>Billing <select data-set-billing data-billing="${esc(JSON.stringify(Object.fromEntries(bs.map(b => [b.name, b.changes]))))}">${bs.map(opt).join('')}</select></label>
-    <button class="ghost" data-act="set-billing">Fill in</button>
-    <span class="small mute" id="set-billing-note">${cur ? `In force: <b>${esc(cur.label)}</b>. ` : 'Not set: Norn treats the account as a plan with a weekly limit. '}${esc(pick.summary)}</span></div>`;
-}
-function profileBar(d, level) {
-  const now = `<p class="small" id="set-profile-now" style="margin:0 0 6px;flex-basis:100%">In force: <b>${esc(profileWords(d.profile_now))}</b></p>`;
-  const ps = d.profiles || [], opt = p => `<option value="${esc(p.name)}" title="${esc(p.summary)}">${esc(p.label)}${p.default ? ' (default)' : ''}</option>`;
-  const lv = (v, t) => `<button class="${v === level ? 'strong' : 'ghost'}" data-set-level="${v}" aria-pressed="${v === level}">${t}</button>`;
-  return `<div class="sprofile card" id="set-profile">${now}${ps.length ? `<label>Start from a profile <select data-set-profile data-profiles="${esc(JSON.stringify(Object.fromEntries(ps.map(p => [p.name, p.changes]))))}">${ps.map(opt).join('')}</select></label>
-    <label>cost <select data-set-cost><option value="cheap">cheap</option><option value="balanced" selected>balanced</option><option value="quality">quality</option></select></label>
-    <button class="ghost" data-act="set-profile">Fill in</button>` : ''}<span class="small mute" id="set-profile-note">${ps.length ? esc(ps[0].summary) : ''}</span>
-    ${billingBar(d)}
-    <span class="lvl">Show ${lv('basic', 'Basic')}${lv('all', 'All')}</span></div>`;
-}
-// fair-slots item 8: Settings > Capacity - the pool as it is now (every project, widgets.mjs capStrip) above the reserve + ceiling rows
-// of every project, and the Undo of the last capacity change while its values are still in force (server.mjs capUndoOf)
-const capPane = d => `${d.capacity?.rows?.length ? `<div class="srow" id="set-capstrip-row" data-search="capacity pool reserve ceiling ${esc(d.capacity.rows.map(r => r.project).join(' '))}" data-mod="0" data-basic="1"><div class="sl">${capStrip(d.capacity, { id: 'set-capstrip', mine: d.project })}</div></div>` : ''}${d.capacity_undo ? `<div class="banner" id="cap-undo">Last capacity change <span class="id">${esc(d.capacity_undo.id)}</span>: ${esc(d.capacity_undo.choice)}. <button data-act="cap-undo" data-project="${esc(d.project)}" data-id="${esc(d.capacity_undo.id)}">Undo</button></div>` : ''}`;
-// RM-26 the mark "below floor": a decision a check-in recorded while its run's model / effort was below the check-in floor
-// (records.mjs made_under.below_floor). A record without made_under is unmarked.
-const BELOW_FLOOR = '<span class="chip warn below-floor">below floor</span>';
-export const decMark = r => (r.data?.made_under?.below_floor ? ` <span class="chip warn below-floor" title="${esc(`made under ${r.data.made_under.model}, effort ${r.data.made_under.effort ?? 'default'}`)}">below floor</span>` : '');
-// RM-26: while the check-in model / effort in force is below the check-in floor (policy checkinBelowFloor) a notice heads Settings;
-// a warning, nothing is refused. The decisions such a check-in records carry the mark (decMark).
-function checkinNotice(rows) {
-  if (!rows?.length) return '';
-  return `<div class="banner" id="checkin-floor-notice"><b>Check-in below the floor.</b> ${rows.map(r => `${r.kind === 'model' ? 'Model' : 'Effort'} ${esc(r.value)} (floor ${esc(r.to)})`).join(' · ')}: ${esc(rows[0].text)}. Its decisions are marked ${BELOW_FLOOR}.</div>`;
-}
-function settings(d, ctx) {
-  const sections = d.sections || [], at = s => (s.section || []).join('/'), sel = sections.some(c => c.id === ctx.setCat) ? ctx.setCat : sections[0]?.id;
-  const nav = sections.map(c => {
-    const rows = d.settings.filter(s => s.section?.[0] === c.id), mods = rows.filter(s => s.modified).length, basicIn = x => !!c.basic || rows.some(s => s.basic && s.section[1] === x);
-    return `<button class="navcat${c.id === sel ? ' on' : ''}" id="nav-${esc(c.id)}" data-setcat="${esc(c.id)}" data-basic="${c.basic || rows.some(s => s.basic) ? 1 : 0}" aria-pressed="${c.id === sel}">${esc(c.label)}${mods ? `<span class="mcount" title="${mods} modified from default">${mods}</span>` : ''}</button>`
-      + `<div class="navsubs">${c.subs.map(x => `<button class="navsub" data-setcat="${esc(c.id)}" data-basic="${basicIn(x.id) ? 1 : 0}" data-setsub="sub-${esc(c.id)}-${esc(x.id)}">${esc(x.label)}</button>`).join('')}</div>`;
-  }).join('');
-  const panes = sections.map(c => {
-    const subs = c.info ? (c.id === 'notify' ? notifyPane(d) + remotePane(d.remote) : filesPane(d)) : c.subs.map(x => {
-      if (x.pane) return syncPane(x, d, ctx.syncOut);
-      const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
-      const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'usage', jump: 'usage-advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
-      return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${x.id === 'capacity' ? capPane(d) : ''}${body}</div>`;
-    }).join('');
-    return `<section class="scat" id="cat-${esc(c.id)}" data-cat="${esc(c.id)}"${c.id === sel ? '' : ' hidden'}><h2>${esc(c.label)}</h2><p class="small mute">${esc(c.help)}</p>${subs}</section>`;
-  }).join('');
-  return `${checkinNotice(d.checkin_below)}${profileBar(d, ctx.setLevel ?? 'basic')}<div class="settings"><aside class="snav"><input type="search" id="set-search" data-set-search placeholder="Search settings  ·  @modified" aria-label="Search settings">${nav}</aside>
-   <div class="spane"><p class="small mute" id="set-nohit" hidden>No setting matches.</p>${panes}</div></div>
-   <div class="savebar"><span class="small" id="dirty-count">No unsaved changes</span><button class="strong" data-act="settings-review" data-project="${esc(d.project)}" data-version="${esc(d.version)}">Review changes</button><button class="ghost" data-act="settings-discard">Discard</button>
-   <span class="small mute">Review shows a diff; Save writes atomically and refuses a stale version (409).</span><div id="settings-diff"></div></div>`;
-}
-
-// ---------- usage (META-OPS-R1 #7): cost per lane / stage / executor / day from /api/usage (engine/lib/cost.mjs) ----------
-/** Group roll-up rows by keys: Claude token types + % summed, Codex / provider tokens apart; sorted by % then Codex tokens. */
-export function usageGroup(rows, keys) {
-  const m = new Map();
-  for (const r of rows) {
-    const k = keys.map(x => r[x]).join('|');
-    let g = m.get(k);
-    if (!g) m.set(k, g = { ...Object.fromEntries(keys.map(x => [x, r[x]])), runs: 0, running: 0, cache_read: 0, cache_create: 0, input: 0, output: 0,
-      pct: null, codex: 0, provider: 0, executors: [] });
-    g.runs += r.runs; g.running += r.running;
-    if (!g.executors.includes(r.executor)) g.executors.push(r.executor);
-    if (r.family === 'claude') { for (const t of ['cache_read', 'cache_create', 'input', 'output']) g[t] += r[t] || 0; if (fin(r.pct)) g.pct = (g.pct ?? 0) + r.pct; }
-    else if (r.family === 'codex') g.codex += r.tokens || 0;
-    else if (r.family === 'provider') g.provider += r.tokens || 0;
-  }
-  return [...m.values()].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || b.codex - a.codex || String(keys.map(x => a[x])).localeCompare(String(keys.map(x => b[x]))));
-}
-const pct2 = n => (fin(n) ? `${n < 0.1 && n > 0 ? n.toFixed(3) : n.toFixed(2)} %` : '-');
-const ofWeek = n => (fin(n) ? `${pct2(n)} of week` : '% of week not known');
-const fmtS = s => (fin(s) ? (s < 90 ? `${Math.round(s)} s` : `${(s / 60).toFixed(1)} min`) : '-');
-function usageTable(id, title, note, rows, keys, maxPct) {
-  const head = keys.map(k => `<th>${esc(k === 'executor' ? 'agent CLI' : k)}</th>`).join('');
-  const body = rows.map(g => `<tr>${keys.map((k, i) => `<td>${i ? esc(g[k]) : `<b>${esc(g[k])}</b>`}</td>`).join('')}
-    <td class="mono">${g.runs}${g.running ? ' ' + chip('running', g.running + ' live') : ''}</td>
-    <td class="small">${g.executors.map(e => chip(exClass(e), e)).join(' ')}</td>
-    <td class="mono">${mTok(g.cache_read)}</td><td class="mono">${mTok(g.cache_create)}</td><td class="mono">${mTok(g.input)}</td><td class="mono">${mTok(g.output)}</td>
-    <td style="width:16%">${fin(g.pct) ? `<span class="mono">${pct2(g.pct)}</span>${meter(g.pct, maxPct)}` : dash}</td>
-    <td class="mono">${g.codex ? mTok(g.codex) : dash}</td><td class="mono">${g.provider ? mTok(g.provider) : dash}</td></tr>`).join('')
-    || `<tr><td colspan="${keys.length + 9}" class="mute">No runs in the window.</td></tr>`;
-  return `<div class="tablecard" id="${esc(id)}"><h3>${esc(title)} <span class="mute small">${esc(note)}</span></h3><table><thead><tr>${head}<th>runs</th><th>agent CLIs</th>
-    <th>cache read</th><th>cache write</th><th>input</th><th>output</th><th>% of weekly Claude limit</th><th>Codex tokens</th><th>other-provider tokens</th></tr></thead><tbody>${body}</tbody></table></div>`;
-}
-const fmtUtc = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
-  return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(t).getUTCDay()]} ${new Date(t).toISOString().slice(0, 16).replace('T', ' ')}Z`; };
-// gap #9: API billing - the project's $ per lane today / last 7 days, the dashboard chats on their own line (ended runs = the CLI's
-// figure, running = a live estimate from tokens at list price, marked ~)
-function apiSpend(s) {
-  if (!s) return '';
-  if (s.error) return `<section class="card" id="usage-spend"><h2>API spend</h2><div class="small mute">${esc(s.error)}</div></section>`;
-  const $ = v => `$${(Number(v) || 0).toFixed(2)}`, lanes = (s.lanes || []).filter(g => g.week > 0 || g.live);
-  const tot = k => lanes.reduce((a, g) => a + g[k], 0) + (s.chats?.[k] || 0);
-  const rows = lanes.map(g => `<tr><td><b>${esc(g.lane)}</b>${g.live ? ' ' + chip('running', 'live') : ''}</td><td class="mono">${g.live ? '~' : ''}${$(g.today)}</td><td class="mono">${g.live ? '~' : ''}${$(g.week)}</td></tr>`).join('');
-  const chat = s.chats && (s.chats.week > 0) ? `<tr id="usage-spend-chats"><td><b>dashboard chats</b></td><td class="mono">${$(s.chats.today)}</td><td class="mono">${$(s.chats.week)}</td></tr>` : '';
-  return `<section class="card" id="usage-spend"><h2>API spend <b>${$(tot('today'))}</b> today <span class="mute small">this project (${esc(s.project ?? '-')}) · today = since local midnight · ${$(tot('week'))} in the last 7 days · per lane · the Overview's 24 h figure is the whole machine's · ~ = a run still running (estimate from its tokens at list price)</span></h2>
-   <table><thead><tr><th>lane</th><th>today</th><th>7 days</th></tr></thead><tbody>${rows + chat || '<tr><td colspan="3" class="mute">No spend in 7 days.</td></tr>'}</tbody></table></section>`;
-}
-function usagePart(p, ctx) {
-  const t = p.totals, c = p.checkins, k = p.calib, rows = p.rows || [], sec = p.secondary;
-  const head = p.window === 'week' ? `since the weekly reset ${fmtUtc(p.since)}` : `runs started in the last ${p.days} days (your weekly reset time is not set in Settings, so the window rolls)`;
-  const secRows = sec ? `<span class="mute small">rolling ${sec.rolling.days} days</span><div class="mono" id="usage-rolling">${ofWeek(sec.rolling.pct)} · ${plural(sec.rolling.runs, 'run')} · ${mTok(sec.rolling.cache_read)} cache read</div>
-     <span class="mute small">last 24 h</span><div class="mono" id="usage-24h">${ofWeek(sec.last24h.pct)} · ${plural(sec.last24h.runs, 'run')} · ${mTok(sec.last24h.cache_read)} cache read</div>` : '';
-  const maxPct = Math.max(0.01, ...usageGroup(rows, ['lane']).map(g => g.pct ?? 0));
-  // META-OPS-R3: the headline is the account's number (every Claude session since the reset) when the cache has it; lanes stay runs
-  const A = p.account, hp = p.headline ? p.headline.pct : t.claude.pct, rf = ctx.refresh || {}, out = A ? A.outside : null;
-  const acctRows = A ? `<span class="mute small">account, since the weekly reset</span><div class="mono"><b>${ofWeek(A.pct)}</b> <span class="small mute">every Claude session on your account</span> · ${int(A.messages)} messages · ${mTok(A.cache_read)} cache read · <span class="mute">cache age ${fmtS(A.age_s)}: counted ${esc(fmtUtc(A.at))}${rf.running ? ', refreshing' : ''}</span></div>
-     <span class="mute small">runs Norn started</span><div class="mono">${ofWeek(t.claude.pct)} · ${plural(t.claude.runs, 'run')} <span class="small mute">(the lane rows below)</span></div>
-     <span class="mute small">outside runs (interactive)</span><div class="mono"><b>${ofWeek(out.pct)}</b> · ${mTok(out.cache_read)} cache read${out.clamped ? ` <span class="small">(Norn's runs count more than the account shows, so this reads 0; the difference is ${out.raw_pct.toFixed(2)} %)</span>` : ''} <span class="small mute">your own Claude sessions, not started by Norn</span></div>`
-    : `<span class="mute small">account: n/a</span><div class="small mute">${rf.running ? 'counting your whole account (the first count reads every Claude session file: minutes)' : 'this provider has no account-wide count'} - until then the number above counts only the runs Norn started</div>`;
-  const pt = c.per_tick, l24 = c.last24h;
-  const ck = c.ticks ? `<div class="kv">
-     <span class="mute small">last 24 h</span><div><span class="big">${l24.ticks}</span> check-ins · ${mTok(l24.cache_read)} cache read · ${mTok(l24.cache_create)} cache write · <b>${ofWeek(l24.pct)}</b></div>
-     <span class="mute small">check-ins per day</span><div><b>${c.ticks_per_day.toFixed(1)}</b> <span class="mute">(${c.ticks} in ${(c.days ?? p.days).toFixed(1)} days)</span> · ${fmtS(c.mean_s)} each on average</div>
-     <span class="mute small">per check-in, on average</span><div class="mono">${mTok(pt.cache_read)} cache read · ${mTok(pt.cache_create)} cache write · ${int(pt.input)} input · ${mTok(pt.output)} output · ${ofWeek(pt.pct)}</div>
-     <span class="mute small">% of week per day</span><div><b>${pct2(c.pct_per_day)}</b> <span class="small mute">what the check-ins cost you each day</span></div></div>`
-    : '<div class="small mute">No check-in with measured usage in this window.</div>';
-  return `<div id="usage-${esc(p.project)}">${ctx.project === 'all' ? `<h2>${esc(p.project)}</h2>` : ''}${apiSpend(p.spend)}
-   <div class="grid2"><section class="card" id="usage-summary"><h2>${fin(hp) ? `Usage <b style="white-space:nowrap">${pct2(hp)}</b> of your weekly Claude limit` : 'Usage: not known yet - set your weekly limit in Settings > Usage calibration'} <span class="mute small">${A ? 'your whole Claude account' : 'the runs Norn started'}, ${esc(head)}${p.next_reset ? ` · next reset ${esc(fmtUtc(p.next_reset))}` : ''}</span></h2>
-     <div class="kv" id="usage-account">${acctRows}</div><div class="kv">${secRows}<span class="mute small">Claude tokens</span><div class="mono">${plural(t.claude.runs, 'run')} · ${mTok(t.claude.cache_read)} cache read · ${mTok(t.claude.cache_create)} cache write · ${mTok(t.claude.input)} input · ${mTok(t.claude.output)} output</div>
-     <span class="mute small">Codex tokens</span><div class="mono">${plural(t.codex.runs, 'run')} · ${mTok(t.codex.tokens)} tokens <span class="small mute">(Codex has its own plan: totals only, not in the Claude %)</span></div>
-     <span class="mute small">other providers</span><div class="mono">${plural(t.provider.runs, 'run')} · ${mTok(t.provider.tokens)} tokens <span class="small mute">(agents on your own API keys; not in the Claude %)</span></div>
-     <span class="mute small">not measured</span><div class="small">${plural(t.unmeasured, 'run')} <span class="mute">(the agent reported no usage and left no session file to count)</span></div>
-     <span class="mute small">scale</span><div class="small">${fin(k.cacheR_per_pct) ? `${mTok(k.cacheR_per_pct)} cache-read tokens = 1 % of your week` : 'not set, so no % is shown: enter the % from your claude.ai usage page in Settings > Usage calibration (or norn calib --pct N)'}
-       <div class="mute">other token types count by price, in cache reads: 1 input = ${k.weights.input}, 1 output = ${k.weights.output}, 1 cache write = ${k.weights.cache_create_1h} (kept 1 h) / ${k.weights.cache_create_5m} (kept 5 min)${fin(k.mix) ? ` · this window: 1 token = ${k.mix.toFixed(3)} cache reads on average` : ''}</div></div>
-     <span class="mute small">counted</span><div class="small mute">${plural(p.cost.runs, 'run')} in ${p.cost.ms.toFixed(1)} ms · ${mTok(p.cost.bytesRead)} bytes of session files read</div></div></section>
-   <section class="card" id="usage-checkins"><h2>Check-ins <span class="mute small">the short agent turns that review finished runs and start the next (norn tick, or the scheduler every 15 min)</span></h2>${ck}</section></div>
-   ${adviceStrip(p.advice, ctx)}
-   ${classCard(p.classes, p.advice)}
-   ${replayCard(p.replay)}
-   ${weekCard(p.week)}
-   ${usageTable('usage-lane', 'By lane', 'each line of work (its own branch), in this window', usageGroup(rows, ['lane']), ['lane'], maxPct)}
-   ${usageTable('usage-stage', 'By lane and stage', 'each step of a lane', usageGroup(rows, ['lane', 'stage']), ['lane', 'stage'], maxPct)}
-   ${usageTable('usage-executor', 'By agent CLI', 'claude, codex, or fake (the free rehearsal)', usageGroup(rows, ['executor']), ['executor'], maxPct)}
-   ${usageTable('usage-day', 'By day', 'the day the run started (UTC)', usageGroup(rows, ['day']).sort((a, b) => String(b.day).localeCompare(String(a.day))), ['day'], maxPct)}</div>`;
-}
-// META-GUARD R1 item 2: where the week's tokens went - per lane + stage, outcomes, merged, per merged branch; the top 5 spenders with why
-const pcA = x => (fin(x) ? '~' + pct2(x) : dash);
-function weekCard(w) {
-  if (!w || w.error) return w?.error ? `<div class="tablecard" id="usage-week"><h3>Where the tokens went</h3><div class="small mute">${esc(w.error)}</div></div>` : '';
-  const body = (w.rows || []).map(r => `<tr><td><b>${esc(r.lane)}</b></td><td>${esc(r.stage)}</td><td class="mono">${r.runs}${r.running ? ' ' + chip('running', r.running + ' live') : ''}</td>
-    <td class="mono">${mTok(r.tokens.input)}</td><td class="mono">${mTok(r.tokens.cache_create)}</td><td class="mono">${mTok(r.tokens.cache_read)}</td><td class="mono">${mTok(r.tokens.output)}</td>
-    <td class="mono">${pcA(r.pct)}</td><td class="small">${r.outcomes.done} done · ${r.outcomes.stopped} stopped · ${r.outcomes.handoff} handoff</td><td class="mono">${r.merged}</td>
-    <td class="mono small">${r.per_merged ? `${mTok(r.per_merged.cache_read)} cache read · ${mTok(r.per_merged.output)} out${fin(r.per_merged.pct) ? ' · ' + pcA(r.per_merged.pct) : ''}` : dash}</td></tr>`).join('')
-    || '<tr><td colspan="11" class="mute">No runs in the window.</td></tr>';
-  const top = (w.top || []).map(t => `<li><span class="id">${esc(t.id)}</span> <b>${esc(t.lane)}</b> ${esc(t.stage)} ${chip(t.outcome === 'done' ? 'done' : t.state === 'running' ? 'running' : 'idle', t.outcome ?? t.state)} <span class="mono">${pcA(t.pct)}</span> · ${mTok(t.cache_read)} cache read <span class="small mute">- ${esc(t.why)}</span></li>`).join('');
-  return `<div class="tablecard" id="usage-week"><h3>Where the tokens went <span class="mute small">${w.window === 'week' ? 'since the weekly reset' : 'last 7 days'} · ${plural(w.totals.runs, 'run')} · ${fin(w.totals.pct) ? pcA(w.totals.pct) + ' of your weekly Claude limit' : '% of your weekly Claude limit not known'} · ${w.totals.merged} merged into main · the four token types are counted apart, never added up</span></h3>
-   ${w.counts ? `<p class="small" id="usage-counts" style="padding:0 12px">${esc(w.counts.text)}</p>` : ''}
-   <table><thead><tr><th>lane</th><th>stage</th><th>runs</th><th>input</th><th>cache write</th><th>cache read</th><th>output</th><th>~% of week</th><th>how the runs ended</th><th>merged</th><th>tokens per merged branch</th></tr></thead><tbody>${body}</tbody></table>
-   <h3 style="margin-top:10px">Top 5 spenders <span class="mute small">the runs that used the most; why = turns x average context size (every turn re-reads the whole context)</span></h3><ol id="usage-top" class="small">${top || '<li class="mute">none</li>'}</ol></div>`;
-}
-// META-TEND P2 (REPORT 4.3): what each kind of work costs - per FINISHED task (a stage that reached DONE; its resumes, hand-offs and
-// fix rounds counted in), by kind of work, by model, and the full class x executor x model x effort grid; the week's Fable runs (Q4).
-// On the shared widgets (META-TEND P6, REPORT 5.3): per kind and per model = `bars`, the grid's cells = `meter`. cost = weighted tokens in cache-read units.
-const rate = x => (fin(x) ? Math.round(100 * x) + ' %' : '-');
-const srcChip = r => (r.src === 'inferred' ? ' ' + chip('idle', 'inferred') : '');
-function classCard(c, adv = null) {
-  const advOn = cls => guardChip((adv?.cards || []).filter(x => x.id === cls && !x.decided).map(x => ({ severity: x.severity, why: x.title })), { tab: 'usage', jump: 'usage-advice' });   // META-TEND P6: the chip in place
-  if (!c) return '';
-  if (c.error) return `<div class="tablecard" id="usage-class"><h3>What each kind of work costs</h3><div class="small mute">${esc(c.error)}</div></div>`;
-  const maxCost = Math.max(1, ...c.byClass.map(r => r.cost_per_done ?? 0), ...c.byClassModel.map(r => r.cost_per_done ?? 0));
-  const ended = r => `${r.done} of ${r.stages} done · ${rate(r.stop_rate)} stopped · ${rate(r.merged_rate)} merged`;
-  const none = n => `<tr><td colspan="${n}" class="mute">No finished stage in the window.</td></tr>`;
-  const noneP = '<p class="small mute" style="padding:0 12px">No finished stage in the window.</p>';
-  const kind = c.byClass.length ? bars(c.byClass.map(r => ({ label: r.label, value: r.cost_per_done ?? 0,
-    note: `${ended(r)} · ${fin(r.runs_per_done) ? r.runs_per_done.toFixed(1) : '-'} runs per finished task${srcChip(r)}${advOn(r.class)}` })), { id: 'usage-class-kind', max: maxCost, fmt: v => v ? mTok(v) : '-' }) : noneP;
-  const model = c.byClassModel.length ? bars(c.byClassModel.map(r => ({ label: `${r.label} · ${r.model}`, value: r.cost_per_done ?? 0, note: `${ended(r)}${srcChip(r)}` })),
-    { id: 'usage-class-model', max: maxCost, fmt: v => v ? mTok(v) : '-' }) : noneP;
-  const maxCr = Math.max(1, ...c.rows.map(r => r.cache_read.p90 ?? 0));
-  const grid = c.rows.map(r => `<tr><td><b>${esc(r.label)}</b>${srcChip(r)}</td><td>${esc(r.executor)}</td><td>${esc(r.model)}</td><td>${esc(r.effort)}</td>
-    <td class="mono">${r.stages}</td><td class="mono">${r.runs}</td><td class="mono">${rate(r.done_rate)}</td><td class="mono">${rate(r.stop_rate)}</td><td class="mono">${rate(r.merged_rate)}</td>
-    <td style="width:14%">${fin(r.cache_read.median) ? `<span class="mono">${mTok(r.cache_read.median)} / ${mTok(r.cache_read.p90)}</span>${meter(r.cache_read.median, maxCr, r.cache_read.p90)}` : dash}</td>
-    <td class="mono">${fin(r.output.median) ? mTok(r.output.median) : dash}</td><td class="mono">${fin(r.cost_per_done) ? mTok(r.cost_per_done) : dash}</td>
-    <td class="small mute">${esc(r.basis.join(', '))}</td></tr>`).join('') || none(13);
-  const f = c.fable || { count: 0, runs: [] };
-  const fable = `<div class="small" id="usage-fable" style="padding:6px 12px">${chip(f.count ? 'warn' : 'idle', plural(f.count, 'Fable run'))} this window <span class="mute">- Fable is the cost class: the hardest long work only${f.count ? ': ' + f.runs.map(esc).join(', ') : ''}</span></div>`;
-  return `<div class="tablecard" id="usage-class"><h3>What each kind of work costs <span class="mute small">per finished task</span></h3>
-   <div class="small mute" style="padding:0 12px">A finished task = a stage that reached DONE, its resumes, hand-offs and fix rounds counted in. Cost = weighted tokens in cache-read units (all its stages, finished or not, / finished ones). ${plural(c.open, 'stage')} still open left out.${c.inferred_runs ? ` ${plural(c.inferred_runs, 'run')} from before the class stamp: class inferred, kept in their own rows.` : ''}</div>
-   ${fable}
-   <h3 style="margin-top:6px">Per kind of work <span class="mute small">cost per finished task</span></h3>${kind}
-   <h3 style="margin-top:10px">By model <span class="mute small">cost per finished task</span></h3>${model}
-   <h3 style="margin-top:10px">Class x agent x model x effort <span class="mute small">cache reads per finished task: median / p90 (the bar's tick)</span></h3>
-   <table id="usage-class-grid"><thead><tr><th>kind of work</th><th>agent</th><th>model</th><th>effort</th><th>stages</th><th>runs</th><th>done</th><th>stopped</th><th>merged</th><th>cache read</th><th>output</th><th>cost</th><th>class from</th></tr></thead><tbody>${grid}</tbody></table></div>`;
-}
-// META-TEND P4: the Advice strip - the open cards (the Inbox shows the same), the vendor sources with the day each was read
-function adviceStrip(a, ctx) {
-  if (!a) return '';
-  if (a.error) return `<section class="card" id="usage-advice"><h2>Advice</h2><div class="small mute">${esc(a.error)}</div></section>`;
-  const srcs = [...new Map((a.sources || []).map(s => [s.ref + s.read, s])).values()];
-  const dated = srcs.map(s => `${esc(s.ref)} ${esc(s.read)}${s.stale ? ' ' + chip('warn', 'stale') : ''}`).join(' · ');
-  const cards = (a.cards || []).map(c => adviceRow({ ...c, project: a.project }, { ...ctx, project: a.project })).join('');
-  return `<section class="card" id="usage-advice"><h2>Advice <span class="mute small">${plural((a.cards || []).length, 'open card')}${a.decided ? ` · ${a.decided} decided` : ''} · what the vendors say vs what the work cost here</span></h2>
-   ${cards || `<div class="small">${chip('ok', 'all clear')} <span class="mute">No advice: no class sits above the vendor's starting effort or on a pricier model than its work needs.</span></div>`}
-   <div class="small mute" id="usage-advice-sources" style="margin-top:6px">Vendor guidance (engine/presets/advice/models.json), read: ${dated || '-'}${a.stale?.length ? ` - ${plural(a.stale.length, 'source')} past the re-read date` : ''}</div></section>`;
-}
-// META-TEND P4 (owner Q2): the replay test - recorded check-in rulings vs cheaper models on the same frozen inputs (norn eval report)
-const VERDICT = { agree: 'ok', harmless: 'idle', refused: 'refused', recoverable: 'warn', harmful: 'bad', error: 'bad' };
-// META-CHECKIN-GUARDS R1: a tick's verdicts as one split bar (the shared stack widget; refused = a guard refused the move in code)
-const VERDICT_PARTS = [['agree', 'agree'], ['harmless', 'harmless'], ['refused', 'refused by a guard'], ['recoverable', 'recoverable'], ['harmful', 'harmful'], ['errors', 'error']];
-const verdictStack = (t, id) => stack(VERDICT_PARTS.map(([k, label]) => ({ key: 'v-' + k, label, value: t[k] ?? 0 })), { id });
-function guardsBlock(r, short) {
-  if (!r.before) return '';
-  const g = r.guard_history, rows = r.arms.map((a, i) => { const b = r.before.arms_total.find(t => t.arm === a), t = r.arms_total.find(x => x.arm === a);
-    return `<tr><td><b>${esc(short(a))}</b></td><td data-label="before">${b ? verdictStack(b, `usage-replay-before-${i}`) : dash}</td><td data-label="after">${t ? verdictStack(t, `usage-replay-after-${i}`) : dash}</td></tr>`; }).join('');
-  return `<h3 style="margin-top:8px">Before / after the check-in guards <span class="mute small">the same stored moves graded again: a move a guard refuses in code never happens (exit 6 lane busy, exit 2 owner-only ask)</span></h3>
-   <table id="usage-replay-guards"><thead><tr><th>model</th><th>before</th><th>after</th></tr></thead><tbody>${rows}</tbody></table>
-   ${g ? `<div class="small mute" id="usage-replay-history">Guard check on the recorded history: ${g.dispatches} check-in dispatches, ${g.busy.length} refused by "lane busy"${g.dup.length ? ` (${g.dup.length} more meet the older duplicate check first)` : ''}; ${g.rulings} check-in rulings of a question, ${g.owner_only.length} refused by "owner-only ask".</div>` : ''}`;
-}
-function replayCard(r) {
-  if (!r || !r.arms?.length) return '';
-  const short = a => a.replace(/^claude:claude-/, '').replace(/:/g, ' ');
-  const tot = bars(r.arms_total.map(t => ({ label: `${short(t.arm)} (${t.ticks} ticks)`, value: t.agree, note: `${t.harmless} harmless · ${t.refused ?? 0} refused · ${t.recoverable} recoverable · ${t.harmful} harmful · ${t.errors} errors · ${mTok(t.tokens)} tokens` })),
-    { id: 'usage-replay-arms', max: Math.max(1, ...r.arms_total.map(t => t.ticks)), fmt: v => `${v} agree` });
-  const clsNames = [...new Set(r.classes.map(c => c.cls))];
-  const per = clsNames.map(k => `<tr><td><b>${esc(k)}</b></td>${r.arms.map(a => { const c = r.classes.find(x => x.arm === a && x.cls === k);
-    const off = c ? ['refused', 'harmful'].filter(x => c[x]).map(x => `${c[x]} ${x}`).join(' · ') : '';
-    return `<td style="width:30%">${c ? `<span class="mono">${c.agree} of ${c.recorded}</span>${meter(c.agree, Math.max(1, c.recorded))}${off ? `<div class="small mute">${esc(off)}</div>` : ''}` : dash}</td>`; }).join('')}</tr>`).join('');
-  const cell = x => (x ? `${chip(VERDICT[x.verdict] || 'idle', x.verdict)}<div class="small">${x.cand.map(esc).join('<br>')}</div>${x.verdict !== 'agree' && x.why?.length ? `<div class="small mute">${x.why.slice(0, 4).map(esc).join('<br>')}${x.why.length > 4 ? `<br>+${x.why.length - 4} more` : ''}</div>` : ''}` : dash);
-  const side = r.ticks.map(t => `<tr><td class="id">${esc(t.tick)}</td><td class="small">${esc(t.stratum)}</td><td data-label="recorded" class="small">${t.recorded.length ? t.recorded.map(esc).join('<br>') : '<span class="mute">nothing</span>'}</td>${r.arms.map(a => `<td data-label="${esc(short(a))}">${cell(t.arms[a])}</td>`).join('')}</tr>`).join('');
-  return `<div class="tablecard" id="usage-replay"><h3>Cheaper check-ins: the replay test <span class="mute small">recorded check-ins re-run offline on the same inputs · ${esc(r.project ?? '')} · ${esc(String(r.at ?? '').slice(0, 16))}</span></h3>
-   <h3 style="margin-top:4px">Ticks that agree, per model</h3>${tot}
-   ${guardsBlock(r, short)}
-   <h3 style="margin-top:8px">Agreement per class of ruling</h3><table id="usage-replay-class"><thead><tr><th>ruling</th>${r.arms.map(a => `<th>${esc(short(a))}</th>`).join('')}</tr></thead><tbody>${per}</tbody></table>
-   <h3 style="margin-top:8px">Side by side <span class="mute small">the recorded ruling vs each cheaper model; ${plural(r.choices?.length ?? 0, 'same-lane ruling')} with a different choice</span></h3>
-   <table id="usage-replay-side"><thead><tr><th>tick</th><th>class</th><th>recorded</th>${r.arms.map(a => `<th>${esc(short(a))}</th>`).join('')}</tr></thead><tbody>${side}</tbody></table></div>`;
-}
-function usage(d, ctx) {
-  const parts = d.parts || [];
-  return `<div class="banner">How much of your Claude plan the work used. "% of week" = the share of your weekly Claude usage limit, estimated from token counts (the scale below). Token types: input (new text sent to the model), output (text it wrote), cache write (context stored for reuse), cache read (stored context re-read on every turn, usually the biggest). k = thousand, M = million tokens. Codex has its own plan: only its token totals are shown.
-   ${d.cached ? 'Updated every 15 s.' : `Counted in ${fin(d.ms) ? d.ms.toFixed(0) : '-'} ms.`}</div>
-   ${parts.map(p => usagePart(p, { ...ctx, refresh: d.account_refresh }) + forecastCard((d.forecasts || {})[p.project], ctx.now)).join('') || '<p class="mute">No project.</p>'}`;
-}
-
-// ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17): the tree with a NOW line ----------
-// One tree per project from /api/roadmap (derived status, never typed). Per theme: the past folded above a NOW rule, the present
-// rows in full, the future folded below. The scope strip is a tap-to-filter switch (Urd was / Verdandi is / Skuld shall be; classic:
-// Past / Now / Next; tap the active one again = all; the scope lives in the URL hash). Every row carries a time line: first activity
-// -> now with one stretch per run (colour = run state) and a NOW tick, one shared window per theme; planned rows a dashed stub.
-// The views list: a switch is drawn only when there is more than one. S2b (owner Q-17): the board (Urd was / Verdandi is / Skuld
-// shall be columns, the themes as rows aligned across them) is the second view; the tree stays the default.
-export const RM_VIEWS = [['tree', 'Tree'], ['board', 'Board']];
-const rmView = f => (RM_VIEWS.some(v => v[0] === f?.view) ? f.view : RM_VIEWS[0][0]);
-export const RM_SCOPES = ['past', 'present', 'future'];
-const RM_ST = { shipped: ['shipped', 'ok'], dropped: ['dropped', 'idle'], building: ['building', 'running'], waiting: ['needs you', 'needs'], built: ['built, not merged', 'warn'],
-  merged: ['merged, not installed', 'warn'], queued: ['queued', 'idle'], planned: ['planned', 'idle'], idea: ['idea', 'idle'] };
-const RM_SG = { done: 'ok', live: 'running', queued: 'idle', planned: 'plan', stopped: 'bad', handoff: 'warn', ended: 'warn', killed: 'bad', lost: 'bad' };
-const RM_WORDS = { norn: [['Urd', 'was'], ['Verdandi', 'is'], ['Skuld', 'shall be']], classic: [['Past', 'done'], ['Now', 'in flight'], ['Next', 'planned']] };
-const RM_NOW = 88;   // % of a time line: the theme window 0 .. 88, NOW at 88, the future side (stubs, no dates) 88 .. 100
-/** the scope after a tap: the tapped one, or all (null) when it was already active */
-export const rmScopeNext = (cur, tapped) => (cur === tapped ? null : tapped);
-// the hash: the tree keeps the S2 words (#past, #rm-RM-3); another view is a prefix (#board, #board-past, #board-rm-RM-3)
-const rmPre = view => (view && view !== RM_VIEWS[0][0] && RM_VIEWS.some(v => v[0] === view) ? view : '');
-export const rmHash = (scope, view) => { const p = rmPre(view), s = RM_SCOPES.includes(scope) ? scope : ''; return p || s ? '#' + [p, s].filter(Boolean).join('-') : ''; };
-/** the whole Roadmap hash from its state: a deep link wins over the scope; the view rides along */
-export const rmUrlHash = (rm = {}) => (rm.item ? `#${rmPre(rm.view) ? rmPre(rm.view) + '-' : ''}rm-${rm.item}` : rmHash(rm.scope, rm.view));
-/** '#past' -> { scope }, '#rm-RM-3' -> { item } (a deep link), '#board-past' -> { view, scope }, anything else -> {} */
-export function parseRmHash(h) {
-  let s = String(h || '').replace(/^#/, '');
-  const v = RM_VIEWS.find(([k]) => s === k || s.startsWith(k + '-'))?.[0], o = v ? { view: v } : {};
-  if (v) s = s.slice(v.length + 1);
-  if (!s) return o;
-  if (RM_SCOPES.includes(s)) return { ...o, scope: s };
-  const m = s.match(/^rm-(RM-(?:[a-z][a-z0-9]{0,15}-)?\d+)$/);
-  return m ? { ...o, item: m[1] } : {};
-}
-/** one item against the filters (scope, theme, status, live only, drift only, text over title / id / links / branches); pure */
-export function rmMatch(i, f = {}, theme = null) {
-  if (f.scope && i.phase !== f.scope) return false;
-  if (f.theme && theme && f.theme !== theme) return false;
-  if (f.status && i.status !== f.status) return false;
-  if (f.live && !(i.live || []).length) return false;
-  if (f.drift && !(i.flags?.drift || []).length) return false;
-  const q = String(f.q || '').trim().toLowerCase();
-  if (q && !q.split(/\s+/).every(w => [i.title, i.id, ...(i.links || []), ...(i.branches || []).map(b => b.name)].join(' ').toLowerCase().includes(w))) return false;
-  return true;
-}
-const rmFiltered = f => !!(f.scope || f.theme || f.status || f.live || f.drift || String(f.q || '').trim());
-const rmAgo = (iso, now) => { if (!iso) return ''; const d = (now - Date.parse(iso)) / 864e5; return d < 1 ? `${Math.max(1, Math.round(d * 24))} h ago` : `${Math.round(d)} d ago`; };
-const rmDay = iso => (iso ? new Date(iso).toISOString().slice(5, 10) : '');
-const rmFlat = (ns, depth = 0) => ns.flatMap(n => [...(n.kind === 'item' ? [{ ...n, depth }] : []), ...rmFlat(n.children || [], n.kind === 'item' ? depth + 1 : depth)]);
-// an id as the dashboard's id chip: DIR / DEC / Q / RUN / L: jump to their tab, DLV opens the drawer
-function rmRid(id, ctx) {
-  if (/^DLV-/.test(id)) return `<a class="rid r-dlv" href="#" data-dlv="${esc(id)}" data-project="${esc(ctx.project)}">${esc(id)}</a>`;
-  const k = id.split(/[-:]/)[0].toLowerCase();
-  return `<a class="rid r-${k === 'l' ? 'l' : esc(k)}" href="#" data-rid="${esc(id)}">${esc(id)}</a>`;
-}
-const rmChip = i => `<span class="chip ${(RM_ST[i.status] || ['', 'idle'])[1]}">${esc((RM_ST[i.status] || [i.status])[0])}</span>${i.flags?.claimed ? `<span class="chip idle claimed" title="${esc(i.flags.claimed)}">claimed</span>` : ''}`;
-const rmLive = (i, ctx) => (i.live || []).map(id => `<span class="rmlive" role="button" tabindex="0" data-feed="${esc(id)}" data-project="${esc(ctx.project)}" title="open the live feed"><i></i>${esc(id)}</span>`).join('');
-const rmProg = i => (i.progress?.total ? `<span class="rmprog" title="stages DONE + branches at the target, of all"><span class="bar"><i style="width:${Math.round(100 * i.progress.done / i.progress.total)}%"></i></span>${i.progress.done}/${i.progress.total}</span>` : '');
-function rmStages(i, max = 7) {
-  const real = (i.stages || []).filter(s => s.state !== 'planned'), plan = (i.stages || []).filter(s => s.state === 'planned');
-  const cut = Math.max(0, real.length - max), shown = real.slice(cut).concat(plan);
-  if (!shown.length) return '';
-  return `<div class="rmstages">${cut ? `<span class="mute small">+${cut} earlier</span>` : ''}${shown.map(s => `<span class="rmst sg-${RM_SG[s.state] || 'idle'}" title="${esc(s.lane ? `lane ${s.lane}, ` : '')}${s.runs || 0} run(s)${s.run ? `, latest ${s.run}` : ''}"><i></i>${esc(s.key)}<small>${esc(s.state)}</small></span>`).join('')}</div>`;
-}
-function rmLinks(i, ctx) {
-  const by = k => (i.links || []).filter(t => t.startsWith(k + ':')).map(t => t.slice(k.length + 1));
-  const ids = [...by('dir'), ...by('dec'), ...by('q'), ...by('ep'), ...by('run'), ...by('dlv'), ...by('lane').map(l => 'L:' + l)];
-  const shown = ids.slice(0, 8).map(id => rmRid(id, ctx)).join(' ') + (ids.length > 8 ? ` <span class="mute small">+${ids.length - 8}</span>` : '');
-  const known = new Set((i.branches || []).map(b => b.name));
-  const br = [...(i.branches || []), ...by('branch').filter(b => !known.has(b)).map(name => ({ name, state: null }))].slice(0, 3)
-    .map(b => `<span class="rmbr b-${esc(b.state || 'linked')}">${esc(b.name)}${b.dlv ? ' ' + rmRid(b.dlv, ctx) : ''}${b.state ? ` <small>${esc(b.state === 'done' ? 'not on main' : b.state)}</small>` : ''}</span>`).join(' ');
-  return [shown, br].filter(Boolean).join(' ');
-}
-/** the theme's shared time window: the oldest first activity (or evidence) of any of its items .. now; null when none has a date */
-function rmWindow(items, now) {
-  const ts = items.flatMap(i => [i.first, i.last_evidence]).filter(Boolean).map(Date.parse).filter(Number.isFinite);
-  if (!ts.length) return null;
-  const t0 = Math.min(now, ...ts);
-  return { t0, span: Math.max(now - t0, 36e5), now };
-}
-const rmPct = x => Math.round(x * 10) / 10;
-/** one row's time line: a track to NOW, the item's thread, one stretch per run, a knot for dated evidence without runs, a stub for the future */
-function rmTime(i, win) {
-  const x = t => rmPct(RM_NOW * Math.min(1, Math.max(0, (t - win.t0) / win.span)));
-  const spans = win ? (i.spans || []) : [];
-  const parts = [];
-  if (spans.length) {
-    const a = x(Date.parse(spans[0].from)), end = i.phase === 'past' ? Math.max(...spans.map(s => (s.to ? Date.parse(s.to) : win.now))) : win.now;
-    parts.push(`<i class="rmthr" style="left:${a}%;width:${rmPct(x(end) - a)}%"></i>`);
-    for (const s of spans) {
-      const l = x(Date.parse(s.from)), r = s.to ? x(Date.parse(s.to)) : RM_NOW;
-      parts.push(`<i class="rmsp sg-${RM_SG[s.state] || 'idle'}" style="left:${l}%;width:${rmPct(r - l)}%" title="${esc(`${s.run} ${s.state} ${rmDay(s.from)}${s.to ? ' to ' + rmDay(s.to) : ', live'}`)}"></i>`);
-    }
-  } else if (win && i.last_evidence) parts.push(`<i class="rmknot" style="left:${x(Date.parse(i.last_evidence))}%" title="${esc('evidence ' + rmDay(i.last_evidence))}"></i>`);
-  if (i.phase === 'future' || (i.stages || []).some(s => s.state === 'planned') || (i.queued || []).length) parts.push('<i class="rmstub"></i>');
-  const label = spans.length ? `${spans.length} run${spans.length === 1 ? '' : 's'} since ${rmDay(spans[0].from)}` : i.phase === 'future' ? `${i.status}, no dates yet` : 'no runs';
-  return `<div class="rmtl${spans.length ? '' : ' empty'}" role="img" aria-label="${esc('time line: ' + label)}" title="${esc(label)}"><i class="rmtrack"></i>${parts.join('')}<i class="rmnow"></i></div>`;
-}
-const rmHead = (i, ctx, par, compact) => `<div class="rmh">${rmChip(i)}${par}<b class="rmt">${esc(i.title)}</b><span class="id">${esc(i.id)}</span>${homeChip(i)}${pendingChips(i)}${i.horizon ? `<span class="tg tg-hz">${esc(i.horizon)}</span>` : ''}${rmLive(i, ctx)}${(i.flags?.drift || []).length ? '<span class="chip bad">drift</span>' : ''}${i.stuck?.flag ? `<span class="chip bad" title="${esc('stuck since ' + i.stuck.flag.ts.slice(0, 16) + 'Z: ' + i.stuck.flag.why.join(', ') + ' - further rounds wait for an approach review')}">stuck</span>` : ''}${compact ? '' : rmProg(i)}${rmEditBtn(i)}</div>`;
-function rmRow(i, ctx, win, compact) {
-  const f = ctx.rm || {}, hit = f.item === i.id ? ' hit' : '';
-  const par = i.depth ? `<span class="rmpar mute small" title="nested item">${'&#8250; '.repeat(i.depth)}</span>` : '';
-  const head = rmHead(i, ctx, par, compact);
-  const why = `<span class="mute">${esc(i.why)}${compact && i.last ? ' · ' + rmAgo(i.last, ctx.now) : ''}${i.flags?.idle != null ? ` · idle ${i.flags.idle} d` : ''}${i.stuck?.runs ? ` · ${i.stuck.runs} runs, ${i.stuck.days} days, ${i.stuck.stopped_row} stopped in a row` : ''}</span>`;   // META-CATCH S1 (stuck.mjs)
-  const body = compact ? `<div class="rmw small">${why} ${rmLinks(i, ctx)}</div>`
-    : `<div class="rmw small">${why} ${rmLinks(i, ctx)}</div>${rmStages(i)}${(i.flags?.drift || []).length || (i.flags?.gone || []).length ? `<div class="rmdrift">${i.flags.drift.map(d => `<div>Drift: ${esc(d)}</div>`).join('')}${(i.flags.gone || []).map(g => `<div>Link gone: ${esc(g)}</div>`).join('')}</div>` : ''}`;
-  return `<div class="rmi${compact ? ' c' : ''} ph-${esc(i.phase)}${hit}" id="rm-${esc(i.id)}" data-rm-row>${head}${rmTime(i, win)}${body}</div>`;   // desktop: the time line in its own column; phone: under the title
-}
-const rmFoldText = (items, phase) => (phase === 'past' ? [['shipped', 'shipped'], ['dropped', 'dropped']] : [['queued', 'queued'], ['planned', 'planned'], ['idea', 'idea']])
-  .map(([k, w]) => [items.filter(i => i.status === k).length, w]).filter(([n]) => n).map(([n, w]) => (w === 'idea' ? plural(n, 'idea') : `${n} ${w}`)).join(' · ');
-const rmFutOrder = i => ['queued', 'planned', 'idea'].indexOf(i.status) * 10 + ({ now: 0, next: 1, later: 3 }[i.horizon] ?? 2);
-const RM_SORT = { past: (a, b) => String(b.last || '').localeCompare(String(a.last || '')), present: (a, b) => ((b.live || []).length - (a.live || []).length) || String(b.last || '').localeCompare(String(a.last || '')),
-  future: (a, b) => rmFutOrder(a) - rmFutOrder(b) };
-const rmPhase = (xs, k) => xs.filter(i => i.phase === k).sort(RM_SORT[k]);
-function rmTheme(t, d, ctx, nThemes) {
-  const f = ctx.rm || {}, now = ctx.now, filtered = rmFiltered(f);
-  const all = rmFlat(t.children || []), win = rmWindow(all, Date.parse(d.generated) || now);
-  const vis = all.filter(i => rmMatch(i, f, t.id));
-  if (filtered && !vis.length && !all.some(i => i.id === f.item)) return '';
-  const [past, pres, fut] = RM_SCOPES.map(k => rmPhase(vis, k));
-  const deep = id => [past, pres, fut].findIndex(g => g.some(i => i.id === id));
-  const live = all.filter(i => (i.live || []).length).length, c = t.counts || {}, tot = Math.max(1, all.length);
-  const open = filtered || deep(f.item) >= 0 || live > 0 || (nThemes <= 5 && (c.present || 0) > 0);
-  const rows = (xs, compact) => xs.map(i => rmRow(i, ctx, win, compact)).join('');
-  const fold = (xs, ph, isOpen) => (xs.length ? `<details class="rmfold f-${ph}"${isOpen ? ' open' : ''}><summary>${rmFoldText(xs, ph) || plural(xs.length, 'item')}${ph === 'past' ? `<span class="mute small"> · latest ${rmAgo(xs[0].last, now) || 'n/a'}</span>` : ''}</summary>${rows(xs, true)}</details>` : '');
-  const winText = win ? `time line ${rmDay(new Date(win.t0).toISOString())} to now` : 'no run yet';
-  return `<details class="rmth" id="rmt-${esc(t.id)}"${open ? ' open' : ''}><summary><span class="tw"></span><b>${esc(t.title)}</b><span class="id">${esc(t.id)}</span>${t.state === 'dropped' ? '<span class="chip idle">dropped</span>' : ''}${rmEditBtn(t)}
-    <span class="rmthread mini" aria-hidden="true"><i class="th-past" style="flex:${(c.past || 0) / tot}"></i><i class="th-present" style="flex:${(c.present || 0) / tot}"></i><i class="th-future" style="flex:${(c.future || 0) / tot}"></i></span>
-    <span class="small mute">${c.past || 0} was · <b class="c-now">${c.present || 0} is</b> · ${c.future || 0} shall be · ${winText}</span>${live ? `<span class="chip running">${live} live</span>` : ''}</summary>
-    <div class="rmbody">${fold(past, 'past', filtered || deep(f.item) === 0)}<div class="nowline"><span>NOW</span></div>${f.scope === 'past' || f.scope === 'future' ? '' : rows(pres, false) || '<div class="rmi c mute small">nothing in flight</div>'}${fold(fut, 'future', filtered || deep(f.item) === 2 || fut.length <= 3)}</div></details>`;
-}
-function rmTop(d, ctx) {
-  const f = ctx.rm || {}, c = d.counts || {}, tot = Math.max(1, c.items || 0), words = RM_WORDS[ctx.look === 'norn' ? 'norn' : 'classic'];
-  const scope = RM_SCOPES.map((k, n) => `<button type="button" class="sc sc-${k}" data-rm-scope="${k}" aria-pressed="${f.scope === k}" title="${f.scope === k ? 'show all again' : `show only ${['what was', 'what is', 'what shall be'][n]}`}"><span class="nn">${words[n][0]}</span><small>${words[n][1]}</small><b>${c[k] || 0}</b></button>`).join('');
-  const sel = (k, label, opts) => `<select data-rmf="${k}" aria-label="${label}"><option value="">${label}</option>${opts.map(([v, t]) => `<option value="${esc(v)}"${String(f[k] || '') === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
-  const statuses = Object.keys(RM_ST).filter(s => rmFlat(d.themes).some(i => i.status === s));
-  const views = RM_VIEWS.length > 1 ? `<span class="rmviews" role="group" aria-label="Roadmap view">${RM_VIEWS.map(([k, w]) => `<button type="button" data-rm-view="${k}" aria-pressed="${rmView(f) === k}">${esc(w)}</button>`).join('')}</span>` : '';
-  const items = rmFlat(d.themes), shown = items.filter(i => rmMatch(i, f, rmThemeOf(d, i.id))).length;
-  return `<div class="rmtop"><div class="rmscope" role="group" aria-label="Show what was, what is or what shall be (tap again for all)">${scope}</div>
-    ${c.live ? `<button type="button" class="chip running" data-rmf-set="live" title="show only live items">${c.live} live</button>` : ''}${c.drift ? `<button type="button" class="chip bad" data-rm-jump="rm-drift">${c.drift} drift</button>` : ''}${c.unplaced ? `<button type="button" class="chip warn" data-rm-jump="rm-unplaced">${c.unplaced} unplaced</button>` : ''}${c.claimed ? `<span class="chip idle claimed">${c.claimed} claimed</span>` : ''}${views}<button type="button" class="rmadd" data-rm-edit="new" title="add an item or a theme">+ Add</button></div>
-  <div class="rmthread" aria-hidden="true">${RM_SCOPES.map(k => `<i class="th-${k}" style="flex:${(c[k] || 0) / tot}"></i>`).join('')}</div>
-  <div class="filters rmfilters"><input type="search" data-rmf="q" value="${esc(f.q || '')}" placeholder="filter titles, ids, branches" aria-label="Filter the roadmap">${sel('theme', 'all themes', (d.themes || []).map(t => [t.id, t.title]))}${sel('status', 'all states', statuses.map(s => [s, RM_ST[s][0]]))}
-    <label class="small"><input type="checkbox" data-rmf="live"${f.live ? ' checked' : ''}> live only</label><label class="small"><input type="checkbox" data-rmf="drift"${f.drift ? ' checked' : ''}> drift only</label>
-    ${rmFiltered(f) ? `<span class="small mute">showing ${shown} of ${items.length}</span><button type="button" data-rm-clear>show all</button>` : ''}</div>
-  <div class="small mute rmsrc">${esc(d.title || d.project)} · ${c.items || 0} items in ${(d.themes || []).length} themes · derived ${esc(fmtTime(d.generated, ctx.now))}${d.error ? ` · <span class="chip bad">error</span> ${esc(d.error)}` : ''}</div>`;
-}
-const rmThemeOf = (d, id) => (d.themes || []).find(t => rmFlat(t.children || []).some(i => i.id === id))?.id ?? null;
-function rmAudit(d, ctx) {
-  const dr = rmFlat(d.themes).filter(i => (i.flags?.drift || []).length);
-  return `${dr.length ? `<details class="tablecard rmaudit" id="rm-drift"><summary><h3>Drift <span class="chip bad">${dr.length}</span> <span class="mute small">typed text that disagrees with the records - shown, not trusted</span></h3></summary>
-    ${dr.map(i => `<div class="rmau"><span class="id">${esc(i.id)}</span> <b>${esc(i.title)}</b><div class="small">${i.flags.drift.map(esc).join('<br>')}</div></div>`).join('')}</details>` : ''}
-  ${(d.unplaced || []).length ? `<details class="tablecard rmaudit" id="rm-unplaced"><summary><h3>Unplaced work <span class="chip warn">${d.unplaced.length}</span> <span class="mute small">live lanes, finished branches and directives no roadmap item links</span></h3></summary>
-    ${d.unplaced.map(u => `<div class="rmau">${/^(DIR|DEC|Q|RUN|DLV|L:)/.test(u.id) ? rmRid(u.id, ctx) : `<span class="id">${esc(u.id)}</span>`} <span class="small">${esc(u.why || u.text || '')}</span></div>`).join('')}</details>` : ''}`;
-}
-// ---------- view B (META-ROADMAP S2b, SPEC sec. 4 option B, owner Q-17): the three Norns board ----------
-// Columns Urd was / Verdandi is / Skuld shall be (classic: Past / Now / Next); every theme is one grid row, so its heading stands in
-// each column at the same height (sticky under the sticky column heads on a desktop). Cards are compact: the head and the time
-// line (the reason text is the card's tooltip); the past and the future show four per theme, the rest folded. A scope leaves its column.
-function rmCard(i, ctx, win) {
-  const hit = (ctx.rm || {}).item === i.id ? ' hit' : '';
-  return `<div class="rmi rmcard ph-${esc(i.phase)}${hit}" id="rm-${esc(i.id)}" data-rm-row title="${esc(i.why || '')}">${rmHead(i, ctx, '', true)}${rmTime(i, win)}</div>`;
-}
-function rmBoard(d, ctx) {
-  const f = ctx.rm || {}, filtered = rmFiltered(f), c = d.counts || {}, words = RM_WORDS[ctx.look === 'norn' ? 'norn' : 'classic'];
-  const ks = f.scope ? [f.scope] : RM_SCOPES, word = k => words[RM_SCOPES.indexOf(k)];
-  const heads = ks.map(k => `<div class="rmcolh col-${k}"><span class="nn">${word(k)[0]}</span><small>${word(k)[1]}</small><b>${c[k] || 0}</b></div>`).join('');
-  const rows = d.themes.map(t => {
-    const all = rmFlat(t.children || []), win = rmWindow(all, Date.parse(d.generated) || ctx.now), vis = all.filter(i => rmMatch(i, f, t.id));
-    if (filtered && !vis.length && !all.some(i => i.id === f.item)) return '';
-    return ks.map(k => {
-      const its = rmPhase(vis, k), cap = k === 'present' ? its.length : 4, more = its.slice(cap);
-      const open = filtered || more.some(i => i.id === f.item);
-      const fold = more.length ? `<details class="rmfold f-${k}"${open ? ' open' : ''}><summary>${more.length} more</summary>${more.map(i => rmCard(i, ctx, win)).join('')}</details>` : '';
-      return `<div class="rmcell col-${k}" data-theme="${esc(t.id)}"><h4 class="rmgh"><span class="rmgk">${word(k)[0]} · </span>${esc(t.title)} <span class="mute">${its.length}</span></h4>${its.slice(0, cap).map(i => rmCard(i, ctx, win)).join('') || '<div class="rmnone mute small">nothing</div>'}${fold}</div>`;
-    }).join('');
-  }).join('');
-  return rows ? `<section class="rmboard${ks.length === 1 ? ' n1' : ''}">${heads}${rows}</section>` : '';
-}
-// ---------- META-ROADMAP S3 (SPEC sec. 3): the edit drawer - structure only (title, place, horizon, note, links, drop / reopen) ----------
-// Status is never an input: it stays derived. Each action is ONE POST /api/roadmap/<op> = one record by dashboard; a body carries the
-// rev the page saw (and a move the order it saw under the target parent), so a stale page gets a 409 instead of a lost edit.
-const rmEditBtn = n => `<button type="button" class="rmedit" data-rm-edit="${esc(n.id)}" title="edit ${esc(n.id)}" aria-label="edit ${esc(n.id)}">&#8943;</button>`;
-/** id -> { node, parent (node | null), sibs (the ids under the same parent, in record order) } | null */
-export function rmFind(d, id) {
-  let hit = null;
-  const walk = (xs, parent) => { for (const n of xs) { if (n.id === id) hit = { node: n, parent, sibs: xs.map(x => x.id) }; walk(n.children || [], n); } };
-  walk(d?.themes || [], null);
-  return hit;
-}
-const RM_HZ = ['now', 'next', 'later'];
-const rmList = v => String(v || '').split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
-/** a drawer action -> { op, body } (the POST /api/roadmap/<op> body without the project) | { error } */
-export function rmEditBody(act, d, id, v = {}) {
-  const txt = k => String(v[k] ?? '').trim();
-  if (act === 'add') {
-    if (!txt('title')) return { error: 'A title is needed.' };
-    if (v.parent === 'theme') return { op: 'add', body: { title: txt('title'), kind: 'theme' } };
-    if (!v.parent) return { error: 'Pick a theme.' };
-    const links = rmList(v.links);
-    return { op: 'add', body: { title: txt('title'), parent: v.parent, ...(v.horizon ? { horizon: v.horizon } : {}), ...(txt('note') ? { note: txt('note') } : {}), ...(links.length ? { links } : {}) } };
-  }
-  const hit = rmFind(d, id);
-  if (!hit) return { error: `${id} is not in this roadmap any more. Reload.` };
-  const n = hit.node, base = { id, rev: n.rev };
-  if (act === 'edit') {
-    const ch = {};
-    if (v.title !== undefined && txt('title') && txt('title') !== n.title) ch.title = txt('title');
-    if (v.note !== undefined && txt('note') !== (n.note || '')) ch.note = txt('note');
-    if (v.horizon !== undefined && (v.horizon || null) !== (n.horizon || null)) ch.horizon = v.horizon || '';
-    return Object.keys(ch).length ? { op: 'edit', body: { ...base, ...ch } } : { error: 'Nothing changed.' };
-  }
-  if (act === 'up' || act === 'down') {
-    const s = hit.sibs, i = s.indexOf(id);
-    if (act === 'up' ? i === 0 : i === s.length - 1) return { error: `Already ${act === 'up' ? 'first' : 'last'}.` };
-    return { op: 'move', body: { ...base, after: act === 'up' ? (i >= 2 ? s[i - 2] : null) : s[i + 1], order: s } };
-  }
-  if (act === 'theme') {
-    const t = v.theme && rmFind(d, v.theme);
-    if (!t || v.theme === hit.parent?.id) return { error: 'Pick another theme.' };
-    return { op: 'move', body: { ...base, parent: v.theme, order: (t.node.children || []).map(x => x.id) } };
-  }
-  if (act === 'link') { const links = rmList(v.link); return links.length ? { op: 'link', body: { ...base, links } } : { error: 'Name a link: kind:id (dir:DIR-n, lane:name, branch:feat/x ...).' }; }
-  if (act === 'unlink') return { op: 'unlink', body: { ...base, links: [v.link] } };
-  if (act === 'drop') {
-    if (!txt('why')) return { error: 'Say why it is dropped.' };
-    if (!/^(DEC|DIR)-[\w-]+$/.test(txt('ref'))) return { error: 'Cite the ruling: a DEC-n or DIR-n.' };
-    return { op: 'drop', body: { ...base, why: txt('why'), ref: txt('ref') } };
-  }
-  if (act === 'reopen') return txt('why') ? { op: 'reopen', body: { ...base, why: txt('why') } } : { error: 'Say why it comes back.' };
-  return { error: `unknown action ${act}` };
-}
-const rmOpt = (v, t, sel) => `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(t)}</option>`;
-/** the drawer body: id = an RM id, or 'new' (add an item or a theme) */
-export function renderRmEditor(d, id, ctx = {}) {
-  const themes = d?.themes || [], btn = (act, label, cls = '') => `<button type="button" data-rme-act="${act}"${cls ? ` class="${cls}"` : ''}>${label}</button>`;
-  const field = (label, html) => `<label class="rmef"><span class="small mute">${label}</span>${html}</label>`;
-  const hz = cur => `<select data-rme="horizon">${rmOpt('', 'none', !cur)}${RM_HZ.map(h => rmOpt(h, h, cur === h)).join('')}</select>`;
-  const foot = '<p class="small mute">Status is derived from the links, never typed. Each change is one record (by dashboard); every open tab shows it within about 2 s.</p>';
-  if (id === 'new') {
-    const first = ctx.theme || themes[0]?.id;
-    return `<div class="rmed" data-rmed="new"><h3>Add to the roadmap</h3>
-      ${field('Under', `<select data-rme="parent">${themes.map(t => rmOpt(t.id, `${t.title} (${t.id})`, t.id === first)).join('')}${rmOpt('theme', '(a new theme)', !themes.length)}</select>`)}
-      ${field('Title', '<input data-rme="title" maxlength="200" placeholder="what it is, in a few words">')}
-      ${field('Horizon', hz(null))}${field('Note', '<textarea data-rme="note" rows="3" maxlength="4000"></textarea>')}
-      ${field('Links', '<input data-rme="links" placeholder="dir:DIR-n, lane:name, branch:feat/x (optional)">')}
-      <div class="rmea">${btn('add', 'Add', 'strong')}</div>${foot}</div>`;
-  }
-  const hit = rmFind(d, id);
-  if (!hit) return `<div class="rmed"><p class="mute">${esc(id)} is not in this roadmap any more. ${btn('reload', 'Reload')}</p></div>`;
-  const n = hit.node, item = n.kind === 'item', dropped = n.state === 'dropped';
-  const sibs = hit.sibs.map(s => rmFind(d, s)?.node).filter(Boolean);
-  const place = `<ol class="rmesibs small">${sibs.map(s => `<li${s.id === id ? ' class="me"' : ''}>${esc(s.title)} <span class="id">${esc(s.id)}</span>${s.state === 'dropped' ? ' <span class="mute">dropped</span>' : ''}</li>`).join('')}</ol>`;
-  const otherThemes = themes.filter(t => t.id !== hit.parent?.id);
-  const ref = (n.links || []).map(l => /^(?:dir|dec):(.+)$/.exec(l)?.[1]).find(Boolean) || '';
-  const links = (n.links || []).map(l => `<li><span class="mono small">${esc(l)}</span> <button type="button" class="ghost" data-rme-act="unlink" data-link="${esc(l)}" aria-label="unlink ${esc(l)}" title="unlink">&#215;</button></li>`).join('');
-  return `<div class="rmed" data-rmed="${esc(id)}"><h3><span class="id">${esc(id)}</span> ${item ? rmChip(n) : '<span class="chip idle">theme</span>'}${dropped ? ' <span class="chip idle">dropped</span>' : ''}</h3>
-    ${item ? `<p class="small mute">${esc(n.why || '')}</p>` : ''}
-    ${field('Title', `<input data-rme="title" maxlength="200" value="${esc(n.title)}">`)}${item ? field('Horizon', hz(n.horizon)) : ''}
-    ${field('Note', `<textarea data-rme="note" rows="3" maxlength="4000">${esc(n.note || '')}</textarea>`)}
-    <div class="rmea">${btn('edit', 'Save', 'strong')}</div>
-    <h4>Place</h4>${place}<div class="rmea">${btn('up', '&#8593; Up')}${btn('down', '&#8595; Down')}</div>
-    ${item && hit.parent?.kind === 'theme' && otherThemes.length ? `<div class="rmea"><select data-rme="theme" aria-label="move to theme">${otherThemes.map(t => rmOpt(t.id, `${t.title} (${t.id})`, false)).join('')}</select>${btn('theme', 'Move to theme')}</div>` : ''}
-    <h4>Links</h4>${links ? `<ul class="rmelinks">${links}</ul>` : '<p class="small mute">no links yet: an item gets its status from what it links</p>'}
-    <div class="rmea"><input data-rme="link" placeholder="dir:DIR-n, lane:name, run:RUN-n, branch:feat/x" aria-label="link">${btn('link', 'Link')}</div>
-    ${dropped ? `<h4>Dropped</h4><p class="small">${esc(n.dropped?.why || '')}${n.dropped?.ref ? ` (${esc(n.dropped.ref)})` : ''}</p><div class="rmea"><input data-rme="why" placeholder="why it comes back" aria-label="why">${btn('reopen', 'Reopen')}</div>`
-      : `<h4>Drop</h4><div class="rmea"><input data-rme="why" placeholder="why" aria-label="why"><input data-rme="ref" value="${esc(ref)}" placeholder="DEC-n or DIR-n" aria-label="the ruling" size="9">${btn('drop', 'Drop', 'bad')}</div>`}
-    ${foot}</div>`;
-}
-function roadmap(d, ctx) {
-  if (!d || !(d.themes || []).length) {   // META-ADOPT A3: what the repository holds + the draft, the questions, or one item by hand
-    const a = d?.adopt;
-    return `<div class="card" id="rm-empty"><p><b>No roadmap yet</b> for ${esc(ctx.project)}.${a ? ` The repository has ${a.items} planned line(s) in ${a.plans} file(s), ${a.branches} branch(es) in flight.` : ''}</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="primary" type="button" data-act="adopt-open" data-project="${esc(ctx.project)}">Draft it from the repository</button><button type="button" data-act="adopt-open" data-ask="scan" data-project="${esc(ctx.project)}">Answer 3 questions instead</button><button type="button" class="rmadd" data-rm-edit="new">+ Add one item</button></div>
-      <p class="small mute" style="margin:10px 0 0">Or <code>norn road add</code> / <code>norn road apply plan.json</code>; status is derived from the records, never typed.</p>${d?.error ? `<p class="small">${esc(d.error)}</p>` : ''}</div>`;
-  }
-  const f = ctx.rm || {}, n = d.themes.length;
-  const view = rmView(f), body = view === 'board' ? rmBoard(d, ctx) : d.themes.map(t => rmTheme(t, d, ctx, n)).join('');
-  return `<div class="rm rm-${view}">${rmTop(d, ctx)}${body || '<div class="card"><p class="mute">No item matches these filters. <button type="button" data-rm-clear>show all</button></p></div>'}${rmAudit(d, ctx)}</div>`;
 }

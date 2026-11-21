@@ -1,27 +1,32 @@
-// NORN-UI-NAV (SPEC 4.1 item 2): the dashboard shell - one flat bar of 5 (Lanes, Runs, Inbox, Talk, More) the same on desktop and
+// NORN-UI-NAV (SPEC 4.1 item 2): the dashboard shell - one flat bar of 5 (Talk, Lanes, Runs, Inbox, More) the same on desktop and
 // phone, as link nav (`<nav>` + aria-current, not a tablist: the APG keeps tabs for panels on one page); the More sheet (the low-use
 // pages under plain group headings, a popover on desktop and a bottom sheet on a phone); the status strip under the header (from
 // GET /api/strip, which never builds the run tree); the router (a page id opens itself, anything else opens Lanes - the router's
 // default rule, no alias table); and the keyed refetch contract: each page declares the state-stream keys it reads, so a pulse
-// repaints the strip only and a record append refetches the open page only when the page reads that file.
+// repaints the strip only and a record append refetches the open page only when the page reads that file. The header (UI redesign
+// 2026-11-20): the worker pool (widgets.mjs poolLine), the check-ins group box (checkinStatus + Pause + Run tick now) and the cog
+// (renderCog), which opens Settings over the page - Settings is on neither the bar nor the More sheet.
 // LANES and RUNS build on: BAR / MORE ids, renderBar / renderMore / renderStatus markup ids (#tabs, #tab-<id>, #more-sheet,
 // #status-strip), PAGE_KEYS (add or narrow a page's keys here), routeTab.
 import { TABS } from './ui.mjs';
 import { esc, fin, int, pct, fmtTime, worstState, scopeWords } from './cells.mjs';
 
-// the bar's 4 pages, in order: [id, label, glyph]. Glyphs pass the blind-label test (a list of rows, play, a tray, a speech
-// bubble, ⋯ for More), always beside the word; drawn as SVG in currentColor so both looks and grounds colour them
+// the bar's 4 pages, in order: [id, label, glyph]. Glyphs pass the blind-label test (a speech bubble, a list of rows, play, a tray,
+// ⋯ for More; a cog for Settings in the header), always beside the word; drawn as SVG in currentColor so both looks and grounds colour them
 const svg = d => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">${d}</svg>`;
 const G = {
   lanes: svg('<circle cx="2.5" cy="4" r="1.2" fill="currentColor"/><circle cx="2.5" cy="8" r="1.2" fill="currentColor"/><circle cx="2.5" cy="12" r="1.2" fill="currentColor"/><path d="M6 4h8M6 8h8M6 12h8" stroke="currentColor" stroke-width="1.6" fill="none"/>'),
   runs: svg('<path d="M4.5 2.5l9 5.5-9 5.5z" fill="currentColor"/>'),
   inbox: svg('<path d="M1.5 9.5h4l1 2h3l1-2h4v4h-13zM1.5 9.5l2-7h9l2 7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/>'),
   talk: svg('<path d="M1.5 2.5h13v8.5h-7l-3.5 3v-3h-2.5z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/>'),
+  settings: svg('<circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="8" r="4.3" stroke="currentColor" stroke-width="1.4" fill="none"/>'),
   more: svg('<circle cx="3" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="13" cy="8" r="1.5" fill="currentColor"/>'),
 };
-export const BAR = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk']];
-// the More sheet: [group heading ('' = none), page ids]. Map and Plan stay until LANES and RUNS re-home them (SPEC 4.1 item 2)
-export const MORE = [['Health', ['usage', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap']], ['', ['settings']]];
+export const BAR = [['talk', 'Talk'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox']];
+// the More sheet: [group heading, page ids]
+export const MORE = [['Health', ['spend', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap']]];
+/** the page the header's cog opens (over the page: index.html #setview) - the one page on neither the bar nor the More sheet */
+export const COG = 'settings';
 const HEALTH = MORE[0][1];
 const LABEL = Object.fromEntries(TABS);
 
@@ -31,12 +36,17 @@ export const routeTab = id => (id === 'adopt' || TABS.some(t => t[0] === id) ? i
 const href = (project, id) => esc(`?project=${encodeURIComponent(project ?? '')}&tab=${id}`);
 const badge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
 const dot = (st, words) => (st === 'warn' || st === 'bad' ? `<span class="dot tone-${st}" role="img" aria-label="${esc(words)}"></span>` : '');
-/** the bar: 4 links + the More button. o: { project, needs, health: { usage|slop|tests|context: 'ok'|'warn'|'bad'|null } } */
+/** the bar: 4 links + the More button. o: { project, needs, health: { spend|slop|tests|context: 'ok'|'warn'|'bad'|null } } */
 export function renderBar(tab, o = {}) {
   const inMore = MORE.some(([, ids]) => ids.includes(tab)), sick = worstState(o.health);
   const links = BAR.map(([k, l]) => `<a href="${href(o.project, k)}" id="tab-${k}" data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}>${G[k]}<span class="bl">${l}</span>${k === 'inbox' ? badge(o.needs) : ''}</a>`).join('');
   return `<nav class="pagebar" id="tabs" aria-label="Pages">${links}<button type="button" id="tab-more" data-act="more" aria-haspopup="dialog" aria-expanded="${!!o.open}" aria-controls="more-sheet"${inMore ? ' aria-current="page"' : ''}>${G.more}<span class="bl">More</span>${dot(sick, 'a Health page needs a look')}</button></nav>`;
 }
+/** the header's cog: a link to Settings (a plain click opens the overlay, index.html), current while Settings is open */
+export const renderCog = (tab, o = {}) => `<a href="${href(o.project, COG)}" id="tab-${COG}" class="cog" data-tab="${COG}" title="Settings" aria-label="Settings"${tab === COG ? ' aria-current="page"' : ''}>${G.settings}</a>`;
+/** the check-ins group box's status line (ov = the /api/strip answer): the status time (local), check-ins on / the pause mode, a
+ *  tick running, the stream live; o: { live, remote (a remote viewer's name) } */
+export const checkinStatus = (ov, o = {}) => `status ${esc(fmtTime(ov.now))} · ${ov.pause ? `<b>${esc(ov.pause.label)}</b>` : 'check-ins <b>on</b>'}${ov.checkin_locked ? ' · tick running' : ''} · ${o.live ? 'live' : 'reconnecting ...'}${o.remote ? ` · remote: ${esc(o.remote)}` : ''}`;
 /** the More sheet (hidden until More opens it): every page not on the bar, under its group heading; the open page marked */
 export function renderMore(tab, o = {}) {
   const h = o.health || {};
@@ -74,7 +84,7 @@ export function renderStatus(s, ctx = {}) {
 // pause / quiet / tick flags), 'all' (a reset or a reconnect: anything may have changed). A page refetches only for its own keys.
 export const PAGE_KEYS = {
   lanes: ['records', 'runs', 'deliverables', 'derived'], runs: ['runs', 'records', 'derived'], inbox: ['records', 'runs', 'deliverables', 'derived', 'state'],
-  talk: ['records', 'runs', 'state'], usage: ['records', 'runs', 'derived'], slop: ['derived'], tests: ['runs', 'derived'], context: ['derived'],
+  talk: ['records', 'runs', 'state'], spend: ['records', 'runs', 'derived'], slop: ['derived'], tests: ['runs', 'derived'], context: ['derived'],
   records: ['records'], ledger: ['derived'], docs: ['derived'], roadmap: ['records', 'runs', 'deliverables'],
   settings: ['derived', 'state'], adopt: ['records', 'derived'],
 };

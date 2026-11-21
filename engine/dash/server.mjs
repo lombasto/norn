@@ -37,6 +37,8 @@ import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { listProcsAsync } from '../lib/strays.mjs';
+import { agentSessions } from '../lib/agentprocs.mjs';
+import { testOwner } from '../lib/derelict.mjs';
 import { loadMail } from '../lib/mail.mjs';
 import { findTranscriptA } from '../lib/harness/claude.mjs';
 import os from 'node:os';
@@ -71,7 +73,7 @@ import { loopOf } from '../lib/sync.mjs';
 import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
-import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
+import { guardSummary, guardPart, chipView, fixSheet, fixPick, fixOne } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
 import { isNeed, needsYou } from './terms.mjs';
 import { docsList as docsListOf, docKey } from './docparts.mjs';
@@ -95,6 +97,7 @@ import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
+import { slopHist } from '../lib/slophist.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
 import { effectiveRules, explainOf, primeRules } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
@@ -110,10 +113,10 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscree
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
-const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css'];
+const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs', 'settings.mjs', 'context.mjs', 'context-acts.mjs', 'docs.mjs', 'roadmap.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css', 'slop.css', 'context.css', 'roadmap.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
+export const TABS = ['talk', 'lanes', 'runs', 'inbox', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -552,6 +555,22 @@ export function createDashboard(o) {
   // of the dash uses it (null at first, like the CPU sample)
   let procsAt = 0, procsNow = null, procsBusy = false;
   const procsSample = () => { if (!procsBusy && Date.now() - procsAt >= 30000) { procsBusy = true; listProcsAsync().then(ps => { procsNow = ps; procsAt = Date.now(); procsBusy = false; }); } return procsNow; };
+  // the header's worker pool (UI redesign item 1): the Claude Code / Codex CLI sessions on this machine, Norn's and the others
+  // (agentprocs.mjs), from a listing taken in the background at most once a minute (it also refreshes procsSample's); a request
+  // reads the last count (null until the first lands). Norn's pids: every project's live run heartbeats + this dashboard. A test
+  // never lists the machine's real processes (its fixture injects o.listProcs)
+  const listAgents = o.listProcs ?? (testOwner(o.env ?? process.env) ? null : listProcsAsync);
+  let agentsAt = 0, agentsNow = null, agentsBusy = false;
+  const hbPids = async p => { const dir = path.join(p.state, 'hb'), names = await fs.promises.readdir(dir).catch(() => []);
+    return (await Promise.all(names.map(n => fs.promises.readFile(path.join(dir, n), 'utf8').then(x => { const h = JSON.parse(x); return [h.pid, h.supervisor_pid]; }, () => [])))).flat().filter(Number.isInteger); };
+  const agentsSample = () => {
+    if (listAgents && !agentsBusy && Date.now() - agentsAt >= 60000) {
+      agentsBusy = true;
+      Promise.all([listAgents(), Promise.all(projects.map(hbPids))]).then(([ps, pids]) => { agentsNow = agentSessions(ps, { norn: new Set([process.pid, ...pids.flat()]) }); if (ps.length) { procsNow = ps; procsAt = Date.now(); } })
+        .catch(() => { /* a failed listing keeps the last count (the header's pool shows it, or … before the first); the next request a minute on lists again */ }).finally(() => { agentsAt = Date.now(); agentsBusy = false; });
+    }
+    return agentsNow;
+  };
   const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
   const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
   /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
@@ -887,12 +906,19 @@ export function createDashboard(o) {
     const lanesRunning = ps.flatMap(p => lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running')));
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needs,
       running: { claude: { n: live.filter(claudeR).length, cap: m.max_claude_workers ?? null }, codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
+      pool: await poolOf(),
       usage: usage(ps[0], m), checkin: stripOf(ps, lanesRunning, m).checkin, strip: stripOf(ps, lanesRunning, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
       setup: ps.length === 1 ? setupOf(ps[0]) : null };
   }
   // end statusStrip
+  // the header's worker pool, machine-wide (never the page's projects): the Claude worker slots in use of the cap (capacityOf, every
+  // project) + the agent CLI sessions on this computer (agentsSample: null = not counted yet)
+  async function poolOf() {
+    const c = await capacityOf();
+    return { claude: { using: c.rows.reduce((a, r) => a + r.using, 0), cap: c.cap }, sessions: agentsSample() };
+  }
   async function overview(ps) {
     const m = withDefaults(settingsState(ps[0]).view);
     let needs = [], running = [], tree = [];
@@ -1127,7 +1153,9 @@ export function createDashboard(o) {
     const rows0 = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const rows = part('declines', () => markDeclines(rows0, st(p).items), rows0);   // a fixer's reasoned decline stands on its finding until the finding or its file changes
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors };
+    // ui-spend-slop: the closed findings per type (lib/slophist.mjs), stepped only on a whole view - a pending scan or a failed part would close ids it merely lacks
+    const hist = await slopHist(p.state, rows, { types: v.types.map(t => t.type), step: !ig.pending && !errors.length }).catch(() => null);
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors, hist };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
@@ -1154,7 +1182,7 @@ export function createDashboard(o) {
     const g = await guardOf(p), name = url.searchParams.get('part'), lim = Number(url.searchParams.get('limit'));
     if (name === null) return chipView(g);   // S5: the header + chips: no hint / tighten rows, no patch text
     if (name === 'sheet') return { sheet: { ...fixSheet(g), usage: fixUsage(p) } };   // S6: the Fix all sheet
-    return name === 'summary' ? guardSummary(g) : guardPart(g, name, Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP, url.searchParams.get('batch'));
+    return name === 'summary' ? guardSummary(g) : guardPart(g, name, Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP, url.searchParams.get('batch'), url.searchParams.get('finding'));
   }
   // TESTS-RUNTIME: the Tests tab = a summary (testsView + the open Inbox questions the test machinery raised: data.area 'tests') and the
   // chosen sub-view's part (?part=suite|costs|impact|trends&limit=). Impact takes &files=a,b or &lane=<name> (that lane's changed files:
@@ -1211,7 +1239,7 @@ export function createDashboard(o) {
     return { file: rel.split('\\').join('/'), text, lines: text.split(/\r?\n/).length };
   }
   // META-UX-BUILD S6 (REPORT s.3 step 2): the usage a Send approves - one run of the docs class as Settings routes it today, with the
-  // measured median cache reads of that class's runs (classCost, the Usage tab's table; 7 days)
+  // measured median cache reads of that class's runs (classCost, the Spend page's table; 7 days)
   function fixUsage(p) {
     const e = withDefaults(settingsState(p).view).policy.executors?.docs ?? {}, who = [e.executor, [e.model, e.effort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     const c = classesFor(p, Date.now()).byClass.filter(x => x.project === p.name && x.class === 'docs').sort((a, b) => b.measured - a.measured)[0];
@@ -1887,8 +1915,9 @@ data: ${JSON.stringify(l)}
     if (route === '/api/fixall') {   // META-UX-BUILD S6 (REPORT s.3 step 2, DIR-65 Q2 A): Send the fixer = ONE decision + ONE directive (the audit card's path) with the ids
       const g = await guardOf(p);
       if (g.pending) throw fail(409, 'The instruction-file scan is still running: reload the sheet when it lands.');
-      if (data.sig !== fixSheet(g).sig) throw fail(409, 'The findings changed since the sheet was drawn. Reload it and look again.');
-      let x; try { x = fixPick(g, { keys: data.keys, picks: data.picks }); } catch (e) { throw fail(e.status ?? 400, e.message); }
+      if (!data.id && data.sig !== fixSheet(g).sig) throw fail(409, 'The findings changed since the sheet was drawn. Reload it and look again.');
+      // ui-context-docs: { id, way? } = one finding from the Docs reader's line popover, the same decision + directive as the sheet
+      let x; try { x = data.id ? fixOne(g, { id: String(data.id), way: data.way ?? null }) : fixPick(g, { keys: data.keys, picks: data.picks }); } catch (e) { throw fail(e.status ?? 400, e.message); }
       const items = Object.values(st(p).items);   // the same open set sent again (a second tap): the pair it wrote, no second pair
       const was = items.find(i => i.kind === 'decision' && i.state === 'in-force' && i.data.lane === 'fixall' && i.data.set === x.set);
       const wasDir = was && items.find(i => i.kind === 'directive' && i.state === 'active' && i.data.fixall === was.id);

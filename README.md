@@ -92,7 +92,7 @@ open a row of pages.
 - **Context** (Health): the context limits per role, the tokens per loaded file, and whether they are growing.
 - **Roadmap** (Work, `norn road`): themes and items whose status comes from the runs and records, never typed by hand.
 - **The other pages**: Overview (what needs you and what is running), Lanes and Map (every lane and its latest run), Runs
-  (running and recent runs with their tokens and context), Usage (usage against the limits, and which model suits which work),
+  (running and recent runs with their tokens and context), Spend (usage against the limits, and which model suits which work),
   Tests (which tests check real behaviour), Records and Ledger (every decision and check-in), and Settings.
 
 Around the dashboard:
@@ -177,7 +177,7 @@ test, which runs on all three systems.
 - **Executors.** A project's `project.json` defines them: `claude-compatible` (Claude Code against a compatible endpoint),
   `openai-compatible` (the Codex CLI with a custom provider) or `cli` (any headless CLI, its arguments as a template). Norn never
   stores an API key; the project names the environment variable that holds it. `projects/example/project.json` has one of each.
-- **Settings.** Machine-wide limits live in `local/budget.json`, per-project policy in `project.json`; the Settings tab edits both.
+- **Settings.** Machine-wide limits live in `local/budget.json`, per-project policy in `project.json`; Settings (the cog at the top right of the dashboard) edits both.
 
 ### Done checks
 

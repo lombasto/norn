@@ -29,12 +29,11 @@ test('his line: a template with the number in plain words; the one best action g
   assert.deepEqual(bestAction([]).go, { tab: 'slop' });
 });
 
-test('the pop-up gate: off by default, then once per new warn finding, the daily cap, typing, mute, one at a time', () => {
+test('the pop-up gate: off by default, then once per new warn finding, the daily cap, typing, one at a time', () => {
   assert.equal(mayAppear({ rows, now }).ok, false, 'pop-ups ship off');
   const on = { mode: 'on', rows, now };
   assert.deepEqual([mayAppear(on).ok, mayAppear(on).row.id], [true, 'a']);
   assert.equal(mayAppear({ ...on, typing: true }).why, 'the owner is typing');
-  assert.equal(mayAppear({ ...on, mutedUntil: now + 1 }).why, 'muted');
   assert.equal(mayAppear({ ...on, onStage: true }).why, 'one appearance at a time');
   let log = logAppearance({}, 'a', now);
   assert.equal(mayAppear({ ...on, log }).why, 'nothing new', 'once per finding; the low one never pops up');

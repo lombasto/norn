@@ -42,7 +42,7 @@ test('replayReport: agreement per class of ruling per arm, disagreements with re
   assert.equal(actionText({ type: 'record', op: 'withdraw', id: 'Q-5' }), 'record withdraw Q-5');
 });
 
-test('norn eval report: reads <out>/results.jsonl (a re-run tick counts once, its last row), --write = the JSON the Usage tab reads', async () => {
+test('norn eval report: reads <out>/results.jsonl (a re-run tick counts once, its last row), --write = the JSON the Spend page reads', async () => {
   const out = mkTmp('evr-'), st = mkTmp('evr-st-'), lines = [];
   fs.writeFileSync(path.join(out, 'results.jsonl'), [...ROWS, res('RUN-1', B, [D, Q], [D, Q])].map(r => JSON.stringify(r)).join('\n') + '\n');
   const w = path.join(st, 'eval', 'checkin-replay.json');

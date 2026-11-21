@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { discover, matches, instructionsView, sessionsOn } from '../engine/lib/instructions.mjs';
+import { discover, matches, instructionsView, sessionsOn, harnessRows } from '../engine/lib/instructions.mjs';
 import { staticChecks, CHECKS, memoryDir } from '../engine/lib/instrchecks.mjs';
 import { memoryOf, MEMORY_DEFAULT, memoryEnv } from '../engine/lib/launchpolicy.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
@@ -141,7 +141,18 @@ test('prose checks 14-19 and agents / hooks / harness checks 21-23 (keys only, n
   assert.ok(!JSON.stringify(f).includes('SECRET-VALUE') && !JSON.stringify(f).includes('gone.mjs'));
   assert.ok(by(f, 23).some(x => /Codex/.test(x.why)));
   assert.ok(by(f, 23).some(x => /2\.1\.400/.test(x.why) && x.severity === 'medium'));
+  assert.ok(!by(f, 23).some(ag), 'a harness finding never sits on a project file (bug 3)');
   assert.ok(!f.some(x => x.check === 20), 'check 20 is P5');
+});
+
+test('check 23 sits on the adapter that holds the rules, at its family line (bug 3: it sat on AGENTS.md L1)', () => {
+  const { p, home, items } = fx();
+  const f = staticChecks(discover(p, { home, git: false }), { project: p, home, items, harness: harnessRows().map(h => ({ ...h, verified: null })) });
+  const gem = by(f, 23).find(x => /Gemini/.test(x.why));
+  assert.match(gem.path, /engine\/lib\/harness\/cli\.mjs$/); assert.match(gem.fix.action, /in cli\.mjs/);
+  const line = fs.readFileSync(gem.path, 'utf8').split(/\r?\n/)[gem.line - 1];
+  assert.match(line, /family: 'gemini'/);
+  assert.match(by(f, 23).find(x => /Claude Code/.test(x.why)).path, /harness\/claude\.mjs$/);
 });
 
 test('Context (the checks page, Per file) shows findings in place (severity chips, counts, fix) and the managed line; fixed since last scan', () => {
@@ -196,7 +207,7 @@ test('Context sits in Health beside Usage; the tab draws what one session loads,
     worker: { run: 'RUN-1', method: 'request', total: 1000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 700 }, { key: 'claude_md', label: 'CLAUDE.md / AGENTS.md chain', ours: true, tokens: 300 }, { key: 'memory', label: 'memory index', ours: true, tokens: 0 }] },
     chat: { run: 'chat', method: 'request', total: 2000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 1500 }, { key: 'memory', label: 'memory index', ours: true, tokens: 500 }] } } };
   const v = instructionsView(p, { home, git: false, standing, now: Date.parse('2026-11-14T12:00:00Z') });
-  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['usage', 'slop', 'tests', 'context'], 'Context in Health beside Usage, Slop and Tests (UX review 2)');
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'context'], 'Context in Health beside Spend, Slop and Tests (UX review 2)');
   assert.ok(!MORE.find(g => g[0] === 'History')[1].includes('context'));
   // file map data: every row has loads per day and one state of four
   assert.ok(v.rows.every(r => typeof r.loads_day === 'number' && ['fresh', 'stale', 'conflict', 'generated-stale'].includes(r.map_state)));

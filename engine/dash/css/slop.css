@@ -1,0 +1,3 @@
+/* The Slop page (pages/slop.mjs): the row a link named (&finding=<id>, e.g. Context's "in Slop") - highlighted where it stands in its
+   open batch; index.html scrolls it into view once. */
+.glist .grow.hit{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent);padding-left:8px;scroll-margin:80px}

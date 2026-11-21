@@ -38,10 +38,10 @@ export function tickPaths(state, { project: p = {}, now = Date.now(), git = make
     if (!ahead || workOnMain(dir, tip, main, { git })) { if (ahead || merges.some(m => m.end?.outcome === 'done')) set({ state: 'merged', sha: tip.slice(0, 7) }); continue; }
     const live = merges.find(m => LIVE.includes(m.state));
     if (live) { set({ state: 'staged', merge: live.id }); continue; }
-    const open = dlvs.find(d => d.state === 'open' && d.data.lane === name && (!d.data.branch || d.data.branch === branch));
-    if (open) { set({ state: 'pr', dlv: open.id, pr: open.data.pr ?? null }); continue; }
     const dirty = wt ? String(git(wt, ['status', '--porcelain'], { allowFail: true }) ?? '').split('\n').filter(s => s.trim()).length : 0;
     const risk = dirty ? `${dirty} uncommitted file(s) in ${wt}` : null;
+    // land-push: the push comes before the deliverable check - the run end records a deliverable for every DONE branch, so an open one
+    // ended this step unpushed, and nothing else pushes a lane branch (ui-shell, dwarf-names, ui-runs-lanes sat on home b, no PR)
     if (git(dir, ['merge-base', '--is-ancestor', tip, `refs/remotes/origin/${branch}`], { allowFail: true }) === null) {
       // unpushed commits beside uncommitted files: the worker's end left work behind - the owner's call, never a push or a merge
       const ok = !dry && !dirty && git(dir, ['push', 'origin', `${tip}:refs/heads/${branch}`], { allowFail: true }) !== null;
@@ -49,6 +49,8 @@ export function tickPaths(state, { project: p = {}, now = Date.now(), git = make
       git(dir, ['fetch', '-q', 'origin', branch], { allowFail: true });
       out.push({ id: l.id, act: 'pushed', note: `pushed ${branch} ${tip.slice(0, 7)} (${ahead} commit(s) of ${r.id})` });
     }
+    const open = dlvs.find(d => d.state === 'open' && d.data.lane === name && (!d.data.branch || d.data.branch === branch));
+    if (open) { set({ state: 'pr', dlv: open.id, pr: open.data.pr ?? null, risk }); continue; }
     const tried = merges.at(-1);
     const stuck = why => { set({ state: 'stuck', why, risk }); found('stuck'); };
     if (tried) { stuck(`merge step ${tried.id} ended ${tried.end?.outcome ?? tried.state} without landing it`); continue; }
@@ -56,7 +58,7 @@ export function tickPaths(state, { project: p = {}, now = Date.now(), git = make
     if (dry || !cli || !p.file || !wt) { stuck(!wt ? `its worktree ${r.data.worktree ?? '(none)'} is gone` : 'nothing could queue one here (no meta CLI / project file)'); continue; }
     const a = stageArgs(p, r, { branch, sha: tip }, cp), b = cli(a.brief);
     if (b.code !== 0) { stuck(`merge-brief exit ${b.code}: ${b.out.split('\n')[0].slice(0, 160)}`); continue; }
-    const q = cli([...a.run, '--priority', 'P1']), m = q.out.match(/RUN-\d+/);
+    const q = cli([...a.run, '--priority', 'P1']), m = q.out.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/);   // a home's id too (RUN-b-12)
     if (q.code !== 0 || !m) { stuck(`norn run --queue exit ${q.code}: ${q.out.split('\n')[0].slice(0, 160)}`); continue; }
     set({ state: 'staged', merge: m[0], risk });
     out.push({ id: l.id, act: 'staged', note: `${ahead} commit(s) of ${r.id} on ${branch} not on main -> MERGE ${m[0]} (P1)` });
