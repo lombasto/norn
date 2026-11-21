@@ -11,7 +11,6 @@ import { TABS, loadTab, loadParts, renderTab, healthStates, pageTitle, needsCoun
 import { worstState } from '../engine/dash/cells.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
-import { ledgerInline } from '../engine/dash/ledger.mjs';
 import { dashCss } from './helpers/dash-css.mjs';
 
 const getter = f => async r => { const x = await f.get(r); if (x.status !== 200) throw new Error(`${r} -> ${x.status} ${x.data.error}`); return x.data; };
@@ -43,7 +42,7 @@ test('every tab renders with fixture state: ids from records / runs / transcript
       clean(out[tab], tab); if (tab === 'runs') { out.runDoc = renderTab(tab, d, { project: 'kestrel', run: 'RUN-1' }); clean(out.runDoc, 'run doc'); }   // Runs: the live part, then its history part
       assert.ok(out[tab].includes(`id="panel-${tab}"`), tab); }
     const has = (tab, ...ids) => { for (const id of ids) assert.ok(out[tab].includes(id), `${tab} shows ${id}`); };
-    has('inbox', 'id="q-Q-1"', 'Choose (a) - recommended', 'Choose (b)', 'RUN-1', 'L:gen', 'STOPPED');
+    has('inbox', 'id="q-Q-1"', 'Choose (a) - recommended', 'Choose (b)');
     has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'parked by Q-1', 'exited: STOPPED: red test', 'codex-sol', 'RUN-2');
     has('runs', 'id="node-RUN-1"', 'id="node-RUN-2"', 'gpt-5.4', '60,559');
     has('runDoc', 'id="run-doc" data-run="RUN-1"', 'kestrel-implementer', '65k');   // stage RUNS: an ended run's subagents and context are in its document
@@ -69,7 +68,7 @@ test('All projects: inbox / lanes / runs sum both projects; one-project tabs say
     for (const [tab] of TABS) { const html = renderTab(tab, await loadTab(tab, 'all', get), { project: 'all' }); clean(html, 'all ' + tab); assert.ok(html.includes(`id="panel-${tab}"`)); }
     const ib = renderTab('inbox', await loadTab('inbox', 'all', get), { project: 'all' });
     assert.ok(ib.includes('other project question'), 'other project in the all inbox');
-    assert.match(ib, /Needs you <b>4<\/b>/);
+    assert.match(ib, /Questions <b>2<\/b>/);
     assert.match(renderTab('records', await loadTab('records', 'all', get), { project: 'all' }), /Choose one project/);
   } finally { await f.done(); }
 });

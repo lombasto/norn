@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="/css/base.css">
 <link rel="stylesheet" href="/css/lanes.css">
 <link rel="stylesheet" href="/css/runs.css">
+<link rel="stylesheet" href="/css/inbox.css">
+<link rel="stylesheet" href="/css/ledger.css">
 <link rel="stylesheet" href="/norn/norn.css">
 </head>
 <body>
@@ -59,6 +61,8 @@ import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
 import { acts as runActs } from '/pages/runs-acts.mjs';
+import { acts as inboxActs } from '/pages/inbox-acts.mjs';
+import { acts as ledgerActs } from '/pages/ledger-acts.mjs';
 import { createFeed } from '/pages/runs-feed.mjs';
 import { codeView, codeHead } from '/testparts.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
@@ -77,7 +81,7 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, laneDetail: null, laneDet: null, laneFile: null, br: { states: new Set(), where: 'all', lane: '' }, brUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
+const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, laneDetail: null, laneDet: null, laneFile: null, br: { states: new Set(), where: 'all', lane: '' }, brUndo: null, ledgerN: 100, proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
   quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
@@ -238,7 +242,7 @@ async function render(force = false, why = []) {
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) { box.value = S.find; draftNote(box); } S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
-    step('render:finish'); fxPaint(); recFit(); proseFit(); applyFilters(); ORC.place(); err(''); step('ready');
+    step('render:finish'); fxPaint(); proseFit(); applyFilters(); ORC.place(); err(''); step('ready');
     document.body.dataset.ready = S.tab;   // the ready signal: this tab's data is fetched and painted (tests wait on it, not on a clock)
   } catch (e) { err('Refresh failed: ' + e.message); document.body.dataset.ready = 'error'; }
 }
@@ -377,9 +381,6 @@ document.addEventListener('click', e => {
   const j = e.target.closest?.('[data-rm-jump]'); if (j) { const el = document.getElementById(j.dataset.rmJump); if (el) { el.open = true; el.scrollIntoView({ block: 'start' }); } }
 });
 document.addEventListener('input', e => { const el = e.target.closest?.('[data-rmf]'); if (el) rmSet({ ...S.rm, [el.dataset.rmf]: el.type === 'checkbox' ? el.checked : el.value, item: null }); });
-// Records text (RECORDS-TEXT R1): an opened cell stays open over re-renders; a clamped cell that fits (or hides < ~2 lines,
-// less than the button costs) loses its "more" button
-function recOpen(t, b, open) { t.classList.toggle('open', open); b.setAttribute('aria-expanded', String(open)); b.textContent = open ? 'less' : 'more'; }
 // RM-30 S1 (prose.mjs): a long text is a 3-line preview + "more" on the phone; an opened one stays open over re-renders
 function proseFit() { for (const t of document.querySelectorAll('.prose.pclamp')) if (S.proseOpen.has(t.dataset.key)) { t.classList.add('open'); const b = t.nextElementSibling; if (b) { b.textContent = 'less'; b.setAttribute('aria-expanded', 'true'); } } }
 // RM-30 S1: a directive refused as a restatement (409 { dup }) = the plain-words notice under the bar (ui.mjs dupRefusal); its buttons
@@ -387,10 +388,6 @@ function proseFit() { for (const t of document.querySelectorAll('.prose.pclamp')
 function paintDup() { const el = $('#dupask'); el.innerHTML = S.dupAsk ? sanitize(dupRefusal(S.dupAsk)) : ''; el.hidden = !S.dupAsk; if (S.dupAsk) el.scrollIntoView({ block: 'nearest' }); }
 const dirSend = (x, extra = {}) => act(async () => { try { await post('/api/directive', { project: x.project, text: x.text, ...(x.card ? { card: x.card } : {}), ...extra }); S.dupAsk = null; }
   catch (e) { if (!e.body?.dup) throw e; S.dupAsk = { ...x, dup: e.body.dup }; } finally { paintDup(); } });
-function recFit() {
-  for (const t of document.querySelectorAll('.rtext.rclamp')) { const b = t.nextElementSibling;
-    if (S.recOpen.has(t.dataset.key)) recOpen(t, b, true); else if (t.scrollHeight <= t.clientHeight + 40) { t.classList.remove('rclamp'); b?.remove(); } }
-}
 // ---- Settings helpers: control value (same conversion the Review diff uses), search filter, unsaved-change marker ----
 function valueOf(el) {
   const ty = el.dataset.type;
@@ -479,7 +476,7 @@ const { F, mountFeed } = createFeed({ onFollow: (p, r) => feedGo(p, r) });
 const runsNarrow = () => matchMedia('(max-width:1100px)').matches;
 matchMedia('(max-width:1100px)').addEventListener('change', () => { if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
-const ACTS = { ...laneActs, ...runActs };
+const ACTS = { ...laneActs, ...runActs, ...inboxActs, ...ledgerActs };
 const C = { S, render: () => render(), get, post, $, go: g => goTo(g), act, err, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r) };
 // ---- roadmap edit drawer (META-ROADMAP S3): a row's / theme's "..." or + Add opens it; each action = one POST /api/roadmap/<op>
 // (the page token, one record by dashboard). The reply's tree repaints the tab and the drawer at once; every other tab gets the
@@ -651,7 +648,6 @@ document.addEventListener('click', e => {
   if (d.ins) { goTo({ tab: 'docs', ins: d.ins, line: d.line }); return; }   // a Context file link lands on the Docs reader
   if (d.setcat) { S.setCat = d.setcat; S.setQ = ''; $('#set-search').value = ''; setFilter();
     const to = d.setsub && document.getElementById(d.setsub); if (to) to.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0); return; }
-  if (d.act === 'rec-more') { const t = b.previousElementSibling, open = !t.classList.contains('open'); recOpen(t, b, open); if (open) S.recOpen.add(t.dataset.key); else S.recOpen.delete(t.dataset.key); return; }
   if (d.act === 'claim-take' && confirm(`Take over ${d.lane}? Its home stops the run at its next renew.`)) { act(() => post('/api/claim/take', { project: p, lane: d.lane })); return; }
   if (d.act === 'ledger-more') { S.ledgerN += 100; render(); return; }
   if (b.dataset.setLevel) { S.setLevel = b.dataset.setLevel; try { localStorage.setItem('meta-setlevel', S.setLevel); } catch { /* private mode */ }
@@ -684,7 +680,6 @@ document.addEventListener('click', e => {
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(async () => { await post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }); draftDrop(null, '#ans-' + d.id); });
-  if (d.act === 'proposal') act(() => post('/api/proposal', { project: d.project || p, run: d.run, stage: d.stage, pick: d.pick }));   // RM-28 S1: one stage's pick
   if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
   if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, resume: 'all' }));   // GAP-1: the hold row of a PAUSED file
   // RM-37: the pause menu (a mode, Pause half: its pick line then Confirm, Resume all) and a row's Pause / Resume - each one POST /api/pause

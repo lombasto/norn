@@ -1,8 +1,8 @@
-// Ledger tab (LEDGER-UX R1): one ledger line -> one entry. Pure; the same module runs in the browser (/ledger.mjs) and in node --test.
+// Ledger tab (LEDGER-UX R1): one ledger line -> one entry, and a record's text -> its structure. Parsers only: the pages render every
+// text through the one prose renderer (prose.mjs). Pure; the same module runs in the browser (/ledger.mjs) and in node --test.
 // Shapes: "- meta <ISO>Z[ minor]: body" (check-in / minor), "- auto <ISO>Z: body", "- <label> <ISO>Z: body" (controller session);
 // any other line (headings, prose) is kind "other" and renders as markdown. The body splits at top-level "; " into clauses:
 // the first is the headline, later ones are sub-lines, labelled when they start "<words>: " or with a known label word.
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ENTRY = /^- ([A-Za-z][\w.-]*) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z)( minor)?:\s?(.*)$/;
 export const LEDGER_KINDS = ['check-in', 'minor', 'auto', 'controller', 'other'];
 // later clauses the check-ins write as "<word> <rest>" with no colon (rate 1.2 %/h, records none new, digest 1 empty, ...)
@@ -44,37 +44,6 @@ export function parseLedgerLine(line) {
 
 /** lines (file order) -> entries (file order), blank lines dropped */
 export const parseLedger = lines => (lines || []).filter(l => String(l ?? '').trim()).map(parseLedgerLine);
-
-// record ids, short shas (7-12 hex with a digit and a letter); `code` spans are taken first
-const TOKEN = /`([^`]+)`|\b(?:(DEC|DIR|Q|RUN|DLV|EP|RM)-(\d+))\b|\b([0-9a-f]{7,12})\b/g;
-const isSha = s => /\d/.test(s) && /[a-f]/.test(s);
-// o.rec (Records text): also paths (2+ slashes, an extension or a drive) and "->" arrows
-const TOKEN_REC = new RegExp(TOKEN.source + String.raw`|(?<![\w/.-])((?:[A-Za-z]:)?(?:[\w.-]+\/)+[\w.-]*[\w-])|(->)`, 'g');
-const isPath = s => /^[A-Za-z]:\//.test(s) || (s.match(/\//g) || []).length >= 2 || /\.[A-Za-z]\w{0,4}$/.test(s);
-/** text -> safe HTML: DEC / DIR jump to the Records row, Q to the Inbox, RM to the Roadmap row, RUN to Agents when o.runs has it, DLV opens the drawer. */
-export function ledgerInline(text, o = {}) {
-  const s = String(text ?? ''), runs = o.runs instanceof Set ? o.runs : new Set(o.runs || []);
-  let out = '', at = 0;
-  for (const m of s.matchAll(o.rec ? TOKEN_REC : TOKEN)) {
-    const [all, code, k, n, sha, p, arr] = m;
-    let h;
-    if (code !== undefined) h = `<code>${esc(code)}</code>`;
-    else if (k) {
-      const id = `${k}-${n}`, cls = `rid r-${k.toLowerCase()}`;
-      h = k === 'DEC' || k === 'DIR' ? `<a class="${cls}" href="#rec-${id}" data-rid="${id}">${id}</a>`
-        : k === 'Q' ? `<a class="${cls}" href="#q-${id}" data-rid="${id}">${id}</a>`
-        : k === 'RM' ? `<a class="${cls}" href="#rm-${id}" data-rid="${id}">${id}</a>`   // META-ROADMAP S2: the Roadmap row
-          : k === 'RUN' && runs.has(id) ? `<a class="${cls}" href="#node-${id}" data-rid="${id}">${id}</a>`
-            : k === 'DLV' ? `<a class="${cls}" href="#" data-dlv="${id}"${o.project ? ` data-project="${esc(o.project)}"` : ''}>${id}</a>`
-              : `<span class="id">${id}</span>`;
-    } else if (sha && isSha(sha)) h = `<span class="sha">${sha}</span>`;
-    else if (p && isPath(p)) h = `<span class="path">${esc(p)}</span>`;
-    else if (arr) h = '<span class="arr">→</span>';
-    else continue;
-    out += esc(s.slice(at, m.index)) + h; at = m.index + all.length;
-  }
-  return out + esc(s.slice(at));
-}
 
 // ---------- Records text (RECORDS-TEXT R1): directive text / decision question, choice, why in the Ledger look ----------
 // "OWNER a14 2026-10-30 ~20:15Z:" / "Owner 11-11 ~23:30Z (chat):" / "Owner 11-10 (amends DIR-93):" / "..., on the x note (..):"
@@ -119,15 +88,9 @@ export function parseRecordText(text) {
   const [head = '', ...rest] = splitClauses(pre.replace(/[\s;,]+$/, ''));
   return { meta, quotes, head, subs: rest.map(sub), items };
 }
-const lineCount = (t, cpl) => Math.max(1, Math.ceil(String(t).length / cpl));
-/** text -> { html, lines }: muted meta line, quotes, headline + clause lines, list; lines = a rough rendered-line estimate at o.cpl chars */
-export function recordBlocks(text, o = {}) {
-  const p = parseRecordText(text), cpl = o.cpl || 100, inl = t => ledgerInline(t, { ...o, rec: true });
-  let html = '', lines = 0;
-  if (p.meta) { html += `<div class="rmeta">${esc(p.meta)}</div>`; lines++; }
-  for (const q of p.quotes) { html += `<blockquote class="rquote">${inl(q)}</blockquote>`; lines += lineCount(q, cpl); }
-  if (p.head) { html += `<div class="ledhead">${inl(p.head)}</div>`; lines += lineCount(p.head, cpl); }
-  for (const x of p.subs) { html += `<div class="ledsub">${x.label ? `<b>${esc(x.label)}</b> ` : ''}${inl(x.text)}</div>`; lines += lineCount(x.text, cpl); }
-  if (p.items.length) { html += `<ol class="rlist">${p.items.map(t => `<li>${inl(t)}</li>`).join('')}</ol>`; lines += p.items.reduce((n, t) => n + lineCount(t, cpl), 0); }
-  return { html, lines };
+/** text -> markdown for the one prose renderer (prose.mjs): the meta line in italics, each quote a block quote, the headline and its
+ *  clause lines (a label in bold) as lines of one paragraph, the (1) (2) items as a numbered list */
+export function recordMarkdown(text) {
+  const p = parseRecordText(text), lines = [p.head, ...p.subs.map(x => (x.label ? `**${x.label}** ${x.text}` : x.text))].filter(Boolean);
+  return [p.meta ? `*${p.meta}*` : '', ...p.quotes.map(q => `> ${q}`), lines.join('\n'), p.items.map((t, k) => `${k + 1}. ${t}`).join('\n')].filter(Boolean).join('\n\n');
 }

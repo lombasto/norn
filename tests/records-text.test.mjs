@@ -1,46 +1,63 @@
-// RECORDS-TEXT R1: the Records tab text cells (directive text, decision question / choice / why) get the Ledger treatment -
-// owner prefix as a muted meta line, quoted owner words as a quote, "(1) .. (2) .." as a list, top-level "; " clauses as lines,
-// "->" as an arrow, ids / shas / paths / `code` inline; long text clamps behind a "more" button. Synthetic strings only.
+// The Records page (UI redesign 2026-11-20): each text cell (directive text, decision question / choice / why) is structured by
+// ledger.mjs recordMarkdown (owner prefix in italics, quoted owner words as a quote, "(1) .. (2) .." as a list, top-level "; "
+// clauses as lines) and rendered by the one prose renderer (ids / paths / `code` inline, a long text clamps behind "more").
+// Directives / Decisions are filter chips; state, age and lane filter; each row carries its weight and opens its drawer. Synthetic.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRecordText, recordBlocks } from '../engine/dash/ledger.mjs';
+import { recordMarkdown } from '../engine/dash/ledger.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
+import { recView, renderRecord } from '../engine/dash/pages/ledger.mjs';
 
-test('recordBlocks: meta / quote / head / clause lines / list, ids + shas + paths + code + arrows, a line estimate', () => {
-  const { html, lines } = recordBlocks("Owner 01-02 ~03:04Z: 'yes' -> DIR-4 at 53a3f65 in state/x/PAUSED and `a<b`; (1) DEC-5 (2) see docs/plan.md", { cpl: 60 });
-  assert.match(html, /^<div class="rmeta">Owner 01-02 ~03:04Z<\/div><blockquote class="rquote">yes<\/blockquote><div class="ledhead">/);
-  assert.match(html, /<span class="arr">→<\/span> <a class="rid r-dir" href="#rec-DIR-4" data-rid="DIR-4">DIR-4<\/a>/);
-  assert.match(html, /<span class="sha">53a3f65<\/span>/); assert.match(html, /<span class="path">state\/x\/PAUSED<\/span>/);
-  assert.match(html, /<code>a&lt;b<\/code>/);
-  assert.match(html, /<ol class="rlist"><li><a class="rid r-dec"[^>]*>DEC-5<\/a><\/li><li>see <span class="path">docs\/plan.md<\/span><\/li><\/ol>$/);
-  assert.ok(lines >= 5, `meta + quote + head + 2 items, got ${lines}`);
-  assert.ok(!/class="path">(?:and\/or|a\/b)</.test(recordBlocks('and/or a/b').html), 'a single short slash pair is no path');
-  assert.ok(!recordBlocks('x -> y').html.includes('-&gt;'));
+const NOW = Date.parse('2026-01-20T05:00Z');
+const W = (o = {}) => ({ cited: { records: 1, runs: 2, notes: 3, ledger: 0, total: 6 }, by: { runs: ['RUN-4'], lanes: ['alpha'], records: ['DEC-2'], notes: ['state/notes/x/NOTES.md'] },
+  edits: 1, supersedes: [], superseded_by: null, conflicts: [], age_days: 19, stood_days: 19, violations: [], ...o });
+const rec = (id, kind, state, data, o = {}) => ({ id, kind, state, data, by: 'controller', created: '2026-01-01T03:04Z', history: [{ seq: 1, ts: '2026-01-01T03:04Z', ev: 'create', by: 'owner' }], weight: W(), ...o });
+
+test('recordMarkdown: meta / quote / head + clause lines / list, as markdown for the prose renderer', () => {
+  const m = recordMarkdown("Owner 01-02 ~03:04Z: 'yes' -> DIR-4 at 53a3f65; why: because; (1) DEC-5 (2) see docs/plan.md");
+  assert.equal(m, '*Owner 01-02 ~03:04Z*\n\n> yes\n\n-> DIR-4 at 53a3f65\n**why** because\n\n1. DEC-5\n2. see docs/plan.md');
+  assert.equal(recordMarkdown('plain words'), 'plain words');
 });
 
-test('XSS: hostile directive text and decision fields render escaped in the Records tab', () => {
+test('XSS: hostile directive text and decision fields render escaped in the Records tab and its drawer', () => {
   const bad = `Owner 01-02 (<img src=x onerror=alert(1)>): '<script>alert(2)</script>' -> <b>x</b>; (1) <i>y</i> (2) \`</code><svg>\``;
-  const rec = (id, kind, state, data) => ({ id, kind, state, data, by: 'controller<u>', created: '2026-01-02T03:04Z', history: [] });
-  const d = { project: 'demo', directives: [rec('DIR-1', 'DIR', 'active', { text: bad, via: '<em>chat</em>' })],
-    decisions: [rec('DEC-1', 'DEC', 'in-force', { question: bad, choice: bad, why: bad, lane: '<s>l</s>', source: '<a>' })] };
-  const html = renderTab('records', d, { project: 'demo', now: Date.parse('2026-01-02T05:00Z') });
-  assert.ok(!/<(?:img|script|b|i|svg|em|u|s)[ >]/i.test(html.replace(/<b class="aname" data-dwarf="[a-z0-9-]*">/g, '')), html);
+  const d = { project: 'demo', directives: [rec('DIR-1', 'directive', 'active', { text: bad, via: '<em>chat</em>' })],
+    decisions: [rec('DEC-1', 'decision', 'in-force', { question: bad, choice: bad, why: bad, lane: '<s>l</s>', source: '<a>' }, { by: 'controller<u>' })] };
+  const html = renderTab('records', d, { project: 'demo', now: NOW }) + renderRecord(d.decisions[0], d, { now: NOW });
+  assert.ok(!/<(?:img|script|svg|u|s|i)[ >]|<em>chat/i.test(html), html);   // prose itself writes <em> / <strong>
   assert.match(html, /&lt;img src=x/); assert.match(html, /<code>&lt;\/code&gt;&lt;svg&gt;<\/code>/);
 });
 
-test('Records tab: every text cell uses the formatter; long text clamps behind a keyboard "more" button with the full text in the DOM', () => {
+test('Records: one chip row Directives / Decisions, state / age / lane filters, prose text that clamps, a weight per row', () => {
   const long = 'Owner 01-02 ~03:04Z: ' + Array.from({ length: 12 }, (_, i) => `clause ${i} with some words to make it long enough`).join('; ');
-  const rec = (id, state, data) => ({ id, state, data, by: 'controller', created: '2026-01-01T03:04Z', history: [] });
-  const d = { project: 'demo', directives: [rec('DIR-7', 'active', { text: long, via: 'chat' }), rec('DIR-8', 'done', { text: 'short one', via: 'chat' })],
-    decisions: [rec('DEC-9', 'in-force', { question: 'Q text; with -> arrow', choice: 'pick (1) a (2) b', why: 'because DIR-7', lane: 'l' })] };
-  const html = renderTab('records', d, { project: 'demo', now: Date.parse('2026-01-02T05:00Z') });
+  const d = { project: 'demo', directives: [rec('DIR-7', 'directive', 'active', { text: long, via: 'chat' }), rec('DIR-8', 'directive', 'done', { text: 'short one', via: 'chat' }, { weight: W({ age_days: 2, stood_days: 1 }) })],
+    decisions: [rec('DEC-9', 'decision', 'in-force', { question: 'Q text; with arrow', choice: 'pick (1) a (2) b', why: 'because DIR-7', lane: 'alpha' }, { weight: W({ conflicts: [{ id: 'owner', why: 'overruled' }], violations: [{ source: 'scope hook', run: 'RUN-3', why: 'DEC-9 says no' }] }) })] };
+  const html = renderTab('records', d, { project: 'demo', now: NOW });
   const row = id => html.match(new RegExp(`<tr id="rec-${id}"[\\s\\S]*?</tr>`))[0];
-  assert.match(row('DIR-7'), /<div class="rtext rclamp" data-key="DIR-7:text">/);
-  assert.match(row('DIR-7'), /<button type="button" class="ghost rmore" data-act="rec-more" aria-expanded="false">more<\/button>/);
+  assert.match(html, /class="fchips" role="group" aria-label="Show"><button class="hf" data-act="rec-kind" data-show="directive" aria-pressed="true">Directives <b>2<\/b><\/button><button class="hf" data-act="rec-kind" data-show="decision" aria-pressed="true">Decisions <b>1<\/b>/);
+  assert.match(html, /data-act="rec-state" data-show="force" aria-pressed="true">In force <b>2<\/b>/); assert.match(html, /data-act="rec-state" data-show="ended" aria-pressed="true">Ended <b>1<\/b>/);
+  assert.match(html, /data-act="rec-age" data-show="7"/); assert.match(html, /data-act="rec-lane" data-show="alpha"/); assert.match(html, /data-act="rec-sort" data-show="cited"/);
+  assert.match(row('DIR-7'), /class="prose pclamp" data-key="rec:DIR-7"/); assert.match(row('DIR-7'), /data-act="prose-more"/);
   assert.ok(row('DIR-7').includes('clause 11 with some words'), 'the full text stays in the DOM, so the search filter matches it');
-  assert.ok(!row('DIR-8').includes('rmore'), 'short text has no expander');
-  assert.match(row('DIR-7'), /<td class="id rnw">DIR-7<\/td>/); assert.match(row('DIR-7'), /<td class="small mute rnw">01-01 03:04Z · chat<\/td>/);
-  assert.match(row('DEC-9'), /<td class="rt" data-label="question"><div class="rtext" data-key="DEC-9:q"><div class="ledhead">Q text<\/div><div class="ledsub">with <span class="arr">→<\/span> arrow<\/div>/);
-  assert.match(row('DEC-9'), /<ol class="rlist"><li>a<\/li><li>b<\/li><\/ol><div class="rwhy small mute"><div class="ledhead">because <a class="rid r-dir"/);
-  assert.match(html, /<table class="rectab" data-rows="records">/);
+  assert.ok(!row('DIR-8').includes('pclamp'), 'short text has no expander');
+  assert.match(row('DIR-7'), /data-act="rec-open" data-id="DIR-7"/); assert.match(row('DIR-7'), /cited <b>6<\/b> · 1 edit · stood 19 d/);
+  assert.match(row('DIR-7'), /data-act="revoke"/); assert.match(row('DEC-9'), /data-act="overrule"/); assert.doesNotMatch(row('DIR-8'), /data-act="revoke"/);
+  assert.match(row('DEC-9'), /1 conflict/); assert.match(row('DEC-9'), /1 violation recorded/);
+  assert.match(row('DEC-9'), /<strong>choice<\/strong> pick/); assert.match(row('DEC-9'), /<ol>\s*<li>a<\/li>\s*<li>b<\/li>\s*<\/ol>/); assert.match(row('DEC-9'), /data-rid="DIR-7"/);
+  assert.doesNotMatch(html, /\d+ decisions · \d+ directives/, 'no counter row: the counts live on the chips');
+  // the filters
+  const only = v => renderTab('records', d, { project: 'demo', now: NOW, recView: { ...recView, ...v } });
+  assert.doesNotMatch(only({ kinds: new Set(['decision']) }), /id="rec-DIR-7"/, 'Directives off hides them');
+  const forced = only({ states: new Set(['force']) }); assert.match(forced, /id="rec-DIR-7"/); assert.doesNotMatch(forced, /id="rec-DIR-8"/);
+  const young = only({ age: '7' }); assert.match(young, /id="rec-DIR-8"/); assert.doesNotMatch(young, /id="rec-DIR-7"/);
+  const lane = only({ lane: 'alpha' }); assert.match(lane, /id="rec-DEC-9"/); assert.doesNotMatch(lane, /id="rec-DIR-7"/);
+});
+
+test('the record drawer: the numbers, who cites it (links where each lives), the conflicts, violations as recorded, history', () => {
+  const r = rec('DIR-3', 'directive', 'superseded', { text: 'do x', via: 'chat' }, { weight: W({ supersedes: ['DIR-1'], superseded_by: 'DIR-5', conflicts: [{ id: 'DIR-2', why: 'possible duplicate: same words' }] }) });
+  const h = renderRecord(r, { project: 'demo' }, { now: NOW });
+  assert.match(h, /cited<\/dt><dd>6 <span class="mute">\(records 1 · runs 2 · notes 3 · ledger lines 0\)/);
+  for (const id of ['RUN-4', 'L:alpha', 'DEC-2', 'DIR-1', 'DIR-5', 'DIR-2']) assert.match(h, new RegExp(`data-rid="${id}"`), id);
+  assert.match(h, /state\/notes\/x\/NOTES\.md/); assert.match(h, /none recorded/); assert.match(h, /create by owner/);
+  assert.match(renderRecord(null, {}, {}), /not found/);
 });

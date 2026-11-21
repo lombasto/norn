@@ -132,7 +132,6 @@ export function homeEvents({ thread = [], runs = [], items = null, ledger = [], 
   ledger.forEach((e, i) => { if (e.kind !== 'check-in' || !e.ts) return; const run = checkinRunAt(e.ts, checkins);
     out.push({ key: `l${i}`, ts: e.ts, cat: 'checkin', kind: 'checkin', ckrun: run, line: run ? checkinLine(checkinFacts(run, all)) : null, headline: e.headline, subs: e.subs || [], images: imagePaths(e.raw ?? e.headline) }); });
   for (const n of needs) {
-    if (n.type === 'answered') continue;
     out.push({ ...n, key: `n${n.id}`, ts: n.created ?? null, cat: 'needs', kind: n.type });
   }
   const t = e => { const v = Date.parse(e.ts ?? ''); return Number.isFinite(v) ? v : 0; };
@@ -187,12 +186,8 @@ function card(e, ctx) {
     return `<div class="head">${tag('ok', 'DONE')}<b class="ttl">${inline(e.title)}</b></div>${(e.lines || []).map(l => `<div class="txt">${inline(l)}</div>`).join('')}
     <div class="acts">${e.hold ? `<span class="hold">lane ${esc(e.hold)} held by this chat${e.until ? ` until ${hhmm(e.until)}` : ''}</span>` : ''}${undo}</div>`; }
   if (e.kind === 'show') return `<div class="who">shown · ${at}</div><div class="txt">${e.caption ? `${inline(e.caption)} ` : ''}<code>${esc(e.path)}</code></div>${shots(e.images, ctx.project)}${e.excerpt ? `<pre class="excerpt">${esc(e.excerpt)}</pre>` : ''}`;
-  // the other needs-you rows of the inbox: a login to redo, a drafted setup, a parked lane, an unreviewed run
-  const what = e.kind === 'unreviewed' ? `${rid(e.id)} <b>${esc(e.lane ?? 'run')}</b> ended ${esc(String(e.outcome ?? e.state).toUpperCase())}${e.why ? `: ${esc(e.why)}` : ''} - not reviewed yet`
-    : e.kind === 'parked' ? `lane <b>${esc(e.lane)}</b> parked${e.q ? ` by ${rid(e.q)}` : e.why ? `: ${esc(e.why)}` : ''}`
-    : e.kind === 'login' ? `${esc(e.title)}` : `${esc(e.title ?? e.id)}`;
-  const go = e.kind === 'unreviewed' ? 'runs' : 'inbox';
-  return `<div class="head">${tag('needs', 'NEEDS YOU')}<span class="txt">${what}</span><span class="spacer"></span><button class="ghost" data-tab="${go}">open</button></div>`;
+  // the other needs-you rows of the inbox: a login to redo, a drafted setup, a hold, an owner card
+  return `<div class="head">${tag('needs', 'NEEDS YOU')}<span class="txt">${esc(e.title ?? e.id)}</span><span class="spacer"></span><button class="ghost" data-tab="inbox">open</button></div>`;
 }
 const LINE = new Set(['segment', 'stop', 'checkin', 'handoff']), PLAIN = new Set(['you', 'controller', 'tools', 'show', 'norn']);
 // META-CHAT-CONTROLS R1 (owner DIR-58): a filter with nothing in it says what it shows and why it is empty - never a blank screen

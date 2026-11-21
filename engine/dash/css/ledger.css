@@ -1,0 +1,11 @@
+/* The Records and Ledger pages (pages/ledger.mjs): the title lines with their chips and ? help, the filter row, the lane picker
+   popover, the weight cell, a record's prose clamped on every width, the record drawer's numbers. The tables are base.css's. */
+#records-head .lhelp,#ledger-head .fchips{margin-left:auto}
+.rfilters{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}.rfilters input[type=search]{width:220px;max-width:100%}
+.rlane{position:relative}.rlane>summary{cursor:pointer;list-style:none;padding:2px 8px;border:1px solid var(--field-line);border-radius:12px}
+.rlane>.fchips{position:absolute;z-index:4;left:0;top:30px;width:min(340px,86vw);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 6px 18px var(--shadow)}
+.rweight{display:inline-flex;flex-wrap:wrap;gap:2px 6px;align-items:center;color:var(--mute)}.rweight b{color:var(--ink)}
+.rectab .prose.pclamp:not(.open){max-height:6.6em;overflow:hidden;-webkit-mask-image:linear-gradient(var(--ink) 60%,transparent);mask-image:linear-gradient(var(--ink) 60%,transparent)}
+.rectab .pmore{display:inline-block;margin:2px 0;padding:0 8px;font-size:12px;line-height:18px}
+.recd{padding:4px 2px;overflow-wrap:anywhere}.reckv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:10px 0}.reckv dt{color:var(--mute);font-size:12px}
+.reckv dd{margin:0}.rhist{padding-left:18px}.recacts{margin-top:10px}
