@@ -3314,7 +3314,7 @@ function syncCmd(argv, env, out, err) {
     if (sub === 'reconcile') {   // S5: the likely duplicate pairs across homes -> one owner card each; the answered cards apply first
       const by = f.as || env.META_ROLE;
       if (!f.dry && !by) { err('error: no role: pass --as <role> or set META_ROLE'); return 2; }
-      const claims = (() => { try { return localClaims(fedOf(cfg)); } catch { return {}; } })();   // the last fetched claims; none = no claim pairs
+      const claims = localClaims(fedOf(cfg));   // the last fetched claims; none = no claim pairs
       for (const { project, state } of syncedDirs(cfg)) {
         const r = reconcile(state, { by, claims, dry: f.dry });
         out(`${project}: ${r.pairs.length} likely duplicate pair${r.pairs.length === 1 ? '' : 's'} ${f.dry ? '(dry run, no card written)' : `, ${r.written.length} card${r.written.length === 1 ? '' : 's'} written (${r.written.join(' ') || '-'})`}; ${r.carded} asked before${r.applied.length ? `; applied ${r.applied.map(a => `${a.q} ${a.choice}`).join(', ')}` : ''}`);
