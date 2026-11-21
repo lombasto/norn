@@ -69,8 +69,13 @@ test('pr.yml: pull_request only; slop of the diff, norn smoke and ci-suite --cha
   assert.doesNotMatch(t, /needs:/, 'the three jobs run side by side');
   assert.equal(jobs.filter(l => l.trim() === 'runs-on: ubuntu-latest').length, 3);
   const runs = jobs.map(l => l.trim()).filter(l => l.startsWith('run: '));
-  assert.deepEqual(runs.filter(l => /norn\.mjs|ci-suite/.test(l)), ['run: node engine/bin/norn.mjs slop check --diff "origin/${{ github.base_ref }}..HEAD"',
-    'run: node engine/bin/norn.mjs smoke', 'run: node engine/bin/ci-suite.mjs --changed "origin/${{ github.base_ref }}" --concurrency 4']);
+  assert.deepEqual(runs.filter(l => /norn\.mjs|ci-suite/.test(l)), ['run: node engine/bin/norn.mjs smoke',
+    'run: node engine/bin/ci-suite.mjs --changed "origin/${{ github.base_ref }}" --concurrency 4']);
+  // slop (d3afd1fe): a `run: |` block - the PR head's diff from its merge base with the target, --ci (no machine-only rules)
+  const s = jobs.map(l => l.trim()), at = s.indexOf('- name: slop check of the PR\'s diff from its merge base');
+  assert.deepEqual(s.slice(at + 1, at + 5), ['shell: bash', 'run: |', 'base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)',
+    'node engine/bin/norn.mjs slop check --ci --diff "$base..HEAD"']);
+  assert.ok(jobs.some(l => l.trim() === 'ref: ${{ github.event.pull_request.head.sha }}'), 'slop checks out the PR head');
   assert.equal(jobs.filter(l => l.trim() === 'fetch-depth: 0').length, 2, 'slop and tests diff against the base: full history');
   const code = t.split(/\r?\n/).filter(l => !l.trim().startsWith('#')).join('\n');
   assert.doesNotMatch(code, /retry|retries|continue-on-error/i, 'never retries');
