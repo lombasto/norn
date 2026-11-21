@@ -39,20 +39,13 @@ const HB_FRESH_MS = 10 * 60 * 1000;
 export class ToolError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 const bad = msg => { throw new ToolError(msg, 2); };
 
-// Who is asking, from the environment: a check-in run sets META_ROLE=checkin; every other supervised run has META_RUN_ID (worker),
-// even when it inherited META_ROLE=controller from the session that started it.
-export function envRole(env) {
-  if (env.META_ROLE === 'checkin') return 'checkin';
-  if (env.META_RUN_ID) return 'worker';
-  return env.META_ROLE || null;
-}
-export function refusal(profile, env) {
+// Who may start a profile: the role is mail.mjs mailRole's (a run's RUN record, never META_ROLE, which a worker inherits from the
+// check-in that dispatched it). Setup has no state to read; any supervised run is refused it anyway.
+export function refusal(profile, env, state) {
   if (!PROFILES.includes(profile)) return `--profile must be ${PROFILES.join(' | ')} (got ${JSON.stringify(profile)})`;
-  const r = envRole(env);
-  if ((profile === 'controller' || profile === 'chat') && (r === 'worker' || r === 'checkin')) return `refused: profile ${profile} from a ${r} environment (META_ROLE=${env.META_ROLE || '-'}, META_RUN_ID=${env.META_RUN_ID || '-'})`;
-  if (profile === 'setup' && (r === 'worker' || r === 'checkin')) return `refused: profile setup from a ${r} environment (META_ROLE=${env.META_ROLE || '-'}, META_RUN_ID=${env.META_RUN_ID || '-'})`;
-  if (profile === 'checkin' && r === 'worker') return `refused: profile checkin from a worker environment (META_RUN_ID=${env.META_RUN_ID})`;
-  return null;
+  const r = env.META_RUN_ID && !state ? 'supervised run' : mailRole(state, env);
+  if (r === 'controller' || profile === 'worker' || (profile === 'checkin' && r === 'checkin')) return null;
+  return `refused: profile ${profile} from a ${r} environment (META_ROLE=${env.META_ROLE || '-'}, META_RUN_ID=${env.META_RUN_ID || '-'})`;
 }
 
 // ---------- minimal JSON-schema check (the shapes the tools use) ----------
