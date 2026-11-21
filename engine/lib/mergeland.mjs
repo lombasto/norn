@@ -4,7 +4,7 @@
 // and records the PR on the branch's deliverable (a `pr` event). The owner approves and merges the PR; Norn never touches main.
 // Repo = the owner/name of the remote's URL, base = project deliverables.main, title = the deliverable's `delivers` line (the lane
 // brief's heading), else the branch: project data, nothing chosen here. RM-44 D1: a branch whose pushed head has open slop BLOCK
-// findings (its stored check, or the check run now) gets no PR.
+// findings (its stored check, or the check run now) gets no PR; RM-44 B: an opened PR's body carries that check's WARN list.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,7 +19,7 @@ import { isWork } from './gate.mjs';
 import { isMergeRun } from './checkins.mjs';
 import { LIVE } from './lifecycle.mjs';
 import { slopOn } from './policy.mjs';
-import { doorCheck, doorWhy } from './slop/door.mjs';
+import { doorCheck, doorWhy, doorWarns } from './slop/door.mjs';
 
 export const fwd = p => String(p || '').replace(/\\/g, '/');
 export const s7 = s => String(s || '').slice(0, 7);
@@ -36,7 +36,7 @@ export const ghSlug = url => (String(url || '').trim().match(/github\.com[:/]+([
 
 /**
  * Open (or reuse) the PR of each lane branch of the tested merge in wt. o: { repo, wt, branches, main, remote, stateDir, run, git, gh,
- * door ((branch, tip) -> null | why refused: the slop door; null = SloppaChoppa is off) }.
+ * door ((branch, tip) -> the slop door's check of that head (doorCheck); door null = SloppaChoppa is off) }.
  * Returns [{ branch, status: opened | open | refused, url?, number?, ahead?, why, dlv? }].
  */
 export function openPrs(o) {
@@ -62,7 +62,8 @@ export function openPrs(o) {
     if (!own.length) return res('refused', `${branch} has no commits past ${main}: nothing to land`);
     if (untested.length === own.length) return res('refused', `the tested merge ${s7(head)} holds none of ${branch}'s commits past ${main}`);
     if (untested.length) return res('refused', `${branch} has ${untested.length} commit(s) the tested merge ${s7(head)} does not hold (${untested.slice(0, 3).map(s7).join(', ')}${untested.length > 3 ? ', ...' : ''}): test them in a new MERGE run`);
-    if (door) { let why; try { why = door(branch, tip); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
+    let slop = null;   // the PR body's SloppaChoppa line(s): the stored check's WARN list
+    if (door) { let why; try { const d = door(branch, tip); why = doorWhy(d); slop = doorWarns(d); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
     const ahead = Number(git(wt, ['rev-list', '--count', `${head}..${tip}`], { allowFail: true }) || 0);   // merges of main only (the checks above)
     const dlv = dlvs.find(d => sameRepo(d.data.repo, repo) && d.data.branch === branch) || null;
     const list = gh(['pr', 'list', '--repo', slug, '--head', branch, '--base', main, '--state', 'open', '--json', 'url,number']);
@@ -71,7 +72,7 @@ export function openPrs(o) {
     if (!pr) {
       const title = dlv?.data.delivers || branch;
       const body = [`Lane branch \`${branch}\`${dlv ? ` (${dlv.id}${dlv.data.lane ? `, lane ${dlv.data.lane}` : ''})` : ''}.`,
-        `Norn tested it merged on ${main}: merge ${s7(head)}${run ? `, run ${run}` : ''}.`, ahead ? `The branch is ${ahead} commit(s) past that merge: merges of ${main} only.` : ''].filter(Boolean).join('\n\n');
+        `Norn tested it merged on ${main}: merge ${s7(head)}${run ? `, run ${run}` : ''}.`, ahead ? `The branch is ${ahead} commit(s) past that merge: merges of ${main} only.` : '', slop].filter(Boolean).join('\n\n');
       const bf = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'norn-pr-')), 'body.md');
       fs.writeFileSync(bf, body + '\n');
       const c = gh(['pr', 'create', '--repo', slug, '--base', main, '--head', branch, '--title', title, '--body-file', bf]);
@@ -94,7 +95,7 @@ export const prLine = r => r.status === 'refused' ? `NOT OPENED ${r.branch}: ${r
 /** openPrs with a project's settings (project.json deliverables) and its slop door (on unless the project's switch is off; tests pass `door`) */
 export function openProjectPrs(p, { wt, branches, run, git, gh, door: d } = {}) {
   const cfg = mergeConfig(p);
-  const door = d !== undefined ? d : slopOn(p.policy) ? (branch, tip) => doorWhy(doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, projectDir: p.project_dir, main: cfg.main, remote: cfg.remote })) : null;
+  const door = d !== undefined ? d : slopOn(p.policy) ? (branch, tip) => doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, projectDir: p.project_dir, main: cfg.main, remote: cfg.remote }) : null;
   return openPrs({ repo: cfg.repo, wt, branches, main: cfg.main, remote: cfg.remote, stateDir: p.state || null, run, door, ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
 }
 

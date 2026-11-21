@@ -12,9 +12,9 @@ import { sweep, formatSweep } from './sweep.mjs';
 import { dailyReport } from './daily.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
-export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | daily | fixtures    '
-  + '[--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings; fixtures: the real tools on the rule fixtures, nightly)';
-const FLAGS = { check: ['lane', 'diff', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], daily: [], fixtures: [] };
+export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | daily | fixtures    '
+  + '[--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings; --ci skips the rules that read the machine state; fixtures: the real tools on the rule fixtures, nightly)';
+const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], daily: [], fixtures: [] };
 
 function parse(verb, argv) {
   const spec = [...(FLAGS[verb] || []), 'project', 'state', 'repo'], f = {};
@@ -48,7 +48,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     repo = toplevel(repo);
     const [base, head] = f.diff ? f.diff.split('..') : [null, 'HEAD'];
     if (f.diff && !(base && head)) { err('error: --diff wants base..head'); return 2; }
-    const c = checkBranch({ repo, state, base, head, projectDir: project?.project_dir });
+    const c = checkBranch({ repo, state, base, head, projectDir: project?.project_dir, machine: !f.ci });
     if (!c) { out('slop check: no lane branch here (detached, on main, or no main to diff against): nothing to check'); return 0; }
     const ws = state ? activeWaivers(state) : [];
     const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id, explain: explainOf(b.rule, project?.project_dir) }));
@@ -60,7 +60,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
       const told = new Set();
       for (const b of blocks) { out((b.waived ? `waived (${b.waived}) ` : 'BLOCK ') + findingLine(b)); if (!b.waived && !told.has(b.rule)) { told.add(b.rule); for (const l of explainLines(b, { projectDir: project?.project_dir })) out(l); } }
       for (const s of c.result.skipped) out(`skipped ${s.rule}: ${s.why}`);
-      out(`slop check: ${open.length} BLOCK${blocks.length > open.length ? ` (+${blocks.length - open.length} waived)` : ''} on ${c.branch} ${c.base.slice(0, 7)}..${c.result.head.slice(0, 7)} (${c.result.ran.join(' ')})`);
+      out(`slop check: ${open.length} BLOCK${blocks.length > open.length ? ` (+${blocks.length - open.length} waived)` : ''} on ${c.branch ?? head} ${c.base.slice(0, 7)}..${c.result.head.slice(0, 7)} (${c.result.ran.join(' ')})`);
     }
     return open.length ? 1 : 0;
   }
@@ -76,7 +76,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   }
   if (verb === 'daily') {
     if (!state) { err('error: daily needs --project / --state (it writes the report there)'); return 2; }
-    const r = dailyReport({ repo: repoOf(), state, own });
+    const r = dailyReport({ repo: repoOf(), state, own, main: project?.deliverables?.main, remote: project?.deliverables?.remote, projectDir: project?.project_dir });
     out(`slop daily: ${r.line} -> ${r.file}`);
     return 0;
   }

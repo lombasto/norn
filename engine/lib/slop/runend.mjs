@@ -6,13 +6,18 @@ import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
 import { findingLine, explainLines } from './host.mjs';
 
-/** the merge base of a commit with main (the remote's main first: it is the fresher), or null (no main, or no common history) */
-export function mainBase(repo, head = 'HEAD', { main = 'main', remote = 'origin' } = {}) {
+/** main's sha: the remote's main first (it is the fresher), else the local branch, else null */
+export function mainTip(repo, { main = 'main', remote = 'origin' } = {}) {
   for (const ref of [`refs/remotes/${remote}/${main}`, `refs/heads/${main}`]) {
     const got = gitRun(repo, ['rev-parse', '--verify', '--quiet', ref], { ok: [0, 1] }).trim();
-    if (got) return gitRun(repo, ['merge-base', head, got], { ok: [0, 1] }).trim() || null;
+    if (got) return got;
   }
   return null;
+}
+/** the merge base of a commit with main (mainTip), or null (no main, or no common history) */
+export function mainBase(repo, head = 'HEAD', o = {}) {
+  const tip = mainTip(repo, o);
+  return tip ? gitRun(repo, ['merge-base', head, tip], { ok: [0, 1] }).trim() || null : null;
 }
 /** the branch and merge base of a checkout against main, or null (no branch / no main) */
 export function branchBase(repo, o = {}) {
@@ -39,12 +44,13 @@ function recordResolver(state) {
   return id => (id.startsWith('RM-') ? rm[id] : items[id]?.state) ?? null;
 }
 
-/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop */
-export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null } = {}) {
+/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop;
+ * brief: the run's brief text; machine false: skip the machine rules (slopCheck) */
+export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null, brief = null, machine = true } = {}) {
   const bb = base ? { branch: branchBase(repo)?.branch ?? null, base } : branchBase(repo);
   if (!bb) return null;
   const ps = projectSlop({ state, projectDir });
-  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules }) };
+  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules, brief, machine }) };
 }
 
 // the resume prompt names at most SLOP_GROUPS (rule, file) groups and SLOP_FIRST lines of each: a BLOCK list of thousands of hits

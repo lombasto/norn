@@ -233,7 +233,8 @@ test('readiness: one walk names every unmet term; the fill starts exactly the ro
   assert.equal(qa.ready, false);
   assert.deepEqual(qa.terms, by[a].terms);
   assert.match(renderDigest(dg), new RegExp(`- ${a} a .*; blocked: after q:${q}:answered unmet`), 'digest sec. 2 shows the same words');
-  await d.ended(got[0].next);
+  // c's end-of-run fill starts e (the slot is free again): every run this test caused settles here, not after the file
+  await waitFor(() => !stateBusy(d.state)(), { what: 'every run the fills started settled' });
 });
 
 test('readiness: a gone trigger reads "needs a ruling: ..." in the dry walk and the fill holds it (META-AUTONOMY R1); norn ready --epic filters', () => {
@@ -272,7 +273,9 @@ test('fill order: priority then FIFO; with no priority the order is exactly the 
   assert.deepEqual(rows.find(r => r.id === plain[0]).terms, [`cap max_claude_workers: kept for ${p1} (fill order per cap)`]);
   const got = fillQueue(d.state);
   assert.deepEqual(got.map(x => x.queued), [p0], 'the fill starts what norn ready said');
-  await d.ended(got[0].next);
+  // each run's end-of-run fill starts the next queued one (P0 -> P1 -> f1 .. f3 -> P2 -> P3): the whole chain settles here - left
+  // running, its last supervisor (RUN-14) outlived the file (CI 44335427788 windows LEAK RED)
+  await waitFor(() => !stateBusy(d.state)(), { what: 'the chain of fills settled' });
 });
 
 test('resource gate: the fill and norn ready hold a run while RAM / CPU are short (one sample per pass); no policy.fill = no gate', async () => {
