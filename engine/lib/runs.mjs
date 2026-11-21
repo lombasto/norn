@@ -66,7 +66,7 @@ export { prompt } from './harness/common.mjs';
 export const claudeCmd = (o, remote) => adapterFor('claude').command({ ...o, remote });
 /** The command { exe, args, stdin, stdout, parse } of run spec `o`, built by its executor's harness adapter. */
 // META-GTP-MAIL delivery (a): a run whose adapter runs the mail hook (caps.hooks settings + adapter.mailHook: claude) gets the
-// PostToolUse hook `norn mail check --inject`; the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
+// PostToolUse hook (norn-hook mail -> `norn mail check --inject` while its flag is up); the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
 export function mailHookOf(o) {
   const fam = harnessOf(o.executor, o.provider);
   const a = fam ? adapterFor(fam) : null;
