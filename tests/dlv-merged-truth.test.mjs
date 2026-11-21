@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { record } from '../engine/lib/records.mjs';
 import { deliverablesView, latchMerged, loadDeliverables } from '../engine/lib/deliverables.mjs';
 import { dlvMerged } from '../engine/lib/dlvmerge.mjs';
-import { contentOnMain } from '../engine/lib/dlvgit.mjs';
+import { contentOnMain, makeGit, scanRepo } from '../engine/lib/dlvgit.mjs';
 import { makeEval } from '../engine/lib/after.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
@@ -153,4 +153,36 @@ test('cannot tell -> ONE Inbox ruling; "merged" latches it, "open" makes it DONE
   latchMerged(s2, { project: project(repo, s2), nowMs: NOW });
   assert.equal(row(s2, repo).state, 'done');
   assert.equal(latchMerged(s2, { project: project(repo, s2), nowMs: NOW }).length, 0);
+});
+
+// a git whose listed sub-commands fail as a timeout does (no exit status); the rest is real git
+const failingGit = (...fail) => makeGit((repo, args, env, input) => {
+  if (fail.includes(args[0])) throw Object.assign(new Error(`git ${args[0]} timed out`), { status: null });
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: { ...GENV, ...env }, input, stdio: ['pipe', 'pipe', 'pipe'] });
+});
+
+test('C1: a failed git diff is "cannot tell", never "the branch changes nothing" (merged)', () => {
+  const { repo, tip } = repoWithBranch();
+  const c = contentOnMain(repo, tip, 'main', { git: failingGit('diff') });
+  assert.equal(c.on, null, c.why); assert.match(c.why, /git diff failed/);
+  const state = tmp('state');
+  const id = mkDlv(state, { repo, branch: 'feat/x', tip, delivers: 'x', done_utc: at(-10).toISOString() });
+  deleteBranch(repo);
+  const m = dlvMerged(loadDeliverables(state)[id], { git: failingGit('diff') });
+  assert.equal(m.merged, false); assert.match(m.unknown, /git diff failed/);
+});
+
+test('C9: a git failure is not cached as an answer: the next scan asks again and gets the truth', () => {
+  const { repo, tip } = repoWithBranch();
+  const short = tip.slice(0, 9);
+  // tip is no ref (branch deleted, not merged): ancestry, counts, native paths and the rehearsal are asked per tip
+  deleteBranch(repo);
+  const ask = git => { const s = scanRepo(repo, { cache, git, native: ['*.md'], installed: [short] }); return { s, i: s.info('feat/x', tip), r: s.rehearse(tip) }; };
+  const cache = {};
+  const bad = ask(failingGit('merge-base', 'rev-parse', 'rev-list', 'diff', 'merge-tree'));
+  assert.deepEqual([bad.i.behind, bad.i.ahead, bad.i.native, bad.r, bad.s.installed], [null, null, null, null, []], 'a failure answers nothing');
+  assert.deepEqual([cache.anc, cache.full, cache.counts, cache.native, cache.rehearse].map(o => Object.keys(o).length), [0, 0, 0, 0, 0], 'and caches nothing');
+  const good = ask(makeGit());
+  assert.deepEqual([good.i.behind, good.i.ahead, good.i.native, good.r.clean, good.s.installed], [0, 2, true, true, [tip]]);
+  assert.equal(good.s.onBase(tip, good.s.mainSha), false); assert.equal(good.s.onBase(tip, tip), true);
 });
