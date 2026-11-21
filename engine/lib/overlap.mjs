@@ -178,6 +178,21 @@ export function projectOverlap(p, { now = Date.now(), force = false, git, gh } =
   } catch { return null; }
 }
 
+/** lane-collide S1c (SPEC 2, territory / conflict): merge-tree of two lanes of ONE home, for the tip pairs the tick found sharing changed
+ *  files -> { 'tipA tipB' (sorted): { conflict, files } }. Cached in overlap.json `lane_merges` per tip pair (a pair not asked this pass
+ *  leaves it); never throws. */
+export function laneConflicts(state, root, pairs, { now = Date.now(), mergeTree = mergeTreeCli } = {}) {
+  const c = readOverlap(state), old = c.lane_merges || {}, out = {};
+  for (const [a, b] of pairs) {
+    const k = [a, b].sort().join(' ');
+    if (out[k]) continue;
+    if (old[k]) { out[k] = old[k]; continue; }
+    try { const m = mergeTree(a, b, root); if (m) out[k] = { ts: now, conflict: m.conflict, files: m.files }; } catch { /* git gone: no grade this pass */ }
+  }
+  if (Object.keys(out).length || Object.keys(old).length) save(overlapFile(state), { ...readOverlap(state), lane_merges: out });
+  return out;
+}
+
 /** the cache, read only (the dashboard, the digest); {} when none */
 export function readOverlap(state, read = f => fs.readFileSync(f, 'utf8')) {
   try { const t = read(overlapFile(state)); return t ? JSON.parse(t) : {}; } catch { return {}; }

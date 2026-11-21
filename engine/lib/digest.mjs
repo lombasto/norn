@@ -28,6 +28,7 @@ import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
 import { laneRules, lanePolicy, ciFixPlan, laneHooks, laneShippedIn } from './lifecycle.mjs';
 import { readSync } from './claims.mjs';
+import { readCollide } from './intents.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -232,6 +233,10 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // RM-46 S1d (SPEC 3.7): this home's writes another home refused (or a create it may not make) and the copies that did not fold
   const hm = homeRows(stateDir);
   if (hm.length) sections.homes = hm;
+  // lane-collide S1c (SPEC 4A.5): the open collisions of the last tick (collide.json, level-triggered: a row leaves when its cause is gone),
+  // each with SloppaChoppa's pick; what Norn handled by itself in the last day, each with its undo; the other homes' `**` claims
+  const co = collideRows(stateDir);
+  if (co.length) sections.collisions = co;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
@@ -252,6 +257,13 @@ function claimRows(stateDir, items) {
     .map(([id, h]) => ({ id, kind: 'held', lane: items[id].data.lane ?? null, home: h.home, why: h.home ? `held by ${h.home}: ${h.why}` : `held: ${h.why}` }));
   const r = readSync(stateDir, 'rows');
   return [...holds, ...(r.events || []).map(e => ({ id: e.id, kind: e.kind, at: e.at, why: e.why })), ...(r.stale || [])];
+}
+
+function collideRows(stateDir) {
+  const c = readCollide(stateDir);
+  return [...(c.rows || []).map(r => ({ id: r.col, kind: r.kind, grade: r.grade, verdict: r.verdict, lane: r.lane, run: r.run, other: r.other, why: r.why, files: r.files, files_n: r.files_n, pick: r.pick })),
+    ...(c.handled || []).map(h => ({ id: h.col, kind: 'handled', of: h.kind, grade: h.grade, action: h.action, at: h.at, lane: h.lane, why: h.why, undo: h.undo ? `META collide undo ${h.col} --why W` : null })),
+    ...(c.wide || []).map(w => ({ id: w.key, kind: 'wide-claim', home: w.home, lane: w.lane, why: w.why }))];
 }
 
 // a synced dir: the conflicts whose writer is this home + every integrity row, over each shared log (records, roadmap, mail, waivers)

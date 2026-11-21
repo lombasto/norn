@@ -25,7 +25,7 @@ import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, qu
 import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
-import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
+import { loadRoadmap, setCaveat, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, allowRefusal, pairKey } from '../lib/collide.mjs';
 import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction } from '../lib/intents.mjs';
@@ -2407,6 +2407,14 @@ function collideCase(pos, flags, env, out) {
     const acts = actionsOf(col), a = flags.action ? acts[Number(flags.action) - 1] : acts.filter(x => !x.undone).at(-1), n = acts.indexOf(a) + 1;
     if (!a) throw new RunError(`${col.id} has no action${flags.action ? ` ${flags.action}` : ''} to undo`);
     if (a.undone) throw new RunRefused(`${col.id} action ${n} (${a.action}) is already undone`, 3);
+    if (a.action === 'caveat') {   // S1c: the stale fact comes off - only while the caveat is still the text Norn wrote
+      const now = loadRoadmap(state).items[a.args.item]?.caveat?.text ?? null;
+      if (now !== a.args.after) throw new RunRefused(`${a.args.item}'s caveat changed since Norn noted ${a.args.run}'s end: it stays as it is`, 3);
+      setCaveat(state, a.args.item, a.args.before, flags.as);
+      record(state, { kind: 'collision', ev: 'undo', id: col.id, by: flags.as, data: { action: a.i, why: flags.why } });
+      out(`${col.id}: ${a.args.item}'s caveat is back to its old text - the tick does not note it again`);
+      return 0;
+    }
     if (a.action !== 'allow') throw new RunRefused(`${col.id} action ${n} (${a.action}) has no undo: ${a.action === 'told' ? 'it was information' : 'a hold ends by itself when the holder lands, or by norn collide allow'}`, 3);
     const r = allowRefusal(flags.as, col.data.kind, col.data.grade);
     if (r) throw new RunRefused(r, 3);
