@@ -2,14 +2,15 @@
 // rule of a record and of a lane over the records (landedOf, laneShipped). Kept apart from deliverables.mjs
 // so after.mjs (`--after dlv:`) and records.mjs (the lane archive guard) use the same rule without an import cycle: this module
 // imports git helpers and path spelling only, never the records.
-import { scanRepo, makeGit, pruneCache, workOnMain, contentOnMain } from './dlvgit.mjs';
+import { scanRepo, makeGit, pruneCache, workOnMain, contentOnMain, goneTip } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 
 export const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 export const sameRepo = (a, b) => pathKey(a) === pathKey(b);   // the same repo in any spelling (8.3 short name, link, case)
 export const lastEv = (it, evs) => [...it.history].reverse().find(h => evs.includes(h.ev)) || null;
 
-// the scanner for one repo, cached in cache[repo]; returns the scan + a finish() that prunes
+// the scanner for one repo, cached in cache[repo]; returns the scan + prime(items) (git-perf S1: the tips of every item asked about
+// in one batch per repo, before the rows are judged one by one) + a finish() that prunes
 export function repoScanner({ cfg, cache, git, install }) {
   const scans = new Map();
   const get = repo => {
@@ -23,16 +24,28 @@ export function repoScanner({ cfg, cache, git, install }) {
     }
     return scans.get(key);
   };
-  const finish = () => { for (const { s, c, tips } of scans.values()) if (s) pruneCache(c, { mainSha: s.mainSha, keepBases: [...s.installed, ...s.history], tips: [...tips, ...[...s.refs.values()].map(r => r.sha)] }); };
-  return { get, finish, scans: () => scans.values() };
+  const originOf = (s, main) => s.refs.get(`refs/remotes/${cfg.remote || 'origin'}/${main}`)?.sha || null;
+  const prime = items => {
+    const by = new Map();
+    for (const it of items) { const t = lastEv(it, ['done'])?.data?.tip || it.data?.tip; if (t) by.set(it.data.repo, [...(by.get(it.data.repo) || []), t]); }
+    for (const [repo, tips] of by) { const sc = get(repo); if (sc.s) sc.s.present(tips, [sc.s.mainSha, originOf(sc.s, mainOf(cfg, repo)), ...sc.s.installed, ...sc.s.history]); }
+  };
+  const finish = () => { for (const { s, c, tips } of scans.values()) if (s) pruneCache(c, { mainSha: s.mainSha, keepBases: [...s.installed, ...s.history, originOf(s, cfg.main)], tips: [...tips, ...[...s.refs.values()].map(r => r.sha)] }); };
+  return { get, prime, finish, scans: () => scans.values() };
 }
 
+const mainOf = (cfg, repo) => (sameRepo(repo, cfg.repo) ? cfg.main : 'main');
 // META-DLV-LANDED: is the WORK of a tip that is no ancestor of main on main (rebase / squash / merged, then main merged into the branch)?
-// The one rule of dlvgit.mjs workOnMain, cached per (tip, main, origin main) in the repo's cache
-function landedOn(sc, repo, tip, main, remote, git) {
-  const o = sc.s.refs.get(`refs/remotes/${remote}/${main}`)?.sha || '', k = `${tip}:${sc.s.mainSha}:${o}`, w = (sc.c.work ||= {});
-  if (!(k in w)) w[k] = workOnMain(repo, tip, main, { git });
-  return w[k];
+// The one rule of dlvgit.mjs workOnMain, cached per tip with the (main, origin main) it was asked against.
+// git-perf S1: that rule asks ~16 git questions per tip, and main moves with every merge: a "not on main" answer is kept when main moves
+// - a fresh ancestry check (cached, batched by prime) still sees a merge at once - and asked again only by the refresh (refresh: the
+// detached `norn branches --refresh`, at most every BRANCHES_TTL_MS). A tip never asked is asked now.
+function landedOn(sc, repo, tip, main, remote, git, refresh) {
+  const o = sc.s.refs.get(`refs/remotes/${remote}/${main}`)?.sha || '', mk = `${sc.s.mainSha}:${o}`, w = (sc.c.work ||= {}), e = w[tip];
+  if (e?.mk === mk) return e.on;
+  if (e && !e.on && !refresh) { if (!o || !sc.s.onBase(tip, o)) return false; w[tip] = { mk, on: true }; return true; }
+  w[tip] = { mk, on: workOnMain(repo, tip, main, { git }) };
+  return w[tip].on;
 }
 
 // the same rule against the EARLIER main lines (deliverables.history, resolved in the scan): a line never moves, so each (tip, line)
@@ -94,7 +107,7 @@ const noScan = tip =>({ tip, exists: null, merged: false, installed: false, behi
  * it still open. sc: a repoScanner entry. -> { g (branch info), merge: { how, tip, merge_commit, merged_at, pr, latched } | null,
  * installed, unknown: why | null }
  */
-export function judge(it, sc, { cfg, git }) {
+export function judge(it, sc, { cfg, git, refresh = false }) {
   const d = it.data, s = sc.s, main = d.main || (sameRepo(d.repo, cfg.repo) ? cfg.main : 'main');
   const tipAtDone = lastEv(it, ['done'])?.data?.tip || d.tip || null;
   const g = s ? s.info(d.branch, tipAtDone) : noScan(tipAtDone);
@@ -106,17 +119,25 @@ export function judge(it, sc, { cfg, git }) {
   }
   const found = (how, installed = g.installed) => ({ g, unknown: null, installed, merge: { how, tip: g.tip, merge_commit: how === 'git' ? g.tip : null, merged_at: null, pr: null, latched: false } });
   if (g.merged) return found('git');
-  if (g.tip && s?.mainSha && (landedOn(sc, d.repo, g.tip, main, cfg.remote || 'origin', git) || landedOnHistory(sc, d.repo, g.tip, git))) { Object.assign(g, { merged: true, ahead: 0 }); return found('git'); }
+  const gone = !!g.tip && !!s?.isGone(g.tip);   // a tip this repo lacks: every rule below would fail in git (prime asked once)
+  if (g.tip && s?.mainSha && !gone && (landedOn(sc, d.repo, g.tip, main, cfg.remote || 'origin', git, refresh) || landedOnHistory(sc, d.repo, g.tip, git))) { Object.assign(g, { merged: true, ahead: 0 }); return found('git'); }
   let why = !s ? `the repo ${fwd(d.repo)} cannot be read` : !g.tip ? `no tip was recorded at DONE and the branch ${d.branch} is gone` : null;
   if (!why && s.mainSha) {
-    const c = equivOn(sc, d.repo, g.tip, s.mainSha, main, git);
+    const c = gone ? goneTip(g.tip) : equivMain(sc, d.repo, g.tip, main, git, refresh);
     if (c.on) { Object.assign(g, { ahead: 0, behind: null }); return found('equivalent', s.installed.some(b => equivOn(sc, d.repo, g.tip, b, b, git).on)); }
     if (c.on === null) why = c.why;
   }
   if (!why && g.exists === false) why = `the branch ${d.branch} is deleted and its change is not on main as it was (rebased with edits, or dropped)`;
   return { g, merge: null, installed: false, unknown: latch?.held ? null : why };
 }
-// the content check of a tip against one base commit (main's sha, or an install's), cached per (tip, base) in the repo's cache
+// the content check of a tip against main, kept per tip as landedOn's answer is: a negative answer outlives a main move until the refresh
+function equivMain(sc, repo, tip, main, git, refresh) {
+  const q = (sc.c.equivMain ||= {}), e = q[tip], base = sc.s.mainSha;
+  if (e && (e.base === base || (e.on !== true && !refresh))) return e;
+  q[tip] = { base, ...contentOnMain(repo, tip, main, { git }) };
+  return q[tip];
+}
+// the content check of a tip against one install's commit, cached per (tip, base) in the repo's cache
 function equivOn(sc, repo, tip, base, ref, git) {
   const q = (sc.c.equiv ||= {}), k = `${tip}:${base}`;
   if (!(k in q)) q[k] = contentOnMain(repo, tip, ref, { git });

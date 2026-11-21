@@ -84,8 +84,26 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     }
     return e;
   };
+  // git-perf S1: the tips that are no ref (a deleted branch, a tip recorded at DONE on another home) are asked about in batches:
+  // present(tips, bases) = ONE `cat-file --batch-check` (a tip this repo lacks is gone: every question about it fails, so none is asked)
+  // and ONE `rev-list ^<base> <tips>` per base for their ancestry (a tip it lists is not on that base; one it leaves out is)
+  const gone = new Set(), checked = new Set(), FULL = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+  const present = (tips, bases = []) => {
+    const todo = [...new Set(tips.filter(t => t && !allShas.includes(t) && !checked.has(t)))];
+    const out = todo.length ? git(repo, ['cat-file', '--batch-check'], { allowFail: true, input: todo.join('\n') + '\n' }) : null;
+    if (out !== null) { const ls = out.split('\n'); todo.forEach((t, i) => { checked.add(t); if (/ missing\s*$/.test(ls[i] || '')) gone.add(t); }); }
+    for (const b of [...new Set(bases.filter(Boolean))]) {
+      const ask = [...new Set(tips.filter(t => FULL.test(t || '') && !allShas.includes(t) && !gone.has(t) && !(`${t}:${b}` in c.anc)))];
+      if (ask.length < 2) continue;   // one tip: onBase's own is-ancestor is the same one spawn
+      const off = git(repo, ['rev-list', `^${b}`, ...ask], { allowFail: true });
+      if (off === null) continue;
+      const not = new Set(off.split('\n').map(l => l.trim()));
+      for (const t of ask) c.anc[`${t}:${b}`] = !not.has(t);
+    }
+  };
+  const isGone = tip => gone.has(tip);
   const onBase = (tip, base) => {
-    if (!tip || !base) return false;
+    if (!tip || !base || gone.has(tip)) return false;
     if (allShas.includes(tip)) return mergedSet(base).on.includes(tip);
     const k = `${tip}:${base}`;   // a tip that is no ref any more (branch deleted): one is-ancestor, cached
     if (!(k in c.anc)) c.anc[k] = git(repo, ['merge-base', '--is-ancestor', tip, base], { allowFail: true }) !== null;
@@ -113,7 +131,7 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
     const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(direct || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
-    if (tip && mainSha && !merged) {
+    if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it)
       const k = `${tip}:${mainSha}`;
       if (!c.counts[k]) {
         const out = git(repo, ['rev-list', '--left-right', '--count', `${mainSha}...${tip}`], { allowFail: true });
@@ -121,7 +139,7 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
       }
       [r.behind, r.ahead] = c.counts[k];
     } else if (merged) { r.ahead = 0; }
-    if (nativeRe && tip && mainSha) {
+    if (nativeRe && tip && mainSha && !gone.has(tip)) {
       if (!(tip in c.native)) {
         const out = merged ? null : git(repo, ['diff', '--name-only', `${mainSha}...${tip}`], { allowFail: true });
         c.native[tip] = out === null ? null : out.split('\n').filter(Boolean);
@@ -175,7 +193,7 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const res = branchRe(globs), pre = `refs/remotes/${remote}/`;
     return [...refs.keys()].filter(k => k.startsWith(pre)).map(k => k.slice(pre.length)).filter(b => res.some(re => re.test(b))).sort();
   };
-  return { mainSha, refs, branches, tipOf, info, onBase, rehearse, rehearseMany, installed: inst, history: hist };
+  return { mainSha, refs, branches, tipOf, info, onBase, present, isGone, rehearse, rehearseMany, installed: inst, history: hist };
 }
 
 // keep the cache small: merged sets of the current main + installed / history bases, behind counts of the current main, native by live tips
@@ -184,8 +202,9 @@ export function pruneCache(c, { mainSha, keepBases = [], tips = [] }) {
   for (const k of Object.keys(c.merged || {})) if (!keep.has(k)) delete c.merged[k];
   for (const k of Object.keys(c.counts || {})) if (!k.endsWith(':' + mainSha)) delete c.counts[k];
   for (const k of Object.keys(c.rehearse || {})) if (!k.endsWith(':' + mainSha)) delete c.rehearse[k];
-  for (const k of Object.keys(c.work || {})) if (k.split(':')[1] !== mainSha) delete c.work[k];   // META-DLV-LANDED workOnMain answers
   const live = new Set(tips);
+  for (const k of Object.keys(c.work || {})) if (!live.has(k)) delete c.work[k];   // META-DLV-LANDED workOnMain answers, per tip (git-perf S1: they outlive a main move)
+  for (const k of Object.keys(c.equivMain || {})) if (!live.has(k)) delete c.equivMain[k];   // contentOnMain answers against main, per tip
   for (const k of Object.keys(c.native || {})) if (!live.has(k)) delete c.native[k];
   for (const k of Object.keys(c.hist || {})) if (!live.has(k.split(':')[0])) delete c.hist[k];   // workOnMain answers against deliverables.history lines
   for (const k of Object.keys(c.anc || {})) if (!keep.has(k.split(':')[1])) delete c.anc[k];
@@ -237,17 +256,20 @@ function onlyCleanMerges(repo, head, base, git) {
 
 export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) {
   const lines = out => String(out ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+  // git-perf S1: the two bases mostly share their merge-base: a tree id and the squash commit of one (tree, merge-base) are asked once
+  const seen = new Map(), once = (k, fn) => { if (!seen.has(k)) seen.set(k, fn()); return seen.get(k); };
+  const treeOf = rev => once(`tree ${rev}`, () => git(repo, ['rev-parse', `${rev}^{tree}`], { allowFail: true })?.trim());
   for (const base of [main, `refs/remotes/origin/${main}`]) {
     if (isAncestor(repo, head, base, git)) return true;
     if (onlyCleanMerges(repo, head, base, git)) return true;
     const mb = git(repo, ['merge-base', base, head], { allowFail: true })?.trim();
     if (!mb) continue;
-    const tree = git(repo, ['rev-parse', `${head}^{tree}`], { allowFail: true })?.trim();
-    if (tree && tree === git(repo, ['rev-parse', `${mb}^{tree}`], { allowFail: true })?.trim()) return true;
+    const tree = treeOf(head);
+    if (tree && tree === treeOf(mb)) return true;
     const own = lines(git(repo, ['cherry', base, head, mb], { allowFail: true }));
     if (own.length && own.every(l => l.startsWith('-'))) return true;
-    const synth = tree && git(repo, ['commit-tree', tree, '-p', mb, '-m', 'norn: the branch as one patch (squash check)'], { allowFail: true,
-      env: { GIT_AUTHOR_NAME: 'norn', GIT_AUTHOR_EMAIL: 'norn@localhost', GIT_COMMITTER_NAME: 'norn', GIT_COMMITTER_EMAIL: 'norn@localhost' } })?.trim();
+    const synth = tree && once(`synth ${mb}`, () => git(repo, ['commit-tree', tree, '-p', mb, '-m', 'norn: the branch as one patch (squash check)'], { allowFail: true,
+      env: { GIT_AUTHOR_NAME: 'norn', GIT_AUTHOR_EMAIL: 'norn@localhost', GIT_COMMITTER_NAME: 'norn', GIT_COMMITTER_EMAIL: 'norn@localhost' } })?.trim());
     const sq = synth ? lines(git(repo, ['cherry', base, synth, mb], { allowFail: true })) : [];
     if (sq.length === 1 && sq[0].startsWith('-')) return true;
   }
@@ -262,9 +284,10 @@ export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) 
  * the branch deleted must be gone from main; a binary file must equal main's.
  * -> { on: true | false, why } | { on: null, why } (cannot tell: the tip is gone from the repo)
  */
+/** the content check's answer for a tip the repo does not have (also scanRepo present()'s gone tips: no git asked) */
+export const goneTip = tip => ({ on: null, why: `the tip ${String(tip).slice(0, 9)} recorded at DONE is gone from the repo` });
 export function contentOnMain(repo, tip, main = 'main', { git = makeGit(), maxFiles = 200 } = {}) {
-  const short = String(tip).slice(0, 9);
-  if (git(repo, ['cat-file', '-e', `${tip}^{commit}`], { allowFail: true }) === null) return { on: null, why: `the tip ${short} recorded at DONE is gone from the repo` };
+  if (git(repo, ['cat-file', '-e', `${tip}^{commit}`], { allowFail: true }) === null) return goneTip(tip);
   const show = (rev, f) => git(repo, ['show', `${rev}:${f}`], { allowFail: true });
   const count = text => { const m = new Map(); for (const l of String(text).split('\n')) { const k = l.trimEnd(); if (k.trim()) m.set(k, (m.get(k) || 0) + 1); } return m; };
   let seen = false;
