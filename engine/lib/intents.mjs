@@ -194,3 +194,9 @@ export function itemStages(events) {
   for (const e of [...events].sort((a, b) => a.seq - b.seq)) if (e.kind === 'item' && (e.ev === 'create' || e.ev === 'edit') && Array.isArray(e.data?.stages)) out[e.id] = { stages: [...e.data.stages] };
   return out;
 }
+
+// ---------- S1c: <state>/collide.json, the tick's cache (tick.mjs collidePass writes it; the digest and the pages only read it) ----------
+/** { at, rows: [open collision rows, each with its COL id and SloppaChoppa's pick], handled: [Norn's automatic actions of the last day],
+ *  wide: [other homes' claims of the whole repo] } */
+export const collideFile = state => path.join(state, 'collide.json');
+export const readCollide = state => { try { return JSON.parse(fs.readFileSync(collideFile(state), 'utf8')) || {}; } catch { return {}; } };
