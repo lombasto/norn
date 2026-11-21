@@ -6,7 +6,10 @@
 import { renderProse } from '../prose.mjs';
 import { parseLedger, recordMarkdown, LEDGER_KINDS } from '../ledger.mjs';
 import { esc, int, plural, chip, homeChip, pendingChips, fmtTime, filterChips } from '../cells.mjs';
-import { decMark } from '../ui.mjs';
+
+// RM-26: the mark "below floor" - a decision a check-in recorded while its run's model / effort was below the check-in floor
+// (records.mjs made_under.below_floor); a record without made_under is unmarked
+export const decMark = r => (r.data?.made_under?.below_floor ? ` <span class="chip warn below-floor" title="${esc(`made under ${r.data.made_under.model}, effort ${r.data.made_under.effort ?? 'default'}`)}">below floor</span>` : '');
 
 // the views live in this module (one per page: the acts flip them, a stream repaint keeps them)
 export const REC_KINDS = [['directive', 'Directives'], ['decision', 'Decisions']];

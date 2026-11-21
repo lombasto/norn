@@ -185,3 +185,7 @@ const testWords = t => `${int(t.pass ?? 0)} pass, ${int(t.fail)} fail${t.failed?
 // NAME-W2 item 5: '1 run' / '2 runs'; a share of the week that is not known says so (never '- of week')
 export const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const ITEM_MARK = { done: '✓', doing: '…', todo: '·' };
+// minutes since an ISO time (null when it does not parse)
+export const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
+// a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
+export const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(name, cls) : '');

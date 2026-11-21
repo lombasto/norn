@@ -3,10 +3,9 @@
 // kind (UI redesign 2026-11-20). Synthetic lines only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLedgerLine, splitClauses, parseLedger } from '../engine/dash/ledger.mjs';
+import { parseLedgerLine, splitClauses, parseLedger, LEDGER_KINDS } from '../engine/dash/ledger.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { ledgerView } from '../engine/dash/pages/ledger.mjs';
-import { LEDGER_KINDS } from '../engine/dash/ledger.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 
 test('the Ledger text goes through the prose renderer: ids are chips, code stays code, all escaped', () => {

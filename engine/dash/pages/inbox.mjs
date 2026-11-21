@@ -4,8 +4,8 @@
 // parked and unreviewed work; a lane's plan goes ahead inside its lane (no Decisions queue). One filter-chip row picks the groups
 // (Questions, Cards, Resolved); every text goes through the one prose renderer (prose.mjs). ui.mjs keeps the dispatch line.
 import { renderProse } from '../prose.mjs';
-import { esc, int, fmtMin, plural, chip, projTag, homeChip, pendingChips, fmtTime, filterChips } from '../cells.mjs';
-import { art, minsSince, holdRow, loginRow, editRow, setupRow, auditCard, enforceCard } from '../ui.mjs';
+import { esc, int, fmtMin, plural, chip, projTag, homeChip, pendingChips, fmtTime, filterChips, minsSince, art } from '../cells.mjs';
+import { holdRow, loginRow, editRow, setupRow, auditCard, enforceCard } from '../cards.mjs';
 import { fxSection } from './slop.mjs';
 
 // the groups the chip row shows; the view lives in this module (one per page: the acts flip it, a stream repaint keeps it)
