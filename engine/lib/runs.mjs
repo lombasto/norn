@@ -15,6 +15,7 @@ import { findTranscript } from './harness/claude.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
 import { writeQueueView, sleepMs } from './views.mjs';
+import { noteFillWhy } from './mqwhy.mjs';
 import { spawnOutside, procList, procListAsync } from './jobguard.mjs';
 import { receiptTree } from './kills.mjs';
 import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
@@ -40,7 +41,7 @@ import { claimWork, claimHold, renewWork, workKey, readSync, updateSync, leaderW
 import { ClaimsError, readClaims } from './claimsref.mjs';
 import { touchedOf, workOf } from './intents.mjs';
 export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
-import { syncPolicy, POLICY_DEFAULTS } from './policy.mjs';
+import { syncPolicy, POLICY_DEFAULTS, MACHINE_DEFAULTS } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -552,7 +553,7 @@ export function laneWriter({ state, locksDir, lane, worktree, staleMs = STALE_MS
 // merge-slot (owner 11-21: "a dedicated merge worker"): budget.merge_workers Claude slots (default 1) on top of max_claude_workers,
 // machine-wide, that only a landing run (MERGE / resolve) may take - so finished work never waits behind lanes that started first.
 // A landing run fills the merge slots first and may take a normal slot too; lane work counts only the landing runs past the merge slots.
-export const MERGE_WORKERS_DEFAULT = 1;
+export const MERGE_WORKERS_DEFAULT = MACHINE_DEFAULTS.merge_workers;   // the Settings row's default (policy.mjs)
 export const mergeWorkers = budget => (Number.isInteger(budget?.merge_workers) && budget.merge_workers >= 0 ? budget.merge_workers : MERGE_WORKERS_DEFAULT);
 const MERGE_POOL = 'max_claude_workers';
 // the Claude pool split: lane = live non-landing runs, land = live landing runs (machine-wide, plus extra: the dry walk's pending starts)
@@ -1072,7 +1073,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
         started.push(...fillPass(state, at, res, authProbe));
         onPass?.();
       } while (flagged());
-      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
+      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); noteFillWhy(state, ready, isLandingStage, { now: at }); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
     } finally { release(); }
     if (!flagged()) return started;
   }
