@@ -74,10 +74,10 @@ export function testsHook(p, policy, worktree) {
 /** the working directories a guarded run gets beyond its worktree and addDirs: the NOTES folder (its shots sit there too) */
 export const notesDir = spec => (spec.notes ? path.dirname(path.resolve(spec.notes)) : null);
 
-/** what one run may touch: { worktree, roots (normalised: worktree, addDirs, NOTES folder), scope (the brief's Scope: or []), pushMain } */
+/** what one run may touch: { worktree, roots (normalised: worktree, addDirs, NOTES folder), scope (the brief's Scope: or []), pushMain }.
+ *  A brief that cannot be read throws: its Scope is unknown, never "no Scope" (scopeCheck refuses with the reason) */
 export function scopeOf(spec) {
-  let text = null;
-  try { text = spec.brief && spec.brief !== '-' ? fs.readFileSync(spec.brief, 'utf8') : null; } catch { text = null; }
+  const text = spec.brief && spec.brief !== '-' ? fs.readFileSync(spec.brief, 'utf8') : null;
   const free = [...(spec.addDirs || []), ...(notesDir(spec) ? [notesDir(spec)] : [])].map(norm);
   // a monorepo project's run (spec.subdir) whose brief names no Scope: stays inside the project's folder
   const scope = parseReady(text).scope, own = scope.length ? scope : spec.subdir ? [spec.subdir] : [];
@@ -254,7 +254,7 @@ export function checkTool(p, c, env = process.env) {
 
 // ---------- the hook, the record, the readers ----------
 const readSpec = (state, run) => JSON.parse(fs.readFileSync(path.join(state, 'runs', run + '.spec.json'), 'utf8'));
-/** norn scope check: payload -> { deny: reason | null }; a refusal is appended to refusals.jsonl. A spec that cannot be read refuses
+/** norn scope check: payload -> { deny: reason | null }; a refusal is appended to refusals.jsonl. A spec or brief that cannot be read refuses
  * (the guard fails closed): the run then has no known worktree to keep it in. The project's CURRENT policy (spec.ctx_from) says
  * which test rules (policy.tests) and whether the scope guard apply; a spec with no project file gets the test defaults and the guard. */
 export function scopeCheck({ state, run, payload, env = process.env }) {
@@ -264,7 +264,10 @@ export function scopeCheck({ state, run, payload, env = process.env }) {
     const pol = spec.ctx_from ? specPolicy(spec) : null;
     why = testsHook(payload, pol, spec.worktree) ?? (pol === null || scopeOnFor(pol, spec) ? checkTool(payload, scopeOf(spec), env) : null);
   }
-  catch (e) { why = `Norn's scope hook cannot read this run's spec (${run}: ${e.code || e.message}), so it cannot tell what you may touch: end with \`norn done --outcome stopped --why "scope hook cannot read the run spec"\``; }
+  catch (e) {
+    const what = !spec ? 'spec' : e.path && spec.brief && path.resolve(e.path) === path.resolve(spec.brief) ? 'brief' : 'brief or policy';
+    why = `Norn's scope hook cannot read this run's ${what} (${what === 'spec' ? run : fwd(e.path || run)}: ${e.code || e.message}), so it cannot tell what you may touch: end with \`norn done --outcome stopped --why "scope hook cannot read the run ${what}"\``;
+  }
   if (!why) return { deny: null };
   const tool = String(payload?.tool_name ?? '?'), target = oneLine(payload?.tool_input?.file_path ?? payload?.tool_input?.notebook_path ?? payload?.tool_input?.command ?? '', 200);
   fs.mkdirSync(path.dirname(refusalsFile(state)), { recursive: true });
