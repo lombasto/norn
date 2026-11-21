@@ -835,8 +835,9 @@ const writeHolds = (state, fn) => writeAtomic(collideHoldsFile(state), fn(readCo
 // a queued run's place in the queue: its first event, as intents.mjs reads every other queued run's (one clock for first come)
 const queuedAt = r => Date.parse(r?.history?.[0]?.ts ?? r?.created ?? '') || 0;
 /** judge launch spec o now -> null (exempt, no project, policy.collide off) | { me, hits, held, warns, g, cases }. queued: the id of
- *  the queued run the fill judges; tracked: false = no `git ls-files` (the walk: the scopes grade only warns); cache: one gather per walk */
-export function judgeLaunch(o, { queued = null, now = o.now ?? Date.now(), ttlMs = 0, tracked = true, cache = null } = {}) {
+ *  the queued run the fill judges; tracked: false = no `git ls-files` (the walk: the scopes grade only warns); cache: one gather per walk;
+ *  ttlMs: a lane's touched files per unchanged tip (SPEC 4.2 cost: cached per tip; fresh, 8 live lanes cost the start about 700 ms) */
+export function judgeLaunch(o, { queued = null, now = o.now ?? Date.now(), ttlMs = WALK_TOUCH_TTL_MS, tracked = true, cache = null } = {}) {
   const pf = collideExempt(o) ? null : policySource(o);
   if (!pf || !fs.existsSync(pf)) return null;
   const pj = loadProject(pf), P = collidePolicy(pj.policy);
