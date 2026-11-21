@@ -201,12 +201,12 @@ function boot({ role }, ctx) {
   const items = Object.values(st(ctx).items);
   const runs = items.filter(i => i.kind === 'run');
   const lastCk = runs.filter(i => i.data.kind === 'checkin').at(-1);
-  const resume = tryDigest(ctx.state, ctx.project || {});   // NORN-WATCH S1: the level-triggered resume digest
-  const lh = laneHooks(ctx.state), digest = { project: ctx.project?.name ?? null, needs_you: items.filter(i => needsYou(i, lh, ctx.state)).length, digest: digestIds(resume),
+  const resume = tryDigest(ctx.state, ctx.project || {});   // the level-triggered resume digest, or the error that stopped it
+  const lh = laneHooks(ctx.state), digest = { project: ctx.project?.name ?? null, needs_you: items.filter(i => needsYou(i, lh, ctx.state)).length, digest: resume.error ? { error: resume.error } : digestIds(resume),
     running: runs.filter(i => i.state === 'running').map(i => ({ run: i.id, lane: i.data.lane ?? null, executor: i.data.executor ?? i.data.kind })),
     last_checkin: lastCk ? { run: lastCk.id, state: lastCk.state, ts: lastCk.history[0].ts } : null,
     other_controllers: otherControllers(ctx).map(h => ({ pid: h.pid, via: h.via, ts: h.ts })), pause: readPause(pauseFiles(ctx.state)) };   // RM-37: the mode in force (null = none)
-  return { text: pack(ctx, role) + '\n\n## State digest\n' + JSON.stringify(digest, null, 1) + (resume ? '\n\n' + renderDigest(resume, { level: 2 }) : ''), data: { role, digest } };
+  return { text: pack(ctx, role) + '\n\n## State digest\n' + JSON.stringify(digest, null, 1) + '\n\n' + (resume.error ? `## Digest\n- could not be built: ${resume.error}` : renderDigest(resume, { level: 2 })), data: { role, digest } };
 }
 function status(a, ctx) {
   if (a.project && a.project !== ctx.project?.name) bad(`this server serves ${ctx.project?.name ?? 'no named project'}, not ${a.project}`);
