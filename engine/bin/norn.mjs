@@ -10,7 +10,7 @@ import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHer
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
-import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS } from '../lib/config.mjs';
+import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS, updateMachine } from '../lib/config.mjs';
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
@@ -709,7 +709,7 @@ function s5Cmd(argv, env, out, err) {
       if (miss.length) { err(`error: no caps set in ${m.budgetFile.replace(/\\/g, '/')} (missing ${miss.join(', ')}): run norn setup (writes the starter caps when the file is absent) or set them in the dashboard Settings (Workers & budget), then sched install again`); return 2; }
       if (['install', 'remove'].includes(pos[0])) {
         for (const l of schedApply(pos[0], a, o, sc.kind)) out(l);
-        if (sc.name !== m.machine.scheduler.name) { const raw = JSON.parse(fs.readFileSync(m.mf, 'utf8')); raw.scheduler.name = sc.name; fs.writeFileSync(m.mf + '.tmp', JSON.stringify(raw, null, 1) + '\n'); fs.renameSync(m.mf + '.tmp', m.mf); }
+        if (sc.name !== m.machine.scheduler.name) updateMachine(m.mf, raw => ({ scheduler: { ...raw.scheduler, name: sc.name } }));
         return 0;
       }
       throw new RunError(`sched needs show | install | remove (got ${pos[0]})`);

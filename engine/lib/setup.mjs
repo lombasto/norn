@@ -11,7 +11,7 @@ import { PREREQS, hint, nodeOk } from './prereqs.mjs';
 import { loadState } from './records.mjs';
 import { adapterFor as schedAdapter, realIo as schedIo, schedName, schedState, normDir, liveName } from './sched/index.mjs';
 import { spawnSync } from 'node:child_process';
-import { loadMachine, loadProject, validate, portable, metaRoot, fwd, ConfigError, MACHINE_SCHEMA, PROJECT_SCHEMA } from './config.mjs';
+import { loadMachine, loadProject, validate, portable, metaRoot, fwd, ConfigError, MACHINE_SCHEMA, PROJECT_SCHEMA, updateMachine } from './config.mjs';
 import { fileURLToPath } from 'node:url';
 import { providersOf, keySet, isCli, capKey, capDefault } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
@@ -241,10 +241,6 @@ export function genWhyNot(p, { meta = p.meta } = {}) {
   return { m };
 }
 
-function readMachineOrNull(meta) {
-  if (!exists(machineFile(meta))) return null;
-  try { return loadMachine(machineFile(meta), { meta }); } catch { return null; }
-}
 const rawMachine = meta => JSON.parse(fs.readFileSync(machineFile(meta), 'utf8'));
 
 export function projectAdd(file, { env = process.env, out, err }) {
@@ -256,7 +252,7 @@ export function projectAdd(file, { env = process.env, out, err }) {
   const raw = rawMachine(meta), config = portable(file, { meta });
   const same = raw.projects.find(x => x.name === p.name);
   if (same && key(expandNorn(same.config, meta)) !== key(p.file)) throw new SetupError(`a project named ${p.name} is already registered (${same.config})`);
-  if (!same) { raw.projects.push({ name: p.name, config }); writeJson(machineFile(meta), raw); }
+  if (!same) updateMachine(machineFile(meta), r => ({ projects: [...r.projects, { name: p.name, config }] }));
   out(`${p.name} ${same ? 'already registered' : 'added'} (${config})`);
   const problems = installProject(p, machine, { meta, out });
   for (const x of problems) err('error: ' + x);
@@ -356,9 +352,9 @@ export function projectNew(o) {
   out(`project ${name}: OK (${fwd(file)})`);
   if (nr) {
     if (nr.block && !nr.kept) {
-      const m = { ...rawMachine(meta), notify: nr.block }, errs = validate(MACHINE_SCHEMA, m);
+      const errs = validate(MACHINE_SCHEMA.properties.notify, nr.block, '$.notify');
       if (errs.length) throw new ConfigError('machine.json: ' + errs.join('; '));
-      writeJson(machineFile(meta), m); out(`wrote ${fwd(machineFile(meta))} (notify)`);
+      updateMachine(machineFile(meta), () => ({ notify: nr.block })); out(`wrote ${fwd(machineFile(meta))} (notify)`);
     }
     notifyFinish(nr, { meta, env, interactive, ask: o.ask, out, noPing: !!o.noTestPing });
   }
@@ -392,7 +388,7 @@ export function projectList({ json = false, env = process.env, out }) {
 export function projectRemove({ name, purgeState = false, dryRun = false, env = process.env, out, io = schedIo }) {
   const meta = metaRoot(env);
   if (!exists(machineFile(meta))) throw new SetupError('no machine.json: run norn setup first');
-  const machine = loadMachine(machineFile(meta), { meta }), raw = rawMachine(meta);
+  const machine = loadMachine(machineFile(meta), { meta });
   const pr = machine.projects.find(x => x.name === name);
   if (!pr) throw new SetupError(`no project named ${name} (norn project list)`);
   const f = projectFacts(meta, machine, pr);
@@ -424,7 +420,7 @@ export function projectRemove({ name, purgeState = false, dryRun = false, env = 
   }
   // 3. unregister
   out(`${W}unregister ${name} from ${fwd(machineFile(meta))}`);
-  if (!dryRun) { raw.projects = raw.projects.filter(x => x.name !== name); writeJson(machineFile(meta), raw); }
+  if (!dryRun) updateMachine(machineFile(meta), r => ({ projects: r.projects.filter(x => x.name !== name) }));
   // 4. the scheduler goes with the last project, and only when the OS says it is installed
   const left = machine.projects.filter(x => x.name !== name).length, sc = machine.scheduler;
   if (!left) {
@@ -528,7 +524,8 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   if (!hb.ok) { err('error: ' + hb.why); err('setup: nothing written'); return 1; }
   out(`norn-hook: ${fwd(HOOK_BIN)}${hb.built ? ' (built)' : ''}`);
 
-  const old = readMachineOrNull(meta) ? rawMachine(meta) : null;
+  // issue #104: the stored file as it is, valid or not (a key the schema does not know must not reset projects, dash, notify)
+  let old = null; try { if (exists(machineFile(meta))) old = JSON.parse(fs.readFileSync(machineFile(meta), 'utf8').replace(/^\uFEFF/, '')); } catch { /* unreadable: the write below refuses */ }
   // META-NOTIFY-SETUP R1: decided before anything is written (a bad --notify writes nothing); no flag keeps an existing block as is
   const interactive = !nonInteractive && (!!process.stdin.isTTY || env.META_INTERACTIVE === '1');
   const nr = notifyChoice({ old: old?.notify, choice: notify, server, interactive, ask, out });
@@ -546,9 +543,14 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   };
   const errs = validate(MACHINE_SCHEMA, m);
   if (errs.length) throw new ConfigError('machine.json: ' + errs.join('; '));
+  // issue #104: setup writes only the keys of m; every other key (ledger, usage, fed, unknown) is kept by updateMachine, and so is an unknown
+  // key nested in a block setup owns (discovered values win). Dropped on purpose: codex when not found (null), notify when turned off / not
+  // now (nr.block undefined), and a notify block replaced whole (an old topic never leaks into a new backend).
+  const nested = (o, n) => (o && n && typeof o === 'object' && typeof n === 'object' && !Array.isArray(n) ? { ...o, ...n } : n);
+  const own = raw => ({ ...m, ...Object.fromEntries(['claude', 'git', 'codex', 'scheduler', 'dash'].map(k => [k, nested(raw[k], m[k])])), notify: nr.block });
   // META-ONBOARD S1: the write is verified by reading it back from the path reported; anything else is a loud failure, never a 0
   const mf = machineFile(meta);
-  try { writeJson(mf, m); if (JSON.stringify(JSON.parse(fs.readFileSync(mf, 'utf8'))) !== JSON.stringify(m)) throw new Error('read back differs'); }
+  try { const w = updateMachine(mf, own); if (JSON.stringify(JSON.parse(fs.readFileSync(mf, 'utf8'))) !== JSON.stringify(w)) throw new Error('read back differs'); }
   catch (e) { err(`error: could not write ${fwd(mf)}: ${e.code || e.message}`); err('setup: machine.json not written'); return 1; }
   out(`wrote ${fwd(mf)}`);
   notifyFinish(nr, { meta, env, interactive, ask, out, noPing: noTestPing });
