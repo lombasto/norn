@@ -13,6 +13,7 @@ import { inDir } from '../monorepo.mjs';
 import { readText } from '../fsnap.mjs';
 import { landedUnchecked, landedWords } from './landed.mjs';
 import { mainTip } from './runend.mjs';
+import { readEvents, recordsFile } from '../records.mjs';
 
 const num = n => n.toLocaleString('en-US');
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
@@ -20,7 +21,7 @@ export const delta = (now, then) => `${now - then >= 0 ? '+' : ''}${num(now - th
 const today = now => new Date(now).toISOString().slice(0, 10);
 
 /** the report from a LOC report + a sweep: { markdown, line } */
-export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [] } = {}) {
+export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0 } = {}) {
   const then = loc.series.length > 7 ? loc.series[loc.series.length - 8] : loc.series[0];
   const L = [`# SloppaChoppa daily ${day}`, '', `Lines of code (non-blank, git) at ${loc.ref} ${loc.head.slice(0, 7)}; the change is against ${then?.day ?? '-'}.`, '',
     '| class | lines | 7 d |', '|---|---:|---:|', ...CLASSES.map(c => `| ${c} | ${num(loc.totals[c])} | ${delta(loc.totals[c], then?.totals[c] ?? 0)} |`),
@@ -33,7 +34,7 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = []
   const week = loc.landings.filter(l => then && l.day > then.day), big = week.filter(l => l.big);
   L.push('', `## Landings in 7 d: ${week.length}; big (> 1,500 changed code lines): ${big.length}`, '');
   for (const l of big) L.push(`- ${l.day} ${l.sha.slice(0, 7)} +${num(l.added.code || 0)} -${num(l.deleted.code || 0)} code: ${l.subject.slice(0, 100)}`);
-  L.push('', '## Git sweep', '', '```', formatSweep(sw), '```', '', `## Held by slop: ${holds.length}; active waivers: ${waivers}`, '');
+  L.push('', '## Git sweep', '', '```', formatSweep(sw), '```', '', `## Held by slop: ${holds.length}; active waivers: ${waivers}; slop resumes in 7 d: ${resumes}`, '');
   for (const h of holds) L.push(`- ${h.branch}: ${h.open} open BLOCK (${h.rules})`);
   // RM-44 B: the landings on main since the last report that no stored check names (an admin merge, a direct push), with their findings
   if (landed.length) L.push('', `## Landed unchecked: ${landed.length}`, '');
@@ -41,10 +42,13 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = []
   const c = then ? delta(loc.totals.code, then.totals.code) : '';
   const line = `slop ${day}: code ${num(loc.totals.code)}${c ? ` ${c} in 7 d` : ''}, tests ${num(loc.totals.tests)}; big landings ${big.length}; branches: `
     + `${sw.real.length} real (${sw.real.filter(r => r.conflicts).length} conflict), ${sw.empty.length} empty; worktrees: ${sw.dead.length} dead, ${sw.at_risk.length} AT RISK; `
-    + `${sw.remote_merged.length} remote merged`
+    + `${sw.remote_merged.length} remote merged; slop resumes ${resumes} in 7 d`
     + (landed.length ? `; LANDED UNCHECKED ${landed.length}: ${landed.map(l => `${l.sha.slice(0, 7)} (${landedWords(l)})`).join(', ')}` : '');
   return { markdown: L.join('\n') + '\n', line };
 }
+
+// SloppaChoppa 2 S2: the run ends that went back to their lane with slop BLOCK findings (a resume round each) - what `norn done` saves
+export const slopResumes = (state, now = Date.now()) => readEvents(recordsFile(state, 'run')).filter(e => e.kind === 'run' && e.ev === 'resume' && e.data?.slop && Date.parse(e.ts) > now - 7 * 864e5).length;
 
 /** the daily run: build, write through the host, return { line, file }. own = { name, subdir } of a monorepo project: the lines of
  * code are its folder's, the sweep its own branches and worktrees (repo stays the top level). main / remote / projectDir / rules /
@@ -56,7 +60,7 @@ export function dailyReport({ repo, state, now = Date.now(), own = null, main = 
     .map(h => ({ branch: h.branch, open: h.blocks.length, rules: [...new Set(h.blocks.map(b => b.rule))].join(' ') }));
   const tip = mainTip(repo, { main, remote });
   const landed = landedUnchecked({ repo, state, to: tip, since: slopReport(state)?.main ?? null, own, projectDir, rules, ...(tool ? { tool } : {}) });
-  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed });
+  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now) });
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
     empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };
   return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point, main: tip }) };

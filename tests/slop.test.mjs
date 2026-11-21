@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, effectiveRules, slopCheck, explainOf, EXPLAIN, RULES_DIR } from '../engine/lib/slop/check.mjs';
 import { slopPrompt } from '../engine/lib/slop/runend.mjs';
-import { hostWrite, openBlocks, slopHolds } from '../engine/lib/slop/host.mjs';
+import { hostWrite, openBlocks, slopHolds, slopChecks } from '../engine/lib/slop/host.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { startRun } from '../engine/lib/runs.mjs';
@@ -179,7 +179,8 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   const id = startRun({ state, locksDir: path.join(root, 'locks'), executor: 'fake', lane: 'x', worktree: wt, notes, brief, hbMs: 150, staleMs: 3000,
     policy: { auto_resume_max: 0, trigger_on_exit: false }, budget: {} }).run;
   const next = await waitFor(() => loadState(state).items[id]?.resume?.next, { what: 'the slop resume' });
-  await waitFor(() => settled(loadState(state).items[next]) && fs.existsSync(path.join(state, 'slop', 'holds.json')) && slopHolds(state)['feat/x']?.run === next, { what: 'the resumed run ends' });
+  await waitFor(() => settled(loadState(state).items[next]), { what: 'the resumed run ends' });
+  assert.equal(slopChecks(state).length, 1, 'the resumed run end reads the check stored at the same head and rule set (S2): no second check');
   assert.equal(loadState(state).items[id].resume.slop, 1);
   assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 `a\.txt\.orig`: 1\n  - K15 `a\.txt\.orig` /, 'the resume carries the list (the path in backticks)');
   assert.match(fs.readFileSync(path.join(state, 'results', id, 'slop-blocks.md'), 'utf8'), /^- K15 `a\.txt\.orig` junk name/, 'the full list is in the named file');
