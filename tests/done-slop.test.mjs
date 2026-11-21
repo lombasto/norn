@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { endCheck } from '../engine/lib/slop/runend.mjs';
+import { slopResumes } from '../engine/lib/slop/daily.mjs';
+import { record } from '../engine/lib/records.mjs';
 import { slopChecks, slopHolds } from '../engine/lib/slop/host.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -63,4 +65,14 @@ test('endCheck: the run end reads the check norn done stored at this head and ru
   fs.writeFileSync(path.join(fx.wt, 'b.txt'), 'b\n'); git(fx.wt, 'add', '-A'); git(fx.wt, 'commit', '-q', '-m', 'more');
   const c2 = endCheck({ repo: fx.wt, state: fx.state, lane: 'x', run: 'RUN-1' });
   assert.ok(c2.result, 'a new head is checked'); assert.equal(slopChecks(fx.state).length, 2);
+});
+
+test('slopResumes: the daily report counts the run ends resumed with slop BLOCK findings in the last 7 days', () => {
+  const state = mkTmp('meta-done-slop-rs-'), now = Date.parse('2026-11-20T12:00:00Z');
+  for (const [id, at] of [['RUN-1', now - 3600e3], ['RUN-2', now - 8 * 864e5]]) {
+    record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'x' } }, { now: () => new Date(at) });
+    record(state, { kind: 'run', ev: 'end', id, by: 'launcher', data: { exit: 0, outcome: 'done' } }, { now: () => new Date(at) });
+    record(state, { kind: 'run', ev: 'resume', id, by: 'launcher', data: { next: 'RUN-9', slop: 2 } }, { now: () => new Date(at) });
+  }
+  assert.equal(slopResumes(state, now), 1, 'the one inside the week');
 });
