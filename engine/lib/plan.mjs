@@ -471,8 +471,8 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
 /** gather the inputs from a state dir and build the plan. o: { state, project (loaded project.json), budget, now, git } */
 export function loadPlan({ state, project = null, budget = {}, now = Date.now(), git } = {}) {
   const runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
-  let lanes = [];
-  try { const home = homeOf(state)?.id; lanes = Object.values(loadShared(state, 'lane').items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null })); } catch { /* none */ }
+  // a lane log that does not read is an integrity error (as in deliverables.mjs): it throws, never an empty lane list
+  const home = homeOf(state)?.id, lanes = Object.values(loadShared(state, 'lane').items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null }));
   const ready = readiness(state, { now });
   let status = '';
   try { status = fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'); } catch { /* not written yet */ }
