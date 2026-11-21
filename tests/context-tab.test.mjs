@@ -5,7 +5,8 @@
 // Sandbox only: pure renders, the shared dash fixture (temp dirs, no real ~/.claude) and a private headless browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CONTEXT_SUBS, contextNumbers, standingRows, INS_PARTS } from '../engine/dash/insparts.mjs';
+import { CONTEXT_SUBS, contextNumbers, standingRows, INS_PARTS, measuredRows, fileAdvice } from '../engine/dash/insparts.mjs';
+import { ctxView, filesOf } from '../engine/dash/pages/context.mjs';
 import { TABS, ONE_PROJECT, renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
@@ -43,7 +44,9 @@ test('4 numbers at most: one check-in, one worker, today by N sessions, the chec
   assert.equal(ns.length, 4);
   assert.deepEqual(ns.map(x => x.n), ['~32.8k', '~21.1k', '~386.5k', '-40 %']);
   assert.match(ns[2].label, /148 sessions/); assert.match(ns[3].label, /since 2026-11-09/);
-  assert.equal(ns[3].cls, 'ok', 'shrinking = ok');
+  assert.equal(ns[3].cls, 'ok', 'shrinking = ok'); assert.equal(ns[3].mark, 'shrinking');
+  assert.deepEqual(ns.slice(0, 3).map(x => x.mark), ['medium', 'medium', 'low'], 'a load bubble is marked low / medium / high (today: its mean per session)');
+  assert.match(ns[2].label, /~2\.6k each/);
   const bare = contextNumbers({ total: 0, sessions: 0, measured: null });
   assert.equal(bare.length, 4); assert.equal(bare[0].n, '-');
 });
@@ -63,25 +66,26 @@ test('ONE standing table: each measured role with the per-profile estimates of t
 test('the default view: 4 numbers, 4 sub-views, Per role = what one session loads + the ONE standing table; no reader, no checks; one link to them', () => {
   const html = renderTab('context', { ...summary(), sub: 'role', parts_loading: false });
   assert.match(html, /id="context-sum"/); assert.equal((html.match(/class="subnum/g) || []).length, 4);
-  assert.equal((html.match(/data-act="sub" data-sub="/g) || []).length, 4 + 1, '4 sub-view buttons + the one checks link');
+  assert.equal((html.match(/data-act="sub" data-sub="/g) || []).length, 4, 'the 4 sub-view buttons; no footer link (the checks page is reached from Slop)');
+  assert.match(html, /class="chip warn submark">medium</, 'each load bubble carries its mark');
+  for (const gone of ['context-links', 'context-what', 'ins-count']) assert.doesNotMatch(html, new RegExp(`id="${gone}"`), `${gone} is gone`);
   assert.match(html, /id="context-sub-role"[^>]*aria-pressed="true"/);
   assert.match(html, /id="ins-loads"/); assert.match(html, /id="ctx-roles"/);
   assert.equal((html.match(/<table/g) || []).length, 1, 'the two standing tables are one');
   assert.doesNotMatch(html, /id="ins-standing"/); assert.equal((html.match(/<h3>Standing context/g) || []).length, 1);
   for (const gone of ['ins-table', 'ins-findings', 'ins-ladder', 'ins-hints', 'ins-suggest', 'ins-repeats', 'ins-audits', 'ins-memory', 'ins-managed', 'ins-filemap', 'ins-trend', 'ins-checkins'])
     assert.doesNotMatch(html, new RegExp(`id="${gone}"`), `${gone} is not in the default view`);
-  assert.match(html, /data-sub="checks"/, 'the checks: one link');
   assert.equal((html.match(/<tr class="ctxrole"/g) || []).length, 5, 'one row per role; its launch-profile estimates inside it');
   const many = renderTab('context', { ...summary(), standing: [...summary().standing, { key: 'worker:claude:runner', label: 'worker runner (claude)', sessions: 3, tokens: 5000 }], sub: 'role' });
   assert.match(many, /<td class="num">10<\/td><td class="num"><details class="ctxprofs"><summary>~5\.0k-20\.0k <span class="small mute">2 profiles<\/span><\/summary>[\s\S]*worker runner \(claude\) · 3 today · ~5\.0k/);
-  assert.match(html, /data-tab="docs"/, 'reading: one link to the Docs reader');
 });
 
 test('each sub-view is its own part: Per file (count card, file map, most tokens, the files capped), growing, check-ins; the checks page keeps every check', () => {
   const s = summary();
   assert.match(renderTab('context', { ...s, sub: 'file', parts_loading: true }), /id="context-sub-loading"/);
   const file = renderTab('context', { ...s, sub: 'file', limit: 40, rows: ROWS, parts_loading: false });
-  assert.match(file, /id="ins-count"/); assert.match(file, /id="ins-filemap"/); assert.match(file, /Most tokens per day/);
+  assert.doesNotMatch(file, /id="ins-count"/, 'the numbers show once, at the top'); assert.match(file, /id="ins-filemap"/);
+  assert.equal((file.match(/<table/g) || []).length, 1, 'Files and the file map are one view: one table under the map');
   assert.equal((file.match(/<tr id="ins-row-/g) || []).length, 40); assert.match(file, /showing 40 of 45/);
   assert.match(file, /data-ins="f0"/, 'a file name opens the Docs reader');
   assert.match(renderTab('context', { ...s, sub: 'growing', parts_loading: false }), /id="ins-trend"/);
@@ -92,6 +96,33 @@ test('each sub-view is its own part: Per file (count card, file map, most tokens
   assert.match(checks, /data-go="slop" data-gosub="fix"/, 'the hints and tightening candidates: one link to Slop › To fix');
   assert.match(checks, /data-sub="role"/, 'back to Context');
   assert.doesNotMatch(checks, /id="context-subs"/, 'the checks page is no fifth sub-view');
+});
+
+test('Per file: the map groups are its filter chips; every block and every name opens Docs; skills + MCP servers are measured rows; "in Slop" opens the finding', () => {
+  const s = summary(), mcp = { run: 'chat', total: 3000, parts: [{ key: 'mcp', tokens: 900, items: [{ name: 'mcp__norn__ask', tokens: 600 }, { name: 'mcp__gh__pr', tokens: 200 }, { name: 'MCP Server Instructions', tokens: 100 }] }, { key: 'skills', label: 'skills list', tokens: 1200, items: [] }] };
+  const measured = { ...s.measured, parts: { ...s.measured.parts, chat: mcp, worker: { ...s.measured.parts.worker, parts: [...s.measured.parts.worker.parts, { key: 'skills', tokens: 1500, items: [] }] } } };
+  assert.deepEqual(measuredRows(measured).map(m => [m.name, m.tokens, m.roles.join(',')]), [['skills list (descriptions)', 1500, 'worker,chat'], ['MCP server norn', 600, 'chat'], ['MCP server gh', 200, 'chat'], ['MCP server instructions', 100, 'chat']]);
+  const rows = [row('cm', 'CLAUDE.md', 'session', 3000, { findings: 2, hints: 1, slop: { finding: 'A-1f', hint: 'H-2h' } }), row('od', 'notes.md', 'on-demand', 400, { loads_day: 0, reads: 3 }), row('wk', 'impl.md', 'role', 800, { role: 'worker' }), row('src', 'gen.md', 'source', 50)];
+  assert.deepEqual(fileAdvice(rows[0]).filter(a => a.go).map(a => a.finding), ['A-1f', 'H-2h'], 'each advice names the Slop row it opens');
+  assert.deepEqual(filesOf(rows, 'top').map(r => r.id), ['cm', 'wk'], 'most tokens per day: the files that cost anything, the most first');
+  assert.deepEqual(filesOf(rows, 'on-demand').map(r => r.id), ['od']); assert.deepEqual(filesOf(rows, 'all').map(r => r.id), ['cm', 'wk', 'od'], 'a generator source is not loaded');
+  const page = () => renderTab('context', { ...s, measured, sub: 'file', rows, parts_loading: false });
+  try {
+    ctxView.show = 'all';
+    let html = page();
+    assert.match(html, /class="fchips ctxshow" role="group" aria-label="Files"/);
+    for (const [k, n] of [['session', 5], ['role', 1], ['on-demand', 1], ['top', 2], ['all', 7]]) assert.match(html, new RegExp(`data-act="ctx-show" data-show="${k}" aria-pressed="${k === 'all'}">[^<]+<b>${n}</b>`), k);
+    for (const id of ['cm', 'od', 'wk']) { assert.match(html, new RegExp(`class="fmblk[^"]*" data-ins="${id}"[^>]*>[^<]+</button>`), `the ${id} block carries its name`); assert.match(html, new RegExp(`<td><button class="lnk" data-ins="${id}"`)); }
+    assert.match(html, /on demand<\/b> <span class="mute">1 file · opened 3x in 30 d/, 'on demand says how often a run opened one, never "0 tokens / day"');
+    assert.doesNotMatch(html, /0 tokens \/ day/);
+    assert.match(html, /class="fmblk st-measured"[^>]*>MCP server norn</); assert.equal((html.match(/<tr class="ctxmeas"/g) || []).length, 4);
+    assert.match(html, /data-go="slop" data-gosub="fix" data-gofinding="A-1f">in Slop/, 'bug 5: the link names its finding');
+    ctxView.show = 'top'; html = page();
+    assert.equal((html.match(/<tr id="ins-row-/g) || []).length, 2); assert.doesNotMatch(html, /ctxmeas/);
+    assert.match(html, /<button class="fmblk st-fresh" data-ins="cm"[^>]*>CLAUDE\.md<\/button>/, 'bug 6: a most-tokens-per-day name opens the file');
+    ctxView.show = 'on-demand'; html = page();
+    assert.deepEqual([...html.matchAll(/<tr id="ins-row-(\w+)"/g)].map(m => m[1]), ['od']);
+  } finally { ctxView.show = 'all'; }
 });
 
 test('the loader: the summary alone for Per role / growing / check-ins; the files part for Per file; every list for the checks; keyed by sub', async () => {

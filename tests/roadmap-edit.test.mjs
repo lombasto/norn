@@ -141,7 +141,8 @@ test('digest: a project with a roadmap carries "Unplaced on the roadmap" (the au
 });
 
 // ---------- the edit drawer (ui.mjs, pure) + the page wiring ----------
-const { renderTab, renderRmEditor, rmEditBody, rmFind } = await import('../engine/dash/ui.mjs');
+const { renderTab } = await import('../engine/dash/ui.mjs');
+const { renderRmEditor } = await import('../engine/dash/pages/roadmap.mjs');
 const uiNode = (id, title, o = {}) => ({ id, kind: 'item', title, state: o.state || 'open', rev: o.rev ?? 1, parent: o.parent ?? null, phase: o.phase || 'future', status: o.status || 'idea',
   why: 'no evidence', note: o.note || '', horizon: o.horizon ?? null, links: o.links || [], live: [], queued: [], stages: [], branches: [], spans: [], progress: { done: 0, total: 0 },
   flags: { claimed: null, drift: [], idle: null, gone: [] }, dropped: o.dropped || null, children: [] });
@@ -180,7 +181,7 @@ test('roadmap edit drawer: every row (tree and board) and theme has an edit butt
 test('the page wires the edit drawer: its own aside, opened by data-rm-edit, POSTs /api/roadmap/<op> with the token, repaints from the reply tree', () => {
   const html = fs.readFileSync(path.join(HERE, '..', 'engine', 'dash', 'index.html'), 'utf8');
   assert.match(html, /<aside id="rmed" class="drawer" hidden/);
-  assert.match(html, /import \{[^}]*renderRmEditor[^}]*rmEditBody[^}]*\} from '\/ui\.mjs'/);
+  assert.match(html, /import \{[^}]*renderRmEditor[^}]*rmEditBody[^}]*\} from '\/pages\/roadmap\.mjs'/);
   assert.match(html, /closest\?\.\('\[data-rm-edit\]'\)/);
   assert.match(html, /post\('\/api\/roadmap\/' \+ b\.op/);
   assert.match(html, /S\.rmData = r\.tree/);

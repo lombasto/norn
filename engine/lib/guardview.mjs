@@ -4,7 +4,7 @@
 // Pure: the server hands in the views it already builds. Node built-ins only.
 import { createHash } from 'node:crypto';
 import { CHECKS } from './instrchecks.mjs';
-import { HINT_FIX, TIGHTEN_FIX } from './instructions.mjs';
+import { HINT_FIX, TIGHTEN_FIX, hintSlopId } from './instructions.mjs';
 import { ADVICE_FIX } from './advice.mjs';
 
 /** [type, label, the tab that owns it] in display order */
@@ -64,7 +64,7 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   // the lint's hints and the tightening candidates of the same scan (META-UX-BUILD S5: they moved here from Context's checks page)
   for (const h of ins?.hints || []) {
     const f = HINT_FIX[h.kind];
-    out.push({ id: 'H-' + hash(`${h.kind}|${fwd(h.path)}|${h.line}|${h.text}`), type: 'instructions', severity: 'low', surface: `hint: ${h.kind}`, path: h.path, line: h.line, why: String(h.text).slice(0, 300),
+    out.push({ id: hintSlopId(h), type: 'instructions', severity: 'low', surface: `hint: ${h.kind}`, path: h.path, line: h.line, why: String(h.text).slice(0, 300),
       source: 'norn instructions (lint, read-only)', action: null, ...fixOf(`hint-${h.kind}`, f, f.title), ...ownerOf(h), go: { tab: 'docs', ins: h.id, ...(h.line ? { line: h.line } : {}) } });
   }
   for (const x of ins?.suggest || []) {
