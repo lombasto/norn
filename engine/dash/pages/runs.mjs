@@ -175,7 +175,7 @@ function runDoc(n, d, ctx) {
     ['burn', fin(n.burn30) && n.burn30 > 0 ? `${mTok(n.burn30)} / 30 min` : null], ['speed', n.speed ? speedLine(n.speed) : null],
     ['helpers', n.helpers ? esc(`${n.helpers.n}${n.helpers.running ? ` (${n.helpers.running} running)` : ''}, ${int(n.helpers.tokens)} tok`) : null],
     ['subagents', (n.children || []).length ? `<ul class="rd-kids">${n.children.map(k => `<li><b>${esc(k.agentType ?? 'subagent')}</b> <span class="mute">${esc(k.description ?? '')}</span></li>`).join('')}</ul>` : null],
-    ['refused', (n.refused || []).length ? n.refused.map(x => `<div>${chip('refused', `refused: ${x.words}`)} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div>`).join('') : null]]
+    ['refused', (n.refused || []).length ? n.refused.map(x => `<div>${chip('refused', `refused: ${x.words}`)} <span class="mute">${esc(fmtTime(x.ts, now))} - ${esc(x.why)}</span></div>`).join('') : null]]
     .filter(([, v]) => v != null).map(([k, v]) => `<span class="mute">${k}</span><span>${v}</span>`).join('');
   const feed = feedable(n) ? `<section id="run-feed-slot" ${at}></section>` : '';
   return `<article class="rdoc drawer" id="run-doc" data-run="${esc(n.id)}" data-project="${esc(n.project ?? '')}" aria-label="${esc(n.id)}">${head}${alarms ? `<section class="rd-sec rd-alarms">${alarms}</section>` : ''}${paceBand}${result}${list}
