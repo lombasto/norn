@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { syncCut, ID_RE } from '../engine/lib/synccut.mjs';
 import { ledgerConfig } from '../engine/lib/ledger.mjs';
-import { loadState, readEvents, recordsFile, homeOf, idPrefix } from '../engine/lib/records.mjs';
+import { KINDS, loadState, readEvents, recordsFile, homeOf, idPrefix } from '../engine/lib/records.mjs';
 import { listClaims } from '../engine/lib/claims.mjs';
 import { fedOf } from '../engine/lib/fed.mjs';
 import { main } from '../engine/bin/norn.mjs';
@@ -155,9 +155,11 @@ test('the joiner: every bare id token becomes <P>b-n exactly, the files keyed by
   assert.equal(listClaims(fedOf(B.cfg))['homes/b.json'].id, 'b');
 });
 
-test('ID_RE is the spec token: bare numeric ids of the 12 kinds only', () => {
+test('ID_RE is the spec token: bare numeric ids of every numeric kind in KINDS (C4: COL- too) only', () => {
   const hits = s => (s.match(new RegExp(ID_RE.source, 'g')) || []);
-  assert.deepEqual(hits('Q-1 DEC-2 DIR-3 RUN-4 DLV-5 EP-6 MAIL-7 RM-8 ADP-9 ICF-10 GRD-11 WVR-12'), ['Q-1', 'DEC-2', 'DIR-3', 'RUN-4', 'DLV-5', 'EP-6', 'MAIL-7', 'RM-8', 'ADP-9', 'ICF-10', 'GRD-11', 'WVR-12']);
+  assert.deepEqual(hits('Q-1 DEC-2 DIR-3 RUN-4 DLV-5 EP-6 MAIL-7 RM-8 ADP-9 ICF-10 GRD-11 WVR-12 COL-13'), ['Q-1', 'DEC-2', 'DIR-3', 'RUN-4', 'DLV-5', 'EP-6', 'MAIL-7', 'RM-8', 'ADP-9', 'ICF-10', 'GRD-11', 'WVR-12', 'COL-13']);
+  const numeric = Object.values(KINDS).map(k => k.prefix).filter(p => p.endsWith('-'));
+  assert.deepEqual(numeric.filter(p => hits(`${p}7`).length !== 1), [], 'a kind added to KINDS is cut too');
   assert.deepEqual(hits('RM-a-3 RUN-wsl-3 UTF-8 L:x RM-30x XRM-3'), []);
 });
 
