@@ -15,11 +15,12 @@ import { createHash } from 'node:crypto';
 import { advisory } from './advisory.mjs';
 import { frontOf } from './instrchecks.mjs';
 import { generatedLines, withDefaults } from './policy.mjs';
+import { readText, readTextA } from './fsnap.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const lc = p => (process.platform === 'win32' ? fwd(p).toLowerCase() : fwd(p));
-const readText = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+// a missing file is none; a corrupt one throws (rules.json read as none would be written over, the retired list lost)
+const readJson = f => { const t = readText(f); return t === null ? null : JSON.parse(t); };
 const sha = s => createHash('sha1').update(s).digest('hex');
 const RULE_RE = /\b(?:must|never)\b/i;
 const MARK_RE = /<!--\s*policy:([a-z_.]+)\s*-->/;
@@ -280,11 +281,10 @@ export function enforceCards(state, items = {}) {
 export const openCards = (state, items = {}) => enforceCards(state, items).filter(c => !c.asked);
 const rulesJson = state => path.join(state, 'instructions', 'rules.json');
 const cardsOf = (j, items) => (j?.cards || []).map(c => ({ ...c, asked: askedBy(c, items) }));
-/** META-DASH-ASYNC R1: enforceCards on fs.promises (the dash Inbox) */
+/** enforceCards on fs.promises (the dash Inbox) */
 export async function enforceCardsAsync(state, items = {}) {
-  let j = null;
-  if (state) { try { j = JSON.parse(await fs.promises.readFile(rulesJson(state), 'utf8')); } catch { j = null; } }
-  return cardsOf(j, items);
+  const t = state ? await readTextA(rulesJson(state)) : null;
+  return cardsOf(t === null ? null : JSON.parse(t), items);
 }
 /** the directive an approval writes: the check-in turns it into a task brief (Norn installs nothing itself) */
 export const approvalText = c => `Enforce (advisory ${c.id}, the repeat detector): ${c.why} Draft: ${String(c.fix?.patch || '').slice(0, 1500)} - write a task brief that adds it, red-first, and retire the prose line once it lands.`;
