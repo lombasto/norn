@@ -46,10 +46,12 @@ export function ledgerConfig(machine, { metaRoot, machineFile } = {}) {
     machine_file: machineFile ? path.resolve(machineFile) : path.join(meta, 'local', 'machine.json') };
 }
 
-/** the secret values of machine.json (the ntfy topic, any token / key / secret / password field), read at run time; never printed */
+/** the secret values of machine.json (the ntfy topic, any token / key / secret / password field), read at run time; never printed.
+ *  No machine.json = no secrets; one that does not parse throws: a blind scan would pass every file. */
 export function secretsOf(file) {
-  let m;
-  try { m = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return []; }
+  let s;
+  try { s = fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+  const m = JSON.parse(s.replace(/^﻿/, ''));
   const out = [];
   const walk = (o, k = '') => {
     if (typeof o === 'string') { if (/topic|token|key|secret|password|passwd|auth/i.test(k) && o.length >= 6) out.push(o); return; }
