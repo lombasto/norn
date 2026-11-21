@@ -7,7 +7,7 @@ import { activityInit, activityAdd, activityView, fmtDur } from '../activity.mjs
 import { hoChip } from '../widgets.mjs';
 // the kind filters of the event list (in place of "All events"): each button shows its kinds; none pressed = the list folds away
 export const FEED_KINDS = [['tools', 'tools', ['tool', 'error']], ['words', 'words', ['text', 'step']], ['commits', 'commits', ['marker']]];
-const FEED_HTML = `<h3>Live feed <span class="small mute">times UTC · tool (duration)</span><span class="spacer"></span>
+const FEED_HTML = `<h3>Live feed<span class="spacer"></span>
     <label class="small"><input type="checkbox" id="feed-follow" checked> follow</label></h3>
   <div id="feed-head"></div>
   <div id="feed-now" class="small"></div>

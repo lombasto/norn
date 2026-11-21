@@ -71,15 +71,15 @@ test('capStrip: one line per project - slots in use, reserved, past the ceiling 
   assert.equal(capStrip({ cap: 3, rows: [] }), '');
 });
 
-test('the browser: Lanes shows the pool and each lane\'s priority chip; Settings > Capacity fits the phone (no sideways scroll at 390 px)', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the browser: Lanes shows each lane\'s priority (no pool card: it moved to the top banner); Settings > Capacity fits the phone (no sideways scroll at 390 px)', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
     record(f.pa.state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen', priority: 'P1' } });
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
-    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lanes-capstrip')`, 90000), 'Lanes shows the pool');
-    assert.equal(await pg.ev(`document.querySelector('#lane-gen .chip.prio')?.textContent`), 'P1 #1', 'the queued lane: its priority and its place in the fill order');
-    assert.match(await pg.ev(`document.querySelector('#lane-gen .chip.prio').title`), /priority P1 · #1 in this project's fill order/);
+    assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen')`, 90000), 'Lanes shows the queued lane');
+    assert.equal(await pg.ev(`!!document.querySelector('#lanes-capstrip')`), false, 'no pool card on Lanes');
+    assert.ok(await pg.until(`document.querySelector('#lane-gen select.pl-prio')?.value === 'P1' || document.querySelector('#lane-gen .chip.prio')?.textContent === 'P1 #1'`, 30000), 'the queued lane: its priority (the control once the plan is worked out)');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Lanes at 390 px');
     await pg.go(`${f.url}/?project=kestrel&tab=settings&setcat=workers`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'settings' && !!document.querySelector('#set-capstrip') && !!document.querySelector('#in-project_workers\\\\.other\\\\.reserve_claude_workers')`, 90000), 'Capacity shows the pool and the other project\'s rows');

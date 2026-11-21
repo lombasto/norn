@@ -1,5 +1,7 @@
 {
-  "id": "K10", "level": "BLOCK", "kind": "imports",
+  "id": "K10",
+  "level": "BLOCK",
+  "kind": "imports",
   "title": "a layer rule broken, or a new import cycle",
   "how": "static import / export-from specifiers of the JS files under roots, resolved relative to the file: a forbidden edge, or a cycle (a strongly connected group) the base did not have",
   "explain": {
@@ -8,13 +10,21 @@
     "fix": "Move the shared code down into engine/lib, or pass the value in as a parameter, so that the import goes one way only."
   },
   "roots": ["engine/"],
-  "files": ["**/*.mjs", "**/*.js", "**/*.cjs"],
-  "forbid": [{ "from": "engine/lib/**", "to": ["engine/dash/**", "engine/bin/**"] }],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "forbid": [{"from":"engine/lib/**","to":["engine/dash/**","engine/bin/**"]}],
   "fixture": {
-    "hit": { "base": { "engine/lib/a.mjs": "export const a = 1;\n", "engine/bin/x.mjs": "export const x = 1;\n" },
-      "head": { "engine/lib/a.mjs": "import { x } from '../bin/x.mjs';\nexport const a = x;\n", "engine/bin/x.mjs": "export const x = 1;\n" } },
-    "miss": { "base": { "engine/lib/a.mjs": "import { b } from './b.mjs';\nexport const a = () => b;\n", "engine/lib/b.mjs": "import { a } from './a.mjs';\nexport const b = () => a;\n" },
-      "head": { "engine/lib/a.mjs": "import { b } from './b.mjs';\nexport const a = () => b();\n", "engine/lib/b.mjs": "import { a } from './a.mjs';\nexport const b = () => a;\n",
-        "engine/bin/x.mjs": "import { a } from '../lib/a.mjs';\nexport const x = a;\n", "engine/lib/c.mjs": "export const c = () => import('../bin/x.mjs');\n" } }
+    "hit": {
+      "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/bin/x.mjs":"export const x = 1;\n"},
+      "head": {"engine/lib/a.mjs":"import { x } from '../bin/x.mjs';\nexport const a = x;\n","engine/bin/x.mjs":"export const x = 1;\n"}
+    },
+    "miss": {
+      "base": {"engine/lib/a.mjs":"import { b } from './b.mjs';\nexport const a = () => b;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nexport const b = () => a;\n"},
+      "head": {
+        "engine/lib/a.mjs": "import { b } from './b.mjs';\nexport const a = () => b();\n",
+        "engine/lib/b.mjs": "import { a } from './a.mjs';\nexport const b = () => a;\n",
+        "engine/bin/x.mjs": "import { a } from '../lib/a.mjs';\nexport const x = a;\n",
+        "engine/lib/c.mjs": "export const c = () => import('../bin/x.mjs');\n"
+      }
+    }
   }
 }

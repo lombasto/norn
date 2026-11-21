@@ -9,17 +9,9 @@
     "why": "Two copies of one helper drift apart. A fix lands in one copy, and the other keeps the bug.",
     "fix": "Import the existing helper and delete the copy. If the two must differ, make the difference visible in the name or the body."
   },
-  "roots": [
-    "engine/"
-  ],
-  "files": [
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "**/vendor/**"
-  ],
+  "roots": ["engine/"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["**/vendor/**"],
   "min_chars": 20,
   "groups": [
     [
@@ -33,24 +25,15 @@
       "engine/agents/**",
       "engine/presets/**"
     ],
-    [
-      "engine/dash/**"
-    ]
+    ["engine/dash/**"]
   ],
   "fixture": {
     "hit": {
-      "base": {
-        "engine/lib/a.mjs": "export const fwd = p => String(p).replace(/\\\\/g, '/');\n"
-      },
-      "head": {
-        "engine/lib/a.mjs": "export const fwd = p => String(p).replace(/\\\\/g, '/');\n",
-        "engine/lib/b.mjs": "const toSlash = (p) => String(p).replace(/\\\\/g, '/');\nexport const b = q => toSlash(q) + '/';\n"
-      }
+      "base": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\n"},
+      "head": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\n","engine/lib/b.mjs":"const toSlash = (p) => String(p).replace(/\\\\/g, '/');\nexport const b = q => toSlash(q) + '/';\n"}
     },
     "miss": {
-      "base": {
-        "engine/lib/a.mjs": "export const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const mag = n => n > 0 ? n : -n;\n"
-      },
+      "base": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const mag = n => n > 0 ? n : -n;\n"},
       "head": {
         "engine/lib/a.mjs": "export const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const mag = n => n > 0 ? n : -n;\n",
         "engine/lib/c.mjs": "const fwd = p => String(p).split('\\\\').join('/');\nconst abs = n => n > 0 ? n : -n;\nexport const c = q => fwd(q) + abs(1);\n",

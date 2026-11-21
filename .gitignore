@@ -9,6 +9,8 @@
 /projects/*
 !/projects/example/
 !/tests/
+!/tools/
+!/eslint.config.mjs
 !/.github/
 !/README.md
 !/SETUP.md

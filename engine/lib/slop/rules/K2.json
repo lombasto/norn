@@ -1,18 +1,67 @@
 {
-  "id": "K2", "level": "BLOCK", "kind": "swallow",
+  "id": "K2",
+  "level": "BLOCK",
+  "kind": "ast",
+  "tool": "eslint",
   "title": "a new empty or comment-only catch with no reason",
-  "how": "JS files the diff touches: a catch block or .catch(() => {}) whose body is empty or only comments; the comment is a reason only when it says what happens next (two words or more) and does not start with a deny-list word",
+  "how": "ESLint selectors on the JS files the diff touches: a catch clause with no statement, a .catch(() => {}) with an empty body; passes when its comment says what happens next (two words or more, not a deny-list word)",
   "explain": {
     "what": "A new catch block is empty, or holds only a comment that does not say what happens next.",
     "why": "An empty catch hides the error. The code goes on as if the step worked, and the real fault shows up later, far from its cause.",
     "fix": "Handle the error, rethrow it, or let it go up. If it is safe to drop, write a comment that says why and what happens next (two words or more, not \"ignore\" or \"ok\")."
   },
-  "files": ["**/*.mjs", "**/*.js", "**/*.cjs"],
-  "deny": ["ignore", "ignored", "ok", "okay", "best effort", "nothing", "noop", "no-op", "empty", "todo", "fine", "whatever", "swallow"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["**/vendor/**"],
+  "reason": ["ignore","ignored","ok","okay","best effort","nothing","noop","no-op","empty","todo","fine","whatever","swallow"],
+  "selectors": [
+    {"selector":"CatchClause[body.body.length=0]","message":"empty catch: say what happens next, or let it throw"},
+    {"selector":"CallExpression[callee.property.name='catch'] > ArrowFunctionExpression[body.type='BlockStatement'][body.body.length=0]","message":"empty .catch(() => {}): say what happens next, or let it throw"}
+  ],
   "fixture": {
-    "hit": { "base": { "src/io.mjs": "export const read = f => f();\n" },
-      "head": { "src/io.mjs": "export const read = f => { try { return f(); } catch { /* ignore */ } };\nexport const quiet = p => p.catch(() => {});\nexport function last(f) {\n  try { f(); } catch (e) {}\n}\nexport const meh = f => { try { f(); } catch { /* best effort, it is fine */ } };\n" } },
-    "miss": { "base": { "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\n" },
-      "head": { "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\nexport const read = f => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = p => p.catch(e => { throw e; });\nexport const text = 'try { f(); } catch (e) {}';\n" } }
+    "hit": {
+      "base": {"src/io.mjs":"export const read = f => f();\n"},
+      "head": {
+        "src/io.mjs": "export const read = f => { try { return f(); } catch { /* ignore */ } };\nexport const quiet = p => p.catch(() => {});\nexport function last(f) {\n  try { f(); } catch (e) {}\n}\nexport const meh = f => { try { f(); } catch { /* best effort, it is fine */ } };\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "src/io.mjs",
+            "messages": [
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":1,"column":48,"endLine":1,"endColumn":70},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty .catch(() => {}): say what happens next, or let it throw","line":2,"column":35,"endLine":2,"endColumn":43},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":4,"column":16,"endLine":4,"endColumn":28},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":6,"column":40,"endLine":6,"endColumn":79}
+            ]
+          }
+        ],
+        "base": [{"filePath":"src/io.mjs","messages":[]}]
+      }
+    },
+    "miss": {
+      "base": {"src/io.mjs":"export function old(f) {\n  try { f(); } catch (e) {}\n}\n"},
+      "head": {
+        "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\nexport const read = f => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = p => p.catch(e => { throw e; });\nexport const text = 'try { f(); } catch (e) {}';\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "src/io.mjs",
+            "messages": [
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":2,"column":16,"endLine":2,"endColumn":28},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":4,"column":48,"endLine":4,"endColumn":122}
+            ]
+          }
+        ],
+        "base": [
+          {
+            "filePath": "src/io.mjs",
+            "messages": [
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":2,"column":16,"endLine":2,"endColumn":28}
+            ]
+          }
+        ]
+      }
+    }
   }
 }

@@ -21,7 +21,7 @@ const G = {
 };
 export const BAR = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk']];
 // the More sheet: [group heading ('' = none), page ids]. Map and Plan stay until LANES and RUNS re-home them (SPEC 4.1 item 2)
-export const MORE = [['Health', ['usage', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap', 'plan']], ['', ['settings']]];
+export const MORE = [['Health', ['spend', 'slop', 'tests', 'context']], ['History', ['records', 'ledger', 'docs']], ['Plan', ['roadmap']], ['', ['settings']]];
 const HEALTH = MORE[0][1];
 const LABEL = Object.fromEntries(TABS);
 
@@ -31,7 +31,7 @@ export const routeTab = id => (id === 'adopt' || TABS.some(t => t[0] === id) ? i
 const href = (project, id) => esc(`?project=${encodeURIComponent(project ?? '')}&tab=${id}`);
 const badge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
 const dot = (st, words) => (st === 'warn' || st === 'bad' ? `<span class="dot tone-${st}" role="img" aria-label="${esc(words)}"></span>` : '');
-/** the bar: 4 links + the More button. o: { project, needs, health: { usage|slop|tests|context: 'ok'|'warn'|'bad'|null } } */
+/** the bar: 4 links + the More button. o: { project, needs, health: { spend|slop|tests|context: 'ok'|'warn'|'bad'|null } } */
 export function renderBar(tab, o = {}) {
   const inMore = MORE.some(([, ids]) => ids.includes(tab)), sick = worstState(o.health);
   const links = BAR.map(([k, l]) => `<a href="${href(o.project, k)}" id="tab-${k}" data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}>${G[k]}<span class="bl">${l}</span>${k === 'inbox' ? badge(o.needs) : ''}</a>`).join('');
@@ -74,8 +74,8 @@ export function renderStatus(s, ctx = {}) {
 // pause / quiet / tick flags), 'all' (a reset or a reconnect: anything may have changed). A page refetches only for its own keys.
 export const PAGE_KEYS = {
   lanes: ['records', 'runs', 'deliverables', 'derived'], runs: ['runs', 'records', 'derived'], inbox: ['records', 'runs', 'deliverables', 'derived', 'state'],
-  talk: ['records', 'runs', 'state'], usage: ['records', 'runs', 'derived'], slop: ['derived'], tests: ['runs', 'derived'], context: ['derived'],
-  records: ['records'], ledger: ['derived'], docs: ['derived'], roadmap: ['records', 'runs', 'deliverables'], plan: ['records', 'runs'],
+  talk: ['records', 'runs', 'state'], spend: ['records', 'runs', 'derived'], slop: ['derived'], tests: ['runs', 'derived'], context: ['derived'],
+  records: ['records'], ledger: ['derived'], docs: ['derived'], roadmap: ['records', 'runs', 'deliverables'],
   settings: ['derived', 'state'], adopt: ['records', 'derived'],
 };
 /** a stream event -> its keys */

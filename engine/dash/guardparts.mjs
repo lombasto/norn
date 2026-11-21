@@ -15,7 +15,7 @@ export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['age', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
-const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}${r.declined ? ':d' : ''}`)]));
+const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, g.precision, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}${r.declined ? ':d' : ''}`)]));
 function fnv(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
@@ -115,15 +115,19 @@ export function fixOne(g, { id, way = null } = {}) {
 }
 
 /** one sub-view's part of the guard view; throws (400) on an unknown name. fix: the batches (capped at the limit), each with its first
- * BATCH_ROWS rows - the open one (batch = its key) with every row up to the limit */
-export function guardPart(g, name, limit = SUB_CAP, batch = null) {
+ * BATCH_ROWS rows - the open one (batch = its key) with every row up to the limit. finding = one row's id (Slop &finding=): its batch
+ * opens, with that row kept past the caps; found = it is open (else the page says so) */
+export function guardPart(g, name, limit = SUB_CAP, batch = null, finding = null) {
   if (name === 'fix') {
-    const all = batchesOf(g.rows || []), open = all.some(b => b.key === batch) ? batch : null, c = capList(all, limit);
-    const batches = c.rows.map(b => { const x = capList(b.rows, b.key === open ? limit : BATCH_ROWS); return { ...b, rows: x.rows }; });
-    return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}) } };
+    const all = batchesOf(g.rows || []), home = finding ? all.find(b => b.rows.some(r => r.id === finding)) : null;
+    const want = batch ?? home?.key ?? null, open = all.some(b => b.key === want) ? want : null, c = capList(all, limit);
+    const shown = home && !c.rows.includes(home) ? [...c.rows, home] : c.rows;
+    const batches = shown.map(b => { const x = capList(b.rows, b.key === open ? limit : BATCH_ROWS), miss = b === home && !x.rows.some(r => r.id === finding);
+      return { ...b, rows: miss ? [...x.rows, b.rows.find(r => r.id === finding)] : x.rows }; });
+    return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}), ...(finding ? { finding, found: !!home } : {}) } };
   }
-  if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length } };
-  if (name === 'rules') return { rules: { ledger: g.ledger ?? null, ...capList(ruleRows(g), limit) } };
+  if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length, hist: g.hist ?? null } };   // hist: lib/slophist.mjs histTypes
+  if (name === 'rules') return { rules: { ledger: g.ledger ?? null, precision: g.precision ?? [], ...capList(ruleRows(g), limit) } };
   if (name === 'age') return { age: { trend: g.trend ?? null } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });
 }

@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fwd } from './config.mjs';
 import { idNum as num } from './records.mjs';
+import { isLanded } from './deliverables.mjs';
 
 const HEAD = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
 const ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
@@ -183,7 +184,7 @@ export const NEXT_STATES = {
 };
 const day = iso => (iso ? String(iso).slice(0, 10) : '?');
 /**
- * laneNext({ outcome, asks, prs, stages, notQueued, written, deliverable }) -> { key, words, cls } | null (the last run has not ended).
+ * laneNext({ outcome, asks, prs, stages, notQueued, written, deliverable, shipped, why }) -> { key, words, cls } | null (the last run has not ended).
  *   outcome   the last run's end outcome (done, stopped, handoff, no-result, crash, lost ...)
  *   asks      the lane's open owner questions [{ id, title }]
  *   prs       the lane's PRs, newest first [{ number, state open | approved | merged | closed, merged_at? }]
@@ -191,10 +192,15 @@ const day = iso => (iso ? String(iso).slice(0, 10) : '?');
  *   notQueued brief files a run proposed and nothing queued
  *   written   files the last run wrote in the notes folder (a no-result run's evidence)
  *   deliverable the lane's newest deliverable state (done | merged | installed) when it has no PR yet
+ *   shipped   LANE-TRUTH: why the lane's work is on main (dlvmerge.mjs laneShipped) | null - it decides first: a shipped lane never reads
+ *             'awaiting your approval' or 'needs your input' (rm26 read 'PR #28 awaiting your approval' long after #28 merged)
+ *   why       that deliverable's why_not (dlvwhy.mjs whyNotMerged: the merge queue's skip in words - not pushed, slop BLOCK, conflict and
+ *             its MERGE, ...): a done lane waiting to merge says why, never only "no PR yet" (land-push)
  */
-export function laneNext({ outcome = null, asks = [], prs = [], stages = [], notQueued = [], written = [], deliverable = null } = {}) {
+export function laneNext({ outcome = null, asks = [], prs = [], stages = [], notQueued = [], written = [], deliverable = null, shipped = null, why = null } = {}) {
   if (!outcome) return null;
   const S = NEXT_STATES, n = (k, s) => `${k} ${s}${k === 1 ? '' : 's'}`;
+  if (shipped) return { key: 'shipped', words: prs[0]?.state === 'merged' ? `${S.shipped}: PR #${prs[0].number} merged${prs[0].merged_at ? ` ${day(prs[0].merged_at)}` : ''}` : `${S.shipped}: ${shipped}`, cls: 'ok' };
   if (asks.length) return { key: 'input', words: `${S.input}: ${n(asks.length, 'ruling')}`, cls: 'needs' };
   if (['no-result', 'crash', 'lost', 'killed'].includes(outcome) && written.length) return { key: 'noresult', words: `${S.noresult}: ${n(written.length, 'file')} written; review`, cls: 'warn' };
   const pr = prs[0];
@@ -202,7 +208,7 @@ export function laneNext({ outcome = null, asks = [], prs = [], stages = [], not
   if (pr?.state === 'open') return { key: 'approval', words: `PR #${pr.number} ${S.approval}`, cls: 'needs' };
   if (pr?.state === 'merged') return { key: 'shipped', words: `${S.shipped}: PR #${pr.number} merged ${day(pr.merged_at)}`, cls: 'ok' };
   if (deliverable === 'merged' || deliverable === 'installed') return { key: 'shipped', words: `${S.shipped}: on main`, cls: 'ok' };
-  if (deliverable === 'done') return { key: 'merge', words: `${S.merge}: no PR yet`, cls: 'idle' };
+  if (deliverable === 'done') return { key: 'merge', words: `${S.merge}: ${why?.text ?? 'no PR yet'}`, cls: why?.warn ? 'warn' : 'idle' };
   const queued = stages.filter(s => s.state === 'queue' || s.state === 'launched'), later = stages.filter(s => s.state === 'later');
   if (later.length) return { key: 'roadmap', words: `${S.roadmap} (${later.map(s => `${s.ref ?? s.key}${s.horizon ? `, horizon ${s.horizon}` : ''}`).join('; ')}), ${queued.length ? `${queued.length} queued` : 'none queued'}`, cls: 'idle' };
   if (notQueued.length) return { key: 'notqueued', words: `${S.notqueued}: ${notQueued.join(', ')}`, cls: 'warn' };
@@ -249,13 +255,13 @@ export function lanePlan(prop, { items = {}, R = { items: {} }, rows = [] } = {}
     stages: prop.stages.map(s => { const d = s.dec ? items[s.dec] : null; return { ...stageWhere(s, { items, R, rows }), ...(d ? { by: d.by, at: d.created } : {}) }; }) };
 }
 /**
- * laneNow({ lane, items, R, rows, prop, written, notes }) -> { next, status_line, asks_open, cutoff, not_queued }: the Lanes row's
+ * laneNow({ lane, items, R, rows, prop, written, notes, shipped }) -> { next, status_line, asks_open, cutoff, not_queued }: the Lanes row's
  * state after its last run (laneNext) and the run's own last summary line (its `norn done` summary, else NOTES.md's summary section)
  */
-export function laneNow({ lane, items = {}, R = { items: {} }, rows = [], prop = null, written = [], notes = null }) {
+export function laneNow({ lane, items = {}, R = { items: {} }, rows = [], prop = null, written = [], notes = null, shipped = null }) {
   const r = lastRun(lane, items), outcome = outcomeOf(r), asks = laneAsks(items, lane), open = asks.filter(a => a.open);
   const notQueued = [...new Set(Object.values(items).filter(q => q.kind === 'question' && q.data?.lane === lane && q.data.ask?.kind === 'not-queued' && q.state === 'open').flatMap(q => q.data.ask.briefs || []))];
   const plan = lanePlan(prop, { items, R, rows }), dl = rows.filter(d => d.lane === lane).sort((a, b) => num(b.id) - num(a.id))[0];
-  const next = laneNext({ outcome, asks: open, prs: lanePrs(rows, lane), stages: plan?.stages ?? [], notQueued, written, deliverable: dl?.state ?? null });
+  const next = laneNext({ outcome, asks: open, prs: lanePrs(rows, lane), stages: plan?.stages ?? [], notQueued, written, deliverable: isLanded(dl) && dl.state === 'done' ? 'merged' : dl?.state ?? null, shipped, why: dl?.why_not ?? null });
   return { next, status_line: outcome ? r.end?.summary ?? summaryLine(notes) : null, asks_open: open.length, cutoff: r?.end?.cutoff ?? null, not_queued: notQueued };
 }

@@ -1,18 +1,23 @@
 // META-SLOP-A (REVIEW-FABLE 3.1-3.2): the run-end backstop. Every lane run end that leaves commits is checked on its branch's diff
 // against main (the merge base; RM-44 D1: stopped, Done-red and hand-off too); a DONE's open BLOCK findings go back to the SAME lane
 // as one resume with the list (the supervisor). The merge doors (door.mjs) check the head they merge.
-import { gitRun, slopCheck, effectiveRules } from './check.mjs';
+import { gitRun, slopCheck, effectiveRules, fingerprint, rulesHash } from './check.mjs';
 import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
-import { findingLine, explainLines } from './host.mjs';
+import { findingLine, explainLines, hostWrite, slopChecks, unwaived } from './host.mjs';
 
-/** the merge base of a commit with main (the remote's main first: it is the fresher), or null (no main, or no common history) */
-export function mainBase(repo, head = 'HEAD', { main = 'main', remote = 'origin' } = {}) {
+/** main's sha: the remote's main first (it is the fresher), else the local branch, else null */
+export function mainTip(repo, { main = 'main', remote = 'origin' } = {}) {
   for (const ref of [`refs/remotes/${remote}/${main}`, `refs/heads/${main}`]) {
     const got = gitRun(repo, ['rev-parse', '--verify', '--quiet', ref], { ok: [0, 1] }).trim();
-    if (got) return gitRun(repo, ['merge-base', head, got], { ok: [0, 1] }).trim() || null;
+    if (got) return got;
   }
   return null;
+}
+/** the merge base of a commit with main (mainTip), or null (no main, or no common history) */
+export function mainBase(repo, head = 'HEAD', o = {}) {
+  const tip = mainTip(repo, o);
+  return tip ? gitRun(repo, ['merge-base', head, tip], { ok: [0, 1] }).trim() || null : null;
 }
 /** the branch and merge base of a checkout against main, or null (no branch / no main) */
 export function branchBase(repo, o = {}) {
@@ -39,12 +44,34 @@ function recordResolver(state) {
   return id => (id.startsWith('RM-') ? rm[id] : items[id]?.state) ?? null;
 }
 
-/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop */
-export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null } = {}) {
+/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop;
+ * brief: the run's brief text; machine false: skip the machine rules (slopCheck) */
+export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null, brief = null, machine = true } = {}) {
   const bb = base ? { branch: branchBase(repo)?.branch ?? null, base } : branchBase(repo);
   if (!bb) return null;
   const ps = projectSlop({ state, projectDir });
-  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules }) };
+  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules, brief, machine }) };
+}
+
+/** SloppaChoppa 2 S2: a run's branch check, once per (branch, head, rule set) - `norn done` runs it in the worker's session, the run end
+ * reads the check stored at that head instead of running it again. -> null (no lane branch, or no commits past main) |
+ * { branch, check (the stored line), open (its BLOCKs no waiver covers), result (slopCheck's; null = read from the store) }. Throws as checkBranch. */
+export function endCheck({ repo, state, projectDir = null, voice = null, brief = null, lane = null, run = null }) {
+  const bb = branchBase(repo), head = bb && gitRun(repo, ['rev-parse', 'HEAD']).trim();
+  if (!bb || bb.base === head) return null;
+  const rules = projectSlop({ projectDir }).rules, hash = rulesHash(rules), had = slopChecks(state).findLast(c => c.branch === bb.branch && c.head === head && c.hash === hash);
+  if (had) return { branch: bb.branch, check: had, open: unwaived(state, had.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), result: null };
+  const c = checkBranch({ repo, state, base: bb.base, rules, projectDir, tool: makeTool({ voice }), brief });
+  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings }), result: c.result };
+}
+
+/** SPEC 1.3 F7: the hold of a run-end check that threw - one BLOCK "could not check" on the branch, stored under a hash no rule set has
+ * (no door reads it as a check: the door runs its own) -> a hostWrite check payload | null (no lane branch, or no commits past main) */
+export function couldNotCheck(repo, why) {
+  const bb = branchBase(repo), head = bb && gitRun(repo, ['rev-parse', 'HEAD']).trim();
+  if (!bb || bb.base === head) return null;
+  const f = { rule: 'check', level: 'BLOCK', file: '*', line: 0, msg: `could not check: ${why}`, snippet: 'could-not-check', fp: fingerprint('check', '*', 'could-not-check'), new: true };
+  return { type: 'check', branch: bb.branch, base: bb.base, head, hash: 'could-not-check', blocks: [f], findings: [f] };
 }
 
 // the resume prompt names at most SLOP_GROUPS (rule, file) groups and SLOP_FIRST lines of each: a BLOCK list of thousands of hits

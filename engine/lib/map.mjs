@@ -72,7 +72,7 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
     vis.forEach((r, i) => {
       const d = r.data || {}, [rc, rw] = runWord(r), big = i === 0;
       const crit = d.class === 'planning' ? critiqueOfNode(runs, r.id) : null;   // META-DOD 3: the plan's review (ui.mjs mapNode: its sub line)
-      add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: dwarfDisplay(d.dwarf) ?? r.id, sub: [d.dwarf ? r.id : kindWord(d), d.executor, d.stage].filter(Boolean).join(' · '), critique: crit,   // DWARVES 3.3: the bead is the dwarf; no dwarf = id + kind word
+      add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: dwarfDisplay(d) ?? r.id, sub: [d.dwarf ? r.id : kindWord(d), d.executor, d.stage].filter(Boolean).join(' · '), critique: crit,   // DWARVES 3.3: the bead is the dwarf; no dwarf = id + kind word
         state: r.state, cls: rc, word: rw, x: COL[1], y: ry, w: W[1], h: big ? H.big : H.small, faded: !big, feed: r.id, executor: d.executor ?? null, handoff: hoBy[r.id] ?? null });
       edge(laneId, r.id, 'owns');
       const kids = [...(helpersOf[r.id] || []).map(h => { const [hc, hw] = runWord(h); return { id: h.id, type: 'helper', lane: name, label: h.id,

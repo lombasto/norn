@@ -74,9 +74,13 @@ export async function fixture(extra = {}) {
   fs.writeFileSync(log, Array.from({ length: 230 }, (_, i) => `line ${i + 1}`).join('\n'));
   const clog = path.join(S, 'logs', 'render.log');
   fs.writeFileSync(clog, ['OpenAI Codex', '--------', 'model: gpt-5.4', 'reasoning effort: high', `session id: ${CSID}`, '--------'].join('\n'));
-  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'seabed', dwarf: 'thorin', log, session_id: SID } });
+  // the machine's crew: two dwarves by their generated names (the runs name them by id; loadState gives each run its dwarf's name)
+  fs.mkdirSync(path.join(path.dirname(S), 'crew'), { recursive: true });
+  fs.writeFileSync(path.join(path.dirname(S), 'crew', 'crew.jsonl'), [['harvald-marblekeg', 'Harvald Marblekeg'], ['vondrak-torchgrip', 'Vondrak Torchgrip']]
+    .map(([id, name], i) => JSON.stringify({ v: 1, seq: i + 1, at: '2026-10-30T00:00:00Z', id, kind: 'dwarf', ev: 'hire', by: 'launcher', data: { name } }) + '\n').join(''));
+  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'seabed', dwarf: 'harvald-marblekeg', log, session_id: SID } });
   record(S, { kind: 'run', ev: 'end', id: 'RUN-1', by: 'launcher', data: { exit: 0, outcome: 'stopped', why: 'red test' } });
-  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'codex', executor: 'codex-sol', lane: 'render', dwarf: 'oin', log: clog, budget_min: 90 } });
+  record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'codex', executor: 'codex-sol', lane: 'render', dwarf: 'vondrak-torchgrip', log: clog, budget_min: 90 } });
   fs.mkdirSync(path.join(S, 'hb'), { recursive: true }); fs.writeFileSync(path.join(S, 'hb', 'RUN-2.hb'), '{}');
   fs.writeFileSync(path.join(S, 'STATUS.md'), '- since CALIB x: 0.1 % over 1 h = 0.10 %/h vs cap 0.43 -> ok\n- estimated weekly now ~60.0 %\nRATE_OK=1\n');
   record(pb.state, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'other project question', lane: 'x' } });

@@ -1,0 +1,8 @@
+{
+  "name": "norn-lint-tools",
+  "private": true,
+  "description": "The locked tool set of SloppaChoppa's kind lint (SPEC Q1 A). Installed with npm ci --ignore-scripts into <meta root>/state/tools/lint/<lock hash>/, never in a worktree; nothing under engine/ imports it. Every change here is an owner approval (K20).",
+  "dependencies": {
+    "eslint": "10.15.0"
+  }
+}

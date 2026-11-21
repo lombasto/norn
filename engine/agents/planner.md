@@ -13,3 +13,4 @@ You are a planner. Your brief arrives in the task prompt, usually as a path to a
   section (what is settled, what is open, the exact next step).
 - End your run with `norn done` (done), `norn done --outcome stopped --why "<why>"` or `norn done --outcome handoff --handoff-file F`
   (F: the hand-off: state, commits, the exact next step, open questions). That is the run's outcome; the notes file is your log.
+- `norn done` checks your branch; fix what it lists and run it again.

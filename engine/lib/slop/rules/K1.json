@@ -1,5 +1,7 @@
 {
-  "id": "K1", "level": "BLOCK", "kind": "diff-check",
+  "id": "K1",
+  "level": "BLOCK",
+  "kind": "diff-check",
   "title": "a conflict marker or a whitespace error in an added line",
   "how": "git diff --check <base> <head>: git reports only the lines the diff adds",
   "explain": {
@@ -8,7 +10,10 @@
     "fix": "Finish the merge by hand: keep the right side, delete the markers. Delete the stray whitespace. `git diff --check main` lists each line."
   },
   "fixture": {
-    "hit": { "base": { "a.mjs": "export const a = 1;\n" }, "head": { "a.mjs": "export const a = 1;\n<<<<<<< HEAD\nexport const b = 2;\n=======\nexport const b = 3;\n>>>>>>> feat/x\n" } },
-    "miss": { "base": { "a.mjs": "export const a = 1;\n" }, "head": { "a.mjs": "export const a = 1;\nexport const banner = '<<<<<<< not a marker';\n" } }
+    "hit": {
+      "base": {"a.mjs":"export const a = 1;\n"},
+      "head": {"a.mjs":"export const a = 1;\n<<<<<<< HEAD\nexport const b = 2;\n=======\nexport const b = 3;\n>>>>>>> feat/x\n"}
+    },
+    "miss": {"base":{"a.mjs":"export const a = 1;\n"},"head":{"a.mjs":"export const a = 1;\nexport const banner = '<<<<<<< not a marker';\n"}}
   }
 }
