@@ -44,7 +44,7 @@ import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf, setCaveat } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { tickDerelicts } from './derelict.mjs';
-import { tickLanes, lanesProbe } from './lifecycle.mjs';
+import { tickLanes, lanesProbe, laneShippedIn } from './lifecycle.mjs';
 import { tickPaths } from './lanepaths.mjs';
 import { tickProposals } from './proposals.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
@@ -200,7 +200,7 @@ export function tick(o) {
 }
 // ---------- RM-46 S2b (multi-home SPEC 4.5): the tick's claims step, before the fill ----------
 // Only a synced project (home.json) with a ledger remote. One fetch (offline = the last fetched claims), then: release the own claims
-// of lanes done / archived; renew once the oldest confirmation is past renew_s; fence SECOND (a machine waking with network renews and
+// of lanes done / archived, landed or idle past the lease (issue #123); renew once the oldest confirmation is past renew_s; fence SECOND (a machine waking with network renews and
 // is not fenced): a live run whose claim is unconfirmed past fence_s is stopped and recorded lost. A renew that finds an own claim gone
 // or under another nonce = taken over: its run stops, the claim leaves the own list. Last the observer's clock (stale foreign claims).
 // Rows for the digest go to <state>/sync/claims-digest.json: events (drift, fenced, taken) for 72 h, stale claims as they are now.
@@ -229,11 +229,25 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
   const stopMerges = why => { for (const r of Object.values(items)) if (r.kind === 'run' && r.state === 'running' && isMergeRun(r.data) && stopForClaim(state, r, why, kill)) lead.fenced.push(r.id); };
   let claims;
   try { claims = listClaims(f); } catch { claims = localClaims(f); out.offline = true; }
+  // issue #123: a lane whose work merged stays open, so done / archived alone renewed its claim forever and blocked the other home. With no
+  // live and no queued run, a landed lane (lifecycle.mjs laneShippedIn: merged on main, or a `runs landed` ruling) or one with no run past
+  // the lease releases too (a digest row names why); a new run on the lane claims again at its dispatch
+  const shipped = laneShippedIn(state), runsOf = lane => Object.values(items).filter(i => i.kind === 'run' && i.data?.lane === lane && i.data.kind !== 'checkin' && i.data.role !== 'helper');
+  const freeWhy = c => {
+    if (['done', 'archived'].includes(items[laneId(c.lane, state)]?.state)) return runOf(c.lane) ? null : '';
+    const rs = runsOf(c.lane);
+    if (!rs.length || rs.some(r => ['running', 'queued', 'claimed'].includes(r.state))) return null;   // a claim before its first run record: not judged
+    const s = shipped(c.lane, ...rs);
+    if (s) return `landed (${s})`;
+    const last = Math.max(...rs.map(r => Date.parse(r.history.at(-1)?.ts ?? '') || 0));
+    return last && now - last > pol.lease_s * 1000 ? `idle past lease (no run for ${Math.floor((now - last) / 60000)} min)` : null;
+  };
   for (const [k, c] of Object.entries(own)) {
-    if (!['done', 'archived'].includes(items[laneId(c.lane, state)]?.state) || runOf(c.lane)) continue;
+    const why = freeWhy(c);
+    if (why === null) continue;
     let r = null;
     try { r = releaseWork(f, c); } catch { /* offline: the next pass */ }
-    if (r?.ok || r?.gone) { delete own[k]; out.released.push(k); }
+    if (r?.ok || r?.gone) { delete own[k]; out.released.push(k); if (why) event('released', k, `${c.home}/${c.lane}: released - ${why}`); }
   }
   if ([...Object.values(own), ...(led ? [led] : [])].some(c => !(now - c.confirmed_ms < pol.renew_s * 1000))) {
     const rn = renewWork(f, { ...Object.fromEntries(Object.entries(own).map(([k, c]) => { const r = runOf(c.lane); return [k, { nonce: c.nonce, run: r?.id, touched: r ? touchedOf(r.data.worktree) : undefined }]; })), ...(led ? { [lk]: { nonce: led.nonce } } : {}) }, { now });
