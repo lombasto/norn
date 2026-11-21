@@ -28,6 +28,7 @@ import { profileDoctorLines } from './standing.mjs';
 import { checkinDoctorLines } from './checkins.mjs';
 import { limitLines } from './limitgate.mjs';
 import { splitRepo, normSubdir } from './monorepo.mjs';
+import { ensureHook, hookProblem, HOOK_BIN, HOOK_BUILD } from './hookbin.mjs';
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export class SetupError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
@@ -522,6 +523,10 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   out(`claude: ${d.claude ? `${d.claude.exe} (${d.claude.version ?? 'version unknown'}), config ${d.claude.config_dir}` : 'NOT FOUND'}`);
   out(`codex: ${d.codex ? d.codex.exe : 'not found (optional, disabled)'}`);
   if (d.problems.length) { for (const x of d.problems) { err('error: ' + x.msg); err('  ' + hint(x.tool)); } err('setup: nothing written'); return 1; }
+  // hook-fast S1: norn-hook, the per-tool-call hooks of every claude run (hookbin.mjs) - built here when missing or stale; no build = no setup
+  const hb = ensureHook({ err });
+  if (!hb.ok) { err('error: ' + hb.why); err('setup: nothing written'); return 1; }
+  out(`norn-hook: ${fwd(HOOK_BIN)}${hb.built ? ' (built)' : ''}`);
 
   const old = readMachineOrNull(meta) ? rawMachine(meta) : null;
   // META-NOTIFY-SETUP R1: decided before anything is written (a bad --notify writes nothing); no flag keeps an existing block as is
@@ -612,6 +617,8 @@ export function doctor({ env = process.env, out }) {
     if (exists(exe)) out(`ok ${k} ${exe}`); else { bad(`${k}: ${exe} does not exist (rerun norn setup)`); if (PREREQS[k]?.required) out('  ' + hint(k)); }
   }
   if (!m.codex?.exe) out(`note codex not found (optional) - ${hint('codex')}`);
+  const hp = hookProblem();   // hook-fast S1: every claude run's hooks are this binary
+  if (hp) { bad(hp); out(`  build: ${HOOK_BUILD} (norn setup does it)`); } else out(`ok norn-hook ${fwd(HOOK_BIN)}`);
   if (!which('gh', { env })) out(`note gh not found (optional) - ${hint('gh')}`);
   // META-NOTIFY-SETUP R1: notifications off = a hint, never a problem; on = the backend (+ the ntfy server; the topic is never shown)
   const nb = m.notify;
