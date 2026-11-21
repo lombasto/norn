@@ -94,6 +94,7 @@ import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
+import { slopHist } from '../lib/slophist.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
 import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
@@ -109,10 +110,10 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscree
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
-const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css'];
+const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'settings'];
+export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -1120,7 +1121,9 @@ export function createDashboard(o) {
     const rows0 = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const rows = part('declines', () => markDeclines(rows0, st(p).items), rows0);   // a fixer's reasoned decline stands on its finding until the finding or its file changes
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, errors };
+    // ui-spend-slop: the closed findings per type (lib/slophist.mjs), stepped only on a whole view - a pending scan or a failed part would close ids it merely lacks
+    const hist = await slopHist(p.state, rows, { types: v.types.map(t => t.type), step: !ig.pending && !errors.length }).catch(() => null);
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, errors, hist };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
@@ -1194,7 +1197,7 @@ export function createDashboard(o) {
     return { file: rel.split('\\').join('/'), text, lines: text.split(/\r?\n/).length };
   }
   // META-UX-BUILD S6 (REPORT s.3 step 2): the usage a Send approves - one run of the docs class as Settings routes it today, with the
-  // measured median cache reads of that class's runs (classCost, the Usage tab's table; 7 days)
+  // measured median cache reads of that class's runs (classCost, the Spend page's table; 7 days)
   function fixUsage(p) {
     const e = withDefaults(settingsState(p).view).policy.executors?.docs ?? {}, who = [e.executor, [e.model, e.effort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     const c = classesFor(p, Date.now()).byClass.filter(x => x.project === p.name && x.class === 'docs').sort((a, b) => b.measured - a.measured)[0];

@@ -57,7 +57,7 @@ test('keyed refetch: a pulse refreshes the strip only; a rec refetches the open 
   assert.deepEqual(refetchFor('records', keysOf('rec', { file: 'records' })), { strip: true, page: true });
   assert.deepEqual(refetchFor('settings', keysOf('reset', { file: 'runs' })), { strip: true, page: true }, 'a reset refetches everything');
   assert.deepEqual(refetchFor('lanes', ['chat']), { strip: false, page: false }, 'a chat line is the thread only (Talk)');
-  assert.deepEqual(refetchFor('usage', keysOf('derived', {})), { strip: true, page: true });
+  assert.deepEqual(refetchFor('spend', keysOf('derived', {})), { strip: true, page: true });
 });
 
 test('the status strip: running / cap, usage vs guard and hourly cap, the next check-in, the needs count; "…" until its data comes', () => {
@@ -73,18 +73,17 @@ test('the status strip: running / cap, usage vs guard and hourly cap, the next c
   assert.match(n, /Urd[^]*Verdandi[^]*Skuld/); assert.match(n, /2 running \/ 7/); assert.match(n, /2 need you/);
 });
 
-test('the Overview parts re-homed: Lanes shows the first task + setup gaps from the strip, Usage the API spend from the strip and the forecast from /api/plan', async () => {
+test('the Overview parts re-homed: Lanes shows the first task + setup gaps from the strip, Spend its tiles from the strip and the forecast from /api/plan', async () => {
   const { stripCards, loadTab, renderTab } = await import('../engine/dash/ui.mjs');
   const s = { first_run: { project: 'tide', lane: 'first', caps: {} }, setup: { project: 'tide', rules: false, rules_from: [], gate: null, roadmap: 0, caps: {} },
     usage: { billing: { type: 'api', usd: 3, cap: 20, runs: 2, live_usd: 0 } } };
   const l = stripCards('lanes', s); assert.match(l, /^<div id="strip-cards">/); assert.match(l, /id="first-task"/); assert.match(l, /id="setup-gaps"/); assert.doesNotMatch(l, /burn-api/);
-  const u = stripCards('usage', s); assert.match(u, /id="usage-burn"[^]*id="burn-api"/); assert.doesNotMatch(u, /first-task/);
-  assert.equal(stripCards('usage', { usage: { billing: { type: 'plan' } } }), '<div id="strip-cards"></div>', 'plan billing: no spend card');
+  assert.equal(stripCards('spend', s), '<div id="strip-cards"></div>', 'Spend reads the strip in its tiles: no strip card');
   assert.equal(stripCards('lanes', null), '<div id="strip-cards"></div>', 'the strip not here yet: an empty slot the strip fills');
   const asked = [], get = async r => { asked.push(r.split('?')[0]); return r.startsWith('/api/plan') ? { parts: [{ project: 'tide', forecast: { weekly: null } }] } : { parts: [] }; };
-  const d = await loadTab('usage', 'tide', get);
-  assert.deepEqual(asked.sort(), ['/api/plan', '/api/usage']); assert.deepEqual(d.forecasts, { tide: { weekly: null } });
-  assert.match(renderTab('usage', d, { project: 'tide', strip: s }), /id="panel-usage"[^]*id="strip-cards"[^]*id="usage-burn"/);
+  const d = await loadTab('spend', 'tide', get, { sub: 'forecast' });
+  assert.deepEqual(asked.sort(), ['/api/plan', '/api/usage']); assert.deepEqual(d.forecasts, { tide: { weekly: null } }); assert.equal(d.sub, 'forecast');
+  assert.match(renderTab('spend', d, { project: 'tide', strip: s }), /id="panel-spend"[^]*id="spend-head"[^]*id="spend-drawer"[^]*id="spend-view-forecast"/);
 });
 
 test('shared fixes: fmtMin shows days past 48 h; the server sets the wordmark src (no empty <img> before the art loads)', async () => {

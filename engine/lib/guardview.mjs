@@ -9,7 +9,7 @@ import { ADVICE_FIX } from './advice.mjs';
 
 /** [type, label, the tab that owns it] in display order */
 export const GUARD_TYPES = [['code', 'code', 'runs'], ['tests', 'tests', 'tests'], ['instructions', 'instruction files', 'context'],
-  ['memory', 'memory', 'context'], ['rules', 'rules', 'context'], ['docs', 'docs', 'docs'], ['models', 'models', 'usage']];
+  ['memory', 'memory', 'context'], ['rules', 'rules', 'context'], ['docs', 'docs', 'docs'], ['models', 'models', 'spend']];
 const SEV_RANK = { high: 0, medium: 1, low: 2, count: 3 };
 /** warn level or above: only these warn (the badge, a pop-up); low and count rows are listed, never announced */
 export const WARNS = s => s === 'high' || s === 'medium';
@@ -76,7 +76,7 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
       ...fixOf(a.key, a.fix, BATCH_TITLE[a.key] ?? a.surface), go: { tab: 'tests', sub: 'costs' } });
   for (const c of (advice?.cards || []).filter(x => !x.decided))
     out.push({ id: 'M-' + c.key, type: 'models', severity: c.severity, surface: `class ${c.id}`, path: null, line: null, why: c.title, source: c.source?.ref ?? c.source ?? null,
-      action: c.fix ?? null, cls: c.id, ...fixOf('model-advice', ADVICE_FIX, 'Model advice for a class of work'), go: { tab: 'usage', jump: 'usage-advice' } });
+      action: c.fix ?? null, cls: c.id, ...fixOf('model-advice', ADVICE_FIX, 'Model advice for a class of work'), go: { tab: 'spend', sub: 'advice' } });
   for (const h of holds) for (const b of h.blocks || [])
     out.push({ id: 'S-' + b.fp, type: 'code', severity: 'high', surface: `branch ${h.branch}`, path: b.file, line: b.line ?? null, why: `${b.rule}: ${b.msg}`,
       source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn rec add waiver)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),

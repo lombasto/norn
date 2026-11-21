@@ -132,10 +132,10 @@ test('dash: the Usage replay card shows before / after with refused as its own c
       disagreements: [], choices: [], ticks: [], before: { arms_total: [t({ harmful: 1 })], classes: [] }, guard_history: { dispatches: 40, busy: [], dup: [], rulings: 3, owner_only: [] } };
     fs.mkdirSync(path.dirname(replayReportFile(f.pa.state)), { recursive: true });
     fs.writeFileSync(replayReportFile(f.pa.state), JSON.stringify(rep));
-    const html = renderTab('usage', (await f.get('/api/usage?project=kestrel')).data, { project: 'kestrel', now: Date.now() });
-    assert.match(html, /id="usage-replay-guards"[\s\S]*opus-5-5 low[\s\S]*id="usage-replay-before-0"[\s\S]*seg-v-harmful[\s\S]*id="usage-replay-after-0"[\s\S]*seg-v-refused[\s\S]*refused by a guard 1/);
-    assert.match(html, /id="usage-replay-history">Guard check on the recorded history: 40 check-in dispatches, 0 refused by "lane busy"; 3 check-in rulings of a question, 0 refused by "owner-only ask"/);
-    assert.match(html, /id="usage-replay-class"[\s\S]*1 refused/);
+    const html = renderTab('spend', { ...(await f.get('/api/usage?project=kestrel')).data, sub: 'checkins' }, { project: 'kestrel', now: Date.now() });
+    assert.match(html, /id="spend-replay-guards"[\s\S]*opus-5-5 low[\s\S]*id="spend-replay-before-0"[\s\S]*seg-v-harmful[\s\S]*id="spend-replay-after-0"[\s\S]*seg-v-refused[\s\S]*refused by a guard 1/);
+    assert.match(html, /id="spend-replay-history">Guard check on the recorded history: 40 check-in dispatches, 0 refused by "lane busy"; 3 check-in rulings of a question, 0 refused by "owner-only ask"/);
+    assert.match(html, /id="spend-replay-class"[\s\S]*1 refused/);
     const ck = record(f.pa.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'claude', lane: 'checkin', worktree: f.pa.root ?? 'C:/x' } }).id;
     record(f.pa.state, { kind: 'run', ev: 'refuse', id: ck, by: 'launcher', data: { guard: 'busy', why: 'lane busy: worktree C:/w has live run RUN-1 (river S1)', lane: 'river', stage: 'S2' } });
     const a = (await f.get('/api/agents?project=kestrel')).data;

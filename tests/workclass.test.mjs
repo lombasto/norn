@@ -120,7 +120,7 @@ test('norn run --class: a known class is stamped (basis given), none = derived, 
   assert.ok(!items.some(i => i.data.lane === 'c'));
 });
 
-test('Usage tab: the per-kind-of-work card (cost per finished task by class, by model, the full grid with bars) and the Fable count', async () => {
+test('Spend page: the per-kind-of-work card (cost per finished task by class, by model, the full grid with bars) and the Fable count', async () => {
   const { renderTab } = await import('../engine/dash/ui.mjs');
   const { part } = fixture();
   const classes = classCost([part], { now: NOW, since: NOW - 7 * 86400000 });
@@ -128,18 +128,18 @@ test('Usage tab: the per-kind-of-work card (cost per finished task by class, by 
   const p = { project: 'x', window: 'rolling', days: 7, since: '2026-11-06T12:00:00Z', rows: [], totals: { claude: zero, codex: zero, provider: zero, unmeasured: 0 },
     checkins: { ticks: 0 }, calib: { cacheR_per_pct: 1e6, mix: 1, weights: { input: 10, output: 50, cache_create_1h: 20, cache_create_5m: 12.5 } }, cost: { runs: 0, ms: 1, bytesRead: 0 },
     secondary: null, headline: null, account: null, classes };
-  const html = renderTab('usage', { parts: [p] }, { project: 'x', now: NOW });
-  assert.match(html, /id="usage-class"[\s\S]*What each kind of work costs/);
-  assert.match(html, /id="usage-class-kind"[\s\S]*Implementation[\s\S]*class="bar/);
-  assert.match(html, /id="usage-class-model"[\s\S]*claude-fable-5-2/);
-  assert.match(html, /id="usage-class-grid"[\s\S]*kestrel-implementer[\s\S]*medium/);
-  assert.match(html, /id="usage-fable"[\s\S]*1 Fable run/);
+  const html = renderTab('spend', { parts: [p], sub: 'work' }, { project: 'x', now: NOW });
+  assert.match(html, /id="spend-class"[\s\S]*What each kind of work costs/);
+  assert.match(html, /id="spend-class-kind"[\s\S]*Implementation[\s\S]*class="bar/);
+  assert.match(html, /id="spend-class-model"[\s\S]*claude-fable-5-2/);
+  assert.match(html, /id="spend-class-grid"[\s\S]*kestrel-implementer[\s\S]*medium/);
+  assert.match(html, /id="spend-fable"[\s\S]*1 Fable run/);
   // META-TEND P6: on the shared widgets (bars), and a Slop chip in place on the class row a model advice is about
-  assert.match(html, /<ol class="wbars" id="usage-class-kind">/);
+  assert.match(html, /<ol class="wbars" id="spend-class-kind">/);
   const cls = classes.byClass[0].class;
-  const withAdv = renderTab('usage', { parts: [{ ...p, advice: { cards: [{ id: cls, key: 'k1', severity: 'medium', title: 'on a top model at xhigh' }] } }] }, { project: 'x', now: NOW });
-  assert.match(withAdv, /id="usage-class-kind"[^]*?<\/li>/);
-  assert.match(withAdv.match(/id="usage-class-kind"[^]*?<\/li>/)[0], /gchip" data-go="usage" data-gojump="usage-advice"[^>]*><span class="chip warn">1 Slop finding/);
+  const withAdv = renderTab('spend', { sub: 'work', parts: [{ ...p, advice: { cards: [{ id: cls, key: 'k1', severity: 'medium', title: 'on a top model at xhigh' }] } }] }, { project: 'x', now: NOW });
+  assert.match(withAdv, /id="spend-class-kind"[^]*?<\/li>/);
+  assert.match(withAdv.match(/id="spend-class-kind"[^]*?<\/li>/)[0], /gchip" data-go="spend" data-gosub="advice"[^>]*><span class="chip warn">1 Slop finding/);
   assert.match(html, /inferred/, 'the inferred rows are marked');
 });
 

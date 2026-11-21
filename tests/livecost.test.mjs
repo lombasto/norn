@@ -118,7 +118,7 @@ async function apiFixture() {
   return { f, id, now };
 }
 
-test('the dash in API mode: the strip carries the 24 h spend (running runs as an estimate), Usage shows it, Lanes each lane\'s $ to date, Usage the $ per lane today / 7 days + chats', async () => {
+test('the dash in API mode: the strip carries the 24 h spend (running runs as an estimate), Spend shows it, Lanes each lane\'s $ to date, Spend the $ per lane today / 7 days + chats', async () => {
   resetLiveCost();
   const { f, id, now } = await apiFixture();
   try {
@@ -126,17 +126,17 @@ test('the dash in API mode: the strip carries the 24 h spend (running runs as an
     const ov = (await f.get('/api/strip?project=kestrel')).data, b = ov.usage.billing;
     assert.equal(b.live_usd, 0.14); assert.equal(b.live_runs, 1); assert.equal(b.chat_usd, 0.4);
     assert.deepEqual(b.live.map(x => [x.id, x.usd]), [[id, 0.14]]);
-    let html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel', strip: ov });
+    let html = renderTab('spend', await loadTab('spend', 'kestrel', ui, { sub: 'tokens' }), { now, project: 'kestrel', strip: ov });
     assert.match(html, /id="burn-api-parts"[^>]*>\$0\.00 from 0 Claude runs ended in the last 24 h \(every project\) · \$0\.14 running \(1 run, estimate\) · \$0\.40 dashboard chats/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
     // the Lanes board: the figure sits in the lane's facts and says it sums every run of the lane (fair-slots item 2)
     assert.match(html, /id="lane-gen"[\s\S]*?<span class="mono lane-usd" title="[^"]*every run of the lane[^"]*">~\$0\.14 to date, all runs<\/span>/, 'the figure says it sums every run of the lane (fair-slots item 2)');
     const render = html.match(/id="lane-render"[\s\S]*?<\/article>/)?.[0];
     assert.ok(render, 'the lane with no Claude spend is on the board'); assert.doesNotMatch(render, /lane-usd|to date/, 'a lane with no Claude spend shows no figure');
-    html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.match(html, /id="usage-spend"><h2>API spend <b>\$0\.54<\/b> today/);
+    html = renderTab('spend', await loadTab('spend', 'kestrel', ui, { sub: 'lane' }), { now, project: 'kestrel' });
+    assert.match(html, /id="spend-spend"><h3>API spend <b>\$0\.54<\/b> today/);
     assert.match(html, /<b>gen<\/b>[^<]*<span[^>]*>live<\/span><\/td><td class="mono">~\$0\.14<\/td><td class="mono">~\$0\.14<\/td>/);
-    assert.match(html, /id="usage-spend-chats"><td><b>dashboard chats<\/b><\/td><td class="mono">\$0\.40<\/td>/);
+    assert.match(html, /id="spend-spend-chats"><td><b>dashboard chats<\/b><\/td><td class="mono">\$0\.40<\/td>/);
   } finally { await f.done(); }
 });
 
@@ -152,18 +152,18 @@ test('the dash in plan mode keeps the burn (the run document\'s facts, tokens / 
     assert.match(html, /<span class="mute">burn<\/span><span>2\.5M \/ 30 min<\/span>/); assert.doesNotMatch(html, /\$ so far/);
     html = renderTab('lanes', await loadTab('lanes', 'kestrel', ui), { now, project: 'kestrel' });
     assert.doesNotMatch(html, /\$ to date|lane-usd/);
-    html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel' });
-    assert.doesNotMatch(html, /id="usage-spend"/);
+    html = renderTab('spend', await loadTab('spend', 'kestrel', ui, { sub: 'lane' }), { now, project: 'kestrel' });
+    assert.match(html, /id="spend-lane"/); assert.doesNotMatch(html, /id="spend-spend"/);
   } finally { await f.done(); }
 });
 
-test('phone width unchanged: Lanes and Usage in API mode at 390 px have no sideways scroll', { skip: skipWhy, timeout: 420000 }, async () => {
+test('phone width unchanged: Lanes and Spend (page and drawer) in API mode at 390 px have no sideways scroll', { skip: skipWhy, timeout: 420000 }, async () => {
   resetLiveCost();
   const { f } = await apiFixture(); let pg;
   try {
     pg = await openPage([390, 844]);
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-    for (const [tab, sel] of [['lanes', '.lane-usd'], ['usage', '#usage-burn'], ['usage', '#usage-spend']]) {
+    for (const [tab, sel] of [['lanes', '.lane-usd'], ['spend', '#spend-24h'], ['spend&sub=tokens', '#spend-burn'], ['spend&sub=lane', '#spend-spend']]) {
       await pg.go(`${f.url}/?project=kestrel&tab=${tab}`, 60000);
       assert.ok(await pg.until(`!!document.querySelector('${sel}')`, 60000), `${tab}: ${sel} painted`);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `${tab}: no sideways scroll on a phone`);

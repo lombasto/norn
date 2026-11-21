@@ -113,7 +113,7 @@ export function guardPart(g, name, limit = SUB_CAP, batch = null) {
     const batches = c.rows.map(b => { const x = capList(b.rows, b.key === open ? limit : BATCH_ROWS); return { ...b, rows: x.rows }; });
     return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}) } };
   }
-  if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length } };
+  if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length, hist: g.hist ?? null } };   // hist: lib/slophist.mjs histTypes
   if (name === 'rules') return { rules: { ledger: g.ledger ?? null, ...capList(ruleRows(g), limit) } };
   if (name === 'age') return { age: { trend: g.trend ?? null } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });

@@ -630,7 +630,7 @@ const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume
   launch_profile: o.profile?.name || 'full', memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // launch_profile: the profile EVERY run launched with (launchpolicy.mjs profileOf; no profile = full) - overhead-audit S1: a floor is judged against it   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
 // META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
 const classStamp = o => { const w = workClass(o, o.workPolicy); return { class: w.class, class_basis: w.basis }; };
-// owner Q4: Fable is the cost class - a run on it carries a notice (printed at launch, shown on the Usage tab with the week's count)
+// owner Q4: Fable is the cost class - a run on it carries a notice (printed at launch, shown on the Spend page with the week's count)
 // the worker floor (floor.mjs, local/budget.json worker_min_model / worker_min_effort): a worker run below it is raised to it; the
 // start / queue record carries floor: { model?: [from, to], effort?: [from, to] } and a notice. A check-in keeps its own model.
 function withFloor(o) {
@@ -639,7 +639,7 @@ function withFloor(o) {
   return r.raised ? { ...o, model: r.model, effort: r.effort, floor: { ...(o.floor || {}), ...r.raised } } : o;
 }
 const floorNotice = o => (o.floor ? [`raised to the worker floor: ${Object.entries(o.floor).map(([k, [a, b]]) => `${k} ${a || '(default)'} -> ${b}`).join(', ')}`] : []);
-const fableNotice = o => (isFable(o) ? [`Fable (${o.model || o.executor}) is the cost class: use it for the hardest long work only (the Usage tab counts the week's Fable runs)`] : []);
+const fableNotice = o => (isFable(o) ? [`Fable (${o.model || o.executor}) is the cost class: use it for the hardest long work only (the Spend page counts the week's Fable runs)`] : []);
 // META-GTP-DAG piece 2: a NEW run (not a fill / resume / re-queue of one) named --epic joins that open epic; no --priority = the epic's
 const isNew = o => !o.fromQueue && !o.resumeOf && !o.requeueOf && !o.replaces;
 function withEpic(o) {

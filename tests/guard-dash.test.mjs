@@ -55,13 +55,13 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
     assert.match(renderTab('runs', ag, { project: 'kestrel' }), /id="node-RUN-1"[^]*?Slop finding/);
     // a chip in place on the Settings class row a model advice is about
     const set = { ...(await f.get('/api/settings?project=kestrel')).data, guard: { rows: [{ id: 'M-1', type: 'models', cls: 'chores', severity: 'medium', why: 'Chores on a top model' }] } };
-    assert.match(renderTab('settings', set, { project: 'kestrel' }), /id="grp-executors-routing-chores"[^>]*><div class="sl"><b>Chores<\/b> <button class="lnk gchip" data-go="usage" data-gojump="usage-advice"/);
+    assert.match(renderTab('settings', set, { project: 'kestrel' }), /id="grp-executors-routing-chores"[^>]*><div class="sl"><b>Chores<\/b> <button class="lnk gchip" data-go="spend" data-gosub="advice"/);
     assert.equal((await f.get('/api/guard?project=all')).status, 400, 'one project');
   } finally { await f.done(); }
 });
 
 test('Slop sits in More under Health beside Usage, Tests and Context; chips in place on Docs', () => {
-  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['usage', 'slop', 'tests', 'context']);
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'context']);
   assert.match(renderMore('slop', {}), /data-tab="slop" aria-current="page"/);
   // META-UX-BUILD S3: the Docs list carries each file's finding count (the same scan findings the Guard lists)
   const docs = renderTab('docs', { files: 2, groups: [{ id: 'project', label: 'Project docs', n: 2, rows: [{ key: 'doc-0', name: 'Plan', path: 'P', exists: true, findings: 0 }, { key: 'doc-1', name: 'Spec', path: 'S', exists: true, findings: 1 }] }] }, {});

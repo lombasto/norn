@@ -151,7 +151,9 @@ test('the dash: Settings offers Billing; saving api reaches the queued runs (rea
     assert.match(html, /In force: <b>API billing \(pay per token\)<\/b>/);
     const ov = (await f.get('/api/strip?project=kestrel')).data;
     assert.equal(ov.usage.billing.type, 'api'); assert.equal(ov.usage.billing.cap, 20); assert.equal(ov.usage.guard, 'ok');
-    html = renderTab('usage', await loadTab('usage', 'kestrel', ui), { now, project: 'kestrel', strip: ov });
+    html = renderTab('spend', await loadTab('spend', 'kestrel', ui, { sub: 'tokens' }), { now, project: 'kestrel', strip: ov });
+    assert.match(html, /id="spend-24h"><b class="mono">\$[\d.]+<\/b><span class="small mute">last 24 h · every project · cap \$20\.00/, 'the 24 h tile: dollars against the cap');
+    assert.match(html, /id="spend-guard"><b class="mono">ok<\/b>/);
     assert.match(html, /id="burn-api"/);
     assert.match(html, /of the \$20\.00 daily cap/);
     assert.doesNotMatch(html, /guard unknown/);

@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/css/base.css">
 <link rel="stylesheet" href="/css/lanes.css">
 <link rel="stylesheet" href="/css/runs.css">
+<link rel="stylesheet" href="/css/spend.css">
 <link rel="stylesheet" href="/norn/norn.css">
 </head>
 <body>
@@ -59,6 +60,8 @@ import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
 import { acts as runActs } from '/pages/runs-acts.mjs';
+import { acts as spendActs } from '/pages/spend-acts.mjs';
+import { acts as slopActs } from '/pages/slop-acts.mjs';
 import { createFeed } from '/pages/runs-feed.mjs';
 import { codeView, codeHead } from '/testparts.mjs';
 import { diffLines, parsePatch, renderDiff } from '/diffview.mjs';
@@ -79,7 +82,7 @@ const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs m
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
 const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, laneDetail: null, laneDet: null, laneFile: null, br: { states: new Set(), where: 'all', lane: '' }, brUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
   quiet: false,
-  sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
+  sub: qs.get('sub'), slopKind: qs.get('kind') === 'ready' ? 'ready' : null, subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
 // META-ROADMAP S2b: the Roadmap view (tree / board) - the hash first, else this viewer's last choice, else the tree (also on a phone)
 S.rm.view = S.rm.view || (() => { try { return localStorage.getItem('meta-rmview'); } catch { return null; } })() || null;
@@ -131,10 +134,9 @@ async function header(g = get) {
 }
 // ---- META-TEND P6: SloppaChoppa (DEC-264). The badge = warn-level findings new since this browser last opened the Guard; a click calls
 // him up (always); he pops up by himself only when Settings turns pop-ups on, per orc.mjs mayAppear. Per browser: the Guard's last
-// open, the day's appearances and the findings he already showed, Mute. /api/guard never blocks a render (fetched beside it). ----
+// open, the day's appearances and the findings he already showed. /api/guard never blocks a render (fetched beside it). ----
 const ls = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) ?? 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch { return null; } return v; };
 const orcKey = k => `meta-orc-${k}:${S.project}`;
-const mutedUntil = () => Number(ls('meta-orc-mute')) || 0;
 const typing = () => { const a = document.activeElement; return !!a?.matches?.('textarea, input[type=text], input[type=search], input:not([type]), [contenteditable=true]') || Date.now() - (S.keyAt || 0) < 4000; };
 document.addEventListener('keydown', () => { S.keyAt = Date.now(); }, true);
 const ORC = createStage({ url: n => assetUrl('orc-96-' + n), still: () => stillOnly(S.guard?.voice?.popups ?? 'off', motion()), onAct: g => goTo(g),
@@ -143,8 +145,8 @@ function paintOrc() {
   const b = $('#orc'), g = S.guard;
   b.hidden = !g || g.slop === false || !S.project || S.project === 'all';   // META-BETA-PREP: the project's SloppaChoppa switch off = no orc
   if (b.hidden) return;
-  const n = mutedUntil() > Date.now() ? 0 : badgeCount(g.rows, Number(ls(orcKey('seen'))) || 0), hot = n && g.rows.some(r => r.severity === 'high' && (r.new || Date.parse(r.first_seen) > (Number(ls(orcKey('seen'))) || 0)));
-  b.setAttribute('aria-label', mutedUntil() > Date.now() ? 'SloppaChoppa: muted' : badgeLabel(n));
+  const n = badgeCount(g.rows, Number(ls(orcKey('seen'))) || 0), hot = n && g.rows.some(r => r.severity === 'high' && (r.new || Date.parse(r.first_seen) > (Number(ls(orcKey('seen'))) || 0)));
+  b.setAttribute('aria-label', badgeLabel(n));
   b.innerHTML = look() === 'norn' ? `${assetImg('orc-32', 'o32')}${assetImg('orc-16', 'o16')}${n ? `<span class="obadge${hot ? ' hot' : ''}">${n}</span>` : ''}` : `<span class="ocl">Choppa${n ? ' ' + n : ''}</span>`;
 }
 // RM-18 S1: the bar in its Norn colours; Health's colour needs the Guard rows, so the bar repaints (alone) when they land
@@ -176,7 +178,7 @@ function callUp() {
 function popUp() {
   const g = S.guard; if (!g || g.slop === false) return;
   const log = ls(orcKey('log')) || {};
-  const m = mayAppear({ mode: g.voice?.popups ?? 'off', cap: g.voice?.daily_cap ?? 3, log, rows: g.rows, typing: typing(), mutedUntil: mutedUntil(), onStage: ORC.on() });
+  const m = mayAppear({ mode: g.voice?.popups ?? 'off', cap: g.voice?.daily_cap ?? 3, log, rows: g.rows, typing: typing(), onStage: ORC.on() });
   if (!m.ok) return;
   ls(orcKey('log'), logAppearance(log, m.row.id));
   const rows = [m.row, ...g.rows.filter(r => r !== m.row)];
@@ -185,7 +187,7 @@ function popUp() {
 // a Guard row / chip: the tab that fixes it, opened at its file + line, its doc, or its element
 // META-UX-BUILD S3: a file (an Instructions file link, a doc) opens in the Docs reader at its line
 function goTo(g) {
-  if (S.moreOpen) moreShow(false, false); S.tab = routeTab(g.tab); S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
+  if (S.moreOpen) moreShow(false, false); S.tab = routeTab(g.tab); S.sub = g.sub || null; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null;
   const file = g.ins ? g.ins : g.path ? `path:${g.path}` : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
   if (file) { S.tab = 'docs'; S.doc = file; S.docLine = Number(g.line) || null; S.docScroll = !!S.docLine; }
   if (g.jump) S.jump = g.jump;
@@ -204,11 +206,11 @@ async function partsFetch(tab, d) {
   } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
-const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'slop' && S.slopKind ? '&kind=ready' : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = routeTab(q.get('tab'));
   if (q.get('project') !== S.project) return;
-  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('show')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
+  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; S.sub = q.get('sub'); S.slopKind = q.get('kind') === 'ready' ? 'ready' : null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('show')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -219,7 +221,7 @@ async function render(force = false, why = []) {
     // overtook (a click while a slow fetch was out) never paints
     const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
     const tab = S.project ? S.tab : 'adopt';
-    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
+    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, kind: S.slopKind, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     // NORN-UI-NAV: the bar paints first, the strip (GET /api/strip) beside the page's own fetch, never in front of it
     document.body.dataset.tab = S.tab; paintNav(); if (!S.ov) paintStrip();
     step('render:header'); header(g).catch(e => err('Status failed: ' + e.message)); guardHeader();
@@ -479,7 +481,7 @@ const { F, mountFeed } = createFeed({ onFollow: (p, r) => feedGo(p, r) });
 const runsNarrow = () => matchMedia('(max-width:1100px)').matches;
 matchMedia('(max-width:1100px)').addEventListener('change', () => { if (S.tab === 'runs' && S.last && S.lastTab === 'runs') paintMain(S.last); });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
-const ACTS = { ...laneActs, ...runActs };
+const ACTS = { ...laneActs, ...runActs, ...spendActs, ...slopActs };
 const C = { S, render: () => render(), get, post, $, go: g => goTo(g), act, err, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r) };
 // ---- roadmap edit drawer (META-ROADMAP S3): a row's / theme's "..." or + Add opens it; each action = one POST /api/roadmap/<op>
 // (the page token, one record by dashboard). The reply's tree repaints the tab and the drawer at once; every other tab gets the
@@ -625,7 +627,6 @@ document.addEventListener('click', e => {
   if (d.act === 'undo' && confirm('Undo this?')) { act(() => post('/api/chat/undo', { project: p, line: Number(d.line) })); return; }
   if (d.act === 'more') { moreShow(!S.moreOpen); return; }
   if (b.id === 'orc' || d.act === 'orc-call') { callUp(); return; }
-  if (d.act === 'orc-mute') { ls('meta-orc-mute', Number(d.days) ? Date.now() + Number(d.days) * 86400000 : 0); paintOrc(); return; }
   if (d.go) { goTo({ tab: d.go, sub: d.gosub, ins: d.goins, line: d.goline, doc: d.godoc, jump: d.gojump }); return; }
   if (b.id === 'needs-btn') { S.tab = 'inbox'; history.pushState(null, '', `?project=${encodeURIComponent(S.project)}&tab=inbox`); render(); return; }
   if (b.matches('.caret[data-t]')) { const kids = document.querySelectorAll(`[data-p="${d.t}"]`), hide = kids[0] && kids[0].style.display !== 'none';
@@ -643,7 +644,7 @@ document.addEventListener('click', e => {
   if (d.act === 'tests-impact') { const v = ($('#tests-impact-files')?.value || '').split(',').map(x => x.trim()).filter(Boolean).join(','); S.batch = v ? 'files:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'tests-impact-lane') { const v = $('#tests-impact-lane')?.value; S.batch = v ? 'lane:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
-  if (d.tab) { if (S.moreOpen) moreShow(false, false); S.run = null; S.sub = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = routeTab(d.tab); history.pushState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
+  if (d.tab) { if (S.moreOpen) moreShow(false, false); S.run = null; S.sub = null; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = routeTab(d.tab); history.pushState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
   // META-UX-BUILD S3: Docs - a tap opens the file (pushed: Back returns to the list), Back on the reader, Rendered / Source
   if (d.docfile) { S.doc = d.docfile; S.docLine = null; history.pushState(null, '', tabUrl()); render(); return; }
   if (d.act === 'doc-back') { S.doc = null; S.docLine = null; history.pushState(null, '', tabUrl()); render(); window.scrollTo(0, 0); return; }

@@ -6,7 +6,7 @@ import { replayReport } from './report.mjs';
 import { frozenContext, baselineActions, sampleTicks, evalPrompt, replayTick, scoreTick, tickContext, findBudget, summarize, guardHistory } from './checkin.mjs';
 
 export const EVAL_USAGE = 'norn eval checkin --state <COPY of a state dir> --out <dir> [--executor claude|codex-sol|codex-astra|<provider>] [--model M] [--effort E] [--exe F] [--since-h 48] [--until ISO] [--acted 30] [--idle 12] [--ticks RUN-a,RUN-b] [--max-calls N] [--concurrency 3] [--dry]    (--dry = sample + frozen-context sizes, no calls)\n'
-  + '       norn eval report --out <dir> [--state <COPY of the state: re-grade through the guards, before / after + the recorded moves through them>] [--write F] [--project P] [--json]    (META-TEND P4: the replay test report - agreement per class of ruling, every disagreement; --write F = the JSON the Usage tab reads, <state>/eval/checkin-replay.json)';
+  + '       norn eval report --out <dir> [--state <COPY of the state: re-grade through the guards, before / after + the recorded moves through them>] [--write F] [--project P] [--json]    (META-TEND P4: the replay test report - agreement per class of ruling, every disagreement; --write F = the JSON the Spend page reads, <state>/eval/checkin-replay.json)';
 const FLAGS = ['state', 'out', 'executor', 'model', 'effort', 'exe', 'since-h', 'until', 'acted', 'idle', 'ticks', 'max-calls', 'concurrency', 'dry!'];
 
 export const readJsonl = f => fs.readFileSync(f, 'utf8').split(/\r?\n/).filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
