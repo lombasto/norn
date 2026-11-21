@@ -78,7 +78,8 @@ function writeCache(stateDir, cache, before) {
 
 // lane-outputs item 6: every PR a deliverable had (fix rounds, ci-fix: several 'pr' events), newest first, with its state open | approved
 // | merged | closed and its merge date, from the tick's GitHub answers (latchMerged, deliverables-pr.json). No answer yet: the last PR of
-// a merged deliverable reads merged (no date), every other one open.
+// a landed deliverable (merged, or superseded: LANE-TRUTH, rm26's PR #28 read 'awaiting your approval' long after it merged) reads
+// merged (no date), every other one open.
 const prWord = c => c.state === 'MERGED' ? 'merged' : c.state === 'CLOSED' ? 'closed' : c.review === 'APPROVED' ? 'approved' : 'open';
 function prsOf(it, merged, prs) {
   const evs = it.history.filter(h => h.ev === 'pr' && h.data?.url).reverse(), seen = new Set(), out = [];
@@ -140,7 +141,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
     return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
       delivers: d.delivers ?? g.subject ?? '', subject: g.subject ?? null, tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
-      native: g.native, native_files: g.native_files, pr, prs: prsOf(it, state === 'merged' || state === 'installed', prCache), park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}),
+      native: g.native, native_files: g.native_files, pr, prs: prsOf(it, state === 'merged' || state === 'installed' || !!superseded, prCache), park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}),
       merged_how: m?.how ?? null, merge_commit: m?.merge_commit ?? null, merged_at: m?.merged_at ?? null, merge_pr: m?.pr ?? null, merge_latched: !!m?.latched,
       unknown_why: j.unknown, ruling: rulingOf(it.id) };
     };
@@ -296,7 +297,7 @@ export function onRunDone(stateDir, runId, { now, git = makeGit() } = {}) {
 // to land work before it starts new lanes (digest row 0c).
 /** -> { n, oldest_h, ids, max, over (n > max), text ("done, not merged: 4 (oldest 13h)": the one count every page shows) }; max = backlogMax(policy) */
 export function mergeBacklog(rows = [], { now = Date.now(), max = POLICY_DEFAULTS.merge.backlog_max } = {}) {
-  const b = rows.filter(r => r.state === 'done' && r.record_state === 'open' && !r.superseded && !r.pr);
+  const b = rows.filter(r => !isLanded(r) && r.state === 'done' && r.record_state === 'open' && !r.pr);
   const oldest = Math.min(...b.map(r => Date.parse(r.done_utc)).filter(Number.isFinite));
   const oldest_h = Number.isFinite(oldest) ? +Math.max(0, (now - oldest) / 3600e3).toFixed(1) : null;
   return { n: b.length, oldest_h, ids: b.map(r => r.id), max, over: b.length > max,
@@ -356,7 +357,8 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
  */
 export const landedWhy = r => r.superseded ? `superseded by ${r.superseded.by}` : (r.merge_pr ?? r.pr?.number) != null ? `landed as PR #${r.merge_pr ?? r.pr.number}`
   : `landed on main (${r.merged_how === 'equivalent' ? 'its change found on main' : r.merged_how === 'ruling' ? 'the owner ruled it merged' : 'git'}${r.merge_commit ? ` ${String(r.merge_commit).slice(0, 9)}` : ''})`;
-export const isLanded = r => !!r && (r.state === 'merged' || r.state === 'installed' || !!r.superseded);
+// LANE-TRUTH: the row form of dlvmerge.mjs landedOf (a row's state also carries what git found before the tick latched it)
+export const isLanded = r =>!!r && (r.state === 'merged' || r.state === 'installed' || !!r.superseded);
 const names = (q, r) => { const t = [q.data?.title, q.data?.body, q.data?.source].filter(Boolean).join('\n');
   return new RegExp(`(^|[^\\w-])${r.id}(?![\\w-])`).test(t) || (!!r.branch && t.includes(r.branch)); };
 export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {

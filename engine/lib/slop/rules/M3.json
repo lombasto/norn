@@ -1,0 +1,30 @@
+{
+  "id": "M3",
+  "level": "WARN",
+  "shadow": true,
+  "kind": "model",
+  "title": "a weakened test",
+  "question": "Was a test weakened: an assertion removed or loosened with no behaviour change, a test that passes if the feature is deleted, a test of its own fixture?",
+  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
+  "explain": {
+    "what": "A model read the diff and found a test that was weakened: an assertion removed or loosened, or a test that passes without the feature.",
+    "why": "A weakened test stays green while the behaviour it guarded breaks.",
+    "fix": "Restore the assertion, or make the test fail when the feature is deleted. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
+  },
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.py","**/*.rs","**/*.md"],
+  "on": ["code","tests"],
+  "hits": [],
+  "context": [],
+  "fixture": {
+    "hit": {
+      "base": {"tests/sum.test.mjs":"import assert from 'node:assert/strict';\nassert.equal(sum(1, 2), 3);\n"},
+      "head": {"tests/sum.test.mjs":"import assert from 'node:assert/strict';\nassert.ok(sum(1, 2));\n"},
+      "recorded": {"head":"{\"findings\":[{\"rule\":\"M3\",\"file\":\"tests/sum.test.mjs\",\"quote\":\"assert.ok(sum(1, 2));\",\"why\":\"the exact assert became a truthiness check: a wrong sum passes\"}]}"}
+    },
+    "miss": {
+      "base": {"tests/sum.test.mjs":"import assert from 'node:assert/strict';\nassert.equal(sum(1, 2), 3);\n"},
+      "head": {"tests/sum.test.mjs":"import assert from 'node:assert/strict';\nassert.ok(sum(1, 2));\n"},
+      "recorded": {"head":"{\"findings\":[{\"rule\":\"M3\",\"file\":\"tests/sum.test.mjs\",\"quote\":\"import assert from 'node:assert/strict';\",\"why\":\"not an added line\"}]}"}
+    }
+  }
+}

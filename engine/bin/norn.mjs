@@ -10,7 +10,7 @@ import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHer
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
-import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS } from '../lib/config.mjs';
+import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS, updateMachine } from '../lib/config.mjs';
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
@@ -20,12 +20,14 @@ import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
-import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
+import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
+import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
+import { collisions, staleCaveats, hitLines, ahead, UNREADABLE } from '../lib/collide.mjs';
+import { gatherIntents, briefIntent } from '../lib/intents.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
@@ -61,7 +63,8 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
+import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, closeLandedQuestions } from '../lib/deliverables.mjs';
+import { tickLanes, othersShipped } from '../lib/lifecycle.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -71,7 +74,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -89,6 +92,7 @@ import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
+import { voiceRoute } from '../lib/slop/voice.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { sourceQuestion, SourceError } from '../lib/qsource.mjs';
@@ -479,7 +483,7 @@ function runSpec(flags, env, { project, state, locks }) {
     policy: { auto_resume_handoff: cadence.auto_resume_handoff, auto_resume_max: cadence.auto_resume_max, trigger_on_exit: cadence.trigger_on_exit,
       fill: { ...FILL_DEFAULTS, ...(project?.policy?.fill || {}) },   // META-GTP-DAG piece 5: the resource gate of the fill
       mail: { nudge_after_min: project?.policy?.mail?.nudge_after_min ?? POLICY_DEFAULTS.mail.nudge_after_min },   // META-GTP-MAIL piece 3
-      slop: { enabled: slopOn(project?.policy), project_dir: project?.project_dir } },   // META-BETA-PREP (DIR-52): the one switch; RM-45: the run end checks with the project's own rules
+      slop: { enabled: slopOn(project?.policy), project_dir: project?.project_dir, voice: project ? voiceRoute({ project, machine, author: ex, env }) : null } },   // META-BETA-PREP (DIR-52): the one switch; RM-45: the run end checks with the project's own rules; RM-43: the second voice's route
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
     budget, budget_file: path.resolve(bf),   // GAP-2: the fill reads the budget of NOW from here (runs.mjs liveBudget); budget = the copy for a resume
@@ -704,7 +708,7 @@ function s5Cmd(argv, env, out, err) {
       if (miss.length) { err(`error: no caps set in ${m.budgetFile.replace(/\\/g, '/')} (missing ${miss.join(', ')}): run norn setup (writes the starter caps when the file is absent) or set them in the dashboard Settings (Workers & budget), then sched install again`); return 2; }
       if (['install', 'remove'].includes(pos[0])) {
         for (const l of schedApply(pos[0], a, o, sc.kind)) out(l);
-        if (sc.name !== m.machine.scheduler.name) { const raw = JSON.parse(fs.readFileSync(m.mf, 'utf8')); raw.scheduler.name = sc.name; fs.writeFileSync(m.mf + '.tmp', JSON.stringify(raw, null, 1) + '\n'); fs.renameSync(m.mf + '.tmp', m.mf); }
+        if (sc.name !== m.machine.scheduler.name) updateMachine(m.mf, raw => ({ scheduler: { ...raw.scheduler, name: sc.name } }));
         return 0;
       }
       throw new RunError(`sched needs show | install | remove (got ${pos[0]})`);
@@ -1319,11 +1323,19 @@ function deliverablesCmd(argv, env, out, err) {
       out(r.id);
       return 0;
     }
-    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH + LANE-TRUTH: the tick's merge and lane steps now, in its order - latch every merge
+      // (GitHub, git, rulings), withdraw the questions landed work made moot, then archive the lanes whose work shipped (lifecycle.mjs
+      // tickLanes: parked / stopped + shipped at once, a done one once it aged out); the other homes' shipped lanes are listed, never written
       if (id) throw new RunError(`unexpected ${id}`);
-      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      const dry = !!flags.dry, done = latchMerged(state, { project, gh: makeGh(), dry });
       for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
-      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
+      const qs = closeLandedQuestions(state, { project, dry });
+      for (const c of qs) out(`${c.q} withdrawn - ${c.why}`);
+      const ls = tickLanes(state, { project, dry });
+      for (const x of ls) out(x.refused ? `${x.id} (${x.rule}) not archived: ${x.refused}` : `${x.id} archived (${x.rule}${dry ? '' : `; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}`}) - ${x.why}`);
+      const away = othersShipped(state);
+      for (const x of away) out(`${x.id} (${x.state}, home ${x.home}: read-only here - for home ${x.home}) work on main: ${x.why}`);
+      out(`${dry ? 'DRY RUN - nothing written: ' : ''}${done.length} deliverable change(s), ${qs.length} question(s) withdrawn, ${ls.filter(x => !x.refused).length} lane(s) archived${ls.some(x => x.refused) ? `, ${ls.filter(x => x.refused).length} refused` : ''}${away.length ? `; ${away.length} other-home lane(s) listed` : ''}`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)
@@ -1428,6 +1440,7 @@ Plan and land work:
   norn crew                        the dwarves who take the worker runs: list, pin to a lane, retire, recall
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
+  norn collide                     lane collisions: what a run would meet now, and SloppaChoppa's pick (plan)
   norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
   norn asks                        post the rulings a lane's notes ask of the owner as Inbox questions (the run end does it by itself)
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
@@ -1478,7 +1491,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, collide: COLLIDE_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1539,6 +1552,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'crew') return crewCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'collide') return collideCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'proposal') return proposalCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'asks') return asksCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'pause') return pauseCmd(argv.slice(1), env, out, err);
@@ -2067,13 +2081,13 @@ function crewCmd(argv, env, out, err) {
       const line = r => `${r.id}  ${r.name}  ${r.state}${r.state === 'active' ? `  ${r.busy ? `on ${r.busy}` : 'free'}` : `  ${r.why ?? ''}`}  ${r.runs} run${r.runs === 1 ? '' : 's'}${r.pins.length ? `  pinned ${r.pins.join(', ')}` : ''}`;
       if (sub === 'list') {
         const rows = Object.values(st.dwarves).sort((a, b) => a.order - b.order).map(row);
-        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires Thorin'); else for (const r of rows) out(line(r));
+        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires one'); else for (const r of rows) out(line(r));
         return 0;
       }
       if (!id || !st.dwarves[id]) throw new RunError(id ? `no dwarf ${id} in the crew (norn crew list)` : 'show needs a dwarf id');
       const r = { ...row(st.dwarves[id]), career: past.filter(p => p.dwarf === id).sort((a, b) => String(a.at).localeCompare(String(b.at))) };
       if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
-      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}${r.succeeds ? `, after ${dwarfDisplay(r.succeeds)}` : ''}`);
+      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}`);
       for (const p of r.career) out(`  ${p.at}  ${p.project}/${p.lane ?? '-'}  ${p.run}  ${p.state}`);
       return 0;
     }
@@ -2272,6 +2286,56 @@ function stuckCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + STUCK_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
+const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)';
+function collideCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if (k === 'json') { flags.json = true; continue; }
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    if (pos[0] !== 'plan') throw new RunError(pos[0] ? `unknown verb ${pos[0]} (plan)` : 'collide needs a verb (plan)');
+    if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
+    if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
+    const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
+    const g = gatherIntents({ state, repo: P.root, main: cfg.main, remote: cfg.remote, now, home }), ctx = { tracked: g.tracked, items: loadRoadmap(state).items };
+    const note = x => (x.role === 'work' && x.scope === null ? [`note: ${UNREADABLE.replace(':', ` (${x.scope_why}):`)}`] : []);
+    if (flags.lane) {
+      const me = briefIntent({ lane: flags.lane, brief: flags.brief, item: flags.item, stage: flags.stage, role: flags.role, now, home }, g, { repo: P.root });
+      const hits = collisions(me, g.intents, ctx), notes = note(me);
+      if (flags.json) { out(JSON.stringify({ me, hits, notes }, null, 1)); return 0; }
+      out(`lane ${me.lane}${me.stage ? `, stage ${me.stage}` : ''}: items ${me.items.join(' ') || '-'}; Scope ${me.scope === null ? '(not readable)' : me.scope.join(' ') || 'none'}`);
+      if (!hits.length) out(`no collision: ${g.intents.length} open lane${g.intents.length === 1 ? '' : 's'} checked`);
+      for (const h of hits) out(hitLines(h, me).join('\n'));
+      for (const n of notes) out(n);
+      return 0;
+    }
+    // every pair of open lanes once, from the later side (a tie: the later name); the caveats that name a dead run; the free items
+    const pairs = g.intents.flatMap(x => collisions(x, g.intents, ctx).filter(h => { const o = g.intents.find(y => y.lane === h.other); return ahead(o, x) || (!ahead(x, o) && x.lane > o.lane); }).map(h => ({ lane: x.lane, ...h, me: x })));
+    const openDlvRuns = new Set(Object.values(g.dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state)).flatMap(x => (x.history || []).map(e => e.data?.run).filter(Boolean)));
+    const hbAge = id => { try { return now - fs.statSync(hbPath(state, id)).mtimeMs; } catch { return null; } };
+    const stale = staleCaveats(ctx.items, { runs: g.runs, hbAge, openDlvRuns, staleMs: STALE_MS });
+    const held = new Set(g.intents.flatMap(x => x.items)), free = itemsOf(buildTree({ stateDir: state, project: P, now })).filter(n => n.phase !== 'past' && !n.live?.length && !n.queued?.length && !held.has(n.id));
+    if (flags.json) { out(JSON.stringify({ intents: g.intents, hits: pairs.map(({ me: _m, ...h }) => h), stale, free: free.map(n => ({ id: n.id, title: n.title })) }, null, 1)); return 0; }
+    const by = s => g.intents.filter(x => x.state === s).length, counts = ['running', 'queued', 'unlanded'].map(s => by(s) && `${by(s)} ${s}`).filter(Boolean);
+    out(`collide plan ${P.name ?? path.basename(state)}: ${g.intents.length} open lane${g.intents.length === 1 ? '' : 's'}${counts.length ? ` (${counts.join(', ')})` : ''}`);
+    if (!pairs.length) out('no collision between open lanes');
+    for (const h of pairs) out(hitLines(h, h.me).map((l, i) => (i ? `  ${l}` : `${h.lane}: ${l}`)).join('\n'));
+    for (const h of stale) out(hitLines(h).join('\n'));
+    for (const n of g.intents.filter(x => note(x).length)) out(`${n.lane}: ${note(n)[0]}`);
+    for (const n of free) out(`Free: ${n.id} ${n.title}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + COLLIDE_USAGE); return 2; }
     throw e;
   }
 }
@@ -2980,6 +3044,7 @@ function mailCmd(argv, env, out, err) {
       if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
       if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
+      if (inject && reader) clearFlag(state, reader);   // hook-fast S1: down before the read (mail.mjs flagFile): a mail that lands meanwhile raises it again
       const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }

@@ -48,7 +48,7 @@ test('the API: a Lanes row and a Runs node carry the run\'s progress and the lan
     assert.match(node.progress.line, /^1 of 4 items done/);
     assert.equal(node.lane_card.lane, 'gen');
     const rhtml = renderTab('runs', { tree: runs.data.tree }, { project: 'kestrel', now: Date.now() }), rnode = rhtml.split('id="node-').find(x => x.startsWith(`${id}"`));
-    assert.match(rnode, /<span class="rlane"><span class="lhov"><a class="lanelink" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
+    assert.match(rnode, /<td class="rlane" data-label="lane"><span class="lhov"><a class="lanelink" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
     assert.match(rnode, /<div class="rline small">1 of 4 items done/, 'the live row: the brief line');
     // worker-speed: a worker run with model requests shows its tok/s line; a live one its last 10 min
     const now = Date.now(), ts = s => new Date(now - s * 1000).toISOString(), sid = 'aaaaaaaa-2222-4333-8444-555555555555';
@@ -70,8 +70,8 @@ test('a runaway alarm on the card in words: the ratio, its numbers and the owner
     alarms: [{ cls: 'runaway', words: 'uses 4.2x the tokens of similar runs - most of it re-reading a long context while waiting on tests', numbers: '310M cache reads vs a median 74M of 9 ended runs',
       act: ['mail it', 'stop it', 'nothing needed - let it run'], ruled: null }] };
   const html = renderTab('runs', { tree: [{ id: 'RUN-5', name: 'x', kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [],
-    progress: g, lane_card: { lane: 'gen', objective: 'relief maps', type: 'build', stage: 'S1 · RUN-5', progress: g, last: null, next: 'MERGE queued (RUN-6)' } }] }, { project: 'kestrel', now: Date.now() });
-  assert.match(html, /<div class="rhead">[^]*?<span class="chip warn">slow<\/span><\/div>/, 'the pace chip on the live row');
+    progress: g, lane_card: { lane: 'gen', objective: 'relief maps', type: 'build', stage: 'S1 · RUN-5', progress: g, last: null, next: 'MERGE queued (RUN-6)' } }] }, { project: 'kestrel', now: Date.now(), run: 'RUN-5' });
+  assert.match(html, /<td class="rpace" data-label="pace"><div class="rtimes small"><span class="chip warn">slow<\/span>/, 'the pace chip on the live row');
   assert.match(html, /<b>S1 · RUN-5<\/b>: 2 of 5 items done, testing item 3/);
   assert.match(html, /<div class="rline small warn">slow: 70 % of the last hour in test runs; the machine is at 98 % CPU; the same file re-run 6 times \(a\.test\.mjs\)<\/div>/);
   assert.match(html, /runaway<\/span> uses 4\.2x the tokens of similar runs - most of it re-reading a long context while waiting on tests/);

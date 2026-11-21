@@ -8,6 +8,7 @@ import path from 'node:path';
 import { readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn, laneNameIn, homeOfId, copyItems } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
+import { landedOf } from './dlvmerge.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
 import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
@@ -271,10 +272,12 @@ export function unplacedOf(nodes, W) {
 export const hasInstallTarget = project => { const c = deliverableConfig(project || {}); return c.target === 'install' && (c.receipts || []).length > 0; };
 
 /** RM-46 S3 (SPEC 3.3): another home's deliverable (records.mjs copyItems) as a read-only deliverables row. Its git facts are that
- * home's: the record says only that a DONE run delivered it (state done, never merged / installed from here). */
-export const dlvCopyRow = it => ({ id: it.id, home: it.home, readonly: true, record_state: it.state, state: 'done', target: 'main', at_target: it.state === 'superseded',
+ * home's: no git from here, only what its record says - LANE-TRUTH: landed by the one rule (dlvmerge.mjs landedOf: a merge that home
+ * latched, or superseded) = merged and at its target; else done (the Inbox listed 133 of home a's merged DLVs as DONE, not merged). */
+export const dlvCopyRow = it => { const l = landedOf(it); return { id: it.id, home: it.home, readonly: true, record_state: it.state,
+  state: l && l.how !== 'superseded' ? 'merged' : 'done', target: 'main', at_target: !!l, ...(l && l.how !== 'superseded' ? { merged_how: l.how, merge_pr: l.pr } : {}),
   ...(it.state === 'superseded' ? { superseded: true } : {}), repo: it.data.repo ?? null, branch: it.data.branch ?? null, lane: it.data.lane ?? null, run: it.data.run ?? null,
-  delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created });
+  delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created }; };
 /** worldOf() filled from the state dir, the deliverables view and git (the engine's scanRepo; branch / sha facts asked lazily) */
 export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle } = {}) {
   project = project || {};

@@ -9,6 +9,8 @@ import { diffBlock } from '../diffview.mjs';
 
 const G_TAB = { context: 'Context', tests: 'Tests', spend: 'Spend', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
+// RM-43: a second-voice row is rated here (thumbs: the finding is right / wrong), not fixed; its quote is the added line it read
+const voiceThumbs = r => `<button class="ghost" data-act="slop-rate" data-fp="${esc(r.rate.fp)}" data-up="1" aria-label="right">&#128077; right</button> <button class="ghost" data-act="slop-rate" data-fp="${esc(r.rate.fp)}" data-up="0" aria-label="wrong">&#128078; wrong</button>`;
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 // a finding the fixer declined with a reason (fixer.mjs markDeclines): the reason, and the owner's two answers - accept the decline (the
 // finding closes) or re-scope it (a new fix sentence, e.g. "trim in place" for "move to an on-demand file": Fix all offers it again)
@@ -19,7 +21,7 @@ const declinedLine = r => `<div class="small gdecl">${chip('idle', 'declined')} 
 const slopExplain = x => `<details class="sexplain"><summary class="small">what this is, why it matters, what to do</summary><dl class="small">
     <dt>What</dt><dd>${esc(x.what)}</dd><dt>Why</dt><dd>${esc(x.why)}</dd><dt>What to do</dt><dd>${esc(x.fix)}</dd>${x.waiver ? `<dt>If it must stay</dt><dd>only the owner or the controller waives it: <code>${esc(x.waiver)}</code></dd>` : ''}</dl></details>`;
 const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
-    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div>${r.explain ? slopExplain(r.explain) : ''}${r.declined ? declinedLine(r) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
+    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} ${r.rate ? voiceThumbs(r) : `<button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button>`}</div>${r.quote ? `<code class="small">${esc(r.quote)}</code>` : ''}${r.explain ? slopExplain(r.explain) : ''}${r.declined ? declinedLine(r) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
 // META-UX-BUILD S5 (REPORT s.2-3): To fix = ONE list in batches (check + the kind of fix the check declares), the kinds apart:
 // ready (the exact text is known), to draft (a worker writes the text), your call (two ways), and the rows that only count (folded).
 // A batch shows its first rows; "all n" opens it (one batch at a time, every row, capped + show more). The two ways are named here;
@@ -109,6 +111,14 @@ function slopTypes(P, total, fresh) {
     note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''}${past(t)} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'slop-types', fmt: n => `${n} open` })}</section>`;
 }
 const AGE_HELP = '<details class="lhelp" id="slop-trend-help"><summary aria-label="About this chart">?</summary><div class="small">Each line climbs on the day a finding still open today was first seen. Fixed findings are not in it, so it is not the open count over time: a flat line means nothing still open is that old.</div></details>';
+// RM-43: the second voice's precision per model rule (thumbs rated); the promotion / demotion line is for the owner or the controller to record
+const VOICE_SUGGEST = { BLOCK: ['ok', 'may go to BLOCK'], TREND: ['warn', 'drop to TREND'] };
+const VOICE_HELP = '<details class="lhelp" id="slop-voice-help"><summary aria-label="About the second voice">?</summary><div class="small">Precision per question, from your thumbs. At 90 % over 20 rated a question may go to BLOCK; under 50 % it drops to TREND. Set it in rules/slop/overrides.json.</div></details>';
+function voicePrecisionCard(rows = []) {
+  if (!rows.length) return '';
+  const row = p => `<tr id="slop-voice-${esc(p.rule)}"><td><b>${esc(p.rule)}</b> ${esc(p.title)}</td><td>${esc(p.level)}${p.shadow ? ' · shadow' : ''}</td><td>${p.precision === null ? '<span class="mute">none rated</span>' : `${int(Math.round(p.precision * 100))} % <span class="mute small">(${int(p.up)} of ${int(p.rated)})</span>`}</td><td>${p.suggest ? chip(...VOICE_SUGGEST[p.suggest]) : ''}</td></tr>`;
+  return `<h3>The second voice ${VOICE_HELP}</h3><div class="tablecard"><table id="slop-voice"><tbody>${rows.map(row).join('')}</tbody></table></div>`;
+}
 // META-UX-BUILD S2: the sub-view pattern (subviews.mjs): To fix / Per type / Rules / By age, the chosen part; the lead holds only what
 // is acted on (the errors, Fix all, the sent line, the fixer's cards). d = the summary (guardparts.mjs) + d[d.sub] once its part is here.
 // META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays). ui-spend-slop: no banner, no counter row, no footer.
@@ -124,7 +134,7 @@ export function slopPage(d) {
     : d.sub === 'types' ? slopTypes(P, total, fresh)
     : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
     <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}
-    <h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
+    ${voicePrecisionCard(P.precision)}<h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
     : `<section class="card" id="slop-trend-card"><h2>Open findings by age <span class="mute small">the findings open now, per type, counted from the day each was first seen · last ${int(P.trend?.days?.length ?? 30)} days</span> ${AGE_HELP}</h2>
     ${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'findings open now, by the day first seen', unit: 'findings' }) : '<p class="small mute">No open finding.</p>'}</section>`;
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);

@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck, rulesHash } from '../engine/lib/slop/check.mjs';
 import { hostWrite, slopHolds, slopChecks, slopDir } from '../engine/lib/slop/host.mjs';
-import { doorCheck } from '../engine/lib/slop/door.mjs';
+import { doorCheck, doorWhy, storedCheck } from '../engine/lib/slop/door.mjs';
 import { sweep } from '../engine/lib/slop/sweep.mjs';
 import { tickSlop, digestRow } from '../engine/lib/slop/daily.mjs';
 import { pickBatch, batchSlop } from '../engine/lib/mergeq.mjs';
@@ -134,7 +134,7 @@ test('D1 merge-land: refuses a lane branch whose pushed head has an open BLOCK; 
   const ghGit = makeGit((cwd, args) => (args[0] === 'remote' && args[1] === 'get-url' ? 'https://github.com/o/r.git\n' : git(cwd, ...args) + '\n'));
   const created = [];
   const gh = args => { if (args[1] === 'list') return { code: 0, out: '[]', err: '' }; created.push(args[args.indexOf('--head') + 1]); return { code: 0, out: `https://github.com/o/r/pull/${created.length}\n`, err: '' }; };
-  const door = (branch, tip) => { const d = doorCheck({ state, repo, branch, head: tip, tool: noTool }); return d.open.length ? `${d.open.length} open slop BLOCK finding(s) at ${tip.slice(0, 7)}` : null; };
+  const door = (branch, tip) => doorCheck({ state, repo, branch, head: tip, tool: noTool });
   const rs = openPrs({ repo, wt, branches: ['feat/bad', 'feat/ok'], git: ghGit, gh, door });
   assert.deepEqual(rs.map(r => [r.branch, r.status]), [['feat/bad', 'refused'], ['feat/ok', 'opened']], JSON.stringify(rs));
   assert.match(rs[0].why, /1 open slop BLOCK finding\(s\) at [0-9a-f]{7}/);
@@ -156,7 +156,8 @@ test('D1 run end: a lane run that ends STOPPED with commits is checked and its c
   const c = slopChecks(state).find(x => x.run === id);
   assert.ok(c, 'the stopped end was checked');
   assert.equal(c.head, head);
-  assert.deepEqual(c.findings.map(f => f.rule), ['K15']);
+  assert.deepEqual(c.findings.filter(f => !f.unrun).map(f => f.rule), ['K15']);
+  assert.ok(c.findings.filter(f => f.unrun).every(f => /^M\d/.test(f.rule) && f.level === 'WARN'), 'only the voice (no route here) could not run: WARN, never a hold');
   assert.equal(slopHolds(state)['feat/x']?.run, id, 'its BLOCK holds the branch');
   assert.equal(loadState(state).items[id].resume, undefined, 'a stopped end is not resumed for slop');
 });
@@ -240,6 +241,108 @@ test('D7: the batch result is checked against main - an import cycle that exists
   assert.equal(slopChecks(state).at(-1).branch, 'mq/batch-3');
   record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K10', scope: open[0].fp, why: 'reviewed: the cycle is broken next' } });
   assert.deepEqual(batchSlop(state, { n: 3, base, merge_tip: tip }, { repo, tool: noTool }), [], 'a waiver clears it');
+});
+
+// S1a (SPEC 1.3 F1-F4, F7, F8): `norn slop check --diff` reads the range it names; a check that cannot run holds every door
+const slopCli = (cwd, env, ...a) => spawnSync(process.execPath, [NORN, 'slop', 'check', ...a], { cwd, env: { ...process.env, ...env }, encoding: 'utf8', windowsHide: true });
+/** a META_ROOT whose tool cache cannot be made (state/tools is a file): the real ESLint run fails, as with no npx or no network */
+function brokenRoot() {
+  const root = mkTmp('meta-slopgate-down-');
+  fs.mkdirSync(path.join(root, 'state')); fs.writeFileSync(path.join(root, 'state', 'tools'), 'not a folder\n');
+  return root;
+}
+const s7 = s => s.slice(0, 7);
+
+test('F1: --diff prints the resolved commits (merge base..head), the files checked and the rules that ran - never the typed text or a null branch', () => {
+  const repo = repoWith(); git(repo, 'checkout', '-q', '-b', 'feat/x'); const head = commit(repo, { 'ok.txt': 'fine\n' }, 'ok');
+  const base = git(repo, 'merge-base', 'main', head); git(repo, 'checkout', '-q', '--detach');
+  const r = slopCli(repo, { META_ROOT: mkTmp('meta-slopgate-root-') }, '--ci', '--diff', 'main..HEAD');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, new RegExp(`^slop check: 0 BLOCK on HEAD ${s7(base)}\\.\\.${s7(head)}, 1 file\\(s\\); ran: K1 `, 'm'));
+  assert.doesNotMatch(r.stdout, /null|main\.\./);
+});
+
+test('F2: --diff starts at the merge base - a change main made after the fork is not the branch\'s finding', () => {
+  const repo = repoWith({ 'a.txt': 'a\n', 'old.orig': 'left at the fork\n' });
+  git(repo, 'checkout', '-q', '-b', 'feat/x'); commit(repo, { 'ok.txt': 'fine\n' }, 'ok');
+  git(repo, 'checkout', '-q', 'main'); git(repo, 'rm', '-q', 'old.orig'); git(repo, 'commit', '-q', '-m', 'main drops the junk');
+  git(repo, 'checkout', '-q', 'feat/x');
+  const r = slopCli(repo, { META_ROOT: mkTmp('meta-slopgate-root-') }, '--ci', '--diff', 'main..HEAD');
+  assert.equal(r.status, 0, 'the tip of main would show old.orig as added by the branch: ' + r.stdout + r.stderr);
+  assert.match(r.stdout, /, 1 file\(s\); ran: /);
+});
+
+test('F3: an empty range says "nothing to check" (exit 0), with --diff and on a branch with no commits past main', () => {
+  const repo = repoWith(), env = { META_ROOT: mkTmp('meta-slopgate-root-') }, tip = s7(git(repo, 'rev-parse', 'HEAD'));
+  let r = slopCli(repo, env, '--ci', '--diff', 'main..HEAD');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, new RegExp(`^slop check: nothing to check: ${tip}\\.\\.${tip} changes no file$`, 'm'));
+  assert.doesNotMatch(r.stdout, /BLOCK/);
+  git(repo, 'checkout', '-q', '-b', 'feat/new');
+  r = slopCli(repo, env, '--ci');
+  assert.match(r.stdout, /^slop check: nothing to check: /m, r.stdout + r.stderr);
+});
+
+test('F4 + F5 at the CLI: a broken tool is a BLOCK "could not run" (exit 1); a --diff check is never stored, the branch form is', () => {
+  const repo = repoWith(), state = stateDir(), env = { META_ROOT: brokenRoot() };
+  git(repo, 'checkout', '-q', '-b', 'feat/x'); commit(repo, { 'b.mjs': 'export const b = 1;\n' }, 'js');
+  let r = slopCli(repo, env, '--ci', '--diff', 'main..HEAD', '--state', state);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^BLOCK LJ `\*` could not run: /m);
+  assert.match(r.stdout, /; could not run: K11A K19 K2 K21 LJ T3/);
+  assert.deepEqual(slopChecks(state), [], 'a --diff check is not stored: it opens no door');
+  r = slopCli(repo, env, '--ci', '--state', state);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(slopChecks(state).at(-1).findings.some(f => f.rule === 'LJ' && /could not run/.test(f.msg)));
+});
+
+test('F5: a check with a broken tool holds the merge at all three doors (merge-brief, the merge queue, merge-land)', () => {
+  const root = brokenRoot(), repo = path.join(root, 'repo'), wt = path.join(root, 'wt');
+  fs.mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
+  git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
+  const head = commit(wt, { 'b.mjs': 'export const b = 1;\n' }, 'js');
+  const r = spawnSync(process.execPath, [NORN, 'merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', path.join(root, 'N.md'),
+    '--out', path.join(root, 'MB.md'), '--sha', head], { encoding: 'utf8', windowsHide: true, env: { ...process.env, META_ROOT: root } });
+  assert.equal(r.status, 3, r.stdout + r.stderr);
+  assert.match(r.stdout, /REFUSED: merge-brief feat\/x: \d+ open slop BLOCK finding\(s\) at [0-9a-f]{7}[\s\S]*LJ `\*` could not run/);
+  const down = () => { throw new Error('npm not found on PATH'); }, st2 = stateDir();
+  const door = (branch, tip) => doorCheck({ state: st2, repo, branch, head: tip, tool: down });
+  const row = { id: 'DLV-1', gate: 'batch', word: 'clean', tip: head, lane: 'x', branch: 'feat/x', repo, into: 'main' };
+  assert.deepEqual(pickBatch([row], { cfg: { batch_max: 4 }, mq: { red: {} }, stateDir: st2, writer: () => null, door: (x, sha) => door(x.branch, sha).open.length }), []);
+  const d = door('feat/x', head);
+  assert.ok(d.open.length > 0 && d.open.every(f => /could not run/.test(f.msg)), 'the door merge-land asks holds it too');
+  assert.match(doorWhy(d), /LJ `\*` could not run: npm not found on PATH/);
+});
+
+test('F7: a run-end check that throws stores a "could not check" hold for the branch and one digest row', async () => {
+  const state = mkTmp('meta-slopgate-run-'), root = path.dirname(path.dirname(state));
+  const repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), notes = path.join(root, 'NOTES.md'), brief = path.join(root, 'brief.md'), pdir = path.join(root, 'proj');
+  fs.mkdirSync(repo); fs.mkdirSync(path.join(pdir, 'rules', 'slop'), { recursive: true });
+  fs.writeFileSync(path.join(pdir, 'rules', 'slop', 'overrides.json'), '{ not json');   // the rule set cannot load: the check throws
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
+  git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
+  const head = commit(wt, { 'ok.txt': 'fine\n' }, 'ok');
+  fs.writeFileSync(brief, 'mode: stopped\n');
+  const id = startRun({ state, locksDir: path.join(root, 'locks'), executor: 'fake', lane: 'x', worktree: wt, notes, brief, hbMs: 150, staleMs: 3000,
+    policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { project_dir: pdir } }, budget: {} }).run;
+  await waitFor(() => settled(loadState(state).items[id]), { what: 'the stopped run ends' });
+  const h = slopHolds(state)['feat/x'];
+  assert.ok(h, 'the branch is held');
+  assert.equal(h.head, head);
+  assert.deepEqual(h.blocks.map(b => [b.rule, b.level]), [['check', 'BLOCK']]);
+  assert.match(h.blocks[0].msg, /^could not check: .*JSON/);
+  assert.match(digestRow(state).line, /HELD by slop: feat\/x/);
+  assert.equal(storedCheck(state, { branch: 'feat/x', head, hash: rulesHash(loadRules()) }), null, 'no door reads it as a check: the door runs its own');
+});
+
+test('F8: three dots is a usage error, exit 2, no stack trace', () => {
+  const repo = repoWith(), r = slopCli(repo, { META_ROOT: mkTmp('meta-slopgate-root-') }, '--diff', 'main...HEAD');
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^error: --diff wants base\.\.head \(two dots/m);
+  assert.doesNotMatch(r.stderr, /\n\s+at /);
 });
 
 test('K10 on Norn itself: the engine has no import cycle (the chat -> checkins -> digest -> guard -> look -> roadmap -> standing -> stuck one is broken)', () => {

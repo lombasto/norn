@@ -70,7 +70,7 @@ export async function evalCmd(argv, { out = s => process.stdout.write(s + '\n'),
 }
 
 const pct = x => (x === null ? '-' : Math.round(100 * x) + ' %');
-/** norn eval report (META-TEND P4): read <out>/results.jsonl, print the report; --write F = the JSON the Usage tab reads. -> exit code */
+/** norn eval report (META-TEND P4): read <out>/results.jsonl, print the report; --write F = the JSON the Spend page reads. -> exit code */
 function reportCmd(argv, { out, err }) {
   const f = {};
   for (let i = 0; i < argv.length; i++) {

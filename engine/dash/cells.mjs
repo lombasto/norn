@@ -100,7 +100,7 @@ export function laneCard(c, label) {
 export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">done, not merged: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 // fair-slots item 2: finished work on its way to main has its own state (lanes.mjs landState), never plain 'queued'; the PR one links it
-// (the Lanes run state cell and the Plan's Up next / Landing next rows)
+// (the Lanes run state cell)
 export const LAND_CHIP = { 'awaiting-merge': ['done', 'done - awaiting merge'], 'awaiting-pr': ['needs', 'awaiting PR approval'] };
 export const landChip = l => { const [cls, word] = LAND_CHIP[l.land];
   return l.pr?.url && /^https:\/\//.test(l.pr.url) ? `<a class="chip ${cls}" href="${esc(l.pr.url)}" target="_blank" rel="noopener" title="${esc(`PR #${l.pr.number ?? '?'}: merge-land opened it; approve it on GitHub`)}">${esc(word)}</a>` : chip(cls, word); };

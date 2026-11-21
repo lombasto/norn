@@ -24,8 +24,8 @@ import { briefMarker } from './mergebrief.mjs';
 import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
-import { hookCommand } from './mail.mjs';
-import { scopeHookOf, guardSettings } from './scope.mjs';
+import { mailHook, raiseFlag } from './mail.mjs';
+import { scopeHookOf, guardSettings, writeScopeFile } from './scope.mjs';
 import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
@@ -36,9 +36,10 @@ import { withCrew, pickDwarf, readCrew, crewState, projectOf, CrewError } from '
 import { shareOf, slotVerdict } from './share.mjs';
 import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
-import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
-import { ClaimsError } from './claimsref.mjs';
-import { parseReady } from './ready.mjs';
+import { claimWork, claimHold, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
+import { ClaimsError, readClaims } from './claimsref.mjs';
+import { touchedOf, workOf } from './intents.mjs';
+export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
 import { syncPolicy, POLICY_DEFAULTS } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -65,11 +66,11 @@ export { prompt } from './harness/common.mjs';
 export const claudeCmd = (o, remote) => adapterFor('claude').command({ ...o, remote });
 /** The command { exe, args, stdin, stdout, parse } of run spec `o`, built by its executor's harness adapter. */
 // META-GTP-MAIL delivery (a): a run whose adapter runs the mail hook (caps.hooks settings + adapter.mailHook: claude) gets the
-// PostToolUse hook `norn mail check --inject`; the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
+// PostToolUse hook (norn-hook mail -> `norn mail check --inject` while its flag is up); the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
 export function mailHookOf(o) {
   const fam = harnessOf(o.executor, o.provider);
   const a = fam ? adapterFor(fam) : null;
-  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? hookCommand(o.state) : undefined;
+  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? mailHook(o.state) : undefined;
 }
 // META-DOD 2: the same executors get the scope guard (scope.mjs): deny rules, the write block and the PreToolUse hook - write runs only
 // ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too); TEST-GOVERNANCE S1:
@@ -492,16 +493,18 @@ export function dwarfWait(o, staleMs = STALE_MS) {
   if (!Object.values(st.dwarves).some(d => d.state === 'active' && d.pins.includes(key))) return null;
   return pickDwarf(st, { project: projectOf(o.state), lane: o.lane }, crewLoad(o.state, staleMs).busy).wait ?? null;
 }
-// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf;
-// a busy pinned dwarf refuses (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
+// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf; the
+// event carries its id and its name then (dwarf_name: what the other homes show, records.mjs copyItems); a busy pinned dwarf refuses
+// (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
 function withDwarf(o, info, staleMs, write) {
-  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write(undefined);
+  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write({});
   try {
     return withCrew(o.state, c => {
       const { busy, past } = crewLoad(o.state, staleMs);
       const p = pickDwarf(c.state, { project: projectOf(o.state), lane: o.lane }, busy, past);
       if (p.wait) throw new RunRefused(p.wait, 3);
-      return write(p.dwarf ?? c.hire(p.hire));
+      const id = p.dwarf ?? c.hire();
+      return write({ dwarf: id, dwarf_name: c.state.dwarves[id].name });
     });
   } catch (e) { if (e instanceof CrewError) throw new RunRefused(e.message, 3); throw e; }
 }
@@ -732,36 +735,6 @@ const noCaller = ({ caller: _c, ...o }) => o;
 // and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
 export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
 const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
-const gitOut = (cwd, args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }); return r.status === 0 ? r.stdout.trim() : null; };
-/** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main) */
-export function touchedOf(worktree) {
-  const wt = worktree && fs.existsSync(worktree) ? worktree : null, base = wt && gitOut(wt, ['merge-base', 'HEAD', 'origin/main']);
-  return base ? (gitOut(wt, ['diff', '--name-only', base]) || '').split('\n').filter(Boolean) : [];
-}
-// the open roadmap items linking one of `links`, from the item events (roadmap.mjs imports runs.mjs: its fold here would close a cycle)
-function laneItems(events, links) {
-  const L = {}, open = {};
-  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
-    if (e.kind !== 'item') continue;
-    const d = e.data || {};
-    if (e.ev === 'create') { L[e.id] = new Set(d.links || []); open[e.id] = true; }
-    if (!L[e.id]) continue;
-    if (e.ev === 'link') for (const x of d.links || []) L[e.id].add(x);
-    if (e.ev === 'unlink') for (const x of d.links || []) L[e.id].delete(x);
-    if (e.ev === 'drop' || e.ev === 'reopen') open[e.id] = e.ev === 'reopen';
-  }
-  return Object.keys(L).filter(id => open[id] && links.some(l => L[id].has(l)));
-}
-/** the work claim of a launch: branch + touched from its worktree (merge-base with origin/main), scope from its brief's Scope: line
- *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others) */
-export function workOf(o, home, project) {
-  const wt = o.worktree && fs.existsSync(o.worktree) ? o.worktree : null, br = wt && gitOut(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), touched = touchedOf(wt);
-  let scope = [], items = [];
-  try { scope = parseReady(fs.readFileSync(o.brief, 'utf8')).scope; } catch { /* no brief file: the whole repo */ }
-  const links = [`lane:${home}/${o.lane}`, `lane:${o.lane}`];
-  try { items = laneItems(readEvents(recordsFile(o.state, 'item')), links); } catch { /* no roadmap yet: no items to claim */ }
-  return { project, home, lane: o.lane, branch: br && br !== 'HEAD' ? br : null, items, scope, touched, run: o.resumeOf ?? null };
-}
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
 /** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else RunRefused 3 */
@@ -795,6 +768,17 @@ export function claimDoor(o) {
   updateSync(o.state, 'own', m => ({ ...m, [key]: { project, home, lane: me.lane, nonce: r.claim.nonce, n: r.n, confirmed_ms: r.again ? m[key]?.confirmed_ms ?? now : now } }));
   if (o.fromQueue) noteClaimHold(o.state, o.fromQueue, null);
   return { key, n: r.n };
+}
+// queue-stall (11-21: queued runs read READY in norn ready while every fill's claimDoor held them on another home's claim - nothing
+// recorded): the walk's term for queued spec o = claimDoor's no-network pre-check (claims.mjs claimHold on the last fetched tip), so
+// the dry walk and the fill agree. cache: ledger dir -> fetched claims (one read per walk). -> null | { term, why, home }
+function claimTerm(o, cache) {
+  if (claimExempt(o)) return null;
+  const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
+  if (!f) return null;
+  if (!cache.has(f.dir)) { let c = null; try { c = readClaims(f).claims; } catch { /* no fetched claims yet: the start's CAS round decides */ } cache.set(f.dir, c); }
+  const claims = cache.get(f.dir), h = claims && claimHold(claims, workOf(o, home, path.basename(path.resolve(o.state))));
+  return h ? { term: `claim: ${h.why} (held by ${h.hit.home})`, why: `claim: ${h.why}`, home: h.hit.home ?? null } : null;
 }
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
@@ -867,7 +851,7 @@ export function startRun(o) {
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     // WORK-SIZING S1: the context marks the run starts under, on its record (enforcement still reads the live policy: ctxlimit.mjs)
     const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
-    const ev = withDwarf(o, info, staleMs, dwarf => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), dwarf, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
+    const ev = withDwarf(o, info, staleMs, dw => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), ...dw, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
@@ -880,6 +864,10 @@ export function startRun(o) {
     const specFile = path.join(o.state, 'runs', run + '.spec.json');
     fs.mkdirSync(path.dirname(specFile), { recursive: true });
     fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
+    // hook-fast S1: norn-hook's inputs - the scope file of a guarded run, and the mail flag up once, so the first tool call delivers what
+    // waited for this run's mailbox before it started (lane mail sent between two runs of a lane, a nudge's resume)
+    if (spec.scope) writeScopeFile(o.state, run, spec);
+    if (spec.mail_hook) raiseFlag(o.state, run);
     // NORN-WATCH S5: started from inside a reaped run's job (META_JOB) = break away, unless it is that run's own helper (dies with it).
     // RM-48 S1 (DEC-1088): an independent run that cannot leave the job is refused, naming it - never started inside (nested, the
     // job's reap or close would kill it with the run that happened to launch it)
@@ -1101,8 +1089,26 @@ function fillPass(state, now, resources, authProbe) {
       record(state, { kind: 'run', ev: 'fill', id: q.id, by: 'launcher', data: { next } });
       started.push({ queued: q.id, next });
     },
+    // the walk's claim term: the digest's "held by <home>" row, as a start's ClaimHeld writes it (rewritten only on a new why)
+    claimHeld(id, ct) { if (readSync(state, 'holds')[id]?.why !== ct.why) noteClaimHold(state, id, { message: ct.why, home: ct.home }); },
+    skipped: (id, why) => noteSkip(state, id, why, now),
   } });
   return started;
+}
+// queue-stall: a row the fill walk called ready but whose start was refused stays queued with no record - so each one leaves a line in
+// <state>/fill.log, once per run + why (the run's last line is read first: the same refusal on every pass logs once). Past
+// FILL_LOG_MAX bytes the file keeps its newer half. A failed write never fails the fill.
+const FILL_LOG_MAX = 256 * 1024;
+export const fillLogFile = state => path.join(state, 'fill.log');
+function noteSkip(state, id, why, now) {
+  const f = fillLogFile(state), tag = ` ${id} not started: `;
+  let text = '';
+  try { text = fs.readFileSync(f, 'utf8'); } catch { /* none yet */ }
+  if (text.split('\n').filter(l => l.includes(tag)).pop()?.endsWith(tag + why)) return;
+  try {
+    fs.appendFileSync(f, `${new Date(now).toISOString()}${tag}${why}\n`);
+    if (text.length > FILL_LOG_MAX) { const t = fs.readFileSync(f, 'utf8'); fs.writeFileSync(f, t.slice(t.indexOf('\n', t.length >> 1) + 1)); }
+  } catch { /* a log never fails a fill */ }
 }
 
 // ---------- META-GTP-FED piece 2: the home side of the claim protocol (fed.mjs) ----------
@@ -1235,7 +1241,7 @@ const claudeLive = (state, staleMs, pending, me) => {
 };
 function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
-  let E = null, R, L, W = null, mine = Infinity, last = null;
+  let E = null, R, L, CL, W = null, mine = Infinity, last = null;
   const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
   const me = path.basename(path.resolve(state));
   const shareGate = (spec, q, staleMs) => {   // null = this row may take a Claude slot
@@ -1277,6 +1283,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const mr = mergeStageRefusal(spec, staleMs);   // META-GTP-MERGEQ piece 0: a rebase MERGE waits for its lane worktree
     if (mr) row.terms.push(mr);
     { const dw = dwarfWait(spec, staleMs); if (dw) row.terms.push(dw); }   // DWARVES 1.3: a busy pinned dwarf; holds no cap
+    { const ct = claimTerm(spec, (CL ??= new Map())); if (ct) { row.terms.push(ct.term); act?.claimHeld?.(q.id, ct); } }   // queue-stall: the claim door's no-network pre-check; holds no cap
     // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
     // this walk stays the one readiness evaluator (META-GTP-DAG piece 3): a node claims only an offered row
     // META-GTP-FED-2 piece 3: Claude rows are offered too (DEC-47 interim "node 2 non-Claude only" lifted): the usage term above is the same
@@ -1298,7 +1305,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     try { next = act.start(q, spec); }
     catch (e) {
       row.ready = false;
-      if (e instanceof RunRefused) { row.terms.push(`refused: ${e.message}`); if (e.code === 4) for (const k of caps) blocked.set(k, q.id); continue; }
+      if (e instanceof RunRefused) { row.terms.push(`refused: ${e.message}`); act.skipped?.(q.id, `refused: ${e.message}`); if (e.code === 4) for (const k of caps) blocked.set(k, q.id); continue; }
       gone(`error: ${e.message}`); continue;
     }
     act.started(q, next);

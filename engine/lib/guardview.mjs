@@ -22,6 +22,8 @@ const RULE_KEY = /^(rule-|enforcement-)/;
 export const SLOP_FIX = { kind: 'call', ways: ['Fix it on the branch', 'Waive it (norn rec add waiver)'], title: 'Code checks hold a branch' };
 /** META-DOD 2: a refused call - the brief was too narrow (widen Scope) or the guard did its job (leave it) - the owner's call */
 export const SCOPE_FIX = { kind: 'call', ways: ['Widen the brief Scope and resume', 'Leave it refused'], title: 'Norn refused a call outside the run scope' };
+/** stage F (RM-43): the second voice's findings are in shadow - nothing to fix or send; each is rated (thumbs), which gives the rule its precision */
+export const VOICE_FIX = { kind: 'count', title: 'The second voice (shadow): is each finding right?' };
 /** the batch title of the advisory checks that are not instruction-file checks (those use CHECKS' title) */
 const BATCH_TITLE = { 'rule-several-homes': 'A rule with several homes', 'rule-drift-claim': 'Says it is enforced, nothing enforces it', 'rule-drift-policy': 'A policy line differs from Settings',
   'rule-path-unknown': 'A rule names a path git never had', 'rule-drift-path': 'A rule points at code that is gone', 'enforcement-unexplained': 'Hooks and gates no rule explains',
@@ -38,10 +40,10 @@ export function insType(a) {
 /**
  * guardRows({ ins, tests, advice, holds, docs }) -> rows [{ id, type, severity, surface, path, line, why, source, action, go }]
  * ins = instructionsView (findings + rules.advisories), tests = testsView, advice = adviceOf (cards), holds = [{ branch, run, lane,
- * blocks }] (slop holds with their OPEN blocks), refusals = scope.mjs refusals (META-DOD 2), docs = the project's docs list [{ i, path }]. go = where it is fixed: { tab, ins?,
+ * blocks }] (slop holds with their OPEN blocks), voice = [{ branch, run, findings }] (host.mjs voiceFindings: the unrated model findings), refusals = scope.mjs refusals (META-DOD 2), docs = the project's docs list [{ i, path }]. go = where it is fixed: { tab, ins?,
  * line?, doc?, jump? }. A finding on a file the Docs tab lists is a docs row (fixed there).
  */
-export function guardRows({ ins = null, tests = null, advice = null, holds = [], refusals = [], docs = [] } = {}) {
+export function guardRows({ ins = null, tests = null, advice = null, holds = [], voice = [], refusals = [], docs = [] } = {}) {
   const out = [], docAt = new Map(docs.map(d => [fwd(d.path), d.i]));
   const rowOf = a => a.row || (ins?.rows || []).find(r => fwd(r.path) === fwd(a.path))?.id || null;
   // META-UX-BUILD S6 (REPORT s.7): a row on one of the owner's own files (the scan's machine_only rows) says so - Fix all never ticks it for him
@@ -81,6 +83,10 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
     out.push({ id: 'S-' + b.fp, type: 'code', severity: 'high', surface: `branch ${h.branch}`, path: b.file, line: b.line ?? null, why: `${b.rule}: ${b.msg}`,
       source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn rec add waiver)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
       go: { tab: 'slop', jump: 'slop-S-' + b.fp } });   // its own Slop row (an ended run is on no live Runs view)
+  for (const v of voice) for (const f of v.findings || [])
+    out.push({ id: 'V-' + f.fp, type: 'code', severity: 'low', surface: `branch ${v.branch} · second voice`, path: f.file, line: f.line ?? null, why: `${f.rule}: ${f.msg}`, quote: f.snippet,
+      source: 'SloppaChoppa second voice (shadow: recorded, never holds)', action: 'rate it: right or wrong', run: v.run ?? null, rate: { fp: f.fp, rule: f.rule },
+      ...fixOf('slop-voice', VOICE_FIX, VOICE_FIX.title), go: { tab: 'slop', jump: 'slop-V-' + f.fp } });
   // META-DOD 2: a call Norn's scope hook refused (scope.mjs refusals: the run, its tool, the target, the plain reason)
   for (const r of refusals)
     out.push({ id: 'R-' + hash(`${r.run}|${r.tool}|${r.target}|${r.why}`), type: 'code', severity: 'medium', surface: `run ${r.run}${r.lane ? ' · ' + r.lane : ''} · ${r.tool}`, path: null, line: null,

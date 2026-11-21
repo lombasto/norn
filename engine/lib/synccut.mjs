@@ -17,7 +17,7 @@ import { fedOf } from './fed.mjs';
 import { listClaims, registerHome, registerProject, homeKey, projectKey } from './claims.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { subdirOf } from './monorepo.mjs';
-import { fwd } from './config.mjs';
+import { fwd, updateMachine } from './config.mjs';
 import { readJsonS as readJson } from './fsnap.mjs';
 import { renameRetry } from './runs.mjs';
 
@@ -196,8 +196,7 @@ export function syncCut(o) {
   if (backup.error || backup.refused) return done({ refused: [`the backup ledger commit failed: ${backup.error || 'a secret in ' + backup.refused.join(', ')}`] });
   const reg = registerHome(fe, { id: home, projects: [project.name], now });
   if (reg.exists && mine !== home) return done({ refused: [`home id ${home} was taken meanwhile`] });
-  machine.ledger = { ...machine.ledger, home_id: home };   // right after the registration: a re-run after a crash knows the id is its own
-  writeAtomic(machineFile, JSON.stringify(machine, null, 2) + '\n');
+  updateMachine(machineFile, raw => ({ ledger: { ...raw.ledger, home_id: home } }));   // right after the registration: a re-run after a crash knows the id is its own
   if (bare) { const r = registerProject(fe, { project: project.name, repo, bare_home: home }); if (r.exists && (r.claim.bare_home !== home || r.claim.repo !== repo)) return done({ refused: [`projects/${project.name}.json was created meanwhile by home ${r.claim.bare_home}`] }); }
   for (const b of plan.branches.filter(x => x.action === 'rename')) {
     const step = (args, what) => { const r = g(root, args); if (!r.ok) throw new Error(`${what}: ${r.err.split('\n').pop()}`); };

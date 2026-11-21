@@ -1,4 +1,5 @@
-// DLV-MERGED-TRUTH: THE merge state of a deliverable (judge) and the per-repo git scanner it reads. Kept apart from deliverables.mjs
+// DLV-MERGED-TRUTH: THE merge state of a deliverable (judge), the per-repo git scanner it reads, and (LANE-TRUTH) the one shipped
+// rule of a record and of a lane over the records (landedOf, laneShipped). Kept apart from deliverables.mjs
 // so after.mjs (`--after dlv:`) and records.mjs (the lane archive guard) use the same rule without an import cycle: this module
 // imports git helpers and path spelling only, never the records.
 import { scanRepo, makeGit, pruneCache, workOnMain, contentOnMain } from './dlvgit.mjs';
@@ -53,7 +54,35 @@ export function mergeLatch(it) {
   return null;
 }
 
-const noScan = tip => ({ tip, exists: null, merged: false, installed: false, behind: null, ahead: null, native: null, native_files: [], ref_date: null, subject: null });
+// ---------- LANE-TRUTH (owner 2026-11-20, P0): ONE answer to "is this work on main", for a deliverable record and for a lane ----------
+// Rows said parked + shipped + "awaiting approval" + "to land" at once, because each page asked its own question. Every reader of a
+// RECORD (no git: the dash, the Inbox, the tick's lane rules, the archive gate, another home's copy) asks landedOf / laneShipped; the
+// deliverables listing (git) adds what judge() finds before the tick latches it (deliverables.mjs isLanded, the row form of this rule).
+/** a deliverable record's landing, or null: superseded (its work landed another way), or a merge latched after its last DONE (a merged
+ * PR, git ancestry / cherry / squash, the content check, the owner's ruling - the tick latches each) -> { how, pr, words } */
+export function landedOf(it) {
+  if (!it) return null;
+  if (it.state === 'superseded') { const s = lastEv(it, ['supersede'])?.data || {}; return { how: 'superseded', pr: null, words: `landed (superseded by ${s.by ?? '?'})` }; }
+  const m = mergeLatch(it)?.merged?.data;
+  return !m ? null : { how: m.how ?? 'git', pr: m.pr ?? null, words: m.pr ? `PR #${m.pr}` : m.how === 'ruling' ? 'ruled merged' : 'on main' };
+}
+const runN = id => Number(String(id ?? '').match(/-(\d+)$/)?.[1] ?? -1);
+/**
+ * THE shipped rule of a lane: why its work is on main, or null. dlvs = the lane's deliverable records (superseded ones included), path =
+ * its lane-paths.json entry (lanepaths.mjs: the branch of its last DONE run read against main), runs = its runs (a `norn runs landed`
+ * ruling on one). In order: every deliverable landed (unless the path read a NEWER DONE run off main: that work is not on main yet);
+ * else the path merged; else a landed ruling. A shipped lane is never parked, "needs you", "to land" or "awaiting approval".
+ */
+export function laneShipped({ dlvs = [], path = null, runs = [] } = {}) {
+  const ls = dlvs.map(d => [d, landedOf(d)]), newestDone = Math.max(-1, ...dlvs.flatMap(d => [d.data?.run, ...d.history.filter(h => h.ev === 'done').map(h => h.data?.run)]).map(runN));
+  const newer = path && path.state !== 'merged' && runN(path.run) > newestDone;
+  if (ls.length && ls.every(([, x]) => x) && !newer) return ls.map(([d, x]) => `${d.id} ${x.words}`).join(', ');
+  if (path?.state === 'merged') return `${path.branch ?? 'its branch'} on main`;
+  const r = runs.find(x => x?.landed);
+  return r ? `ruled landed${r.landed.why ? `: ${r.landed.why}` : ''}` : null;
+}
+
+const noScan = tip =>({ tip, exists: null, merged: false, installed: false, behind: null, ahead: null, native: null, native_files: [], ref_date: null, subject: null });
 
 /**
  * DLV-MERGED-TRUTH: THE merge state of one deliverable. Every reader goes through here: the listing and the Inbox / Overview cards

@@ -9,41 +9,20 @@
     "why": "An export promises that other code needs this name. An unused one is dead code that every reader must still check, and it often means a change was left half done.",
     "fix": "Use it, or remove the export keyword (or the whole name). If only tests use it, test it through the code that does. If a CLI or an HTML page loads it by path, add it to the rule's entry list."
   },
-  "roots": [
-    "engine/"
-  ],
-  "files": [
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "**/vendor/**"
-  ],
-  "search": [
-    "engine",
-    "tests"
-  ],
-  "tests": [
-    "tests/**"
-  ],
+  "roots": ["engine/"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["**/vendor/**"],
+  "search": ["engine","tests"],
+  "tests": ["tests/**"],
   "tests_level": "WARN",
   "entry": [],
   "fixture": {
     "hit": {
-      "base": {
-        "engine/lib/a.mjs": "export const a = 1;\n",
-        "engine/lib/b.mjs": "import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"
-      },
-      "head": {
-        "engine/lib/a.mjs": "export const a = 1;\nexport const lonely = () => 2;\n",
-        "engine/lib/b.mjs": "import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"
-      }
+      "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"},
+      "head": {"engine/lib/a.mjs":"export const a = 1;\nexport const lonely = () => 2;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"}
     },
     "miss": {
-      "base": {
-        "engine/dash/index.html": "<p>x</p>\n"
-      },
+      "base": {"engine/dash/index.html":"<p>x</p>\n"},
       "head": {
         "engine/dash/look.mjs": "export function initLook() { return 1; }\n",
         "engine/dash/index.html": "<script type=\"module\">import { initLook } from './look.mjs'; initLook();</script>\n",

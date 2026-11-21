@@ -176,28 +176,25 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   assert.equal(bad.status, 2); assert.match(bad.stderr, /usage: norn plan/);
 });
 
-test('ui: Plan sits in More; Runs shows the queue as its Queued band (stage RUNS: a queued run is a row there, no table); Plan renders sections, all-projects groups and plain-words empty states; its forecast renders on Usage', async () => {
+test('ui: the Plan page is gone (owner 2026-11-20: Up next folds into Lanes); Runs shows the queue as queued rows; the forecast renders on Spend', async () => {
   const { TABS, renderTab } = await import('../engine/dash/ui.mjs');
   const { MORE } = await import('../engine/dash/shell.mjs');
   const { forecastCard } = await import('../engine/dash/pages/plan.mjs');
   const { TABS: SERVER_TABS } = await import('../engine/dash/server.mjs');
-  assert.ok(MORE.find(g => g[0] === 'Plan')[1].includes('plan'));
-  assert.ok(TABS.some(t => t[0] === 'plan') && SERVER_TABS.includes('plan'));
+  assert.ok(!MORE.some(g => g[1].includes('plan')), 'no Plan page in More');
+  assert.ok(!TABS.some(t => t[0] === 'plan') && !SERVER_TABS.includes('plan'), 'no plan tab');
   const queue = [{ id: 'RUN-4', position: 1, lane: 'qlane', state: 'queued', project: 'demo' }];
   const ag = renderTab('runs', { tree: [], queue }, { project: 'demo' });
-  assert.ok(!/<table/.test(ag), 'no queue table on Runs');
-  assert.match(ag, /<section class="rband" id="runs-queued"[^]*?<div class="rrow queued" id="node-RUN-4"[^]*?qlane/, 'the queued run is a row of the Queued band (SPEC stage RUNS)');
-  const empty = renderTab('plan', { parts: [buildPlan({ project: 'demo', now: NOW })] }, { project: 'demo', now: NOW });
-  for (const s of ['id="panel-plan"', 'Up next', 'Nothing is waiting to start.', 'Chains', 'No queued run waits for another run.', 'Landing next', 'Nothing is heading to main.']) assert.ok(empty.includes(s), s);
-  assert.ok(!empty.includes('pl-fc'), 'the forecast left Plan (stage NAV: it is on Usage)');
+  assert.match(ag, /<tr class="rrow queued" id="node-RUN-4"[^]*?qlane/, 'the queued run is a row of the Runs table');
   const fc0 = forecastCard(buildPlan({ project: 'demo', now: NOW }).forecast, NOW);
   for (const s of ['id="pl-fc"', 'Forecast', 'Usage not measured yet.']) assert.ok(fc0.includes(s), s);
   assert.equal(forecastCard(null, NOW), '');
-  assert.ok(!/undefined|NaN|null</.test(empty));
   const runs = [run(1, 'running', { lane: 'adopt', stage: 'A1', budget_min: 60 }, { created: T(-20) }), run(2, 'queued', { lane: 'adopt', stage: 'A2', after: [after('RUN-1', 'merged')] })];
   const p = buildPlan({ project: 'demo', runs, ready: [{ id: 'RUN-2', ready: false, terms: ['after run:RUN-1:merged unmet'] }], status: STATUS('0.62'), budget: { weekly_stop_pct: 95 }, now: NOW });
-  const html = renderTab('plan', { parts: [p, { project: 'kestrel', pending: true }] }, { project: 'all', now: NOW });
-  for (const s of ['Adopt A2', 'RUN-2', 'waits for Adopt A1 to merge', 'class="pl-chain"', 'class="pl-step s-play"', 'class="pl-step s-ring"',
-    '>demo<', '>kestrel<', 'Working out the plan']) assert.ok(html.includes(s), s);
   assert.ok(forecastCard(p.forecast, NOW).includes('at this rate the weekly stop is reached'));
+  // Up next on Lanes: the queued lane in the Waiting group carries its priority control and what it waits for, in words
+  const lanes = [{ project: 'demo', name: 'adopt', board: 'waiting', run: 'RUN-2', run_state: 'queued', text: 'queued', priority: { p: 'P2', dflt: true }, position: 1, runs: [] }];
+  const lh = renderTab('lanes', { lanes, plan: { parts: [p] }, sub: 'lanes' }, { project: 'demo', now: NOW, laneShow: ['waiting'] });
+  assert.match(lh, /<select class="pl-prio" data-act="prio" data-project="demo" data-run="RUN-2"/);
+  assert.match(lh, /class="lane-up small mute">[^<]*waits for Adopt A1 to merge/);
 });
