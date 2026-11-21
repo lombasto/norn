@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
-import { dlvMerged } from './dlvmerge.mjs';
+import { dlvMerged, laneShipped } from './dlvmerge.mjs';
 import { isAncestor } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
@@ -844,15 +844,19 @@ export const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
 function archiveGuard(stateDir, lane, ev = {}) {
-  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
+  // LANE-TRUTH: work the records say is on main (dlvmerge.mjs laneShipped: every deliverable landed - a merged PR latched, git cherry /
+  // the content check, a ruling, superseded - or its path merged) archives: the gate never reads a deliverable unmerged the Lanes row calls shipped
+  const dlvs = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.data.lane === lane);
+  const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
+  if (laneShipped({ dlvs, path: pth ?? null, runs: runs.filter(r => r.kind === 'run' && r.data?.lane === lane) })) return;
+  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
-    const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;
+    const dir = runs.find(r => r.id === pth.run)?.data?.worktree;
     if (!(pth.tip && dir && fs.existsSync(dir) && isAncestor(dir, pth.tip, 'main')))
       fail(`${laneId(lane, stateDir)} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
   }
-  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
-  for (const d of open) {
+  for (const d of dlvs.filter(i => i.state === 'open')) {
     const m = dlvMerged(d);
     if (m.merged) continue;
     fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is ${m.unknown ? `done, cannot tell if merged (${m.unknown})` : 'done but not merged'} - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
