@@ -5,7 +5,7 @@
 // Project-agnostic: every project fact comes from project.json (deliverables target / receipts, root, views.roadmap).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn, laneNameIn, homeOfId, copyItems } from './records.mjs';
+import { record, readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn, laneNameIn, homeOfId, copyItems } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { landedOf } from './dlvmerge.mjs';
@@ -61,6 +61,9 @@ export function foldRoadmap(events, { ordered = false } = {}) {   // ordered: th
 // RM-46 S1d: a synced dir folds the own roadmap + the copies (records.mjs foldHomes: one order on every home)
 // a synced dir's fold also carries the pending item events (another home's, or this home's on another home's item: SPEC 3.7)
 export const loadRoadmap = stateDir => (homeOf(stateDir) ? (v => ({ ...foldRoadmap(v.events, { ordered: true }), pending: v.pending }))(loadShared(stateDir, 'item')) : foldRoadmap(readEvents(recordsFile(stateDir, 'item'))));
+/** lane-collide S1c (SPEC 4A.1 stale): an item's caveat set by code - the tick adds the fact a stale caveat gains, norn collide undo writes the
+ *  old text back; one edit event, so the item's history keeps both */
+export const setCaveat = (stateDir, id, text, by) => record(stateDir, { kind: 'item', ev: 'edit', id, by, data: { caveat: text } });
 /**
  * RM-46 S3: the fold as this home reads it. Another home's item names its lanes as that home types them (lane:x = its own x): here they
  * read lane:b/x, so derive() finds b's copied runs and DLVs; such a node carries home (its "on b" chip). A pending event on an item =

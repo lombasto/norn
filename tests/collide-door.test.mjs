@@ -34,7 +34,8 @@ function fixture() {
   git(home, 'add', '-A'); git(home, 'commit', '-qm', 'base'); git(home, 'push', '-q', 'origin', 'main');
   for (const d of [state, locks]) fs.mkdirSync(d, { recursive: true });
   const pf = path.join(t, 'project.json');
-  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'k', title: 'k', root: fwd(home), ledger: '${root}/L.md', briefs_dir: '${root}', policy: { slop: { enabled: false } } }));
+  // land_wait_min 0: these tests are about the door's hold / after / warn, not S1c's land-first wait (collide-tick.test.mjs covers it)
+  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'k', title: 'k', root: fwd(home), ledger: '${root}/L.md', briefs_dir: '${root}', policy: { slop: { enabled: false }, collide: { auto: { land_wait_min: 0 } } } }));
   const f = { t, home, state, locks, pf };
   f.lane = (lane, edits = {}, from = 'origin/main') => {
     const wt = path.join(t, 'wt', lane);

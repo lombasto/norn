@@ -134,7 +134,7 @@ export const KINDS = {
   // one wins, the other is refused - the state machine, never a reader-side dedupe. nudge = the supervisor's one claim of an
   // urgent unacked mail (it resumes the run with the mail as its prompt). Owner asks stay Q records.
   mail: { prefix: 'MAIL-', file: 'mail', events: {
-    create: { from: null, to: 'queued', roles: [...MAILERS, ...OWNER] },   // RM-37: the owner's pause order (pause.mjs)
+    create: { from: null, to: 'queued', roles: [...MAILERS, ...OWNER, 'tick'] },   // RM-37: the owner's pause order (pause.mjs); tick: lane-collide S1c's same-files / conflict mail
     deliver: { from: ['queued'], to: 'delivered', roles: ['launcher', ...MAILERS] },
     nudge: { from: ['queued', 'delivered'], to: 'delivered', roles: ['launcher'] },
     ack: { from: ['queued', 'delivered'], to: 'acked', roles: MAILERS },
@@ -144,7 +144,7 @@ export const KINDS = {
   // an event or a field. Workers write none.
   item: { prefix: 'RM-', file: 'roadmap', events: {
     create: { from: null, to: 'open', roles: [...CK, ...OWNER] },
-    edit: { from: ['open'], to: null, roles: [...CK, ...OWNER] },
+    edit: { from: ['open'], to: null, roles: [...CK, ...OWNER, 'tick'] },   // tick: lane-collide S1c's caveat fact (collidePass), undone by norn collide undo
     move: { from: ['open'], to: null, roles: [...CK, ...OWNER] },
     link: { from: ['open'], to: null, roles: [...CK, ...OWNER, 'launcher'] },
     unlink: { from: ['open'], to: null, roles: [...CK, ...OWNER, 'launcher'] },
@@ -197,7 +197,7 @@ export const KINDS = {
 // META-ROADMAP S1: a roadmap link is a kind:id term (the --after grammar); existence is checked by roadmap.mjs checkLinks
 // lane-collide S1b: the kinds a case names (SPEC 2; any = a ruling on a whole pair) and the actions S1b records (SPEC 4A.1 hold, after, told; allow)
 export const COLLIDE_KINDS = ['item', 'lead', 'goal', 'territory', 'resource', 'order', 'stale', 'any'];
-export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow'];
+export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow', 'caveat', 'claim-release'];   // S1c: the tick's stale corrections
 const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
 // RM-46 S1a: a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
 const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
