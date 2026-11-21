@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, effectiveRules, slopCheck, explainOf, EXPLAIN, RULES_DIR } from '../engine/lib/slop/check.mjs';
 import { slopPrompt } from '../engine/lib/slop/runend.mjs';
-import { hostWrite, openBlocks, slopHolds, slopChecks } from '../engine/lib/slop/host.mjs';
+import { hostWrite, openBlocks, slopHolds, slopChecks, slopSeries } from '../engine/lib/slop/host.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { startRun } from '../engine/lib/runs.mjs';
@@ -271,7 +271,11 @@ test('daily: the tick starts `norn slop daily` once a day; the report has absolu
   const md = fs.readFileSync(file, 'utf8');
   assert.match(md, /\| code \| 150 \| \+50 \(\+50\.0 %\) \|/);
   assert.match(md, /\| engine\/lib \| 150 \| \+50 \(\+50\.0 %\) \|/);
-  assert.match(line, /^slop 2026-11-09: code 150 \+50 \(\+50\.0 %\) in 7 d, tests 10; big landings 0; branches: 0 real/);
+  assert.match(line, /^slop 2026-11-09: meter \d+ (?:Tended|Weedy|Sloppy|Slopified|Full slop); code 150 \+50 \(\+50\.0 %\) in 7 d, tests 10; big landings 0; branches: 0 real/);
+  // slop-meter S1: the day's series point carries the meter, the report its section
+  const pt = slopSeries(state).days['2026-11-09'].meter;
+  assert.ok(Number.isFinite(pt.score) && typeof pt.band === 'string' && Array.isArray(pt.top), JSON.stringify(pt));
+  assert.match(md, /^## Meter: [\d.]+ \w/m);
   assert.equal(tickSlop(p, state, { metaCmd: NORN, spawnFn, now: now + 3600e3 }), null, "today's report exists");
   const d = digest(state, p, { now, dlv: [] });
   assert.deepEqual(d.sections.slop, [{ id: 'slop', line }]);

@@ -1,9 +1,10 @@
-// META-TEND TESTS: `norn tests` - measure | history | check | mutation | lean | gate | for. Code only, no model. Writes <state>/tests/ only:
+// META-TEND TESTS: `norn tests` - measure | history | check | mutation | lean | gate | for | run. Code only, no model. Writes <state>/tests/ only:
 //   measure.json (the last full measure), history.jsonl (one summary row per measure), mutation.json (the merged trial matrices),
 //   candidates.json (the last lean analysis), advisories.json (the last merge check), waves.jsonl (one row per gated wave),
 //   git-history.json (tests vs code per day), times.json + impact.json (TESTS-RUNTIME: the per-test timing table and source -> tests,
 //   lib/testtimes.mjs). measure reads a node:test suite (ci-suite) or a pytest suite (--junitxml); check / mutation / lean / gate read
 //   node:test only. testsView + testsPart read them for the dash's Tests tab (small files only, never measure.json).
+// test-diet S1: `run` - a run's node tests, through the machine's result cache (testcache.mjs) under policy.tests (testpolicy.mjs).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,11 +15,14 @@ import { gitHistory, summarize, mergeCheck, leanGate, leafNames, mutationMatrix,
 import { crossings } from './advisory.mjs';
 import { subdirOf, inDir, projectHome } from './monorepo.mjs';
 import { suiteKind, runPytest, timesTable, impactMap, testsFor, breakdown, slowestTests, TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
+import { repoIndex, runCached, cacheDir, prune } from './testcache.mjs';
+import { testsPolicy, pickInRepo, policyWords, BROWSER_SKIP_ENV } from './testpolicy.mjs';
 
-export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore] | for FILE...    '
-  + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer; for = the test files that cover each FILE, from the last measure\'s coverage)';
-const FLAGS = { measure: ['no-coverage!'], history: ['points'], check: ['base'], mutation: ['report', 'kills', 'tests', 'label', 'wall'], lean: [], gate: ['base', 'restore!'], for: [] };
-const POSITIONAL = new Set(['for']);   // for: the files to look up
+export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore] | for FILE... | run [FILE...] [--changed [--base REF]] [-- node flags]    '
+  + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer; for = the test files that cover each FILE, from the last measure\'s coverage; '
+  + 'run = node test files through the machine\'s result cache under policy.tests, --changed adds the files policy.tests.mode picks for the change; exit 1 = a red)';
+const FLAGS = { measure: ['no-coverage!'], history: ['points'], check: ['base'], mutation: ['report', 'kills', 'tests', 'label', 'wall'], lean: [], gate: ['base', 'restore!'], for: [], run: ['changed!', 'base'] };
+const POSITIONAL = new Set(['for', 'run']);   // for: the files to look up; run: the test files
 const CI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'ci-suite.mjs');
 const fwd = s => s.split('\\').join('/');
 const TEST_GLOB = /^tests\/[^/]+\.test\.mjs$/;
@@ -64,21 +68,24 @@ function writeTimes(dir, repo, measure, o) {
 const changedTests = (repo, base, filter = 'AMD') => git(repo, ['diff', '--name-only', '--relative', `--diff-filter=${filter}`, base, '--', 'tests']).split('\n').map(fwd).filter(f => TEST_GLOB.test(f));
 
 /** o: { env, out, err, where(flags) -> { project, state } } */
-export function testsCmd(argv, { out = console.log, err = console.error, where } = {}) {
-  const verb = argv[0];
+export function testsCmd(argv, { out = console.log, err = console.error, where, env = process.env } = {}) {
+  const verb = argv[0], dd = verb === 'run' ? argv.indexOf('--') : -1, rest = dd >= 0 ? argv.slice(dd + 1) : [];   // run: `--` passes node flags on
   let f;
-  try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); }
+  try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, (dd >= 0 ? argv.slice(0, dd) : argv).slice(1)); }
   catch (e) { err('error: ' + e.message); err(TESTS_USAGE); return 2; }
   let w;
   try { w = where(f); } catch (e) { err('error: ' + e.message); return 2; }
   const dir = path.join(w.state, 'tests');
   // gap #7: a monorepo project (project.subdir; not with an explicit --repo) measures its own folder: its tests/, its history
-  const top = fwd(git(f.repo || w.project?.root || process.cwd(), ['rev-parse', '--show-toplevel']));
+  // `run` tests the checkout it is called in (a worker's worktree, not the project's main checkout); the other verbs the project's
+  const top = fwd(git(f.repo || (verb === 'run' ? process.cwd() : w.project?.root) || process.cwd(), ['rev-parse', '--show-toplevel']));
   const repo = !f.repo && subdirOf(w.project) ? fwd(inDir(top, subdirOf(w.project))) : top;
   const sha = () => git(repo, ['rev-parse', '--short=12', 'HEAD']);
   const print = (v, text) => (f.json ? out(JSON.stringify(v, null, 1)) : text.forEach(l => out(l)));
 
   const kind = suiteKind(repo);
+  if (verb === 'run') return kind === 'node:test' ? testsRun(f, { repo, state: w.state, project: w.project, rest, out, err, env, print })
+    : (err(`error: tests run: runs node:test files (tests/*.test.mjs); this project's suite is ${kind ?? 'neither node:test nor pytest'} - run its test files with their own runner, one at a time`), 2);
   if (NODE_ONLY.has(verb) && kind !== 'node:test') {
     if (verb === 'check') { print({ list: [], suite: kind ?? false }, [`tests check: ${NOT_NODE(repo, kind)}`]); return 0; }   // advisory: a merge goes on
     err(`error: tests ${verb}: ${NOT_NODE(repo, kind)}`); return 2;
@@ -178,6 +185,45 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
   return g.ok ? 0 : 1;
 }
 
+// test-diet S1: `norn tests run [FILE...] [--changed [--base REF]] [-- node flags]`. Each file runs through the machine's result cache (a pass
+// on the same content in the last day is reused, a copy running in another run is waited for); --changed adds the files policy.tests.mode
+// picks for the branch's change against the merge base (committed, uncommitted and untracked). Inside a run (META_RUN_ID) browser tests
+// skip while policy.tests.browser = ci. One line per file, a red's output tail (failures only); exit 1 = a red, 2 = nothing runnable.
+const sec = ms => `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
+/** the branch's changed files against the merge base with base (committed, uncommitted, untracked), repo-relative */
+export const changedFiles = (repo, base) => { const mb = git(repo, ['merge-base', base, 'HEAD']);
+  return [...new Set([...git(repo, ['diff', '--name-only', '--relative', mb]).split('\n'), ...git(repo, ['ls-files', '--others', '--exclude-standard']).split('\n')].map(fwd).filter(Boolean))]; };
+async function testsRun(f, { repo, state, project, rest, out, err, env, print }) {
+  const t = testsPolicy(project?.policy), run = env.META_RUN_ID || null;
+  if (run && t.mode === 'off') { err('error: tests run: policy.tests.mode = off - tests do not run in a run of this project; CI runs them on the PR'); return 2; }
+  let files = f._.map(fwd), picked = null;
+  if (f.changed) {
+    const base = f.base || 'origin/main';
+    let changed;
+    try { changed = changedFiles(repo, base); } catch (e) { err(`error: tests run --changed: no diff against ${base} (${String(e.stderr || e.message).trim().split('\n')[0]})`); return 2; }
+    picked = pickInRepo(repo, state, t.mode, changed);
+    if (!f.json) out(`tests run: ${changed.length} file(s) changed since ${base}: ${picked.run.length} test file(s) by policy.tests.mode = ${t.mode}${picked.none.length ? `; no test covers ${picked.none.join(' ')} directly (left to CI)` : ''}${picked.left.length ? `; ${picked.left.length} more importers left to CI` : ''}`);
+    files = [...new Set([...files, ...picked.run])];
+  }
+  if (!files.length) { print({ files: [], picked }, ['tests run: no test file to run']); return 0; }
+  const gone = files.filter(x => !fs.existsSync(path.join(repo, x)));
+  if (gone.length) { err(`error: tests run: no such test file in ${repo}: ${gone.join(' ')}`); return 2; }
+  const skip = !!run && t.browser === 'ci', cdir = cacheDir(env), ix = repoIndex(repo), rows = [];
+  prune(cdir);
+  for (const x of files) {
+    const r = await runCached(x, { ix, dir: cdir, run, env, childEnv: skip ? BROWSER_SKIP_ENV : {}, extra: skip ? 'browser:skip' : '', nodeArgs: rest, say: l => !f.json && out(`tests run: ${l}`) });
+    rows.push(r);
+    if (f.json) continue;
+    const c = r.counts ? `${r.counts.pass} pass ${r.counts.fail} fail` : '';
+    out(r.how === 'ran' ? `${r.ok ? 'pass' : 'FAIL'} ${x} ${sec(r.ms)}${c ? ` (${c})` : ''}${r.timed_out ? ' - timed out' : ''}`
+      : `pass ${x} - ${r.how === 'waited' ? 'waited for' : 'reused'} the pass of ${r.by ?? 'a hand run'} at ${r.at.slice(11, 16)}Z on the same content (${sec(r.saved_ms)} saved)`);
+    if (!r.ok && r.tail) out(r.tail.trimEnd());
+  }
+  const bad = rows.filter(r => !r.ok), n = h => rows.filter(r => r.how === h).length, saved = rows.reduce((a, r) => a + r.saved_ms, 0);
+  print({ policy: t, picked, files: rows.map(({ tail: _t, ...r }) => r) }, [`tests run: ${rows.length} file(s): ${n('ran')} ran, ${n('reused') + n('waited')} reused (${sec(saved)} saved), ${bad.length} red${skip ? ' - browser tests skipped (CI runs them)' : ''} · ${policyWords(t)}`]);
+  return bad.length ? 1 : 0;
+}
+
 const readLines = f => { try { return (readText(f) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
 /** the tick's hook: `norn tests history` (git only, cheap) detached once a day, so the Tests tab's charts fill without anyone running it
  * (not while one started in the last 30 min). -> the tick-log words | null */
@@ -194,20 +240,19 @@ export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {})
   return `tests history: started pid ${r?.pid ?? '?'}`;
 }
 
-// ---------- the Tests tab (TESTS-RUNTIME): a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
+// ---------- the Tests tab (TESTS-RUNTIME, test-diet S1): a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
 // The governance machinery (the test-governance lane, DIR-23 a-g) writes these beside the measure; until a file exists its view says
 // "not measured yet", never a number. Ids are timesTable's (file::group::name).
 //   costs.json    { at, cpu_pct (the machine's CPU % while measured), tests: { id: { cpu_s, peak_mb, children: { browser, server, git, other }, alone_ms, load_ms } } }
 //   health.json   { at, days, tests: { id: { fails, reruns, load_only, hangs } }, quarantine: { id: { by, until, why, q } } }
 //   tiers.json    { at, tests: { id: { tier: worker | pr | post-batch | nightly, verdict: keep | move | merge | delete | rewrite, evidence, q } } }
-//   budgets.jsonl { at, run, lane, wall_s, test_s, full_suite (full-suite commands seen), state: ok | warn | over } - one row per run
 //   history.jsonl rows may carry cpu_min (the suite's CPU-minutes for that measure)
 // An alert the machinery raises is an open Inbox question with data.area 'tests' (the server lists them: the tab links, never copies).
 const GOV = ['costs.json', 'health.json', 'tiers.json'];
 const read = (state, f) => readJson(path.join(state, 'tests', f));
 /** META-DASH-ASYNC R1: the files the summary + a part read, for the dash to prime on fs.promises */
 export const testsFiles = (state, sub = null) => [...['history.jsonl', 'git-history.json', TIMES_FILE, 'advisories.json'],
-  ...(sub === 'costs' ? [...GOV, 'budgets.jsonl', 'candidates.json', 'mutation.json'] : sub === 'impact' ? [IMPACT_FILE] : sub === 'trends' ? ['waves.jsonl', 'budgets.jsonl'] : sub === 'suite' ? [] : ['mutation.json', 'candidates.json', 'waves.jsonl'])]
+  ...(sub === 'costs' ? [...GOV, 'candidates.json', 'mutation.json'] : sub === 'impact' ? [IMPACT_FILE] : sub === 'suite' ? ['waves.jsonl'] : sub === 'runtime' ? [] : ['mutation.json', 'candidates.json', 'waves.jsonl'])]
   .map(f => path.join(state, 'tests', f));
 /** which suite the project folder holds ('node:test' | 'pytest' | false = neither; null = no project folder), off the sync path */
 export const suiteOf = project => (project?.root ? fs.promises.access(path.join(projectHome(project), 'tests')).then(() => suiteKind(projectHome(project)) ?? false, () => false) : Promise.resolve(null));
@@ -220,37 +265,45 @@ export function testsView(state, suite = null) {
     advisories: read(state, 'advisories.json'), commands: { measure: 'norn tests measure', history: 'norn tests history', lean: 'norn tests lean', for: 'norn tests for' } };
 }
 const cap = (list, limit) => ({ rows: list.slice(0, limit), n: list.length });
-/** the per-lane test minutes per day from budgets.jsonl -> [{ day, lane, min }] */
-const laneDays = rows => { const m = new Map(); for (const r of rows) { const k = `${String(r.at).slice(0, 10)}|${r.lane ?? '-'}`; m.set(k, (m.get(k) ?? 0) + (r.test_s ?? 0) / 60); }
-  return [...m].map(([k, min]) => ({ day: k.split('|')[0], lane: k.split('|')[1], min: Math.round(min * 10) / 10 })).sort((a, b) => a.day.localeCompare(b.day) || b.min - a.min); };
 /**
  * one sub-view's part of the Tests tab -> its data. o: { limit, picked: { files, lane, lanes } (impact: the server resolves a lane's changed
- * files), merges: the merge queue's batches (costs: per merge gate time + what it ran) }
+ * files), merges: the merge queue's batches (costs: per merge gate time + what it ran) }. Run time is the server's (runtimePart: run records + transcripts)
  */
 export function testsPart(state, name, { limit = 40, picked = null, merges = [] } = {}) {
   const t = read(state, TIMES_FILE);
-  if (name === 'suite') {
-    if (!t) return { breakdown: null, tests: { rows: [], n: 0 } };
-    return { breakdown: breakdown(t), tests: cap(slowestTests(t), limit) };
+  if (name === 'suite') {   // + the charts over time (suite CPU-minutes per full run, the last lean-tests wave)
+    const over = { cpu: readLines(path.join(state, 'tests', 'history.jsonl')).filter(r => typeof r.cpu_min === 'number').map(r => ({ at: r.at, cpu_min: r.cpu_min })), wave: readLines(path.join(state, 'tests', 'waves.jsonl')).at(-1) ?? null };
+    return t ? { breakdown: breakdown(t), tests: cap(slowestTests(t), limit), ...over } : { breakdown: null, tests: { rows: [], n: 0 }, ...over };
   }
   if (name === 'costs') {
-    const [costs, health, tiers] = GOV.map(f => read(state, f)), budgets = readLines(path.join(state, 'tests', 'budgets.jsonl'));
+    const [costs, health, tiers] = GOV.map(f => read(state, f));
     const cost = id => costs?.tests?.[id] ?? null, hl = id => health?.tests?.[id] ?? null, q = id => health?.quarantine?.[id] ?? null, tr = id => tiers?.tests?.[id] ?? null;
     const rows = (t?.tests ?? []).map(x => ({ id: x.id, file: x.file, name: x.name, line: x.line, ms: x.ms, cost: cost(x.id), health: hl(x.id), quarantine: q(x.id), tier: tr(x.id) }))
       .sort((a, b) => (b.cost?.cpu_s ?? 0) - (a.cost?.cpu_s ?? 0) || (b.health?.fails ?? 0) - (a.health?.fails ?? 0) || b.ms - a.ms);
     const mx = read(state, 'mutation.json');
-    return { sources: { costs: costs ? { at: costs.at, cpu_pct: costs.cpu_pct ?? null } : null, health: health ? { at: health.at, days: health.days ?? 7 } : null, tiers: tiers ? { at: tiers.at } : null, budgets: budgets.length > 0 },
-      rows: cap(rows, limit), runs: budgets.slice(-limit).reverse(), merges, lean: read(state, 'candidates.json'), mutation: mx ? { files: mx.files, trials: mx.trials } : null };
+    return { sources: { costs: costs ? { at: costs.at, cpu_pct: costs.cpu_pct ?? null } : null, health: health ? { at: health.at, days: health.days ?? 7 } : null, tiers: tiers ? { at: tiers.at } : null },
+      rows: cap(rows, limit), merges, lean: read(state, 'candidates.json'), mutation: mx ? { files: mx.files, trials: mx.trials } : null };
   }
   if (name === 'impact') {
     const im = read(state, IMPACT_FILE);
     return { impact: im ? { at: im.at, sha: im.sha, suite: im.suite, sources: Object.keys(im.sources).sort() } : null, lanes: picked?.lanes ?? [],
       picked: picked && (picked.files?.length || picked.lane) ? { lane: picked.lane ?? null, error: picked.error ?? null, files: picked.files ?? [], ...(im ? testsFor(im, picked.files ?? []) : { rows: [], tests: [] }) } : null };
   }
-  if (name === 'trends') {
-    const budgets = readLines(path.join(state, 'tests', 'budgets.jsonl'));
-    return { cpu: readLines(path.join(state, 'tests', 'history.jsonl')).filter(r => typeof r.cpu_min === 'number').map(r => ({ at: r.at, cpu_min: r.cpu_min })),
-      lanes: budgets.length ? laneDays(budgets) : null, wave: readLines(path.join(state, 'tests', 'waves.jsonl')).at(-1) ?? null };
-  }
   throw new Error(`unknown tests part ${name}`);
+}
+/**
+ * test-diet S1: the Tests tab's Run time part - per worker run of the last RUNTIME_DAYS: its wall time, its time in test commands and
+ * the share (speed.mjs speedOf over its transcript), the duplicate test files the machine's test cache spared it (testcache.mjs log rows
+ * how reused | waited: count, saved_ms) and whether it went past policy.tests.run_budget_min. runs: [{ id, lane, state, started, ended,
+ * speed: { wall_ms, test_ms } | null }] (the server reads them); cache: the cache log rows; policy: the project policy.
+ */
+export const RUNTIME_DAYS = 3, RUNTIME_SETTINGS = ['policy.tests.mode', 'policy.tests.run_budget_min', 'policy.tests.browser', 'policy.tests.full_suite'];
+export function runtimePart({ runs, cache, policy, now = Date.now() }) {
+  const t = testsPolicy(policy), since = now - RUNTIME_DAYS * 86400e3, budget = t.run_budget_min > 0 ? t.run_budget_min * 60000 : null, by = new Map();
+  for (const c of cache) if (c.run && (c.how === 'reused' || c.how === 'waited')) { const x = by.get(c.run) ?? { n: 0, saved_ms: 0 }; x.n++; x.saved_ms += c.saved_ms || 0; by.set(c.run, x); }
+  const rows = runs.filter(r => Date.parse(r.ended ?? r.started) >= since).map(r => { const s = r.speed, d = by.get(r.id) ?? { n: 0, saved_ms: 0 };
+    return { id: r.id, lane: r.lane ?? null, state: r.state, started: r.started, ended: r.ended ?? null, wall_ms: s?.wall_ms ?? null, test_ms: s?.test_ms ?? null,
+      test_pct: s?.wall_ms > 0 ? Math.round(1000 * s.test_ms / s.wall_ms) / 10 : null, over: budget !== null && (s?.test_ms ?? 0) > budget, dup: d.n, saved_ms: d.saved_ms }; })
+    .sort((a, b) => String(b.started).localeCompare(String(a.started)));
+  return { policy: t, words: policyWords(t), settings: RUNTIME_SETTINGS, days: RUNTIME_DAYS, rows };
 }

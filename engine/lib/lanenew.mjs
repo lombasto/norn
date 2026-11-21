@@ -21,8 +21,9 @@ export const laneBranch = (name, p) => laneBranchPrefix(p) + name;
 const fwd = p => String(p).replace(/\\/g, '/');
 // the testing rules' one home (owner Q-32), by absolute path: a lane of any project reads it from the Norn engine's own checkout
 export const TESTING_DOC = fwd(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'TESTING.md'));
-// a lane brief's Tests: line. No backticks and no repo path, so the run-end Done check (dod.mjs) finds nothing in it to run
-export const BRIEF_TESTS = `Tests: the test files of the files you change (norn tests for FILE names them for node), each run alone; never the full suite. Rules: ${TESTING_DOC}`;
+// a lane brief's Tests: line. No backticks and no repo path, so the run-end Done check (dod.mjs) finds nothing in it to run: under
+// policy.tests (test-diet S1) the Done check picks the light set itself
+export const BRIEF_TESTS = `Tests: light (policy.tests): norn tests run --changed runs the test files that directly cover what you changed, no browser tests; never the full suite, no page tests - CI runs them. Rules: ${TESTING_DOC}`;
 
 function git(cwd, args) {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000 });

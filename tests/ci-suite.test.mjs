@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseKnown, judge, suiteEnv, pickTests, importsOf } from '../engine/lib/cisuite.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { findBrowser } from '../engine/lib/shot.mjs';
+import { skipWhy } from './helpers/cdp.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CI = path.join(REPO, 'engine', 'bin', 'ci-suite.mjs');
@@ -96,7 +96,7 @@ test('ci-suite: an explicit glob without smoke runs only the parallel phase; one
 });
 
 // CI 44335427788: a fresh ubuntu runner's first browser launch passed the 30 s DevTools wait of the first browser tests
-test('ci-suite: with a browser test in the run, one browser launch (warm-up, timed) goes before the files; without one, none', { skip: !findBrowser() && 'no browser installed', timeout: 120000 }, () => {
+test('ci-suite: with a browser test in the run, one browser launch (warm-up, timed) goes before the files; without one, none', { skip: skipWhy, timeout: 120000 }, () => {
   const dir = mkTmp('meta-cisuite-warm-'), f = path.join(dir, 'b.test.mjs');
   fs.writeFileSync(f, `// a browser test by its import: import { openPage } from './helpers/cdp.mjs'\nimport test from 'node:test';\ntest('b', () => {});\n`);
   const r = spawnSync(process.execPath, [CI, '--known', `${FX}/known.txt`, f.split('\\').join('/')], { cwd: REPO, encoding: 'utf8' });

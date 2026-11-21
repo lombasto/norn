@@ -2,7 +2,7 @@
 // (a whole suite: ci-suite.mjs without --changed, node --test with no file or a folder / glob, pytest with no test file, npm test),
 // 'test' (named test files, or a runner it cannot size: cargo, go, jest ...), 'watch' (tail -f, Get-Content -Wait, an until / while
 // loop that sleeps: no bound but the run's own end) or null. The transcript fold (progress.mjs), the context split (standing.mjs),
-// the run feed (dash/activity.mjs) and the scope hook's full-suite deny (scope.mjs, owner Q-28) all read it: one home, no copies.
+// the run feed (dash/activity.mjs) and the scope hook's test rules (testpolicy.mjs, policy.tests) all read it: one home, no copies.
 
 const fwd = s => String(s).replace(/\\/g, '/');
 /** a command line -> segments (arrays of words) split at && || ; | & and newlines outside quotes; the quotes kept out of the words */
@@ -57,11 +57,15 @@ function one(ws, depth) {
     const i = ws.findIndex((x, k) => k > 0 && /^-(c|command)$/i.test(x));
     return i > 0 && ws[i + 1] !== undefined ? classify(ws.slice(i + 1).join(' '), depth + 1) : null;
   }
-  const ci = ws.findIndex(x => /(^|[\\/])ci-suite\.mjs$/.test(x));
-  if (ci >= 0) return { kind: ws.includes('--changed') ? 'test' : 'full', files: [], runner: 'ci-suite' };
+  // ci-suite.mjs as the script node runs (or the command itself), never as a file another command reads (`cat`, `grep x ci-suite.mjs`)
+  const ci = /(^|[\\/])ci-suite\.mjs$/, script = name !== 'node' ? ws[0] : ws.some(x => x === '--check' || x === '-c') ? undefined : ws.slice(1).find(x => !x.startsWith('-'));
+  if (script !== undefined && ci.test(script)) return { kind: ws.includes('--changed') ? 'test' : 'full', files: [], runner: 'ci-suite' };
+  // test-diet S1: `norn tests run` is the runner of a run's node tests (testcache.mjs: the machine's result cache, policy.tests)
+  const nornAt = name === 'node' && /(^|[\\/])(norn|meta)\.mjs$/.test(ws[1] ?? '') ? 2 : /^(norn|meta)$/.test(name) ? 1 : -1;
+  if (nornAt > 0 && ws[nornAt] === 'tests' && ws[nornAt + 1] === 'run') { const pos = args(ws, nornAt + 2, /^--(base|project|state)$/); return { kind: 'test', files: pos.map(fileName).filter(Boolean), paths: pos.filter(fileName), runner: 'norn' }; }
   if (name === 'node' && ws.includes('--test')) {
     const pos = args(ws, 1, NODE_VAL);
-    return { kind: !pos.length || pos.some(wide) ? 'full' : 'test', files: pos.map(fileName).filter(Boolean), runner: 'node' };
+    return { kind: !pos.length || pos.some(wide) ? 'full' : 'test', files: pos.map(fileName).filter(Boolean), paths: pos.filter(fileName), runner: 'node' };
   }
   const py = name === 'pytest' ? 1 : /^(python[\d.]*|py)$/.test(name) && ws[1] === '-m' && ws[2] === 'pytest' ? 3 : -1;
   if (py > 0) {
@@ -81,25 +85,19 @@ const RANK = { full: 3, test: 2, watch: 1 };
 // a poll loop: until / while ... sleep (bash) or while (...) { ... Start-Sleep } (PowerShell). A `for` loop has its own bound.
 const LOOP = /(^|[\s;&|({])(until|while)\b[\s\S]*?\b(sleep|start-sleep)\b/i;
 
-/** a shell command -> { kind: 'full' | 'test' | 'watch' | null, files: [test file names], runner } (the strongest segment wins) */
+/** a shell command -> { kind: 'full' | 'test' | 'watch' | null, files: [test file names], paths: [the test files as written: node, norn tests
+ *  run], runner } (the strongest segment wins) */
 export function classify(cmd, depth = 0) {
   const text = String(cmd ?? '');
-  let best = { kind: null, files: [], runner: null };
+  let best = { kind: null, files: [], paths: [], runner: null };
+  const add = r => ({ files: [...new Set([...best.files, ...r.files])], paths: [...new Set([...best.paths, ...(r.paths || [])])] });
   for (const ws of segments(text)) {
     const r = one(ws, depth);
-    if (r && (RANK[r.kind] > (RANK[best.kind] ?? 0))) best = { ...r, files: [...new Set([...best.files, ...r.files])] };
-    else if (r) best.files = [...new Set([...best.files, ...r.files])];
+    if (r && (RANK[r.kind] > (RANK[best.kind] ?? 0))) best = { ...r, ...add(r) };
+    else if (r) Object.assign(best, add(r));
   }
-  if (!best.kind && LOOP.test(text)) best = { kind: 'watch', files: [], runner: 'loop' };
+  if (!best.kind && LOOP.test(text)) best = { kind: 'watch', files: [], paths: [], runner: 'loop' };
   return best;
 }
 /** a command that runs tests (a whole suite or named files) */
 export const isTest = cmd => { const k = classify(cmd).kind; return k === 'test' || k === 'full'; };
-
-/** the deny text of a full-suite command (owner Q-28: ALWAYS denied in a run; the full suite runs in CI) */
-export function fullSuiteDeny(r) {
-  const how = r.runner === 'pytest' ? '`python -m pytest <tests/test_x.py>` (the test files of the modules you changed, one at a time)'
-    : '`node engine/bin/ci-suite.mjs --changed origin/main` (the tests of the files your branch changed) or `node --test tests/<file>.test.mjs` per file with META_ROOT set';
-  return `a full test suite (${r.runner}) never runs in a worker or MERGE run, a resumed run and a hand-off's "then one full suite" included (owner rulings Q-26 / Q-28; policy tests.budget.full_suite = deny): `
-    + `the full suite runs in CI on every PR and on main after a batch lands. Run only the tests relevant to your change: ${how}; CLAUDE.md Tests has the rules`;
-}

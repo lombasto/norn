@@ -162,7 +162,7 @@ test('MERGE briefs: policy.merge.suite changed (default: the changed + conflicte
     }
     if (k !== 'batch') {
       assert.match(changed, /never the full suite .* Norn refuses it in a run/s);
-      assert.match(changed, /node --test tests\/<file>\.test\.mjs` each, with META_ROOT set/);
+      assert.match(changed, /`norn tests run tests\/<file>\.test\.mjs` \(each file through the machine cache, on an empty META_ROOT\)/);
       assert.match(changed, /Write NOTES: the PR url, the tested merge sha, the merge-land line, changed-file tests <the test files run> counts/);
       assert.match(skip, /conflicts?.*only the test files of the conflicted areas/s);
       assert.match(skip, /a red there = .*--outcome stopped --why "red in a conflicted area/s);

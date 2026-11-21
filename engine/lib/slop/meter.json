@@ -1,0 +1,66 @@
+{
+ "about": "The slop meter's data (meter.mjs; design: state/norn/briefs/slop-meter-design.md). Each signal part scores 0-100 on a log scale between its anchors good and bad; a signal is the mean of its parts, a group the w-weighted mean of its signals, the total the weighted mean of the groups that measured something. Anchors are judgment until the calibration (S2).",
+ "seed": 20261121,
+ "langs": ["mjs", "js", "cjs", "ts", "tsx", "jsx", "mts", "cts", "py", "rs"],
+ "groups": { "Volume": 0.10, "Structure": 0.15, "Ceremony": 0.20, "Duplication": 0.20, "Noise": 0.15, "Leftovers": 0.10, "Trust": 0.05, "Process": 0.05 },
+ "bands": [[0, "Tended"], [20, "Weedy"], [40, "Sloppy"], [60, "Slopified"], [80, "Full slop"]],
+ "hysteresis": 2,
+ "signals": [
+  { "id": "S1", "group": "Volume", "name": "net growth", "w": 0.8, "parts": {
+    "kept": { "good": 0.8, "bad": 0.2, "unit": "deleted per added code line, 30 d" },
+    "big": { "good": 0.25, "bad": 3, "unit": "big landings per week" } } },
+  { "id": "S2", "group": "Volume", "name": "size", "w": 0.2, "parts": {
+    "tokens": { "good": 50000, "bad": 5000000, "unit": "code tokens" } } },
+  { "id": "S3", "group": "Structure", "name": "god files", "w": 1, "parts": {
+    "god": { "good": 0.05, "bad": 0.5, "unit": "share of code tokens in files over the size limit" },
+    "gini": { "good": 0.35, "bad": 0.75, "unit": "file-size Gini" } } },
+  { "id": "S4", "group": "Structure", "name": "fragmentation", "w": 1, "parts": {
+    "tiny": { "good": 0.1, "bad": 0.5, "unit": "share of code files under 25 lines" },
+    "single": { "good": 0.15, "bad": 0.6, "unit": "share of JS modules with one export" },
+    "fanout": { "good": 4, "bad": 15, "unit": "mean relative imports per module" } } },
+  { "id": "S5", "group": "Structure", "name": "functions", "w": 0, "parts": {
+    "density": { "good": 40, "bad": 200, "unit": "functions per 10 k tokens" },
+    "median": { "good": 40, "bad": 300, "unit": "median body tokens" } } },
+  { "id": "S6", "group": "Ceremony", "name": "pass-through wrappers", "w": 1, "parts": {
+    "rate": { "good": 0.5, "bad": 8, "unit": "per 10 k tokens" } } },
+  { "id": "S7", "group": "Ceremony", "name": "abstraction names", "w": 1, "parts": {
+    "rate": { "good": 0.2, "bad": 5, "unit": "per 10 k tokens" } } },
+  { "id": "S8", "group": "Ceremony", "name": "single-use helpers", "w": 1, "parts": {
+    "share": { "good": 0.05, "bad": 0.3, "unit": "share of functions" } } },
+  { "id": "S9", "group": "Duplication", "name": "near-duplicate functions", "w": 1, "parts": {
+    "share": { "good": 0.02, "bad": 0.15, "unit": "share of functions in a cluster" } } },
+  { "id": "S10", "group": "Duplication", "name": "one name, many modules", "w": 1, "parts": {
+    "share": { "good": 0.02, "bad": 0.15, "unit": "share of function names declared in 2+ modules of a group" } } },
+  { "id": "S11", "group": "Duplication", "name": "several ways to do one thing", "w": 0, "parts": {
+    "concerns": { "good": 1, "bad": 4, "unit": "concerns with 2+ idioms" } } },
+  { "id": "S12", "group": "Noise", "name": "swallowed errors", "w": 1, "parts": {
+    "rate": { "good": 2, "bad": 40, "unit": "per 10 k tokens" } } },
+  { "id": "S13", "group": "Noise", "name": "symptom fixes", "w": 1, "parts": {
+    "rate": { "good": 0.5, "bad": 10, "unit": "per 10 k tokens" } } },
+  { "id": "S14", "group": "Noise", "name": "narrating comments", "w": 1, "parts": {
+    "share": { "good": 0.02, "bad": 0.2, "unit": "share of comment lines" } } },
+  { "id": "S14T", "group": "Noise", "name": "stage-tag comments", "w": 0, "parts": {
+    "share": { "good": 0.02, "bad": 0.2, "unit": "share of comment lines" } } },
+  { "id": "S15", "group": "Leftovers", "name": "dead and stray code", "w": 1, "parts": {
+    "orphans": { "good": 0.03, "bad": 0.2, "unit": "share of code modules nothing names" },
+    "stray": { "good": 0.1, "bad": 3, "unit": "versioned names and summary files per 10 k tokens" } } },
+  { "id": "S16", "group": "Leftovers", "name": "shims and deferrals", "w": 1, "parts": {
+    "rate": { "good": 0.3, "bad": 5, "unit": "K11 / K16 / K22 matches per 10 k tokens" } } }
+ ],
+ "god": { "lines": 800, "tokens": 25000 },
+ "tiny_lines": 25,
+ "minhash": { "perms": 64, "bands": 16, "shingle": 5, "jaccard": 0.8, "min_tokens": 30 },
+ "abstraction": "^[A-Z]\\w*(?:Factory|Adapter|Wrapper|Manager|Provider|Handler|Service|Base|Impl)$|^Abstract[A-Z]|[a-z](?:Factory|Adapter|Wrapper|Manager)$",
+ "stray": { "names": "(?:_|-)(?:v\\d+|new|old)$|[a-z\\d]V\\d+$", "files": "(?:^|/)[^/]*SUMMARY[^/]*\\.md$|(?:^|/)IMPLEMENTATION[^/]*\\.md$" },
+ "entry": "(?:^|/)bin/|(?:^|/)(?:__main__|setup|conftest|manage)\\.py$|(?:^|/)(?:main|lib|mod|build)\\.rs$|(?:^|/)index\\.(?:m?js|ts)$|\\.config\\.(?:m?js|ts)$",
+ "symptoms": { "comment": ["eslint-disable", "@ts-ignore", "@ts-expect-error", "type:\\s*ignore", "\\bnoqa\\b", "@ts-nocheck"], "code": ["\\bas\\s+any\\b"] },
+ "history": ["\\bnow uses\\b", "\\bimproved\\b", "\\bnew approach\\b", "\\bpreviously\\b", "\\binstead of the old\\b", "\\bwas changed\\b", "\\brefactored\\b", "\\bupdated to\\b"],
+ "stage_tag": "\\b(?:META|RM|DEC|DIR)-[A-Z0-9]",
+ "narrate": { "jaccard": 0.6, "min_words": 2, "stop": ["the", "and", "for", "with", "from", "this", "that", "into", "then", "its", "are", "was", "not", "all", "each", "one"] },
+ "idioms": {
+  "HTTP": ["\\bfetch\\(", "\\bhttps?\\.(?:request|get)\\(", "\\baxios\\b", "\\brequests\\.(?:get|post)\\("],
+  "dates": ["\\bnew Date\\(", "\\bdayjs\\(", "\\bDateTime\\.", "\\bmoment\\("],
+  "processes": ["\\bspawn(?:Sync)?\\(", "\\bexecFile(?:Sync)?\\(", "\\bexecSync\\(", "\\bsubprocess\\."],
+  "JSON file read": ["\\breadJ\\(", "\\breadJson\\(", "JSON\\.parse\\(\\s*(?:fs\\.)?readFileSync\\("]
+ }
+}
