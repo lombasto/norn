@@ -10,7 +10,8 @@
 //                 rows with their state from branchState, the one state function. The page and `norn branches` both call it.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { boundedAsync } from './jobguard.mjs';
 import { fileURLToPath } from 'node:url';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { loadState, record } from './records.mjs';
@@ -68,7 +69,8 @@ export const branchSlug = b => String(b || '').replace(/^(norn|feat|feature|fix|
 // async children, POOL at a time: on a busy Windows machine one `git cherry` takes ~1.3 s and `git status` in a worktree as long; the
 // owner's hand cleanup of 190 refs took over 10 min one call after another
 const POOL = 4;
-const run = (exe, timeout) => (args, cwd) => new Promise(ok => execFile(exe, args, { cwd, encoding: 'utf8', timeout, windowsHide: true, maxBuffer: 64 << 20 }, (e, out) => ok(e ? null : String(out))));
+// each child bounded (jobguard): a timeout or a killed parent leaves no git.exe behind (git-perf S1: doctor's suspended leaks)
+const run = (exe, timeout) => (args, cwd) => boundedAsync(exe, args, { cwd, timeout }).then(r => (r.status === 0 ? String(r.stdout) : null));
 export const gitA = run('git', 120000);
 const ghA = run('gh', 30000);
 async function pool(xs, fn, n = POOL) { let i = 0; await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => { while (i < xs.length) { const x = xs[i++]; await fn(x); } })); }

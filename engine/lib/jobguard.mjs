@@ -165,6 +165,26 @@ export function boundedSync(file, args, { timeout, cwd, env, input, encoding = '
   return r;
 }
 
+/** boundedSync off the event loop (the async git of branches.mjs and the sync loop): resolves the same shape, never rejects. Never
+ * compiles the helper (that blocks): an uncompiled one = execFile's own timeout, direct child only */
+export function boundedAsync(file, args, { timeout, cwd, env, encoding = 'utf8', maxBuffer = 64 << 20, exe } = {}) {
+  if (!(timeout > 0)) throw new Error('boundedAsync needs a timeout');
+  if (exe === undefined) exe = process.platform === 'win32' ? (jgExe || jobguardCached() || '') : '';
+  const base = { cwd, env, encoding, maxBuffer, windowsHide: true };
+  return new Promise(ok => {
+    const done = (e, out, err) => {
+      const r = { status: e ? (Number.isInteger(e.code) ? e.code : null) : 0, signal: e?.signal ?? null, stdout: out ?? '', stderr: err ?? '', ...(e && !Number.isInteger(e.code) ? { error: e } : {}) }, s = String(r.stderr);
+      if (exe && r.status === 124 && /^jobguard-timeout/m.test(s)) return ok({ ...r, status: null, signal: 'SIGTERM', error: Object.assign(new Error(`execFile ${file} ETIMEDOUT`), { code: 'ETIMEDOUT' }) });
+      if (exe && r.status === 127 && /^jobguard-err/m.test(s)) return ok({ ...r, status: null, error: Object.assign(new Error(`execFile ${file} ENOENT (${s.trim()})`), { code: 'ENOENT' }) });
+      ok(r);
+    };
+    let c;
+    try { c = exe ? execFile(exe, ['run', String(timeout), cwd || '-', [resolveExe(file, env), ...args].map(winQuote).join(' ')], { ...base, timeout: timeout + 10000 }, done) : execFile(file, args, { ...base, timeout }, done); }
+    catch (e) { return done(e, '', ''); }
+    c.stdin?.end();
+  });
+}
+
 /** the hold process's exit (its stdin ended by reapJob, or the held process gone), at most ms: a supervisor awaits it before its
  * own exit, so "the supervisor is gone" (settled) means its hold is gone too - never a hold seen alive after the file (LEAK RED) */
 export function holdGone(job, ms = 5000) {
