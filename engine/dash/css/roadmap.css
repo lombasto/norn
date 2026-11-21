@@ -1,0 +1,29 @@
+/* The Roadmap time lines (ui-context-docs item 5; moved from norn/norn.css): the theme window on 0 .. 88 % (first activity -> now),
+   NOW at 88 %, the future side after it (a dashed stub, no dates). The run bars are tall with a padded hit area, a caption under the
+   bar says the latest run's state in words, and one key over the page names every colour. Both looks; this sheet loads before
+   norn.css, so a rule that must beat its `.rmi > *` is written `.rmi > .rmgantt`. */
+.rmi > .rmgantt { grid-column: 2; grid-row: 1 / span 4; margin-top: 1px; }
+.rmtl { position: relative; height: 22px; }
+.rmtl > i { position: absolute; display: block; }
+.rmtrack { left: 0; width: 88%; top: 10px; height: 2px; background: var(--line); }
+.rmthr { top: 10px; height: 2px; background: var(--c); }
+.rmsp { top: 2px; height: 18px; min-width: 5px; background: var(--k, var(--mute)); box-shadow: inset -1px 0 var(--panel); cursor: help; }
+.rmsp::after, .rmknot::after { content: ''; position: absolute; inset: -4px; }   /* the hit area: a one-day run is still easy to point at */
+.rmsp:hover, .rmknot:hover { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 1; }
+.rmknot { top: 6px; width: 10px; height: 10px; margin-left: -5px; background: var(--rm-past); cursor: help; }
+.rmnow { left: 88%; top: 0; bottom: 0; width: 2px; background: var(--rm-now); }
+.rmstub { left: calc(88% + 5px); right: 0; top: 10px; height: 0; border-top: 2px dashed var(--rm-fut); }
+.rmtl.empty .rmtrack { background: transparent; border-top: 1px dotted var(--line); height: 0; }
+.rmtlw { margin-top: 2px; font-size: 12px; line-height: 1.35; color: var(--mute); overflow-wrap: anywhere; }
+.rmtlw b { color: var(--k, var(--ink)); font-weight: 650; }
+.rmboard .rmi > .rmgantt { grid-column: 1; grid-row: auto; margin: 4px 0 0; }
+/* the key: one row over the time lines, wrapping on a phone */
+.rmlegend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 10px; font-size: 12px; color: var(--mute); }
+.rmlegend > span { display: inline-flex; align-items: center; gap: 5px; }
+.rmsw { flex: none; display: inline-block; width: 14px; height: 10px; background: var(--k, var(--mute)); }
+.rmsw-now { width: 2px; height: 14px; background: var(--rm-now); }
+.rmsw-stub { height: 0; border-top: 2px dashed var(--rm-fut); background: transparent; }
+.rmsw-knot { width: 8px; height: 8px; background: var(--rm-past); }
+@media (max-width: 700px) {
+  .rmi > .rmgantt { grid-column: 1; grid-row: auto; margin: 4px 0 2px; }
+}

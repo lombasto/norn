@@ -181,7 +181,7 @@ test('roadmap edit drawer: every row (tree and board) and theme has an edit butt
 test('the page wires the edit drawer: its own aside, opened by data-rm-edit, POSTs /api/roadmap/<op> with the token, repaints from the reply tree', () => {
   const html = fs.readFileSync(path.join(HERE, '..', 'engine', 'dash', 'index.html'), 'utf8');
   assert.match(html, /<aside id="rmed" class="drawer" hidden/);
-  assert.match(html, /import \{[^}]*renderRmEditor[^}]*rmEditBody[^}]*\} from '\/ui\.mjs'/);
+  assert.match(html, /import \{[^}]*renderRmEditor[^}]*rmEditBody[^}]*\} from '\/pages\/roadmap\.mjs'/);
   assert.match(html, /closest\?\.\('\[data-rm-edit\]'\)/);
   assert.match(html, /post\('\/api\/roadmap\/' \+ b\.op/);
   assert.match(html, /S\.rmData = r\.tree/);
