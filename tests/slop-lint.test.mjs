@@ -1,0 +1,101 @@
+// SloppaChoppa 2 S1b (SPEC 3.1-3.4, 7 S1b): the kind `lint` - one rule (LJ) per language tool, sub-rule ids, levels and shadow in
+// Choppa's data, the config read from the merge base, LJ/config-changed, the replay of a retirement, a cold tool cache fails closed.
+// ESLint's output is recorded (each test hands the check its tool); only the cold-cache test starts npm, offline.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { loadRules, effectiveRules, slopCheck, explainOf, replay, KIND_PARAMS } from '../engine/lib/slop/check.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
+
+const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const put = (dir, files) => { for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); } };
+/** a repo: main = base files, feat/x = head files */
+function repoOf(base, head) {
+  const dir = mkTmp('meta-slop-lint-');
+  git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't'); git(dir, 'config', 'core.autocrlf', 'false');
+  put(dir, base); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'base');
+  git(dir, 'checkout', '-q', '-b', 'feat/x'); put(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
+  return dir;
+}
+const LJ = loadRules().find(r => r.id === 'LJ');
+const msg = (ruleId, line, message) => ({ ruleId, severity: 2, message, line, column: 1 });
+/** a recorded ESLint: side -> [{ filePath, messages }]; every run it is handed is kept in o.runs */
+const recorded = (out, o = {}) => (run, side) => { (o.runs ||= []).push({ run, side }); return JSON.stringify(out[side] || []); };
+
+test('LJ: a finding is LJ/<the tool\'s rule>; the levels are Choppa\'s data (today\'s BLOCK set), every other rule the config turns on is shadow', () => {
+  const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': "import fs from 'node:fs';\nexport const a = b;\nconsole.log(a);\n" });
+  const r = slopCheck({ repo, base: 'main', rules: [LJ], tool: recorded({ head: [{ filePath: 'a.mjs', messages: [msg('no-unused-vars', 1, "'fs' is defined but never used."), msg('no-undef', 2, "'b' is not defined."), msg('no-console', 3, 'Unexpected console statement.')] }] }) });
+  assert.deepEqual(r.findings.map(f => [f.rule, f.level, !!f.shadow]), [['LJ/no-unused-vars', 'BLOCK', false], ['LJ/no-undef', 'WARN', true], ['LJ/no-console', 'BLOCK', false]]);
+  assert.deepEqual(r.blocks.map(b => b.rule), ['LJ/no-unused-vars', 'LJ/no-console'], 'the recommended set runs in shadow: recorded, never held');
+  assert.deepEqual(r.ran, ['LJ']);
+  for (const id of ['no-unused-vars', 'no-duplicate-imports', 'no-debugger', 'no-console', 'no-warning-comments', 'no-restricted-properties']) assert.equal(LJ.levels[id], 'BLOCK', id);
+  assert.notEqual(r.findings[0].fp, slopCheck({ repo, base: 'main', rules: [{ ...LJ, id: 'LX' }], tool: recorded({ head: [{ filePath: 'a.mjs', messages: [msg('no-unused-vars', 1, "'fs' is defined but never used.")] }] }) }).findings[0].fp, 'the fingerprint keys on the sub-rule id');
+});
+
+test('LJ: both sides lint with the merge base\'s config; a branch that edits it is LJ/config-changed (BLOCK), and its own config never reaches the run', () => {
+  const baseCfg = "export default [{ rules: { 'no-console': 'off' } }];\n", headCfg = 'export default [];\n';
+  const repo = repoOf({ 'eslint.config.mjs': baseCfg, 'a.mjs': 'export const a = 1;\n' }, { 'eslint.config.mjs': headCfg, 'a.mjs': 'export const a = 2;\n' });
+  const o = {}, r = slopCheck({ repo, base: 'main', rules: [LJ], tool: recorded({}, o) });
+  assert.deepEqual(o.runs.map(x => [x.side, x.run.config]), [['head', baseCfg], ['base', baseCfg]], 'the base config, for both sides');
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.level]), [['LJ/config-changed', 'eslint.config.mjs', 'BLOCK']]);
+  const plain = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 2;\n' }), o2 = {};
+  assert.deepEqual(slopCheck({ repo: plain, base: 'main', rules: [LJ], tool: recorded({}, o2) }).blocks, []);
+  assert.equal(o2.runs[0].run.config, null, 'no config at base: LJ\'s own rules alone');
+  assert.deepEqual(o2.runs[0].run.rules, LJ.rules);
+});
+
+test('LJ: a file that does not parse is LJ/parse (BLOCK); a tool that cannot run is one BLOCK of LJ', () => {
+  const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = );\n' });
+  const bad = { ruleId: null, fatal: true, severity: 2, message: 'Parsing error: Unexpected token )', line: 1, column: 18 };
+  const rules = loadRules().filter(r => r.kind === 'lint' || r.kind === 'ast');
+  assert.deepEqual(slopCheck({ repo, base: 'main', rules, tool: recorded({ head: [{ filePath: 'a.mjs', messages: [bad] }] }) }).blocks.map(b => [b.rule, b.line]), [['LJ/parse', 1]]);
+  const down = slopCheck({ repo, base: 'main', rules: [LJ], tool: () => { throw new Error('npm ci failed (lock 0123)'); } });
+  assert.deepEqual(down.blocks.map(b => [b.rule, b.level, b.msg]), [['LJ', 'BLOCK', 'could not run: npm ci failed (lock 0123)']]);
+});
+
+test('explainOf answers a sub-rule: its own text from LJ\'s file, else LJ\'s, the fix naming the ESLint page', () => {
+  assert.deepEqual(explainOf('LJ/no-console'), { ...LJ.explain.rules['no-console'], fix: `${LJ.explain.rules['no-console'].fix} (ESLint: https://eslint.org/docs/latest/rules/no-console)` });
+  const { rules, ...own } = LJ.explain;
+  assert.ok(rules['config-changed'] && rules.parse);
+  assert.deepEqual(explainOf('LJ/no-undef'), { ...own, fix: `${own.fix} (ESLint: https://eslint.org/docs/latest/rules/no-undef)` });
+  assert.deepEqual(explainOf('LJ/config-changed'), rules['config-changed'], 'no tool page for Choppa\'s own sub-rules');
+  assert.equal(explainOf('LX/no-undef'), null);
+});
+
+test('overrides.json patches LJ\'s levels (merged by sub-rule) and shadow_rules; K16 (kind shim) has its params row', () => {
+  const d = mkTmp('meta-slop-lint-proj-');
+  put(d, { 'rules/slop/overrides.json': JSON.stringify({ LJ: { params: { levels: { 'config-changed': 'WARN', 'no-undef': 'BLOCK' }, shadow_rules: [] } }, K16: { params: { exclude: ['gen/**'] } } }) });
+  const by = Object.fromEntries(effectiveRules({ projectDir: d }).map(r => [r.id, r]));
+  assert.deepEqual(by.LJ.levels, { ...LJ.levels, 'config-changed': 'WARN', 'no-undef': 'BLOCK' });
+  assert.deepEqual(by.LJ.shadow_rules, []);
+  assert.deepEqual(by.K16.exclude, ['gen/**']);
+  assert.deepEqual(KIND_PARAMS.lint, ['files', 'exclude', 'levels', 'shadow_rules']);
+  assert.equal('eslint' in KIND_PARAMS || 'swallow' in KIND_PARAMS, false, 'the kinds eslint and swallow are gone');
+  put(d, { 'rules/slop/overrides.json': JSON.stringify({ LJ: { params: { rules: {} } } }) });
+  assert.throws(() => effectiveRules({ projectDir: d }), /lint takes the params files, exclude, levels, shadow_rules/, 'what ESLint looks for is not a param');
+});
+
+test('the replay: per merged branch, the old rule\'s new findings beside its new form\'s, paired by file and line', () => {
+  const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 1;\n' });
+  git(repo, 'checkout', '-q', '-b', 'feat/y', 'main'); put(repo, { 'b.mjs': '// TODO: wire it\nexport const b = 2; // todo list\n' }); git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'y');
+  git(repo, 'checkout', '-q', 'main'); git(repo, 'merge', '-q', '--no-ff', '-m', 'merge y', 'feat/y');
+  const old = { id: 'KX', level: 'BLOCK', kind: 'pattern', in: ['comment'], patterns: ['\\bTODO\\b'], files: ['**/*.mjs'], explain: LJ.explain, fixture: LJ.fixture, title: 'x' };
+  const tool = recorded({ head: [{ filePath: 'b.mjs', messages: [msg('no-warning-comments', 1, "Unexpected 'todo' comment."), msg('no-warning-comments', 2, "Unexpected 'todo' comment.")] }] });
+  const rows = replay({ repo, old: 'KX', as: ['LJ/no-warning-comments'], main: 'main', rules: [old, LJ], tool });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].subject, 'merge y');
+  assert.deepEqual([rows[0].old, rows[0].missed], [['b.mjs:1'], []]);
+  assert.deepEqual(rows[0].added.map(a => a.split(' ')[0]), ['b.mjs:2'], 'the case-blind core rule adds one: labelled by hand in the table');
+});
+
+test('a check on a cold tool cache with no network holds the merge: LJ could not run (BLOCK), exit 1', () => {
+  const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 2;\n' });
+  const r = spawnSync(process.execPath, [NORN, 'slop', 'check', '--ci', '--diff', 'main..HEAD'], { cwd: repo, encoding: 'utf8', windowsHide: true, timeout: 120000,
+    env: { ...process.env, META_ROOT: mkTmp('meta-slop-lint-cold-'), npm_config_offline: 'true' } });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^BLOCK LJ `\*` could not run: npm ci failed \(lock [0-9a-f]{12}\)/m);
+  assert.match(r.stdout, /; could not run: .*\bLJ\b/);
+});

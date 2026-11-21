@@ -55,17 +55,18 @@ for (const rule of [...loadRules(), ...projectRules]) {
       const fx = rule.fixture[which];
       const repo = fixtureRepo(fx);
       const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
-      const at = r.findings.filter(f => f.new && f.level === rule.level);
+      // a lint rule's findings carry their sub-rule's level and id (LJ/no-console); the held ones (not shadow) are what the hit must show
+      const level = rule.levels ? 'BLOCK' : rule.level, at = r.findings.filter(f => f.new && f.level === level && !f.shadow);
       assert.deepEqual(r.ran, [rule.id], `${rule.id} ${which} ran`);
       assert.equal(at.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
-      assert.equal(r.blocks.length > 0, want && rule.level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
-      for (const b of at) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
+      assert.equal(r.blocks.length > 0, want && level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
+      for (const b of at) { assert.equal(b.rule.split('/')[0], rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
     }
   });
 }
 
 // S1a (SPEC 1.3 F5 / F6, 3.4): the check fails closed - a rule that could not run and a file the linter cannot parse are BLOCK findings
-const LINT = loadRules().filter(r => r.kind === 'eslint' || r.kind === 'ast');
+const LINT = loadRules().filter(r => r.kind === 'lint' || r.kind === 'ast');
 test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could not run: <why>", fingerprint rule + could-not-run); the result has no skipped list', () => {
   const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n' } });
   const down = () => { throw new Error('npx not found on PATH'); };
