@@ -49,7 +49,8 @@ test('pause routes: a named mode, a safe pause of one run, the pick of pause hal
     assert.equal((await lane('render')).pause, 'handoff');
     const node = (await f.get('/api/agents?project=kestrel')).data.tree.find(n => n.id === 'RUN-2');
     assert.equal(node.pause, 'handoff');
-    assert.match(renderTab('runs', { tree: [node] }, { now: Date.now() }), /data-act="run-resume" data-project="kestrel" data-run="RUN-2"/);
+    // a8b060ac: a row's actions are in its run document, the drawer the picked row (ctx.run) opens
+    assert.match(renderTab('runs', { tree: [node] }, { now: Date.now(), run: 'RUN-2' }), /data-act="run-resume" data-project="kestrel" data-run="RUN-2"/);
     o = await ov();
     assert.match(pauseMenu(o), /Paused hand-off RUN-2 \(render\) <button[^>]*data-act="run-resume"/);
     // Resume all: the hold released (RUN-2 has no spec file here: its resume reports the error, the release still happens)
