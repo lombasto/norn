@@ -12,7 +12,7 @@ import { record } from '../engine/lib/records.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { collidePass } from '../engine/lib/tick.mjs';
 import { casesOf, actionsOf, readCollide } from '../engine/lib/intents.mjs';
-import { claimWork, writeSync, readSync } from '../engine/lib/claims.mjs';
+import { claimWork, allowPair, writeSync, readSync } from '../engine/lib/claims.mjs';
 import { fedOf } from '../engine/lib/fed.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -106,7 +106,10 @@ function homes() {
 
 test('claims: this home\'s claim of a dead lane is released; a dirty worktree and another home\'s claim are left alone; a ** claim is listed', () => {
   const g = homes(), now = Date.now() + 5 * 864e5;   // past recent_days (3) after the runs ended
-  const dead = g.lane(g.a, 'old'), dirty = g.lane(g.a, 'wip'), theirs = g.lane(g.b, 'far', { scope: [] });
+  const dead = g.lane(g.a, 'old'), dirty = g.lane(g.a, 'wip');
+  // b's whole-repo claim would be held by a's two claims: the owner allowed the pairs, so it is on the ledger beside them
+  for (const l of ['a/old', 'a/wip']) assert.ok(allowPair(g.b.f, { project: 'demo', a: 'b/far', b: l, why: 'fixture' }).ok);
+  const theirs = g.lane(g.b, 'far', { scope: [] });
   fs.writeFileSync(path.join(dirty.wt, 'a.txt'), 'not committed\n');
   const r = collidePass(g.a.state, g.a.p, { now, ledger: g.a.ledger });
   assert.deepEqual(r.released, [dead.key]);

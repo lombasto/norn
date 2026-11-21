@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
-import { record, loadState } from '../engine/lib/records.mjs';
+import { record } from '../engine/lib/records.mjs';
+import { loadMail } from '../engine/lib/mail.mjs';
 import { collidePass } from '../engine/lib/tick.mjs';
 import { casesOf, actionsOf, readCollide } from '../engine/lib/intents.mjs';
 import { collisions, holdsOf, holdTerm } from '../engine/lib/collide.mjs';
@@ -20,13 +21,15 @@ const git = (cwd, ...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const fwd = p => p.split(path.sep).join('/');
 const FILES = ['map/tiles.mjs', 'map/paint.mjs', 'ui/board.mjs', 'docs/guide.md'];
+// eight lines, so an edit of the first line and a line appended at the end merge cleanly (same files, no conflict)
+const BASE = f => `// ${f}\n${[2, 3, 4, 5, 6, 7, 8].map(n => `line ${n}`).join('\n')}\n`;
 
 function fixture() {
   const t = mkTmp('meta-ctick-'), origin = path.join(t, 'origin.git'), home = path.join(t, 'home'), state = path.join(t, 'state', 'k');
   git(t, 'init', '-q', '--bare', '-b', 'main', origin);
   git(t, 'clone', '-q', origin, home);
   git(home, 'checkout', '-q', '-b', 'main');
-  for (const f of FILES) put(path.join(home, f), `// ${f}\nline 2\nline 3\n`);
+  for (const f of FILES) put(path.join(home, f), BASE(f));
   git(home, 'add', '-A'); git(home, 'commit', '-qm', 'base'); git(home, 'push', '-q', 'origin', 'main');
   fs.mkdirSync(state, { recursive: true });
   const f = { t, home, state, p: { name: 'k', root: fwd(home), state, policy: {} } };
@@ -45,14 +48,14 @@ function fixture() {
     return record(state, { kind: 'deliverable', ev: 'create', by: 'launcher', data: { repo: fwd(home), branch: `norn/${lane}`, tip, lane, run, delivers: lane, source: 'run', done_utc: new Date().toISOString() } }).id;
   };
   f.land = lane => { git(home, 'push', '-q', 'origin', `norn/${lane}:main`); git(home, 'fetch', '-q', 'origin'); };
-  f.mails = () => Object.values(loadState(state).items).filter(i => i.kind === 'mail');
+  f.mails = () => Object.values(loadMail(state));
   return f;
 }
 
 test('same-files: two running lanes of one home that change one file get the row, and the later run one mail per pair and grade', () => {
   const f = fixture();
-  const a = f.running('map-base', f.lane('map-base', { 'map/tiles.mjs': '// tiles\nline 2\nline 3\nmore tiles\n' }), f.brief('a', '# map-base S1\nScope: map/tiles.mjs\n'));
-  const b = f.running('map-paint', f.lane('map-paint', { 'map/tiles.mjs': '// tiles paint\nline 2\nline 3\n' }), f.brief('b', '# map-paint S1\nScope: map/paint.mjs\n'));
+  const a = f.running('map-base', f.lane('map-base', { 'map/tiles.mjs': `${BASE('map/tiles.mjs')}more tiles\n` }), f.brief('a', '# map-base S1\nScope: map/tiles.mjs\n'));
+  const b = f.running('map-paint', f.lane('map-paint', { 'map/tiles.mjs': BASE('map/tiles.mjs').replace('// map/tiles.mjs', '// tiles paint') }), f.brief('b', '# map-paint S1\nScope: map/paint.mjs\n'));
   collidePass(f.state, f.p);
   const rows = readCollide(f.state).rows;
   assert.equal(rows.length, 1, JSON.stringify(rows));
@@ -61,7 +64,7 @@ test('same-files: two running lanes of one home that change one file get the row
   const m = f.mails();
   assert.equal(m.length, 1);
   assert.equal(m[0].data.to, b, 'the later of the two running runs is told');
-  assert.match(m[0].text ?? m[0].data.body, /map\/tiles\.mjs[\s\S]*norn\/map-base[\s\S]*merge main into your branch after it lands/);
+  assert.match(m[0].text ?? m[0].data.body, /norn\/map-base[\s\S]*map\/tiles\.mjs[\s\S]*merge main into your branch after it lands/);
   assert.ok(actionsOf(casesOf(f.state)[rows[0].col]).some(x => x.action === 'told' && x.args.mail === m[0].id));
   collidePass(f.state, f.p);
   assert.equal(f.mails().length, 1, 'one mail per pair and grade');
