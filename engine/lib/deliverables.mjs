@@ -5,7 +5,7 @@
 // a rebased landing or a deleted branch never turns merged work back into DONE; what cannot be decided asks the owner for one ruling.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fold, readEvents, recordsFile, loadState, record } from './records.mjs';
+import { fold, readEvents, recordsFile, loadState, loadShared, record } from './records.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -111,7 +111,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
   const cache = readCache(stateDir), before = JSON.stringify(cache), prCache = readPrs(stateDir);
   const install = lastInstall(cfg);
   const scanner = repoScanner({ cfg, cache, git, install });
-  const qs = questions || (() => { try { return Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items).filter(i => i.kind === 'question'); } catch { return []; } })();
+  const qs = questions || Object.values(loadShared(stateDir, 'question').items).filter(i => i.kind === 'question');
   const rulingOf = id => qs.find(q => q.data?.deliverable === id && q.data?.ruling && q.state === 'open')?.id ?? null;   // the open 'cannot tell' ruling
   scanner.prime(items);
   const later = items.map(it => {
@@ -367,7 +367,7 @@ export const isLanded = r =>!!r && (r.state === 'merged' || r.state === 'install
 const names = (q, r) => { const t = [q.data?.title, q.data?.body, q.data?.source].filter(Boolean).join('\n');
   return new RegExp(`(^|[^\\w-])${r.id}(?![\\w-])`).test(t) || (!!r.branch && t.includes(r.branch)); };
 export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
-  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items).filter(q => q.kind === 'question' && q.state === 'open');
+  const open = Object.values(loadShared(stateDir, 'question').items).filter(q => q.kind === 'question' && q.state === 'open');
   if (!open.length) return [];
   const landed = deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.filter(isLanded);
   if (!landed.length) return [];
@@ -426,7 +426,7 @@ export function latchMerged(stateDir, { project = {}, git = makeGit(), gh = null
     }
     if (!dry && JSON.stringify(cache) !== before) { const tmp = prFile(stateDir) + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(cache)); fs.renameSync(tmp, prFile(stateDir)); }
   }
-  const qs = () => Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items).filter(x => x.kind === 'question' && x.data?.ruling && x.data?.deliverable);
+  const qs = () => Object.values(loadShared(stateDir, 'question').items).filter(x => x.kind === 'question' && x.data?.ruling && x.data?.deliverable);
   const byId = loadDeliverables(stateDir);
   for (const x of qs().filter(x => x.state === 'answered')) {
     const it = byId[x.data.deliverable], choice = x.answer?.choice;

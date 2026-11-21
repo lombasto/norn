@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runSteps, runStepsAsync } from './steps.mjs';
-import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId, homeOf } from './records.mjs';
+import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId, homeOf, loadShared } from './records.mjs';
 import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
@@ -718,7 +718,7 @@ function swapWait(o) {
 // before the hold is the launcher's, not the check-in's, and goes on
 export function heldRefusal(state, lane, caller, now = Date.now()) {
   if (caller !== 'checkin' || !lane) return;
-  const h = holdOf(fold(readEvents(recordsFile(state, 'lane'))).items[laneId(lane, state)], now);
+  const h = holdOf(loadShared(state, 'lane').items[laneId(lane, state)], now);
   if (h) throw new RunRefused(holdMessage(h), HELD_EXIT);
 }
 // META-CHECKIN-GUARDS R1 guard A (checkinguards.busyRefusal, the replay grader's too): a check-in's new run (start or --queue) on a
