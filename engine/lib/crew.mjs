@@ -189,7 +189,7 @@ function checkEvent(st, { ev, id, data }) {
  * writes are appended as it makes them, so the caller's own write (the run's start event) lands while the lock still holds. An unreadable
  * store throws before fn runs. hire draws a fresh name (drawName) and returns the new dwarf's id. o.home / o.seen: the seed's home and the
  * other homes' names (default homeSeed / seenNames).
- * A dwarf hired before the names (no name on its hire) gets its drawn name here first, once: a rename event, the id kept, no trace of the old name.
+ * A dwarf whose hire carries no name gets a drawn name here first, once: a rename event with { name } only; its id stays the key of its runs.
  */
 export function withCrew(state, fn, { now = () => new Date(), home, seen } = {}) {
   const dir = crewDir(state), file = crewFile(state);
