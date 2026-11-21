@@ -293,7 +293,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // META-DOD 3: a plan review's end names its findings file and count (critique.mjs: 0 = clean, the build it holds goes)
   if (spec.critique) data.critique = { ...spec.critique, file: String(spec.notes).replace(/\\/g, '/'), findings: findingsCount(read(spec.notes)) };
   // MAIL-28: the end data goes to END_FILE first - an end that does not land (refused, or this process dies) is recorded from it by
-  // the sweep (sweepLost / endLost), never read as a run that never started; recordEnd revives a run that reads lost before its end
+  // the sweep (sweepLost / endLost), never read as a run that never started; a run swept lost still takes its end
   const endFile = endFilePath(state, run);
   try { fs.mkdirSync(path.dirname(endFile), { recursive: true }); fs.writeFileSync(endFile, JSON.stringify({ run, data })); } catch (e) { logLine(`end data not kept: ${e.message}`); }
   try { recordEnd(state, run, data); try { fs.unlinkSync(endFile); } catch { /* not written */ } }

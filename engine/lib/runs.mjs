@@ -318,20 +318,8 @@ function endFromEvidence(state, it, ev) {
   try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
   return true;
 }
-/**
- * MAIL-28 (1): the supervisor's end record. An end refused while the run reads lost (a supervisor whose event table takes end from
- * running only: RUN-80 "end not recorded: RUN-80 is lost; end needs running") does not give up: alive, then its end. Any other refusal
- * (killed, already ended) throws as before. rec: a test's record.
- */
-export function recordEnd(state, run, data, { rec = record } = {}) {
-  const end = () => rec(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data });
-  try { return end(); }
-  catch (e) {
-    if (!(e instanceof RecordError) || runsOf(state).find(r => r.id === run)?.state !== 'lost') throw e;
-    rec(state, { kind: 'run', ev: 'alive', id: run, by: 'launcher', data: { why: `its supervisor ended it (end refused: ${e.message})` } });
-    return end();
-  }
-}
+// the supervisor's end record: end is taken from running and lost (a stall swept lost still ends); a killed / ended run refuses it
+export const recordEnd = (state, run, data) => record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data });
 // The second signal (owner report 2026-11-19): a stale .hb alone is never a death. The run's own output (its log, its transcript, the
 // newest mtime) -> ms, or null when there is none. Spec fields fill in what the start record lacks (projectsDir is the spec's only).
 export function runActivityMs(state, it) {

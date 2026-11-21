@@ -258,16 +258,13 @@ test('endLost: a lost run whose supervisor left its end data is ended with that 
   assert.equal(d.item(a).end.outcome, 'done'); assert.match(d.item(a).end.swept, /end\.json/);
 });
 
-// MAIL-28 (1): the supervisor's end path never gives up on a run that reads lost: alive, then its end
-test('recordEnd: an end refused because the run reads lost (an older event table) records alive and then the end; a killed run stays refused', async () => {
+// the supervisor's end lands on a run that reads lost (a stall it lived through); a killed run stays refused
+test('recordEnd: a run that reads lost takes its end directly; a killed run stays refused', async () => {
   const { recordEnd } = await import('../engine/lib/runs.mjs');
-  const { RecordError } = await import('../engine/lib/records.mjs');
   const d = sandbox(), a = d.start(), k = d.start();
   record(d.state, { kind: 'run', ev: 'lost', id: a, by: 'status', data: { why: 'heartbeat 300 s old', cause: 'stale' } });
-  // the older table: end only from running
-  const older = (st, e, o) => { if (e.ev === 'end' && loadState(st).items[e.id].state !== 'running') throw new RecordError(`${e.id} is ${loadState(st).items[e.id].state}; end needs running`); return record(st, e, o); };
-  recordEnd(d.state, a, { exit: 0, outcome: 'done' }, { rec: older });
-  assert.deepEqual(d.item(a).history.map(h => h.ev), ['start', 'lost', 'alive', 'end']);
+  recordEnd(d.state, a, { exit: 0, outcome: 'done' });
+  assert.deepEqual(d.item(a).history.map(h => h.ev), ['start', 'lost', 'end']);
   assert.equal(d.item(a).state, 'exited'); assert.equal(d.item(a).end.outcome, 'done');
   record(d.state, { kind: 'run', ev: 'kill', id: k, by: 'owner', data: {} });
   assert.throws(() => recordEnd(d.state, k, { exit: 0, outcome: 'done' }), /is killed/);
