@@ -27,8 +27,8 @@ import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../li
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
-import { collisions, staleCaveats, hitLines, ahead, UNREADABLE } from '../lib/collide.mjs';
-import { gatherIntents, briefIntent } from '../lib/intents.mjs';
+import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, allowRefusal, pairKey } from '../lib/collide.mjs';
+import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction } from '../lib/intents.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
@@ -573,12 +573,14 @@ function runCmd(argv, env, out, err) {
     if (flags.item) { if (fit) err(`warning: ${fit.warn}`); linkItem(state, flags.item, 'run:' + r.run, 'launcher', err, { why: fit?.why, project }); }
     if (r.queued) {
       out(`QUEUED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} position ${r.position} (${r.why})`);
+      for (const l of r.collide || []) out(l);   // lane-collide S1b: the hold's evidence and SloppaChoppa's pick (SPEC 5.2)
       for (const c of holds) out(`WAITS ${r.run} for the plan review ${c.id} (after run:${c.id}:reviewed: a clean review releases it, findings wait for the check-in's review)`);
       if (o.after?.length || o.labels?.length) for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // S4: met now = starts now; FED: served here = starts now
       return 0;
     }
     out(`STARTED ${r.run} lane ${o.lane} ${ex}${o.model === ex ? '' : ' ' + o.model} ${o.effort} supervisor pid ${r.pid} log ${r.log}`);
     for (const w of r.warnings || []) out(`WARNING ${r.run}: ${w}`);   // NORN-WATCH S5 durable lane output
+    for (const l of r.collide || []) out(l);   // lane-collide S1b: one collide: line per warn hit (SPEC 5.3)
     if (flags.wait) {   // META-OOTB F-1: block until the run ends and say how (the first-task walk-through; exit 1 unless DONE)
       delegateWait({ state, runs: [r.run], maxS: 24 * 3600 });
       // CIRED-ba33455: the `end` record comes BEFORE the supervisor's exit work (auth gate + re-queue, queue fill): the run has
@@ -2319,7 +2321,8 @@ function stuckCmd(argv, env, out, err) {
 }
 
 // ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
-const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)';
+const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)'
+  + ' | list [--all] [--json] | show COL-n [--json] | allow (COL-n | <lane a> <lane b>) [--kind K] --as checkin|controller|owner --why W | undo COL-n [--action N] --as R --why W';
 function collideCmd(argv, env, out, err) {
   try {
     const flags = {}, pos = [];
@@ -2327,11 +2330,12 @@ function collideCmd(argv, env, out, err) {
       const a = argv[i];
       if (!a.startsWith('--')) { pos.push(a); continue; }
       const k = a.slice(2);
-      if (k === 'json') { flags.json = true; continue; }
-      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      if (k === 'json' || k === 'all') { flags[k] = true; continue; }
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action'].includes(k)) throw new RunError(`unknown flag ${a}`);
       flags[k] = argv[++i];
     }
-    if (pos[0] !== 'plan') throw new RunError(pos[0] ? `unknown verb ${pos[0]} (plan)` : 'collide needs a verb (plan)');
+    if (['list', 'show', 'allow', 'undo'].includes(pos[0])) return collideCase(pos, flags, env, out);
+    if (pos[0] !== 'plan') throw new RunError(pos[0] ? `unknown verb ${pos[0]} (plan, list, show, allow, undo)` : 'collide needs a verb (plan, list, show, allow, undo)');
     if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
     if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
     const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
@@ -2364,8 +2368,64 @@ function collideCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + COLLIDE_USAGE); return 2; }
+    if (e instanceof RunRefused || e instanceof RecordError) { err('norn collide: refused - ' + e.message); return e.code ?? 3; }
     throw e;
   }
+}
+// lane-collide S1b: the cases (COL-n) - list, show, and the two writes of S1b: allow (the pair ruling that releases a hold; SPEC 4A.3 says
+// who may) and undo (of an allow only: a hold, an after or a told is nobody's choice - it ends by itself, or by an allow). A worker run
+// applies nothing (META_RUN_ID set and no check-in / controller role), as in round 1.
+const caseLine = c => { const a = actionsOf(c), d = c.data; return `${c.id} ${c.state} ${d.kind}${d.grade ? ` (${d.grade})` : ''} ${d.verdict} ${d.a?.lane ?? '?'} > ${d.b?.lane ?? '?'} door ${d.door ?? '-'}${a.length ? ` - ${a.map(x => x.action + (x.undone ? ' (undone)' : '')).join(', ')}` : ''}`; };
+const STRICTEST = { territory: 'exclusive' };   // an allow of a whole kind with no case behind it is judged at the kind's strictest grade
+function collideCase(pos, flags, env, out) {
+  const { state } = where(flags, env), cases = casesOf(state), [verb, ...args] = pos;
+  const json = c => ({ id: c.id, state: c.state, ...c.data, actions: actionsOf(c) });
+  if (verb === 'list') {
+    const xs = Object.values(cases).filter(c => flags.all || c.state === 'open').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)));
+    if (flags.json) { out(JSON.stringify(xs.map(json), null, 1)); return 0; }
+    if (!xs.length) out(flags.all ? 'no collision case' : 'no open collision case');
+    for (const c of xs) out(caseLine(c));
+    return 0;
+  }
+  const col = /^COL-\d+$/.test(args[0] ?? '') ? cases[args[0]] : null;
+  if (/^COL-/.test(args[0] ?? '') && !col) throw new RunError(`no case ${args[0]}`);
+  if (verb === 'show') {
+    if (!col) throw new RunError('show needs COL-n');
+    if (flags.json) { out(JSON.stringify(json(col), null, 1)); return 0; }
+    out(caseLine(col));
+    out(`  ${col.data.why}`);
+    if (col.data.files?.length) out(`  files (${col.data.files_n}): ${col.data.files.join(' ')}`);
+    if (col.data.recommended) out(`  SloppaChoppa: ${col.data.recommended.remedy} (${col.data.recommended.why})`);
+    actionsOf(col).forEach((a, i) => out(`  ${i + 1}. ${a.at} ${a.action} by ${a.by}${a.auto ? ' (auto)' : ''}${a.undone ? ' - undone' : ''}${a.args ? ` ${JSON.stringify(a.args)}` : ''}${a.why ? ` - ${a.why}` : ''}`));
+    return 0;
+  }
+  if (env.META_RUN_ID && !['checkin', 'controller'].includes(env.META_ROLE)) throw new RunRefused(`a worker run applies no remedy (run ${env.META_RUN_ID}): name the collision in NOTES`, 3);
+  if (!flags.as) throw new RunError(`${verb} needs --as checkin|controller|owner`);
+  if (!flags.why) throw new RunError(`${verb} needs --why`);
+  if (verb === 'undo') {
+    if (!col) throw new RunError('undo needs COL-n');
+    const acts = actionsOf(col), a = flags.action ? acts[Number(flags.action) - 1] : acts.filter(x => !x.undone).at(-1), n = acts.indexOf(a) + 1;
+    if (!a) throw new RunError(`${col.id} has no action${flags.action ? ` ${flags.action}` : ''} to undo`);
+    if (a.undone) throw new RunRefused(`${col.id} action ${n} (${a.action}) is already undone`, 3);
+    if (a.action !== 'allow') throw new RunRefused(`${col.id} action ${n} (${a.action}) has no undo: ${a.action === 'told' ? 'it was information' : 'a hold ends by itself when the holder lands, or by norn collide allow'}`, 3);
+    const r = allowRefusal(flags.as, col.data.kind, col.data.grade);
+    if (r) throw new RunRefused(r, 3);
+    record(state, { kind: 'collision', ev: 'undo', id: col.id, by: flags.as, data: { action: a.i, why: flags.why } });
+    out(`${col.id}: allow ${a.args?.pair} withdrawn - the judge holds the pair again from the next fill`);
+    return 0;
+  }
+  if (!col && args.length !== 2) throw new RunError('allow needs COL-n or two lane names');
+  const kinds = flags.kind ? [flags.kind] : col ? [col.data.kind] : [], pair = col ? col.data.pair ?? pairKey(col.data.a.lane, col.data.b.lane) : pairKey(args[0], args[1]);
+  const open = Object.values(cases).filter(c => c.state === 'open' && (c.data.pair ?? pairKey(c.data.a?.lane, c.data.b?.lane)) === pair);
+  const need = [...(col ? [col] : open).filter(c => !kinds.length || kinds.includes(c.data.kind)).map(c => [c.data.kind, c.data.grade]),
+    ...(col ? [] : (kinds.length ? kinds : ['item', 'territory', 'order']).map(k => [k, STRICTEST[k] ?? null]))];
+  const refused = need.map(([k, g]) => allowRefusal(flags.as, k, g)).find(Boolean);
+  if (refused) throw new RunRefused(refused, 3);
+  const id = col?.id ?? open[0]?.id ?? record(state, { kind: 'collision', ev: 'open', by: flags.as, data: { key: `ruling:${pair}`, kind: 'any', grade: null, verdict: 'allow', door: 'cli',
+    a: { lane: args[0] }, b: { lane: args[1] }, files: [], files_n: 0, why: flags.why, pair } }).id;
+  caseAction(state, id, 'allow', { by: flags.as, auto: false, args: { pair, kinds }, why: flags.why });
+  out(`${id}: allow ${pair}${kinds.length ? ` for ${kinds.join(', ')}` : ' for every kind'} - a held run starts at the next fill`);
+  return 0;
 }
 
 // lane-outputs item 9 (runasks.mjs): a run's end posts its notes' owner asks by itself; this posts them for runs that ended before

@@ -245,6 +245,20 @@ test('MR score = Gas Town score.go: 1000 + epic_h*10 + (4-P)*100 - min(retries*5
   assert.deepEqual(mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW }).rows.map(r => r.id), ['DLV-2']);
 });
 
+// lane-collide S1b (SPEC 4A.1): a deliverable that queued runs wait for lands early - +100 a waiting run, at most 300; an entry whose
+// run no longer waits counts for nothing
+test('MR score waiters: the held runs of collide-holds.json lift the holder lane\'s deliverable to the head of the queue', () => {
+  assert.equal(mrScore({ waiters: 2 }), 1400);
+  assert.equal(mrScore({ waiters: 9 }), 1500, 'the waiters term caps at 300');
+  const f = qRepo(), state = qState(f, { epic: false });
+  const q = () => record(state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'w', worktree: '/w' } }, { now: () => at(-1), views: false }).id;
+  const w1 = q(), w2 = q(), gone = q();
+  record(state, { kind: 'run', ev: 'withdraw', id: gone, by: 'controller', data: { why: 'not needed' } }, { views: false });
+  fs.writeFileSync(path.join(state, 'collide-holds.json'), JSON.stringify(Object.fromEntries([w1, w2, gone].map(id => [id, { cols: ['COL-1'], holders: ['c'], since: at(-1).toISOString(), why: 'x' }]))));
+  const { rows } = mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW });
+  assert.deepEqual(rows.map(r => [r.id, r.waiters]), [['DLV-3', 2], ['DLV-1', 0], ['DLV-4', 0], ['DLV-2', 0]], 'DLV-3 (lane c, 3 retries) is first while 2 runs wait');
+});
+
 // META-CATCH S2: the entry check of a look item's row - a DONE whose end names an image newer than its start, and a pass verdict
 // newer than the row's head; nothing else in the queue changes (the other rows keep their order)
 test('look item: its row enters the queue only with a proven DONE and a pass verdict newer than the head; held rows are named', () => {

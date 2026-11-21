@@ -2,7 +2,8 @@
 // queue of DONE-not-merged deliverables. Code only, no LLM: the tick runs it after the fill.
 //  1. MR score (Gas Town internal/refinery/score.go:43-51, 81-87): 1000 + epic_hours*10 + (4 - priority)*100
 //     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P4; none = P2, the DAG default), retries = its
-//     resolve / fix rounds, the DLV's age since DONE.
+//     resolve / fix rounds, the DLV's age since DONE. lane-collide S1b (SPEC 4A.1, landing the holder early): + min(waiters*100, 300),
+//     waiters = the queued runs a collision holds on the DLV's lane (<state>/collide-holds.json; derived each pass, so it ends with the wait).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile } from './records.mjs';
@@ -12,7 +13,7 @@ import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
-import { acquireLock, laneWriter, killTree, liveRuns } from './runs.mjs';
+import { acquireLock, laneWriter, killTree, liveRuns, readCollideHolds } from './runs.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { renderBatchBrief, suiteMode, briefMarker } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
@@ -38,9 +39,9 @@ export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 export const gateKind = (row, cfg) => (row.native ? 'door' : cfg.gate?.fast ? 'batch' : 'stage');
 
 /** Gas Town's MR score with our inputs (score.go:43-51); higher merges first */
-export function mrScore({ epicHours = 0, priority = 'P2', retries = 0, dlvHours = 0 } = {}) {
+export function mrScore({ epicHours = 0, priority = 'P2', retries = 0, dlvHours = 0, waiters = 0 } = {}) {
   const p = PRIO_RANK[priority] ?? PRIO_RANK.P2;
-  return Math.round(1000 + epicHours * 10 + (4 - p) * 100 - Math.min(retries * 50, 300) + dlvHours);
+  return Math.round(1000 + epicHours * 10 + (4 - p) * 100 - Math.min(retries * 50, 300) + Math.min(waiters * 100, 300) + dlvHours);
 }
 
 // the open epic a deliverable belongs to: by its DLV id, else by its DONE run; the oldest open one wins (stable)
@@ -55,6 +56,12 @@ function retriesOf(runs, stateDir, row, since) {
     || (row.lane && r.data?.lane === row.lane && /^fix/i.test(r.data?.stage || '') && Date.parse(r.created) >= since))).length;
 }
 
+// lane-collide S1b: per holder lane, the queued runs a collision holds on it (an entry of a run no longer queued counts for nothing)
+function waitersOf(stateDir, runs) {
+  const queued = new Set(runs.filter(r => r.state === 'queued').map(r => r.id)), out = {};
+  for (const [id, h] of Object.entries(readCollideHolds(stateDir))) if (queued.has(id)) for (const l of h.holders || []) out[l] = (out[l] || 0) + 1;
+  return out;
+}
 /**
  * The queue: every DONE-not-merged deliverable that is open (not parked, not superseded) and whose branch exists, in score order.
  * Returns { rows: [{ ...view row, score, priority, epic, epic_hours, dlv_hours, retries, gate, word (rehearsal), into (target branch) }], cfg,
@@ -67,6 +74,7 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
   const dlvs = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items);
   const red = loadMq(stateDir).red || {};   // piece 3: a bisect culprit stays out (no update, no batch) until its tip changes
+  const waitOn = waitersOf(stateDir, runs);
   const looks = Object.values((() => { try { return loadRoadmap(stateDir).items; } catch { return {}; } })()).filter(n => n.proof === 'look');
   const rows = [], held = [], into1 = new Map(), ib1 = into => (into1.has(into) ? into1.get(into) : into1.set(into, intoSha(cfg, into, git)).get(into));
   for (const r of v.rows) {
@@ -86,9 +94,9 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
     const priority = ep?.data.priority || 'P2';
     const epic_hours = ep ? Math.max(0, (now - Date.parse(ep.created)) / H) : 0;
     const dlv_hours = Math.max(0, (now - Date.parse(r.done_utc)) / H);
-    const retries = retriesOf(runs, stateDir, r, since);
-    rows.push({ ...r, score: mrScore({ epicHours: epic_hours, priority, retries, dlvHours: dlv_hours }), priority, epic: ep?.id ?? null,
-      epic_hours: +epic_hours.toFixed(1), dlv_hours: +dlv_hours.toFixed(1), retries, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
+    const retries = retriesOf(runs, stateDir, r, since), waiters = (r.lane && waitOn[r.lane]) || 0;
+    rows.push({ ...r, score: mrScore({ epicHours: epic_hours, priority, retries, dlvHours: dlv_hours, waiters }), priority, epic: ep?.id ?? null,
+      epic_hours: +epic_hours.toFixed(1), dlv_hours: +dlv_hours.toFixed(1), retries, waiters, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
       into, red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null,
       slop: slop ? storedSlop(stateDir, r, hash) : 0 });   // RM-44 D1: the stored check of its tip (null = unchecked; the pick checks it) - not while off (META-BETA-PREP)
   }
