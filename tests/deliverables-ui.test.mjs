@@ -1,12 +1,12 @@
-// META-DELIVERABLES 6 (DELIVERABLES-SPEC 3): the deliverable drawer, the Map band state, the /api/deliverables route (the Inbox has no
-// deliverables card since the UI redesign 2026-11-20: Lanes shows finished work). Temp-dir dashboards + fixture git repos only (never the live dash / state).
+// META-DELIVERABLES 6 (DELIVERABLES-SPEC 3): the deliverable drawer, a lane's PR track from its newest deliverable, the /api/deliverables route
+// (no Inbox card and no Map since the UI redesign 2026-11-20: Lanes shows finished work). Temp-dir dashboards + fixture git repos only (never the live dash / state).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { renderTab, renderDeliverable } from '../engine/dash/ui.mjs';
-import { mapGraph } from '../engine/lib/map.mjs';
+import { prStep } from '../engine/lib/lanes.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { fixture as dash } from './helpers/dash-fixture.mjs';
 
@@ -24,18 +24,16 @@ test('drawer: the deliverable opened - state, tip, behind / ahead, native files,
     'norn deliverables park DLV-1 --why', 'DONE', 'MERGED', 'INSTALLED']) assert.ok(html.includes(s), s);
 });
 
-test('map: a lane band carries its deliverable state; the SVG draws it with an open target', () => {
-  const st = { items: { 'L:gen': { id: 'L:gen', kind: 'lane', state: 'active', data: { name: 'gen' }, history: [] } } };
-  const m = mapGraph(st, { deliverables: [row({ lane: 'gen' }), row({ id: 'DLV-4', lane: 'other' })] });
-  const band = m.bands.find(b => b.lane === 'gen');
-  assert.equal(band.deliverables.length, 1); assert.equal(band.deliverables[0].id, 'DLV-1'); assert.equal(band.deliverables[0].state, 'done');
-  assert.deepEqual(mapGraph(st, {}).bands.find(b => b.lane === 'gen').deliverables, []);
-  const html = renderTab('map', { project: 'kestrel', ...m }, { project: 'kestrel', now: NOW });
-  assert.match(html, /class="dlv done[^"]*"[^>]*data-dlv="DLV-1"/);
-  assert.match(html, /DLV-1 done 10\.8 d · 1002 behind · native/);
+test('lanes: a lane\'s newest deliverable is its PR track; the row draws the step', () => {
+  assert.deepEqual(prStep([row({ lane: 'gen' })]), { step: 'done', pr: null, url: null, branch: 'feat/shader-cache' });
+  assert.equal(prStep([row({ lane: 'gen' }), row({ id: 'DLV-4', lane: 'gen', state: 'merged', branch: 'feat/b' })]).step, 'merged', 'the newest deliverable wins');
+  assert.equal(prStep([]), null);
+  const lane = { name: 'gen', id: 'L:gen', project: 'kestrel', board: 'land', state: 'active', data: {}, run: 'RUN-1', run_state: 'exited', text: 'exited: DONE', dlv: prStep([row({ lane: 'gen' })]) };
+  const html = renderTab('lanes', { lanes: [lane] }, { project: 'kestrel', now: NOW, laneShow: ['land'] });
+  assert.match(html, /id="lane-gen"[^]*class="ltrack" role="img" aria-label="PR track: done"/);
 });
 
-test('server: /api/deliverables (git-derived, cached child CLI) feeds the Map bands', async () => {
+test('server: /api/deliverables (git-derived, cached child CLI) feeds the Lanes PR track', async () => {
   const f = await dash();
   try {
     const repo = f.pa.root;
@@ -43,7 +41,7 @@ test('server: /api/deliverables (git-derived, cached child CLI) feeds the Map ba
     commit(repo, 'README.md', 'r', 'init');
     g(repo, 'checkout', '-q', '-b', 'feat/a'); const a = commit(repo, 'src/a.rs', 'a', 'feat(a): a'); g(repo, 'checkout', '-q', 'main');
     g(repo, 'update-ref', 'refs/remotes/origin/feat/a', a);
-    record(f.pa.state, { kind: 'deliverable', ev: 'create', by: 'controller', data: { repo, branch: 'feat/a', lane: 'gen', delivers: 'the a layer', done_utc: new Date(Date.now() - 3 * 864e5).toISOString() } }, { views: false });
+    record(f.pa.state, { kind: 'deliverable', ev: 'create', by: 'controller', data: { repo, branch: 'feat/a', lane: 'render', delivers: 'the a layer', done_utc: new Date(Date.now() - 3 * 864e5).toISOString() } }, { views: false });
     // the first call never waits for git: it answers pending and starts the child; the cached rows follow
     const first = await f.get('/api/deliverables?project=kestrel');
     assert.equal(first.status, 200, JSON.stringify(first.data));
@@ -53,8 +51,8 @@ test('server: /api/deliverables (git-derived, cached child CLI) feeds the Map ba
     assert.equal(r.data.pending, false);
     assert.equal(r.data.rows.length, 1); assert.equal(r.data.rows[0].branch, 'feat/a'); assert.equal(r.data.rows[0].state, 'done'); assert.equal(r.data.rows[0].project, 'kestrel');
     assert.equal((await f.get('/api/deliverables?project=all')).data.rows.length, 1);
-    const m = (await f.get('/api/map?project=kestrel')).data;
-    assert.equal(m.bands.find(b => b.lane === 'gen').deliverables[0].branch, 'feat/a');
+    const lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
+    assert.deepEqual(lanes.find(l => l.name === 'render').dlv, { step: 'done', pr: null, url: null, branch: 'feat/a' });
     g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
     void loadState;
   } finally { await f.done(); }
