@@ -10,12 +10,13 @@
 //                 rows with their state from branchState, the one state function. The page and `norn branches` both call it.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { boundedAsync } from './bounded.mjs';
 import { fileURLToPath } from 'node:url';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { loadState, record } from './records.mjs';
 import { liveRuns } from './runs.mjs';
-import { deliverableConfig, loadDeliverables } from './deliverables.mjs';
+import { deliverableConfig, loadDeliverables, deliverablesView } from './deliverables.mjs';
 import { githubRepo } from './overlap.mjs';
 import { pathKey } from './config.mjs';
 import { fwd } from './dlvmerge.mjs';
@@ -68,7 +69,8 @@ export const branchSlug = b => String(b || '').replace(/^(norn|feat|feature|fix|
 // async children, POOL at a time: on a busy Windows machine one `git cherry` takes ~1.3 s and `git status` in a worktree as long; the
 // owner's hand cleanup of 190 refs took over 10 min one call after another
 const POOL = 4;
-const run = (exe, timeout) => (args, cwd) => new Promise(ok => execFile(exe, args, { cwd, encoding: 'utf8', timeout, windowsHide: true, maxBuffer: 64 << 20 }, (e, out) => ok(e ? null : String(out))));
+// each child bounded (jobguard): a timeout or a killed parent leaves no git.exe behind (git-perf S1: doctor's suspended leaks)
+const run = (exe, timeout) => (args, cwd) => boundedAsync(exe, args, { cwd, timeout }).then(r => (r.status === 0 ? String(r.stdout) : null));
 export const gitA = run('git', 120000);
 const ghA = run('gh', 30000);
 async function pool(xs, fn, n = POOL) { let i = 0; await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => { while (i < xs.length) { const x = xs[i++]; await fn(x); } })); }
@@ -170,7 +172,11 @@ export async function refreshBranches(p, { git = gitA, gh = ghA, now = Date.now(
     const memo = old?.memo || {};
     let n = 0;   // what a first scan learned survives a stop: the memo is written every 10 answers (the old facts stay until the scan ends)
     const progress = () => { if (++n % 10 === 0) save(f, { ...(old || { refs: [], worktrees: [] }), memo }); };
-    return save(f, { ...(await scanBranches(repo, { main, remote: remote || 'origin', git, gh, memo, now, progress })), memo });
+    const out = save(f, { ...(await scanBranches(repo, { main, remote: remote || 'origin', git, gh, memo, now, progress })), memo });
+    // git-perf S1: the slow landing rules of the deliverables (squash / rebase / content) run here, off the tick and the fill: every
+    // reader keeps a tip's "not on main" answer across main moves (dlvmerge landedOn), this detached refresh asks them again
+    try { deliverablesView({ stateDir: p.state, project: p, now, refresh: true }); } catch { /* the readers keep the last answers */ }
+    return out;
   } catch (e) { return save(f, { ...(old || { refs: [], worktrees: [] }), error: `scan failed: ${String(e.message).split('\n')[0]}` }); }
 }
 function save(f, c) { try { fs.mkdirSync(path.dirname(f), { recursive: true }); const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(c)); fs.renameSync(t, f); } catch { /* the view still answers */ } return c; }

@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import { readEvents, recordsFile, fold, record, homeOf, roleAddrIn } from './records.mjs';
 import { measureRun } from './standing.mjs';
 import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';

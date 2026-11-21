@@ -24,6 +24,7 @@ import { syncCut, cutLines } from './synccut.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
 import { setPause, clearPause } from './pause.mjs';
+import { boundedAsync } from './bounded.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const COPIED = ['run', 'deliverable'];
@@ -394,8 +395,12 @@ const lastLine = r => (r.err || r.out || '').trim().split('\n').pop();
 /** a norn CLI child, async: -> { code, out, err } */
 export const norn = (args, { env = process.env } = {}) => new Promise(ok => execFile(process.execPath, [NORN, ...args], { env, windowsHide: true, timeout: 600000, maxBuffer: 32 << 20 },
   (e, out, err) => ok({ code: e ? (Number.isInteger(e.code) ? e.code : 1) : 0, out: String(out || ''), err: String(err || '') })));
-const gitA = (cfg, args) => new Promise((ok, no) => execFile('git', args, { env: { ...process.env, ...(fs.existsSync(cfg.dir) ? { GIT_DIR: cfg.dir } : {}) }, windowsHide: true, timeout: 60000, maxBuffer: 16 << 20 },
-  (e, out, err) => (e ? no(new Error(`git ${args[0]}: ${String(err || e.message).trim().split('\n').pop()}`)) : ok(String(out)))));
+// bounded (jobguard): the sync loop's ls-remote never leaves a git.exe behind (git-perf S1)
+const gitA = async (cfg, args) => {
+  const r = await boundedAsync('git', args, { env: { ...process.env, ...(fs.existsSync(cfg.dir) ? { GIT_DIR: cfg.dir } : {}) }, timeout: 60000, maxBuffer: 16 << 20 });
+  if (r.status !== 0) throw new Error(`git ${args[0]}: ${String(r.stderr || r.error?.message || `exit ${r.status}`).trim().split('\n').pop()}`);
+  return String(r.stdout);
+};
 
 /** the real loop of a ledger config: the dashboard passes its CLI runner (cli), `norn sync watch` the default one and ref-ed timers (they keep
  * its process alive); log defaults to sync.log */
