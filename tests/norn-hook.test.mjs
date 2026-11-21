@@ -101,4 +101,15 @@ test('scope: the calls scope.mjs surely allows pass without Node; every other ca
   assert.match(hook('scope', w.state, { input: pass[5] }).stdout, /outside the brief's Scope/);
   silent(hook('scope', w.state, { input: pass[0], node: NO_NODE }), 'shell call');
   assert.ok(fs.existsSync(scopeFile(w.state, 'RUN-1')));
+  // test-diet S1: a run whose policy.tests checks nothing (tests_free in the scope file) passes its test commands here; by default
+  // (policy.tests light, a budget) a test command goes to Node, `norn tests run` included
+  const test = pay('Bash', { command: 'node --test tests/a.test.mjs' }, w.wt), nt = pay('Bash', { command: 'norn tests run --changed' }, w.wt);
+  assert.equal(JSON.parse(fs.readFileSync(scopeFile(w.state, 'RUN-1'), 'utf8')).tests_free, false);
+  for (const p of [test, nt]) assert.equal(hook('scope', w.state, { input: p, node: NO_NODE }).status, 1, `Node judges: ${p}`);
+  const free = path.join(w.root, 'free.json');
+  fs.writeFileSync(free, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy: { tests: { mode: 'changed', run_budget_min: 0, browser: 'allow', full_suite: 'allow' } } }));
+  const spec = JSON.parse(fs.readFileSync(path.join(w.state, 'runs', 'RUN-1.spec.json'), 'utf8'));
+  writeScopeFile(w.state, 'RUN-1', { ...spec, ctx_from: free });
+  for (const p of [test, nt]) silent(hook('scope', w.state, { input: p, node: NO_NODE }), p);
+  assert.equal(hook('scope', w.state, { input: judged[0], node: NO_NODE }).status, 1, 'the other checks stay');
 });

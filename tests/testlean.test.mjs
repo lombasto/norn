@@ -181,22 +181,22 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   const app = createDashboard({ projects: [{ name: 'kestrel', state: st }], machine: {}, budgetFile: path.join(st, 'budget.json'), platform: {}, sessionsDir: path.join(st, 'sessions') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
-  // TESTS-RUNTIME: the lean evidence and the merge check sit in Costs and health, the charts and the last wave in Trends
+  // TESTS-RUNTIME: the lean evidence and the merge check sit in Costs and health, the charts and the last wave under Suite (test-diet S1)
   const get = async p => (await fetch(url + p)).json(), now = Date.parse('2026-11-14T12:00:00Z');
   const view = async sub => { const d = await loadTab('tests', 'kestrel', get, { sub }); return renderTab('tests', { ...d, ...(await loadParts('tests', 'kestrel', d, get)), parts_loading: false }, { now }); };
-  let data, costs, trends;
-  try { data = await loadTab('tests', 'kestrel', get); costs = await view('costs'); trends = await view('trends'); } finally { await app.close(); }
+  let data, costs, suite;
+  try { data = await loadTab('tests', 'kestrel', get); costs = await view('costs'); suite = await view('suite'); } finally { await app.close(); }
   assert.equal(data.project, 'kestrel'); assert.equal(data.history.length, 2); assert.equal(data.sub, 'suite'); assert.equal(data.parts_loading, true);
   for (const id of ['tests-mut', 'tests-never', 'tests-dup', 'tests-lean', 'tests-merges']) assert.match(costs, new RegExp(`id="${id}"`), id);
-  for (const id of ['tests-time', 'tests-count', 'tests-suite', 'tests-wave']) assert.match(trends, new RegExp(`id="${id}"`), id);
+  for (const id of ['tests-time', 'tests-count', 'tests-suite', 'tests-wave', 'tests-cpu']) assert.match(suite, new RegExp(`id="${id}"`), id);
   assert.match(costs, /kills 0/); assert.match(costs, /inside: <span class="mute">a\.test\.mjs<\/span> big/);
-  assert.match(trends, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
-  assert.match(trends, /gate passed/);
+  assert.match(suite, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
+  assert.match(suite, /gate passed/);
   assert.match(renderMore('tests', {}), /<h3>Health<\/h3><ul>[^]*data-tab="spend"[^]*data-tab="tests" aria-current="page"/, 'beside Spend under Health in More (stage NAV)');
   const empty = renderTab('tests', { history: [], git: null, times: null, commands: { measure: 'norn tests measure', history: 'norn tests history' }, sub: 'suite', breakdown: null, tests: { rows: [], n: 0 } }, {});
   assert.match(empty, /not measured yet/); assert.match(empty, /norn tests measure/);
   assert.match(empty, /id="tests-scope"[^>]*>Nothing measured yet\. The tick fills/, 'an empty page says why and what fills it');
-  const none = renderTab('tests', { suite: false, history: [], git: { points: [{ day: '2026-11-17', tests: 566, test_lines: 14848, code_lines: 39556 }] }, commands: { measure: 'norn tests measure' }, sub: 'trends', cpu: [], lanes: null, wave: null }, {});
+  const none = renderTab('tests', { suite: false, history: [], git: { points: [{ day: '2026-11-17', tests: 566, test_lines: 14848, code_lines: 39556 }] }, commands: { measure: 'norn tests measure' }, sub: 'suite', breakdown: null, tests: { rows: [], n: 0 }, cpu: [], wave: null }, {});
   assert.match(none, /this project's tests\/ holds neither/); assert.match(none, /id="tests-time"/, 'the git charts still fill');
 });
 

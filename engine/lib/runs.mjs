@@ -74,7 +74,7 @@ export function mailHookOf(o) {
 }
 // META-DOD 2: the same executors get the scope guard (scope.mjs): deny rules, the write block and the PreToolUse hook - write runs only
 // ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too); TEST-GOVERNANCE S1:
-// with it off, the hook alone while policy.tests.budget.full_suite = deny (the full-suite deny reaches every run, a resume too)
+// with it off, the hook alone while policy.tests checks something (testpolicy.mjs testsFree) (the full-suite deny reaches every run, a resume too)
 export function scopeOfLaunch(o) {
   const h = mailHookOf(o) && scopeHookOf(o);
   return h ? guardSettings(specPolicy({ ctx_from: policySource(o) }), o, h) : undefined;

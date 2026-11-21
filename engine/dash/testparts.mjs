@@ -4,8 +4,9 @@
 import hljs from './vendor/highlight.min.js';
 import { esc } from './docs.mjs';
 
-/** the Tests tab's sub-views [id, label] (subviews.mjs: 3-4; the governance views are part of Costs and health and Trends) */
-export const TESTS_SUBS = [['suite', 'Suite'], ['costs', 'Costs and health'], ['impact', 'Impact'], ['trends', 'Trends']];
+/** the Tests tab's sub-views [id, label] (subviews.mjs: 3-4; the governance views are part of Costs and health, the charts over time of
+ *  Suite; test-diet S1: Run time = a run's wall time vs its test time, the cache's savings, policy.tests) */
+export const TESTS_SUBS = [['suite', 'Suite'], ['costs', 'Costs and health'], ['impact', 'Impact'], ['runtime', 'Run time']];
 const MAX_HL = 400000;   // a file above this many characters is shown unhighlighted
 const LANG = { mjs: 'javascript', cjs: 'javascript', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', json: 'json',
   rs: 'rust', go: 'go', cs: 'csharp', java: 'java', rb: 'ruby', sh: 'bash', ps1: 'powershell', md: 'markdown', yml: 'yaml', yaml: 'yaml', toml: 'ini', c: 'c', h: 'c', cpp: 'cpp' };

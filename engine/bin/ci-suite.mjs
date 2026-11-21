@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseKnown, judge, suiteEnv, pickTests } from '../lib/cisuite.mjs';
+import { parseKnown, judge, suiteEnv, pickTests, isBrowserTest } from '../lib/cisuite.mjs';
 import { procsNaming, leakText } from '../lib/testprocs.mjs';
 import { killTree } from '../lib/runs.mjs';
 import { listProcs } from '../lib/strays.mjs';
@@ -95,8 +95,8 @@ if (process.platform === 'win32') { const j = await holdJob(process.pid, { name:
 // META-CI-WORKCLASS R4 (DEC-336): --cpu-prof DIR - a browser test file (it imports shot.mjs or helpers/cdp.mjs) runs with
 // NODE_OPTIONS --cpu-prof into DIR/<file>, so its node processes leave a sampling profile that names a sync call blocking the loop
 // by its JS caller (tests/helpers/profgap.mjs reads them; the Windows CI job)
-const isBrowserTest = f => /shot\.mjs|helpers\/cdp\.mjs/.test(fs.readFileSync(f, 'utf8'));
-const profEnv = f => !cpuProf || !isBrowserTest(f) ? {}
+const isBrowserFile = f => isBrowserTest(fs.readFileSync(f, 'utf8'));
+const profEnv = f => !cpuProf || !isBrowserFile(f) ? {}
   : { NODE_OPTIONS: `${childEnv.NODE_OPTIONS ?? ''} --cpu-prof --cpu-prof-dir="${fwd(path.resolve(cpuProf, path.basename(f, '.mjs')))}"`.trim() };
 const runFile = (name, f, i) => new Promise(resolve => {
   const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`), mout = path.join(tmp, `${name}-${i}.measure.jsonl`);
@@ -145,7 +145,7 @@ const phase = async (name, c, files) => {
 // CI 44335427788: a fresh runner's first browser launch is slow (ubuntu: 25-36 s; two at once passed the 30 s DevTools wait). With a
 // browser test in the run, one launch to the DevTools port and down goes first: the one-time cost lands here, measured, not on a
 // test's clock. A failed warm-up is logged and the suite goes on: the browser tests then fail with their own message.
-if (files.some(isBrowserTest)) {
+if (files.some(isBrowserFile)) {
   const { findBrowser, warmBrowser } = await import('../lib/shot.mjs'), browser = findBrowser();
   if (browser) { const w = await warmBrowser({ browser, tmp });
     console.log(`ci-suite: browser warm-up ${w.ms} ms (${browser.exe})${w.error ? `, failed: ${w.error}` : ''}`);

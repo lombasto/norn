@@ -16,9 +16,10 @@ These are tech debt. SloppaChoppa reports them as slop. If removing one really b
 
 The testing rules (tiers, the run budget, load reds, quarantine, waiting on a test) are in docs/TESTING.md, the one full copy. Here only what is specific to this repo:
 
-- Run one file, or a few: `META_ROOT="$TEMP/emptyroot-<name>" node --test tests/<file>.test.mjs`. Create the empty folder first. `META_ROOT` keeps the tests away from this machine's live state.
-- Never run `node --test tests/`. It starts hundreds of processes at once.
-- In a run, the changed-file command is `node engine/bin/ci-suite.mjs --changed origin/main`; `norn tests for <file>` names the test files that cover a file. The full suite (`node engine/bin/ci-suite.mjs` without `--changed`) runs only in GitHub CI; Norn's scope hook refuses it in a run, even when a hand-off asks for it.
+- Tests: light (policy.tests). Run only the test files that directly cover what you changed, and no page (browser) tests: CI runs the rest on the PR and nightly.
+- Run one file, or a few: `norn tests run tests/<file>.test.mjs`. It runs each on an empty META_ROOT (away from this machine's live state) through the machine's test cache: a file another run already passed on the same content is reused, one running now is waited for.
+- The changed-file command is `norn tests run --changed`; `norn tests for <file>` names the test files that cover a file. In a run, Norn's scope hook refuses a direct `node --test` and sends it to `norn tests run`, and stops testing past `policy.tests.run_budget_min`.
+- Never run `node --test tests/`. It starts hundreds of processes at once. The full suite (`node engine/bin/ci-suite.mjs` without `--changed`) runs only in GitHub CI; the hook refuses it in a run, even when a hand-off asks for it.
 - Every temp folder comes from `mkTmp` (tests/helpers/tmp.mjs); dashboard tests use tests/helpers/dash-fixture.mjs.
 
 ## Git
