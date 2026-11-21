@@ -111,7 +111,7 @@ test('served: the Norn modules + sheet by allowlist, the font pinned, three.js g
     fs.mkdirSync(path.dirname(art), { recursive: true }); fs.writeFileSync(art, Buffer.from('89504e470d0a1a0a', 'hex'));
     assert.deepEqual((await f.get('/norn/assets.json')).data.present, ['token-running-16'], 'a dropped-in file is listed');
     const r = await fetch(f.url + '/norn/art/token-running-16.png'); assert.equal(r.status, 200); assert.match(r.headers.get('content-type'), /image\/png/);
-    assert.match(html, /href="\/norn\/norn\.css"/); assert.match(html, /id="look"/, 'the classic look stays selectable');
+    assert.match(html, /href="\/norn\/norn\.css"/); assert.match(await (await fetch(f.url + '/pages/settings.mjs')).text(), /data-act="look"/, 'the classic look stays selectable (Settings > Look)');
   } finally { fs.rmSync(artDir, { recursive: true, force: true }); await f.done(); }
 });
 

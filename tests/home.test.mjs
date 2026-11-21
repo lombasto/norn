@@ -112,8 +112,8 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   assert.match(renderTab('talk', { one: true }, { project: 'all' }), /belongs to one project/);
 });
 
-test('C2 nav: the thread is Talk, the 4th page on the one bar (stage NAV: Lanes is the landing; the same bar on desktop and phone)', async () => {
-  assert.deepEqual(TABS[3], ['talk', 'Talk']); assert.equal(SERVER_TABS[3], 'talk'); assert.deepEqual(BAR[3], ['talk', 'Talk']);
+test('C2 nav: the thread is Talk, the first page on the one bar (UI redesign 2026-11-20; Lanes stays the landing; the same bar on desktop and phone)', async () => {
+  assert.deepEqual(TABS[0], ['talk', 'Talk']); assert.equal(SERVER_TABS[0], 'talk'); assert.deepEqual(BAR[0], ['talk', 'Talk']);
   const bar = renderBar('talk', { project: 'kestrel', needs: 2 });
   assert.match(bar, /data-tab="talk" aria-current="page"/); assert.match(bar, /aria-label="2 need you">2</); assert.match(bar, /data-act="more"/);
   const seen = [];

@@ -5,10 +5,11 @@ random port, `--no-open` skips the browser, `--project <project.json>` limits it
 only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the page (a fresh random token each start).
 
 ## Where things are (stage NAV: 5 destinations, plain names, both looks)
-The bar is **Lanes · Runs · Inbox · Talk · More** (`shell.mjs` `BAR`), the same on a desktop and a phone (at the bottom there),
+The bar is **Talk · Lanes · Runs · Inbox · More** (`shell.mjs` `BAR`), the same on a desktop and a phone (at the bottom there),
 as link nav (`<nav>` + `aria-current`). Lanes is the landing page. **More** is a menu, not a page: a popover on a desktop, a
 bottom sheet on a phone (`MORE`): **Health** = Spend, Slop, Tests, Context; **History** = Records, Ledger, Docs; **Plan** =
-Roadmap (and Plan until stage RUNS retires it); then Settings. When one of those is open, More is marked current; a
+Roadmap. Settings is no page of the bar or More: the cog at the top right of the header opens it over the page (`#setview`),
+Close (Esc) puts the page back. When one of the More pages is open, More is marked current; a
 Health page in a bad state puts a dot on More. Every page's label, tab id and URL are the same word (`?tab=runs` is Runs); an
 unknown or retired id (`overview`, `work`, `health`, `history`, `home`) opens Lanes - there is no alias or redirect table.
 The Inbox link carries the one needs-you count. A page with views (Slop, Context, Tests) shows its view switch on its own title
@@ -19,8 +20,11 @@ The bar paints from the static page list before any fetch. Each page declares th
 refreshes the strip only, a record refetches the open page only when the page reads that file.
 
 ## What you see (from records, runs, heartbeats and transcripts - never from an LLM; re-renders on change via `/api/stream`, no timer)
-- Header: project switcher (one project or All projects), status time, check-ins on / paused, theme (light / dark / system),
-  Pause / Resume check-ins, Run tick. The tab title shows `(n)` when something needs you.
+- Header: project switcher (one project or All projects); the worker pool, machine-wide (Claude workers in use of the cap, the
+  other Claude Code sessions on this computer, the Codex sessions: `widgets.mjs` `poolLine`, `engine/lib/agentprocs.mjs`); the
+  Check-ins box (status time in local time, check-ins on / paused, tick running, live; Pause / Resume, Run tick now); the cog
+  (Settings, with Look and Theme inside). On a phone the pool and the Check-ins box sit behind More. Every time on the dashboard
+  is the browser's local time (`cells.mjs` `fmtTime` / `fmtDate`). The tab title shows `(n)` when something needs you.
 - Talk: the controller chat and the check-in thread.
 - Inbox: open questions with their options as small cards (key, text, cost; the recommended one marked, with its why) and a
   free-text answer; answered-not-applied questions, parked lanes, unreviewed runs. Its text goes through the one prose renderer
@@ -90,7 +94,7 @@ the stall), the last 100 of each; also appended to `local/dash-timing-<port>.jso
 the server, `prime` = the snapshot read of a GET), shown in the browser's network panel.
 
 ## Look
-Norn (default; `engine/dash/norn/`: pixel kit, 9-slice panels, palette lock to `palette.hex`, integer art scale, state tokens and art behind one asset map `norn/assets.mjs`, drop-in folder `norn/art/`) or classic: the header Look button, `?look=classic`, remembered per browser.
+Norn (default; `engine/dash/norn/`: pixel kit, 9-slice panels, palette lock to `palette.hex`, integer art scale, state tokens and art behind one asset map `norn/assets.mjs`, drop-in folder `norn/art/`) or classic: Settings > Look, `?look=classic`, remembered per browser.
 Norn vocabulary (display only; tab ids, routes, record kinds, paths and the CLI are unchanged): the bar is the same plain bar as
 classic (the Norn group frames left the bar in UX review 2); the title says Norn and the header shows the wordmark; empty lists show
 the empty-state art. Both looks open the Overview with the strip of the three Norns (RM-18 S2), each part a link in its colour: Urd

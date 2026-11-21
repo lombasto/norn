@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, loadTab, loadParts, renderTab, healthStates, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, loadTab, loadParts, renderTab, healthStates, pageTitle, needsCount } from '../engine/dash/ui.mjs';
+import { RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/pages/roadmap.mjs';
 import { worstState } from '../engine/dash/cells.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
@@ -175,6 +176,11 @@ test('roadmap time line on every row: first activity -> now, run stretches by ru
   assert.match(row('RM-4'), /class="rmstub"/); assert.deepEqual(sp('RM-4'), [], 'planned: a stub, no fake dates');
   assert.deepEqual(sp('RM-6'), [['ok', 0, 22]], 'Dashboard has its own window (2 d)');
   assert.match(h, /Core[^]*?time line 01-02 to now/, 'the theme says its window');
+  // item 5 (ui-context-docs): the bar's state in words under it, and one key over the time lines naming every colour
+  assert.match(row('RM-3'), /<div class="rmtlw"><b class="sg-running">live<\/b> RUN-3 · 2 runs since 01-06<\/div>/, 'the latest run state, its id, the count');
+  assert.match(row('RM-4'), /<div class="rmtlw">planned, no dates yet<\/div>/, 'no run: the label alone');
+  assert.equal((h.match(/class="rmlegend"/g) || []).length, 1, 'one key per page');
+  assert.match(h, /class="rmsw sg-bad"><\/i>stopped \/ killed \/ lost[^]*class="rmsw sg-warn"><\/i>handed off \/ ended[^]*rmsw-now[^]*rmsw-stub/);
   assert.match(row('RM-3'), /<b class="rmt">Building thing with a long title that must wrap and never be cut by the time line<\/b>/, 'the title is whole');
 });
 

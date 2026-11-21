@@ -1,6 +1,6 @@
 // The owner cards (UI redesign 2026-11-20): the rows only the owner can settle - a login to redo, a machine-level hold, a hand-edited
 // generated file, a drafted setup - and the vendor-audit hunk and enforce cards, shown on the Inbox (pages/inbox.mjs) and the Context
-// page's checks (ui.mjs). Their own module so the Inbox page and ui.mjs both read them without an import cycle. Pure HTML strings.
+// page's checks (pages/context.mjs; the Docs reader takes SEV_CHIP). Their own module so those pages share them without an import cycle.
 import { esc, int, fmtMin, chip, projTag, minsSince } from './cells.mjs';
 import { renderProse } from './prose.mjs';
 import { diffBlock } from './diffview.mjs';

@@ -255,11 +255,14 @@ export function staticChecks(rows, { project: p = {}, home = '', items = {}, har
     }));
   }
   // ---- 23: harness rules carry a version + date; an installed CLI past it = re-check ----
-  const anchor = rows.find(r => r.kind === 'repo' && r.exists !== false) || rows[0];
+  // the finding sits on the adapter that holds the rules (h.src, its `family:` line), never on a project file the rules are about (bug 3:
+  // it sat on AGENTS.md L1); an adapter row with no src (a test seam) names the family
+  const srcLine = h => { const t = h.src ? readText(h.src) : null, i = t ? t.split(/\r?\n/).findIndex(l => l.includes(`family: '${h.family}'`)) : -1; return i + 1 || 1; };
   for (const h of harness) {
-    if (!h.verified?.version) { add(23, 'low', anchor || h.family, 1, `the ${h.label} load rules carry no version or date`, `stamp harness/${h.family}.mjs instructions.verified { version, date } after reading its docs`); continue; }
+    const at = h.src || h.family, file = h.src ? path.basename(h.src) : `harness/${h.family}.mjs`;
+    if (!h.verified?.version) { add(23, 'low', at, srcLine(h), `the ${h.label} load rules carry no version or date`, `stamp the ${h.label} entry's instructions.verified { version, date } in ${file} after reading its docs`); continue; }
     const v = versions[h.family];
-    if (v && v !== h.verified.version) add(23, 'medium', anchor || h.family, 1, `${h.label} ${v} is installed; its load rules were checked on ${h.verified.version} (${h.verified.date}): re-check`, `re-read the ${h.label} docs and re-stamp instructions.verified`);
+    if (v && v !== h.verified.version) add(23, 'medium', at, srcLine(h), `${h.label} ${v} is installed; its load rules were checked on ${h.verified.version} (${h.verified.date}): re-check`, `re-read the ${h.label} docs and re-stamp instructions.verified in ${file}`);
   }
   const SEV = { high: 0, medium: 1, low: 2, count: 3 };
   return out.sort((a, b) => SEV[a.severity] - SEV[b.severity] || a.check - b.check || a.path.localeCompare(b.path) || a.line - b.line);

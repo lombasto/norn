@@ -1,6 +1,6 @@
 // META-TEND (REPORT s.5.3): the shared chart widgets, built once - `meter` (one value against a max), `bars` (a ranked list, one horizontal bar each), `columns` (one
-// value over time, a column per point), `stack` (one bar split into its parts + a legend) and `capStrip` (the Claude worker pool per
-// project). Pure: data -> HTML on the palette's CSS variables (index.html .wbars / .wcols / .wstack / .wcap); every chart carries its
+// value over time, a column per point), `stack` (one bar split into its parts + a legend), `capStrip` (the Claude worker pool per
+// project) and `poolLine` (the header's machine-wide worker pool). Pure: data -> HTML on the palette's CSS variables (index.html .wbars / .wcols / .wstack / .wcap); every chart carries its
 // numbers as text and an aria-label.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fin = v => typeof v === 'number' && Number.isFinite(v);
@@ -37,6 +37,21 @@ export function capStrip(v, { id = 'capstrip', mine = null } = {}) {
   const aria = `Claude worker pool: ${cap === null ? 'no machine cap' : `${used} of ${cap} in use`}; ${v.rows.map(r => `${r.project} ${words(r)}`).join('; ')}`;
   return `<div class="wcap"${id ? ` id="${esc(id)}"` : ''} role="group" aria-label="${esc(aria)}"><div class="small wtitle">Claude worker pool <b>${cap === null ? 'no machine cap' : `${used} of ${cap}`}</b>${cap === null ? '' : ' in use'} <span class="mute">· every project on this machine</span></div>
     <ol class="wcaprows">${v.rows.map(r => `<li data-project="${esc(r.project)}" title="${esc(`${r.project}: ${words(r)} (max = its ceiling; reserve = slots kept for it while it has queued work)`)}"><span class="wcapn">${r.project === mine ? `<b>${esc(r.project)}</b>` : esc(r.project)}</span>${cells(r)}<span class="small mute mono">${esc(words(r))}</span></li>`).join('')}</ol></div>`;
+}
+
+/**
+ * UI redesign item 1: the worker pool in the header, machine-wide - Norn's Claude worker slots in use of the cap (every project), the
+ * Claude Code sessions on this computer Norn did not start, and the Codex sessions; each counted apart. p = /api/strip's `pool`
+ * ({ claude: { using, cap }, sessions: agentprocs.mjs agentSessions | null }); null = not come yet, a null sessions = not counted yet.
+ */
+export function poolLine(p) {
+  const head = 'class="pool small" id="pool" role="group" aria-label="Agent sessions on this computer"';
+  if (!p) return `<span ${head}><span class="mute">…</span></span>`;
+  const c = p.claude || {}, s = p.sessions, b = v => `<b>${fin(v) ? v : '…'}</b>`;
+  const part = (title, html) => `<span title="${esc(title)}">${html}</span>`;
+  return `<span ${head}>${part("Norn's Claude worker slots in use, every project on this machine", `Claude workers ${b(c.using)} of ${fin(c.cap) ? c.cap : 'no cap'}`)}`
+    + `${part('Claude Code sessions on this computer that Norn did not start (a terminal, an IDE, the desktop app)', `other Claude ${b(s?.claude.other)}`)}`
+    + `${part(s ? `Codex sessions on this computer: ${s.codex.norn} started by Norn, ${s.codex.other} others` : 'Codex sessions on this computer: not counted yet', `Codex ${b(s ? s.codex.norn + s.codex.other : null)}`)}</span>`;
 }
 
 /** one value against a max -> a single bar, an optional tick at `mark` (a p90, a hand-off line); no data = a dash */

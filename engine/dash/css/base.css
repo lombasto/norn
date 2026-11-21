@@ -18,6 +18,15 @@ header{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var
 header h1{font-size:15px;margin:0;font-weight:650}
 /* A-15: a header button never breaks onto 2 lines */
 header button,header select{white-space:nowrap}
+/* UI redesign 2026-11-20: the header's worker pool (widgets.mjs poolLine), the check-ins group box (status, Pause, Run tick now) and the
+   cog that opens Settings over the page (#setview, a wide drawer) */
+.pool{display:flex;gap:4px 12px;flex-wrap:wrap;white-space:nowrap}.pool>span{cursor:default}
+.ckbox{display:flex;align-items:center;gap:8px;margin:-6px 0 0;padding:0 8px 4px;border:1px solid var(--line);border-radius:6px;min-width:0}
+.ckbox legend{font-size:11px;color:var(--mute);padding:0 4px}
+.cog{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;flex:none;border-radius:6px;color:var(--ink)}.cog svg{width:20px;height:20px}
+.cog:hover,.cog[aria-current=page]{background:var(--run-bg)}
+.drawer.wide{width:min(1180px,100vw)}#setview-body{flex:1;min-height:0;overflow:auto}
+.slook{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px}
 select,button,input{font:inherit;color:inherit;background:var(--soft);border:1px solid var(--field-line);border-radius:6px;padding:4px 10px}
 select,button{cursor:pointer}button:disabled{cursor:default;opacity:.7}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
@@ -25,7 +34,7 @@ button.ghost{background:transparent}
 button.strong{border-color:var(--ink);font-weight:600}
 a{color:inherit}
 .spacer{flex:1}.mute{color:var(--mute)}.small{font-size:12px}.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
-/* NORN-UI-NAV: the bar (shell.mjs renderBar) - Lanes, Runs, Inbox, Talk, More on every page, one row, a glyph beside each word; a
+/* NORN-UI-NAV: the bar (shell.mjs renderBar) - Talk, Lanes, Runs, Inbox, More on every page, one row, a glyph beside each word; a
    phone pins it to the bottom (thumb reach). The More sheet: a popover under More on a desktop, a bottom sheet on a phone. The status
    strip under the header (renderStatus): running / cap, usage, the next check-in, the needs count */
 .pagebar{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
@@ -419,5 +428,6 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
  .sheet{top:auto;left:0;right:0;bottom:58px;width:auto;max-height:70vh;border-radius:10px 10px 0 0}.sheet a{min-height:44px}
  .sstrip{padding:6px 10px;gap:2px 12px}
  button,select,input:not([type=checkbox]):not([type=radio]):not([type=range]),.hf{min-height:44px}.hfilters{gap:8px}
- body:not(.more) header>#status,body:not(.more) header>#look,body:not(.more) header>#theme,body:not(.more) header>#pause,body:not(.more) header>#pause-pop,body:not(.more) header>#tick{display:none}
+ body:not(.more) header>#pool,body:not(.more) header>#ckbox,body:not(.more) header>#pause-pop{display:none}
+ .ckbox{flex-wrap:wrap;max-width:100%}.cog{width:44px;height:44px}
  #needs-btn:not([hidden]){display:inline-block;margin-left:auto}}

@@ -7,6 +7,7 @@ import { parseLedgerLine, splitClauses, parseLedger, LEDGER_KINDS } from '../eng
 import { renderTab } from '../engine/dash/ui.mjs';
 import { ledgerView } from '../engine/dash/pages/ledger.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
+process.env.TZ = 'UTC';   // the dash prints local time (cells.mjs fmtTime): pin the zone these expectations are written in
 
 test('the Ledger text goes through the prose renderer: ids are chips, code stays code, all escaped', () => {
   const html = renderTab('ledger', { file: 'L.md', ledger: ['- meta 2026-01-02T03:04Z: DEC-3 and DIR-4 ruled Q-5 for RUN-6; dispatched: `x<y>`'], total: 1, count: 100, offset: 0, more: false }, { project: 'demo', now: Date.parse('2026-01-02T05:00Z') });
@@ -30,7 +31,7 @@ test('the Ledger tab: newest first, one row per entry, time + kind chip, a filte
   const html = renderTab('ledger', d, { project: 'demo', now });
   const rows = [...html.matchAll(/<tr id="led-(\d+)" data-state="([\w-]+)"/g)].map(m => [m[1], m[2]]);
   assert.deepEqual(rows.map(r => r[1]), ['minor', 'auto', 'check-in', 'other'], 'newest first, kind in data-state');
-  assert.match(html, /03:00Z/); assert.match(html, /02:14Z/); assert.match(html, /01-01 22:20Z/);
+  assert.match(html, />03:00</); assert.match(html, />02:14</); assert.match(html, />01-01 22:20</);
   assert.match(html, /<span class="chip [^"]*">check-in<\/span>/); assert.match(html, /<span class="chip [^"]*">auto<\/span>/);
   assert.match(html, /class="fchips"[^>]*aria-label="Kinds"/, 'the kinds are one filter-chip row');
   assert.match(html, /data-act="ledger-kind" data-show="check-in" aria-pressed="true">check-in <b>1<\/b>/);

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { recordMarkdown } from '../engine/dash/ledger.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { recView, renderRecord } from '../engine/dash/pages/ledger.mjs';
+process.env.TZ = 'UTC';   // the dash prints local time (cells.mjs fmtTime): pin the zone these expectations are written in
 
 const NOW = Date.parse('2026-01-20T05:00Z');
 const W = (o = {}) => ({ cited: { records: 1, runs: 2, notes: 3, ledger: 0, total: 6 }, by: { runs: ['RUN-4'], lanes: ['alpha'], records: ['DEC-2'], notes: ['state/notes/x/NOTES.md'] },
