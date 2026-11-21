@@ -156,7 +156,8 @@ test('dashboard: a typed clarification stays open and starts a reply; an explici
       assert.ok(!ib3.items.some(i => i.id === 'Q-1' && i.type === 'question'), 'the Inbox closes it');
       const res = ib3.items.find(i => i.id === 'Q-1' && i.type === 'resolved');
       assert.deepEqual(res.thread.map(x => x.ev), ['say', 'reply', 'answer'], 'Resolved keeps the thread');
-      assert.match(renderTab('inbox', ib3, { project: 'kestrel', now: Date.now() }), /id="inbox-resolved"[\s\S]*id="qr-Q-1"[\s\S]*what does this mean\?/);
+      // the Resolved chip on (pages/inbox.mjs: Resolved is off until the owner presses it)
+      assert.match(renderTab('inbox', ib3, { project: 'kestrel', now: Date.now(), inboxShow: new Set(['questions', 'cards', 'resolved']) }), /id="inbox-resolved"[\s\S]*id="qr-Q-1"[\s\S]*what does this mean\?/);
     } finally { await app2.close(); }
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });

@@ -106,7 +106,8 @@ test('/api/projects carries each project\'s needs-you count (the pick order read
   try {
     const { projects } = (await f.get('/api/projects')).data;
     const by = Object.fromEntries(projects.map(p => [p.name, p.needs]));
-    assert.ok(by.kestrel >= 2, JSON.stringify(by)); assert.equal(by.other, 1);
+    // kestrel: its open question only - the stopped unreviewed run shows in Lanes, not in the Inbox count (UI redesign 2026-11-20)
+    assert.equal(by.kestrel, 1, JSON.stringify(by)); assert.equal(by.other, 1);
   } finally { await f.done(); }
 });
 

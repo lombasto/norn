@@ -1,12 +1,15 @@
 // The owner cards (UI redesign 2026-11-20): the rows only the owner can settle - a login to redo, a machine-level hold, a hand-edited
 // generated file, a drafted setup - and the vendor-audit hunk and enforce cards, shown on the Inbox (pages/inbox.mjs) and the Context
 // page's checks (ui.mjs). Their own module so the Inbox page and ui.mjs both read them without an import cycle. Pure HTML strings.
-import { esc, int, fmtMin, chip, projTag, fmtTime, minsSince } from './cells.mjs';
+import { esc, int, fmtMin, chip, projTag, minsSince } from './cells.mjs';
 import { renderProse } from './prose.mjs';
 import { diffBlock } from './diffview.mjs';
 
 export const SEV_CHIP = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
 export const baseName = p => String(p ?? '').split('/').pop();
+// RM-30 S1: the day an enforce card was asked, in the owner's own clock ("Fri 11-20 05:41 local")
+const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
+  const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
 export const loginRow = (i, ctx) => `<div class="item">${chip('needs', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${i.cls === 'vendor' ? 'nothing to do - a vendor outage, not your login' : `open a terminal and run <span class="mono">${esc(i.command)}</span>`}; held: ${esc((i.runs || []).join(', '))} - they resume by themselves${i.line ? ` · "${esc(i.line)}"` : ''}</div></div></div>`;
 // GAP-1 (lib/holds.mjs): ALL queued work held on one machine-level hold - what, since when, why in plain words and the fix (Settings /
@@ -40,7 +43,7 @@ export function enforceCard(c, project, px = { project }) {
   const a = c.asked;
   return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
     <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
-    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtTime(a.at))}</div>`
+    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
     : `<div class="small mute">${esc(c.fix.action)}</div>
     <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;
 }
