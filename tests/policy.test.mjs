@@ -70,3 +70,16 @@ test('NORN-CTX-1M: a _1m context row takes up to 1000k, a plain row keeps its 40
   assert.throws(()=>applySettings(b,{'policy.context.implementer.hard_max_k':450}),e=>e.status===400);
   assert.throws(()=>applySettings(b,{'policy.context.planner_1m.hard_max_k':1001}),e=>e.status===400);
 });
+
+test('lane-collide S1b: policy.collide ships the SPEC 4.3 defaults; collide.mjs judges with them and a project overrides one kind',async()=>{
+  const c=POLICY_DEFAULTS.collide;
+  assert.equal(c.enabled,true);
+  assert.deepEqual(c.kinds,{item:'warn',lead:'warn',goal:'shadow',territory:'warn',exclusive:'hold',resource:'hold',order:'hold',order_named:'warn',stale:'warn'});
+  assert.deepEqual(c.commons,['tests/**','docs/**']);
+  assert.equal(c.narrow_files,25); assert.equal(c.recent_days,3);
+  assert.deepEqual(c.auto,{hold_exclusive:true,land_early:true,order_after:true,stale_fix:true,tell_worker:true,land_wait_min:45,remedies:[]});
+  const { collidePolicy }=await import('../engine/lib/collide.mjs');
+  assert.deepEqual(collidePolicy({collide:{kinds:{exclusive:'warn'}}}).kinds,{...c.kinds,exclusive:'warn'});
+  assert.deepEqual(collidePolicy({collide:{auto:{land_early:false}}}).auto,{...c.auto,land_early:false});
+  assert.deepEqual(collidePolicy(undefined),c);
+});
