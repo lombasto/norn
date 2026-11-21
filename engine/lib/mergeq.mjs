@@ -27,6 +27,7 @@ import { loadRoadmap } from './roadmap.mjs';
 import { rowLookItems, lookHold } from './look.mjs';
 import { landPass } from './landing.mjs';
 import { mergeConfig } from './mergecfg.mjs';
+import { noteMqWhy } from './mqwhy.mjs';
 
 const H = 3600e3;
 const pad = (s, n) => String(s ?? '').padEnd(n);
@@ -199,6 +200,28 @@ export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acqu
   } catch (e) {
     return res('failed', String(e.stderr || e.message).trim().split(/\r?\n/)[0]);
   } finally { lock.release(); }
+}
+
+/**
+ * land-push: each queue row's reason it did not land this pass, for mqwhy.mjs (the deliverable's why_not, the Lanes row): the landing's
+ * (land: landPass skips, by branch), else - a batch pass (picked: the batch's ids) - the pick's rule, else the update's conflict / failure
+ * or its "not pushed"; a look item's hold (q.held) too. -> { branch: { tip, kind, why } | null (judged: nothing holds it) }
+ */
+export function queueSkips(q, { updates = [], land = null, picked = null } = {}) {
+  const out = {}, s7 = s => String(s || '').slice(0, 7);
+  for (const h of q.held || []) out[h.branch] = { tip: null, kind: 'held', why: h.why };
+  for (const r of q.rows) {
+    const u = updates.find(x => x.id === r.id);
+    const uw = ['conflict', 'failed'].includes(u?.action) ? { tip: r.tip, kind: u.action, why: `update: ${u.why}` }
+      : u?.action === 'skip' && /not pushed/.test(u.why) ? { tip: r.tip, kind: 'unpushed', why: `not pushed at ${s7(r.tip)}: the tick's path to main pushes it` } : null;
+    if (land) { if (r.branch in land) out[r.branch] = land[r.branch]; else if (uw) out[r.branch] = uw; continue; }
+    if (!picked) continue;
+    out[r.branch] = picked.includes(r.id) ? null : r.gate === 'door' ? { tip: r.tip, kind: 'door', why: 'native-touching: it lands through the door flow' }
+      : r.red ? { tip: r.tip, kind: 'red', why: `red in the merge queue at ${s7(r.red)}: its fix stage merges main itself` }
+      : r.word !== 'clean' ? { tip: r.tip, kind: 'conflict', why: `${r.word}: the resolve path (norn deliverables resolve ${r.id})` }
+      : r.slop ? { tip: r.tip, kind: 'slop', why: `${r.slop} slop BLOCK finding(s) at ${s7(r.tip)}: fix or waive them` } : uw;
+  }
+  return out;
 }
 
 /** the live MERGE run testing a row's branch (its lane's, or one whose merge brief names the branch / lane), or null */
@@ -429,7 +452,9 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
   const out = { updates: project.deliverables || project.merge ? updatePass({ stateDir, project, locksDir, git, now, acquire }) : [], batch: null, fix: null, land: null, why: '' };
   const cfg = mergeConfig(project);
   if (!cfg.gate?.fast) {   // MERGE-FIRST (3): no batch - each stage-gated row lands by code (landing.mjs); a failure queues its MERGE
-    const land = await landPass({ stateDir, project, locksDir, rows: mergeQueue({ stateDir, project, now, git }).rows, cfg, git, gateRunner, cli, gh, now, hbMs });
+    const q = mergeQueue({ stateDir, project, now, git });
+    const land = await landPass({ stateDir, project, locksDir, rows: q.rows, cfg, git, gateRunner, cli, gh, now, hbMs });
+    noteMqWhy(stateDir, queueSkips(q, { updates: out.updates, land: land.skips }), { now });
     return { ...out, land, why: `no fast merge gate declared (merge.gate.fast): no batch; land: ${land.why}` };
   }
   const mq = loadMq(stateDir);
@@ -448,7 +473,8 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
   try {
     const hb = setInterval(() => { slock.refresh(); }, hbMs);
     try {
-      let { rows } = mergeQueue({ stateDir, project, now, git });
+      const q = mergeQueue({ stateDir, project, now, git });
+      let { rows } = q;
       // MQ-STARVE: the last batch found its target red at a base that is still the target's tip -> the rows that fix it go first
       const last = mq.n ? loadBatch(stateDir, mq.n) : null;
       dropBatchBranch(stateDir, last, { cfg, git });   // a green batch the MERGE stage landed (or main moved past it): its branch goes
@@ -459,6 +485,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
         rows = [...rows.filter(r => fixers.includes(r.id)), ...rows.filter(r => !fixers.includes(r.id))];
       }
       const pick = pickBatch(rows, { cfg, mq, stateDir, locksDir, ...(slopOn(project.policy) ? {} : { door: () => 0 }) });
+      noteMqWhy(stateDir, queueSkips(q, { updates: out.updates, picked: pick.map(p => p.id) }), { now });
       if (!pick.length) return { ...out, why: 'no batchable row (clean, fast-gated, slop-checked clean, not red at its sha)' };
       const key = ms => ms.map(m => `${m.id}@${m.sha}`).sort().join(' ');
       // D7: the same members on the same base whose merged result slop held: not rebuilt (nor re-gated) while the hold stands
