@@ -169,6 +169,9 @@ test('doneCheck light: the light set runs through the test cache (a second check
 
 test('doneCheck light: the Tests line\'s node test files join the set, its other commands run as written; past run_budget_min nothing more starts - left to CI, not red', async () => {
   const t = mkTmp('meta-dod-budget-'), { wt, cache, logDir } = lightLane(t);
+  // the first job outlasts the 0.002 min (120 ms) budget below on any machine (CI 44913677296: a fast Linux runner finished it inside)
+  fs.appendFileSync(path.join(wt, 'tests', 'a.test.mjs'), "test('a outlasts the budget', () => new Promise(r => setTimeout(r, 400)));\n");
+  git(wt, 'commit', '-qam', 'slow a');
   const ready = parseReady('Scope: src/**, tests/**\nTests: `node --test tests/z.test.mjs` and `node -e "console.log(\'# pass 1\')"`\nDone: x\n');
   const all = await doneCheck({ worktree: wt, dod: { ready, tests: { run_budget_min: 0 } }, logDir, run: 'RUN-1', cache });
   assert.equal(all.ok, true, JSON.stringify(all));

@@ -34,8 +34,13 @@ test('SETUP.md walks: every guide:run block of a fresh clone succeeds and matche
   const gitDir = gitCmd && fs.existsSync(path.join(gitCmd, 'git.exe')) ? gitCmd : path.dirname(which('git'));
   const R = process.env.SystemRoot || 'C:\\Windows';   // a fresh Windows' system PATH entries
   const sys = WIN ? ['System32', '', 'System32\\Wbem', 'System32\\WindowsPowerShell\\v1.0'].map(d => path.join(R, d)) : [];
-  const PATH = [bin, gitDir, path.dirname(process.execPath), ...sys].join(path.delimiter);
+  // Rust is a prerequisite (d7071303: setup builds norn-hook with cargo, no binary = a setup error): cargo on PATH, and rustup / cargo
+  // keep their real homes (they default to <HOME>/.rustup and <HOME>/.cargo, which the temp HOME lacks; smoke.mjs sandboxEnv does the same)
+  const cargo = which('cargo'), real = os.homedir();
+  assert.ok(cargo, 'cargo on the host PATH (SETUP.md 1: Rust is a prerequisite)');
+  const PATH = [bin, gitDir, path.dirname(process.execPath), path.dirname(cargo), ...sys].join(path.delimiter);
   const env = { ...process.env, PATH, HOME: home, USERPROFILE: home,
+    RUSTUP_HOME: process.env.RUSTUP_HOME || path.join(real, '.rustup'), CARGO_HOME: process.env.CARGO_HOME || path.join(real, '.cargo'),
     CLAUDE_CONFIG_DIR: cfg, LOCALAPPDATA: path.join(home, 'AppData', 'Local'), APPDATA: path.join(home, 'AppData', 'Roaming'), META_ROOT: clone, META_NO_TICK: '1' };
   for (const k of Object.keys(env)) if (k.toUpperCase() === 'PATH' && k !== 'PATH') delete env[k];   // Windows: process.env has Path
   for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'NPM_CONFIG_PREFIX', 'npm_config_prefix']) delete env[k];

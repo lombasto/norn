@@ -82,10 +82,11 @@ test('the Slop page: no "one voice of the Guard"; 4 numbers (open, ready, to dra
   const html = renderTab('slop', { ...base, ...guardPart(g, 'fix'), parts_loading: false }, { project: 'kestrel' });
   assert.doesNotMatch(html, /one voice of the Guard/);
   assert.doesNotMatch(html, /\bGuard\b/, 'no "Guard" left in the page text');
-  assert.equal((html.match(/class="subnum/g) || []).length, 4);
-  assert.match(html, /<b[^>]*>10<\/b><span[^>]*>open/);
-  assert.match(html, /<b[^>]*>1<\/b><span[^>]*>ready/); assert.match(html, /<b[^>]*>5<\/b><span[^>]*>to draft/); assert.match(html, /<b[^>]*>3<\/b><span[^>]*>your call/);
-  for (const id of ['slop-orc', 'slop-sum', 'slop-subs', 'slop-ready', 'slop-drafts', 'slop-call', 'slop-count', 'slop-about']) assert.ok(html.includes(`id="${id}"`), id);
+  // bddb2b4c (ui-spend-slop): no counter row, no banner, no footer - open / ready are the To fix chips, each kind's count heads its section
+  assert.equal((html.match(/class="subnum/g) || []).length, 0);
+  assert.match(html, /data-kind="" aria-pressed="true">Open <b>10<\/b>/); assert.match(html, /data-kind="ready" aria-pressed="false">Ready <b>1<\/b>/);
+  assert.match(html, /<h2>Ready <span class="mute small">1<\/span>/); assert.match(html, /<h2>To draft <span class="mute small">5<\/span>/); assert.match(html, /<h2>Your call <span class="mute small">3<\/span>/);
+  for (const id of ['slop-head', 'slop-subs', 'slop-ready', 'slop-drafts', 'slop-call', 'slop-count']) assert.ok(html.includes(`id="${id}"`), id);
   assert.ok(html.indexOf('id="slop-ready"') < html.indexOf('id="slop-drafts"') && html.indexOf('id="slop-drafts"') < html.indexOf('id="slop-call"') && html.indexOf('id="slop-call"') < html.indexOf('id="slop-count"'));
   assert.match(html, /id="slop-call"[^]*Add the enforcement[^]*Drop the claim/);
   assert.match(html, /data-act="slop-batch" data-batch="instr-c16\|drafts"/);

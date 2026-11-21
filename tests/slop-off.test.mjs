@@ -113,8 +113,9 @@ test('off: /api/guard has no code rows and says slop off; the Guard page is a pl
     assert.ok(!g.types.some(t => t.type === 'code'), 'no code type in the counts either');
     const html = guardPage(g, { project: 'kestrel', look: 'norn', art: true });
     assert.ok(!/SloppaChoppa|orc-|slop-popups/.test(html), 'no orc, no pop-up line, no SloppaChoppa words');
-    for (const id of ['slop-plain', 'slop-count-types', 'slop-rows']) assert.ok(html.includes(`id="${id}"`), id);
-    assert.match(html, /id="slop-plain"[^]*?class="chip (ok|warn)"/, 'a plain count badge');
+    // bddb2b4c (ui-spend-slop): the page has no banner (slop-orc) and no plain-list card (slop-plain), on or off; the count is Per type's
+    for (const id of ['slop-count-types', 'slop-rows']) assert.ok(html.includes(`id="${id}"`), id);
+    assert.match(html, /id="slop-count-types"><h2>Open per type <span class="mute small">1 open finding · /, 'a plain count: the hold is not counted');
     const v = (await f.get('/api/settings?project=kestrel')).data;
     const r = await f.post('/api/settings', { project: 'kestrel', version: v.version, changes: { 'policy.slop.enabled': true } });
     assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -123,7 +124,7 @@ test('off: /api/guard has no code rows and says slop off; the Guard page is a pl
     assert.equal(g.slop, true);
     assert.ok(g.rows.some(r => r.type === 'code'), 'on again: the recorded finding shows');
     assert.equal(g.types.find(t => t.type === 'code').open, 1);
-    assert.match(guardPage(g, { project: 'kestrel' }), /id="slop-orc"/);
+    assert.match(guardPage(g, { project: 'kestrel' }), /id="slop-S-fp1"[^]*id="slop-count-types"><h2>Open per type <span class="mute small">2 open findings · /, 'on again: the finding has its row and its count');
   } finally { await f.done(); }
 });
 

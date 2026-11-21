@@ -54,7 +54,7 @@ test('norn smoke passes end to end in a temp clone (exit 0, < 60 s)', () => {
 // and <temp>/.cargo ("rustup has no default toolchain") and setup could not build norn-hook; the sandbox keeps the real tool homes.
 test('smoke sandboxEnv keeps the real RUSTUP_HOME / CARGO_HOME (env value, else <real home>/.rustup / .cargo)', async () => {
   const { sandboxEnv } = await import('../engine/lib/smoke.mjs');
-  const home = path.join(os.tmpdir(), 'h'), real = os.homedir();
+  const home = path.join('sandbox', 'h'), real = os.homedir();
   const e = sandboxEnv({ home, bin: 'b', cfg: 'c', root: 'm' }, { PATH: 'p', HOME: real, USERPROFILE: real });
   assert.equal(e.HOME, home);
   assert.equal(e.RUSTUP_HOME, path.join(real, '.rustup'));

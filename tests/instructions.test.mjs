@@ -221,7 +221,8 @@ test('Context: in Health next to Usage (UX review 2), a one-project tab; rows wi
   const slop = renderTab('slop', { ...guardSummary(sv), sub: 'fix', ...guardPart(sv, 'fix'), parts_loading: false }, {});
   assert.match(slop, /id="slop-T-S-1"[^]*norn instructions apply S-1/); assert.match(slop, /~1800 tokens \/ day/, 'the tokens it saves a day'); assert.match(slop, /engine\/missing\.mjs does not exist/);
   const aged = renderTab('docs', { groups: [], files: 0, file: 'a1', doc: { ...VIEW.rows[0], text: '# Title\n\nold body', paras: [{ anchor: 'p00000001', line: 1, end: 1, age_days: 2, stale: false }, { anchor: 'p00000002', line: 3, end: 3, age_days: 70, stale: true, why: 'older than 30 d' }] } });
-  assert.match(aged, /70 d · STALE/); assert.match(aged, /id="ins-p00000002"/); assert.match(aged, /old body/);
+  // d97d2c0a: the age badge became the paragraph's gutter line number, coloured by age, its title the age and STALE
+  assert.match(aged, /id="ins-p00000002"><div class="dgut"><span class="dln gage-[a-z]+" title="70 d old[^"]*STALE[^"]*">3<\/span>/); assert.match(aged, /old body/);
   const calls = [];
   const d = await loadTab('context', 'kestrel', async u => { calls.push(u); return VIEW; }, { ins: 'a1' });
   assert.deepEqual(calls, ['/api/instructions?project=kestrel'], 'META-UX-BUILD S3: the tab no longer opens a file (the Docs reader does)');
@@ -290,7 +291,7 @@ test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, 
     const ev = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }))?.result?.value;
     const wait = sel => ev(`new Promise(r => { const t0 = Date.now(); const go = () => document.querySelector(${JSON.stringify(sel)}) || Date.now() - t0 > 20000 ? setTimeout(() => r({
       sw: document.documentElement.scrollWidth, w: innerWidth, rows: document.querySelectorAll('#ins-table tbody tr').length, hints: document.querySelectorAll('#slop-rows [id^="slop-H-"]').length,
-      body: !!document.querySelector('#doc-body'), sug: document.querySelectorAll('#slop-rows [id^="slop-T-"]').length, badges: document.querySelectorAll('#doc-body .agebadge').length }), 300) : setTimeout(go, 100); go(); })`);
+      body: !!document.querySelector('#doc-body'), sug: document.querySelectorAll('#slop-rows [id^="slop-T-"]').length, badges: document.querySelectorAll('#doc-body .dgut .dln[title]').length }), 300) : setTimeout(go, 100); go(); })`);
     await send('Page.enable'); await send('Runtime.enable');
     for (const [wd, h, mobile] of [[390, 844, true], [1440, 900, false]]) {
       await send('Emulation.setDeviceMetricsOverride', { width: wd, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
@@ -308,7 +309,7 @@ ${slow ?? await loopReport(step)}`);
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await ev(`document.querySelector('#ins-table button[data-ins]:not([disabled])').click()`);
     const step = mark(), o = await wait('#doc-body'), slow = await slowStep(step, 'wait(#doc-body)');   // META-UX-BUILD S3: the row opens the file in the Docs reader
-    if (!(o.body && o.badges >= 1)) assert.fail(`the file opened rendered, an age badge per paragraph: ${JSON.stringify(o)}
+    if (!(o.body && o.badges >= 1)) assert.fail(`the file opened rendered, an age-coloured line number per paragraph (d97d2c0a: the gutter replaced the badge): ${JSON.stringify(o)}
 ${slow ?? await loopReport(step)}`); assert.equal(o.sw, o.w, `open file at 390 (${JSON.stringify(o)})`);
   } finally {
     try { ws?.close(); } catch { /* closed */ }

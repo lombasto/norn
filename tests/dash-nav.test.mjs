@@ -106,9 +106,9 @@ test('the header: the cog links Settings, the check-ins status line, the worker 
 });
 
 test("agentSessions: the Claude Code and Codex CLI sessions on the machine, Norn's apart from the others; one per process tree; the desktop app is not a session", () => {
-  assert.equal(agentOf({ name: 'claude.exe', cmd: 'C:\\Users\\x\\.local\\bin\\claude.exe -p' }), 'claude');
+  assert.equal(agentOf({ name: 'claude.exe', cmd: 'C:\\u\\x\\.local\\bin\\claude.exe -p' }), 'claude');
   assert.equal(agentOf({ name: 'node.exe', cmd: 'node C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js' }), 'claude');
-  assert.equal(agentOf({ name: 'Claude.exe', cmd: '"C:\\Users\\x\\AppData\\Local\\AnthropicClaude\\app-1.0\\Claude.exe"' }), null, 'the desktop app');
+  assert.equal(agentOf({ name: 'Claude.exe', cmd: '"C:\\u\\x\\AppData\\Local\\AnthropicClaude\\app-1.0\\Claude.exe"' }), null, 'the desktop app');
   assert.equal(agentOf({ name: 'codex', cmd: '/usr/bin/codex exec' }), 'codex'); assert.equal(agentOf({ name: 'node', cmd: 'node /x/@openai/codex/bin/codex.js' }), 'codex');
   assert.equal(agentOf({ name: 'node.exe', cmd: 'node server.mjs' }), null);
   const procs = [

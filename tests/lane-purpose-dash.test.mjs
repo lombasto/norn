@@ -90,12 +90,13 @@ test('the Runs page: a row\'s lane - a worker (lane · stage, linked to its row)
     { id: 'RUN-9', dwarf: null, kind_word: 'check-in', kind: 'checkin', state: 'exited', outcome: 'done', executor: 'claude', lane: 'checkin', project: 'kestrel', started: new Date().toISOString(), children: [] },
   ];
   const html = renderTab('runs', { tree }, { project: 'kestrel', now: Date.now() }), node = id => html.split('id="node-').find(x => x.startsWith(`${id}"`));
-  assert.match(node('RUN-7'), /<span class="rlane"><a class="lanelink" data-rid="L:gen" href="\?project=kestrel&tab=lanes&show=needs,running,stopped,waiting,land,parked,today,old,archived">gen<\/a> · S1<\/span>/);
-  assert.match(node('RUN-7'), /<span class="rwho"><span class="id">RUN-7<\/span> <b class="aname" data-dwarf="oin">Óin<\/b><\/span>/);
-  assert.match(node('RUN-8'), /<span class="rwho"><span class="id">RUN-8<\/span> <span class="mute">merge<\/span><\/span>/, 'no dwarf: the kind word');
-  assert.match(html, /id="run-doc" data-run="RUN-7"[^]*?<span class="mute">helpers<\/span><span>1, 1,200 tok<\/span>/, 'the helpers in the run document');
-  assert.match(node('RUN-8'), /<span class="chip done">done<\/span>[^]*?<span class="rlane">[^<]*<a [^>]*>gen<\/a> · MERGE<\/span>/);
-  assert.match(node('RUN-9'), /<span class="rlane">check-in<\/span>/);
+  // a8b060ac: Runs is one table again (a row's cells are <td>), and the run document is the drawer of the picked row (ctx.run)
+  assert.match(node('RUN-7'), /<td class="rlane" data-label="lane"><a class="lanelink" data-rid="L:gen" href="\?project=kestrel&tab=lanes&show=needs,running,stopped,waiting,land,parked,today,old,archived">gen<\/a> · S1<\/td>/);
+  assert.match(node('RUN-7'), /<td class="rwho" data-label="run"><span class="id">RUN-7<\/span> <b class="aname" data-dwarf="oin">Óin<\/b> <\/td>/);
+  assert.match(node('RUN-8'), /<td class="rwho" data-label="run"><span class="id">RUN-8<\/span> <span class="mute">merge<\/span> <\/td>/, 'no dwarf: the kind word');
+  assert.match(renderTab('runs', { tree }, { project: 'kestrel', now: Date.now(), run: 'RUN-7' }), /id="run-doc" data-run="RUN-7"[^]*?<span class="mute">helpers<\/span><span>1, 1,200 tok<\/span>/, 'the helpers in the run document');
+  assert.match(node('RUN-8'), /<span class="chip done">done<\/span>[^]*?<td class="rlane" data-label="lane"><a [^>]*>gen<\/a> · MERGE<\/td>/);
+  assert.match(node('RUN-9'), /<td class="rlane" data-label="lane">check-in<\/td>/);
 });
 
 test('the browser at 390 px: Lanes (objective + links, type + output, the type filter) and Runs (the lane on a row\'s second line) never scroll sideways', { skip: skipWhy, timeout: 180000 }, async () => {

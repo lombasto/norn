@@ -83,7 +83,7 @@ test('leakText names each leftover with its parent pid, its creation time and wh
 });
 
 // CI 44658557500 (delegate LEAK RED): a supervisor killed while its jobguard hold was starting left the hold alive past the file;
-// the hold names no mkTmp dir (only its exe in os.tmpdir() and the held pid), so reapTmp also reaps a hold whose held pid is gone
+// the hold names no mkTmp dir (only its exe in the OS temp dir and the held pid), so reapTmp also reaps a hold whose held pid is gone
 test('orphanHolds: a jobguard hold whose held pid is gone or reused is an orphan; a live run\'s hold is not', () => {
   const at = Date.parse('2026-11-20T02:11:41.605Z'), exe = 'C:\T\meta-jobguard-c45ee2b19bda.exe';
   const procs = [

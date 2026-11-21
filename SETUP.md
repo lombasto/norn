@@ -18,7 +18,8 @@ variables only. The scheduler is the only thing it puts on your machine, and onl
 
 ## 1. Prerequisites and setup
 
-You need node >= 22, git and the claude CLI, signed in to your Claude account. codex and gh are optional. Check node first:
+You need node >= 22, git, Rust (cargo: setup builds `norn-hook`, the per-tool-call hooks; install it from https://rustup.rs) and
+the claude CLI, signed in to your Claude account. codex and gh are optional. Check node first:
 
 <!-- guide:run expect=/v(2[2-9]|[3-9]\d)\./ -->
 ```

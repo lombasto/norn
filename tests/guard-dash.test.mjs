@@ -45,11 +45,12 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
     assert.ok(fs.existsSync(path.join(S, 'advisory', 'seen.json')), 'first_seen lives in the one seen store');
     // META-UX-BUILD S2: the page = the summary + one sub-view's part at a time; every sub-view together shows what the one page did
     const html = GUARD_SUBS.map(([sub]) => renderTab('slop', { ...guardSummary(g), sub, limit: 40, ...guardPart(g, sub), parts_loading: false }, { project: 'kestrel' })).join('');
-    for (const id of ['slop-orc', 'slop-line', 'slop-types', 'slop-ledger', 'slop-rows', `slop-${code.id}`]) assert.ok(html.includes(`id="${id}"`), id);
+    // bddb2b4c (ui-spend-slop): no banner (slop-orc / slop-line); the page head and its sub-view switch lead
+    for (const id of ['slop-head', 'slop-subs', 'slop-types', 'slop-ledger', 'slop-rows', `slop-${code.id}`]) assert.ok(html.includes(`id="${id}"`), id);
     assert.match(html, /data-go="slop" data-gojump="slop-S-fp1"/);
     for (const s of [explainOf('K2').what, explainOf('K2').why, 'norn rec add waiver --rule K2 --scope fp1']) assert.ok(html.includes(s.replace(/"/g, '&quot;')), `RM-27: the Slop row shows ${s}`);
-    assert.match(html, /Pop-ups: <b>off<\/b>/);
-    assert.match(html, /data-act="orc-call"/);
+    // bddb2b4c: the pop-up line and the call / mute menu left the page with the banner; pop-ups stay a Settings row (policy.voice.popups)
+    assert.ok(!/Pop-ups:|data-act="orc-/.test(html), 'no pop-up line, no orc menu on the Slop page');
     // a chip in place on the run that owns the block
     const ag = { ...(await f.get('/api/agents?project=kestrel')).data, top: [], guard: g };
     assert.match(renderTab('runs', ag, { project: 'kestrel' }), /id="node-RUN-1"[^]*?Slop finding/);
