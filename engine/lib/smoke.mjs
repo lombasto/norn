@@ -3,7 +3,7 @@
 // records add / answer / apply / supersede -> views vs tests/golden/smoke -> fake run handoff -> auto-resume -> done ->
 // second writer refused (exit 3) -> scheduler files (dry, nothing installed) -> dashboard on a random 127.0.0.1 port whose
 // /api/overview + /api/agents show the running fake run -> project new / list / remove on a temp repo with a GitHub origin (an
-// edited installed agent is kept) -> doctor names an install line for each missing optional tool (META-ONBOARD S5). Sandbox: temp HOME / CLAUDE_CONFIG_DIR, a placeholder `claude` file
+// edited installed agent is kept) -> doctor names an install line for each missing optional tool (META-ONBOARD S5). Sandbox: temp HOME / CLAUDE_CONFIG_DIR (real RUSTUP_HOME / CARGO_HOME), a placeholder `claude` file
 // first on PATH (setup needs one; the smoke never starts claude), META_NO_TICK (no check-in is ever launched).
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,6 +35,18 @@ async function until(what, fn, ms = 30000) {
   for (;;) { const v = fn(); if (v) return v; if (performance.now() > end) throw new SmokeError('timeout waiting for ' + what); await sleep(100); }
 }
 
+/** the env of the smoke's sandbox: temp HOME / USERPROFILE / AppData / CLAUDE_CONFIG_DIR / META_ROOT, the placeholder bin first on
+ *  PATH. RUSTUP_HOME / CARGO_HOME stay the real ones (rustup and cargo default to <HOME>/.rustup and <HOME>/.cargo, which the temp
+ *  home lacks: "rustup has no default toolchain", and setup could not build norn-hook; SMOKE-RUSTUP R1). */
+export function sandboxEnv({ home, bin, cfg, root }, base = process.env) {
+  const real = base.USERPROFILE || base.HOME || os.homedir();
+  const env = { ...base, PATH: bin + path.delimiter + (base.PATH || ''), HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: cfg,
+    LOCALAPPDATA: path.join(home, 'AppData', 'Local'), APPDATA: path.join(home, 'AppData', 'Roaming'), META_ROOT: root, META_NO_TICK: '1',
+    RUSTUP_HOME: base.RUSTUP_HOME || path.join(real, '.rustup'), CARGO_HOME: base.CARGO_HOME || path.join(real, '.cargo') };
+  for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'NPM_CONFIG_PREFIX', 'npm_config_prefix', 'META_HB_MS']) delete env[k];
+  return env;
+}
+
 /** o: { out, err, keep, update (re-record the goldens into this repo) } -> exit code */
 export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s => process.stderr.write(s + '\n'), keep = false, update = false } = {}) {
   const t0 = Date.now(), tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'meta-smoke-'));
@@ -50,9 +62,7 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     // 2. setup in a sandbox
     for (const d of [home, bin, cfg]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'claude.exe' : 'claude'), '');
-    const env = { ...process.env, PATH: bin + path.delimiter + (process.env.PATH || ''), HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: cfg,
-      LOCALAPPDATA: path.join(home, 'AppData', 'Local'), APPDATA: path.join(home, 'AppData', 'Roaming'), META_ROOT: M, META_NO_TICK: '1' };
-    for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'NPM_CONFIG_PREFIX', 'npm_config_prefix', 'META_HB_MS']) delete env[k];
+    const env = sandboxEnv({ home, bin, cfg, root: M });
     const cli = path.join(M, 'engine', 'bin', 'norn.mjs'), PJ = path.join(M, 'projects', 'example', 'project.json');
     meta = (args, extra = {}) => {
       const r = spawnSync(process.execPath, [cli, ...args], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000 });
