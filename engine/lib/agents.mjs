@@ -65,10 +65,20 @@ export async function tailA(file, cache, init, onRecord) {
   return { c, bytesRead };
 }
 
+// the Runs table's counts (owner 2026-11-20 "what tools, words, commits"): tool calls, words the agent wrote and git commits it ran;
+// a message's blocks come one per transcript line, so every line counts (the usage below is per message)
+const GIT_COMMIT = /\bgit\s+(?:-C\s+\S+\s+)?commit\b/;
+function countActs(c, m) {
+  for (const b of Array.isArray(m?.content) ? m.content : []) {
+    if (b?.type === 'tool_use') { c.tools++; if (GIT_COMMIT.test(String(b.input?.command ?? ''))) c.commits++; }
+    else if (b?.type === 'text') c.words += String(b.text ?? '').split(/\s+/).filter(Boolean).length;
+  }
+}
 function onTranscript(c, j) {
   if (j.timestamp && (!c.first || j.timestamp < c.first)) c.first = j.timestamp;
   if (j.timestamp && (!c.last || j.timestamp > c.last)) c.last = j.timestamp;
   const m = j.message, u = m?.usage;
+  if (j.type === 'assistant') countActs(c, m);
   if (j.type !== 'assistant' || !u) return;
   const key = (m.id || '') + ':' + (j.requestId || '');
   if (c.seen.has(key)) return;
@@ -79,16 +89,16 @@ function onTranscript(c, j) {
   c.peak = Math.max(c.peak ?? 0, c.ctx);
   c.entries.push([Date.parse(j.timestamp), u.cache_read_input_tokens || 0, u.cache_creation_input_tokens || 0]);
 }
-const tInit = () => ({ seen: new Set(), entries: [], model: null, effort: null, ctx: null, peak: null, first: null, last: null });
+const tInit = () => ({ seen: new Set(), entries: [], model: null, effort: null, ctx: null, peak: null, first: null, last: null, tools: 0, words: 0, commits: 0 });
 
-/** One transcript: { model, effort, first, last, ctx (last call in+cacheR+cacheC), peak (its largest call), cacheR (sum), burn30, bytesRead }. */
+/** One transcript: { model, effort, first, last, ctx (last call in+cacheR+cacheC), peak (its largest call), cacheR (sum), burn30, acts { tools, words, commits }, bytesRead }. */
 export function transcriptInfo(file, cache = new Map(), { now = Date.now() } = {}) {
   const r = tail(file, cache, tInit, onTranscript);
   if (!r) return null;
   const { c } = r;
   let cacheR = 0, burn30 = 0;
   for (const [t, cr, cc] of c.entries) { cacheR += cr; if (t >= now - BURN_MS) burn30 += cr + cc; }
-  return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, peak: c.peak, cacheR, burn30, said: c.entries.length > 0, bytesRead: r.bytesRead };
+  return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, peak: c.peak, cacheR, burn30, acts: { tools: c.tools, words: c.words, commits: c.commits }, said: c.entries.length > 0, bytesRead: r.bytesRead };
 }
 
 const readJson = readJsonS;
@@ -182,6 +192,7 @@ export async function primeAgents(runs, o = {}) {
  * o: { projectsDir, codexDir, cache (Map, kept by the server), now, window, part ('live' | 'history' | none: RUN_PARTS), policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
  * Times: started = the start event, ended = endedAt (null while running), ran_min = start to end (start to now while running).
  * META-CTX-ENFORCE R1: ctx = the run's CURRENT context (its last request), ctx_peak beside it, ctx_limit / ctx_hard = its role's policy lines.
+ * acts = { tools, words, commits } from a Claude transcript (the Runs table's counts); null for codex / cli runs (no transcript read here).
  */
 export function agentsTree(runs, o = {}) {
   const now = o.now ?? Date.now(), cache = o.cache || new Map();
@@ -196,7 +207,7 @@ export function agentsTree(runs, o = {}) {
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
       dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log, ms, suite }) => ({ name, code, counts, log, ms, suite })) } : null,   // META-DOD 1; ms + suite: the gate text (DOD-GATE-FAST)
       started: r.created, ended: endedAt(r), ran_min: Math.max(0, Math.round(((ended(r) ? Date.parse(endedAt(r)) : now) - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null,
-      ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [],
+      ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, acts: null, children: [],
       handoff: d.role === 'helper' ? null : handoffOf(r, items, ho) };
     const exe = d.executor || '';
     if (exe.startsWith('codex')) {
@@ -212,7 +223,7 @@ export function agentsTree(runs, o = {}) {
       const file = end.transcript || d.transcript || findTranscript(o.projectsDir, d.session_id);
       const t = file ? transcriptInfo(file, cache, { now }) : null;
       if (t) {
-        Object.assign(node, { ctx: t.ctx, ctx_peak: t.peak, cacheR: t.cacheR, burn30: t.burn30, model: t.model ?? node.model, effort: t.effort ?? node.effort });
+        Object.assign(node, { ctx: t.ctx, ctx_peak: t.peak, cacheR: t.cacheR, burn30: t.burn30, acts: t.acts, model: t.model ?? node.model, effort: t.effort ?? node.effort });
         node.children = subagents(file, cache, { now });
       }
       // a claude-compatible provider bills its own account: no Claude-plan burn; tokens from the CLI final json (META-EXEC-S1)

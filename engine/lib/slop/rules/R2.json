@@ -9,36 +9,17 @@
     "why": "A broken reference sends the reader to a command that fails or a file that is not there. Docs go stale quietly this way.",
     "fix": "Fix the name or the path. If the command or file was renamed, use the new name everywhere."
   },
-  "files": [
-    "**/*.md",
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "tests/**",
-    "**/vendor/**"
-  ],
+  "files": ["**/*.md","**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["tests/**","**/vendor/**"],
   "cli": "engine/bin/norn.mjs",
-  "usage_in": [
-    "engine"
-  ],
+  "usage_in": ["engine"],
   "fixture": {
     "hit": {
-      "base": {
-        "engine/bin/norn.mjs": "const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n",
-        "docs/guide.md": "# Guide\n"
-      },
-      "head": {
-        "engine/bin/norn.mjs": "const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n",
-        "docs/guide.md": "# Guide\n\nRun `norn slop waive`, then `norn frobnicate`; the code is in `engine/lib/gone.mjs`.\n"
-      }
+      "base": {"engine/bin/norn.mjs":"const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n","docs/guide.md":"# Guide\n"},
+      "head": {"engine/bin/norn.mjs":"const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n","docs/guide.md":"# Guide\n\nRun `norn slop waive`, then `norn frobnicate`; the code is in `engine/lib/gone.mjs`.\n"}
     },
     "miss": {
-      "base": {
-        "engine/bin/norn.mjs": "const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n",
-        "docs/guide.md": "# Guide\n"
-      },
+      "base": {"engine/bin/norn.mjs":"const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n","docs/guide.md":"# Guide\n"},
       "head": {
         "engine/bin/norn.mjs": "const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n",
         "docs/guide.md": "# Guide\n\nUse `norn <verb>`, never `git stash`; the state is `${state}/x/y.json`; run `norn slop check`; the CLI is `engine/bin/norn.mjs` ([the bin](../engine/bin/norn.mjs)).\n",

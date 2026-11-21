@@ -123,7 +123,8 @@ test('a non-leader opens the PR of its DONE pushed lane branch through a fake gh
   const rx = doneLane(g.b.state, 'x', ok); doneLane(g.b.state, 'y', bad);
   const created = [], calls = [];
   const gh = args => { calls.push(args); if (args[1] === 'list') return { code: 0, out: '[]', err: '' }; created.push(args[args.indexOf('--head') + 1]); return { code: 0, out: `https://github.com/o/r/pull/${created.length}\n`, err: '' }; };
-  const door = (branch, tip) => (branch.endsWith('/y') ? `1 open slop BLOCK finding(s) at ${tip.slice(0, 7)}` : null);
+  const bl = { rule: 'K2', level: 'BLOCK', file: 'y.orig', line: 1, msg: 'synthetic' };
+  const door = (branch, tip) => ({ check: { head: tip, findings: branch.endsWith('/y') ? [bl] : [] }, open: branch.endsWith('/y') ? [bl] : [] });
   const p = { name: 'demo', file: path.join(t, 'project.json'), state: g.b.state, deliverables: { repo: rp.repo, main: 'main' } };
   const rs = followerPrs(p, g.b.state, { git: ghGit(), gh, door });
   assert.deepEqual(rs.map(r => [r.lane, r.status]), [['x', 'opened'], ['y', 'refused']], JSON.stringify(rs));

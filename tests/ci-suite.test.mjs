@@ -149,7 +149,7 @@ test('ci-suite --measure OUT --coverage: per file the tests (subtest before pare
   assert.equal(m.coverage, true); assert.ok(m.suite_ms > 0);
   const [f] = m.files;
   assert.equal(f.file, 'tests/fixtures/measure/m.test.mjs'); assert.ok(f.ms > 0);
-  assert.deepEqual(f.tests.map(t => [t.name, t.nesting, t.ok]), [['inner crew balin-2', 1, true], ['outer', 0, true]]);
+  assert.deepEqual(f.tests.map(t => [t.name, t.nesting, t.ok]), [['inner crew slug', 1, true], ['outer', 0, true]]);
   assert.ok(f.cov['engine/lib/crew.mjs'].length > 0 && f.totals['engine/lib/crew.mjs'] > 0, 'crew.mjs lines covered');
   assert.ok(!Object.keys(f.cov).some(k => k.startsWith('tests/') || k.includes('/vendor/')), 'only engine/, no vendor');
   const bad = spawnSync(process.execPath, [CI, '--coverage', 'tests/fixtures/measure/*.test.mjs'], { cwd: REPO, encoding: 'utf8' });

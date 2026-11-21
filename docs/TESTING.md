@@ -33,6 +33,9 @@ The book's "nothing to lose except computer time" (p. 142) does not hold on a sh
 | **B: batch / main** | The full suite (.github/workflows/ci.yml) | GitHub runner, never local for norn | on main and nightly |
 | **H: heavy** | Timing and speed checks, 390 px browser walks, load tests (.github/workflows/nightly.yml) | alone on the runner | nightly |
 
+The owner makes the PR check's `slop` job a required status (Settings > Rules > Rulesets: "Require status checks to pass", check
+`slop`); only that repository setting lets it hold a merge. engine/lib/slop/rules/README.md ("On a pull request") has the details.
+
 ## The run budget (ruling Q-28)
 
 - **A full suite is denied.** The PreToolUse scope hook refuses a full-suite command in every worker, MERGE, resumed and check-in

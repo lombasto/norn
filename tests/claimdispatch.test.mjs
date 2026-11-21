@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { startRun, fillQueue, claimDoor, RunRefused, hbPath } from '../engine/lib/runs.mjs';
+import { startRun, queueRun, fillQueue, readiness, claimDoor, RunRefused, hbPath } from '../engine/lib/runs.mjs';
 import { claimsPass } from '../engine/lib/tick.mjs';
 import { claimWork, releaseWork, renewWork, takeWork, listClaims, readSync, writeSync } from '../engine/lib/claims.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
@@ -160,4 +160,33 @@ test('exempt: a check-in starts with no claim and no ledger contact; helpers and
   assert.throws(() => claimDoor(g.b.opts('y', { stage: 'MERGE' })), e => e instanceof RunRefused && e.code === 3 && /MERGE: no merge leader confirmed yet/.test(e.message));
   assert.equal(claimDoor({ ...g.b.opts('y'), state: path.join(g.t, 'solo') }), null, 'a solo state dir (no home.json) never claims');
   assert.equal(spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/heads/claims'], { env: { ...process.env, GIT_DIR: g.remote }, windowsHide: true }).status, 1, 'the claims branch was never written');
+});
+
+// queue-stall (11-21: three queued runs read READY in norn ready / META-QUEUE.md while every fill started none): the walk is the one
+// readiness evaluator, so the claim door's no-network pre-check is one of its terms - the dry walk and the fill agree on a held row.
+test('a claim-held queued run is not READY in the dry walk: it names the holder, and the fill starts nothing', () => {
+  const g = rig();
+  assert.equal(claimWork(g.a.f, me('a', 'x', { scope: ['src/**'] })).won, true);
+  const rb = startRun(g.b.opts('y'));
+  assert.equal(rb.queued, true);
+  const [row] = readiness(g.b.state);
+  assert.equal(row.id, rb.run);
+  assert.equal(row.ready, false, 'the dry walk sees the hold the start sees');
+  assert.ok(row.terms.some(t => /^claim: scope overlaps a\/x: src\/\*\* \(held by a\)$/.test(t)), row.terms.join(' | '));
+  assert.deepEqual(fillQueue(g.b.state), []);
+  assert.equal(g.b.item(rb.run).state, 'queued');
+});
+
+test('a row the fill walk called ready but whose start was refused leaves one fill.log line per why', () => {
+  const g = rig();
+  listClaims(g.b.f);   // b's last fetch: before a claims - its walk sees no hold, the start's CAS round does
+  const qb = queueRun(g.b.opts('y'));
+  assert.equal(claimWork(g.a.f, me('a', 'x', { scope: ['src/**'] })).won, true);
+  assert.deepEqual(fillQueue(g.b.state), []);
+  assert.equal(g.b.item(qb.run).state, 'queued');
+  const lines = () => fs.readFileSync(path.join(g.b.state, 'fill.log'), 'utf8').trim().split('\n');
+  assert.equal(lines().length, 1);
+  assert.match(lines()[0], new RegExp(`${qb.run} not started: refused: claim: scope overlaps a/x`));
+  fillQueue(g.b.state);
+  assert.equal(lines().length, 1, 'the same why is logged once');
 });

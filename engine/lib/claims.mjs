@@ -2,7 +2,7 @@
 // homes/<id>.json (a home's registration; ids are unique), projects/<p>.json (its bare home), work/<p>/<home>/<lane>.json (a lane that
 // writes), allow/<p>/<h~lane>+<h~lane>.json (an owner's pass for one pair). claimWork is the core startRun calls (S2b: runs.mjs claimDoor);
 // S2b adds renew (renewWork), the observer's stale clock (observeClaims / isStale) and the owner's take over (takeWork); the home's own
-// bookkeeping (its claims, the n it saw per foreign claim, the runs a claim holds, the digest rows) lives in <state>/sync/*.json. Two claims of different homes overlap by item, branch or scope (ready.mjs globsIntersect): item and
+// bookkeeping (its claims, the n it saw per foreign claim, the runs a claim holds, the digest rows) lives in <state>/sync/*.json. Two claims of different homes overlap by item, branch or scope (collide.mjs overlapOf): item and
 // branch refuse, scope queues. Own claims never block own dispatch. Every CAS round re-reads and re-checks overlap: a rejected push is
 // never retried blind (fed's rule F5), and a rejected-looking push that landed is found by nonce + n.
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { ClaimsError, fetchRefs, readClaims, casClaims } from './claimsref.mjs';
 import { under } from './fed.mjs';
-import { globsIntersect } from './ready.mjs';
+import { overlapOf, wholeRepo, verdict } from './collide.mjs';
 import { syncPolicy } from './policy.mjs';
 
 const ROUNDS = 3, TOUCHED_MAX = 500;
@@ -22,23 +22,13 @@ export const homeKey = id => `homes/${want(HOME, id, 'home')}.json`;
 export const projectKey = project => `projects/${want(NAME, project, 'project')}.json`;
 /** the merge leader of a project (SPEC 4.8): one exclusive key, no overlap test */
 export const leaderKey = project => `leader/${want(NAME, project, 'project')}/merge.json`;
+// the overlap model lives in collide.mjs (lane-collide S1a: one model for lanes and homes); a claim's overlap is part of this module's API
+export { overlapOf };
 /** the allow file of a pair of `home/lane` refs, either order */
 export const allowKey = (project, a, b) => `allow/${want(NAME, project, 'project')}/${[want(LANE, a, 'lane ref'), want(LANE, b, 'lane ref')].sort().map(x => x.replace('/', '~')).join('+')}.json`;
 
-// no Scope: line = the whole repo (SPEC 5, DECIDED: the safe reading)
-const scopeOf = c => [...(c.scope?.length ? c.scope : ['**']), ...(c.touched || [])];
-const wholeRepo = c => !c.scope?.length || (c.scope.length === 1 && c.scope[0] === '**');
 /** past TOUCHED_MAX paths, `touched` keeps one <top dir>/** entry per top folder (a root file stays itself) */
 const capTouched = t => (t.length <= TOUCHED_MAX ? t : [...new Set(t.map(p => (p.includes('/') ? p.split('/')[0] + '/**' : p)))]);
-/** the overlap of two work claims: null | { kind: item | branch | scope, what: [the other's items / branch / globs that meet mine] } */
-export function overlapOf(a, b) {
-  if (a.project !== b.project || a.home === b.home) return null;
-  const items = (a.items || []).filter(i => (b.items || []).includes(i));
-  if (items.length) return { kind: 'item', what: items };
-  if (a.branch && a.branch === b.branch) return { kind: 'branch', what: [a.branch] };
-  const sa = scopeOf(a), sb = scopeOf(b);
-  return globsIntersect(sa, sb) ? { kind: 'scope', what: sb.filter(g => globsIntersect(sa, [g])) } : null;
-}
 /** the other homes' work claims of the project that overlap `me`, minus allowed pairs; item / branch hits first */
 function hitsOf(me, claims) {
   const mine = `${me.home}/${me.lane}`, out = [];
@@ -50,8 +40,6 @@ function hitsOf(me, claims) {
   }
   return out.sort((x, y) => (x.kind === 'scope') - (y.kind === 'scope'));
 }
-const whyOf = h => `${h.kind} overlaps ${h.home}/${h.lane}: ${h.what.join(' ')}${h.kind === 'scope' && h.noScope ? ' (brief has no Scope: line)' : ''}`;
-const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true, hit: h, why: whyOf(h) });
 const owned = c => c?.kind === 'work' || c?.kind === 'leader';
 const who = c => (c.kind === 'leader' ? `${c.home}/${c.role} leader` : `${c.home}/${c.lane}`);
 const sameSet = (a = [], b = []) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
@@ -78,21 +66,31 @@ function rounds(f, step, o) {
   return { queued: true, busy: true, why: BUSY };
 }
 
+const meOf = me0 => ({ ...me0, items: me0.items || [], scope: me0.scope?.length ? me0.scope : ['**'], touched: capTouched(me0.touched || []) });
+function decideOn(claims, me, key) {
+  const mine = claims[key];
+  if (unchanged(mine, me)) return { won: true, again: true, key, n: mine.n, claim: mine };
+  const [h] = hitsOf(me, claims);
+  return h ? verdict(h) : { mine };
+}
 /**
- * claimWork(f, me = { project, home, lane, branch, items, scope, touched, run }, o = { lease_s, now, precheck, beforePush })
+ * claimWork's no-network pre-check alone, on `claims` (readClaims(f).claims: the last fetched tip): { hit, why } when another home's
+ * claim holds `me0` (claimWork would answer { queued } without a fetch), else null. The queue walk's claim term (runs.mjs claimTerm).
+ */
+export function claimHold(claims, me0) {
+  const me = meOf(me0), d = decideOn(claims, me, workKey(me.project, me.home, me.lane));
+  return d.hit && !d.won ? { hit: d.hit, why: d.why } : null;
+}
+/**
+ * claimWork(f, me ={ project, home, lane, branch, items, scope, touched, run }, o = { lease_s, now, precheck, beforePush })
  * -> { won, key, n, claim, again? } | { refused, hit, why } (item / branch) | { queued, why, hit? } (scope, busy, unreachable).
  * The pre-check reads the last fetched claims with no network: an overlap holds, an unchanged own claim is won again.
  */
 export function claimWork(f, me0, o = {}) {
-  const me = { ...me0, items: me0.items || [], scope: me0.scope?.length ? me0.scope : ['**'], touched: capTouched(me0.touched || []) };
+  const me = meOf(me0);
   const key = workKey(me.project, me.home, me.lane), now = o.now ?? Date.now();
   return under(f, () => {
-    const decide = claims => {
-      const mine = claims[key];
-      if (unchanged(mine, me)) return { won: true, again: true, key, n: mine.n, claim: mine };
-      const [h] = hitsOf(me, claims);
-      return h ? verdict(h) : { mine };
-    };
+    const decide = claims => decideOn(claims, me, key);
     if (o.precheck !== false) {
       let local = null;
       try { local = readClaims(f).claims; } catch { /* no fetched claims yet */ }

@@ -47,11 +47,11 @@ test('Lanes, Runs and the Inbox show the dwarf who ran it; a run with no dwarf s
   try {
     const get = async p => (await f.get(p)).data;
     const lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
-    assert.deepEqual(lanes.find(l => l.name === 'render').dwarf, { id: 'oin', name: 'Óin' });
+    assert.deepEqual(lanes.find(l => l.name === 'render').dwarf, { id: 'vondrak-torchgrip', name: 'Vondrak Torchgrip' }, 'the name from the crew store');
     assert.ok(!lanes.some(l => 'run_name' in l), 'no run_name any more');
-    const oin = '<b class="aname" data-dwarf="oin">Óin</b>';
+    const oin = '<b class="aname" data-dwarf="vondrak-torchgrip">Vondrak Torchgrip</b>';
     for (const tab of ['runs', 'lanes']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(oin), tab);
-    assert.ok(renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' }).includes('<b class="aname" data-dwarf="thorin">Thorin</b>'), 'inbox: the unreviewed run');
+    assert.ok(renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' }).includes('<b class="aname" data-dwarf="harvald-marblekeg">Harvald Marblekeg</b>'), 'inbox: the unreviewed run');
     record(f.pa.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'claude', lane: 'seabed', name: 'tawny-falcon' } });
     const html = renderTab('lanes', await loadTab('lanes', 'kestrel', get), { project: 'kestrel' });
     assert.ok(html.includes('<span class="mute">check-in</span>'), 'no dwarf: the kind word');

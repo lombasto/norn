@@ -1,8 +1,8 @@
 /* The Lanes page (stage LANES, SPEC 4.2: the attention board): the group filter, one panel per group, the lane row grid (tile, name +
-   now line, progress and pace, the run strip, the PR track, actions, the open chevron), the in-place expand and the strip legend.
+   now line, progress and pace, the run strip, the PR track, actions, the open chevron) and the in-place expand.
    Colour carries state only through the tinted tile and beads (one hue per state token); pace is a word on a tint. Under 700 px a
-   row becomes a card. The elapsed bar's growth is in norn/norn.css under :root.motion (this sheet holds no animation). */
-.lfilters{gap:8px 12px}
+   row becomes a card; a Waiting row carries the Up next line and the priority control. The elapsed bar's growth is in norn/norn.css under :root.motion (this sheet holds no animation). */
+.lfilters{gap:8px 12px}.backlog{margin:6px 0 10px}
 .lfilters input[type=search]{width:220px;max-width:100%}.lane-links{font-size:13px;color:var(--mute)}.lane-links .lnk{font-weight:400;color:var(--run)}
 .lane-types{border-left:1px solid var(--line);padding-left:8px}
 .lhelp{position:relative}.lhelp>summary{list-style:none;cursor:pointer;display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid var(--field-line);border-radius:50%;font-weight:700;color:var(--mute)}
@@ -56,9 +56,6 @@ button.lnk.lane-src{background:none;border:0;padding:0;color:var(--accent);curso
 .lane-kind{margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center}.lane-out{color:var(--mute);overflow-wrap:anywhere}
 .lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}
 details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
-/* the one strip legend under the list */
-.llegend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:4px 2px 12px;color:var(--mute)}.lg-i{display:inline-flex;align-items:center;gap:4px;white-space:normal}
-.llegend .bd{width:18px;height:18px}.llegend .bd svg{width:12px;height:12px}
 @media (max-width:1100px){.lrow{grid-template-columns:32px minmax(0,2fr) minmax(0,1fr) auto auto 32px}.lrow>.ltrack{display:none}}
 /* phone: a card per lane - name + strip, the now line on 2 lines, progress and pace, the PR track, 44 px buttons */
 @media (max-width:700px){
@@ -76,6 +73,7 @@ details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>
 /* fair-slots item 3: a lane run's priority + fill position (pages/lanes.mjs prioChip) in the row head; the default P2 is faded */
 .chip.prio{font-family:ui-monospace,Consolas,monospace;box-shadow:inset 0 0 0 1px var(--line)}.chip.prio.dflt{opacity:.6;font-style:italic}
 /* lane-outputs: what happens next under the now line; the lane's details above the board and a notes file opened in place */
+.lane-up{margin-top:2px;overflow-wrap:anywhere}.lhead .pl-prio{font-size:12px;padding:0 2px;max-width:56px}
 .lane-next{margin-top:3px;display:flex;flex-wrap:wrap;gap:4px}.lane-next .chip{white-space:normal}.lane-status{margin-top:2px;max-width:46ch;overflow-wrap:anywhere}button.chip.lnk{cursor:pointer;border:0;font:inherit}
 .lane-det{min-width:0;overflow-wrap:anywhere;margin-bottom:12px}.lane-det-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.lane-det-head h3{margin:0}.lane-det h4{margin:12px 0 4px;font-size:13px}.lane-det ul{margin:0;padding-left:18px}.lane-det li{margin:2px 0}.lane-files li.on{font-weight:600}.lane-find{border-left:3px solid var(--accent);padding-left:10px}.lane-find table,.fileview .md table{display:block;overflow-x:auto;max-width:100%}
 .fileview{margin-top:12px;min-width:0}.fileview-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px}.fileview-head .inspath{flex:1;min-width:0;overflow-wrap:anywhere}.fileview-img{max-width:100%;height:auto;display:block}.fileview .md pre{overflow-x:auto;max-width:100%}.fileview-src{max-height:70vh;overflow:auto}

@@ -61,7 +61,7 @@ and "Skip this file"; the check-in applies what you approve. SloppaChoppa, an or
 ### Also
 
 - **Usage stays inside your plan.** Before any run starts, Norn checks the worker cap, an hourly rate cap and a weekly stop. The
-  Plan page shows when the queued work would reach the limit.
+  usage forecast (`norn plan`, and on the dashboard's usage page) shows when the queued work would reach the limit.
 - **Main stays green.** Each lane has its own git worktree and one writer. Finished work merges to main one branch at a time,
   through your test command.
 - **Decisions are on record.** Every question, decision and instruction is an append-only record. You can see why something
@@ -81,10 +81,10 @@ open a row of pages.
 
 - **Home**: a controller chat. It answers from the records and acts only through Norn's own commands; anything that needs your
   OK waits on an approval card. Check-ins, runs and questions appear in the same thread.
-- **Plan** (Work, `norn plan`): queued steps in start order with time estimates, the chains of steps that wait on each other, what
-  merges next, and the usage forecast up to the weekly reset.
-
-![The Plan page: queued steps with start estimates, their chains and the usage forecast](docs/img/plan.png)
+- **Lanes**: every lane by what it needs from you. Its Waiting group lists the queued lanes in start order, each with its priority
+  control, time estimate, start and what it waits for (`norn plan` prints the same plan, with the chains and what merges next).
+- **Runs**: one table of every run (state, lane and stage, model, age, tools / words / commits, pace); a row opens the run's
+  document and live feed in a drawer.
 
 - **Inbox**: the questions waiting for you, each with its options and a recommended answer.
 - **Slop** (Health): every open finding, grouped by the kind of fix, with "Fix all" and the fixer's result cards (see SloppaChoppa above).
@@ -169,8 +169,8 @@ test, which runs on all three systems.
   test files, one at a time; never the full suite, which runs in CI) and opens the lane branch's pull request. No agent runs for
   this. Only a conflict, a red check or a slop block queues a MERGE run, and that run's brief describes the failure. A MERGE or
   resolve run is queued at the priority of the work it lands, never below P1. It goes ahead of build and plan runs of its own priority and the next one up, and `policy.fill.merge_reserve` slots (default 1)
-  stay free for it while it waits. `norn requeue RUN-n --priority P0-P4` (or the priority control in Plan > Up next) changes a
-  queued run's priority and keeps its `--after` conditions. Lanes, Plan and Overview show `done, not merged: N (oldest Xh)`. When the
+  stay free for it while it waits. `norn requeue RUN-n --priority P0-P4` (or the priority control on a queued run in Runs or Lanes) changes a
+  queued run's priority and keeps its `--after` conditions. Lanes and Overview show `done, not merged: N (oldest Xh)`. When the
   backlog is above `policy.merge.backlog_max` (default 3), the check-in is told to land work before it starts new lanes.
 - **Records.** Questions, decisions, directives, lanes and runs are append-only events, written only through `norn rec`,
   `norn run` and the dashboard. The markdown views are generated from them.

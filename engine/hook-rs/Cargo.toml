@@ -1,0 +1,15 @@
+[package]
+name = "norn-hook"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# std only: the hook must build on every Norn home with nothing but cargo (no registry fetch)
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

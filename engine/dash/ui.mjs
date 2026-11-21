@@ -17,13 +17,13 @@ import { esc, fin, dash, int, mTok, fmtMin, pct, plural, chip, exClass, projTag,
 import { diffBlock } from './diffview.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
-import { plan, forecastCard } from './pages/plan.mjs';
+import { forecastCard } from './pages/plan.mjs';
 import { inbox } from './pages/inbox.mjs';
 import { records, ledger } from './pages/ledger.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE). Label = id = URL (?tab=<id>)
 export const TABS = [['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'], ['talk', 'Talk'],
   ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
-  ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['settings', 'Settings']];
+  ['roadmap', 'Roadmap'], ['settings', 'Settings']];
 export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 export const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
@@ -80,11 +80,13 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
   if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') return get(`/api/inbox?${q}`);
-  if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table, or every branch / worktree of the repo (branches.mjs, the cached scan)
+  if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table (+ the queue's plan: Up next on the Waiting lanes), or every branch / worktree of the repo (branches.mjs, the cached scan)
     const sub = pickSub(LANES_SUBS, ctx.sub), limit = ctx.limit || SUB_CAP;
-    return { ...(await get(sub === 'lanes' ? `/api/lanes?${q}` : `/api/branches?${q}`)), sub, limit };
+    if (sub !== 'lanes') return { ...(await get(`/api/branches?${q}`)), sub, limit };
+    const [l, plan] = await Promise.all([get(`/api/lanes?${q}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null)]);
+    return { ...l, plan, sub, limit };
   }
-  if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (Plan's up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
+  if (tab === 'runs') {   // stage RUNS: the live part + the queue's plan (up next: holds, estimate, priority); the last history part stands in, marked, until the new one lands
     const [a, plan, guard] = await Promise.all([get(`/api/agents?${q}&part=live${runsWin(ctx.runsWindow)}`), Promise.resolve().then(() => get(`/api/plan?${q}`)).catch(() => null), guardGet(get, q, all)]);
     const old = ctx.parts?.runs, ended = old && old.key.startsWith(`${project}|${a.window}|`) ? old.data.ended : undefined;
     return { ...a, plan, guard, ended, parts_loading: true }; }
@@ -114,7 +116,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const [d, remote, guard] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null), guardGet(get, q, all)]);
     return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
-  // Usage carries the forecast (moved from Plan, stage NAV): /api/plan's forecast per project, beside the usage parts
+  // Usage carries the forecast: /api/plan's forecast per project, beside the usage parts
   if (tab === 'usage') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])) }; }
   if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
     const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
@@ -129,7 +131,6 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const sheet = ctx.fixall ? (await get(`/api/guard?${q}&part=sheet`)).sheet : null;
     return { ...d, ...(have || {}), parts_loading: !have, ...(sheet ? { sheet, sheet_sent: ctx.fixall.sent ?? null, sheet_sel: ctx.fixall } : {}) };
   }
-  if (tab === 'plan') return get(`/api/plan?${q}`);
   throw new Error('unknown tab ' + tab);
 }
 
@@ -143,7 +144,6 @@ export function renderTab(tab, d, ctx = {}) {
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
   if (tab === 'usage' || tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + (tab === 'usage' ? usage(d, { ...ctx, now }) : lanesPage(d, { ...ctx, now })));
-  if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
   return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
@@ -390,6 +390,8 @@ export function pauseMenu(o, ctx = {}) {
 const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
+// RM-43: a second-voice row is rated here (thumbs: the finding is right / wrong), not fixed; its quote is the added line it read
+const voiceThumbs = r => `<button class="ghost" data-act="slop-rate" data-fp="${esc(r.rate.fp)}" data-up="1" aria-label="right">&#128077; right</button> <button class="ghost" data-act="slop-rate" data-fp="${esc(r.rate.fp)}" data-up="0" aria-label="wrong">&#128078; wrong</button>`;
 // a finding the fixer declined with a reason (fixer.mjs markDeclines): the reason, and the owner's two answers - accept the decline (the
 // finding closes) or re-scope it (a new fix sentence, e.g. "trim in place" for "move to an on-demand file": Fix all offers it again)
 const declinedLine = r => `<div class="small gdecl">${chip('idle', 'declined')} declined by ${esc(r.declined.run)}: ${esc(r.declined.why)}
@@ -399,7 +401,7 @@ const declinedLine = r => `<div class="small gdecl">${chip('idle', 'declined')} 
 const slopExplain = x => `<details class="sexplain"><summary class="small">what this is, why it matters, what to do</summary><dl class="small">
     <dt>What</dt><dd>${esc(x.what)}</dd><dt>Why</dt><dd>${esc(x.why)}</dd><dt>What to do</dt><dd>${esc(x.fix)}</dd>${x.waiver ? `<dt>If it must stay</dt><dd>only the owner or the controller waives it: <code>${esc(x.waiver)}</code></dd>` : ''}</dl></details>`;
 const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
-    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div>${r.explain ? slopExplain(r.explain) : ''}${r.declined ? declinedLine(r) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
+    <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} ${r.rate ? voiceThumbs(r) : `<button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button>`}</div>${r.quote ? `<code class="small">${esc(r.quote)}</code>` : ''}${r.explain ? slopExplain(r.explain) : ''}${r.declined ? declinedLine(r) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
 // META-UX-BUILD S5 (REPORT s.2-3): To fix = ONE list in batches (check + the kind of fix the check declares), the kinds apart:
 // ready (the exact text is known), to draft (a worker writes the text), your call (two ways), and the rows that only count (folded).
 // A batch shows its first rows; "all n" opens it (one batch at a time, every row, capped + show more). The two ways are named here;
@@ -474,6 +476,13 @@ function fixAll(sh, sent, sel = null) {
     ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${sh.usage?.batch ? `<b id="fx-runs" data-batch="${int(sh.usage.batch)}">${plural(Math.ceil(on / sh.usage.batch), 'fixer run')}</b> of at most ${int(sh.usage.batch)} findings ${esc(sh.usage.run ?? '')}` : esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
     <button class="strong" data-act="fixall-send" data-sig="${esc(sh.sig)}"${sent || !on ? ' disabled' : ''}>Send the fixer (<span id="fx-n">${int(on)}</span>)</button></span></div></section>`;
 }
+// RM-43: the second voice's precision per model rule (thumbs rated); the promotion / demotion line is for the owner or the controller to record
+const VOICE_SUGGEST = { BLOCK: ['ok', 'may go to BLOCK'], TREND: ['warn', 'drop to TREND'] };
+function voicePrecisionCard(rows = []) {
+  if (!rows.length) return '';
+  const row = p => `<tr id="slop-voice-${esc(p.rule)}"><td><b>${esc(p.rule)}</b> ${esc(p.title)}</td><td>${esc(p.level)}${p.shadow ? ' · shadow' : ''}</td><td>${p.precision === null ? '<span class="mute">none rated</span>' : `${int(Math.round(p.precision * 100))} % <span class="mute small">(${int(p.up)} of ${int(p.rated)})</span>`}</td><td>${p.suggest ? chip(...VOICE_SUGGEST[p.suggest]) : ''}</td></tr>`;
+  return `<h3>The second voice <span class="mute small">precision per question from your thumbs · at 90 % over 20 rated a question may go to BLOCK, under 50 % it drops to TREND - set it in the project's rules/slop/overrides.json</span></h3><div class="tablecard"><table id="slop-voice"><tbody>${rows.map(row).join('')}</tbody></table></div>`;
+}
 // META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / By
 // age, the chosen part. d = the summary (guardparts.mjs) + d[d.sub] once its part is here (parts_loading until then).
 // META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays); the numbers are open + the three kinds of fix.
@@ -503,7 +512,7 @@ function guard(d, ctx) {
       note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'slop-types', fmt: n => `${n} open` })}</section>`
     : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
     <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}
-    <h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
+    ${voicePrecisionCard(P.precision)}<h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
     : `<section class="card" id="slop-trend-card"><h2>Open findings by age <span class="mute small">the findings open now, per type, counted from the day each was first seen · last ${int(P.trend?.days?.length ?? 30)} days</span></h2>
     <p class="small mute" id="slop-trend-note">Each line climbs on the day a finding still open today was first seen. Fixed findings are not in it, so it is not the open count over time: a flat line means nothing still open is that old.</p>${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'findings open now, by the day first seen', unit: 'findings' }) : '<p class="small mute">No open finding.</p>'}</section>`;
   const numbers = [{ n: int(total), label: `open · ${int(fresh)} new${K.count ? ` · ${int(K.count)} only count` : ''}`, cls: fresh ? 'warn' : '' }, { n: int(K.ready ?? 0), label: 'ready: the text is known', cls: K.ready ? 'ok' : '' },

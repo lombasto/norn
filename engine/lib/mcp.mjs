@@ -23,6 +23,7 @@ import { splitRepo, projectHome } from './monorepo.mjs';
 import { dupOf, dupMessage } from './dupdirs.mjs';
 import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll } from './pause.mjs';
 import { PAUSE_MODES, MODE_NAMES, pauseFiles, readPause } from './pausemode.mjs';
+import { laneHooks, laneAsksOwner } from './lifecycle.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
@@ -87,12 +88,15 @@ const lastSeq = i => i.history.at(-1)?.seq ?? 0;
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
 const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : Number(a.id.replace(/\D/g, '')) - Number(b.id.replace(/\D/g, '')));
 
-// The needs-you set (HARNESS-DESIGN sec. 4 norn_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs.
-export function needsYou(i) {
+// The needs-you set (HARNESS-DESIGN sec. 4 norn_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs. LANE-TRUTH:
+// with a project's lane hooks (h = laneHooks(state), stateDir = its state dir) a parked lane whose work shipped or that has no branch left,
+// and an unreviewed run of a shipped lane, ask nothing (lifecycle.mjs laneAsksOwner).
+export function needsYou(i, h = null, stateDir = null) {
+  const asks = (lane, o) => !h || laneAsksOwner(h, lane(), o);
   if (i.kind === 'question' && i.state === 'open') return 'open question';
   if (i.kind === 'question' && i.state === 'answered') return 'answered, not applied';
-  if (i.kind === 'lane' && i.state === 'parked') return 'parked lane';
-  if (i.kind === 'run' && ['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive') return 'unreviewed run';
+  if (i.kind === 'lane' && i.state === 'parked') return asks(() => laneName(i.id, stateDir), { parked: true, rec: i }) ? 'parked lane' : null;
+  if (i.kind === 'run' && ['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive') return asks(() => i.data.lane ?? null) ? 'unreviewed run' : null;
   if (i.kind === 'run' && i.state === 'queued' && i.hold && !i.hold.cleared) return 'needs a ruling';   // META-AUTONOMY R1: the fill held it (norn requeue / stop / runs landed)
   return null;
 }
@@ -205,7 +209,7 @@ function boot({ role }, ctx) {
   const runs = items.filter(i => i.kind === 'run');
   const lastCk = runs.filter(i => i.data.kind === 'checkin').at(-1);
   const resume = tryDigest(ctx.state, ctx.project || {});   // NORN-WATCH S1: the level-triggered resume digest
-  const digest = { project: ctx.project?.name ?? null, needs_you: items.filter(needsYou).length, digest: digestIds(resume),
+  const lh = laneHooks(ctx.state), digest = { project: ctx.project?.name ?? null, needs_you: items.filter(i => needsYou(i, lh, ctx.state)).length, digest: digestIds(resume),
     running: runs.filter(i => i.state === 'running').map(i => ({ run: i.id, lane: i.data.lane ?? null, executor: i.data.executor ?? i.data.kind })),
     last_checkin: lastCk ? { run: lastCk.id, state: lastCk.state, ts: lastCk.history[0].ts } : null,
     other_controllers: otherControllers(ctx).map(h => ({ pid: h.pid, via: h.via, ts: h.ts })), pause: readPause(pauseFiles(ctx.state)) };   // RM-37: the mode in force (null = none)
@@ -234,8 +238,9 @@ function status(a, ctx) {
 function inbox(a, ctx) {
   if (a.project && a.project !== ctx.project?.name) bad(`this server serves ${ctx.project?.name ?? 'no named project'}, not ${a.project}`);
   const s = st(ctx);
-  const items = Object.values(s.items).filter(i => needsYou(i) && lastSeq(i) > (i.kind === 'run' ? a.since_runs_seq ?? -1 : a.since_seq ?? -1)).sort(order)
-    .map(i => ({ id: i.id, kind: i.kind, state: i.state, why: needsYou(i), lane: i.data.lane ?? null, title: title(i) }));
+  const lh = laneHooks(ctx.state), why = i => needsYou(i, lh, ctx.state);
+  const items = Object.values(s.items).filter(i => why(i) && lastSeq(i) > (i.kind === 'run' ? a.since_runs_seq ?? -1 : a.since_seq ?? -1)).sort(order)
+    .map(i => ({ id: i.id, kind: i.kind, state: i.state, why: why(i), lane: i.data.lane ?? null, title: title(i) }));
   const cursor = { seq: s.seq, runs_seq: s.runs_seq };
   return { text: items.map(i => `${i.id}  ${i.why}  ${i.lane ?? '-'}  ${i.title}`).join('\n') + `\ncursor: since_seq=${cursor.seq} since_runs_seq=${cursor.runs_seq}`, data: { items, cursor } };
 }

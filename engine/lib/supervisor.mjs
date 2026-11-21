@@ -12,7 +12,7 @@ import { record, RecordError, loadState } from './records.mjs';
 import { providerEnv, limitPatterns, authPatterns, executorInfo } from './executors.mjs';
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
-import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
+import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN, mailWaiting, raiseFlag, clearFlag } from './mail.mjs';
 import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillAll, fillWords, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
@@ -26,16 +26,17 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { checkBranch, slopPrompt, slopList } from './slop/runend.mjs';
+import { checkBranch, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
 import { procStartAsync, running } from './legacy.mjs';
 import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
+import { makeTool } from './slop/tools.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { pauseOf } from './pause.mjs';
 import { readPause, holdsStarts } from './pausemode.mjs';
-import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
+import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy, orderDue } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
 import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
@@ -65,6 +66,7 @@ let finished = false;
 let capTimer = null, capped = false;
 let nudging = null, nudgeTimer = null, nudgeWaitLast = null;   // META-GTP-MAIL piece 3 (nudgeCheck)
 let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // META-CTX-ENFORCE R1 (ctxCheck)
+let flagTimer = null;   // hook-fast S1 (flagCheck)
 
 // a pid alone names whatever process holds it NOW (Windows reuses a freed pid; CI-HANG-6E54DAB R2): hb + end name the supervisor
 // as (pid, OS start time) - the value procStart gives a reader, so the two compare equal while this process lives.
@@ -149,6 +151,7 @@ if (cmd) {
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);
     if (ctxWatched()) ctxTimer = setInterval(ctxCheck, spec.hbMs);
+    if (spec.mail_hook) flagTimer = setInterval(flagCheck, spec.hbMs);
     if (spec.capMs) capTimer = setTimeout(() => { capped = true; logLine(`time cap ${spec.capMs} ms: stopping the executor`); killTree(childPid, { state, killer: `${run} supervisor ${process.pid}`, reason: `time cap ${spec.capMs} ms` }); }, spec.capMs);
   } catch (e) { finish(null, null, String(e.message)); }
 }
@@ -190,6 +193,7 @@ async function finish(code, signal, error) {
   clearInterval(timer);
   if (nudgeTimer) clearInterval(nudgeTimer);
   if (ctxTimer) clearInterval(ctxTimer);
+  if (flagTimer) { clearInterval(flagTimer); try { clearFlag(state, run); } catch { /* state gone */ } }   // an ended run takes no more mail by hook
   if (capTimer) clearTimeout(capTimer);
   for (const fd of fds) { try { fs.closeSync(fd); } catch { /* closed */ } }
   logLine(`exit=${code}${signal ? ' signal=' + signal : ''}${error ? ' error=' + error : ''}`);
@@ -447,10 +451,21 @@ function autoResume(handoff) {
 function slopEnd() {
   if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
   let c;
-  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
+  // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
+  let brief = null;
+  try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
+  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) {
+    // SPEC 1.3 F7: a check that threw is no "no findings" - the branch is held "could not check" (the dashboard and the digest show it);
+    // no resume: the worker cannot fix the check, and the door runs its own
+    const why = e.message.split('\n')[0];
+    logLine(`slop: could not check: ${why}`);
+    try { const p = couldNotCheck(spec.worktree, why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e2) { logLine(`slop: the could-not-check hold was not stored: ${e2.message.split('\n')[0]}`); }
+    return [];
+  }
   if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
-  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
-  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
+  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings }).open;
+  const unrun = c.result.findings.filter(f => f.unrun).map(f => f.rule);
+  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
   return open;
 }
 
@@ -536,6 +551,12 @@ function nudgeResume() {
 // request) is held against its role's hard_max_k from the CURRENT project policy (ctxlimit.mjs); past it the tree is stopped and
 // the run ends as HANDOFF (Norn writes its result + HANDOFF.md; committed work is kept; auto-resume as for any HANDOFF). The no-new-step
 // and hand-off orders before it are the PostToolUse hook's (norn mail check --inject). A claude-shaped run with a transcript only.
+// hook-fast S1: the mail flag (mail.mjs flagFile) for queued mail no sender flagged - another home's, synced in, or a sender that
+// crashed between its record and the flag. The hook (norn-hook) starts Node only on the flag.
+function flagCheck() {
+  if (finished || !childPid) return;
+  try { if (mailWaiting(state, run)) raiseFlag(state, run); } catch (e) { logLine(`mail flag check: ${e.message}`); }
+}
 function ctxWatched() { return cmd?.parse === 'claude' && !!spec.session_id && !!spec.projectsDir; }
 function ctxWait(why) { if (why !== ctxWaitLast) logLine(`context check waits: ${why}`); ctxWaitLast = why; }
 function ctxCheck() {
@@ -544,8 +565,9 @@ function ctxCheck() {
   if (!ctxFile) return;
   let c;
   try { c = ctxLimits(specPolicy(spec), ctxRole(spec)); } catch (e) { ctxWait(`policy not readable: ${e.message}`); return; }
-  const ctx = transcriptCtx(ctxFile);
-  if (ctxLevel(ctx, c) !== 'hard_max') return;
+  const ctx = transcriptCtx(ctxFile), level = ctxLevel(ctx, c);
+  if (spec.mail_hook && orderDue(state, run, level)) raiseFlag(state, run);   // hook-fast S1: the hook's order goes out at the next tool call
+  if (level !== 'hard_max') return;
   ctxForced = { ctx, hard_max_k: c.hard_max_k, role: c.role };
   logLine(`context ${Math.round(ctx / 1000)}k past the hard max (${c.hard_max_k}k, role ${c.role}): stopping the executor, the run ends as HANDOFF`);
   // the run's result is the hand-off Norn writes for it - unless the worker handed off itself first (its own HANDOFF.md is better)

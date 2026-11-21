@@ -14,19 +14,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # slop (RM-44 stage B, audit D2): the PR head's diff from its merge base with the target, the rules of a lane's run end; the owner
+  # makes `slop` a required status (engine/lib/slop/rules/README.md). This workflow has no path filter on purpose: a required status
+  # a filter skips stays pending and blocks the PR. --ci skips the rules flagged `machine` in their data (K14 reads the machine's
+  # generated files; a runner has none). META_ROOT pins Norn's tool cache (<META_ROOT>/state/tools, tools.mjs): the check installs
+  # the locked tool set tools/lint (npm ci --ignore-scripts) once per lock, and actions/cache carries it to the next run.
   slop:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      META_ROOT: ${{ runner.temp }}/norn
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: slop check of the PR's diff
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/norn/state/tools
+          key: slop-tools-${{ runner.os }}-${{ hashFiles('tools/lint/package-lock.json') }}
+      - name: slop check of the PR's diff from its merge base
         shell: bash
-        run: node engine/bin/norn.mjs slop check --diff "origin/${{ github.base_ref }}..HEAD"
+        run: |
+          base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          node engine/bin/norn.mjs slop check --ci --diff "$base..HEAD"
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
