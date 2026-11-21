@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { sweepLost, relaunchLost, lostNotice, hbPath, pidGone } from '../engine/lib/runs.mjs';
-import { record, loadState } from '../engine/lib/records.mjs';
+import { record, loadState, RecordError } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 function sandbox() {
@@ -85,6 +85,16 @@ test('relaunch: a certain death goes through the auto-resume policy once (relaun
   assert.equal(d.item(off).resume.refused, 'auto-resume off');
   assert.deepEqual(relaunchLost(d.state, { start }), [], 'once per run');
   assert.equal(calls.length, 1);
+});
+
+// slop C10: only a state race (RecordError code 2) is the sweep's to skip; a log that does not read (torn line, lock busy: code 1)
+// throws - a swallowed resume left the relaunched run relaunchable, and the next sweep started it again
+test('relaunch: a resume record that fails on a torn log throws (code 1), never read as done', () => {
+  const d = sandbox(), a = d.start();
+  d.spec(a); d.hb(a, { supervisor_pid: deadPid() });
+  sweepLost(d.state, { load: () => 0 });
+  const start = o => { const next = d.start({ resume_of: o.resumeOf }); fs.appendFileSync(path.join(d.state, 'runs.jsonl'), '{"torn"'); return { run: next }; };
+  assert.throws(() => relaunchLost(d.state, { start }), e => e instanceof RecordError && e.code === 1 && /torn last line/.test(e.message));
 });
 
 test('relaunch: the one owner notice per sweep names the boot, n lost and m relaunched', () => {
