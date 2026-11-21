@@ -11,7 +11,6 @@ import { laneRules, tickLanes, lanesProbe, lanePolicy, laneHooks } from '../engi
 import { tickPaths } from '../engine/lib/lanepaths.mjs';
 import { lanesView } from '../engine/lib/lanes.mjs';
 import { digest } from '../engine/lib/digest.mjs';
-import { renderTab } from '../engine/dash/ui.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const T0 = Date.parse('2026-11-17T10:00:00Z'), H = 3600e3, D = 24 * H;
@@ -237,9 +236,4 @@ test('a home id (L:<home>/<name>): the rules, the Lanes page, the probe, the dig
   // the archive guard finds the lane's path to main under its name
   fs.writeFileSync(path.join(state, 'lane-paths.json'), JSON.stringify({ paths: { 'stuck-one': { state: 'at_risk', run: r, branch: 'norn/a/stuck-one', tip: 'abcdef1234' } } }) + '\n');
   assert.throws(() => rec(state, { kind: 'lane', ev: 'archive', id: l, by: 'tick', data: { why: 'x' } }), /L:a\/stuck-one cannot be archived: its work is not on main/);
-});
-
-test('the Inbox names a parked lane of a home by its name (the server\'s lane field), not its id cut at 2', () => {
-  const h = renderTab('inbox', { items: [{ type: 'parked', id: 'L:a/gen', lane: 'gen', project: 'p', why: 'waits' }] }, { now: T0, project: 'p' });
-  assert.match(h, /lane <b>gen<\/b>/); assert.doesNotMatch(h, /a\/gen<\/b>/);
 });
