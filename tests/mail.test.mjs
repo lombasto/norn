@@ -221,6 +221,9 @@ test('the launcher adds the mail hook to executors that run hooks (claude: --set
   const args = buildCommand({ ...base, mail_hook: hook }).args;
   const set = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(set.hooks.PostToolUse.map(x => x.hooks[0].command), [hook]);
+  // hook-fast S1: not after Read / Grep / Glob (a RegExp matcher Claude Code tests against the tool name)
+  const m = new RegExp(set.hooks.PostToolUse[0].matcher);
+  assert.deepEqual(['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'ReadMcpResource', 'mcp__norn__norn_mail'].filter(t => m.test(t)), ['Bash', 'Edit', 'ReadMcpResource', 'mcp__norn__norn_mail']);
   for (const f of ['codex', 'cli']) assert.match(ADAPTERS[f].headless, /check your mail between steps/, f);
   assert.doesNotMatch(ADAPTERS.claude.headless, /mail/);
 });
