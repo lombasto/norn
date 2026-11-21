@@ -84,12 +84,16 @@ export function readEvidence(rows, p, { items = {}, files = null, projectsDir = 
   for (const r of rows) count.set(base(r), (count.get(base(r)) || 0) + 1);
   const needles = rows.map(r => { const rel = relOf(r, p), b = base(r); return [rel, ...(!GENERIC.has(b) && count.get(b) === 1 ? [b] : [])].filter(Boolean); });
   const byPath = new Map(rows.map((r, i) => [lc(r.path), i])), bySkill = new Map(rows.map((r, i) => [skillOf(r), i]).filter(([k]) => k));
+  // a worker reads its lane's worktree copy (state/<project>/wt/<lane>/docs/x.md, a Claude Code .claude/worktrees/<name>/...): that is a
+  // read of the project's docs/x.md (bug 4: such reads never matched, so every line said "read 0x")
+  const byRel = new Map(rows.map((r, i) => [relOf(r, p), i]).filter(([k]) => k)), wtRel = s => s.match(/\/(?:wt|worktrees)\/[^/]+\/(.+)$/)?.[1] ?? null;
+  const fileOf = v => byPath.get(lc(v)) ?? byRel.get(wtRel(lc(v)));
   const ev = rows.map(() => ({ reads: 0, last: null, ranges: [], cites: [] }));
   const hit = (i, t, range) => { const e = ev[i]; e.reads++; if (!e.last || t > e.last) e.last = t; if (e.ranges.length < 200) e.ranges.push(range); };
   for (const f of ts) for (const [t, kind, v, off, lim] of transcriptReads(f, cache)) {
     if (!(Date.parse(t) >= since && Date.parse(t) <= now)) continue;
     if (!first || t < first) first = t;
-    if (kind === 'read') { const i = byPath.get(lc(v)); if (i !== undefined) hit(i, t, off || lim ? [off || 1, lim ? (off || 1) + lim - 1 : Infinity] : null); }
+    if (kind === 'read') { const i = fileOf(v); if (i !== undefined) hit(i, t, off || lim ? [off || 1, lim ? (off || 1) + lim - 1 : Infinity] : null); }
     else if (kind === 'skill') { const i = bySkill.get(v.toLowerCase().split(':').pop()); if (i !== undefined) hit(i, t, null); }
     else { const s = lc(v); rows.forEach((r, i) => { if (s.includes(lc(r.path)) || needles[i].some(n => n.includes('/') && s.includes(n))) hit(i, t, null); }); }
   }

@@ -6,10 +6,9 @@
 // mounts the same list); renderHome is the Look 3 page around it. C3: approval cards (Approve once / Deny -> POST /api/chat/approve)
 // and done cards (Undo -> POST /api/chat/undo) come from the chat profile's outbox lines; a card without a verb keeps its button disabled.
 import { dodChips, hoChip } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips; the live hand-off chip
-import { dwarfName, runWho } from './cells.mjs';   // DWARVES 3.3: who ran a run
+import { dwarfName, runWho, fmtTime } from './cells.mjs';   // DWARVES 3.3: who ran a run
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fin = v => typeof v === 'number' && Number.isFinite(v);
-const hhmm = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 16) : ''; };
 const ago = (iso, now) => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return ''; const m = Math.max(0, (now - t) / 60000);
   return m < 60 ? `${Math.round(m)} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 const kTok = n => (fin(n) ? `${Math.round(n / 1000)}k` : '-');
@@ -153,7 +152,7 @@ const OUT = { done: ['ok', 'DONE'], stopped: ['bad', 'STOPPED'], handoff: ['run'
 const APPROVAL_SAID = { approved: 'approved once', denied: 'denied', timeout: 'no tap in time - denied' };
 const UNDO_SAID = { revoke: 'revoke the directive', stop: 'withdraw the queued run', requeue: 'put the run back on its old conditions' };
 function card(e, ctx) {
-  const at = hhmm(e.ts);
+  const at = fmtTime(e.ts);
   if (e.kind === 'you') return `<div class="who">you · ${at}</div><div class="bubble txt">${inline(e.text)}</div>`;
   if (e.kind === 'controller') return `<div class="who">controller · ${at}</div><div class="msg txt">${inline(e.text)}</div>${shots(e.images, ctx.project)}`;
   if (e.kind === 'norn') return `<div class="who">norn · ${at}</div><div class="msg txt pre">${inline(e.text)}</div>`;
@@ -185,7 +184,7 @@ function card(e, ctx) {
       : e.undo && Number.isInteger(e.line) ? `<button data-act="undo" data-line="${e.line}" data-project="${esc(e.project ?? ctx.project)}" title="${esc(UNDO_SAID[e.undo.verb] ?? 'undo')}">Undo</button>`
       : '<button disabled title="this act has no undo verb">Undo</button>';
     return `<div class="head">${tag('ok', 'DONE')}<b class="ttl">${inline(e.title)}</b></div>${(e.lines || []).map(l => `<div class="txt">${inline(l)}</div>`).join('')}
-    <div class="acts">${e.hold ? `<span class="hold">lane ${esc(e.hold)} held by this chat${e.until ? ` until ${hhmm(e.until)}` : ''}</span>` : ''}${undo}</div>`; }
+    <div class="acts">${e.hold ? `<span class="hold">lane ${esc(e.hold)} held by this chat${e.until ? ` until ${fmtTime(e.until)}` : ''}</span>` : ''}${undo}</div>`; }
   if (e.kind === 'show') return `<div class="who">shown · ${at}</div><div class="txt">${e.caption ? `${inline(e.caption)} ` : ''}<code>${esc(e.path)}</code></div>${shots(e.images, ctx.project)}${e.excerpt ? `<pre class="excerpt">${esc(e.excerpt)}</pre>` : ''}`;
   // the other needs-you rows of the inbox: a login to redo, a drafted setup, a parked lane, an unreviewed run
   const what = e.kind === 'unreviewed' ? `${rid(e.id)} <b>${esc(e.lane ?? 'run')}</b> ended ${esc(String(e.outcome ?? e.state).toUpperCase())}${e.why ? `: ${esc(e.why)}` : ''} - not reviewed yet`
@@ -225,7 +224,7 @@ function left(s, ctx) {
 function right(s, ctx) {
   const row = (id, text, note) => `<div class="hrow">${rid(id)} <span class="ell">${esc(text)}</span><span class="spacer"></span><span class="mute small">${esc(note ?? '')}</span></div>`;
   const wait = (s.waiting || []).map(w => row(w.id, w.title ?? w.lane ?? w.type, ago(w.created, ctx.now))).join('') || '<div class="mute small">nothing waits for you</div>';
-  const ruled = (s.ruled || []).map(r => row(r.id, r.text, hhmm(r.created))).join('') || '<div class="mute small">no ruling today</div>';
+  const ruled = (s.ruled || []).map(r => row(r.id, r.text, fmtTime(r.created))).join('') || '<div class="mute small">no ruling today</div>';
   const orders = (s.orders || []).map(o => row(o.id, o.text, o.created ? String(o.created).slice(5, 10) : '')).join('') || '<div class="mute small">no standing order</div>';
   return `<aside class="home-r">${sh('Waiting for you', wait)}${sh('Ruled for you today', ruled)}${sh('Your standing orders', orders)}</aside>`;
 }

@@ -5,7 +5,7 @@
 // default terminal (the console is handed to Terminal before PowerShell can hide it); closing that window killed the tick.
 // 'conhost --headless' failed there (0x80070005). GOLDEN-TESTED ONLY in S5.
 import { generic, tickArgv, realIo, ownerOf } from './common.mjs';
-import { winQuote } from '../jobguard.mjs';
+import { winQuote } from '../bounded.mjs';
 
 const x = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const win = p => (/^[a-z]:\//i.test(p) ? String(p).replace(/\//g, '\\') : String(p));   // a drive path in Windows form; any other word as is

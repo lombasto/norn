@@ -44,6 +44,10 @@ test('readEvidence: reads (whole / a range), skills, shell reads and decision ci
   assert.deepEqual(paraMarks({ line: 1, end: 9 }, ev.files.r1), { read: 1, cited: [] });
   assert.deepEqual(paraMarks({ line: 2, end: 4 }, ev.files.r2), { read: 1, cited: ['DEC-1'] });
   assert.equal(readEvidence(rows, { root, state }, { files: [], now: NOW }).advisories.length, 0, 'no transcript = no claim');
+  // bug 4: a worker reads its worktree's copy - that is a read of the project's file (its repo-relative path)
+  const wt = path.join(t, 'wt.jsonl');
+  fs.writeFileSync(wt, [use('2026-11-13T09:00:00.000Z', 'Read', { file_path: `${t}/state/wt/lane-a/docs/old-notes.md`.replace(/\//g, '\\') }), use('2026-11-13T09:01:00.000Z', 'Read', { file_path: `${t}/elsewhere/docs/old-notes.md` }), ''].join('\n'));
+  assert.equal(readEvidence(rows, { root, state }, { files: [wt], now: NOW }).files.r4.reads, 1, 'the worktree copy counts; another checkout outside a worktree does not');
   // appended lines are read on the next call (the cache keeps the offset)
   fs.appendFileSync(tr, use('2026-11-13T10:00:00.000Z', 'Read', { file_path: `${root}/docs/old-notes.md` }) + '\n');
   assert.equal(transcriptReads(tr).filter(e => e[1] === 'read').length, 4);

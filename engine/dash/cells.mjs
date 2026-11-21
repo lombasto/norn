@@ -21,12 +21,16 @@ export function fmtMin(m) {
 // label = the group's aria-label; bs = [{ act, data: { show: 'x', ... }, text, n?, on, title? }]: a pressed chip filters, its <b> is the count.
 // A page handles its own data-act; the look (.fchips, button.hf[aria-pressed]) lives once, in base.css.
 export const filterChips = (label, bs, cls = '') => `<span class="fchips${cls ? ` ${cls}` : ''}" role="group" aria-label="${esc(label)}">${bs.map(b => `<button class="hf" data-act="${esc(b.act)}"${Object.entries(b.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('')} aria-pressed="${!!b.on}"${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.text)}${fin(b.n) ? ` <b>${int(b.n)}</b>` : ''}</button>`).join('')}</span>`;
-// UTC times with a Z, ids and dates as the records carry them: today "02:14Z", older "10-30 22:20Z".
+// the ONE place a time is formatted (bug 2, 2026-11-20): the viewer's local wall time, no zone letter - the records keep UTC, the
+// reader sees their own clock. fmtTime: today "22:34", another day "10-30 22:20", another year "2025-10-30 22:20"; fmtDate: "2026-11-20"
+const p2 = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 export function fmtTime(iso, now = Date.now()) {
   const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
-  const d = new Date(t), hm = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z`;
-  return new Date(now).toISOString().slice(0, 10) === d.toISOString().slice(0, 10) ? hm : `${d.toISOString().slice(5, 10)} ${hm}`;
+  const d = new Date(t), hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`, day = ymd(d), today = ymd(new Date(now));
+  return day === today ? hm : `${day.slice(0, 4) === today.slice(0, 4) ? day.slice(5) : day} ${hm}`;
 }
+export const fmtDate = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? ymd(new Date(t)) : '-'; };
 /** a run's dwarf (DWARVES 3.3): its display name, bold, with data-dwarf for the dossier link the Dwarves page adds (?tab=dwarves&dwarf=<id>) */
 export const dwarfName = d => (d ? ` <b class="aname" data-dwarf="${esc(d.id)}">${esc(d.name)}</b>` : '');
 /** who ran a run: its dwarf, else its kind word (a check-in, a merge, a run from before the crew) - never a blank */
@@ -132,7 +136,7 @@ export function renderFeedEvent(e) {
 export function renderActivity(v, o = {}) {
   const n = v.now, sec = (k, open, head, body) => `<details class="fa-sec" data-k="${k}"${open ? ' open' : ''}><summary>${head}</summary>${body}</details>`;
   const now = `<section class="fa-now" id="fa-now">${n ? `<div><b>Now</b> <span class="fa-sent">${esc(n.text)}</span>${n.since && !o.ended ? ` <span class="mute" id="fa-dur" data-since="${esc(n.since)}">${esc(fmtDur(n.secs))}</span>` : ''}${n.more > 0 ? ` <span class="small mute">+${int(n.more)} more running</span>` : ''}</div>` : '<div class="mute">nothing yet</div>'}
-    ${v.words?.text ? `<div class="fa-words small" title="its latest own words, ${esc(hms(v.words.ts))} UTC">${esc(v.words.text)}</div>` : ''}</section>`;
+    ${v.words?.text ? `<div class="fa-words small" title="its latest own words, ${esc(hms(v.words.ts))}">${esc(v.words.text)}</div>` : ''}</section>`;
   const p = v.plan, pdone = p.items.filter(i => i.state === 'done').length;
   const plan = p.items.length ? sec('plan', true, `<b>Plan</b> <span class="small mute">${int(pdone)} of ${int(p.items.length)} done · ${p.source === 'todos' ? 'its todo list' : "the brief's items (done = named in its NOTES or a commit)"}</span>`,
     `<ol class="fa-plan small">${p.items.map(i => `<li class="fa-p-${i.state}">${chip(i.state === 'done' ? 'ok' : i.state === 'current' ? 'run' : 'idle', i.state)} ${esc(i.text)}</li>`).join('')}</ol>`) : '';
@@ -171,7 +175,7 @@ export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="
   go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : '', go.finding ? `data-gofinding="${esc(go.finding)}"` : ''].filter(Boolean).join(' ');
 const OUTCOME = { done: 'DONE', stopped: 'STOPPED', handoff: 'HANDOFF' };
 const MARK = { DONE: 'done', STOPPED: 'stopped', HANDOFF: 'handoff' };
-const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };
+const hms = ts => { const t = Date.parse(ts ?? ''); if (!Number.isFinite(t)) return ''; const d = new Date(t); return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`; };   // the feed's seconds, local like fmtTime
 const FEED_KINDS = ['tool', 'text', 'step', 'marker', 'error'];
 // RM-36: an Edit / Write line opens to its diff (old -> new; a Write: its content as added lines), drawn by the shared diff component (RM-35)
 const editDiff = i => (i && (typeof i.new_string === 'string' || typeof i.content === 'string')

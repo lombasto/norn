@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseRecordText, recordBlocks } from '../engine/dash/ledger.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
+process.env.TZ = 'UTC';   // the dash prints local time (cells.mjs fmtTime): pin the zone these expectations are written in
 
 test('recordBlocks: meta / quote / head / clause lines / list, ids + shas + paths + code + arrows, a line estimate', () => {
   const { html, lines } = recordBlocks("Owner 01-02 ~03:04Z: 'yes' -> DIR-4 at 53a3f65 in state/x/PAUSED and `a<b`; (1) DEC-5 (2) see docs/plan.md", { cpl: 60 });
@@ -39,7 +40,7 @@ test('Records tab: every text cell uses the formatter; long text clamps behind a
   assert.match(row('DIR-7'), /<button type="button" class="ghost rmore" data-act="rec-more" aria-expanded="false">more<\/button>/);
   assert.ok(row('DIR-7').includes('clause 11 with some words'), 'the full text stays in the DOM, so the search filter matches it');
   assert.ok(!row('DIR-8').includes('rmore'), 'short text has no expander');
-  assert.match(row('DIR-7'), /<td class="id rnw">DIR-7<\/td>/); assert.match(row('DIR-7'), /<td class="small mute rnw">01-01 03:04Z · chat<\/td>/);
+  assert.match(row('DIR-7'), /<td class="id rnw">DIR-7<\/td>/); assert.match(row('DIR-7'), /<td class="small mute rnw">01-01 03:04 · chat<\/td>/);
   assert.match(row('DEC-9'), /<td class="rt" data-label="question"><div class="rtext" data-key="DEC-9:q"><div class="ledhead">Q text<\/div><div class="ledsub">with <span class="arr">→<\/span> arrow<\/div>/);
   assert.match(row('DEC-9'), /<ol class="rlist"><li>a<\/li><li>b<\/li><\/ol><div class="rwhy small mute"><div class="ledhead">because <a class="rid r-dir"/);
   assert.match(html, /<table class="rectab" data-rows="records">/);

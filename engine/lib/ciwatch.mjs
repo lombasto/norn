@@ -6,7 +6,7 @@
 // it stays red while later runs are in progress or cancelled and leaves only when a LATER run on main is green.
 import fs from 'node:fs';
 import path from 'node:path';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 
 export const CI_TTL_MS = 10 * 60000;
 const FIELDS = 'databaseId,conclusion,status,headSha,createdAt';
