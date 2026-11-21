@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFile } from 'node:child_process';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import { loadState } from './records.mjs';
 
 export const STRAY_HOURS = 6;
