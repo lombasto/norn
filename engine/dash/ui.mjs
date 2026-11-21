@@ -11,7 +11,7 @@ import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc } from './docparts.mjs';
-import { esc, fin, dash, int, fmtMin, pct, plural, chip, pauseAct, fmtTime } from './cells.mjs';
+import { esc, fin, int, fmtMin, pct, plural, chip, pauseAct, fmtTime } from './cells.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
 import { context } from './pages/context.mjs';
