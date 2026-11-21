@@ -61,7 +61,8 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, closeLandedQuestions } from '../lib/deliverables.mjs';
+import { tickLanes, othersShipped } from '../lib/lifecycle.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -1319,11 +1320,19 @@ function deliverablesCmd(argv, env, out, err) {
       out(r.id);
       return 0;
     }
-    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH + LANE-TRUTH: the tick's merge and lane steps now, in its order - latch every merge
+      // (GitHub, git, rulings), withdraw the questions landed work made moot, then archive the lanes whose work shipped (lifecycle.mjs
+      // tickLanes: parked / stopped + shipped at once, a done one once it aged out); the other homes' shipped lanes are listed, never written
       if (id) throw new RunError(`unexpected ${id}`);
-      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      const dry = !!flags.dry, done = latchMerged(state, { project, gh: makeGh(), dry });
       for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
-      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
+      const qs = closeLandedQuestions(state, { project, dry });
+      for (const c of qs) out(`${c.q} withdrawn - ${c.why}`);
+      const ls = tickLanes(state, { project, dry });
+      for (const x of ls) out(x.refused ? `${x.id} (${x.rule}) not archived: ${x.refused}` : `${x.id} archived (${x.rule}${dry ? '' : `; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}`}) - ${x.why}`);
+      const away = othersShipped(state);
+      for (const x of away) out(`${x.id} (${x.state}, home ${x.home}: read-only here - for home ${x.home}) work on main: ${x.why}`);
+      out(`${dry ? 'DRY RUN - nothing written: ' : ''}${done.length} deliverable change(s), ${qs.length} question(s) withdrawn, ${ls.filter(x => !x.refused).length} lane(s) archived${ls.some(x => x.refused) ? `, ${ls.filter(x => x.refused).length} refused` : ''}${away.length ? `; ${away.length} other-home lane(s) listed` : ''}`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)
