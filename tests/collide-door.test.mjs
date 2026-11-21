@@ -166,3 +166,17 @@ test('exempt: no project file, a helper or a check-in never meets the door', asy
   assert.deepEqual(casesOf(f.state), {});
   await f.ended(r.run);
 });
+
+test('the tick queues the MERGE stage of a lane that held runs wait for at P0, every other lane at P1', async () => {
+  const { waitedMergeCli } = await import('../engine/lib/tick.mjs');
+  const f = fixture();
+  const q = record(f.state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'web-runs', worktree: '/w' } }).id;
+  fs.writeFileSync(path.join(f.state, 'collide-holds.json'), JSON.stringify({ [q]: { cols: ['COL-1'], holders: ['web-nav'], since: new Date().toISOString(), why: 'x' } }));
+  const cli = waitedMergeCli(f.state, args => args);
+  const run = lane => ['run', '--queue', '--lane', lane, '--stage', 'MERGE', '--priority', 'P1'];
+  assert.deepEqual(cli(run('web-nav')), ['run', '--queue', '--lane', 'web-nav', '--stage', 'MERGE', '--priority', 'P0']);
+  assert.deepEqual(cli(run('lib-core')), run('lib-core'));
+  assert.deepEqual(cli(['merge-brief', '--lane', 'web-nav']), ['merge-brief', '--lane', 'web-nav'], 'only the queued stage');
+  record(f.state, { kind: 'run', ev: 'withdraw', id: q, by: 'controller', data: { why: 'not needed' } });
+  assert.deepEqual(cli(run('web-nav')), run('web-nav'), 'the wait is over: P1 again');
+});
