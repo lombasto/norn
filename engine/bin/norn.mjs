@@ -2,6 +2,7 @@
 // norn CLI (META-GENERAL-DESIGN 3.5). S1: `norn rec` - the only writer of records.jsonl.
 // State dir: --state <dir> or env META_STATE. Role: --as <role> or env META_ROLE. Run id: env META_RUN_ID.
 // Exit: 0 ok, 1 integrity / lock / refused view (`rec views`), 2 invalid input (with a usage line).
+import '../lib/gitprof.mjs';   // first: NORN_GIT_PROFILE=<file> counts every git call of this process (git-perf S1); unset, a no-op
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
