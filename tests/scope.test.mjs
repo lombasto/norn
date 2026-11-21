@@ -114,8 +114,10 @@ test('gh: repo edit / visibility / delete are refused; other gh calls pass', () 
 
 test('the claude command of a guarded run: one --settings with the deny rules, the write block, the PreToolUse scope hook beside the mail hook; the NOTES folder is a working directory', () => {
   const w = world(), hook = scopeHookOf({ executor: 'claude', state: w.state });
-  assert.match(hook, /norn-hook(\.exe)?" scope --run \$META_RUN_ID --state "[^"]+" --node "[^"]+" --norn "[^"]+\/norn\.mjs"$/);
-  const base = { ...w.spec, exe: 'claude', executor: 'claude', mode: 'write', model: 'opus', effort: 'medium', session_id: 'S', promptText: 'p', mail_hook: 'MAILHOOK' };
+  assert.match(hook.command, /\/engine\/hook-rs\/target\/release\/norn-hook(\.exe)?$/);
+  assert.deepEqual([hook.type, hook.args[0], hook.args[1], hook.args[3], hook.args[5], hook.timeout], ['command', 'scope', '--state', '--node', '--norn', 30], 'the exec form: no shell');
+  assert.match(hook.args[6], /\/engine\/bin\/norn\.mjs$/);
+  const base = { ...w.spec, exe: 'claude', executor: 'claude', mode: 'write', model: 'opus', effort: 'medium', session_id: 'S', promptText: 'p', mail_hook: { type: 'command', command: 'MAILHOOK' } };
   const before = adapterFor('claude').command(base).args;
   assert.equal(before.filter(a => a === '--settings').length, 1, 'mail only: as before');
   const args = adapterFor('claude').command({ ...base, scope: scopeSettings(base, hook) }).args;
@@ -124,8 +126,9 @@ test('the claude command of a guarded run: one --settings with the deny rules, t
   assert.equal(set.permissions.blockWritesOutsideWorkingDirectories, true);
   for (const r of ['Bash(git push --force*)', 'PowerShell(git push --force*)', 'Bash(gh repo delete*)', 'Bash(git push * main)']) assert.ok(set.permissions.deny.includes(r), r);
   assert.equal(set.hooks.PostToolUse[0].hooks[0].command, 'MAILHOOK');
+  assert.deepEqual(set.hooks.PreToolUse[0].hooks, [hook]);
   assert.equal(set.hooks.PreToolUse[0].matcher, 'Bash|PowerShell|Edit|Write|NotebookEdit');
-  assert.equal(set.hooks.PreToolUse[0].hooks[0].command, hook);
+  assert.equal(hook.onFailure, 'block', 'the guard fails closed: a hook that cannot answer blocks the call');
   const dirs = args.flatMap((a, i) => (a === '--add-dir' ? [args[i + 1]] : []));
   assert.deepEqual(dirs, [w.wt, w.extra, path.dirname(w.notes)]);
   // a MERGE run opens a PR and gets the main rule like a lane run; only a check-in has none
@@ -179,7 +182,7 @@ test('the launcher guards write runs of executors that run Claude Code hooks; re
   const w = world();
   w.spec.ctx_from = projectWith(w, { scope: 'on' });
   const s = scopeOfLaunch({ ...w.spec, executor: 'claude' });
-  assert.equal(s.hooks.PreToolUse[0].hooks[0].command, scopeHookOf({ state: w.state }));
+  assert.deepEqual(s.hooks.PreToolUse[0].hooks, [scopeHookOf({ state: w.state })]);
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', mode: 'read-only' }), undefined);
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'codex' }), undefined);
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', state: undefined }), undefined);
@@ -200,7 +203,7 @@ test('policy.dod.scope: off (and the default) launches a claude run with no deny
     const args = launch(o), st = settingsOf(args);
     assert.equal(st.permissions.blockWritesOutsideWorkingDirectories, true);
     assert.ok(st.permissions.deny.includes('Bash(git push --force*)'));
-    assert.equal(st.hooks.PreToolUse[0].hooks[0].command, scopeHookOf({ state: w.state }));
+    assert.deepEqual(st.hooks.PreToolUse[0].hooks, [scopeHookOf({ state: w.state })]);
     assert.ok(args.includes(path.dirname(w.notes)));
   }
   // the CURRENT policy: switching the project off reaches the next launch
@@ -241,7 +244,7 @@ test('TEST-GOVERNANCE S1: a fake worker (a resumed run too) issuing the full sui
 test('TEST-GOVERNANCE S1: the launch installs the hook alone (shell tools) when the scope guard is off and full_suite = deny; none with allow; the Settings row', () => {
   const w = world(), f = policy => { const p = path.join(w.root, `p-${Object.keys(policy).join('')}.json`); fs.writeFileSync(p, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy })); return p; };
   const s = scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ dod: { scope: 'off' } }) });
-  assert.deepEqual(s, { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: scopeHookOf({ state: w.state }), timeout: 30 }] }] } });
+  assert.deepEqual(s, { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [scopeHookOf({ state: w.state })] }] } });
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ tests: { budget: { full_suite: 'allow' } } }) }), undefined);
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', mode: 'read-only' }), undefined);
   assert.equal(withDefaults({}).policy.tests.budget.full_suite, 'deny');

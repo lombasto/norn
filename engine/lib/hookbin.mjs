@@ -15,9 +15,12 @@ export const HOOK_BIN = path.join(HOOK_SRC, 'target', 'release', process.platfor
 const fwd = p => String(p).replace(/\\/g, '/');
 export const HOOK_BUILD = `cargo build --release --manifest-path "${fwd(path.join(HOOK_SRC, 'Cargo.toml'))}"`;
 
-/** the hook command line of `sub` (mail | scope). Claude Code runs hook commands in Git Bash / sh: $META_RUN_ID expands there (norn-hook
- *  reads the env itself when it was not expanded); node + norn.mjs are this engine's, for the calls norn-hook hands to Node */
-export const hookLine = (sub, state) => `"${fwd(HOOK_BIN)}" ${sub} --run $META_RUN_ID --state "${fwd(path.resolve(state))}" --node "${fwd(process.execPath)}" --norn "${fwd(META_BIN)}"`;
+/** the --settings hook entry of `sub` (mail | scope): Claude Code's exec form (command + args, spawned with no shell - seen on 2.1.329;
+ *  Git Bash costs ~220 ms more per call on this machine). norn-hook reads the run from META_RUN_ID (the run's env); node + norn.mjs are
+ *  this engine's, for the calls it hands to Node. The scope hook blocks the call when it cannot answer (onFailure block: a missing
+ *  binary, a crash, a timeout - the guard fails closed); a failed mail hook only leaves that mail for the next call. */
+export const hookEntry = (sub, state) => ({ type: 'command', command: fwd(HOOK_BIN), args: [sub, '--state', fwd(path.resolve(state)), '--node', fwd(process.execPath), '--norn', fwd(META_BIN)],
+  timeout: 30, ...(sub === 'scope' ? { onFailure: 'block' } : {}) });
 
 // the newest source file: a binary older than it is stale (a pull changed the hook; setup rebuilds it)
 const newest = d => fs.readdirSync(d, { withFileTypes: true }).reduce((m, e) => e.name === 'target' ? m

@@ -24,7 +24,7 @@ import { briefMarker } from './mergebrief.mjs';
 import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
-import { hookCommand, raiseFlag } from './mail.mjs';
+import { mailHook, raiseFlag } from './mail.mjs';
 import { scopeHookOf, guardSettings, writeScopeFile } from './scope.mjs';
 import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
@@ -70,7 +70,7 @@ export const claudeCmd = (o, remote) => adapterFor('claude').command({ ...o, rem
 export function mailHookOf(o) {
   const fam = harnessOf(o.executor, o.provider);
   const a = fam ? adapterFor(fam) : null;
-  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? hookCommand(o.state) : undefined;
+  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? mailHook(o.state) : undefined;
 }
 // META-DOD 2: the same executors get the scope guard (scope.mjs): deny rules, the write block and the PreToolUse hook - write runs only
 // ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too); TEST-GOVERNANCE S1:

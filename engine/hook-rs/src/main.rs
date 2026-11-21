@@ -1,9 +1,9 @@
 // norn-hook (hook-fast S1, owner 2026-11-20): the per-tool-call hooks of a claude run Norn launches, as one small binary. A Node
 // hook paid ~1 s of start-up plus the norn.mjs import graph on every tool call to answer "nothing to do" almost every time; this
 // answers that case alone and starts Node (`norn mail check --inject`, `norn scope check`) only when Node has something to do.
-//   norn-hook mail  --run R --state S --node N --norn B   PostToolUse: no flag file <S>/mail/flag/<run> = exit 0, no output (Q-b-46:
+//   norn-hook mail  --state S --node N --norn B   PostToolUse: no flag file <S>/mail/flag/<run> = exit 0, no output (Q-b-46:
 //                                                         a mail or a context order for the run raises it, mail.mjs raiseFlag)
-//   norn-hook scope --run R --state S --node N --norn B   PreToolUse: the payload on stdin. The calls scope.mjs surely allows (read
+//   norn-hook scope --state S --node N --norn B   PreToolUse: the payload on stdin. The calls scope.mjs surely allows (read
 //                                                         from <S>/runs/<run>.scope.json, written at launch) exit 0 here; every
 //                                                         other call goes to `norn scope check` unchanged. This binary never
 //                                                         refuses on its own: a refusal, its reason and its record stay Node's.
@@ -87,19 +87,19 @@ impl<'a> P<'a> {
 fn parse(b: &[u8]) -> Option<J> { let b = b.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(b); let mut p = P { b, i: 0 }; let v = p.val(0)?; p.ws(); if p.i == b.len() { Some(v) } else { None } }
 
 // ---------- the arguments, the run, Node ----------
-struct Args { sub: String, run_arg: Option<String>, state: String, node: String, norn: String }
+struct Args { sub: String, state: String, node: String, norn: String }
 fn args() -> Args {
     let a: Vec<String> = env::args().skip(1).collect();
-    let usage = || -> ! { eprintln!("usage: norn-hook mail|scope --run RUN-n --state D --node <node> --norn <norn.mjs>"); exit(2) };
+    let usage = || -> ! { eprintln!("usage: norn-hook mail|scope --state D --node <node> --norn <norn.mjs>    (the run: META_RUN_ID)"); exit(2) };
     if a.is_empty() || (a[0] != "mail" && a[0] != "scope") { usage(); }
-    let (mut run_arg, mut state, mut node, mut norn) = (None, None, None, None);
+    let (mut state, mut node, mut norn) = (None, None, None);
     let mut i = 1;
     while i < a.len() {
         let v = a.get(i + 1).cloned().unwrap_or_else(|| usage());
-        match a[i].as_str() { "--run" => run_arg = Some(v), "--state" => state = Some(v), "--node" => node = Some(v), "--norn" => norn = Some(v), _ => usage() }
+        match a[i].as_str() { "--state" => state = Some(v), "--node" => node = Some(v), "--norn" => norn = Some(v), _ => usage() }
         i += 2;
     }
-    match (state, node, norn) { (Some(state), Some(node), Some(norn)) => Args { sub: a[0].clone(), run_arg, state, node, norn }, _ => usage() }
+    match (state, node, norn) { (Some(state), Some(node), Some(norn)) => Args { sub: a[0].clone(), state, node, norn }, _ => usage() }
 }
 // RUN-n / RUN-<home>-n (norn.mjs: /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/)
 fn run_id(s: &str) -> bool {
@@ -111,16 +111,13 @@ fn run_id(s: &str) -> bool {
         None => false,
     }
 }
-// the run the hook speaks for: --run as given when it is a run id, else META_RUN_ID (a shell that did not expand $META_RUN_ID: norn.mjs reads the env the same way)
-fn the_run(a: &Args) -> Option<String> {
-    if let Some(r) = a.run_arg.as_deref().filter(|r| run_id(r)) { return Some(r.to_string()); }
-    env::var("META_RUN_ID").ok().filter(|r| run_id(r))
-}
-// run Node's own hook (`norn <words> --run <as given> --state S`), stdin = `input` (None: inherited), its stdout / stderr / exit code passed through
-fn node(a: &Args, words: &[&str], input: Option<&[u8]>) -> ! {
+// the run the hook speaks for: META_RUN_ID, the env the launcher gives the run (Claude Code passes it to its hooks)
+fn the_run() -> Option<String> { env::var("META_RUN_ID").ok().filter(|r| run_id(r)) }
+// run Node's own hook (`norn <words> --run <run> --state S`; no run: Node says why), stdin = `input` (None: inherited), its stdout / stderr / exit code passed through
+fn node(a: &Args, words: &[&str], run: Option<&str>, input: Option<&[u8]>) -> ! {
     let mut c = Command::new(&a.node);
     c.arg(&a.norn).args(words);
-    if let Some(r) = &a.run_arg { c.args(["--run", r]); }
+    if let Some(r) = run { c.args(["--run", r]); }
     c.args(["--state", &a.state]).stdout(Stdio::inherit()).stderr(Stdio::inherit()).stdin(if input.is_some() { Stdio::piped() } else { Stdio::inherit() });
     let mut ch = match c.spawn() { Ok(ch) => ch, Err(e) => { eprintln!("norn-hook: cannot start {} ({e})", a.node); exit(1) } };
     if let (Some(b), Some(mut si)) = (input, ch.stdin.take()) { let _ = si.write_all(b); }   // dropped here: Node sees EOF
@@ -129,9 +126,10 @@ fn node(a: &Args, words: &[&str], input: Option<&[u8]>) -> ! {
 
 // ---------- mail ----------
 fn mail(a: &Args) -> ! {
-    match the_run(a) {
-        Some(r) if !Path::new(&a.state).join("mail").join("flag").join(&r).exists() => exit(0),
-        _ => node(a, &["mail", "check", "--inject"], None),   // a flag, or no run to look it up for (Node says why on stderr)
+    let run = the_run();
+    match &run {
+        Some(r) if !Path::new(&a.state).join("mail").join("flag").join(r).exists() => exit(0),
+        _ => node(a, &["mail", "check", "--inject"], run.as_deref(), None),   // a flag, or no run to look it up for (Node says why on stderr)
     }
 }
 
@@ -233,14 +231,15 @@ fn brief_same(j: &J) -> bool {
 
 fn scope(a: &Args) -> ! {
     let mut input = Vec::new();
-    if io::stdin().read_to_end(&mut input).is_err() { node(a, &["scope", "check"], Some(&input)); }
-    let sc = the_run(a).and_then(|r| fs::read(Path::new(&a.state).join("runs").join(format!("{r}.scope.json"))).ok()).and_then(|b| parse(&b));
+    let run = the_run();
+    if io::stdin().read_to_end(&mut input).is_err() { node(a, &["scope", "check"], run.as_deref(), Some(&input)); }
+    let sc = run.as_ref().and_then(|r| fs::read(Path::new(&a.state).join("runs").join(format!("{r}.scope.json"))).ok()).and_then(|b| parse(&b));
     let c = sc.as_ref().and_then(|j| Some(Scope {
         worktree: j.get("worktree")?.str()?.to_string(), free: j.get("free")?.strs()?, scope: j.get("scope")?.strs()?, brief_same: brief_same(j),
     }));
     match (c, parse(&input)) {
         (Some(c), Some(p)) if surely_allowed(&p, &c) => exit(0),
-        _ => node(a, &["scope", "check"], Some(&input)),   // no scope file (Node fails closed on a missing spec), a payload it cannot read, or a call Node must judge
+        _ => node(a, &["scope", "check"], run.as_deref(), Some(&input)),   // no scope file (Node fails closed on a missing spec), a payload it cannot read, or a call Node must judge
     }
 }
 

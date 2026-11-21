@@ -17,7 +17,7 @@ import { readText } from './fsnap.mjs';
 import { spawnSync } from 'node:child_process';
 import { parseReady, inScope } from './ready.mjs';
 import { feedFiles, oneLine } from './harness/common.mjs';
-import { hookLine } from './hookbin.mjs';
+import { hookEntry } from './hookbin.mjs';
 import { classify, fullSuiteDeny } from './testcmd.mjs';
 import { specPolicy } from './ctxlimit.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -36,11 +36,11 @@ const under = (p, root) => p === root || p.startsWith(root + '/');
 const mayPushMain = spec => spec.kind === 'checkin';
 
 export const refusalsFile = state => path.join(state, 'scope', 'refusals.jsonl');
-/** the PreToolUse hook command line: norn-hook, which passes the calls this file surely allows and hands the rest to `norn scope check` */
-export const scopeHookCommand = state => hookLine('scope', state);
-/** the hook command of a run whose executor runs Claude Code hooks (the claude family; a write run with a state dir), else undefined */
+/** the PreToolUse hook: norn-hook, which passes the calls this file surely allows and hands the rest to `norn scope check` */
+export const scopeHook = state => hookEntry('scope', state);
+/** the hook of a run whose executor runs Claude Code hooks (the claude family; a write run with a state dir), else undefined */
 export function scopeHookOf(o) {
-  return o.state && o.mode !== 'read-only' && o.mode !== 'no-tools' && o.readonly !== true ? scopeHookCommand(o.state) : undefined;
+  return o.state && o.mode !== 'read-only' && o.mode !== 'no-tools' && o.readonly !== true ? scopeHook(o.state) : undefined;
 }
 
 /** ROUND 2: the project switch policy.dod.scope (off | on, default off) - off = a run gets no scope part at all */
@@ -54,7 +54,7 @@ const MAIN_RULES = ['git push * main', 'git push * master', 'git push * main *',
 export function scopeSettings(spec, hook) {
   const rules = [...RULES, ...(mayPushMain(spec) ? [] : MAIN_RULES)];
   return { permissions: { deny: ['Bash', 'PowerShell'].flatMap(t => rules.map(r => `${t}(${r})`)), blockWritesOutsideWorkingDirectories: true },
-    hooks: { PreToolUse: [{ matcher: SCOPE_TOOLS, hooks: [{ type: 'command', command: hook, timeout: 30 }] }] } };
+    hooks: { PreToolUse: [{ matcher: SCOPE_TOOLS, hooks: [hook] }] } };
 }
 /** policy.tests.budget.full_suite of a project policy (deny | allow; default deny) */
 export const fullSuiteRule = policy => policy?.tests?.budget?.full_suite ?? POLICY_DEFAULTS.tests.budget.full_suite;
@@ -62,7 +62,7 @@ export const fullSuiteRule = policy => policy?.tests?.budget?.full_suite ?? POLI
  *  the full-suite deny (shell tools only), else undefined */
 export function guardSettings(policy, spec, hook) {
   if (scopeOnFor(policy, spec)) return scopeSettings(spec, hook);
-  return fullSuiteRule(policy) === 'deny' ? { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: hook, timeout: 30 }] }] } } : undefined;
+  return fullSuiteRule(policy) === 'deny' ? { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [hook] }] } } : undefined;
 }
 /** a shell call that runs a full test suite -> the deny reason (testcmd.mjs fullSuiteDeny), else null */
 export function suiteCheck(p) {

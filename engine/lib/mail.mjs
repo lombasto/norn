@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
-import { hookLine } from './hookbin.mjs';
+import { hookEntry } from './hookbin.mjs';
 const fwd = p => String(p).replace(/\\/g, '/');
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
@@ -138,5 +138,5 @@ export function hookWatchdog(ms = Number(process.env.NORN_HOOK_MAX_MS) || HOOK_M
   return w;
 }
 
-/** the PostToolUse hook command line the launcher adds: norn-hook, which runs `norn mail check --inject` only while the run's flag is up */
-export const hookCommand = state => hookLine('mail', state);
+/** the PostToolUse hook the launcher adds: norn-hook, which runs `norn mail check --inject` only while the run's flag is up */
+export const mailHook = state => hookEntry('mail', state);

@@ -213,14 +213,15 @@ test('the launcher adds the mail hook to executors that run hooks (claude: --set
   const { ADAPTERS } = await import('../engine/lib/harness/index.mjs');
   const s = tmp();
   const hook = mailHookOf({ executor: 'claude', state: s });
-  assert.match(hook, /norn-hook(\.exe)?" mail --run \$META_RUN_ID --state "[^"]+" --node "[^"]+" --norn "[^"]+\/norn\.mjs"$/);
+  assert.match(hook.command, /\/engine\/hook-rs\/target\/release\/norn-hook(\.exe)?$/);
+  assert.deepEqual([hook.type, hook.args[0], hook.args[1], hook.args[3], hook.args[5], hook.timeout, hook.onFailure], ['command', 'mail', '--state', '--node', '--norn', 30, undefined], 'the exec form: no shell');
   assert.equal(mailHookOf({ executor: 'codex-sol', state: s }), undefined);
   assert.equal(mailHookOf({ executor: 'fake', state: s }), undefined);
   const base = { executor: 'claude', exe: '/x/claude', brief: 'B', worktree: 'W', notes: 'N', model: 'm', effort: 'e', session_id: 'sid', lane: 'l' };
   assert.ok(!buildCommand(base).args.includes('--settings'), 'no hook = the command line as before');
   const args = buildCommand({ ...base, mail_hook: hook }).args;
   const set = JSON.parse(args[args.indexOf('--settings') + 1]);
-  assert.deepEqual(set.hooks.PostToolUse.map(x => x.hooks[0].command), [hook]);
+  assert.deepEqual(set.hooks.PostToolUse.map(x => x.hooks[0]), [hook]);
   // hook-fast S1: not after Read / Grep / Glob (a RegExp matcher Claude Code tests against the tool name)
   const m = new RegExp(set.hooks.PostToolUse[0].matcher);
   assert.deepEqual(['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'ReadMcpResource', 'mcp__norn__norn_mail'].filter(t => m.test(t)), ['Bash', 'Edit', 'ReadMcpResource', 'mcp__norn__norn_mail']);
