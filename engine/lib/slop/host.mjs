@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readText } from '../fsnap.mjs';
-import { fold, readEvents, recordsFile } from '../records.mjs';
+import { loadShared } from '../records.mjs';
 import { globToRe } from '../dlvgit.mjs';
 import { explainOf } from './check.mjs';
 
@@ -27,8 +27,9 @@ export const slopSeries = state => readJ(path.join(slopDir(state), 'series.json'
 /** slop-meter S1: the days that carry a meter, oldest first: [{ day, ...point.meter }] (the band's hysteresis, the strip, the gauge) */
 export const meterSeries = state => Object.entries(slopSeries(state).days).filter(([, p]) => p?.meter).sort(([a], [b]) => (a < b ? -1 : 1)).map(([day, p]) => ({ day, ...p.meter }));
 
+// waiver is a shared kind: in a synced dir a waiver written on another home covers the block here too
 export function activeWaivers(state, now = Date.now()) {
-  return Object.values(fold(readEvents(recordsFile(state, 'waiver'))).items)
+  return Object.values(loadShared(state, 'waiver').items)
     .filter(w => w.kind === 'waiver' && w.state === 'active' && !(w.data.until && Date.parse(w.data.until) <= now));
 }
 export const covers = (w, f) => w.data.rule === f.rule && (w.data.scope === f.fp || globToRe(w.data.scope).test(f.file));
