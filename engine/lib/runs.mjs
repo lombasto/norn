@@ -42,7 +42,6 @@ import { ClaimsError, readClaims } from './claimsref.mjs';
 import { touchedOf, workOf, gatherIntents, briefIntent, casesOf, rulingsOf, openCase, caseAction, itemStages } from './intents.mjs';
 import { collisions, collidePolicy, holdsOf, holdTerm, workerLine, hitLines, caseKey } from './collide.mjs';
 import { prompt as basePrompt } from './harness/common.mjs';
-import { deliverableConfig } from './deliverables.mjs';
 export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
 import { syncPolicy, POLICY_DEFAULTS, MACHINE_DEFAULTS } from './policy.mjs';
 
@@ -842,7 +841,8 @@ export function judgeLaunch(o, { queued = null, now = o.now ?? Date.now(), ttlMs
   if (!pf || !fs.existsSync(pf)) return null;
   const pj = loadProject(pf), P = collidePolicy(pj.policy);
   if (P.enabled === false) return null;
-  const cfg = deliverableConfig(pj), repo = cfg.repo || o.worktree, home = homeOf(o.state)?.id ?? null, key = `${o.state}|${repo}`;
+  // project.json `deliverables` read here, not through deliverables.mjs (it imports this module); main / remote: gatherIntents' defaults
+  const cfg = pj.deliverables || {}, repo = cfg.repo || pj.root || o.worktree, home = homeOf(o.state)?.id ?? null, key = `${o.state}|${repo}`;
   const g = cache?.[key] ?? gatherIntents({ state: o.state, repo, main: cfg.main, remote: cfg.remote, now, recent_days: P.recent_days, home, ttlMs, tracked });
   if (cache) cache[key] = g;
   const me = briefIntent({ lane: o.lane, brief: o.brief, stage: o.stage ?? null, role: o.role ?? null, kind: o.kind ?? 'worker', critique: o.critique ?? null, now, home,
