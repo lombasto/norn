@@ -104,7 +104,7 @@ export function laneCard(c, label) {
 export const backlogLine = b => (!b ? '' : `<p class="small backlog">${b.pending ? '<span class="mute">done, not merged: counting ...</span>'
   : `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}`}</p>`);
 // fair-slots item 2: finished work on its way to main has its own state (lanes.mjs landState), never plain 'queued'; the PR one links it
-// (the Lanes run state cell and the Plan's Up next / Landing next rows)
+// (the Lanes run state cell)
 export const LAND_CHIP = { 'awaiting-merge': ['done', 'done - awaiting merge'], 'awaiting-pr': ['needs', 'awaiting PR approval'] };
 export const landChip = l => { const [cls, word] = LAND_CHIP[l.land];
   return l.pr?.url && /^https:\/\//.test(l.pr.url) ? `<a class="chip ${cls}" href="${esc(l.pr.url)}" target="_blank" rel="noopener" title="${esc(`PR #${l.pr.number ?? '?'}: merge-land opened it; approve it on GitHub`)}">${esc(word)}</a>` : chip(cls, word); };
@@ -170,9 +170,9 @@ const PACE_CLS = { 'on track': 'ok', testing: 'ok', slow: 'warn', stalled: 'bad'
 export const progDetail = g => !g ? '' : `<ol class="prog-items small">${g.items.map(it => `<li class="prog-${esc(it.state)}"><span aria-hidden="true">${ITEM_MARK[it.state]}</span> ${esc(it.title)}<span class="mute"> - ${esc(it.state)}${it.evidence ? `: ${esc(it.evidence)}` : ''}</span></li>`).join('')}</ol>
   <div class="small"><b>Pace</b> ${esc(g.pace.words)}</div>${g.slow?.line ? `<div class="small"><b>Why</b> ${esc(g.slow.line)}</div>` : ''}
   ${(g.alarms || []).map(a => `<div class="small prog-alarm">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} ${esc(a.words)}<div class="mute">${esc(a.numbers)}</div><div>${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc(a.act.join(' / '))}</div></div>`).join('')}`;
-/** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
+/** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id, a Slop row: finding) */
 export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="${esc(go.sub)}"` : '', go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
-  go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
+  go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : '', go.finding ? `data-gofinding="${esc(go.finding)}"` : ''].filter(Boolean).join(' ');
 const OUTCOME = { done: 'DONE', stopped: 'STOPPED', handoff: 'HANDOFF' };
 const MARK = { DONE: 'done', STOPPED: 'stopped', HANDOFF: 'handoff' };
 const hms = ts => { const t = Date.parse(ts ?? ''); if (!Number.isFinite(t)) return ''; const d = new Date(t); return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`; };   // the feed's seconds, local like fmtTime

@@ -1,6 +1,6 @@
 // RM-44 stage B (SloppaChoppa audit section 2 D2, section 4 rows merge-land / Hand PR / Admin merge; RM-38 S3): the PR-side check.
 // A `slop` job on every pull request runs `norn slop check --ci --diff <merge base>..HEAD` (rules that read this machine's state are
-// skipped by their data flag); merge-land refuses a held branch and writes the stored check's WARN list into the PR body; the daily
+// not run, by their data flag); merge-land refuses a held branch and writes the stored check's WARN list into the PR body; the daily
 // lists every first-parent landing on main that has no stored check, with its findings ("landed unchecked"). Synthetic repos only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,20 +40,20 @@ test('the machine flag is rule data: K14 carries it, and a check with machine of
   const called = [], tool = (rule, side) => { called.push(rule.id); return noTool(rule, side); };
   const r = slopCheck({ repo, base: 'main', rules: [K15, machineRule], tool, machine: false });
   assert.deepEqual(r.ran, ['K15']);
-  assert.equal(r.skipped.length, 1); assert.equal(r.skipped[0].rule, 'X7'); assert.match(r.skipped[0].why, /machine state/);
-  assert.ok(!called.includes('X7'), 'a skipped machine rule never runs its program');
+  assert.ok(!r.findings.some(f => f.rule === 'X7'), 'a machine rule not run here is no finding');
+  assert.ok(!called.includes('X7'), 'a machine rule not run here never runs its program');
   assert.deepEqual(r.blocks.map(b => b.rule), ['K15']);
   assert.deepEqual(slopCheck({ repo, base: 'main', rules: [K15, machineRule], tool }).ran, ['K15', 'X7'], 'machine on (the default): it runs');
 });
 
-test('norn slop check --ci --diff base..HEAD: exit 1 on a BLOCK, the machine rule listed as skipped; exit 0 on a clean diff', () => {
+test('norn slop check --ci --diff base..HEAD: exit 1 on a BLOCK, the machine rule not run (left out of ran:); exit 0 on a clean diff', () => {
   const repo = repoWith(), base = git(repo, 'rev-parse', 'HEAD'), root = mkTmp('meta-slop-pr-root-');
   git(repo, 'checkout', '-q', '--detach');   // a CI checkout: detached at the PR's head
   const env = { ...process.env, META_ROOT: root }, run = (...a) => spawnSync(process.execPath, [NORN, 'slop', 'check', ...a], { cwd: repo, env, encoding: 'utf8', windowsHide: true });
   commit(repo, { 'ok.txt': 'fine\n' }, 'clean');
   let r = run('--ci', '--diff', `${base}..HEAD`);
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /skipped K14: .*machine state/);
+  assert.match(r.stdout, /; ran: K1 /); assert.doesNotMatch(r.stdout, /\bK14\b/, 'the machine rule is not run under --ci');
   commit(repo, { 'x.orig': 'junk\n' }, 'junk');
   r = run('--ci', '--diff', `${base}..HEAD`);
   assert.equal(r.status, 1, r.stdout + r.stderr);
@@ -61,7 +61,7 @@ test('norn slop check --ci --diff base..HEAD: exit 1 on a BLOCK, the machine rul
   assert.match(r.stdout, /slop check: 1 BLOCK on HEAD /);
 });
 
-test('the PR workflow\'s slop job: every pull request (no path filter: a required status must always report), the merge base of the PR, machine rules skipped, a pinned tool cache; the docs say to make it required', () => {
+test('the PR workflow\'s slop job: every pull request (no path filter: a required status must always report), the merge base of the PR, machine rules not run, a pinned tool cache; the docs say to make it required', () => {
   assert.equal(fs.existsSync(path.join(ROOT, '.github', 'workflows', 'slop.yml')), false, 'one PR workflow: pr.yml');
   const y = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'pr.yml'), 'utf8');
   assert.match(y, /^on:\s*\n\s+pull_request:\s*$/m);
@@ -145,10 +145,10 @@ test('landed unchecked: every first-parent landing on main since the first store
   assert.doesNotMatch(r.line, /LANDED UNCHECKED/);
 });
 
-// The audit's proof case (PR #6, a hand PR merged unchecked): its diff had 6 empty catches (K2) and 3 unused names (K3). A synthetic
+// The audit's proof case (PR #6, a hand PR merged unchecked): its diff had 6 empty catches (K2) and 3 unused names (K3, now LJ/no-unused-vars). A synthetic
 // branch of the same shape, checked the way the PR job checks it (merge base with main..head, machine rules off), fails with those 9.
 // ESLint's output is recorded (as in the rule fixtures): a test fetches no tool.
-test('the PR #6 replay: the job\'s check of a branch shaped like PR #6 fails with its 9 BLOCK findings (6 K2 + 3 K3)', () => {
+test('the PR #6 replay: the job\'s check of a branch shaped like PR #6 fails with its 9 BLOCK findings (6 K2 + 3 LJ/no-unused-vars)', () => {
   const repo = repoWith({ 'lib/core.mjs': 'export const one = 1;\n' });
   git(repo, 'checkout', '-q', '-b', 'hand/pr6');
   const head = commit(repo, {
@@ -162,15 +162,20 @@ test('the PR #6 replay: the job\'s check of a branch shaped like PR #6 fails wit
   }, 'pr6');
   const base = git(repo, 'merge-base', 'main', head);
   const msg = (line, column, name) => ({ ruleId: 'no-unused-vars', severity: 2, message: `'${name}' is defined but never used. Allowed unused vars must match /^_/u.`, line, column });
+  const k2 = (line, column, endColumn, arrow) => ({ ruleId: 'no-restricted-syntax', severity: 2, message: `K2: empty ${arrow ? '.catch(() => {})' : 'catch'}: say what happens next, or let it throw`, line, column, endLine: line, endColumn });
   const lintOut = { base: '[]', head: JSON.stringify([
+    { filePath: 'lib/hold.mjs', messages: [k2(2, 23, 31)] },
+    { filePath: 'lib/guard.mjs', messages: [k2(2, 16, 28), k2(4, 35, 43, true)] },
+    { filePath: 'lib/cost.mjs', messages: [k2(1, 48, 70)] },
+    { filePath: 'tests/sup.test.mjs', messages: [k2(1, 46, 54), k2(1, 68, 76)] },
     { filePath: 'lib/server.mjs', messages: [msg(1, 31, 'readdirS')] },
     { filePath: 'tests/legacy.test.mjs', messages: [msg(1, 8, 'path')] },
     { filePath: 'tests/scope.test.mjs', messages: [msg(1, 7, 'unusedRoot')] }]) };
-  const tool = (rule, side) => (rule.kind === 'lint' ? lintOut[side] : noTool(rule, side));   // one ESLint run serves every lint rule
+  const tool = (rule, side) => (rule.kind === 'lint' ? lintOut[side] : noTool(rule, side));   // one ESLint run serves LJ and every ast rule (K2)
   const r = slopCheck({ repo, base, head, tool, machine: false });
-  assert.deepEqual(r.skipped.filter(s => !/^M\d/.test(s.rule)).map(s => s.rule), ['K14'], 'the CI form: the machine rule is skipped');
-  assert.ok(r.skipped.filter(s => /^M\d/.test(s.rule)).every(s => !/machine/.test(s.why)), 'the model rules (gate F) skip for their own reason (no route), never as machine rules');
+  assert.ok(!r.ran.includes('K14') && !r.findings.some(f => f.rule === 'K14'), 'the CI form: the machine rule is not run');
+  assert.ok(r.findings.filter(f => f.unrun).every(f => /^M\d/.test(f.rule) && f.level === 'WARN'), 'only the model rules (gate F, no route) could not run: WARN, never a hold');
   const got = r.blocks.map(b => `${b.rule} ${b.file}:${b.line}`).sort();
   assert.deepEqual(got, ['K2 lib/cost.mjs:1', 'K2 lib/guard.mjs:2', 'K2 lib/guard.mjs:4', 'K2 lib/hold.mjs:2', 'K2 tests/sup.test.mjs:1', 'K2 tests/sup.test.mjs:1',
-    'K3 lib/server.mjs:1', 'K3 tests/legacy.test.mjs:1', 'K3 tests/scope.test.mjs:1'], JSON.stringify(r.blocks.map(findingLine), null, 1));
+    'LJ/no-unused-vars lib/server.mjs:1', 'LJ/no-unused-vars tests/legacy.test.mjs:1', 'LJ/no-unused-vars tests/scope.test.mjs:1'], JSON.stringify(r.blocks.map(findingLine), null, 1));
 });

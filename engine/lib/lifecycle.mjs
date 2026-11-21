@@ -12,14 +12,17 @@
 //   archive  a done lane (record done, or its latest run exited DONE) whose work is merged, with no open deliverable (no open PR) and no
 //            live run: the tick archives it policy.done_lanes.archive_days after its end (0 = never). Its worktree goes only when it is
 //            clean and fully on main; otherwise it stays and the archive records it as work at risk.
+//   shipped  (LANE-TRUTH) a parked lane, or an active one whose last run ended without DONE, whose work is on main (dlvmerge.mjs
+//            laneShipped) and no live run: the tick archives it at the next tick - parked / stopped + shipped is the contradiction the
+//            owner saw on rm29 and model-tab-residual-trail, never a resting state. A done lane that shipped ages out (archive).
 // An archive by the tick is the owner's Archive event by role `tick` with its why; the Lanes page Unarchive undoes it.
 //   path     (item 9, MAIL-20) a lane whose last work run ended DONE with commits not on main reaches a PR by code: lanepaths.mjs tickPaths.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn } from './records.mjs';
+import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn, homeOfId, copyItems } from './records.mjs';
 import { makeEval } from './after.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
-import { mergeLatch } from './dlvmerge.mjs';
+import { laneShipped } from './dlvmerge.mjs';
 import { readJsonS } from './fsnap.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
@@ -33,30 +36,38 @@ export const lanePolicy = (policy = {}) => ({ idleH: Number.isFinite(policy?.idl
   archiveDays: Number.isFinite(policy?.done_lanes?.archive_days) ? policy.done_lanes.archive_days : ARCHIVE_DAYS });
 
 /**
- * One rule per active / done lane that has one: [{ lane (name), id, rule: orphan | idle | stopped | archive, act: tick | checkin | wait,
+ * One rule per active / done / parked lane that has one: [{ lane (name), id, rule: orphan | idle | stopped | archive | shipped, act: tick | checkin | wait,
  * at (ISO: when the tick acts, archive only), run (the latest run id), text (the Lanes page words), why (the archive why / the finding) }].
  * o: { now, idleH, archiveDays, landed (lane, run) -> the stopped run's work landed, merged (lane, run) -> the done lane's work is merged
- * and nothing of it is open (git: the tick's probe; default false = the tick never archives on a guess) }
+ * and nothing of it is open (git: the tick's probe; default false = the tick never archives on a guess), shipped (lane, run) -> why its
+ * work is on main | null (laneShipped over the records: laneHooks / tickLanes) }
  */
-export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = () => false, merged = () => false, home = null } = {}) {
+export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = ARCHIVE_DAYS, landed = () => false, merged = () => false, shipped = () => null, home = null } = {}) {
   const items = Object.values(st.items), byLane = {};
   for (const r of items) if (r.kind === 'run' && r.data?.lane) (byLane[r.data.lane] ??= []).push(r);
   const out = [];
   for (const l of items) {
-    if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
+    if (l.kind !== 'lane' || !['active', 'done', 'parked'].includes(l.state)) continue;
     const name = laneNameIn(l.id, home), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id)), r = runs.at(-1);
     if (runs.some(x => LIVE.includes(x.state))) continue;
     const row = (rule, act, text, why, at = null) => out.push({ lane: name, id: l.id, rule, act, at, run: r?.id ?? null, text, why });
+    // b = its newest run that is no queue bookkeeping (lanes.mjs BOOKKEEPING: a MERGE entry withdrawn before it started is no outcome)
+    const b = runs.filter(x => !['withdrawn', 'filled'].includes(x.state)).at(-1) ?? r;
+    const doneLane = l.state !== 'parked' && (l.state === 'done' || (b?.state === 'exited' && b.end?.outcome === 'done'));
+    // LANE-TRUTH: a parked lane, or one whose last run ended without DONE, whose work is on main archives at the next tick (its one state
+    // is shipped; a done one ages out below). Its words never repeat "stopped" / "parked": the row already says shipped.
+    const sh = doneLane ? null : shipped(name, r);
+    if (sh) { row('shipped', 'tick', 'archives at the next tick', `${l.state === 'parked' ? 'parked' : r ? `${r.id} ended ${r.end?.outcome ?? r.state}` : 'no run'}, but its work is on main (${sh})`); continue; }
+    if (l.state === 'parked') continue;
     const maker = l.run ? st.items[l.run] : null;
     if (l.state === 'active' && !r && maker?.data?.kind === 'checkin' && maker.state !== 'running') {
       row('orphan', 'tick', 'orphan: its check-in dispatched nothing on it - archives at the next tick', `created by check-in ${maker.id}, which ended with no run on it (its work went to another lane or nowhere)`);
       continue;
     }
-    const doneLane = l.state === 'done' || (r?.state === 'exited' && r.end?.outcome === 'done');
     if (doneLane) {
-      if (!archiveDays || !r) continue;
-      const ended = Date.parse(endTs(r) ?? l.updated);
-      if (!merged(name, r)) { row('archive', 'wait', 'done, not merged: stays until its work is on main', null); continue; }
+      if (!archiveDays || !b) continue;
+      const ended = Date.parse(endTs(b) ?? l.updated);
+      if (!merged(name, b)) { row('archive', 'wait', 'done, not merged: stays until its work is on main', null); continue; }
       const at = ended + archiveDays * D;
       row('archive', 'tick', `archives ${inDays(at - now)}`, `done, its work merged, nothing open: archived ${archiveDays} d after its end (policy.done_lanes.archive_days)`, new Date(at).toISOString());
       continue;
@@ -80,19 +91,44 @@ export const laneRulesFile = state => path.join(state, 'lane-rules.json');
  * with its words, or null). A snapshot read in a dash GET: it primes both files. */
 export function laneHooks(state) {
   const c = readJsonS(laneRulesFile(state)), ps = readJsonS(lanePathsFile(state))?.paths || {};
-  const has = k => (l, r) => !!r.landed || !!c?.[k]?.includes(l);
-  // OVERVIEW-TRUTH (5): a lane whose work is on main is shipped (the Lanes page takes it off the active list): every deliverable of it
-  // merged (the latched merge: a merged PR, git, the content check, the owner's ruling), its path to main merged, or a landed ruling
-  const dl = (() => { try { return Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable' && d.state !== 'superseded'); } catch { return []; } })();
-  const shipped = (l, ...runs) => {
-    const mine = dl.filter(d => d.data?.lane === l), m = mine.map(d => [d, mergeLatch(d)?.merged]);
-    if (mine.length && m.every(([, x]) => x)) return m.map(([d, x]) => `${d.id} ${x.data?.pr ? `PR #${x.data.pr}` : x.data?.how === 'ruling' ? 'ruled merged' : 'on main'}`).join(', ');
-    if (ps[l]?.state === 'merged') return `${ps[l].branch ?? 'its branch'} on main`;
-    const r = runs.find(x => x?.landed);
-    return r ? `landed: ${r.landed.why ?? 'ruled landed'}` : null;
-  };
-  return { home: homeOf(state)?.id ?? null, landed: has('landed'), merged: has('merged'), shipped, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
+  // OVERVIEW-TRUTH (5) / LANE-TRUTH: a lane whose work is on main is shipped (dlvmerge.mjs laneShipped: the Lanes page takes it off the
+  // active list), and landed / merged for its rule too - the row never says shipped while its rule still waits
+  const shipped = laneShippedIn(state, ps), home = homeOf(state)?.id ?? null;
+  const has = k => (l, r) => !!r.landed || !!c?.[k]?.includes(l) || !!shipped(l, r);
+  // LANE-TRUTH: the lane's branch (branches.json, the tick's `norn branches --refresh`): gone (none of its names is a branch), merged (every
+  // one left is on main: ancestry or cherry - nothing left to land), open, or null (no scan yet: unknown)
+  const br = readJsonS(path.join(state, 'branches.json')), refs = br ? new Map((br.refs || []).map(r => [r.name, r])) : null;
+  const branchOf = (l, lane = null) => { if (!refs) return null; const xs = laneBranchNames(l, { home, lane, dlvs: shipped.dlvs(l) }).map(b => refs.get(b)).filter(Boolean);
+    return !xs.length ? 'gone' : xs.every(r => r.merged) ? 'merged' : 'open'; };
+  return { home, landed: has('landed'), merged: has('merged'), shipped, branchOf, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
 }
+// LANE-TRUTH: shipped (lane, ...runs) -> why | null over a state dir's deliverable records (superseded ones included) and its lane paths:
+// dlvmerge.mjs laneShipped, the one rule. .dlvs(lane) = the lane's deliverable records.
+export function laneShippedIn(state, ps = readJsonS(lanePathsFile(state))?.paths || {}) {
+  const dl = (() => { try { return Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable'); } catch { return []; } })();
+  const dlvs = l => dl.filter(d => d.data?.lane === l);
+  return Object.assign((l, ...runs) => laneShipped({ dlvs: dlvs(l), path: ps[l] ?? null, runs }), { dlvs });
+}
+/** LANE-TRUTH: the other homes' lanes (read-only here) whose work is on main by what this machine holds: their deliverable copies
+ * (records.mjs copyItems) by laneShipped, or one of their branches on main in branches.json -> [{ id, home, state, why }]. Listed for
+ * that home (`norn deliverables recheck`), never written: a home writes only its own records. */
+export function othersShipped(state) {
+  const me = homeOf(state); if (!me) return [];
+  const st = loadState(state), copies = copyItems(state, 'deliverable'), on = new Map((readJsonS(path.join(state, 'branches.json'))?.refs || []).map(r => [r.name, r]));
+  return Object.values(st.items).filter(l => l.kind === 'lane' && l.state !== 'archived' && homeOfId(l.id, me.bare_home) !== me.id).flatMap(l => {
+    const home = homeOfId(l.id, me.bare_home), name = laneNameIn(l.id, home), dlvs = copies.filter(d => d.home === home && d.data?.lane === name);
+    const why = laneShipped({ dlvs }) || laneBranchNames(name, { home, lane: l, dlvs }).map(b => on.get(b)).filter(r => r?.merged).map(r => `${r.name} on main`)[0] || null;
+    return why ? [{ id: l.id, home, state: l.state, why }] : [];
+  });
+}
+/** LANE-TRUTH: does an Inbox row about a lane need the owner? Needs you holds an open question, or a lane stopped with no shipped work:
+ * a parked lane (parked: true; rec = its LANE record) whose work shipped, that has no branch left or whose branch holds nothing off main
+ * asks nothing, nor does an unreviewed stopped run of a shipped lane. h = laneHooks(state); no lane = not a lane row (true). The dash
+ * Inbox and norn_inbox (mcp.mjs) read it. */
+export const laneAsksOwner = (h, lane, { parked = false, rec = null } = {}) => !lane || (!h.shipped(lane) && !(parked && ['gone', 'merged'].includes(h.branchOf(lane, rec))));
+// the names a lane's branch may have: its LANE record's, its deliverables', norn/<lane> and the multi-home form norn/<home>/<lane>
+export const laneBranchNames = (l, { home = null, lane = null, dlvs = [] } = {}) =>
+  [...new Set([lane?.data?.branch, ...dlvs.map(d => d.data?.branch), `norn/${l}`, home ? `norn/${home}/${l}` : null].filter(Boolean))];
 
 /** the gate probe: a lane finding the check-in must act on (idle / stopped, from the facts the gate folded at that time) = `lanes:<rule>:L:x`, a MAJOR wake once */
 export const lanesProbe = (policy, home = null) => ({ at, items, runs }) => {
@@ -109,10 +145,13 @@ export function tickLanes(state, { project = {}, now = Date.now(), git = makeGit
   const dlvs = Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable');
   const laneDlvs = lane => dlvs.filter(d => d.data.lane === lane && d.state !== 'superseded');
   const dlvMerged = d => ev({ kind: 'dlv', id: d.id }).met;
-  const landed = (lane, r) => !!r.landed || (laneDlvs(lane).length > 0 && laneDlvs(lane).every(dlvMerged));
-  const merged = (lane, r) => ev({ kind: 'run', id: r.id, state: 'merged' }).met && laneDlvs(lane).every(dlvMerged);
+  // LANE-TRUTH: work the records say is on main (laneShipped) is landed and merged here too - the answer the Lanes page shows
+  const shipped = laneShippedIn(state);
+  const landed = (lane, r) => !!r.landed || !!shipped(lane, r) || (laneDlvs(lane).length > 0 && laneDlvs(lane).every(dlvMerged));
+  const merged = (lane, r) => !!shipped(lane, r) || (ev({ kind: 'run', id: r.id, state: 'merged' }).met && laneDlvs(lane).every(dlvMerged));
   const out = [], seen = { landed: [], merged: [] };
-  const rules = laneRules(st, { now, ...lanePolicy(project.policy), home: homeOf(state)?.id ?? null, landed: (l, r) => landed(l, r) && !!seen.landed.push(l), merged: (l, r) => merged(l, r) && !!seen.merged.push(l) });
+  const rules = laneRules(st, { now, ...lanePolicy(project.policy), home: homeOf(state)?.id ?? null, shipped,
+    landed: (l, r) => landed(l, r) && !!seen.landed.push(l), merged: (l, r) => merged(l, r) && !!seen.merged.push(l) });
   if (!dry) try { fs.writeFileSync(laneRulesFile(state), JSON.stringify({ at: new Date(now).toISOString(), ...seen }) + '\n'); } catch { /* no cache: the Lanes page shows the rulings alone */ }
   for (const x of rules) {
     if (x.act !== 'tick' || (x.at && Date.parse(x.at) > now)) continue;
@@ -160,9 +199,11 @@ export function ciFixPlan(st, red, { landed = r => !!r.landed } = {}) {
 // pushed commits not on main and no merge run, ever - the merge was left to a check-in and none staged it. Each tick (lanepaths.mjs
 // tickPaths), for every active / done lane whose last work run ended DONE (a hand-off chain: its last run) and has no live work run, its branch is read:
 //   no commits off main (a planner / design run) -> no path;  on main (workOnMain: ancestry, clean merges, git cherry, squash) -> merged
-//   a MERGE run of the lane after that run is live -> merge step queued;  an open deliverable of the branch -> PR open / in the merge queue
+//   a MERGE run of the lane after that run is live -> merge step queued
 //   commits not pushed -> pushed (a plain push, never a force); a refused push, or unpushed commits beside uncommitted files -> work at
-//   risk, named, never staged;  a dirty worktree with its commits pushed -> staged, and named at risk
+//   risk, named, never staged. This is the one push of a finished lane branch, on every home (the merge leader's queue and a follower's
+//   PR both need it on origin);  an open deliverable of the branch -> PR open / in the merge queue (its skip reason: mqwhy.mjs)
+//   a dirty worktree with its commits pushed -> staged, and named at risk
 //   else -> its MERGE stage queued: merge-brief --sha <head> + norn run --queue --stage MERGE --priority P1 (checkins.mjs stageArgs).
 //   A MERGE run after it that ended without landing the work is not re-queued (a loop): a finding.
 // Work not on main for OFF_MAIN_H with no merge step is red (Lanes page + digest). The paths go to lane-paths.json for the dash, the

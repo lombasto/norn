@@ -141,5 +141,5 @@ export function adviceDigestRow(state) {
   try { c = JSON.parse(fs.readFileSync(adviceCacheFile(state), 'utf8')); } catch { return null; }
   if (!c.cards?.length && !c.stale) return null;
   const top = c.cards?.[0];
-  return { id: 'advice', line: `advice: ${c.cards.length} open on the Usage tab${top ? ` (first: ${top.title})` : ''}${c.stale ? `; ${c.stale} vendor source${c.stale === 1 ? '' : 's'} past the re-read date` : ''} - counted ${c.at}` };
+  return { id: 'advice', line: `advice: ${c.cards.length} open on the Spend page${top ? ` (first: ${top.title})` : ''}${c.stale ? `; ${c.stale} vendor source${c.stale === 1 ? '' : 's'} past the re-read date` : ''} - counted ${c.at}` };
 }

@@ -8,7 +8,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
-import { loadDeliverables } from '../engine/lib/deliverables.mjs';
+import { loadDeliverables, deliverablesView } from '../engine/lib/deliverables.mjs';
+import { loadMqWhy } from '../engine/lib/mqwhy.mjs';
+import { laneNow } from '../engine/lib/laneout.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { mergeqRun } from '../engine/lib/mergeq.mjs';
 import { loadLand, landGate } from '../engine/lib/landing.mjs';
@@ -108,6 +110,12 @@ test('a red quick check (a changed test file fails) queues an LLM MERGE with the
   const again = await pass(f, x);
   assert.equal(x.calls.filter(c => c[0] === 'run').length, 1, 'tried at this tip: no second MERGE');
   assert.deepEqual(again.land.fallback, []);
+  // land-push: the skip stays in words while the tip stands - on the deliverable (why_not) and the lane's next line
+  const w = loadMqWhy(f.state)['feat/b'];
+  assert.equal(w.kind, 'gate'); assert.equal(w.tip, f.tips['feat/b']);
+  assert.match(w.why, /^quick check red at [0-9a-f]{7}: .* exit 1 on the merge of .*; its MERGE RUN-90 is queued$/);
+  const row = deliverablesView({ stateDir: f.state, project: f.project, git: ghGit() }).rows.find(r => r.id === 'DLV-1');
+  assert.deepEqual([row.why_not.kind, row.why_not.text], ['mq', w.why]);
 });
 
 test('a conflict with main queues the MERGE naming the files', async () => {
@@ -116,6 +124,28 @@ test('a conflict with main queues the MERGE naming the files', async () => {
   assert.equal(r.land.fallback[0].kind, 'conflict', r.why);
   const run = x.calls.find(c => c[0] === 'run');
   assert.match(fs.readFileSync(run[run.indexOf('--brief') + 1], 'utf8'), /Merge conflict: merging feat\/c [0-9a-f]{7} into main conflicts in README\.md/);
+  assert.match(loadMqWhy(f.state)['feat/c'].why, /^merge conflict at [0-9a-f]{7}: merging feat\/c .* conflicts in README\.md; its MERGE RUN-90 is queued$/);
+});
+
+// land-push: ui-shell, dwarf-names, ui-runs-lanes sat DONE with "not pushed" only in the mergeq output; the Lanes row said nothing
+test('a DONE branch the queue skips says why on its deliverable and its Lanes row: not pushed; a landed row clears it', async () => {
+  const f = fixture([['feat/d', { 'engine/d.mjs': 'export const d = 1;\n' }]]), x = { ...fakeCli(), ...fakeGh() };
+  const wt = path.join(f.t, 'wt-d'), tip = f.tips['feat/d'];
+  g(wt, 'push', '-q', 'origin', '--delete', 'feat/d');   // never pushed, as on home b
+  const run = record(f.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'd', worktree: fwd(wt) } }, { views: false }).id;
+  record(f.state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data: { exit: 0, outcome: 'done', branch: 'feat/d', head: tip } }, { views: false });
+  const r = await pass(f, x);
+  assert.deepEqual(r.land.landed, [], r.why);
+  assert.match(r.why, new RegExp(`DLV-1: not pushed at ${tip.slice(0, 7)}`));
+  assert.deepEqual([loadMqWhy(f.state)['feat/d'].kind, loadMqWhy(f.state)['feat/d'].tip], ['unpushed', tip]);
+  const rows = deliverablesView({ stateDir: f.state, project: f.project, git: ghGit() }).rows;
+  assert.match(rows[0].why_not.text, /^not pushed at [0-9a-f]{7}: the tick's path to main pushes it$/); assert.equal(rows[0].why_not.warn, true);
+  const next = laneNow({ lane: 'd', items: loadState(f.state).items, rows }).next;
+  assert.deepEqual([next.words, next.cls], [`awaiting merge: ${rows[0].why_not.text}`, 'warn'], 'the Lanes row says why, not "no PR yet"');
+  g(wt, 'push', '-q', 'origin', 'feat/d');   // the tick's path to main pushes it: the next pass lands it and the skip goes
+  const r2 = await pass(f, x);
+  assert.deepEqual(r2.land.landed, ['DLV-1'], r2.why);
+  assert.equal(loadMqWhy(f.state)['feat/d'], undefined);
 });
 
 test('landGate: the quick check, never the full suite; a pytest merge gate lends its python and folder; merge.suite = skip runs none', () => {

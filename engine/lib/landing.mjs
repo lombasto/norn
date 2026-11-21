@@ -20,6 +20,9 @@ export const landDir = stateDir => path.join(stateDir, 'mq', 'land');
 const landFile = (stateDir, id) => path.join(landDir(stateDir), `${id}.json`);
 export const loadLand = (stateDir, id) => { try { return JSON.parse(fs.readFileSync(landFile(stateDir, id), 'utf8')); } catch { return null; } };
 const saveLand = (stateDir, id, o) => { fs.mkdirSync(landDir(stateDir), { recursive: true }); fs.writeFileSync(landFile(stateDir, id), JSON.stringify(o, null, 1)); };
+// a failed landing's status (<state>/mq/land/<DLV>.json) in the words and the kind of its skip (mqwhy.mjs)
+const LAND_WORDS = { conflict: 'merge conflict', red: 'quick check red', slop: 'slop BLOCK', pr: 'PR refused' };
+const LAND_KIND = { conflict: 'conflict', red: 'gate', slop: 'slop', pr: 'failed' };
 export const QUICK_CHECK = fwd(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'quick-check.mjs'));
 const QUICK_MIN = 30;
 
@@ -53,27 +56,37 @@ export function fallbackBrief(project, { row, run, failure }) {
  */
 export async function landPass(o) {
   const { stateDir, project, locksDir, rows, cfg, git = makeGit(), gateRunner, cli, gh, now = Date.now() } = o;
-  const out = { landed: [], fallback: [], why: '' }, said = [];
+  // skips: { branch: { tip, kind, why } | null } - each row's reason it did not land this pass, for mqwhy.mjs (the Lanes row, the deliverable)
+  const out = { landed: [], fallback: [], why: '', skips: {} }, said = [];
+  const skip = (r, kind, why) => { out.skips[r.branch] = { tip: r.tip, kind, why }; said.push(`${r.id}: ${why}`); };
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items).filter(r => r.kind === 'run');
   const landing = lane => runs.filter(r => r.data?.lane === lane && isLandingStage(r.data?.stage) && ['queued', 'running', 'claimed'].includes(r.state));
   git(cfg.repo, ['fetch', '--quiet', cfg.remote], { allowFail: true });
   for (const r of rows) {
-    if (r.gate !== 'stage' || r.red || r.pr || r.branch_exists === false || r.into !== cfg.main || !r.lane || !r.tip) continue;
+    if (r.pr || r.branch_exists === false || !r.lane || !r.tip) continue;
+    if (r.gate === 'door') { out.skips[r.branch] = { tip: r.tip, kind: 'door', why: `native-touching (${(r.native_files || []).join(', ')}): it lands through the door flow` }; continue; }
+    if (r.gate !== 'stage') continue;
+    if (r.red) { out.skips[r.branch] = { tip: r.tip, kind: 'red', why: `red in the merge queue at ${s7(r.red)}: its fix stage merges main itself` }; continue; }
+    if (r.into !== cfg.main) { out.skips[r.branch] = { tip: r.tip, kind: 'target', why: `goes to its epic's branch ${r.into} first` }; continue; }
     const last = loadLand(stateDir, r.id);
-    if (last?.tip === r.tip) continue;   // tried at this tip: its fallback MERGE (or a no-gate note) is the answer until the tip moves
-    if (git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/remotes/${cfg.remote}/${r.branch}`], { allowFail: true })?.trim() !== r.tip) { said.push(`${r.id} not pushed at ${s7(r.tip)}`); continue; }
+    if (last?.tip === r.tip) {   // tried at this tip: its fallback MERGE (or a no-gate note) is the answer until the tip moves
+      if (last.status !== 'landed') out.skips[r.branch] = { tip: r.tip, kind: LAND_KIND[last.status] ?? last.status, why: `${LAND_WORDS[last.status] ?? last.status} at ${s7(r.tip)}: ${last.why}${last.queued ? `; its MERGE ${last.queued} is queued` : '; no MERGE queued'}` };
+      continue;
+    }
+    if (git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/remotes/${cfg.remote}/${r.branch}`], { allowFail: true })?.trim() !== r.tip) { skip(r, 'unpushed', `not pushed at ${s7(r.tip)}: the tick's path to main pushes it`); continue; }
     const live = laneWriter({ state: stateDir, locksDir, lane: r.lane, worktree: null });
-    if (live) { said.push(`${r.id}: ${live}`); continue; }
+    if (live) { skip(r, 'busy', live); continue; }
     const lr = landing(r.lane);
-    if (lr.some(x => x.state !== 'queued')) { said.push(`${r.id}: landing run ${lr.find(x => x.state !== 'queued').id} is live`); continue; }
+    if (lr.some(x => x.state !== 'queued')) { skip(r, 'busy', `landing run ${lr.find(x => x.state !== 'queued').id} is live`); continue; }
     const base = git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/remotes/${cfg.remote}/${cfg.main}^{commit}`], { allowFail: true })?.trim()
       || git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${cfg.main}^{commit}`], { allowFail: true })?.trim();
-    if (!base) { said.push(`${r.id}: no ${cfg.remote}/${cfg.main} nor ${cfg.main} to land on`); continue; }
+    if (!base) { skip(r, 'failed', `no ${cfg.remote}/${cfg.main} nor ${cfg.main} to land on`); continue; }
     const gate = landGate(project, { base, cfg });
-    if (r.word !== 'clean' && lr.length) { said.push(`${r.id} ${r.word}: its queued ${lr[0].id} lands it`); continue; }
+    if (r.word !== 'clean' && lr.length) { skip(r, 'conflict', `${r.word}: its queued ${lr[0].id} lands it`); continue; }
     const res = await landOne({ ...o, row: r, gate, base, queuedMerges: lr, runs, git, gateRunner, cli, gh, now });
     if (res.landed) out.landed.push(r.id);
     if (res.fallback) out.fallback.push(res.fallback);
+    out.skips[r.branch] = res.landed ? null : res.skip ? { tip: r.tip, ...res.skip } : null;
     said.push(res.why);
     if (res.gated) break;   // one gate per pass
   }
@@ -85,12 +98,12 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
   const ts = new Date(now).toISOString(), tag = `mergeq land ${r.id}`;
   let slot = null;
   for (let i = 0; i < mergeParallel(project) && !slot; i++) { try { slot = acquireLock(locksDir, slotKey(cfg.repo, i), { run: tag }); } catch { /* slot busy */ } }
-  if (!slot) return { why: `${r.id}: the ${mergeParallel(project)} merge slot(s) are busy` };
+  if (!slot) return { why: `${r.id}: the ${mergeParallel(project)} merge slot(s) are busy`, skip: { kind: 'busy', why: `the ${mergeParallel(project)} merge slot(s) are busy` } };
   const wt = mergeWtPath(stateDir, r.lane, r.tip);
   let wlock = null;
   const hb = setInterval(() => { slot.refresh(); wlock?.refresh(); }, hbMs);   // a gate may run an hour: both locks stay fresh
   try {
-    try { wlock = acquireLock(locksDir, wt, { run: tag }); } catch (e) { return { why: `${r.id}: merge worktree ${fwd(wt)}: ${e.message}` }; }
+    try { wlock = acquireLock(locksDir, wt, { run: tag }); } catch (e) { return { why: `${r.id}: merge worktree ${fwd(wt)}: ${e.message}`, skip: { kind: 'busy', why: `merge worktree ${fwd(wt)}: ${e.message}` } }; }
     // the queued MERGE of the lane would merge the same work: withdrawn (a failure below queues the MERGE again, with the failure)
     for (const q of queuedMerges.filter(x => x.state === 'queued')) { try { record(stateDir, { kind: 'run', ev: 'withdraw', id: q.id, by: 'launcher', data: { why: `mergeq lands ${r.id} mechanically` } }); } catch { /* started or gone meanwhile */ } }
     removeMergeWorktree({ repo: cfg.repo, wt, git, waitMs: 1000 });
@@ -124,18 +137,19 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
   // a failed landing -> the LLM MERGE run with the failure attached (queued via the CLI, as the routine stage does)
   function fail(f, gated = false) {
     const st = { tip: r.tip, at: ts, status: f.kind, why: f.why, log: f.log ?? null };
+    const skip = q => ({ kind: LAND_KIND[f.kind], why: `${LAND_WORDS[f.kind]} at ${s7(r.tip)}: ${f.why}${q ? `; its MERGE ${q} is queued` : '; no MERGE queued'}` });
     const done = runs.find(x => x.id === r.run) || null;
-    if (!cli || !project.file) { saveLand(stateDir, r.id, { ...st, queued: null }); return { gated, why: `${r.id} ${f.kind}: ${f.why}; no norn CLI / project file to queue its MERGE` }; }
+    if (!cli || !project.file) { saveLand(stateDir, r.id, { ...st, queued: null }); return { gated, skip: skip(null), why: `${r.id} ${f.kind}: ${f.why}; no norn CLI / project file to queue its MERGE` }; }
     const brief = fwd(path.join(project.briefs_dir || project.root || '.', `task-${String(r.lane).toUpperCase()}-MERGE-brief.md`));
     let text;
-    try { text = fallbackBrief(project, { row: r, run: done, failure: f }); } catch (e) { saveLand(stateDir, r.id, { ...st, queued: null }); return { gated, why: `${r.id} ${f.kind}; the MERGE brief failed: ${e.message}` }; }
+    try { text = fallbackBrief(project, { row: r, run: done, failure: f }); } catch (e) { saveLand(stateDir, r.id, { ...st, queued: null }); return { gated, skip: skip(null), why: `${r.id} ${f.kind}; the MERGE brief failed: ${e.message}` }; }
     fs.mkdirSync(path.dirname(brief), { recursive: true });
     fs.writeFileSync(brief, text);
     const cp = checkinPolicy(project.policy);
     const q = cli(['run', '--queue', '--project', fwd(project.file), '--lane', r.lane, '--stage', 'MERGE', '--brief', brief, '--executor', 'claude',
       ...(cp.merge_agent ? ['--agent', cp.merge_agent] : []), '--model', cp.merge_model, '--effort', cp.merge_effort, '--as', 'launcher']);
-    const queued = q?.code === 0 ? (q.out.match(/RUN-\d+/) || [])[0] ?? null : null;
+    const queued = q?.code === 0 ? (q.out.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/) || [])[0] ?? null : null;   // a home's id too (RUN-b-12)
     saveLand(stateDir, r.id, { ...st, brief, queued });
-    return { gated, fallback: { id: r.id, kind: f.kind, queued }, why: `${r.id} ${f.kind}: ${f.why}; ${queued ? `MERGE ${queued} queued` : `norn run --queue failed: ${String(q?.out || '').slice(0, 160)}`}` };
+    return { gated, skip: skip(queued), fallback: { id: r.id, kind: f.kind, queued }, why: `${r.id} ${f.kind}: ${f.why}; ${queued ? `MERGE ${queued} queued` : `norn run --queue failed: ${String(q?.out || '').slice(0, 160)}`}` };
   }
 }

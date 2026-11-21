@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
-import { dlvMerged } from './dlvmerge.mjs';
+import { dlvMerged, laneShipped } from './dlvmerge.mjs';
 import { isAncestor } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
@@ -232,6 +232,14 @@ export const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // F8: th
 const idHome = id => String(id).match(/^[A-Z]+-([a-z][a-z0-9]{0,15})-\d+$/)?.[1] ?? null;
 
 export const recordsFile = (stateDir, kind = 'question') => path.join(stateDir, (KINDS[kind]?.file || 'records') + '.jsonl');
+/** the machine's crew store (crew.mjs): <state_root>/crew/crew.jsonl, beside the state dirs */
+export const crewFile = stateDir => path.join(path.dirname(path.resolve(stateDir)), 'crew', 'crew.jsonl');
+// DWARF-NAMES: a run shows its dwarf's current name. Own runs: the crew store's last hire / rename name (a rename reaches every run the
+// dwarf took); another home's runs: the dwarf_name its newest run carries (the copies hold no crew). A store that does not parse names none.
+const crewNames = events => { const m = new Map(); for (const e of [...events].sort((a, b) => a.seq - b.seq)) if ((e.ev === 'hire' || e.ev === 'rename') && typeof e.data?.name === 'string') m.set(e.id, e.data.name); return m; };
+const copyNames = runs => { const m = new Map(); for (const r of [...runs].sort((a, b) => String(a.created).localeCompare(String(b.created)))) if (r.data?.dwarf && r.data.dwarf_name) m.set(r.data.dwarf, r.data.dwarf_name); return m; };
+const withNames = (f, names) => { for (const r of Object.values(f.items)) if (r.kind === 'run' && names.has(r.data?.dwarf)) r.data = { ...r.data, dwarf_name: names.get(r.data.dwarf) }; return f; };
+const ownNames = stateDir => { try { return crewNames(readEvents(crewFile(stateDir))); } catch { return new Map(); } };
 
 const idFile = (stateDir, file, re) => {
   let j;
@@ -413,6 +421,7 @@ export function copyItems(stateDir, kind) {
   if (!home) return out;
   for (const h of otherHomes(stateDir, home)) {
     let f; try { f = fold(readEvents(copyFile(stateDir, h, kind))); } catch { continue; }
+    if (kind === 'run') withNames(f, copyNames(Object.values(f.items)));
     for (const it of Object.values(f.items)) if (it.kind === kind) out.push({ ...it, home: h, data: { ...it.data, ...(typeof it.data?.lane === 'string' ? { lane: laneNameIn(laneIdIn(it.data.lane, h), home.id) } : {}) } });
   }
   return out;
@@ -429,17 +438,17 @@ export async function copyItemsAsync(stateDir, kind) {
 const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items },
   ...(a.pending ? { pending: a.pending, conflicts: a.conflicts, integrity: a.integrity, newest: a.newest } : {}) });
 // META-DASH-ASYNC R1: inside a primed dash request the snapshot's fold (lib/fsnap.mjs) - a lib that folds again (limitgate, ...) reads nothing
-export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(loadShared(stateDir, 'question'), fold(readEvents(recordsFile(stateDir, 'run'))));
+export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(loadShared(stateDir, 'question'), withNames(fold(readEvents(recordsFile(stateDir, 'run'))), ownNames(stateDir)));
 /** META-DASH-ASYNC R1: loadState on fs.promises (the two records files read concurrently on the threadpool; the same fold) */
 export async function loadStateAsync(stateDir) {
   if (await readTextA(path.join(stateDir, 'home.json')) !== null && homeOf(stateDir)) {   // a synced dir: the copies primed, then the merged fold
     const hs = (await readdirA(path.join(stateDir, 'homes'))).filter(d => d.isDirectory()).map(d => path.join(stateDir, 'homes', d.name));
-    await prime({ files: [recordsFile(stateDir, 'question'), recordsFile(stateDir, 'run'), path.join(stateDir, 'relay.jsonl'), path.join(stateDir, 'sync', 'copy-integrity.json'),
+    await prime({ files: [recordsFile(stateDir, 'question'), recordsFile(stateDir, 'run'), crewFile(stateDir), path.join(stateDir, 'relay.jsonl'), path.join(stateDir, 'sync', 'copy-integrity.json'),
       ...hs.flatMap(d => [path.join(d, 'records.jsonl'), path.join(d, 'relay.jsonl')])] });
     return loadState(stateDir);
   }
-  const [qa, ru] = await Promise.all([readEventsAsync(recordsFile(stateDir, 'question')), readEventsAsync(recordsFile(stateDir, 'run'))]);
-  return joinFolds(fold(qa), fold(ru));
+  const [qa, ru, cw] = await Promise.all([readEventsAsync(recordsFile(stateDir, 'question')), readEventsAsync(recordsFile(stateDir, 'run')), readEventsAsync(crewFile(stateDir)).catch(() => [])]);
+  return joinFolds(fold(qa), withNames(fold(ru), crewNames(cw)));
 }
 
 // ---------- lock (exclusive create, retry 25 ms, stale after 10 s) ----------
@@ -504,7 +513,7 @@ const isOwnerRecord = it => it && (it.kind === 'directive' || (it.kind === 'ques
 function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'waiver') {
     if (ev === 'create') {
-      str(d.rule, 'rule'); if (!/^[A-Z]+\d+$/.test(d.rule)) fail('rule must be a slop rule id (K2, T1, ...)');
+      str(d.rule, 'rule'); if (!/^[A-Z]+\d*[A-Z]?(?:\/[\w@:-]+)?$/.test(d.rule)) fail('rule must be a slop rule id (K2, K11A, LJ, a lint sub-rule LJ/no-console, ...)');
       str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false }); str(d.q, 'q', { req: false });
       if (d.until !== undefined && !Number.isFinite(Date.parse(d.until))) fail(`until must be an ISO time (got ${JSON.stringify(d.until)})`);
     }
@@ -844,15 +853,19 @@ export const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), by the one merge rule (dlvmerge.mjs dlvMerged).
 function archiveGuard(stateDir, lane, ev = {}) {
-  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
+  // LANE-TRUTH: work the records say is on main (dlvmerge.mjs laneShipped: every deliverable landed - a merged PR latched, git cherry /
+  // the content check, a ruling, superseded - or its path merged) archives: the gate never reads a deliverable unmerged the Lanes row calls shipped
+  const dlvs = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.data.lane === lane);
+  const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
+  if (laneShipped({ dlvs, path: pth ?? null, runs: runs.filter(r => r.kind === 'run' && r.data?.lane === lane) })) return;
+  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
-    const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;
+    const dir = runs.find(r => r.id === pth.run)?.data?.worktree;
     if (!(pth.tip && dir && fs.existsSync(dir) && isAncestor(dir, pth.tip, 'main')))
       fail(`${laneId(lane, stateDir)} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
   }
-  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
-  for (const d of open) {
+  for (const d of dlvs.filter(i => i.state === 'open')) {
     const m = dlvMerged(d);
     if (m.merged) continue;
     fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is ${m.unknown ? `done, cannot tell if merged (${m.unknown})` : 'done but not merged'} - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);

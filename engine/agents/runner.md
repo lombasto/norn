@@ -15,3 +15,4 @@ asks.
 - Context: when your context is getting full, stop at a clean point and hand off (`norn done --outcome handoff --handoff-file F`).
 - End your run with `norn done` (done), `norn done --outcome stopped --why "<why>"` or `norn done --outcome handoff --handoff-file F`
   (F: the hand-off: state, commits, the exact next step, open questions). That is the run's outcome; the notes file is your log.
+- `norn done` checks your branch; fix what it lists and run it again.

@@ -201,7 +201,7 @@ const VIEW = {
 test('Context: in Health next to Usage (UX review 2), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
   assert.ok(TABS.some(([k, l]) => k === 'context' && l === 'Context'));   // META-UX-BUILD S4 (owner DIR-65)
   assert.ok(SERVER_TABS.includes('context'));
-  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['usage', 'slop', 'tests', 'context']);   // stage NAV: More, Health
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'context']);   // stage NAV: More, Health
   assert.ok(renderTab('context', { one: true }).includes('Choose one project'));
   const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...VIEW, sub, limit: 1000 }, {})).join('');
   assert.match(html, /id="panel-context"/);

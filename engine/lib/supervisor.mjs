@@ -12,7 +12,7 @@ import { record, RecordError, loadState } from './records.mjs';
 import { providerEnv, limitPatterns, authPatterns, executorInfo } from './executors.mjs';
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
-import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
+import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN, mailWaiting, raiseFlag, clearFlag } from './mail.mjs';
 import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillAll, fillWords, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
@@ -26,17 +26,16 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { checkBranch, slopPrompt, slopList } from './slop/runend.mjs';
+import { endCheck, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
 import { procStartAsync, running } from './legacy.mjs';
 import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
-import { makeTool } from './slop/tools.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { pauseOf } from './pause.mjs';
 import { readPause, holdsStarts } from './pausemode.mjs';
-import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
+import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy, orderDue } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
 import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
@@ -66,6 +65,7 @@ let finished = false;
 let capTimer = null, capped = false;
 let nudging = null, nudgeTimer = null, nudgeWaitLast = null;   // META-GTP-MAIL piece 3 (nudgeCheck)
 let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // META-CTX-ENFORCE R1 (ctxCheck)
+let flagTimer = null;   // hook-fast S1 (flagCheck)
 
 // a pid alone names whatever process holds it NOW (Windows reuses a freed pid; CI-HANG-6E54DAB R2): hb + end name the supervisor
 // as (pid, OS start time) - the value procStart gives a reader, so the two compare equal while this process lives.
@@ -150,6 +150,7 @@ if (cmd) {
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);
     if (ctxWatched()) ctxTimer = setInterval(ctxCheck, spec.hbMs);
+    if (spec.mail_hook) flagTimer = setInterval(flagCheck, spec.hbMs);
     if (spec.capMs) capTimer = setTimeout(() => { capped = true; logLine(`time cap ${spec.capMs} ms: stopping the executor`); killTree(childPid, { state, killer: `${run} supervisor ${process.pid}`, reason: `time cap ${spec.capMs} ms` }); }, spec.capMs);
   } catch (e) { finish(null, null, String(e.message)); }
 }
@@ -191,6 +192,7 @@ async function finish(code, signal, error) {
   clearInterval(timer);
   if (nudgeTimer) clearInterval(nudgeTimer);
   if (ctxTimer) clearInterval(ctxTimer);
+  if (flagTimer) { clearInterval(flagTimer); try { clearFlag(state, run); } catch { /* state gone */ } }   // an ended run takes no more mail by hook
   if (capTimer) clearTimeout(capTimer);
   for (const fd of fds) { try { fs.closeSync(fd); } catch { /* closed */ } }
   logLine(`exit=${code}${signal ? ' signal=' + signal : ''}${error ? ' error=' + error : ''}`);
@@ -420,15 +422,21 @@ function pausedEnd() {
   return false;
 }
 
+// the spec of a resume this supervisor starts (hand-off, fix, nudge): a continuation, never a fill's start. The queue entry the run came
+// from (fromQueue) is not carried over - it let a resume skip the doors a fill already passed (RUN-b-549 resumed, while RUN-b-544 and
+// RUN-b-545, started directly by a check-in, met queuedAhead, were refused exit 4 and dropped). queue: a full cap or a queued run
+// ahead holds the resume queued in fill order - never refused and lost.
+function continuation(sp) { const { fromQueue: _q, ...rest } = sp; return { ...rest, queue: true }; }
+
 function autoResume(handoff) {
   let { refused, count, max } = autoResumeRefusal(spec, state);   // one home with the lost relaunch (runs.mjs)
   let next = null, spawned = null, held = null;
   if (!refused) {
     try {
       // a HANDOFF is a fresh agent on the same brief: never the nudged session or its mail prompt (META-GTP-MAIL)
-      const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, resumeSid: _rs, nudge: _n, ...rest } = spec;
+      const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, resumeSid: _rs, nudge: _n, ...rest } = continuation(spec);
       if (spec.nudge) delete rest.promptText;
-      ({ run: next, spawned, why: held } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));   // a pause holds it queued (held = why)
+      ({ run: next, spawned, why: held } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));   // a pause, a full cap or runs ahead hold it queued (held = why)
     } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   }
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, count: count + 1, max, ...(held ? { held } : {}) } : { refused, count, max } }); }
@@ -451,11 +459,19 @@ function slopEnd() {
   // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
   let brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
-  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
-  if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
-  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
-  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
-  return open;
+  // SloppaChoppa 2 S2: endCheck reads the check `norn done` stored at this head and rule set instead of running it twice
+  try { c = endCheck({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, voice: spec.policy?.slop?.voice ?? null, brief, lane: spec.lane, run }); } catch (e) {
+    // SPEC 1.3 F7: a check that threw is no "no findings" - the branch is held "could not check" (the dashboard and the digest show it);
+    // no resume: the worker cannot fix the check, and the door runs its own
+    const why = e.message.split('\n')[0];
+    logLine(`slop: could not check: ${why}`);
+    try { const p = couldNotCheck(spec.worktree, why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e2) { logLine(`slop: the could-not-check hold was not stored: ${e2.message.split('\n')[0]}`); }
+    return [];
+  }
+  if (!c) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
+  const unrun = c.check.findings.filter(f => f.unrun).map(f => f.rule);
+  logLine(`slop: ${c.open.length} open BLOCK finding(s) on ${c.branch} (${c.result ? c.result.ran.join(' ') : `the check stored at ${c.check.head.slice(0, 7)} by ${c.check.run ?? '-'}`}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
+  return c.open;
 }
 
 // a DONE with open slop findings and / or a red Done check goes back to the SAME lane ONCE, as one resume carrying both lists (slop
@@ -468,12 +484,13 @@ function fixEnd(open, d) {
   if (!slop.length && !dod) return false;
   let next = null, refused = null;
   try {
-    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
+    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = continuation(spec);
     // the full slop list goes to a file; the prompt carries a summary that names it (solve-shack RUN-140)
     const list = slop.length ? path.join(RESULT_DIR, 'slop-blocks.md') : null;
     if (list) { fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(list, slopList(slop)); }
     const promptText = [...(slop.length ? [slopPrompt(slop, null, { listFile: fwdPath(list) })] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
-    next = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText }).run;
+    const s = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText });
+    next = s.run; if (s.queued) logLine(`resume ${next} queued: ${s.why}`);
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   const what = { ...(slop.length ? { slop: slop.length } : {}), ...(dod ? { dod: dod.why } : {}) };
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, ...what } : { refused, ...what } }); }
@@ -527,8 +544,9 @@ function nudgeResume() {
   const id = nudging.mail.id;
   let next = null, refused = null;
   try {
-    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, ...rest } = spec;
-    next = startRun({ ...rest, resumeOf: run, resumeSid: sid, nudge: id, promptText: nudgePrompt(nudging.mail, nudging.afterMin) }).run;
+    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, ...rest } = continuation(spec);
+    const s = startRun({ ...rest, resumeOf: run, resumeSid: sid, nudge: id, promptText: nudgePrompt(nudging.mail, nudging.afterMin) });
+    next = s.run; if (s.queued) logLine(`nudge ${id}: resume ${next} queued: ${s.why}`);
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, nudge: id } : { refused, nudge: id } }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
@@ -540,6 +558,12 @@ function nudgeResume() {
 // request) is held against its role's hard_max_k from the CURRENT project policy (ctxlimit.mjs); past it the tree is stopped and
 // the run ends as HANDOFF (Norn writes its result + HANDOFF.md; committed work is kept; auto-resume as for any HANDOFF). The no-new-step
 // and hand-off orders before it are the PostToolUse hook's (norn mail check --inject). A claude-shaped run with a transcript only.
+// hook-fast S1: the mail flag (mail.mjs flagFile) for queued mail no sender flagged - another home's, synced in, or a sender that
+// crashed between its record and the flag. The hook (norn-hook) starts Node only on the flag.
+function flagCheck() {
+  if (finished || !childPid) return;
+  try { if (mailWaiting(state, run)) raiseFlag(state, run); } catch (e) { logLine(`mail flag check: ${e.message}`); }
+}
 function ctxWatched() { return cmd?.parse === 'claude' && !!spec.session_id && !!spec.projectsDir; }
 function ctxWait(why) { if (why !== ctxWaitLast) logLine(`context check waits: ${why}`); ctxWaitLast = why; }
 function ctxCheck() {
@@ -548,8 +572,9 @@ function ctxCheck() {
   if (!ctxFile) return;
   let c;
   try { c = ctxLimits(specPolicy(spec), ctxRole(spec)); } catch (e) { ctxWait(`policy not readable: ${e.message}`); return; }
-  const ctx = transcriptCtx(ctxFile);
-  if (ctxLevel(ctx, c) !== 'hard_max') return;
+  const ctx = transcriptCtx(ctxFile), level = ctxLevel(ctx, c);
+  if (spec.mail_hook && orderDue(state, run, level)) raiseFlag(state, run);   // hook-fast S1: the hook's order goes out at the next tool call
+  if (level !== 'hard_max') return;
   ctxForced = { ctx, hard_max_k: c.hard_max_k, role: c.role };
   logLine(`context ${Math.round(ctx / 1000)}k past the hard max (${c.hard_max_k}k, role ${c.role}): stopping the executor, the run ends as HANDOFF`);
   // the run's result is the hand-off Norn writes for it - unless the worker handed off itself first (its own HANDOFF.md is better)

@@ -3,7 +3,7 @@
 // question, kill, record; idle = a tick that did nothing): a recorded ruling agrees when the candidate made the same one (scoreTick
 // matched it: not missing, not mismatched); an idle tick agrees when the candidate also did nothing. Plus every disagreement, the
 // same-lane rulings with a different choice (scoreTick's choiceReview: matched, but a human should read them), tokens per arm, and
-// the side-by-side rows (recorded vs each arm) the Usage tab draws. Pure: rows in, a report out.
+// the side-by-side rows (recorded vs each arm) the Spend page draws. Pure: rows in, a report out.
 import { keyed } from './checkin.mjs';
 
 export const RULING_CLASSES = ['dispatch', 'decision', 'question', 'kill', 'record', 'idle'];
@@ -53,5 +53,5 @@ export function replayReport(rows, o = {}) {
     ticks: [...ticks.values()].sort((a, b) => String(a.ts).localeCompare(String(b.ts))) };
 }
 
-/** Where the Usage tab reads a project's replay report (`norn eval report --write`): a report beside the state, never a record. */
+/** Where the Spend page reads a project's replay report (`norn eval report --write`): a report beside the state, never a record. */
 export const replayReportFile = state => `${state}/eval/checkin-replay.json`;

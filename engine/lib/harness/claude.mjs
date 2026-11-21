@@ -57,7 +57,10 @@ export function profileArgs(p) {
 // META-DOD 2: a guarded run's scope part (scope.mjs scopeSettings: deny rules, the write block, the PreToolUse hook) rides the same JSON;
 // its NOTES folder is a working directory (the write block would refuse the NOTES otherwise)
 const runSettings = o => { const m = o.mail_hook ? mailSettings(o.mail_hook) : { hooks: {} }; return o.scope ? { ...o.scope, hooks: { ...o.scope.hooks, ...m.hooks } } : m; };
-export const mailSettings = command => ({ hooks: { PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 30 }] }] } });
+// hook-fast S1: not after Read / Grep / Glob - a worker's most frequent calls; their mail waits for its next other call. Claude Code
+// tests a matcher that is not a plain name list as a RegExp against the tool name (seen on 2.1.329: Read, Glob, Grep skipped, Bash hit)
+export const MAIL_MATCHER = '^(?!(?:Read|Grep|Glob)$)';
+export const mailSettings = hook => ({ hooks: { PostToolUse: [{ matcher: MAIL_MATCHER, hooks: [hook] }] } });
 
 /** doctor --probe: the CLI path without --remote-control, the agent kept (proves it resolves), no shell / edit tools or MCP, 1 turn. */
 function probe(o) {

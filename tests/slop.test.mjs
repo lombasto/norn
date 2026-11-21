@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, effectiveRules, slopCheck, explainOf, EXPLAIN, RULES_DIR } from '../engine/lib/slop/check.mjs';
 import { slopPrompt } from '../engine/lib/slop/runend.mjs';
-import { hostWrite, openBlocks, slopHolds } from '../engine/lib/slop/host.mjs';
+import { hostWrite, openBlocks, slopHolds, slopChecks } from '../engine/lib/slop/host.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { startRun } from '../engine/lib/runs.mjs';
@@ -55,16 +55,38 @@ for (const rule of [...loadRules(), ...projectRules]) {
       const fx = rule.fixture[which];
       const repo = fixtureRepo(fx);
       const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
-      const at = r.findings.filter(f => f.new && f.level === rule.level);
-      assert.deepEqual(r.skipped, [], `${rule.id} ${which} ran`);
+      // a lint rule's findings carry their sub-rule's level and id (LJ/no-console); the held ones (not shadow) are what the hit must show
+      const level = rule.levels ? 'BLOCK' : rule.level, at = r.findings.filter(f => f.new && f.level === level && !(rule.levels && f.shadow));
+      assert.deepEqual(r.ran, [rule.id], `${rule.id} ${which} ran`);
       assert.equal(at.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
-      assert.equal(r.blocks.length > 0, want && rule.level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
-      for (const b of at) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
+      assert.equal(r.blocks.length > 0, want && level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
+      for (const b of at) { assert.equal(b.rule.split('/')[0], rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
     }
   });
 }
 
-// RM-27: every finding explains itself - the rule's what / why / fix sits beside the rule, and a rule without it does not load
+// S1a (SPEC 1.3 F5 / F6, 3.4): the check fails closed - a rule that could not run and a file the linter cannot parse are BLOCK findings
+const LINT = loadRules().filter(r => r.kind === 'lint' || r.kind === 'ast');
+test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could not run: <why>", fingerprint rule + could-not-run); the result has no skipped list', () => {
+  const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n' } });
+  const down = () => { throw new Error('npm not found on PATH'); };
+  const r = slopCheck({ repo, base: 'main', rules: LINT, tool: down });
+  assert.equal('skipped' in r, false, 'skipped leaves the result shape');
+  assert.deepEqual(r.ran, []);
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.level, b.msg]), LINT.map(x => [x.id, 'BLOCK', 'could not run: npm not found on PATH']), 'every lint rule, the WARN one too');
+  assert.equal(new Set(r.blocks.map(b => b.fp)).size, LINT.length, 'one fingerprint per rule');
+  assert.deepEqual(slopCheck({ repo, base: 'main', rules: LINT, tool: down }).blocks.map(b => b.fp), r.blocks.map(b => b.fp), 'stable: a waiver can name it');
+});
+test('F6: a file ESLint cannot parse is ONE BLOCK finding with the parser\'s message (not one per lint rule); the same error at base is not new', () => {
+  const bad = { filePath: 'a.mjs', messages: [{ ruleId: null, fatal: true, severity: 2, message: 'Parsing error: Unexpected token )', line: 2, column: 11 }] };
+  const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 0;\nconst b = );\n' }, head: { 'a.mjs': 'export const a = 1;\nconst b = );\n' } });
+  const r = slopCheck({ repo, base: 'main', rules: LINT, tool: recordedTool({ base: [], head: [bad] }) });
+  assert.deepEqual(r.blocks.map(b => [b.file, b.line, b.level]), [['a.mjs', 2, 'BLOCK']], JSON.stringify(r.findings));
+  assert.match(r.blocks[0].msg, /does not parse: Parsing error: Unexpected token \)/);
+  assert.deepEqual(slopCheck({ repo, base: 'main', rules: LINT, tool: recordedTool({ base: [bad], head: [bad] }) }).blocks, [], 'already broken at base');
+});
+
+// RM-27: every finding explains itself -the rule's what / why / fix sits beside the rule, and a rule without it does not load
 test('every rule explains itself in plain words: what was found, why the rule exists, what to do; a rule without it does not load', () => {
   const projectDir = path.dirname(path.dirname(PROJECT_RULES)), rules = effectiveRules({ projectDir });
   assert.ok(rules.length >= 21 && rules.some(r => r.id.startsWith('P-')), 'the built-ins and the project rules');
@@ -110,14 +132,16 @@ test('only new: a finding the base already had never blocks, even in a renamed f
   const rest = Array.from({ length: 12 }, (_, i) => `export const k${i} = ${i};\n`).join('');   // enough unchanged lines to stay a rename
   const repo = fixtureRepo({ base: { 'src/a.mjs': body + rest }, head: { 'src/a.mjs': body + rest } });
   git(repo, 'mv', 'src/a.mjs', 'src/b.mjs'); git(repo, 'commit', '-q', '-m', 'rename');
-  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'] });
+  // K2 is an ast rule: ESLint's recorded answer, one empty catch per copy of body (line 2, and 17 for the twin); both sides lint under the head's path
+  const k2 = (file, lines) => ({ filePath: file, messages: lines.map(line => ({ ruleId: 'no-restricted-syntax', severity: 2, message: 'K2: empty catch: say what happens next, or let it throw', line, column: 16, endLine: line, endColumn: 28 })) });
+  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: [k2('src/b.mjs', [2])], head: [k2('src/b.mjs', [2])] }) });
   assert.equal(r.findings.length, 1, 'the old swallow is seen in the renamed file');
   assert.equal(r.findings[0].file, 'src/b.mjs');
   assert.equal(r.findings[0].new, false);
   assert.deepEqual(r.blocks, []);
   fs.appendFileSync(path.join(repo, 'src/b.mjs'), body.replace('old', 'twin'));   // the same swallow written a second time IS new
   git(repo, 'commit', '-qam', 'twin');
-  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'] });
+  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: [k2('src/b.mjs', [2])], head: [k2('src/b.mjs', [2, 17])] }) });
   assert.equal(r2.blocks.length, 1);
   assert.equal(r2.blocks[0].line, 17);
 });
@@ -155,7 +179,8 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   const id = startRun({ state, locksDir: path.join(root, 'locks'), executor: 'fake', lane: 'x', worktree: wt, notes, brief, hbMs: 150, staleMs: 3000,
     policy: { auto_resume_max: 0, trigger_on_exit: false }, budget: {} }).run;
   const next = await waitFor(() => loadState(state).items[id]?.resume?.next, { what: 'the slop resume' });
-  await waitFor(() => settled(loadState(state).items[next]) && fs.existsSync(path.join(state, 'slop', 'holds.json')) && slopHolds(state)['feat/x']?.run === next, { what: 'the resumed run ends' });
+  await waitFor(() => settled(loadState(state).items[next]), { what: 'the resumed run ends' });
+  assert.equal(slopChecks(state).length, 1, 'the resumed run end reads the check stored at the same head and rule set (S2): no second check');
   assert.equal(loadState(state).items[id].resume.slop, 1);
   assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 `a\.txt\.orig`: 1\n  - K15 `a\.txt\.orig` /, 'the resume carries the list (the path in backticks)');
   assert.match(fs.readFileSync(path.join(state, 'results', id, 'slop-blocks.md'), 'utf8'), /^- K15 `a\.txt\.orig` junk name/, 'the full list is in the named file');
@@ -172,7 +197,7 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
   git(wt, 'rm', '-q', 'a.txt.orig'); git(wt, 'commit', '-q', '-m', 'fix');
   const c = spawnSync(process.execPath, [NORN, 'slop', 'check', '--state', state], { cwd: wt, encoding: 'utf8' });
   assert.equal(c.status, 0, c.stdout + c.stderr);
-  assert.match(c.stdout, /slop check: 0 BLOCK/);
+  assert.match(c.stdout, /slop check: nothing to check: /, 'the fix leaves the branch with no net change (SPEC 1.3 F3); the clean check is stored');
   assert.equal(mb().status, 0, 'fixed: the merge may be staged');
 });
 
@@ -253,11 +278,11 @@ test('daily: the tick starts `norn slop daily` once a day; the report has absolu
   assert.ok(renderDigest(d).includes(`## 9 SloppaChoppa (1)\n- ${line}\n`),'one row in the digest view');
 });
 
-test("K3's tool: npm >= 10's npx.cmd (the entry in a SET variable) resolves to node + npx-cli.js, no shell", () => {
-  const shim = String.raw`C:\nodejs\npx.cmd`, entry = String.raw`C:\nodejs\node_modules\npm\bin\npx-cli.js`, node = String.raw`C:\other\node.exe`;
+test("the lint tool set's installer: npm >= 10's npm.cmd (the entry in a SET variable) resolves to node + npm-cli.js, no shell", () => {
+  const shim = String.raw`C:\nodejs\npm.cmd`, entry = String.raw`C:\nodejs\node_modules\npm\bin\npm-cli.js`, node = String.raw`C:\other\node.exe`;
   const text = ['@ECHO OFF', 'SETLOCAL', String.raw`SET "NODE_EXE=%~dp0\node.exe"`, 'IF NOT EXIST "%NODE_EXE%" (', '  SET "NODE_EXE=node"', ')',
-    String.raw`SET "NPX_CLI_JS=%~dp0\node_modules\npm\bin\npx-cli.js"`, '"%NODE_EXE%" "%NPX_CLI_JS%" %*', ''].join('\r\n');
+    String.raw`SET "NPM_CLI_JS=%~dp0\node_modules\npm\bin\npm-cli.js"`, '"%NODE_EXE%" "%NPM_CLI_JS%" %*', ''].join('\r\n');
   const vfs = { readText: () => text, isFile: p => p === entry };
-  assert.deepEqual(resolveShim(shim, ['--yes', 'eslint@10.15.0'], { platform: 'win32', execPath: node, fs: vfs }),
-    { exe: node, args: [entry, '--yes', 'eslint@10.15.0'] });
+  assert.deepEqual(resolveShim(shim, ['ci', '--ignore-scripts'], { platform: 'win32', execPath: node, fs: vfs }),
+    { exe: node, args: [entry, 'ci', '--ignore-scripts'] });
 });

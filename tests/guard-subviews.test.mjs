@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { SUB_CAP, capList, pickSub, subviewPage } from '../engine/dash/subviews.mjs';
 import { GUARD_SUBS, guardSummary, guardPart, BATCH_ROWS } from '../engine/dash/guardparts.mjs';
 import { renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
+import { goAttrs } from '../engine/dash/cells.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -73,38 +74,76 @@ test('loadTab(slop): only the summary first; a part of this view already fetched
   const d3 = await loadTab('slop', 'kestrel', async () => s, { sub: 'fix', parts: { slop: { key: partsKey('slop', 'kestrel', d), data: part } } });
   assert.equal(d3.parts_loading, true, 'another sub-view = another part');
   assert.equal((await loadTab('slop', 'kestrel', async () => s, {})).sub, 'fix', 'no sub in the URL = the first sub-view');
+  assert.equal((await loadTab('slop', 'kestrel', async () => s, { kind: 'ready' })).kind, 'ready', 'the To fix chip (&kind=) rides into the page');
 });
 
-test('the Guard page: his section, 4 numbers, 4 sub-views, then the list - the explanation sits under the list; nothing shown before is gone', () => {
+test('the Slop page: no banner, no counter row, no footer - 4 sub-views, then the list; the lead holds only what is acted on', () => {
   const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP };
   const view = sub => renderTab('slop', { ...base, sub, ...guardPart(g, sub), parts_loading: false }, { project: 'kestrel' });
   const fix = view('fix');
-  for (const id of ['slop-orc', 'slop-line', 'slop-sum', 'slop-subs', 'slop-rows', 'slop-A-0', 'slop-about']) assert.ok(fix.includes(`id="${id}"`), id);
-  assert.equal((fix.match(/class="subnum/g) || []).length, 4);
+  for (const id of ['slop-subs', 'slop-rows', 'slop-A-0']) assert.ok(fix.includes(`id="${id}"`), id);
+  for (const id of ['slop-orc', 'slop-line', 'slop-sum', 'slop-about', 'slop-menu', 'slop-plain', 'slop-fixhead']) assert.ok(!fix.includes(`id="${id}"`), `${id} is gone`);
+  assert.equal((fix.match(/class="subnum/g) || []).length, 0, 'no counter row');
+  assert.ok(!/SloppaChoppa|data-act="orc-/.test(fix), 'no banner, no More menu');
   assert.equal((fix.match(/data-act="sub"/g) || []).length, 4);
-  assert.match(fix, /One hundred open findings\. The worst: why 0|Three new findings\. The worst: why 0/);
-  assert.ok(fix.indexOf('id="slop-rows"') < fix.indexOf('id="slop-about"'), 'the explanation moved under the list');
-  assert.match(fix, /It owns no data: each row is fixed on the tab that owns the thing/);
   assert.match(fix, /data-act="slop-batch" data-batch="instructions\|drafts">all 88</, 'a batch shows its first rows; "all n" opens it');
   assert.match(renderTab('slop', { ...base, sub: 'fix', ...guardPart(g, 'fix', SUB_CAP, 'instructions|drafts'), parts_loading: false }, {}), /showing 40 of 88[^]*data-act="sub-more"/);
   assert.match(view('types'), /id="slop-types"/);
   assert.match(view('rules'), /id="slop-ledger"[^]*id="slop-rule-rows"[^]*id="slop-A-11"/);
-  assert.match(view('age'), /id="slop-trend"/);
+  const age = view('age');
+  assert.match(age, /id="slop-trend"/);
+  assert.match(age, /<details class="lhelp" id="slop-trend-help"><summary aria-label="About this chart">\?<\/summary><div class="small">[^<]*not the open count over time/, 'the By age note is a ? popover');
   assert.match(renderTab('slop', { ...base, sub: 'rules', parts_loading: true }, {}), /id="slop-sub-loading"/);
 });
 
-test('UX review 5: the Slop header is one status line + one primary action (Fix all); call / mute / pop-up settings in the "More" menu; same information', () => {
-  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP, offer: 3, fixable: 3 };
+test('the Slop lead: the errors line, one primary action (Fix all), the sent line, the fixer cards', () => {
+  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP, offer: 3, fixable: 3, errors: ['tests: broke'], sent: [{ id: 'DEC-1', directive: 'DIR-1', open: 2, fixer: { at: 'queued', run: 'RUN-1' } }] };
   const fix = renderTab('slop', { ...base, sub: 'fix', ...guardPart(g, 'fix'), parts_loading: false }, { project: 'kestrel' });
-  const head = fix.slice(fix.indexOf('id="slop-orc"'), fix.indexOf('</section>', fix.indexOf('id="slop-orc"')));
-  assert.ok(!/<h2>SloppaChoppa<\/h2>/.test(head), 'no heading line of its own');
-  assert.match(head, /id="slop-line"><b>SloppaChoppa<\/b> /, 'his name leads the status line');
-  assert.equal((head.match(/class="primary"/g) || []).length, 1, 'one primary action');
-  assert.match(head, /<button class="primary" data-act="fixall-open" id="slop-fixall">Fix all \(3\)<\/button>/);
-  const menu = head.slice(head.indexOf('id="slop-menu"'));
-  assert.ok(head.indexOf('id="slop-fixall"') < head.indexOf('id="slop-menu"'), 'Fix all before the menu');
-  for (const x of ['data-act="orc-call"', 'data-days="1"', 'data-days="7"', 'id="slop-unmute"', 'id="slop-popups"']) assert.ok(menu.includes(x), `${x} in the menu`);
-  assert.ok(!/<button[^>]*data-act="orc-(call|mute)"/.test(head.slice(0, head.indexOf('id="slop-menu"'))), 'nothing else outside the menu');
+  const lead = fix.slice(fix.indexOf('id="slop-head"'), fix.indexOf('id="slop-rows"'));
+  assert.match(lead, /id="slop-errors">tests: broke</);
+  assert.equal((lead.match(/class="primary"/g) || []).length, 1, 'one primary action');
+  assert.match(lead, /<button class="primary" data-act="fixall-open" id="slop-fixall">Fix all \(3\)<\/button>/);
+  assert.match(lead, /id="slop-sent">[^]*fixer RUN-1 queued/);
+  assert.ok(lead.indexOf('id="slop-errors"') < lead.indexOf('id="slop-fixall"') && lead.indexOf('id="slop-fixall"') < lead.indexOf('id="slop-sent"'));
+});
+
+test('To fix: the Open / Ready chips (&kind=ready filters what the part holds) and plain section heads', () => {
+  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP, total: 100, kinds: { ...s.kinds, ready: 0 } };
+  const fix = renderTab('slop', { ...base, sub: 'fix', ...guardPart(g, 'fix'), parts_loading: false }, {});
+  assert.match(fix, /class="fchips slop-show"[^]*data-act="slop-kind" data-kind="" aria-pressed="true">Open <b>100<\/b>[^]*data-act="slop-kind" data-kind="ready" aria-pressed="false">Ready <b>0<\/b>/);
+  assert.match(fix, /id="slop-drafts" data-kind="drafts"><h2>To draft <span class="mute small">\d+<\/span><\/h2>/, 'just the kind and its count');
+  const ready = renderTab('slop', { ...base, sub: 'fix', kind: 'ready', ...guardPart(g, 'fix'), parts_loading: false }, {});
+  assert.ok(!ready.includes('id="slop-drafts"') && !ready.includes('id="slop-count"'), 'Ready shows only the ready kind');
+  assert.match(ready, /data-kind="ready" aria-pressed="true"/);
+  assert.match(ready, /nothing ready/);
+});
+
+test('&finding=<id>: To fix, unfiltered, its batch open with the row kept past the cap, highlighted; a closed id says so', async () => {
+  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP };
+  assert.equal(goAttrs({ tab: 'slop', sub: 'fix', finding: 'A-70' }), 'data-go="slop" data-gosub="fix" data-gofinding="A-70"', 'a link carries the row it opens');
+  const d = await loadTab('slop', 'kestrel', async () => s, { sub: 'rules', kind: 'ready', finding: 'A-70' });
+  assert.deepEqual([d.sub, d.kind, d.finding], ['fix', null, 'A-70'], 'the link opens To fix with no chip filter');
+  const asked = []; await loadParts('slop', 'kestrel', d, async u => { asked.push(u); return {}; });
+  assert.deepEqual(asked, [`/api/guard?project=kestrel&part=fix&limit=${SUB_CAP}&finding=A-70`]);
+  assert.notEqual(partsKey('slop', 'kestrel', d), partsKey('slop', 'kestrel', { ...d, finding: null }), 'another finding = another part');
+  const fix = guardPart(g, 'fix', SUB_CAP, null, 'A-70').fix, b = fix.batches.find(x => x.key === fix.open);
+  assert.deepEqual([fix.found, b.rows.length, b.rows.at(-1).id], [true, SUB_CAP + 1, 'A-70'], 'its batch opens; the row rides past the cap');
+  const html = renderTab('slop', { ...base, sub: 'fix', finding: 'A-70', fix, parts_loading: false }, {});
+  assert.match(html, /<li class="grow hit" id="slop-A-70" aria-current="true">/);
+  assert.equal((html.match(/class="grow hit"/g) || []).length, 1, 'one row highlighted');
+  const gone = guardPart(g, 'fix', SUB_CAP, null, 'A-999').fix;
+  assert.equal(gone.found, false);
+  assert.match(renderTab('slop', { ...base, sub: 'fix', fix: gone, parts_loading: false }, {}), /id="slop-gone">[^]*A-999 is not open any more/);
+});
+
+test('Per type: the closed store (lib/slophist.mjs) adds closed and 7-day counts per bar, the types that never caught anything and the fastest growing', () => {
+  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP };
+  const hist = { since: '2026-11-01T00:00:00.000Z', types: { instructions: { closed: 5, opened7: 9, closed7: 2, net7: 7 }, rules: { closed: 1, opened7: 0, closed7: 1, net7: -1 } } };
+  const html = renderTab('slop', { ...base, sub: 'types', types: { ...guardPart(g, 'types').types, hist }, parts_loading: false }, {});
+  assert.match(html, /id="slop-type-sum">Nothing caught since 2026-11-01: code\. Growing fastest \(7 days, opened minus closed\): instruction files \+7\.<\/p>/);
+  assert.match(html, /5 closed · 7 days: \+9 \/ -2/);
+  assert.match(renderTab('slop', { ...base, sub: 'types', ...guardPart(g, 'types'), parts_loading: false }, {}), /id="slop-type-sum">Closed findings are counted from the next full scan/, 'no store yet: one line says so');
+  assert.equal(guardPart({ ...g, hist }, 'types').types.hist, hist, 'the part carries it');
 });
 
 test('GET /api/guard?part=: the summary + one part; no part = the full view the chips on other tabs read', { timeout: 180000 }, async () => {

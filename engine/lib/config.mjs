@@ -136,6 +136,19 @@ export function loadMachine(file, { home = homeDir(), meta = metaRoot() } = {}) 
   try { return walk(obj, exp); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
 }
 
+// issue #104: THE write path of local/machine.json, a read-modify-write. edit(raw) gets the stored file (unexpanded, BOM stripped; {} when
+// there is none) and returns the top-level keys its writer owns; a key returned as undefined is dropped on purpose; every other key (ledger
+// with its doorbell secret, usage, fed, any unknown one) is carried over unchanged, in its place. An unreadable file throws (never replaced
+// blind). Atomic: a pid tmp file + rename. -> the object written.
+export function updateMachine(file, edit) {
+  const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) : {};
+  const next = { ...raw, ...edit(structuredClone(raw)) };
+  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(next, null, 1) + '\n'); fs.renameSync(tmp, file);
+  return next;
+}
+
 // the stored (unexpanded) form of a path: ${norn}/... when under the engine root, else absolute with forward slashes
 export function portable(p, { meta = metaRoot() } = {}) {
   const a = fwd(path.resolve(p)), m = fwd(meta).replace(/\/+$/, '');

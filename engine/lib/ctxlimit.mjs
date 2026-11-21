@@ -92,6 +92,9 @@ export function runOrder(level, ctx, c) {
 // ---------- the hook side: each order once per run (state/ctx/<run>.json { sent: [level] }) ----------
 const sentFile = (state, run) => path.join(state, 'ctx', `${run}.json`);
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const orderOf = level => (level === 'no_new_step' ? 'no_new_step' : 'handoff');   // past the hard max the hand-off order still goes (the supervisor ends it)
+/** a context at `level` (ctxLevel) owes run `run` an order it has not had yet; the supervisor raises the mail flag on it (hook-fast S1) */
+export const orderDue = (state, run, level) => !!level && !(readJson(sentFile(state, run))?.sent || []).includes(orderOf(level));
 /**
  * The context order for run `run` of `state` after a tool call (its transcript found as the supervisor finds it: the launch spec's
  * projectsDir + session_id) - null when none is due. -> { text, level, ctx, limits } | null
@@ -102,10 +105,8 @@ export function ctxOrder(state, run) {
   if (!transcript) return null;
   const ctx = transcriptCtx(transcript), c = ctxLimits(specPolicy(spec), ctxRole(spec));
   const level = ctxLevel(ctx, c);
-  if (!level) return null;
-  const order = level === 'no_new_step' ? 'no_new_step' : 'handoff';   // past the hard max the hand-off order still goes (the supervisor ends it)
-  const f = sentFile(state, run), sent = readJson(f)?.sent || [];
-  if (sent.includes(order)) return null;
+  if (!orderDue(state, run, level)) return null;
+  const order = orderOf(level), f = sentFile(state, run), sent = readJson(f)?.sent || [];
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const { role: _r, ...marks } = c;   // WORK-SIZING S1: the marks this order went out under (the live policy may change after it)
   fs.writeFileSync(f, JSON.stringify({ sent: [...sent, order], marks, ctx, at: new Date().toISOString() }));

@@ -9,17 +9,9 @@
     "why": "Each dependency is code we did not write and must trust, update and ship. Norn keeps to Node built-ins unless the owner approves an addition.",
     "fix": "Use a Node built-in or write the small piece yourself. If the dependency is needed, ask the owner; the approval is the waiver. Give a vendored file its row in VENDOR.md."
   },
-  "files": [
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "tests/fixtures/**"
-  ],
-  "bare": [
-    "^node:"
-  ],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["tests/fixtures/**"],
+  "bare": ["^node:"],
   "manifests": [
     "**/package.json",
     "**/package-lock.json",
@@ -34,19 +26,10 @@
     "**/go.mod",
     "**/go.sum"
   ],
-  "vendor": {
-    "dirs": [
-      "**/vendor/**"
-    ],
-    "table": "VENDOR.md"
-  },
+  "vendor": {"dirs":["**/vendor/**"],"table":"VENDOR.md"},
   "fixture": {
     "hit": {
-      "base": {
-        "src/a.mjs": "import fs from 'node:fs';\nexport const a = fs;\n",
-        "web/vendor/VENDOR.md": "| file | version | sha256 |\n| old.js | 1.0 | abc |\n",
-        "web/vendor/old.js": "export default 1;\n"
-      },
+      "base": {"src/a.mjs":"import fs from 'node:fs';\nexport const a = fs;\n","web/vendor/VENDOR.md":"| file | version | sha256 |\n| old.js | 1.0 | abc |\n","web/vendor/old.js":"export default 1;\n"},
       "head": {
         "src/a.mjs": "import fs from 'node:fs';\nimport _ from 'lodash';\nexport const a = () => import('chalk').then(() => [fs, _]);\n",
         "package.json": "{ \"name\": \"x\", \"dependencies\": { \"left-pad\": \"1.3.0\" } }\n",
@@ -56,10 +39,7 @@
       }
     },
     "miss": {
-      "base": {
-        "src/a.mjs": "import fs from 'node:fs';\nexport const a = fs;\n",
-        "web/vendor/VENDOR.md": "| file | version | sha256 |\n"
-      },
+      "base": {"src/a.mjs":"import fs from 'node:fs';\nexport const a = fs;\n","web/vendor/VENDOR.md":"| file | version | sha256 |\n"},
       "head": {
         "src/a.mjs": "import fs from 'node:fs';\nimport { DatabaseSync } from 'node:sqlite';\nimport pad from './lodash.mjs';\nexport const a = [fs, DatabaseSync, pad];\nexport const doc = `\nimport y from 'lodash';\n`;\n",
         "src/lodash.mjs": "export default 1;\n",

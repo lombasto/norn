@@ -91,7 +91,7 @@ test('a decided card (decision record data.advice = key) is hidden; the digest l
   const st = mkTmp('advice-');
   assert.equal(adviceDigestRow(st), null);
   writeAdviceCache(st, a);
-  assert.match(adviceDigestRow(st).line, /^advice: \d+ open on the Usage tab \(first: /);
+  assert.match(adviceDigestRow(st).line, /^advice: \d+ open on the Spend page \(first: /);
   writeAdviceCache(st, advise({ rows: [] }, S({ executors: { planning: { executor: 'planner', model: 'claude-opus-5-5', effort: 'high' } } }), { project: 'p', data: DATA, now: NOW }));
   assert.equal(adviceDigestRow(st), null);
   assert.ok(fs.existsSync(path.join(st, 'advice.json')));
@@ -105,7 +105,7 @@ test('the digest carries the advice line as ONE row (section 10) only while a ca
   writeAdviceCache(st, advise({ rows: [row({ class: 'checkin_major', model: 'fable', effort: 'high' })] }, S({}, { checkin_model: 'fable' }), { project: 'p', data: DATA, now }));
   const d = digest(st, { name: 'kestrel' }, { now, dlv: [] });
   assert.equal(d.sections.advice.length, 1);
-  assert.match(d.sections.advice[0].line, /^advice: \d+ open on the Usage tab/);
+  assert.match(d.sections.advice[0].line, /^advice: \d+ open on the Spend page/);
   assert.ok(renderDigest(d).includes(`## 10 Model advice (1)\n- ${d.sections.advice[0].line}\n`));
 });
 
@@ -126,11 +126,13 @@ test('dash: Usage has the Advice strip + the replay table; Inbox has the card; o
     const part = u.data.parts[0], card = part.advice.cards.find(c => c.id === 'planning');
     assert.equal(card.check, 'effort-above-start', 'the engine default planning xhigh is above the vendor start (high)');
     assert.equal(part.replay.ticks[0].tick, 'RUN-9');
-    const html = renderTab('usage', u.data, { project: 'kestrel', now: Date.now() });
-    assert.match(html, /id="usage-advice"[\s\S]*Planning above the vendor&#39;s starting effort[\s\S]*read <span class="mono">2026-11-14[\s\S]*data-act="advice-apply"/);
-    assert.match(html, /id="usage-advice-sources"[\s\S]*MM 2026-11-14/);
-    assert.match(html, /id="usage-replay-class"[\s\S]*dispatch[\s\S]*0 of 1/);
-    assert.match(html, /id="usage-replay-side"[\s\S]*RUN-9[\s\S]*dispatch river S1 claude medium[\s\S]*recoverable[\s\S]*nothing/);
+    const html = ['advice', 'checkins'].map(sub => renderTab('spend', { ...u.data, sub }, { project: 'kestrel', now: Date.now() })).join('');
+    assert.match(renderTab('spend', u.data, { project: 'kestrel' }), /id="spend-adv"[^>]*data-sub="advice"[^]*?<span class="obadge( hot)?">1<\/span>/, 'the advice icon counts the open cards');
+    assert.match(html, /id="spend-advice-clear" data-act="advice-clear" data-project="kestrel" data-keys="[^"]+"/, 'Clear all keeps every open card');
+    assert.match(html, /id="spend-advice"[\s\S]*Planning above the vendor&#39;s starting effort[\s\S]*read <span class="mono">2026-11-14[\s\S]*data-act="advice-apply"/);
+    assert.match(html, /id="spend-advice-sources"[\s\S]*MM 2026-11-14/);
+    assert.match(html, /id="spend-replay-class"[\s\S]*dispatch[\s\S]*0 of 1/);
+    assert.match(html, /id="spend-replay-side"[\s\S]*RUN-9[\s\S]*dispatch river S1 claude medium[\s\S]*recoverable[\s\S]*nothing/);
     // a phone stacks the side-by-side rows (each cell labelled by its column): 4 columns clipped the cheaper models at 390 px
     assert.match(html, /<td data-label="recorded"[^>]*>dispatch river S1[\s\S]*<td data-label="sonnet-5-5 medium">/);
     assert.ok(fs.existsSync(path.join(f.pa.state, 'advice.json')), 'the digest cache');

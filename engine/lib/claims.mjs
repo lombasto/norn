@@ -66,21 +66,31 @@ function rounds(f, step, o) {
   return { queued: true, busy: true, why: BUSY };
 }
 
+const meOf = me0 => ({ ...me0, items: me0.items || [], scope: me0.scope?.length ? me0.scope : ['**'], touched: capTouched(me0.touched || []) });
+function decideOn(claims, me, key) {
+  const mine = claims[key];
+  if (unchanged(mine, me)) return { won: true, again: true, key, n: mine.n, claim: mine };
+  const [h] = hitsOf(me, claims);
+  return h ? verdict(h) : { mine };
+}
 /**
- * claimWork(f, me = { project, home, lane, branch, items, scope, touched, run }, o = { lease_s, now, precheck, beforePush })
+ * claimWork's no-network pre-check alone, on `claims` (readClaims(f).claims: the last fetched tip): { hit, why } when another home's
+ * claim holds `me0` (claimWork would answer { queued } without a fetch), else null. The queue walk's claim term (runs.mjs claimTerm).
+ */
+export function claimHold(claims, me0) {
+  const me = meOf(me0), d = decideOn(claims, me, workKey(me.project, me.home, me.lane));
+  return d.hit && !d.won ? { hit: d.hit, why: d.why } : null;
+}
+/**
+ * claimWork(f, me ={ project, home, lane, branch, items, scope, touched, run }, o = { lease_s, now, precheck, beforePush })
  * -> { won, key, n, claim, again? } | { refused, hit, why } (item / branch) | { queued, why, hit? } (scope, busy, unreachable).
  * The pre-check reads the last fetched claims with no network: an overlap holds, an unchanged own claim is won again.
  */
 export function claimWork(f, me0, o = {}) {
-  const me = { ...me0, items: me0.items || [], scope: me0.scope?.length ? me0.scope : ['**'], touched: capTouched(me0.touched || []) };
+  const me = meOf(me0);
   const key = workKey(me.project, me.home, me.lane), now = o.now ?? Date.now();
   return under(f, () => {
-    const decide = claims => {
-      const mine = claims[key];
-      if (unchanged(mine, me)) return { won: true, again: true, key, n: mine.n, claim: mine };
-      const [h] = hitsOf(me, claims);
-      return h ? verdict(h) : { mine };
-    };
+    const decide = claims => decideOn(claims, me, key);
     if (o.precheck !== false) {
       let local = null;
       try { local = readClaims(f).claims; } catch { /* no fetched claims yet */ }

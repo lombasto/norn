@@ -26,7 +26,7 @@ import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
-import { laneRules, lanePolicy, ciFixPlan, laneHooks } from './lifecycle.mjs';
+import { laneRules, lanePolicy, ciFixPlan, laneHooks, laneShippedIn } from './lifecycle.mjs';
 import { readSync } from './claims.mjs';
 
 const H = 3600e3;
@@ -207,7 +207,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // META-SLOP-A: ONE line - the last daily slop report + the branches slop holds now
   const sl = slopOn(project?.policy) ? digestRow(stateDir, now) : null;   // META-BETA-PREP: not while the one switch is off
   if (sl) sections.slop = [sl];
-  // META-TEND P4: ONE line - the open model-advice cards (advice.json, the last count the Usage tab / norn advise made)
+  // META-TEND P4: ONE line - the open model-advice cards (advice.json, the last count the Spend page / norn advise made)
   const adv = adviceDigestRow(stateDir);
   if (adv) sections.advice = [adv];
   // META-DOD 3: the plan reviews with findings (or no clean end) the check-in has not reviewed yet - the builds they hold wait for it
@@ -222,7 +222,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   if (ov.length) sections.overlap = ov;
   // lane norn-lifecycle item 5: no lane sits - each idle / stopped lane is the check-in's to act on this pass (CHECKIN.md 2j); a worktree a
   // tick archive kept (dirty or not on main) stays a row while it exists. Only while any.
-  const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy), home: homeOf(stateDir)?.id ?? null }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
+  const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy), home: homeOf(stateDir)?.id ?? null, shipped: laneShippedIn(stateDir) }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
     ...atRisk(stateDir, items), ...offMain(stateDir, items, now)];
   if (ln.length) sections.lanes = ln;
   // RM-46 S2b: the multi-home work claims - queued runs a claim holds ("held by <home>"), drift / fenced / taken-over events, stale

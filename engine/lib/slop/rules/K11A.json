@@ -10,20 +10,10 @@
     "why": "An alias map or an old-key fallback keeps an old name working after a rename. It is tech debt: the old form never goes away (CLAUDE.md, No compatibility shims).",
     "fix": "Change every caller and every stored file to the new name, and delete the map or the fallback."
   },
-  "files": [
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "tests/**",
-    "**/vendor/**"
-  ],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["tests/**","**/vendor/**"],
   "selectors": [
-    {
-      "selector": "VariableDeclarator[id.name=/ALIAS|REDIRECT|[Aa]lias|[Rr]edirect|^OLD_|^old[A-Z]/][init.type='ObjectExpression'][init.properties.0.value.type='Literal']",
-      "message": "a map from old names to new ones: change every caller and delete the old name"
-    },
+    {"selector":"VariableDeclarator[id.name=/ALIAS|REDIRECT|[Aa]lias|[Rr]edirect|^OLD_|^old[A-Z]/][init.type='ObjectExpression'][init.properties.0.value.type='Literal']","message":"a map from old names to new ones: change every caller and delete the old name"},
     {
       "selector": "LogicalExpression[operator='??'][left.type='MemberExpression'][right.type='MemberExpression']",
       "text": "^([\\w$.]+)\\.[\\w$]+\\s*\\?\\?\\s*\\1\\.(?:[Oo]ld|[Ll]egacy|[Dd]eprecated)[\\w$]*$",
@@ -32,70 +22,30 @@
   ],
   "fixture": {
     "hit": {
-      "base": {
-        "src/a.mjs": "export const a = 1;\n"
-      },
-      "head": {
-        "src/a.mjs": "const TAB_ALIAS = { agents: 'runs' };\nexport const tab = id => TAB_ALIAS[id] || id;\nexport const end = p => p.label ?? p.oldLabel;\n"
-      },
+      "base": {"src/a.mjs":"export const a = 1;\n"},
+      "head": {"src/a.mjs":"const TAB_ALIAS = { agents: 'runs' };\nexport const tab = id => TAB_ALIAS[id] || id;\nexport const end = p => p.label ?? p.oldLabel;\n"},
       "recorded": {
         "head": [
           {
             "filePath": "src/a.mjs",
             "messages": [
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "K11A: a map from old names to new ones: change every caller and delete the old name",
-                "line": 1,
-                "column": 7,
-                "endLine": 1,
-                "endColumn": 37
-              },
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key",
-                "line": 3,
-                "column": 25,
-                "endLine": 3,
-                "endColumn": 46
-              }
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: a map from old names to new ones: change every caller and delete the old name","line":1,"column":7,"endLine":1,"endColumn":37},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key","line":3,"column":25,"endLine":3,"endColumn":46}
             ]
           }
         ]
       }
     },
     "miss": {
-      "base": {
-        "src/a.mjs": "export const a = 1;\n"
-      },
-      "head": {
-        "src/a.mjs": "const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.oldX;\nexport const w = o => o.width ?? o.size;\nexport const OLD_LIMIT = 3;\n"
-      },
+      "base": {"src/a.mjs":"export const a = 1;\n"},
+      "head": {"src/a.mjs":"const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.oldX;\nexport const w = o => o.width ?? o.size;\nexport const OLD_LIMIT = 3;\n"},
       "recorded": {
         "head": [
           {
             "filePath": "src/a.mjs",
             "messages": [
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key",
-                "line": 3,
-                "column": 31,
-                "endLine": 3,
-                "endColumn": 44
-              },
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key",
-                "line": 4,
-                "column": 23,
-                "endLine": 4,
-                "endColumn": 40
-              }
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key","line":3,"column":31,"endLine":3,"endColumn":44},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key","line":4,"column":23,"endLine":4,"endColumn":40}
             ]
           }
         ]

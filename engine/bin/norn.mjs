@@ -10,7 +10,7 @@ import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHer
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
-import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS } from '../lib/config.mjs';
+import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS, updateMachine } from '../lib/config.mjs';
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
@@ -21,7 +21,7 @@ import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
 import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
-import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
+import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
@@ -63,7 +63,8 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
+import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, closeLandedQuestions } from '../lib/deliverables.mjs';
+import { tickLanes, othersShipped } from '../lib/lifecycle.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -73,7 +74,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -91,6 +92,7 @@ import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
+import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
 import { voiceRoute } from '../lib/slop/voice.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
@@ -707,7 +709,7 @@ function s5Cmd(argv, env, out, err) {
       if (miss.length) { err(`error: no caps set in ${m.budgetFile.replace(/\\/g, '/')} (missing ${miss.join(', ')}): run norn setup (writes the starter caps when the file is absent) or set them in the dashboard Settings (Workers & budget), then sched install again`); return 2; }
       if (['install', 'remove'].includes(pos[0])) {
         for (const l of schedApply(pos[0], a, o, sc.kind)) out(l);
-        if (sc.name !== m.machine.scheduler.name) { const raw = JSON.parse(fs.readFileSync(m.mf, 'utf8')); raw.scheduler.name = sc.name; fs.writeFileSync(m.mf + '.tmp', JSON.stringify(raw, null, 1) + '\n'); fs.renameSync(m.mf + '.tmp', m.mf); }
+        if (sc.name !== m.machine.scheduler.name) updateMachine(m.mf, raw => ({ scheduler: { ...raw.scheduler, name: sc.name } }));
         return 0;
       }
       throw new RunError(`sched needs show | install | remove (got ${pos[0]})`);
@@ -1322,11 +1324,19 @@ function deliverablesCmd(argv, env, out, err) {
       out(r.id);
       return 0;
     }
-    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH + LANE-TRUTH: the tick's merge and lane steps now, in its order - latch every merge
+      // (GitHub, git, rulings), withdraw the questions landed work made moot, then archive the lanes whose work shipped (lifecycle.mjs
+      // tickLanes: parked / stopped + shipped at once, a done one once it aged out); the other homes' shipped lanes are listed, never written
       if (id) throw new RunError(`unexpected ${id}`);
-      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      const dry = !!flags.dry, done = latchMerged(state, { project, gh: makeGh(), dry });
       for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
-      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
+      const qs = closeLandedQuestions(state, { project, dry });
+      for (const c of qs) out(`${c.q} withdrawn - ${c.why}`);
+      const ls = tickLanes(state, { project, dry });
+      for (const x of ls) out(x.refused ? `${x.id} (${x.rule}) not archived: ${x.refused}` : `${x.id} archived (${x.rule}${dry ? '' : `; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}`}) - ${x.why}`);
+      const away = othersShipped(state);
+      for (const x of away) out(`${x.id} (${x.state}, home ${x.home}: read-only here - for home ${x.home}) work on main: ${x.why}`);
+      out(`${dry ? 'DRY RUN - nothing written: ' : ''}${done.length} deliverable change(s), ${qs.length} question(s) withdrawn, ${ls.filter(x => !x.refused).length} lane(s) archived${ls.some(x => x.refused) ? `, ${ls.filter(x => x.refused).length} refused` : ''}${away.length ? `; ${away.length} other-home lane(s) listed` : ''}`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)
@@ -1971,6 +1981,9 @@ function doneCmd(argv, env, out, err) {
     if (flags.handoff !== undefined && flags['handoff-file'] !== undefined) throw new RunError('--handoff and --handoff-file: give one');
     let handoff = flags.handoff;
     if (flags['handoff-file'] !== undefined) { try { handoff = fs.readFileSync(flags['handoff-file'], 'utf8'); } catch (e) { throw new RunError(`--handoff-file ${flags['handoff-file']}: ${e.code || e.message}`); } }
+    // SloppaChoppa 2 S2: a DONE is checked in the worker's own session (a fix costs it a few turns; a resume round costs a new process);
+    // open BLOCK findings refuse it: the list, no result, exit 4. stopped and handoff are never refused (the run end checks them).
+    if ((flags.outcome ?? 'done') === 'done' && doneSlop(state, run, out, err)) return 4;
     // the supervisor's directory when it is this run's (META_RESULT_DIR), else the state's
     const dir = (env.META_RESULT_DIR && env.META_RUN_ID === run ? env.META_RESULT_DIR : null) || resultDir(state, run);
     const r = writeResult(dir, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary, handoff, look: flags.look });
@@ -1980,6 +1993,20 @@ function doneCmd(argv, env, out, err) {
     if (e instanceof RunError || e instanceof ResultError) { err('error: ' + e.message); err('usage: ' + DONE_USAGE); return 2; }
     throw e;
   }
+}
+// the branch check of a DONE (endCheck: stored, so the run end does not run it again) -> true = refused (the list is printed).
+// The skips are the run end's (supervisor slopEnd); a check that throws does not refuse: the run end checks again and holds the branch.
+function doneSlop(state, run, out, err) {
+  const spec = readJsonFile(path.join(state, 'runs', `${run}.spec.json`)), pd = spec.policy?.slop?.project_dir;
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy)) return false;
+  let c, brief = null;
+  try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch { /* the model rules read without it, as at the run end */ }
+  try { c = endCheck({ repo: spec.worktree, state, projectDir: pd, voice: spec.policy?.slop?.voice ?? null, brief, lane: spec.lane, run }); }
+  catch (e) { err(`slop: could not check (${e.message.split('\n')[0]}): the run end checks the branch again`); return false; }
+  if (!c?.open.length) return false;
+  out(slopPrompt(c.open, null, { projectDir: pd }));
+  out(`${run} DONE refused: ${c.open.length} open slop BLOCK finding(s) on ${c.branch}, no result written. Fix them, commit, and run \`norn done\` again.`);
+  return true;
 }
 // ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
 const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P4] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
@@ -2072,13 +2099,13 @@ function crewCmd(argv, env, out, err) {
       const line = r => `${r.id}  ${r.name}  ${r.state}${r.state === 'active' ? `  ${r.busy ? `on ${r.busy}` : 'free'}` : `  ${r.why ?? ''}`}  ${r.runs} run${r.runs === 1 ? '' : 's'}${r.pins.length ? `  pinned ${r.pins.join(', ')}` : ''}`;
       if (sub === 'list') {
         const rows = Object.values(st.dwarves).sort((a, b) => a.order - b.order).map(row);
-        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires Thorin'); else for (const r of rows) out(line(r));
+        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires one'); else for (const r of rows) out(line(r));
         return 0;
       }
       if (!id || !st.dwarves[id]) throw new RunError(id ? `no dwarf ${id} in the crew (norn crew list)` : 'show needs a dwarf id');
       const r = { ...row(st.dwarves[id]), career: past.filter(p => p.dwarf === id).sort((a, b) => String(a.at).localeCompare(String(b.at))) };
       if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
-      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}${r.succeeds ? `, after ${dwarfDisplay(r.succeeds)}` : ''}`);
+      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}`);
       for (const p of r.career) out(`  ${p.at}  ${p.project}/${p.lane ?? '-'}  ${p.run}  ${p.state}`);
       return 0;
     }
@@ -3035,6 +3062,7 @@ function mailCmd(argv, env, out, err) {
       if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
       if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
+      if (inject && reader) clearFlag(state, reader);   // hook-fast S1: down before the read (mail.mjs flagFile): a mail that lands meanwhile raises it again
       const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }
