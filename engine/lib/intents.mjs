@@ -9,7 +9,7 @@ import path from 'node:path';
 import { readEvents, recordsFile, fold, idNum, record } from './records.mjs';
 import { parseReady } from './ready.mjs';
 import { readScope, ahead, caseKey, pairKey } from './collide.mjs';
-import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines } from './gitfacts.mjs';
+import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines, memo } from './gitfacts.mjs';
 
 const have = p => !!p && fs.existsSync(p);
 /** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main).
@@ -76,14 +76,29 @@ function treeFacts(wt, ref, ttlMs = 0) {
   return f && { branch: f.branch, tip: f.tip, touched: f.touched, commits: f.commits };
 }
 const onMain = (repo, tip, ref) => !!tip && !!ref.sha && isAncestorOf(repo, commonOf(repo), tip, ref.sha);
-/** order / stacked (a git fact): for each pair whose merge-base is not on main, the later one is stacked on the one whose tip it holds */
+// each tip's commits ahead of main, from ONE `git rev-list --parents` of all tips (the DAG walked here): a merge-base per pair cost the
+// door a git child per other lane for every new tip (SPEC 4.2 cost, 8 live lanes)
+function aheadSets(repo, tips, ref) {
+  const par = new Map(lines(gitOut(repo, ['rev-list', '--parents', ...new Set(tips), `^${ref.sha}`]) ?? '').map(l => { const [h, ...p] = l.split(' '); return [h, p]; }));
+  return new Map(tips.map(t => { const seen = new Set(), st = [t]; while (st.length) { const h = st.pop(); if (!seen.has(h) && par.has(h)) { seen.add(h); st.push(...par.get(h)); } } return [t, seen]; }));
+}
+/** order / stacked (a git fact): for each pair that shares commits not on main (n of them), the later one is stacked on the one whose tip
+ *  it holds (neither: the one ahead in the queue is the base); memoized per main tip and pair */
 export function stackPairs(repo, intents, ref) {
   const t = intents.filter(x => x.tip), c = commonOf(repo);
+  if (!ref.sha) return;
+  let sets;
   for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) {
-    const a = t[i], b = t[j], mb = a.tip !== b.tip && mergeBase(repo, c, a.tip, b.tip);
-    if (!mb || onMain(repo, mb, ref)) continue;
-    const n = ref.sha ? countOf(repo, c, ref.sha, mb) : 0, [base, top] = mb === a.tip ? [a, b] : mb === b.tip ? [b, a] : ahead(b, a) ? [b, a] : [a, b];
-    if (n) top.stacked_on = [...(top.stacked_on || []), { lane: base.lane, n }];
+    const a = t[i], b = t[j];
+    if (a.tip === b.tip) continue;
+    const [x, y] = [a.tip, b.tip].sort(), k = memo(c, `stack ${ref.sha} ${x} ${y}`, () => {
+      sets ??= aheadSets(repo, t.map(z => z.tip), ref);
+      const X = sets.get(x), Y = sets.get(y), n = [...X].filter(h => Y.has(h)).length;
+      return { n, holds: Y.has(x) ? x : X.has(y) ? y : null };   // holds: the tip the other one holds (its base)
+    });
+    if (!k?.n) continue;
+    const [base, top] = k.holds === a.tip ? [a, b] : k.holds === b.tip ? [b, a] : ahead(b, a) ? [b, a] : [a, b];
+    top.stacked_on = [...(top.stacked_on || []), { lane: base.lane, n: k.n }];
   }
 }
 
