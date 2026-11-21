@@ -163,8 +163,12 @@ test('the browser: tab=context opens Context; a sub-view tap is in the URL (Back
     }
     await pg.ev('history.back()');
     assert.ok(await pg.until(`document.querySelector('#context-sub')?.dataset.sub === 'growing'`, 30000), 'Back returns to the sub-view before');
-    await pg.ev(`document.querySelector('[data-sub=checks]').click()`);
+    // the checks page has no link on Context (cac85cda: no footer); Slop › Rules reaches it
+    await pg.go(`${f.url}/?project=kestrel&tab=slop&sub=rules`);
+    assert.ok(await pg.until(`!!document.querySelector('[data-go=context][data-gosub=checks]')`, 60000), 'Slop › Rules links the checks');
+    await pg.ev(`document.querySelector('[data-go=context][data-gosub=checks]').click()`);
     assert.ok(await pg.until(`!!document.querySelector('#ins-ladder') && !!document.querySelector('#ins-findings-card')`, 60000), 'the checks stay reachable');
+    assert.match(await pg.ev('location.search'), /tab=context&sub=checks/);
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (checks)');
   } finally { await pg?.close(); await f.done(); }
 });
