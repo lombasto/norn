@@ -1,18 +1,18 @@
 // hook-fast S1 (owner 2026-11-20; narrows Q-b-43 "no Rust rewrite" to the per-tool-call hooks): a claude run's PostToolUse mail hook
 // and PreToolUse scope hook are ONE Rust binary, norn-hook (engine/hook-rs). A bare `node -e 0` costs ~1 s on a busy machine, so no
 // Node hook could answer "nothing to do" fast; norn-hook answers that case itself and starts the Node hook (norn mail check --inject,
-// norn scope check) only when Node has something to do. `norn setup` builds it (cargo), `norn doctor` checks it; there is no Node
-// hook line to fall back to: a machine without the binary is a setup error that names the build command.
+// norn scope check) only when Node has something to do. `norn setup` builds it (cargo), `norn doctor` checks it; a machine
+// without the binary is a setup error that names the build command.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { fwd } from './config.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const META_BIN = path.join(ENGINE, 'bin', 'norn.mjs');
 export const HOOK_SRC = path.join(ENGINE, 'hook-rs');
 export const HOOK_BIN = path.join(HOOK_SRC, 'target', 'release', process.platform === 'win32' ? 'norn-hook.exe' : 'norn-hook');
-const fwd = p => String(p).replace(/\\/g, '/');
 export const HOOK_BUILD = `cargo build --release --manifest-path "${fwd(path.join(HOOK_SRC, 'Cargo.toml'))}"`;
 
 /** the --settings hook entry of `sub` (mail | scope): Claude Code's exec form (command + args, spawned with no shell - seen on 2.1.329;
