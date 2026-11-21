@@ -42,7 +42,8 @@ test('the browser: a refused Archive keeps its reason on the row through a live 
 });
 
 // DWARVES S1: every page that names a run shows the dwarf who ran it (the server row's dwarf: { id, name }); a run with no dwarf shows its kind word
-test('Lanes, Runs and the Inbox show the dwarf who ran it; a run with no dwarf shows its kind word, never data.name', async () => {
+// UI redesign 2026-11-20 (ui-inbox-ledger): the Inbox holds questions and owner cards only - an unreviewed run shows in Lanes
+test('Lanes and Runs show the dwarf who ran it, the unreviewed stopped run in its Lanes row too; a run with no dwarf shows its kind word, never data.name', async () => {
   const f = await fixture();
   try {
     const get = async p => (await f.get(p)).data;
@@ -51,7 +52,7 @@ test('Lanes, Runs and the Inbox show the dwarf who ran it; a run with no dwarf s
     assert.ok(!lanes.some(l => 'run_name' in l), 'no run_name any more');
     const oin = '<b class="aname" data-dwarf="vondrak-torchgrip">Vondrak Torchgrip</b>';
     for (const tab of ['runs', 'lanes']) assert.ok(renderTab(tab, await loadTab(tab, 'kestrel', get), { project: 'kestrel' }).includes(oin), tab);
-    assert.ok(renderTab('inbox', await loadTab('inbox', 'kestrel', get), { project: 'kestrel' }).includes('<b class="aname" data-dwarf="harvald-marblekeg">Harvald Marblekeg</b>'), 'inbox: the unreviewed run');
+    assert.match(renderTab('lanes', await loadTab('lanes', 'kestrel', get), { project: 'kestrel' }), /<span class="fl-run t-stopped">[\s\S]{0,200}?<b>RUN-1<\/b> <b class="aname" data-dwarf="harvald-marblekeg">Harvald Marblekeg<\/b>/, 'lanes: the unreviewed stopped run');
     record(f.pa.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'claude', lane: 'seabed', name: 'tawny-falcon' } });
     const html = renderTab('lanes', await loadTab('lanes', 'kestrel', get), { project: 'kestrel' });
     assert.ok(html.includes('<span class="mute">check-in</span>'), 'no dwarf: the kind word');
@@ -145,8 +146,9 @@ test('the browser: the filter chips survive a live re-render and a reload (the U
     assert.equal(await pg.ev(`document.querySelector('[data-show=old]').getAttribute('aria-pressed')`), 'true', 'Old is still on after a re-render');
     await pg.ev('location.reload()');
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && document.querySelector('[data-show=old]')?.getAttribute('aria-pressed') === 'true'`, 90000), 'Old is still on after a reload');
+    // gen (its open Q-1) is the Needs-you lane; seabed's unreviewed stopped run is Stopped - no Inbox row names it since ui-inbox-ledger
     await pg.ev(`document.querySelector('[data-act=lane-show][data-show=needs]').click()`);
-    assert.ok(await pg.until(`document.querySelector('[data-show=needs]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-seabed')`, 30000), 'Needs you off hides its lanes');
+    assert.ok(await pg.until(`document.querySelector('[data-show=needs]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('#lane-gen') && !!document.querySelector('#lane-seabed')`, 30000), 'Needs you off hides its lanes');
   } finally { await pg.close(); await f.done(); }
 });
 
