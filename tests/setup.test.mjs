@@ -79,6 +79,16 @@ test('setup --project registers the project as ${norn}-relative and installs age
   assert.deepEqual(sb.machine().notify, { backend: 'ntfy', topic: 't' });
 });
 
+test('gA-09: a budget.json that does not parse stops norn gen with its name - never read as "no caps", which routes to a capped executor', () => {
+  const sb = sandbox(); const f = project(sb);
+  assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
+  const bf = path.join(sb.root, 'local', 'budget.json');
+  fs.writeFileSync(bf, '{"max_codex": 0,');
+  const r = sb.run('gen');
+  assert.equal(r.code, 1, r.out + r.err); assert.match(r.err, /budget\.json/);
+  assert.equal(fs.readFileSync(bf, 'utf8'), '{"max_codex": 0,', 'left for the owner to fix');
+});
+
 test('install never overwrites an unmanaged file that differs', () => {
   const sb = sandbox(); const f = project(sb);
   fs.mkdirSync(path.join(sb.cfg, 'agents'), { recursive: true });
