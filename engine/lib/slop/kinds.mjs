@@ -1,9 +1,7 @@
 // SloppaChoppa stage C (RM-45; audit REPORT sec. 3 rows 1, 3, 4, 7 and sec. 6): the engine-only detectors - dup (K9), exports
-// (K4), refs (R2), the dependency lock of `imports` (K20) - and the ONE ESLint run behind the kinds eslint and ast. Each is
+// (K4), refs (R2), the dependency lock of `imports` (K20) - and the ONE ESLint run behind the kinds lint and ast. Each is
 // (rule, ctx) -> { head: [finding], base: [finding] | null } as check.mjs's DETECT table; ctx carries git, the texts, the trees
 // and the file filter, so this module imports nothing of check.mjs.
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { parseEslint, PARSE } from './tools.mjs';
 import { CODE, classify, commentsIn, exportsOf, helpers, isJs, isReason, lineAt, lineText, masked, norm, usesOf } from './scan.mjs';
@@ -17,23 +15,22 @@ function sideFiles(rule, ctx, side, keep = () => true) {
 }
 const both = fn => ({ head: fn('head'), base: fn('base') });
 
-// ---------- eslint + ast: one ESLint run per side over the touched files of every such rule of the check ----------
+// ---------- lint + ast: one ESLint run per side over the touched files of every such rule of the check ----------
 function lintSide(ctx, side) {
   ctx.lint ||= {};
   if (side in ctx.lint) { if (ctx.lint[side] instanceof Error) throw ctx.lint[side]; return ctx.lint[side]; }
-  const rules = ctx.lintRules, files = new Map();
-  for (const r of rules) for (const x of sideFiles(r, ctx, side)) files.set(x.e.path, x.text);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-lint-'));
   try {
-    for (const [f, t] of files) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); }
-    if (!files.size) return (ctx.lint[side] = new Map());
-    const run = { id: rules.map(r => r.id).join('+'), kind: 'lint', tool: 'eslint', rules: Object.assign({}, ...rules.filter(r => r.kind === 'eslint').map(r => r.rules)),
+    const rules = ctx.lintRules, texts = new Map(), held = rules.filter(r => r.kind === 'lint' || r.kind === 'eslint'), cfg = held.find(r => r.config)?.config;
+    for (const r of rules) for (const x of sideFiles(r, ctx, side)) texts.set(x.e.path, x.text);
+    if (!texts.size) return (ctx.lint[side] = new Map());
+    // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
+    const run = { id: rules.map(r => r.id).join('+'), kind: 'lint', tool: 'eslint', rules: Object.assign({}, ...held.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null),
       selectors: rules.filter(r => r.kind === 'ast').flatMap(r => r.selectors.map(s => ({ selector: s.selector, message: `${r.id}: ${s.message}` }))) };
-    const raw = ctx.tool(run, side, { dir, files: [...files.keys()] }), by = new Map();
+    const raw = ctx.tool(run, side, { texts }), by = new Map();
     if (raw === null) return (ctx.lint[side] = null);
-    for (const x of parseEslint(raw, dir)) if (files.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x);
+    for (const x of parseEslint(raw)) if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x);
     return (ctx.lint[side] = by);
-  } catch (e) { ctx.lint[side] = e; throw e; } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } catch (e) { ctx.lint[side] = e; throw e; }
 }
 /** the source text of a reported node (ESLint: 1-based lines and columns, the end column exclusive) */
 function nodeText(text, x) {
@@ -50,17 +47,25 @@ function astHit(rule, x, text) {
   const m = new RegExp(rule.token || '[\\s\\S]+').exec(src);
   return m && { msg: sel.message, token: m[1] ?? m[0] };
 }
+/** a lint rule's sub-rule -> { sub, level, shadow }: levels by name, `*` for the rest; shadow_rules by name, `*` = every one levels does not name */
+const subLevel = (rule, sub) => ({ sub, level: rule.levels?.[sub] ?? rule.levels?.['*'] ?? rule.level,
+  shadow: (rule.shadow_rules || []).includes(sub) || (!(sub in (rule.levels || {})) && (rule.shadow_rules || []).includes('*')) });
 export function lint(rule, ctx) {
-  return both(side => {
+  const got = both(side => {
     const by = lintSide(ctx, side);
     if (by === null) return null;
     return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
-      // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6)
-      const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK' } : null)
-        : rule.kind === 'eslint' ? (x.rule in rule.rules ? { msg: x.msg } : null) : astHit(rule, x, text);
+      // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6, 3.4: LJ/parse)
+      const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK', ...(rule.kind === 'lint' ? { sub: PARSE } : {}) } : null)
+        : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule) })
+          : rule.kind === 'eslint' ? (x.rule in rule.rules ? { msg: x.msg } : null) : astHit(rule, x, text);
       return f ? [{ file: e.path, line: x.line, snippet: lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
     }));
   });
+  // SPEC 3.1 / Q12: an edit to the lint config is a finding of its own; the waiver is the owner approving the rule change
+  if (rule.config && got.head && ctx.entries.some(e => e.path === rule.config || e.old === rule.config))
+    got.head.push({ file: rule.config, line: 0, snippet: 'config-changed', msg: `${rule.config} changed: the check lints with the merge base's; the owner approves a rule change (a waiver)`, ...subLevel(rule, 'config-changed') });
+  return got;
 }
 
 // ---------- dup (K9): a new one-statement helper whose body another module of the same group already has ----------

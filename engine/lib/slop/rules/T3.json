@@ -1,0 +1,102 @@
+{
+  "id": "T3",
+  "level": "BLOCK",
+  "kind": "ast",
+  "tool": "eslint",
+  "title": "a test option that runs one test alone or skips with no condition",
+  "how": "ESLint selectors in test files: an { only: true } option of describe / it / test / suite, and skip: true or skip: 'a reason' (a literal, not a condition); test.only / test.skip are LJ/no-restricted-properties",
+  "explain": {
+    "what": "A test has the option { only: true }, or skip: true / skip: 'a reason' with no condition.",
+    "why": "With only, the runner runs that test and silently skips the rest; a skipped test checks nothing. The suite still looks green.",
+    "fix": "Fix the test, or delete it if it no longer applies. If it must skip on some machines, make skip a condition (for example the platform)."
+  },
+  "files": [
+    "tests/**",
+    "**/*.test.*",
+    "**/*.spec.*"
+  ],
+  "selectors": [
+    {
+      "selector": "CallExpression[callee.name=/^(?:describe|it|test|suite)$/] > ObjectExpression > Property[key.name='only'][value.value=true]",
+      "message": "a committed { only: true }: the rest of the suite stops running"
+    },
+    {
+      "selector": "Property[key.name='skip'][value.value=true], Property[key.name='skip'][value.type='Literal'][value.raw=/^['\"]/], Property[key.name='skip'][value.type='TemplateLiteral']",
+      "message": "a skip with no condition: make skip a condition, or fix the test"
+    }
+  ],
+  "fixture": {
+    "hit": {
+      "base": {
+        "tests/a.test.mjs": "import test from 'node:test';\n"
+      },
+      "head": {
+        "tests/a.test.mjs": "import test from 'node:test';\ntest('alone', { only: true }, () => {});\ntest('y', { skip: 'flaky' }, () => {});\ntest('z', { skip: true }, () => {});\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "tests/a.test.mjs",
+            "messages": [
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "T3: a committed { only: true }: the rest of the suite stops running",
+                "line": 2,
+                "column": 17,
+                "endLine": 2,
+                "endColumn": 27
+              },
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "T3: a skip with no condition: make skip a condition, or fix the test",
+                "line": 3,
+                "column": 13,
+                "endLine": 3,
+                "endColumn": 26
+              },
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "T3: a skip with no condition: make skip a condition, or fix the test",
+                "line": 4,
+                "column": 13,
+                "endLine": 4,
+                "endColumn": 23
+              }
+            ]
+          }
+        ],
+        "base": [
+          {
+            "filePath": "tests/a.test.mjs",
+            "messages": []
+          }
+        ]
+      }
+    },
+    "miss": {
+      "base": {
+        "tests/a.test.mjs": "import test from 'node:test';\n"
+      },
+      "head": {
+        "tests/a.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\ntest('v', { only: false }, () => {});\nexport const doc = 'skip: true';\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "filePath": "tests/a.test.mjs",
+            "messages": []
+          }
+        ],
+        "base": [
+          {
+            "filePath": "tests/a.test.mjs",
+            "messages": []
+          }
+        ]
+      }
+    }
+  }
+}

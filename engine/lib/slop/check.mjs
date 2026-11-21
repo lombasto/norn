@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
-import { runTool, LINT_RULES } from './tools.mjs';
+import { runTool, TOOLS, PARSE } from './tools.mjs';
 import { norm, lineAt, lineText, isReason, masked } from './scan.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
@@ -22,12 +22,12 @@ export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, swallow, command, dup, exports, refs) are code over the whole tree, and
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
-  'diff-check': [], swallow: ['files', 'exclude', 'deny'], pattern: ['files', 'exclude', 'in', 'unless'], eslint: ['files', 'exclude'],
+  'diff-check': [], swallow: ['files', 'exclude', 'deny'], pattern: ['files', 'exclude', 'in', 'unless'], eslint: ['files', 'exclude'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
   ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
   model: ['files', 'exclude'],
 };
-const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'eslint'];
+const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'lint'];
 
 // RM-27: every rule, built-in or a project's own, carries its explanation beside its parameters - what was found, why the rule
 // exists, what to do - so the CLI, the resume prompt and the Slop page say the same thing; a rule without all three does not load.
@@ -35,7 +35,7 @@ export const EXPLAIN = ['what', 'why', 'fix'];
 function checkRule(r, f) {
   if (!r.id || !LEVELS.includes(r.level) || !DETECT[r.kind]) throw new Error(`${f}: a rule needs an id, a level (${LEVELS.join(' | ')}) and a known kind`);
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
-  if (r.kind === 'eslint' && (r.tool !== 'eslint' || !r.rules || Object.keys(r.rules).some(k => !LINT_RULES.includes(k)))) throw new Error(`${f}: an eslint rule names core rules from ${LINT_RULES.join(', ')} only`);
+  if (r.kind === 'lint' && (!TOOLS[r.tool] || !r.rules || Object.keys(r.rules).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
   if (r.kind === 'ast' && (r.tool !== 'eslint' || !r.selectors?.length || r.selectors.some(s => typeof s.selector !== 'string' || typeof s.message !== 'string'))) throw new Error(`${f}: an ast rule is a list of { selector, message } (tool eslint)`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
@@ -77,7 +77,7 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
       const badP = Object.keys(p.params || {}).filter(k => !KIND_PARAMS[r.kind].includes(k));
       if (badP.length) throw new Error(`overrides.json ${id}: ${r.kind} takes the params ${KIND_PARAMS[r.kind].join(', ') || '(none)'} (not ${badP.join(', ')})`);
       if (p.level !== undefined && !LEVELS.includes(p.level)) throw new Error(`overrides.json ${id}: level is one of ${LEVELS.join(' | ')}`);
-      of.set(id, { ...r, ...p.params, ...(p.level ? { level: p.level } : {}), ...('shadow' in p ? { shadow: !!p.shadow } : {}), ...('enabled' in p ? { enabled: !!p.enabled } : {}) });
+      of.set(id, { ...r, ...p.params, ...(p.params?.levels ? { levels: { ...r.levels, ...p.params.levels } } : {}), ...(p.level ? { level: p.level } : {}), ...('shadow' in p ? { shadow: !!p.shadow } : {}), ...('enabled' in p ? { enabled: !!p.enabled } : {}) });
     }
   }
   return [...of.values()].filter(r => r.enabled !== false);
@@ -87,11 +87,16 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
 export const rulesHash = (rules = loadRules()) => crypto.createHash('sha256').update(JSON.stringify([...rules].sort((a, b) => (a.id < b.id ? -1 : 1)))).digest('hex').slice(0, 16);
 
 let shipped = null;
-/** a rule's { what, why, fix }: a built-in, or a project's own P-* rule read from its file (projectDir); null = no such rule */
+/**
+ * a rule's { what, why, fix }: a built-in, or a project's own P-* rule read from its file (projectDir); null = no such rule. A lint
+ * sub-rule (LJ/no-console) answers with the lint rule's text, or the sub-rule's own (explain.rules[sub]), its fix naming the tool's page.
+ */
 export function explainOf(id, projectDir = null) {
-  if (!String(id).startsWith('P-')) return (shipped ||= new Map(loadRules().map(r => [r.id, r.explain]))).get(id) ?? null;
-  const f = projectDir && path.join(projectDir, 'rules', 'slop', `${id}.json`);
-  return f && existsS(f) ? readRule(f).explain : null;
+  const [base, sub] = String(id).split(/\/(.*)/s), f = base.startsWith('P-') && projectDir && path.join(projectDir, 'rules', 'slop', `${base}.json`);
+  const r = base.startsWith('P-') ? (f && existsS(f) ? readRule(f) : null) : (shipped ||= new Map(loadRules().map(x => [x.id, x]))).get(base);
+  if (!r || !sub) return r?.explain ?? null;
+  const { rules = {}, ...own } = r.explain, e = { ...own, ...rules[sub] }, doc = r.tool === 'eslint' && ![PARSE, 'config-changed'].includes(sub);
+  return { what: e.what, why: e.why, fix: doc ? `${e.fix} (ESLint: https://eslint.org/docs/latest/rules/${sub})` : e.fix };
 }
 
 // ---------- git ----------
@@ -277,6 +282,7 @@ const DETECT = {
   pattern: (rule, ctx) => content(rule, ctx, (t, f) => patterns(rule, t, f, ctx)),
   shim: (rule, ctx) => content(rule, ctx, (t, f) => shimFindings(rule, t, f)),
   eslint: lint,
+  lint,
   ast: lint,
   dup,
   exports: exportsKind,
@@ -325,17 +331,17 @@ const DETECT = {
  */
 export function pairFindings(rule, got, { renamed = new Map(), inBase = () => false } = {}) {
   // got.head null: the tool had no output for head (nothing to report)
-  const out = [], one = (f, fp, isNew, base) => out.push({ rule: rule.id, level: f.level || rule.level, file: f.file, line: f.line, msg: f.msg,
+  const out = [], id = f => (f.sub ? `${rule.id}/${f.sub}` : rule.id), one = (f, fp, isNew, base) => out.push({ rule: id(f), level: f.level || rule.level, file: f.file, line: f.line, msg: f.msg,
     snippet: norm(f.snippet).slice(0, 200), fp, new: isNew, ...(f.value !== undefined ? { value: f.value } : {}),
-    ...(base?.value !== undefined ? { base_value: base.value } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(rule.shadow ? { shadow: true } : {}), ...(rule.kind === 'model' ? { voice: true } : {}) });
+    ...(base?.value !== undefined ? { base_value: base.value } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(rule.shadow || f.shadow ? { shadow: true } : {}), ...(rule.kind === 'model' ? { voice: true } : {}) });
   if (rule.key === 'match') {
     const seen = new Set();
     for (const f of got.head || []) if (!seen.has(f.token)) { seen.add(f.token); one(f, fingerprint(rule.id, '*', f.token), !inBase(f.token)); }
     return out;
   }
   const left = new Map();
-  for (const f of got.base || []) { const fp = fingerprint(rule.id, renamed.get(f.file) || f.file, f.snippet); (left.get(fp) || left.set(fp, []).get(fp)).push(f); }
-  for (const f of got.head || []) { const fp = fingerprint(rule.id, f.file, f.snippet), b = left.get(fp)?.shift(); one(f, fp, !b, b); }
+  for (const f of got.base || []) { const fp = fingerprint(id(f), renamed.get(f.file) || f.file, f.snippet); (left.get(fp) || left.set(fp, []).get(fp)).push(f); }
+  for (const f of got.head || []) { const fp = fingerprint(id(f), f.file, f.snippet), b = left.get(fp)?.shift(); one(f, fp, !b, b); }
   return out;
 }
 
@@ -350,16 +356,17 @@ const pathspecs = rule => [...(rule.files || ['**']).map(g => `:(glob)${g}`), ..
  * resolve(record id) -> its state | null: K22's cited ids (no resolver: an id only has to be named). brief: the run's brief text (the
  * model rules read its Scope and numbered items). The model rules run last: they read the other rules' new findings (their hits).
  * machine false: a rule flagged `machine` in its data (it reads this machine's state, K14) is not run - CI and a landing's after-check
- * have no such state to read. A rule whose detector throws is a finding of its own (couldNotRun): no check passes by not checking.
+ * have no such state to read. config: the lint config text both sides use (the replay's candidate; default the merge base's file).
+ * A rule whose detector throws is a finding of its own (couldNotRun): no check passes by not checking.
  */
-export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, now = Date.now() }) {
+export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, config = null, now = Date.now() }) {
   const sha = r => gitRun(repo, ['rev-parse', '--verify', r + '^{commit}']).trim();
   const B = sha(base), H = sha(head);
   const entries = diffEntries(repo, B, H), picked = rules.filter(r => !only || only.includes(r.id)), run = [...picked.filter(r => r.kind !== 'model'), ...picked.filter(r => r.kind === 'model')];
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
   const findings = [], ran = [];
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, lintRules: run.filter(r => r.kind === 'eslint' || r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
+  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, config, lintRules: [...run.filter(r => r.kind === 'lint' || r.kind === 'eslint'), ...run.filter(r => r.kind === 'ast')], modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));
@@ -398,3 +405,22 @@ export const couldNotRun = (rule, why) => ({ rule: rule.id, level: rule.kind ===
   snippet: 'could-not-run', fp: fingerprint(rule.id, '*', 'could-not-run'), new: true, unrun: true, ...(rule.shadow ? { shadow: true } : {}) });
 // key: match + allow { token (regex), listed_in (a file at head) }: a new token that follows the naming rule and is listed there passes (K21)
 const allowedToken = (rule, token, ctx) => !!rule.allow && new RegExp(rule.allow.token).test(token) && (ctx.text('head', rule.allow.listed_in) || '').includes(token);
+
+/**
+ * SPEC 3.2: a rule retires into the linter only on a replay over the last merged branches of main. Per merge (newest first; its
+ * branch = the second parent, from the merge base with the first): the new findings of the old rule beside those of its new form
+ * (`as`: rule or sub-rule ids, LJ/no-console), paired by file and line; missed = an old finding with no new one on its line,
+ * added = the reverse. config: the candidate lint config text (old branches have none of their own).
+ */
+export function replay({ repo, old, as, main = 'HEAD', last = 50, rules = loadRules(), config = null, tool = runTool }) {
+  const ids = new Set([old, ...as.map(a => a.split('/')[0])]), use = rules.filter(r => ids.has(r.id)), at = f => `${f.file}:${f.line}`;
+  const merges = gitRun(repo, ['log', '--merges', '--first-parent', `-n${last}`, '--format=%H %P %s', main]).split('\n').filter(Boolean);
+  return merges.map(l => {
+    const [sha, p1, p2, ...s] = l.split(' '), base = gitRun(repo, ['merge-base', p1, p2]).trim();
+    const r = slopCheck({ repo, base, head: p2, rules: use, tool, config, machine: false }), fresh = r.findings.filter(f => f.new && !f.unrun);
+    const was = fresh.filter(f => f.rule === old), now = fresh.filter(f => as.includes(f.rule)), on = xs => new Set(xs.map(at));
+    return { merge: sha.slice(0, 8), subject: s.join(' '), old: was.map(at), new: now.map(f => `${at(f)} ${f.rule}`),
+      missed: was.filter(f => !on(now).has(at(f))).map(at), added: now.filter(f => !on(was).has(at(f))).map(f => `${at(f)} ${f.rule}: ${f.snippet.slice(0, 120)}`),
+      unrun: r.findings.filter(f => f.unrun).map(f => `${f.rule} ${f.msg}`) };
+  });
+}
