@@ -41,8 +41,13 @@ export const estTokens = text => Math.ceil(String(text ?? '').length / 4);
 // ---------- the harness data rows (adapters) ----------
 /** [{ family, label, repo [names], user [templates], imports, agents?, skills? }] - Claude Code first, Codex, then the cli presets. */
 export function harnessRows() {
-  return [ADAPTERS.claude.instructions, ADAPTERS.codex.instructions, ...Object.values(ADAPTERS.cli.instructions || {})].filter(Boolean);
+  // src = the adapter file that holds the row (check 23 pins its finding there); the cli presets live in cli.mjs
+  const src = n => fileURLToPath(new URL(`./harness/${n}.mjs`, import.meta.url)).replace(/\\/g, '/');
+  return [[ADAPTERS.claude.instructions, 'claude'], [ADAPTERS.codex.instructions, 'codex'], ...Object.values(ADAPTERS.cli.instructions || {}).map(h => [h, 'cli'])]
+    .filter(([h]) => h).map(([h, n]) => ({ ...h, src: src(n) }));
 }
+/** a lint hint's Slop row id (guardview.mjs guardRows uses it; Context links a file's first hint to it) */
+export const hintSlopId = h => 'H-' + createHash('sha1').update(`${h.kind}|${fwd(h.path ?? '').toLowerCase()}|${h.line}|${h.text}`).digest('hex').slice(0, 10);
 
 // load classes, strongest first; a row's `load` is its strongest spec
 export const LOADS = ['session', 'checkin', 'chat', 'role', 'on-demand', 'source'];
@@ -481,6 +486,14 @@ export function instructionsView(p, { home, machine = null, now = Date.now(), da
     v.findings.push(...v.evidence.advisories, ...v.audits.advisories);
     for (const a of [...v.evidence.advisories, ...v.audits.advisories]) { const r = v.rows.find(x => x.id === a.row || fwd(x.path).toLowerCase() === fwd(a.path ?? '').toLowerCase()); if (r) r.findings = (r.findings || 0) + 1; }
   }
+  // the Slop rows a file's advice links to (Context's "in Slop" opens Slop at &finding=<id>): its worst finding, its first hint, its
+  // first stale paragraph (a tightening row)
+  const rowAt = new Map(v.rows.map(r => [fwd(r.path).toLowerCase(), r.id])), slop = new Map(v.rows.map(r => [r.id, {}]));
+  const put = (id, k, sid) => { const s = id && slop.get(id); if (s && !s[k]) s[k] = sid; };
+  for (const f of v.findings) put(f.row || rowAt.get(fwd(f.path ?? '').toLowerCase()), 'finding', f.id);
+  for (const h of hints) put(h.id, 'hint', hintSlopId(h));
+  for (const x of sug) if (x.class === 'stale' && x.path) put(rowAt.get(fwd(x.path).toLowerCase()), 'stale', 'T-' + x.id);
+  for (const r of v.rows) r.slop = slop.get(r.id);
   v.managed = managedLine(p, v, { remember, now });
   Object.defineProperty(v, 'paras', { value: paras, enumerable: false });
   return v;
