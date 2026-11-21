@@ -274,8 +274,9 @@ const under = (p, dir) => { const a = key(p), d = key(dir).replace(/\/+$/, ''); 
 // the caps in force (local/budget.json; none yet = no limit set). One that does not parse throws: read as {} it lifted every cap, and
 // the starter routing and the packs went to an executor the owner capped at 0
 function capsInForce(meta) {
-  const f = meta && path.join(meta, 'local', 'budget.json');
-  let t; try { t = f ? fs.readFileSync(f, 'utf8') : '{}'; } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
+  if (!meta) return {};
+  const f = path.join(meta, 'local', 'budget.json');
+  let t; try { t = fs.readFileSync(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
   try { return JSON.parse(t.replace(/^﻿/, '')); } catch (e) { throw new SetupError(`${fwd(f)}: ${e.message}`, 1); }
 }
 /** a caps profile on this machine (setup and adopt both apply one through here) -> { cur, next }: the caps in force and them with the
@@ -286,7 +287,6 @@ export function profileCaps(meta, prof, cost) {
 }
 
 /** o: { root, name, title, branch, ci, executors, dir, nonInteractive, register, print, env, out, err, ask } -> exit code */
-
 export function projectNew(o) {
   const { env = process.env, out, err } = o;
   const meta = metaRoot(env);

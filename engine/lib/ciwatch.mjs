@@ -57,7 +57,6 @@ export function ciMain({ repo, workflow = 'ci.yml', branch = 'main', cacheFile, 
     c.ts = t;
     try {   // gh down: the last runs and their facts stay (a red main stays red, its first-seen time stays) and the answer carries the error
       const runs = JSON.parse(gh(['run', 'list', '--repo', repo, '--workflow', workflow, '--branch', branch, '-L', String(LIST_N), '--json', FIELDS]));
-      if (!Array.isArray(runs)) throw new Error('gh run list: not a list');
       const r = redRun(runs);
       // keep only the current red run's facts (a new red run starts its own; a green drops them)
       c = { ts: t, runs, seen: r ? { [r.databaseId]: c.seen?.[r.databaseId] || now.toISOString() } : {}, failed: r && c.failed?.[r.databaseId] ? { [r.databaseId]: c.failed[r.databaseId] } : {} };
