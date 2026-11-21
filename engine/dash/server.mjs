@@ -110,7 +110,7 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscree
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
-const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css'];
+const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
 export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];

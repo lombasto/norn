@@ -4,9 +4,8 @@
 // (/api/plan) and the advice cards. "Where the tokens went", "what each kind of work costs" and "API spend" are views of it, not pages
 // of their own. The advice icon at the top counts the open cards and opens them; Clear all keeps every setting (one decision each).
 // Data: /api/usage (engine/lib/cost.mjs per project) + the status strip (ctx.strip.usage: billing and the guard, machine-wide).
-import { esc, fin, dash, int, mTok, plural, chip, exClass, projTag, guardChip, filterChips, fmtTime } from '../cells.mjs';
+import { esc, fin, dash, int, mTok, pct, plural, chip, exClass, projTag, guardChip, filterChips, fmtTime } from '../cells.mjs';
 import { bars, stack, meter } from '../widgets.mjs';
-import { forecastCard } from './plan.mjs';
 
 /** the drawer's views [id, label]: one breakdown at a time (&sub=<id>); no sub = the drawer is closed */
 export const SPEND_VIEWS = [['lane', 'By lane'], ['stage', 'Lane and stage'], ['cli', 'Agent CLI'], ['day', 'By day'], ['work', 'Kind of work'],
@@ -216,6 +215,18 @@ function replayCard(r) {
    <h3 style="margin-top:8px">Agreement per class of ruling</h3><table id="spend-replay-class"><thead><tr><th>ruling</th>${r.arms.map(a => `<th>${esc(short(a))}</th>`).join('')}</tr></thead><tbody>${per}</tbody></table>
    <h3 style="margin-top:8px">Side by side <span class="mute small">the recorded ruling vs each cheaper model; ${plural(r.choices?.length ?? 0, 'same-lane ruling')} with a different choice</span></h3>
    <table id="spend-replay-side"><thead><tr><th>tick</th><th>class</th><th>recorded</th>${r.arms.map(a => `<th>${esc(short(a))}</th>`).join('')}</tr></thead><tbody>${side}</tbody></table></div>`;
+}
+// the usage forecast (/api/plan forecast = engine/lib/plan.mjs forecastOf; folded in from the retired pages/plan.mjs): the rate now
+// against the hourly cap, the week against the stop, the reset and when the stop is reached at this rate; '' when the project has none
+export function forecastCard(f, now = Date.now()) {
+  if (!f) return '';
+  const fc = f.api ? `<div class="spend-fc" id="spend-fc-api"><p><b>${esc(f.line)}</b><br><span class="small mute">API billing: no weekly limit to run out of.</span></p></div>`
+    : !fin(f.weekly) ? '<p class="spend-fc-empty mute">Usage not measured yet.</p>' : `<div class="spend-fc"><div class="kv">
+    <span class="small mute">rate now</span><span>${meter(f.rate, Math.max(f.cap ?? 0, f.rate ?? 0) || 1, f.cap, f.over ? 'hot' : '')} <span class="small">${pct(f.rate, 2)}/h of the ${pct(f.cap, 1)}/h cap</span></span>
+    <span class="small mute">this week</span><span>${meter(f.weekly, 100, f.stop, fin(f.stop) && f.weekly >= f.stop ? 'hot' : '')} <span class="small">~${pct(f.weekly)}${fin(f.stop) ? ` of the ${pct(f.stop, 0)} stop` : ''}</span></span>
+    <span class="small mute">reset</span><span class="small">${f.reset ? esc(fmtTime(f.reset, now)) : '-'}</span></div>
+    <p><b>${esc(f.lineAt ? `${f.linePre}${fmtTime(f.lineAt, now)}${f.linePost}` : f.line)}</b>${f.costLine ? `<br><span class="small">${esc(f.costLine)}</span>` : ''}</p></div>`;
+  return `<div class="tablecard" id="spend-forecast"><h3>Forecast</h3>${fc}</div>`;
 }
 // the drawer's one view per project (maxPct: the lane table's bar scale, the window's biggest lane)
 const maxPct = rows => Math.max(0.01, ...spendGroup(rows, ['lane']).map(g => g.pct ?? 0));

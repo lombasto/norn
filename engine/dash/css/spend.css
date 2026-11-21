@@ -11,5 +11,7 @@
 .spend-drawer .dh .lhelp>div{left:0;right:auto}
 .spend-dbody{flex:1;min-height:0;overflow:auto}
 .spend-dbody .tablecard,.spend-dbody .card{margin-bottom:12px}
+/* the Forecast view (spend.mjs forecastCard) */
+.spend-fc-empty{padding:10px 14px;margin:0}.spend-fc{padding:10px 14px}.spend-fc .kv>span>.bar{display:inline-block;width:160px;vertical-align:middle;margin-right:6px}
 @media (max-width:700px){#spend-replay-side thead{display:none}#spend-replay-side tr{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:8px 10px;border-bottom:1px solid var(--line)}#spend-replay-side td{padding:0;border:0}#spend-replay-side td[data-label]{grid-column:1 / -1}#spend-replay-side td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--mute)}}
 :root.norn .spend-adv .obadge{border-radius:0}

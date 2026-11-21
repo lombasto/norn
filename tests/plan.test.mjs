@@ -179,7 +179,7 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
 test('ui: the Plan page is gone (owner 2026-11-20: Up next folds into Lanes); Runs shows the queue as queued rows; the forecast renders on Spend', async () => {
   const { TABS, renderTab } = await import('../engine/dash/ui.mjs');
   const { MORE } = await import('../engine/dash/shell.mjs');
-  const { forecastCard } = await import('../engine/dash/pages/plan.mjs');
+  const { forecastCard } = await import('../engine/dash/pages/spend.mjs');
   const { TABS: SERVER_TABS } = await import('../engine/dash/server.mjs');
   assert.ok(!MORE.some(g => g[1].includes('plan')), 'no Plan page in More');
   assert.ok(!TABS.some(t => t[0] === 'plan') && !SERVER_TABS.includes('plan'), 'no plan tab');
@@ -187,7 +187,7 @@ test('ui: the Plan page is gone (owner 2026-11-20: Up next folds into Lanes); Ru
   const ag = renderTab('runs', { tree: [], queue }, { project: 'demo' });
   assert.match(ag, /<tr class="rrow queued" id="node-RUN-4"[^]*?qlane/, 'the queued run is a row of the Runs table');
   const fc0 = forecastCard(buildPlan({ project: 'demo', now: NOW }).forecast, NOW);
-  for (const s of ['id="pl-fc"', 'Forecast', 'Usage not measured yet.']) assert.ok(fc0.includes(s), s);
+  for (const s of ['id="spend-forecast"', 'Forecast', 'Usage not measured yet.']) assert.ok(fc0.includes(s), s);
   assert.equal(forecastCard(null, NOW), '');
   const runs = [run(1, 'running', { lane: 'adopt', stage: 'A1', budget_min: 60 }, { created: T(-20) }), run(2, 'queued', { lane: 'adopt', stage: 'A2', after: [after('RUN-1', 'merged')] })];
   const p = buildPlan({ project: 'demo', runs, ready: [{ id: 'RUN-2', ready: false, terms: ['after run:RUN-1:merged unmet'] }], status: STATUS('0.62'), budget: { weekly_stop_pct: 95 }, now: NOW });
