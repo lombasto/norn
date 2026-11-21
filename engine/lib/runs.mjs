@@ -354,7 +354,7 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     return cpu;
   };
   for (const it of runsOf(state)) {
-    // a stall swept lost (cause stale) whose beat is fresh again and whose supervisor lives is alive again, so its own end lands
+    // a stall swept lost (cause stale) whose beat is fresh again and whose supervisor lives is running after all: the board shows it running and the sweep watches its beat again
     if (it.state === 'lost' && it.lost?.cause === 'stale' && it.data.kind !== 'interactive') {
       const { age, has } = hbAge(state, it, t), hb = has ? readJson(hbPath(state, it.id)) : null;
       const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
