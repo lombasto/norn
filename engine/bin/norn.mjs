@@ -21,7 +21,7 @@ import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
 import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
-import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
+import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
@@ -2081,13 +2081,13 @@ function crewCmd(argv, env, out, err) {
       const line = r => `${r.id}  ${r.name}  ${r.state}${r.state === 'active' ? `  ${r.busy ? `on ${r.busy}` : 'free'}` : `  ${r.why ?? ''}`}  ${r.runs} run${r.runs === 1 ? '' : 's'}${r.pins.length ? `  pinned ${r.pins.join(', ')}` : ''}`;
       if (sub === 'list') {
         const rows = Object.values(st.dwarves).sort((a, b) => a.order - b.order).map(row);
-        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires Thorin'); else for (const r of rows) out(line(r));
+        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires one'); else for (const r of rows) out(line(r));
         return 0;
       }
       if (!id || !st.dwarves[id]) throw new RunError(id ? `no dwarf ${id} in the crew (norn crew list)` : 'show needs a dwarf id');
       const r = { ...row(st.dwarves[id]), career: past.filter(p => p.dwarf === id).sort((a, b) => String(a.at).localeCompare(String(b.at))) };
       if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
-      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}${r.succeeds ? `, after ${dwarfDisplay(r.succeeds)}` : ''}`);
+      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}`);
       for (const p of r.career) out(`  ${p.at}  ${p.project}/${p.lane ?? '-'}  ${p.run}  ${p.state}`);
       return 0;
     }
