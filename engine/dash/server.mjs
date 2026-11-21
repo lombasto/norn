@@ -20,7 +20,7 @@ import { profileChoices, profileChanges, profileBudget, getProfile, loadProfiles
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy, REQUIRED_CAPS } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync, crewFile } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
@@ -273,7 +273,7 @@ export function createDashboard(o) {
   const folds = new Map();
   function stCached(p) {
     const primed = snap.getStore()?.folds.get(p.state); if (primed) return primed;
-    const key = ['question', 'run'].map(k => { try { const s = fs.statSync(recordsFile(p.state, k)); return s.mtimeMs + ':' + s.size; } catch { return '-'; } }).join('|');
+    const key = [...['question', 'run'].map(k => recordsFile(p.state, k)), crewFile(p.state)].map(f => { try { const s = fs.statSync(f); return s.mtimeMs + ':' + s.size; } catch { return '-'; } }).join('|');   // + the crew store: a rename names the runs anew
     const c = folds.get(p.state);
     if (c && c.key === key) return c.st;
     const s = loadState(p.state); folds.set(p.state, { key, st: s }); return s;
@@ -284,7 +284,7 @@ export function createDashboard(o) {
     const sn = snap.getStore(), hit = sn?.folds.get(p.state); if (hit) return hit;
     // RM-46 S3: a synced dir folds the other homes' copies too (the fetch rewrites them): their records + relay files are in the key
     const hs = (await fs.promises.readdir(path.join(p.state, 'homes'), { withFileTypes: true }).catch(() => [])).filter(d => d.isDirectory()).flatMap(d => ['records.jsonl', 'relay.jsonl'].map(x => path.join(p.state, 'homes', d.name, x)));
-    const key = (await Promise.all([...['question', 'run'].map(k => recordsFile(p.state, k)), path.join(p.state, 'relay.jsonl'), ...hs].map(statSig))).join('|');
+    const key = (await Promise.all([...['question', 'run'].map(k => recordsFile(p.state, k)), crewFile(p.state), path.join(p.state, 'relay.jsonl'), ...hs].map(statSig))).join('|');
     let c = folds.get(p.state);
     if (!c || c.key !== key) { c = { key, st: await loadStateAsync(p.state) }; folds.set(p.state, c); }
     sn?.folds.set(p.state, c.st);
