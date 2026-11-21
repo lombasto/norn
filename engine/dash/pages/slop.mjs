@@ -1,5 +1,5 @@
 // The Slop page (moved from ui.mjs, ui-spend-slop): every open finding of every check in one list (/api/guard; guardparts.mjs cuts the
-// parts), its sub-views To fix / Per type / Rules / By age, the Fix all sheet and the fixer's result cards (the Inbox shows the same cards).
+// parts), its sub-views To fix / Per type / Rules / By age, the Fix all sheet, the fixer's result cards (the Inbox shows the same cards) and the slop meter's gauge.
 import { esc, int, plural, chip, goAttrs, filterChips } from '../cells.mjs';
 import { bars, stack, lines } from '../widgets.mjs';
 import { subviewPage, subMore } from '../subviews.mjs';
@@ -121,6 +121,20 @@ function voicePrecisionCard(rows = []) {
   const row = p => `<tr id="slop-voice-${esc(p.rule)}"><td><b>${esc(p.rule)}</b> ${esc(p.title)}</td><td>${esc(p.level)}${p.shadow ? ' · shadow' : ''}</td><td>${p.precision === null ? '<span class="mute">none rated</span>' : `${int(Math.round(p.precision * 100))} % <span class="mute small">(${int(p.up)} of ${int(p.rated)})</span>`}</td><td>${p.suggest ? chip(...VOICE_SUGGEST[p.suggest]) : ''}</td></tr>`;
   return `<h3>The second voice ${VOICE_HELP}</h3><div class="tablecard"><table id="slop-voice"><tbody>${rows.map(row).join('')}</tbody></table></div>`;
 }
+// slop-meter S1: the gauge above the views (m = the server's meterView: the last daily report's meter) - the bands as segments, the
+// needle at the score, the number, the band word, the 7-day change; it opens the drawer: the group bars worst first, 30 days of the
+// total, the 10 worst offenders (each opens its file at the line in Docs). No sub-view of its own, no counter row.
+function meterGauge(m) {
+  if (!m) return '';
+  const n = Math.round(m.score), d = Number.isFinite(m.delta) ? Math.round(m.delta) : 0, turn = d ? `${d > 0 ? '↑' : '↓'}${int(Math.abs(d))}` : '';
+  const bands = m.bands || [], seg = bands.map(([lo], i) => `<i class="smseg smseg-${i}" style="width:${(i + 1 < bands.length ? bands[i + 1][0] : 100) - lo}%"></i>`).join('');
+  const groups = bars(Object.entries(m.groups || {}).sort((a, b) => b[1] - a[1]).map(([g, s]) => ({ label: g, value: Math.round(s), cls: s >= 60 ? 'hot' : '' })), { id: 'slop-meter-groups', max: 100 });
+  const trend = (m.trend || []).length > 1 ? lines([{ key: 'meter', label: 'slop meter', points: m.trend.map(p => ({ x: p.day, y: p.score })) }], { days: m.trend.map(p => p.day), id: 'slop-meter-trend', title: 'the slop meter, 30 days', unit: 'score' }) : '';
+  const top = (m.top || []).map(o => `<li><button class="lnk mono" data-ins="${esc(`path:${o.abs}`)}"${o.line ? ` data-line="${esc(o.line)}"` : ''} title="${esc(o.file)}">${esc(shortPath(o.file))}${o.line ? ':' + esc(o.line) : ''}</button> <span class="small">${esc(o.what)}</span> <span class="small mute">${esc(o.signal)} · ${esc(o.pts)}</span></li>`).join('');
+  return `<details class="smeter" id="slop-meter"><summary aria-label="${esc(`slop meter ${n} of 100, ${m.band}${d ? `, ${d > 0 ? 'up' : 'down'} ${Math.abs(d)} in 7 days` : ''}`)}"><b class="mono smnum">${int(n)}</b> <b class="smband">${esc(m.band)}</b>${turn ? ` <span class="smturn ${d > 0 ? 'up' : 'down'}">${turn}</span>` : ''}
+    <span class="smbar" aria-hidden="true">${seg}<u style="left:${Math.max(0, Math.min(100, m.score))}%"></u></span></summary>
+    <div class="smdrawer">${groups}${trend}${top ? `<ol class="smtop" id="slop-meter-top">${top}</ol>` : ''}</div></details>`;
+}
 // META-UX-BUILD S2: the sub-view pattern (subviews.mjs): To fix / Per type / Rules / By age, the chosen part; the lead holds only what
 // is acted on (the errors, Fix all, the sent line, the fixer's cards). d = the summary (guardparts.mjs) + d[d.sub] once its part is here.
 // META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays). ui-spend-slop: no banner, no counter row, no footer.
@@ -141,5 +155,5 @@ export function slopPage(d) {
     ${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'findings open now, by the day first seen', unit: 'findings' }) : '<p class="small mute">No open finding.</p>'}</section>`;
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
   const act = fixBtn || sentLine ? `<div class="slop-act" id="slop-act">${fixBtn}${sentLine}</div>` : '';
-  return subviewPage('slop', { title: 'Slop', lead: `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}${act}${cards}`, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P });
+  return subviewPage('slop', { title: 'Slop', lead: `${meterGauge(d.meter)}${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}${act}${cards}`, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P });
 }

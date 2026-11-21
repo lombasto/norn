@@ -4,9 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { locReport, CLASSES, APART } from './loc.mjs';
+import { locReport, CLASSES, APART, num } from './loc.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
-import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers, findingLine } from './host.mjs';
+import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers, findingLine, meterSeries } from './host.mjs';
 import { spawnOutside } from '../jobguard.mjs';
 import { slopOn } from '../policy.mjs';
 import { inDir } from '../monorepo.mjs';
@@ -14,14 +14,14 @@ import { readText } from '../fsnap.mjs';
 import { landedUnchecked, landedWords } from './landed.mjs';
 import { mainTip } from './runend.mjs';
 import { readEvents, recordsFile } from '../records.mjs';
+import { meterOf, meterInput, meterPoint, meterDelta, loadMeter } from './meter.mjs';
 
-const num = n => n.toLocaleString('en-US');
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
 export const delta = (now, then) => `${now - then >= 0 ? '+' : ''}${num(now - then)}${then ? ` (${now - then >= 0 ? '+' : ''}${(100 * (now - then) / then).toFixed(1)} %)` : ''}`;
 const today = now => new Date(now).toISOString().slice(0, 10);
 
 /** the report from a LOC report + a sweep: { markdown, line } */
-export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0 } = {}) {
+export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0, meter = null } = {}) {
   const then = loc.series.length > 7 ? loc.series[loc.series.length - 8] : loc.series[0];
   const L = [`# SloppaChoppa daily ${day}`, '', `Lines of code (non-blank, git) at ${loc.ref} ${loc.head.slice(0, 7)}; the change is against ${then?.day ?? '-'}.`, '',
     '| class | lines | 7 d |', '|---|---:|---:|', ...CLASSES.map(c => `| ${c} | ${num(loc.totals[c])} | ${delta(loc.totals[c], then?.totals[c] ?? 0)} |`),
@@ -39,8 +39,15 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = []
   // RM-44 B: the landings on main since the last report that no stored check names (an admin merge, a direct push), with their findings
   if (landed.length) L.push('', `## Landed unchecked: ${landed.length}`, '');
   for (const l of landed) L.push(`- ${l.sha.slice(0, 7)} ${l.subject.slice(0, 100)}: ${landedWords(l, { full: true })}`, ...l.findings.map(f => `  - ${f.level} ${findingLine(f)}`));
-  const c = then ? delta(loc.totals.code, then.totals.code) : '';
-  const line = `slop ${day}: code ${num(loc.totals.code)}${c ? ` ${c} in 7 d` : ''}, tests ${num(loc.totals.tests)}; big landings ${big.length}; branches: `
+  // slop-meter S1: the meter's score and band, its groups worst first and the 10 worst offenders (meter = meterOf's result + delta, or { error })
+  if (meter) L.push('', meter.error ? `## Meter: could not run`
+    : `## Meter: ${meter.score} ${meter.band}${meter.delta === null ? '' : ` (${meter.delta >= 0 ? '+' : ''}${meter.delta} in 7 d)`}`, '', meter.error ? meter.error : `At ${(meter.sha || '').slice(0, 7)}, meter.json ${meter.hash}.`, '');
+  if (meter && !meter.error) {
+    L.push('| group | score |', '|---|---:|', ...Object.entries(meter.groups).sort((a, b) => b[1] - a[1]).map(([g, s]) => `| ${g} | ${s} |`), '', 'The 10 worst offenders (points of the total):', '');
+    meter.top.forEach((o, i) => L.push(`${i + 1}. ${o.pts} ${o.signal} \`${o.file}${o.line ? ':' + o.line : ''}\` ${o.what}`));
+  }
+  const c = then ? delta(loc.totals.code, then.totals.code) : '', mw = !meter ? '' : meter.error ? 'meter could not run; ' : `meter ${Math.round(meter.score)} ${meter.band}; `;
+  const line = `slop ${day}: ${mw}code ${num(loc.totals.code)}${c ? ` ${c} in 7 d` : ''}, tests ${num(loc.totals.tests)}; big landings ${big.length}; branches: `
     + `${sw.real.length} real (${sw.real.filter(r => r.conflicts).length} conflict), ${sw.empty.length} empty; worktrees: ${sw.dead.length} dead, ${sw.at_risk.length} AT RISK; `
     + `${sw.remote_merged.length} remote merged; slop resumes ${resumes} in 7 d`
     + (landed.length ? `; LANDED UNCHECKED ${landed.length}: ${landed.map(l => `${l.sha.slice(0, 7)} (${landedWords(l)})`).join(', ')}` : '');
@@ -60,9 +67,15 @@ export function dailyReport({ repo, state, now = Date.now(), own = null, main = 
     .map(h => ({ branch: h.branch, open: h.blocks.length, rules: [...new Set(h.blocks.map(b => b.rule))].join(' ') }));
   const tip = mainTip(repo, { main, remote });
   const landed = landedUnchecked({ repo, state, to: tip, since: slopReport(state)?.main ?? null, own, projectDir, rules, ...(tool ? { tool } : {}) });
-  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now) });
+  // slop-meter S1: the meter at the head the lines were counted at; a meter that throws is said in the report and the line, and the
+  // rest of the report is still written (the point then carries no meter)
+  const past = meterSeries(state).filter(p => p.day < day);
+  let meter;
+  try { const { texts, git } = meterInput(home, { ref: loc.head, now }), m = meterOf(texts, git, loadMeter(), { prev: past.at(-1)?.band ?? null }); meter = { ...m, delta: meterDelta(past, day, m.score) }; }
+  catch (e) { meter = { error: String(e.message).split('\n')[0].slice(0, 300) }; }
+  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now), meter });
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
-    empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };
+    empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length }, ...(meter.error ? {} : { meter: meterPoint(meter) }) };
   return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point, main: tip }) };
 }
 

@@ -54,7 +54,7 @@ export function renderMore(tab, o = {}) {
   return `<div id="more-sheet" class="sheet" role="dialog" aria-label="More pages"${o.open ? '' : ' hidden'}>${MORE.map(group).join('')}</div>`;
 }
 
-// ---- the status strip: n running / cap, usage vs the weekly guard and the hourly cap, the next check-in, the needs-you count. Each
+// ---- the status strip: n running / cap, usage vs the weekly guard and the hourly cap, the next check-in, the needs-you count, the slop meter. Each
 // field shows "…" until /api/strip answers (index.html keeps the last answer while a newer one loads). Norn look: the three Norns -
 // Urd what was (landed today, usage spent), Verdandi what is (running, parked), Skuld what shall be (needs you, queued, next check-in).
 // OVERVIEW-TRUTH (4): the strip names its scope - the counts are the page's project(s), the usage is the account's (every project)
@@ -65,18 +65,21 @@ function fields(s, ctx) {
   const usage = u.billing?.type === 'api' ? esc(u.billing.label ?? 'API billing')
     : `usage <b>${pct(u.weeklyUsed)}</b> of ${pct(u.weeklyStopPct, 0)}${fin(u.rate) ? ` · ${u.rate.toFixed(2)} %/h of ${fin(u.cap) ? u.cap.toFixed(2) : '-'}` : ''}`;
   const checkin = s.pause?.checkins ? 'check-ins paused' : ck.next ? `next check-in <b>${esc(fmtTime(ck.next, ctx.now))}</b>` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
-  return { running: `<b>${int(n)} running</b> / ${caps.length ? int(caps.reduce((a, b) => a + b, 0)) : '-'}`, usage, checkin, needs: `<b>${int(s.needs_you ?? 0)}</b> need you` };
+  // slop-meter S1: the meter from the last daily report (one project, SloppaChoppa on): score, band, the 7-day change (up = sloppier)
+  const m = s.slop, turn = fin(m?.delta) && Math.round(m.delta) ? ` ${m.delta > 0 ? '↑' : '↓'}${int(Math.abs(Math.round(m.delta)))}` : '';
+  return { running: `<b>${int(n)} running</b> / ${caps.length ? int(caps.reduce((a, b) => a + b, 0)) : '-'}`, usage, checkin, needs: `<b>${int(s.needs_you ?? 0)}</b> need you`,
+    slop: m ? `slop <b>${int(Math.round(m.score))}</b> ${esc(m.band)}${turn}` : '' };
 }
 /** s: the /api/strip answer (null = not come yet); ctx: { look, project, now } */
 export function renderStatus(s, ctx = {}) {
-  const f = fields(s, { now: ctx.now ?? Date.now() }), st = s?.strip, scope = ` title="counts for ${esc(scopeWords(ctx))}; usage: your Claude account (every project)"`, link = (id, html) => `<a href="${href(ctx.project, id)}" data-tab="${id}">${html}</a>`;
+  const f = fields(s, { now: ctx.now ?? Date.now() }), st = s?.strip, slop = f.slop ? `<a href="${href(ctx.project, 'slop')}" data-tab="slop" id="strip-slop" title="the slop meter: 0-100, higher is sloppier; the arrow is the change in 7 days">${f.slop}</a>` : '', scope = ` title="counts for ${esc(scopeWords(ctx))}; usage: your Claude account (every project)"`, link = (id, html) => `<a href="${href(ctx.project, id)}" data-tab="${id}">${html}</a>`;
   if (ctx.look === 'norn') {
     const part = (tone, name, html) => `<span class="np tone-${tone}"><b>${name}</b><span>${html}</span></span>`;
     return `<div class="sstrip norns" id="status-strip" aria-label="Status"${scope}>${part('urd', 'Urd', `${st ? `${int(st.landed_today)} landed today · ` : ''}${f.usage}`)}`
-      + `${part('verd', 'Verdandi', `${link('runs', f.running)}${st ? ` · ${int(st.parked)} parked` : ''}`)}`
+      + `${part('verd', 'Verdandi', `${link('runs', f.running)}${st ? ` · ${int(st.parked)} parked` : ''}${slop ? ` · ${slop}` : ''}`)}`
       + `${part('skuld', 'Skuld', `${link('inbox', f.needs)}${st ? ` · ${int(st.queued)} queued` : ''} · ${f.checkin}`)}</div>`;
   }
-  return `<div class="sstrip" id="status-strip" aria-label="Status"${scope}>${link('runs', f.running)}<span>${f.usage}</span><span>${f.checkin}</span>${link('inbox', f.needs)}</div>`;
+  return `<div class="sstrip" id="status-strip" aria-label="Status"${scope}>${link('runs', f.running)}<span>${f.usage}</span><span>${f.checkin}</span>${link('inbox', f.needs)}${slop}</div>`;
 }
 
 // ---- keyed refetch (SPEC 4.1 item 2, concepts/AUDIT.md A-02): the state stream's events as keys - 'strip' (the status strip), a

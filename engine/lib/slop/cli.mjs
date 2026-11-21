@@ -5,17 +5,18 @@ import path from 'node:path';
 import { loadRules, slopCheck, gitRun, explainOf, replay } from './check.mjs';
 import { loadState, laneId } from '../records.mjs';
 import { checkBranch } from './runend.mjs';
-import { hostWrite, activeWaivers, covers, findingLine, explainLines } from './host.mjs';
+import { hostWrite, activeWaivers, covers, findingLine, explainLines, meterSeries } from './host.mjs';
 import { makeTool } from './tools.mjs';
-import { locReport, formatLoc } from './loc.mjs';
+import { locReport, formatLoc, mainRef } from './loc.mjs';
+import { meterOf, meterInput, formatMeter, loadMeter } from './meter.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
 import { dailyReport } from './daily.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
-export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | daily | fixtures'
+export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures'
   + ' | replay <rule> --as <ids,...> [--main REF] [--last N] [--config FILE] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
-  + ' --ci skips the rules that read the machine state; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2)';
-const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'json!'] };
+  + ' --ci skips the rules that read the machine state; meter: how slopified main is, 0-100 and a band; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2)';
+const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], meter: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'json!'] };
 
 function parse(verb, argv) {
   const spec = [...(FLAGS[verb] || []), 'project', 'state', 'repo'], f = {};
@@ -83,6 +84,12 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   if (verb === 'sweep') {
     const r = sweep(repoOf(), { state, own });
     out(f.json ? JSON.stringify(r, null, 1) : formatSweep(r));
+    return 0;
+  }
+  if (verb === 'meter') {
+    const home = own ? inDir(repoOf(), own.subdir) : repoOf(), ref = mainRef(home), { texts, git } = meterInput(home, { ref });
+    const m = meterOf(texts, git, loadMeter(), { prev: state ? meterSeries(state).at(-1)?.band ?? null : null });
+    out(f.json ? JSON.stringify(m, null, 1) : formatMeter(m, { ref }));
     return 0;
   }
   if (verb === 'daily') {
