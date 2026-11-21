@@ -153,6 +153,7 @@ test('R1 server: a pick shows on /api/home as in use (with the Settings default 
 
 // ---------- the Home renderers (engine/dash/home.mjs) ----------
 import { homeEvents, renderThread, renderHome, slashMenu, shellLine } from '../engine/dash/home.mjs';
+import { fmtTime } from '../engine/dash/cells.mjs';
 const TS = '2026-11-14T10:00:00.000Z';
 const RUNEV = [{ key: 'r1', ts: TS, cat: 'run', kind: 'run-start', run: 'RUN-1', lane: 'x' }];
 test('R1 an empty filter says so: "you + controller" explains this chat (separate from a VS Code / terminal session, type below); other filters name what is missing', () => {
@@ -167,7 +168,7 @@ test("R1 Norn's command answers and typed commands render in the thread; the pic
   const ev = homeEvents({ thread: [{ ts: TS, seg: 1, kind: 'owner', text: '/help', cmd: 'help' }, { ts: TS, seg: 1, kind: 'norn', text: 'Norn chat commands:\n/model - x', cmd: 'help' }, { ts: TS, seg: 1, kind: 'pick', model: 'a', effort: null }] });
   assert.deepEqual(ev.map(e => e.kind), ['you', 'norn']);
   const html = renderThread(ev, {});
-  assert.match(html, /class="ev ev-norn"/); assert.match(html, /norn · 10:00/); assert.match(html, /Norn chat commands:/);
+  assert.match(html, /class="ev ev-norn"/); assert.ok(html.includes(`<div class="who">norn · ${fmtTime(TS)}</div>`), 'the who line: norn + the local time (cells.mjs fmtTime: a past day says its date)'); assert.match(html, /Norn chat commands:/);
 });
 const STATUS = { executor: 'claude', model: 'claude-sonnet-5-5', effort: 'low', pick: { model: 'claude-sonnet-5-5', effort: 'low' }, defaults: { model: 'claude-opus-5-5', effort: 'medium' },
   choices: { models: ['claude-opus-5-5', 'claude-sonnet-5-5'], efforts: ['low', 'medium', 'high', 'xhigh'] }, raw_shell: 'off', commands: ['clear', 'norn-ping'],
