@@ -11,7 +11,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { claimsPass } from '../engine/lib/tick.mjs';
 import { tickMergeq } from '../engine/lib/mergeq.mjs';
 import { followerPrs } from '../engine/lib/mergeland.mjs';
-import { claimDoor, RunRefused, hbPath } from '../engine/lib/runs.mjs';
+import { claimDoor, RunRefused, hbPath, queueRun, readiness, fillQueue } from '../engine/lib/runs.mjs';
 import { readSync, leaderKey } from '../engine/lib/claims.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
@@ -136,4 +136,24 @@ test('a non-leader opens the PR of its DONE pushed lane branch through a fake gh
   assert.deepEqual(followerPrs(p, g.b.state, { git: ghGit(), gh, door }), [], 'the open PR costs no gh call again; the same refusal says nothing new');
   assert.equal(calls.length, n);
   assert.equal(readSync(g.b.state, 'prs')['norn/b/x'].url, 'https://github.com/o/r/pull/1');
+});
+
+// merge-slot (11-21: RUN-b-580 / RUN-b-581 sat queued on home b "held by the cap / the CPU" while every start was refused): a home that
+// is not the merge leader never queues a MERGE run, and one queued before is withdrawn with the leader's words - never a cap or CPU term
+test('a non-leader home refuses to queue a MERGE; a MERGE queued there before is withdrawn naming the leader', () => {
+  const g = rig();
+  g.a.pass(T0); g.b.pass(T0);
+  const brief = path.join(g.t, 'brief.md'), wt = path.join(g.t, 'wt-m'), budget_file = path.join(g.t, 'budget.json');
+  fs.writeFileSync(brief, 'mode: done\n'); fs.mkdirSync(wt, { recursive: true }); fs.writeFileSync(budget_file, JSON.stringify({ max_claude_workers: 0 }));
+  const o = { state: g.b.state, locksDir: path.join(g.t, 'locks'), executor: 'fake', lane: 'm', stage: 'MERGE', brief, worktree: wt, notes: path.join(g.t, 'N.md'),
+    policy: { auto_resume_max: 0, sync: POL }, tick: null, budget_file, now: T0 + S };
+  assert.throws(() => queueRun({ ...o, git_ledger: g.b.ledger }), e => e instanceof RunRefused && e.code === 3 && /^MERGE: merge leader is a - this home only opens PRs$/.test(e.message));
+  // queued before the door (no ledger in its spec then); the ledger is in the spec now: the walk withdraws it with the leader's words
+  const id = queueRun(o).run, specFile = path.join(g.b.state, 'runs', `${id}.queue.json`);
+  fs.writeFileSync(specFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(specFile, 'utf8')), git_ledger: g.b.ledger }));
+  const row = readiness(g.b.state, { now: T0 + S, resources: () => ({ free_gb: 64, cpu_pct: 99 }) }).find(r => r.id === id);
+  assert.deepEqual([row.ready, row.withdraw], [false, 'MERGE: merge leader is a - this home only opens PRs']);
+  assert.ok(!row.terms.some(t => /^(cap|resources)/.test(t)), row.terms.join('; '));
+  fillQueue(g.b.state, { now: T0 + S, resources: () => ({ free_gb: 64, cpu_pct: 99 }) });
+  assert.equal(g.b.item(id).state, 'withdrawn');
 });
