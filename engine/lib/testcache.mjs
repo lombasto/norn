@@ -94,7 +94,7 @@ export function cacheLog(dir, { since = 0 } = {}) {
 /** drop results past RESULT_TTL_MS and log rows past LOG_DAYS (once the log passes 256 KB) */
 export function prune(dir, now = Date.now()) {
   let names = []; try { names = fs.readdirSync(dir); } catch { return; /* no cache folder yet: nothing to prune, the first run makes it */ }
-  for (const n of names.filter(n => /^[0-9a-f]{40}\.json$/.test(n))) { const r = readJson(path.join(dir, n)); if (!r || now - Date.parse(r.at) > RESULT_TTL_MS) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* raced */ } } }
+  for (const n of names.filter(n => /^[0-9a-f]{40}\.json$/.test(n))) { const r = readJson(path.join(dir, n)); if (!r || now - Date.parse(r.at) > RESULT_TTL_MS) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* another run removed it first: the next file goes on */ } } }
   try { if (fs.statSync(logFile(dir)).size > 256 * 1024) fs.writeFileSync(logFile(dir), cacheLog(dir, { since: now - LOG_DAYS * 86400e3 }).map(r => JSON.stringify(r) + '\n').join('')); } catch { /* no log yet */ }
 }
 
