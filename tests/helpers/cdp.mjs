@@ -42,7 +42,9 @@ let shotLib = null;
 try { shotLib = await import('../../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch */ }
 export const browser = shotLib?.findBrowser?.() ?? null;
 const installed = browser;
-export const skipWhy = !shotLib ? 'engine/lib/shot.mjs (norn shot) is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false;
+// test-diet S1: `norn tests run` in a lane run sets META_TEST_BROWSER=skip while policy.tests.browser = ci (the default) - CI runs them
+export const skipWhy = process.env.META_TEST_BROWSER === 'skip' ? 'browser tests run in CI, not in a lane run (policy.tests.browser = ci)'
+  : !shotLib ? 'engine/lib/shot.mjs (norn shot) is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false;
 
 /** o.browser: another { kind, exe, prefix? } than the installed one (a test of the launch failure path) */
 export async function openPage(size = [1440, 900], { browser = installed } = {}) {

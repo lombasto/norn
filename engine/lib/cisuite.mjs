@@ -57,6 +57,9 @@ export const suiteEnv = env => {
 // Even one level picks 60-120 files when a PR touches a hub (server.mjs, records.mjs, policy.mjs), so the importers are capped
 // (max): (1), (3) and (4) always run; the importers run most-changed-imports first, and the rest is named as left to the full suite.
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g;
+// META-CI-WORKCLASS R4 + test-diet S1: a browser (page) test file is one that imports norn shot's launcher or the CDP helper; ci-suite
+// warms a browser for it, and policy.tests.browser = ci skips its browser tests in a lane run (tests/helpers/cdp.mjs skipWhy)
+export const isBrowserTest = text => /shot\.mjs|helpers\/cdp\.mjs/.test(String(text ?? ''));
 const norm = p => { const out = []; for (const s of p.split('/')) { if (s === '..') out.pop(); else if (s && s !== '.') out.push(s); } return out.join('/'); };
 /** the repo-relative files a module imports by a relative specifier (file: its repo-relative path; text: its source) */
 export const importsOf = (file, text) => {
