@@ -11,7 +11,7 @@ import { slopChecks, slopHolds } from '../engine/lib/slop/host.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 
 /** a state with run RUN-1 whose worktree is on feat/x with one junk file (K15 BLOCK) past main */
 function fixture({ policy = {} } = {}) {
@@ -24,7 +24,7 @@ function fixture({ policy = {} } = {}) {
   fs.writeFileSync(path.join(state, 'runs', 'RUN-1.spec.json'), JSON.stringify({ run: 'RUN-1', lane: 'x', worktree: wt, policy }));
   return { root, state, wt };
 }
-const done = ({ root, state }, ...a) => spawnSync(process.execPath, [NORN, 'done', ...a], { encoding: 'utf8', env: { ...process.env, META_ROOT: root, META_RUN_ID: 'RUN-1', META_RUN_STATE: state, META_RESULT_DIR: '' } });
+const done = ({ root, state }, ...a) => spawnSync(process.execPath, [NORN, 'done', ...a], { encoding: 'utf8', env: { ...process.env, META_ROOT: root, META_RUN_ID: 'RUN-1', META_RUN_STATE: state, META_RESULT_DIR: '' }, windowsHide: true });
 const result = state => path.join(state, 'results', 'RUN-1', 'result.json');
 
 test('norn done with a BLOCK on the branch: the list with what / why / fix and the two ways out, no result, exit 4; fixed: DONE', () => {
