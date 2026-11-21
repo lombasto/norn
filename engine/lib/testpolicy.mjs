@@ -9,7 +9,7 @@
 //                   skips them) | allow
 //   full_suite      deny (TEST-GOVERNANCE S1, owner Q-28) | allow
 // testsCheck is the scope hook's test rule (scope.mjs scopeCheck); it supersedes TEST-GOVERNANCE S3's share budget (25 % / 50 % of the
-// run's wall time, budgets.jsonl) with one number the owner sets in Settings. Node tests in a guarded run go through `norn tests run`
+// run's wall time, a budgets.jsonl nothing wrote) with one number the owner sets in Settings. Node tests in a guarded run go through `norn tests run`
 // (testcache.mjs: one result per file and content, shared by every run on the machine), so a direct `node --test` is refused with that
 // command. Pure but for readTestMs (a transcript read) and the browser check (reads the named test files).
 import fs from 'node:fs';

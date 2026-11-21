@@ -82,7 +82,8 @@ import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE, markDeclines, DECLINE_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
-import { testsView, testsFiles, suiteOf, testsPart } from '../lib/testscli.mjs';
+import { testsView, testsFiles, suiteOf, testsPart, runtimePart, RUNTIME_DAYS } from '../lib/testscli.mjs';
+import { cacheLog, cacheDirOf } from '../lib/testcache.mjs';
 import { repoFile } from '../lib/testtimes.mjs';
 import { projectHome, subdirOf, inDir } from '../lib/monorepo.mjs';
 import { guardChips } from '../lib/guard.mjs';
@@ -1185,7 +1186,17 @@ export function createDashboard(o) {
       const lf = lane ? (lanes.includes(lane) ? await laneFiles(p, lane) : { error: `no lane ${lane} in ${p.name}` }) : null;
       return testsPart(p.state, 'impact', { picked: { lanes, lane, files: lf ? lf.files ?? [] : files, error: lf?.error ?? null } });
     }
+    if (name === 'runtime') return testsRuntime(p);
     return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [] });
+  }
+  // test-diet S1: the Run time view - the worker runs of the last RUNTIME_DAYS with their wall / test split (the Runs page's transcript
+  // tail, speed.mjs runSpeedA), the machine's test-cache log and the project's policy.tests
+  async function testsRuntime(p) {
+    const now = Date.now(), since = now - RUNTIME_DAYS * 86400e3, ended = r => (r.state === 'running' ? null : r.end?.at ?? r.updated);
+    const ws = runsOf(await stAsync(p)).filter(r => isWorker(r) && (r.state === 'running' || Date.parse(ended(r)) >= since));
+    const runs = await Promise.all(ws.map(async r => { const s = await runSpeedA(r, { projectsDir, cache, now }).catch(() => null);
+      return { id: r.id, lane: r.data.lane ?? null, state: r.state, started: r.created, ended: ended(r), speed: s ? { wall_ms: s.wall_ms, test_ms: s.test_ms } : null }; }));
+    return runtimePart({ runs, cache: cacheLog(cacheDirOf(p.state), { since }), policy: withDefaults(settingsState(p).view).policy, now });
   }
   // TESTS-RUNTIME: a test's file for the code viewer - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
   // no .. or link out, nothing under .git), text only, at most 2 MB

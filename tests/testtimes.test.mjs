@@ -204,7 +204,7 @@ test('Tests tab: the summary (when, which run, alerts as Inbox questions) and ea
   const f = await tabFixture(), get = async p => (await f.get(p)).data, now = Date.parse('2026-11-19T12:00:00Z');
   try {
     const view = async (sub, batch) => { const d = await loadTab('tests', 'kestrel', get, { sub, batch }); return { d, html: renderTab('tests', { ...d, ...(await loadParts('tests', 'kestrel', d, get)), parts_loading: false }, { now }) }; };
-    assert.deepEqual(TESTS_SUBS.map(x => x[1]), ['Suite', 'Costs and health', 'Impact', 'Trends'], '4 sub-views (CLAUDE.md: never a fifth)');
+    assert.deepEqual(TESTS_SUBS.map(x => x[1]), ['Suite', 'Costs and health', 'Impact', 'Run time'], '4 sub-views (CLAUDE.md: never a fifth)');
     const s = await view('suite');
     assert.equal(s.d.times.run, 'RUN-7'); assert.equal(s.d.alerts.length, 1);
     assert.match(s.html, /id="tests-when"[^]*Timings taken <b>10:00Z<\/b> at <span class="mono">abc123<\/span> by <button[^>]*>RUN-7<\/button>/);
@@ -214,18 +214,22 @@ test('Tests tab: the summary (when, which run, alerts as Inbox questions) and ea
     assert.match(s.html, /id="tests-rows"[^]*<li data-test="tests\/a\.test\.mjs::outer::two"><div><b>two<\/b> <b class="mono">300 ms<\/b>/);
     assert.match(s.html, /data-act="test-src" data-file="tests\/a\.test\.mjs" data-line="4"/);
     assert.match(s.html, /no description: no docstring, no comment above it, and its name says little/);
+    assert.match(s.html, /id="tests-time"[^]*id="tests-cpu"[^]*not measured yet/, 'the charts over time sit under Suite');
+    assert.doesNotMatch(s.html, /tests-lanemin/);
     const c = await view('costs');
     assert.match(c.html, /id="tests-pertest"[^]*measured: costs[^]*with the machine at 12 % CPU[^]*not measured yet<\/span> health, tiers/);
     assert.match(c.html, /CPU 2\.5 s · peak 180 MB · children: 1 browser, 2 git · alone 300 ms \/ under load 900 ms/);
-    assert.match(c.html, /id="tests-runs"[^]*not measured yet/, 'no budgets.jsonl: never a number');
+    assert.doesNotMatch(c.html, /id="tests-runs"/, 'the per-run share lives in Run time');
     assert.match(c.html, /id="tests-merges"[^]*batch-3<\/b> <b class="mono">61 s<\/b>[^]*node engine\/bin\/ci-suite\.mjs/);
     const i = await view('impact', 'files:engine/z.mjs,engine/none.mjs');
     assert.match(i.html, /2 file\(s\) → <b>1 test file\(s\)<\/b>/); assert.match(i.html, /engine\/none\.mjs<\/span> <span class="small mute">not in the measure/);
     assert.match(i.html, /norn tests for engine\/z\.mjs engine\/none\.mjs/);
     const nl = await view('impact', 'lane:nope');
     assert.match(nl.html, /refused<\/span> no lane nope in kestrel/);
-    const tr = await view('trends');
-    assert.match(tr.html, /id="tests-cpu"[^]*not measured yet/); assert.match(tr.html, /id="tests-lanemin"[^]*not measured yet/);
+    const rt = await view('runtime');
+    assert.match(rt.html, /id="tests-runtime"[^]*aria-pressed="true"[^>]*>24 h[^]*over budget[^]*In force: <b>policy\.tests: mode light, budget 3 min, browser ci, full suite deny<\/b>/);
+    assert.match(rt.html, /data-act="open-setting" data-setting="policy\.tests\.run_budget_min"/);
+    assert.match(rt.html, /id="tests-rt-rows"><li data-run="RUN-\d+"/, "the fixture's worker run is listed");
     // the code viewer: inside the repo only
     const r = await f.get('/api/tests/source?project=kestrel&file=tests/a.test.mjs');
     assert.equal(r.status, 200); assert.equal(r.data.lines, 80); assert.match(r.data.text, /two <slow>/);
@@ -247,7 +251,7 @@ test('Tests tab of a pytest project: the merge check and lean tests each say nod
   assert.doesNotMatch(costs, /id="tests-scope"/, 'no banner for a pytest suite');
   assert.match(costs, /id="tests-adv"[^]*node:test only[^]*this project's suite is pytest/); assert.match(costs, /id="tests-lean"[^]*node:test only/);
   assert.match(costs, /suite wall \(one process\)/);
-  const neither = renderTab('tests', { ...base, suite: false, times: null, sub: 'trends', cpu: [], lanes: null, wave: null }, {});
+  const neither = renderTab('tests', { ...base, suite: false, times: null, sub: 'suite', breakdown: null, tests: { rows: [], n: 0 }, cpu: [], wave: null }, {});
   assert.match(neither, /id="tests-scope"[^]*node:test suites \(tests\/\*\.test\.mjs\) and pytest suites/);
 });
 
@@ -261,12 +265,12 @@ test('the browser: Tests at 390 px - every sub-view without sideways scroll; a t
     await pg.go(`${f.url}/?project=kestrel&tab=tests`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'tests' && !!document.querySelector('#tests-rows')`, 90000), 'Suite loads its part');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (Suite)');
-    for (const sub of ['costs', 'impact', 'trends']) {
+    for (const sub of ['costs', 'impact', 'runtime']) {
       await pg.ev(`document.querySelector('#tests-sub-${sub}').click()`);
       assert.ok(await pg.until(`document.querySelector('#tests-sub')?.dataset.sub === '${sub}' && !document.querySelector('#tests-sub-loading')`, 60000), sub);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `no sideways scroll (${sub})`);
     }
-    assert.match(await pg.ev('location.search'), /sub=trends/);
+    assert.match(await pg.ev('location.search'), /sub=runtime/);
     await pg.ev(`document.querySelector('#tests-sub-suite').click()`);
     assert.ok(await pg.until(`!!document.querySelector('#tests-rows [data-act=test-src]')`, 60000));
     await pg.ev(`document.querySelector('#tests-rows [data-act=test-src]').click()`);
@@ -275,4 +279,29 @@ test('the browser: Tests at 390 px - every sub-view without sideways scroll; a t
     assert.ok(await pg.ev(`(() => { const r = document.querySelector('#srcview-code tr.focus').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()`), 'scrolled to the test\'s line');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (viewer)');
   } finally { await pg.close(); await f.done(); }
+});
+
+// test-diet S1: the Run time view - per worker run its wall vs test time, the duplicates the test cache spared it, over budget, the policy
+test('Run time: runtimePart folds runs + the cache log + policy.tests; the view filters by window, over budget and saved', async () => {
+  const { runtimePart } = await import('../engine/lib/testscli.mjs'), { renderTab } = await import('../engine/dash/ui.mjs');
+  const now = Date.parse('2026-11-20T12:00:00Z'), ago = h => new Date(now - h * 3600e3).toISOString();
+  const runs = [{ id: 'RUN-1', lane: 'ui', state: 'exited', started: ago(2), ended: ago(1), speed: { wall_ms: 3600e3, test_ms: 900e3 } },
+    { id: 'RUN-2', lane: 'git', state: 'running', started: ago(0.5), ended: null, speed: { wall_ms: 1800e3, test_ms: 60e3 } },
+    { id: 'RUN-3', lane: 'old', state: 'exited', started: ago(40), ended: ago(39), speed: null },
+    { id: 'RUN-4', lane: 'gone', state: 'exited', started: ago(100), ended: ago(99), speed: null }];
+  const cache = [{ run: 'RUN-2', how: 'reused', saved_ms: 20000 }, { run: 'RUN-2', how: 'waited', saved_ms: 5000 }, { run: 'RUN-1', how: 'ran', saved_ms: 0 }, { run: null, how: 'reused', saved_ms: 1 }];
+  const p = runtimePart({ runs, cache, policy: { tests: { run_budget_min: 5 } }, now });
+  assert.equal(p.words, 'policy.tests: mode light, budget 5 min, browser ci, full suite deny');
+  assert.deepEqual(p.settings, ['policy.tests.mode', 'policy.tests.run_budget_min', 'policy.tests.browser', 'policy.tests.full_suite']);
+  assert.deepEqual(p.rows.map(r => [r.id, r.test_pct, r.over, r.dup, r.saved_ms]), [['RUN-2', 3.3, false, 2, 25000], ['RUN-1', 25, true, 0, 0], ['RUN-3', null, false, 0, 0]], 'newest first; 3 days only');
+  const page = (testsRt = {}) => renderTab('tests', { project: 'k', history: [], git: null, alerts: [], commands: { measure: 'norn tests measure' }, sub: 'runtime', ...p }, { now, testsRt });
+  const day = page();
+  assert.match(day, /2 runs: 16 min of 1 h 30 in tests \(18 %\), 25 s saved by the cache/);
+  assert.match(day, /data-run="RUN-2"[^]*running[^]*cache: 2 duplicates spared, 25 s saved/);
+  assert.match(day, /data-run="RUN-1"[^]*over budget[^]*\(<b>25 %<\/b>\)/);
+  assert.doesNotMatch(day, /data-run="RUN-3"/, '24 h window');
+  assert.match(page({ window: '3d' }), /data-run="RUN-3"[^]*no transcript: no split/);
+  assert.deepEqual([...page({ over: true }).matchAll(/<li data-run="([^"]+)"/g)].map(m => m[1]), ['RUN-1']);
+  assert.deepEqual([...page({ saved: true }).matchAll(/<li data-run="([^"]+)"/g)].map(m => m[1]), ['RUN-2']);
+  assert.match(day, /data-go="runs" data-gojump="node-RUN-1"/);
 });
