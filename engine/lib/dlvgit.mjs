@@ -106,14 +106,14 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
   const onBase = (tip, base) => {
     if (!tip || !base || gone.has(tip)) return false;
     if (allShas.includes(tip)) return mergedSet(base).on.includes(tip);
-    const k = `${tip}:${base}`;   // a tip that is no ref any more (branch deleted): one is-ancestor, cached
-    if (!(k in c.anc)) c.anc[k] = git(repo, ['merge-base', '--is-ancestor', tip, base], { allowFail: true }) !== null;
+    const k = `${tip}:${base}`;   // a tip that is no ref any more (branch deleted): one is-ancestor, cached; a failure (no exit 0 / 1) is asked again
+    if (!(k in c.anc)) { const r = git(repo, ['merge-base', '--is-ancestor', tip, base], { status: true, allowFail: true }); if (r?.code !== 0 && r?.code !== 1) return false; c.anc[k] = r.code === 0; }
     return c.anc[k];
   };
-  // receipts carry short ids: resolve once (immutable), cache
+  // receipts carry short ids: resolve once (immutable), cache; exit 1 = no such commit, any other failure is no answer and asked again
   const full = id => {
     if (!id) return null;
-    if (!(id in c.full)) c.full[id] = (git(repo, ['rev-parse', '--verify', '--quiet', id + '^{commit}'], { allowFail: true }) || '').trim() || null;
+    if (!(id in c.full)) { const r = git(repo, ['rev-parse', '--verify', '--quiet', id + '^{commit}'], { status: true, allowFail: true }); if (r?.code !== 0 && r?.code !== 1) return null; c.full[id] = (r.code === 0 && r.out.trim()) || null; }
     return c.full[id];
   };
   const inst = installed.map(full).filter(Boolean), hist = history.map(full).filter(Boolean);
@@ -132,20 +132,20 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
     const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(direct || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
-    if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it)
+    if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it); a failed count is not kept
       const k = `${tip}:${mainSha}`;
       if (!c.counts[k]) {
         const out = git(repo, ['rev-list', '--left-right', '--count', `${mainSha}...${tip}`], { allowFail: true });
-        c.counts[k] = out ? out.trim().split(/\s+/).map(Number) : [null, null];
+        if (out) c.counts[k] = out.trim().split(/\s+/).map(Number);
       }
-      [r.behind, r.ahead] = c.counts[k];
+      [r.behind, r.ahead] = c.counts[k] || [null, null];
     } else if (merged) { r.ahead = 0; }
     if (nativeRe && tip && mainSha && !gone.has(tip)) {
-      if (!(tip in c.native)) {
+      if (!(tip in c.native)) {   // merged: no native paths; a failed diff is not kept
         const out = merged ? null : git(repo, ['diff', '--name-only', `${mainSha}...${tip}`], { allowFail: true });
-        c.native[tip] = out === null ? null : out.split('\n').filter(Boolean);
+        if (merged || out !== null) c.native[tip] = out === null ? null : out.split('\n').filter(Boolean);
       }
-      const files = c.native[tip];
+      const files = c.native[tip] ?? null;
       if (files) { r.native_files = files.filter(f => nativeRe.some(re => re.test(f))).slice(0, 5); r.native = r.native_files.length > 0; }
     }
     return r;
@@ -163,10 +163,10 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     if (!tip || !mainSha) return null;
     const k = `${tip}:${mainSha}`;
     if (!(k in c.rehearse)) {
-      try {
-        const r = scratchEnv(env => git(repo, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', mainSha, tip], { status: true, env }));
-        c.rehearse[k] = r.code === 0 ? { clean: true, files: [] } : r.code === 1 ? { clean: false, files: [...new Set(r.out.split('\0').slice(1).filter(Boolean))] } : null;
-      } catch { c.rehearse[k] = null; }
+      let r;   // git failed (no exit 0 / 1): null, not kept, asked again
+      try { r = scratchEnv(env => git(repo, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', mainSha, tip], { status: true, env })); } catch { return null; }
+      if (r.code !== 0 && r.code !== 1) return null;
+      c.rehearse[k] = r.code === 0 ? { clean: true, files: [] } : { clean: false, files: [...new Set(r.out.split('\0').slice(1).filter(Boolean))] };
     }
     return c.rehearse[k];
   };
