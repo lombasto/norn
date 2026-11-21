@@ -38,7 +38,7 @@ export function openBlocks(state, branch, { now = Date.now() } = {}) {
   const h = slopHolds(state)[branch];
   return h ? unwaived(state, h.blocks, { now }) : [];
 }
-/** every stored check, oldest first: { branch, base, head, hash, lane, run, at, findings (the new ones, every level), skipped } */
+/** every stored check, oldest first: { branch, base, head, hash, lane, run, at, findings (the new ones, every level; a rule that could not run is one of them) } */
 export const slopChecks = state => (readText(checksFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l));
 
 // ---------- RM-43: the second voice's ratings (audit REPORT sec. 5 "Level") ----------
@@ -66,7 +66,7 @@ export function voicePrecision(state, rules) {
 
 /**
  * The one host write. payload.type:
- *  check  { branch, lane?, run?, base, head, hash (the rule set's), blocks, findings, skipped? } -> one line in checks.jsonl
+ *  check  { branch, lane?, run?, base, head, hash (the rule set's), blocks, findings } -> one line in checks.jsonl
  *         (the new findings of every level) + the branch's hold set (blocks) or dropped (none); -> { open, check }
  *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }), main (the sha the landed-unchecked list ran to) } -> the report files
  *  rating { fp, up (true: the finding is right), by } -> one line in ratings.jsonl; only a stored model finding is rated -> { rating }
@@ -76,7 +76,7 @@ export function hostWrite(state, payload) {
     if (!payload.hash) throw new Error('hostWrite check: no rule-set hash (a stored check is keyed on branch, head and rule set)');
     const holds = slopHolds(state), { branch } = payload, at = payload.at || new Date().toISOString();
     const check = { branch: branch ?? null, base: payload.base, head: payload.head, hash: payload.hash, lane: payload.lane ?? null, run: payload.run ?? null, at,
-      findings: payload.findings.filter(f => f.new !== false), skipped: payload.skipped || [] };
+      findings: payload.findings.filter(f => f.new !== false) };
     fs.mkdirSync(slopDir(state), { recursive: true });
     fs.appendFileSync(checksFile(state), JSON.stringify(check) + '\n');
     if (!branch) return { open: unwaived(state, payload.blocks), check };

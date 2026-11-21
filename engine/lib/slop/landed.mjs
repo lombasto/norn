@@ -10,7 +10,7 @@ import { makeTool } from './tools.mjs';
 /**
  * landedUnchecked({ repo, state, to (main's sha), since (a sha: only landings after it; null = since the first stored check, the
  * day checks began to be stored), own ({ subdir }: a monorepo project's own landings), rules (default: the project's, projectSlop), tool, projectDir })
- * -> [{ sha, subject, at, findings (the new ones of every level), skipped }], oldest first.
+ * -> [{ sha, subject, at, findings (the new ones of every level) }], oldest first.
  */
 export function landedUnchecked({ repo, state, main = 'main', remote = 'origin', to = mainTip(repo, { main, remote }), since = null, own = null,
   projectDir = null, rules = null, tool = makeTool() }) {
@@ -23,7 +23,7 @@ export function landedUnchecked({ repo, state, main = 'main', remote = 'origin',
     .filter(c => c.parents.length && (from === null || Date.parse(c.at) > from) && !heads.has(c.sha) && !c.parents.slice(1).some(p => heads.has(p)))
     .map(c => {
       const r = slopCheck({ repo, base: c.parents[0], head: c.sha, rules: rules || ps.rules, tool, resolve: ps.resolve, machine: false });
-      return { sha: c.sha, subject: c.subject, at: c.at, findings: r.findings.filter(f => f.new && !f.shadow), skipped: r.skipped };
+      return { sha: c.sha, subject: c.subject, at: c.at, findings: r.findings.filter(f => f.new && !f.shadow) };
     });
 }
 
