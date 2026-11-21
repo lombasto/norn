@@ -764,13 +764,13 @@ const noCaller = ({ caller: _c, ...o }) => o;
 // MERGE stages (leaderDoor: the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
 // and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
 export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
-const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
+const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || isMergeStage(o.stage) || !writeTrees(o).length;
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
 /** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else the why, null = it may */
 export const LEADER_ONLY_PRS = 'this home only opens PRs';
 export function leaderRefusal(o) {
-  if (o.stage !== 'MERGE') return null;
+  if (!isMergeStage(o.stage)) return null;
   const f = homeOf(o.state) ? fedOf(o.git_ledger) : null;
   if (!f) return null;
   const why = leaderWhy(o.state, f, { project: path.basename(path.resolve(o.state)), now: o.now ?? Date.now(), pol: syncPolicy(specPolicy({ ctx_from: policySource(o) })) });
@@ -1380,7 +1380,7 @@ const claudeLive = (state, staleMs, pending, me, budget) => {
 function waitingLanding(state, queue, now, ev = () => makeEval(state)) {
   let E = null;
   return queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now) && !(q.after.length && !evalAll(q.after, (E ??= ev())).conds.every(c => c.met))
-    && !(q.stage === 'MERGE' && leaderRefusal({ ...(readJson(queueSpecPath(state, q.id)) || {}), now })));
+    && !(isMergeStage(q.stage) && leaderRefusal({ ...(readJson(queueSpecPath(state, q.id)) || {}), now })));
 }
 function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
