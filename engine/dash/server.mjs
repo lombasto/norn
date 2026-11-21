@@ -566,7 +566,7 @@ export function createDashboard(o) {
     if (listAgents && !agentsBusy && Date.now() - agentsAt >= 60000) {
       agentsBusy = true;
       Promise.all([listAgents(), Promise.all(projects.map(hbPids))]).then(([ps, pids]) => { agentsNow = agentSessions(ps, { norn: new Set([process.pid, ...pids.flat()]) }); if (ps.length) { procsNow = ps; procsAt = Date.now(); } })
-        .catch(() => {}).finally(() => { agentsAt = Date.now(); agentsBusy = false; });
+        .catch(() => { /* a failed listing keeps the last count (the header's pool shows it, or … before the first); the next request a minute on lists again */ }).finally(() => { agentsAt = Date.now(); agentsBusy = false; });
     }
     return agentsNow;
   };
