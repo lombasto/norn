@@ -24,7 +24,7 @@ function jobguardPlan({ platform, dir, csc }) {
 }
 const CSC_ARGS = tmp => ['-nologo', '-optimize', `-out:${tmp}`, SRC];
 function jobguardSettle(p, ok) {
-  if (!ok || !fs.existsSync(p.tmp)) { try { fs.unlinkSync(p.tmp); } catch { /* none */ } return null; }
+  if (!ok || !fs.existsSync(p.tmp)) { try { fs.unlinkSync(p.tmp); } catch { /* no temp exe was written: nothing to remove, null below */ } return null; }
   try { fs.renameSync(p.tmp, p.exe); } catch { try { fs.unlinkSync(p.tmp); } catch { /* a racer won */ } }
   return fs.existsSync(p.exe) ? p.exe : null;
 }
