@@ -12,28 +12,29 @@
 // RM-46 S6b (multi-home SPEC 4.9): in a synced project (home.json) the own lanes - running, or with an open deliverable - are also
 // checked against the other homes' open branches (origin/norn/<h>/...): only a pair that already shares files gets a
 // `git merge-tree --write-tree <own tip> <their tip>`; exit 1 = a predicted conflict = a digest row "norn/a/x conflicts with norn/b/y
-// (on b): 2 files". The result is cached per (own tip, their tip) under the same TTL. A solo project runs no merge-tree.
+// (on b): 2 files". The result is cached per (own tip, their tip): two commit ids merge the same way forever. A solo project runs no merge-tree.
+// git-perf S1: the tick's refresh runs at most once per OVERLAP_TTL_MS for the same lanes (a lane start forces one); one for-each-ref lists
+// every ref with its ahead count, and a branch whose tip and ahead count did not change keeps its files when main moves (none of its
+// commits landed, so its merge-base did not move); a lane's HEAD is read from its files (gitfacts.mjs); every child is bounded (jobguard).
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { loadState, homeOf, fold, readEvents, recordsFile } from './records.mjs';
 import { deliverableConfig } from './deliverables.mjs';
+import { boundedSync } from './jobguard.mjs';
+import { headOf, worktreeFacts } from './gitfacts.mjs';
 
 export const OVERLAP_TTL_MS = 10 * 60000;
 const MAX_FILES = 8;   // files named per overlap row (the count is always whole)
 export const overlapOn = pol => pol?.overlap?.enabled !== false;
 export const overlapFile = state => path.join(state, 'overlap.json');
 
-const cli = (exe, timeout) => (args, cwd) => {
-  try { return execFileSync(exe, args, { cwd, encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, maxBuffer: 64 * 2 ** 20 }); }
-  catch { return null; }
-};
+const cli = (exe, timeout) => (args, cwd) => { const r = boundedSync(exe, args, { cwd, timeout, maxBuffer: 64 << 20 }); return r.status === 0 ? String(r.stdout ?? '') : null; };
 const gitCli = cli('git', 30000), ghCli = cli('gh', 20000);
 const lines = s => String(s ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 const fresh = (now, ts, ttl) => now - ts >= 0 && now - ts < ttl;
 // (own tip, their tip, cwd) -> { conflict, files } | null (git failed: no answer, no row)
 const mergeTreeCli = (a, b, cwd) => {
-  const r = spawnSync('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', a, b], { cwd, encoding: 'utf8', timeout: 60000, windowsHide: true, maxBuffer: 64 * 2 ** 20 });
+  const r = boundedSync('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', a, b], { cwd, timeout: 60000, maxBuffer: 64 << 20 });
   return r.status === 0 ? { conflict: false, files: [] } : r.status === 1 ? { conflict: true, files: [...new Set(lines(r.stdout).slice(1))] } : null;
 };
 const HOME_REF = /^norn\/([a-z][a-z0-9]{0,7})\/./;   // a home's lane branch (SPEC 3.2): norn/<home>/<lane>
@@ -65,17 +66,20 @@ export function runningLanes(st) {
 /**
  * Refresh the overlap cache. o: { root (a checkout of the project repo), main ('main'), lanes [{ lane, run, worktree } | { lane, run, branch }
  * (an open deliverable: no worktree)], cacheFile, now (ms), git ((args, cwd) -> stdout | null), gh ((args, cwd) -> stdout | null), ttlMs,
- * force (fetch + gh now), home (this home's id in a synced project, else null: no cross-home check), mergeTree ((a, b, cwd) -> { conflict, files } | null) }
- * -> the cache: { fetch_ts, fetch_error, pr_ts, prs, remote: { branch: { sha, base, files } }, merges: { 'tipA tipB': { ts, conflict, files } },
- * lanes: { lane: { lane, run, branch, at, files, overlaps, conflicts: [{ ref, home, n, files }], open? } } }
+ * force (fetch + gh now), home (this home's id in a synced project, else null: no cross-home check), mergeTree ((a, b, cwd) -> { conflict, files } | null),
+ * sig (projectOverlap's words for the lane set: the next tick skips a refresh of the same lanes inside the TTL) }
+ * -> the cache: { refresh_ts, sig, fetch_ts, fetch_error, pr_ts, prs, remote: { branch: { sha, base, ahead, files } }, tips: { sha: { sha, base, ahead, files } }
+ * (the open deliverables' tips), merges: { 'tipA tipB': { ts, conflict, files } } (the pairs of this refresh), lanes: { lane: { lane, run,
+ * branch, at, files, overlaps, conflicts: [{ ref, home, n, files }], open? } } }
  */
-export function refreshOverlap({ root, main = 'main', lanes = [], cacheFile, now = Date.now(), git = gitCli, gh = ghCli, ttlMs = OVERLAP_TTL_MS, force = false, home = null, mergeTree = mergeTreeCli }) {
+export function refreshOverlap({ root, main = 'main', lanes = [], cacheFile, now = Date.now(), git = gitCli, gh = ghCli, ttlMs = OVERLAP_TTL_MS, force = false, home = null, mergeTree = mergeTreeCli, sig = null }) {
   let c = null;
   try { c = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch { c = null; }
   if (!c || typeof c !== 'object') c = {};
-  c = { fetch_ts: -Infinity, fetch_error: null, pr_ts: -Infinity, prs: null, remote: {}, lanes: {}, ...c };
-  const merges = Object.fromEntries(Object.entries(c.merges || {}).filter(([, m]) => fresh(now, m.ts, ttlMs)));
-  if (!git(['remote', 'get-url', 'origin'], root)) {   // no origin: nothing upstream to compare with
+  c = { fetch_ts: -Infinity, fetch_error: null, pr_ts: -Infinity, prs: null, remote: {}, tips: {}, lanes: {}, ...c, refresh_ts: now, sig };
+  const merges = c.merges || {}, used = {};
+  const url = git(['remote', 'get-url', 'origin'], root);
+  if (!url) {   // no origin: nothing upstream to compare with
     c.lanes = {};
     save(cacheFile, c);
     return c;
@@ -84,18 +88,26 @@ export function refreshOverlap({ root, main = 'main', lanes = [], cacheFile, now
     const r = git(['fetch', '--prune', '--quiet', 'origin'], root);
     c.fetch_ts = now; c.fetch_error = r === null ? 'git fetch origin failed (offline?): the last fetched refs are used' : null;
   }
-  const local = new Set(lines(git(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], root)));
-  const base = git(['rev-parse', '--verify', '--quiet', `origin/${main}`], root) ? `origin/${main}` : main;
-  const baseSha = (git(['rev-parse', '--verify', '--quiet', base], root) || '').trim();
-  const remote = {};
-  for (const l of lines(git(['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/remotes/origin'], root))) {
-    const [ref, sha] = l.split(' '), b = ref.replace(/^origin\//, '');
-    if (!ref.startsWith('origin/') || b === 'HEAD' || b === main || local.has(b)) continue;
-    const old = c.remote[b];
-    remote[b] = old && old.sha === sha && old.base === baseSha ? old : { sha, base: baseSha, files: lines(git(['diff', '--name-only', `${base}...${ref}`], root)) };
+  // every local and origin ref in one listing, with its ahead count against main (origin's, else the local one; neither: no counts)
+  const list = full => git(['for-each-ref', `--format=%(refname) %(objectname) ${full ? `%(ahead-behind:${full})` : '-'}`, 'refs/heads', 'refs/remotes/origin'], root);
+  let baseFull = `refs/remotes/origin/${main}`, raw = list(baseFull);
+  if (raw === null) { baseFull = `refs/heads/${main}`; raw = list(baseFull); }
+  if (raw === null) { baseFull = null; raw = list(null); }
+  const refs = new Map();
+  for (const l of lines(raw)) { const [ref, sha, ahead] = l.split(' '); refs.set(ref, { sha, ahead: !ahead || ahead === '-' ? null : Number(ahead) }); }
+  const local = new Set([...refs.keys()].filter(r => r.startsWith('refs/heads/')).map(r => r.slice(11)));
+  const base = baseFull?.startsWith('refs/remotes/') ? `origin/${main}` : main, baseSha = (baseFull && refs.get(baseFull)?.sha) || '';
+  // the files of base...<tip>: kept while the tip and its ahead count stand (none of it landed: the merge-base is the same), else one diff
+  const filesOf = (old, sha, ahead, rev) => (old && old.sha === sha && (old.base === baseSha || (ahead !== null && old.ahead === ahead)) ? { ...old, base: baseSha }
+    : { sha, base: baseSha, ahead, files: lines(git(['diff', '--name-only', `${base}...${rev}`], root)) });
+  const remote = {}, tips = {};
+  for (const [full, r] of refs) {
+    const b = full.startsWith('refs/remotes/origin/') ? full.slice(20) : null;
+    if (!b || b === 'HEAD' || b === main || local.has(b)) continue;
+    remote[b] = filesOf(c.remote[b], r.sha, r.ahead, `origin/${b}`);
   }
   c.remote = remote;
-  const repo = githubRepo(git(['remote', 'get-url', 'origin'], root));
+  const repo = githubRepo(url);
   if (!repo) c.prs = null;
   else if (force || !fresh(now, c.pr_ts, ttlMs)) {
     let prs = null;
@@ -107,14 +119,16 @@ export function refreshOverlap({ root, main = 'main', lanes = [], cacheFile, now
   for (const l of lanes) {
     let branch, tip, files;
     if (l.worktree) {
-      branch = (git(['rev-parse', '--abbrev-ref', 'HEAD'], l.worktree) || '').trim() || null;
-      tip = home ? (git(['rev-parse', '--verify', '--quiet', 'HEAD'], l.worktree) || '').trim() || null : null;
-      const mb = (git(['merge-base', 'HEAD', base], l.worktree) || '').trim();
-      files = mb ? lines(git(['diff', '--name-only', mb], l.worktree)) : [];
+      const h = headOf(l.worktree);
+      branch = h?.branch || null;
+      tip = home ? h?.sha || null : null;
+      files = baseFull ? worktreeFacts(l.worktree, { main: baseFull, commits: false })?.touched ?? [] : [];
     } else {   // an open deliverable: its branch tip (local, else the pushed one), its commits only
       branch = l.branch;
-      tip = (git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], root) || git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}^{commit}`], root) || '').trim() || null;
-      files = tip ? lines(git(['diff', '--name-only', `${base}...${tip}`], root)) : [];
+      const r = refs.get(`refs/heads/${branch}`) || refs.get(`refs/remotes/origin/${branch}`);
+      tip = r?.sha || null;
+      if (tip) tips[tip] = filesOf(c.tips[tip], tip, r.ahead, tip);
+      files = tip ? tips[tip].files : [];
     }
     const mine = new Set(files), hit = fs2 => fs2.filter(f => mine.has(f));
     const overlaps = [], viaPr = new Set();
@@ -137,11 +151,12 @@ export function refreshOverlap({ root, main = 'main', lanes = [], cacheFile, now
       if (!h || h === home || !theirs) continue;
       const k = `${tip} ${theirs}`;
       if (!merges[k]) { const m = mergeTree(tip, theirs, root); if (!m) continue; merges[k] = { ts: now, conflict: m.conflict, files: m.files }; }
+      used[k] = merges[k];
       if (merges[k].conflict) conflicts.push({ ref: o.ref, home: h, n: merges[k].files.length, files: merges[k].files.slice(0, MAX_FILES) });
     }
     lanesOut[l.lane] = { lane: l.lane, run: l.run, branch, at: new Date(now).toISOString(), files: files.length, overlaps, conflicts, ...(l.worktree ? {} : { open: 'deliverable' }) };
   }
-  c.lanes = lanesOut; c.merges = merges;
+  c.lanes = lanesOut; c.merges = used; c.tips = tips;
   save(cacheFile, c);
   return c;
 }
@@ -156,7 +171,10 @@ export function projectOverlap(p, { now = Date.now(), force = false, git, gh } =
     const home = homeOf(p.state)?.id ?? null, lanes = runningLanes(loadState(p.state));
     if (home) lanes.push(...deliverableLanes(p.state, new Set(lanes.map(l => l.lane))));   // S6b: a synced project also checks its open deliverables for cross-home conflicts
     if (!lanes.length) { const c = readOverlap(p.state); if (Object.keys(c.lanes || {}).length) save(overlapFile(p.state), { ...c, lanes: {} }); return { ...c, lanes: {} }; }   // nothing runs: no fetch
-    return refreshOverlap({ root: repo, main, lanes, cacheFile: overlapFile(p.state), now, force, home, ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
+    // git-perf S1: the same lanes refreshed within the TTL are not asked again (a lane start passes force)
+    const sig = lanes.map(l => `${l.lane} ${l.run} ${l.worktree || l.branch}`).sort().join('\n'), old = readOverlap(p.state);
+    if (!force && old.sig === sig && fresh(now, old.refresh_ts ?? -Infinity, OVERLAP_TTL_MS)) return old;
+    return refreshOverlap({ root: repo, main, lanes, cacheFile: overlapFile(p.state), now, force, home, sig, ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
   } catch { return null; }
 }
 
