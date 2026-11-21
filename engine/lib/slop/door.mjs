@@ -28,6 +28,12 @@ export function doorCheck({ state, repo, branch, head, base = null, projectDir =
   return { check, open: unwaived(state, check.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), ran };
 }
 
+/** the PR body's words on a passed door (RM-44 B): the WARN findings of the stored check at that head, one line each */
+export function doorWarns(d) {
+  const w = d.check.findings.filter(f => f.new !== false && f.level === 'WARN' && !f.shadow), at = d.check.head.slice(0, 7);
+  return w.length ? [`SloppaChoppa at ${at}: ${w.length} WARN finding(s) (they do not hold the merge):`, ...w.map(f => '- ' + findingLine(f))].join('\n') : `SloppaChoppa at ${at}: no WARN finding.`;
+}
+
 /** the refusal words of a door: null (pass) or "N open slop BLOCK finding(s) at <sha7>: <first lines>" */
 export function doorWhy(d) {
   if (!d.open.length) return null;

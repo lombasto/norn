@@ -38,7 +38,8 @@ import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
 import { ClaimsError } from './claimsref.mjs';
-import { parseReady } from './ready.mjs';
+import { touchedOf, workOf } from './intents.mjs';
+export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
 import { syncPolicy, POLICY_DEFAULTS } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -732,36 +733,6 @@ const noCaller = ({ caller: _c, ...o }) => o;
 // and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
 export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
 const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
-const gitOut = (cwd, args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }); return r.status === 0 ? r.stdout.trim() : null; };
-/** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main) */
-export function touchedOf(worktree) {
-  const wt = worktree && fs.existsSync(worktree) ? worktree : null, base = wt && gitOut(wt, ['merge-base', 'HEAD', 'origin/main']);
-  return base ? (gitOut(wt, ['diff', '--name-only', base]) || '').split('\n').filter(Boolean) : [];
-}
-// the open roadmap items linking one of `links`, from the item events (roadmap.mjs imports runs.mjs: its fold here would close a cycle)
-function laneItems(events, links) {
-  const L = {}, open = {};
-  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
-    if (e.kind !== 'item') continue;
-    const d = e.data || {};
-    if (e.ev === 'create') { L[e.id] = new Set(d.links || []); open[e.id] = true; }
-    if (!L[e.id]) continue;
-    if (e.ev === 'link') for (const x of d.links || []) L[e.id].add(x);
-    if (e.ev === 'unlink') for (const x of d.links || []) L[e.id].delete(x);
-    if (e.ev === 'drop' || e.ev === 'reopen') open[e.id] = e.ev === 'reopen';
-  }
-  return Object.keys(L).filter(id => open[id] && links.some(l => L[id].has(l)));
-}
-/** the work claim of a launch: branch + touched from its worktree (merge-base with origin/main), scope from its brief's Scope: line
- *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others) */
-export function workOf(o, home, project) {
-  const wt = o.worktree && fs.existsSync(o.worktree) ? o.worktree : null, br = wt && gitOut(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), touched = touchedOf(wt);
-  let scope = [], items = [];
-  try { scope = parseReady(fs.readFileSync(o.brief, 'utf8')).scope; } catch { /* no brief file: the whole repo */ }
-  const links = [`lane:${home}/${o.lane}`, `lane:${o.lane}`];
-  try { items = laneItems(readEvents(recordsFile(o.state, 'item')), links); } catch { /* no roadmap yet: no items to claim */ }
-  return { project, home, lane: o.lane, branch: br && br !== 'HEAD' ? br : null, items, scope, touched, run: o.resumeOf ?? null };
-}
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
 /** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else RunRefused 3 */

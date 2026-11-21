@@ -12,6 +12,8 @@ import { globToRe } from '../dlvgit.mjs';
 import { runTool, LINT_RULES } from './tools.mjs';
 import { norm, lineAt, lineText, isReason, masked } from './scan.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
+import { model } from './voice.mjs';
+import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RULES_DIR = path.join(HERE, 'rules');
@@ -23,6 +25,7 @@ export const KIND_PARAMS = {
   'diff-check': [], swallow: ['files', 'exclude', 'deny'], pattern: ['files', 'exclude', 'in', 'unless'], eslint: ['files', 'exclude'],
   ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
+  model: ['files', 'exclude'],
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'eslint'];
 
@@ -34,13 +37,22 @@ function checkRule(r, f) {
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
   if (r.kind === 'eslint' && (r.tool !== 'eslint' || !r.rules || Object.keys(r.rules).some(k => !LINT_RULES.includes(k)))) throw new Error(`${f}: an eslint rule names core rules from ${LINT_RULES.join(', ')} only`);
   if (r.kind === 'ast' && (r.tool !== 'eslint' || !r.selectors?.length || r.selectors.some(s => typeof s.selector !== 'string' || typeof s.message !== 'string'))) throw new Error(`${f}: an ast rule is a list of { selector, message } (tool eslint)`);
+  if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
   if (r.key && r.key !== 'match') throw new Error(`${f}: key is "match" or absent (the line)`);
   return r;
 }
-const readRule = file => checkRule(JSON.parse(fs.readFileSync(file, 'utf8')), path.basename(file));
+// rule reads go through fsnap (META-DASH-ASYNC R1): a snapshot lookup inside a dash GET that awaited primeRules, the sync form elsewhere
+const readRule = file => checkRule(JSON.parse(readText(file)), path.basename(file));
+const jsonNames = (dir, re = /\.json$/) => readdirS(dir).map(d => d.name).filter(f => re.test(f)).sort();
 export function loadRules(dir = RULES_DIR) {
-  return fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort().map(f => readRule(path.join(dir, f)));
+  return jsonNames(dir).map(f => readRule(path.join(dir, f)));
+}
+/** read every rule file effectiveRules / explainOf will read into the request snapshot, on fs.promises (the dash Guard) */
+export async function primeRules(projectDir = null, dir = RULES_DIR) {
+  const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null;
+  await prime({ dirs: [dir, ...(own ? [own] : [])], stats: own ? [own] : [] });
+  await prime({ files: [...jsonNames(dir).map(f => path.join(dir, f)), ...(own ? jsonNames(own).map(f => path.join(own, f)) : [])] });
 }
 
 /**
@@ -49,15 +61,16 @@ export function loadRules(dir = RULES_DIR) {
  * params of that kind } }. A patch can switch, relevel or retune a rule, never replace its text. Disabled rules are left out.
  */
 export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
-  const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null, has = own && fs.existsSync(own);
-  const rules = [...loadRules(dir), ...(has ? fs.readdirSync(own).filter(f => /^P-.*\.json$/.test(f)).sort().map(f => {
+  const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null, has = own && existsS(own);
+  const rules = [...loadRules(dir), ...(has ? jsonNames(own, /^P-.*\.json$/).map(f => {
     const r = readRule(path.join(own, f));
     if (r.id !== f.slice(0, -5) || !PROJECT_KINDS.includes(r.kind)) throw new Error(`${f}: a project rule's id is its file name (P-...) and its kind one of ${PROJECT_KINDS.join(', ')}`);
     return r;
   }) : [])];
   const of = new Map(rules.map(r => [r.id, r]));
-  if (has && fs.existsSync(path.join(own, 'overrides.json'))) {
-    for (const [id, p] of Object.entries(JSON.parse(fs.readFileSync(path.join(own, 'overrides.json'), 'utf8')))) {
+  const over = has ? readText(path.join(own, 'overrides.json')) : null;
+  if (over !== null) {
+    for (const [id, p] of Object.entries(JSON.parse(over))) {
       const r = of.get(id), bad = Object.keys(p).filter(k => !['enabled', 'level', 'shadow', 'params'].includes(k));
       if (!r) throw new Error(`overrides.json: no rule ${id}`);
       if (bad.length) throw new Error(`overrides.json ${id}: only enabled, level, shadow and params may change (not ${bad.join(', ')})`);
@@ -78,7 +91,7 @@ let shipped = null;
 export function explainOf(id, projectDir = null) {
   if (!String(id).startsWith('P-')) return (shipped ||= new Map(loadRules().map(r => [r.id, r.explain]))).get(id) ?? null;
   const f = projectDir && path.join(projectDir, 'rules', 'slop', `${id}.json`);
-  return f && fs.existsSync(f) ? readRule(f).explain : null;
+  return f && existsS(f) ? readRule(f).explain : null;
 }
 
 // ---------- git ----------
@@ -268,6 +281,7 @@ const DETECT = {
   dup,
   exports: exportsKind,
   refs,
+  model,
   // K10 (roots + forbid: layers and cycles) and K20 (bare / manifests / vendor: the dependency lock), each part when its params are set
   imports: (rule, ctx) => {
     const touched = rule.roots && ctx.entries.some(e => rule.roots.some(r => (e.path || '').startsWith(r) || (e.old || '').startsWith(r)));
@@ -307,13 +321,13 @@ const DETECT = {
  * base had fewer of its fingerprint (rule + file, the base path carried through renames, + normalised snippet). key: match
  * (RM-45) fingerprints the matched token tree-wide instead: one finding per token, new only when inBase(token) is false (the token
  * was absent from the whole base tree). A head finding paired with a base one carries the base's value as base_value; a
- * shadow rule's findings are marked shadow (recorded, never held).
+ * shadow rule's findings are marked shadow (recorded, never held); a model rule's are marked voice (the Guard's thumbs rate them).
  */
 export function pairFindings(rule, got, { renamed = new Map(), inBase = () => false } = {}) {
   // got.head null: the tool had no output for head (nothing to report)
   const out = [], one = (f, fp, isNew, base) => out.push({ rule: rule.id, level: f.level || rule.level, file: f.file, line: f.line, msg: f.msg,
     snippet: norm(f.snippet).slice(0, 200), fp, new: isNew, ...(f.value !== undefined ? { value: f.value } : {}),
-    ...(base?.value !== undefined ? { base_value: base.value } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(rule.shadow ? { shadow: true } : {}) });
+    ...(base?.value !== undefined ? { base_value: base.value } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(rule.shadow ? { shadow: true } : {}), ...(rule.kind === 'model' ? { voice: true } : {}) });
   if (rule.key === 'match') {
     const seen = new Set();
     for (const f of got.head || []) if (!seen.has(f.token)) { seen.add(f.token); one(f, fingerprint(rule.id, '*', f.token), !inBase(f.token)); }
@@ -329,19 +343,24 @@ export function pairFindings(rule, got, { renamed = new Map(), inBase = () => fa
 const pathspecs = rule => [...(rule.files || ['**']).map(g => `:(glob)${g}`), ...(rule.exclude || []).map(g => `:(glob,exclude)${g}`)];
 
 /**
- * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve }) -> the ONE result:
- * { base, head, at, findings: [{ rule, level, file, line, msg, snippet, fp, new, value?, base_value?, token?, shadow? }],
+ * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve, brief, machine }) -> the ONE result:
+ * { base, head, at, findings: [{ rule, level, file, line, msg, snippet, fp, new, value?, base_value?, token?, shadow?, voice? }],
  *   blocks: [the new BLOCK findings of rules not in shadow], ran: [ids], skipped: [{ rule, why }] }
  * base / head are any revisions (base = the merge base the caller chose). tool(rule, side, { dir, files }) -> raw output | null.
- * resolve(record id) -> its state | null: K22's cited ids (no resolver: an id only has to be named).
+ * resolve(record id) -> its state | null: K22's cited ids (no resolver: an id only has to be named). brief: the run's brief text (the
+ * model rules read its Scope and numbered items). The model rules run last: they read the other rules' new findings (their hits).
+ * machine false: a rule flagged `machine` in its data (it reads this machine's state, K14) is skipped - CI and a landing's after-check
+ * have no such state to read.
  */
-export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, now = Date.now() }) {
+export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, now = Date.now() }) {
   const sha = r => gitRun(repo, ['rev-parse', '--verify', r + '^{commit}']).trim();
   const B = sha(base), H = sha(head);
-  const entries = diffEntries(repo, B, H), run = rules.filter(r => !only || only.includes(r.id));
+  const entries = diffEntries(repo, B, H), picked = rules.filter(r => !only || only.includes(r.id)), run = [...picked.filter(r => r.kind !== 'model'), ...picked.filter(r => r.kind === 'model')];
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, lintRules: run.filter(r => r.kind === 'eslint' || r.kind === 'ast'),
+  const findings = [], ran = [], skipped = [];
+  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, lintRules: run.filter(r => r.kind === 'eslint' || r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
+    diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));
       blobs(repo, want.map(f => `${rev(s)}:${f}`)).forEach((t, k) => cache.set(`${s}:${want[k]}`, t));
@@ -363,8 +382,8 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
     grepLines: (s, re, spec) => grep(s, ['-h', '-o', '-E', '-e', re], spec),
   };
   const renamed = new Map(entries.filter(e => e.old && e.old !== e.path).map(e => [e.old, e.path]));
-  const findings = [], ran = [], skipped = [];
   for (const rule of run) {
+    if (rule.machine && !machine) { skipped.push({ rule: rule.id, why: 'machine state: the rule reads this machine, not the diff (its flag machine), so it is not run here' }); continue; }
     let got;
     try { got = DETECT[rule.kind](rule, ctx); } catch (e) { skipped.push({ rule: rule.id, why: e.message.split('\n')[0] }); continue; }
     ran.push(rule.id);

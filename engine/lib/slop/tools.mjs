@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { which, resolveShim } from '../paths.mjs';
 import { metaRoot } from '../config.mjs';
+import { askVoice } from './voice.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const TOOLS = { eslint: { pkg: 'eslint@10.15.0' } };
@@ -41,10 +42,15 @@ export function parseEslint(raw, dir) {
  * The real tool runner: tool(rule, side, { dir, files }) -> raw output | null (no output for that side). A tool rule here is the
  * ONE ESLint run of a check: { tool: 'eslint', rules, selectors } (its eslint and ast rules together, one npx start per side). A
  * command rule runs once, at check time (its output is the machine's, not a side's: the check keeps only the lines whose source
- * the diff touches). o.env.
+ * the diff touches). A model read (kind `model`: { id, prompt }) is one no-tools call on o.voice, the route voiceRoute picked at the
+ * launch; with no route (a door, `norn slop check`) it throws and the model rules are skipped: the second voice reads at the run end. o.env.
  */
-export function makeTool({ env = process.env } = {}) {
+export function makeTool({ env = process.env, voice = null } = {}) {
   return (rule, side, { dir, files } = {}) => {
+    if (rule.kind === 'model') {
+      if (!voice) throw new Error('no second voice routed here: the model rules read at the run end');
+      return askVoice(voice, rule.prompt, { env });
+    }
     if (rule.kind === 'command') {
       const r = spawnSync(process.execPath, [NORN, ...rule.argv], { cwd: dir, env, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
       if (r.error) throw r.error;

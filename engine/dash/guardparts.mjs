@@ -15,7 +15,7 @@ export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['age', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
-const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}${r.declined ? ':d' : ''}`)]));
+const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, g.precision, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}${r.declined ? ':d' : ''}`)]));
 function fnv(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
@@ -114,7 +114,7 @@ export function guardPart(g, name, limit = SUB_CAP, batch = null) {
     return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}) } };
   }
   if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length } };
-  if (name === 'rules') return { rules: { ledger: g.ledger ?? null, ...capList(ruleRows(g), limit) } };
+  if (name === 'rules') return { rules: { ledger: g.ledger ?? null, precision: g.precision ?? [], ...capList(ruleRows(g), limit) } };
   if (name === 'age') return { age: { trend: g.trend ?? null } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });
 }

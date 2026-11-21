@@ -1,0 +1,52 @@
+{
+ "id": "M4",
+ "level": "WARN",
+ "shadow": true,
+ "kind": "model",
+ "title": "a hunk the brief does not ask for",
+ "question": "Which added hunks does the brief not ask for (its Scope lines and numbered items)? Name the first added line of each.",
+ "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
+ "explain": {
+  "what": "A model read the diff and found an added hunk the brief does not ask for.",
+  "why": "Work outside the brief is unreviewed scope: it grows the change and hides what the change is for.",
+  "fix": "Drop the hunk, or ask for it to be added to the brief. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
+ },
+ "files": [
+  "**/*.mjs",
+  "**/*.js",
+  "**/*.cjs",
+  "**/*.ts",
+  "**/*.py",
+  "**/*.rs",
+  "**/*.md"
+ ],
+ "on": [
+  "code"
+ ],
+ "hits": [],
+ "context": [],
+ "fixture": {
+  "hit": {
+   "base": {
+    "src/ui.mjs": "export const title = 'a';\n"
+   },
+   "head": {
+    "src/ui.mjs": "export const title = 'a';\nexport const theme = 'dark';\n"
+   },
+   "recorded": {
+    "head": "{\"findings\":[{\"rule\":\"M4\",\"file\":\"src/ui.mjs\",\"quote\":\"export const theme = 'dark';\",\"why\":\"the brief asks for the title only; the theme is a change nobody asked for\"}]}"
+   }
+  },
+  "miss": {
+   "base": {
+    "src/ui.mjs": "export const title = 'a';\n"
+   },
+   "head": {
+    "src/ui.mjs": "export const title = 'a';\nexport const theme = 'dark';\n"
+   },
+   "recorded": {
+    "head": "{\"findings\":[{\"rule\":\"M4\",\"file\":\"src/ui.mjs\",\"quote\":\"export const title = 'a';\",\"why\":\"not an added line\"}]}"
+   }
+  }
+ }
+}

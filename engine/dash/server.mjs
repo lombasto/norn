@@ -94,8 +94,8 @@ import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
-import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
-import { explainOf } from '../lib/slop/check.mjs';
+import { slopHolds, openBlocks, slopFiles, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
+import { effectiveRules, explainOf, primeRules } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
 import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
 import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
@@ -1102,12 +1102,15 @@ export function createDashboard(o) {
     return { v: c.v ?? (c.error ? { error: c.error } : null), pending: !c.v && !c.error };
   }
   async function guardOf(p) {
-    await prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] });   // META-DASH-ASYNC R1: the parts' files on fs.promises
+    await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
     const ig = insForGuard(p), ins = ig.v?.error ? (errors.push(ig.v.error), null) : ig.v, tests = part('tests', () => testsView(p.state), null), advice = await adviceOf(p).catch(e => { errors.push(`models: ${String(e.message).slice(0, 200)}`); return null; });
     // META-BETA-PREP (DIR-52): the project's one SloppaChoppa switch (Settings) - off = no slop rows; his recorded holds stay on disk
     const pol = withDefaults(settingsState(p).view).policy, slop = pol.slop.enabled;
     const holds = !slop ? [] : part('code', () => Object.entries(slopHolds(p.state)).map(([branch, h]) => ({ branch, run: h.run, lane: h.lane, blocks: openBlocks(p.state, branch) })), []);
+    // RM-43: the second voice's unrated findings (thumbs) and each model rule's precision (the Rules view)
+    const voiceRows = !slop ? [] : part('voice', () => voiceFindings(p.state), []);
+    const precision = !slop ? [] : part('voice', () => voicePrecision(p.state, effectiveRules({ projectDir: p.project_dir }).filter(r => r.kind === 'model')), []);
     // the first Guard scan of a project is its baseline (<state>/advisory/guard-baseline.json, one timestamp): what was open then is
     // not NEW to anyone, on that scan or later - only a crossing after it warns. It is written once the instruction scan has landed.
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
@@ -1115,12 +1118,12 @@ export function createDashboard(o) {
     const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
     // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
     const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
-    const crossed = (await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }))).map(r => (told.has(r.id) && told.get(r.id).what ? { ...r, explain: told.get(r.id) } : r));
+    const crossed = (await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, voice: voiceRows, refusals: refused, docs: docsList(p) }))).map(r => (told.has(r.id) && told.get(r.id).what ? { ...r, explain: told.get(r.id) } : r));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows0 = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const rows = part('declines', () => markDeclines(rows0, st(p).items), rows0);   // a fixer's reasoned decline stands on its finding until the finding or its file changes
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, errors };
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
@@ -1886,6 +1889,10 @@ data: ${JSON.stringify(l)}
       const text = `${head} ${ids.join(' ')}${ids.length < x.ids.length ? ` +${x.ids.length - ids.length} more (every id in ${r.id} and in this directive's findings)` : ''}`;
       const d = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', findings: x.ids, fixall: r.id } });
       return { ok: true, id: r.id, directive: d.id, n: x.ids.length, again: false };
+    }
+    if (route === '/api/slop/rate') {   // RM-43: a thumb on a second-voice finding = one rating line (the last one counts); only a stored model finding
+      if (typeof data.fp !== 'string' || typeof data.up !== 'boolean') throw fail(400, 'fp (a finding fingerprint) and up (true or false) are needed');
+      try { return { ok: true, ...hostWrite(p.state, { type: 'rating', fp: data.fp, up: data.up, by: 'dashboard' }) }; } catch (e) { throw fail(400, e.message); }
     }
     if (route === '/api/proposal') {   // RM-28 S1: a stage's pick on the proposal card = `norn proposal rule` (the decision + the act: one path)
       if (!['queue', 'later', 'drop'].includes(data.pick)) throw fail(400, 'pick must be queue, later or drop');
