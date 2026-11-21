@@ -29,7 +29,7 @@ export function laneItems(events, links) {
   }
   return Object.keys(L).filter(id => open[id] && links.some(l => L[id].has(l)));
 }
-const itemEvents = state => { try { return readEvents(recordsFile(state, 'item')); } catch { return []; } };
+const itemEvents = state => readEvents(recordsFile(state, 'item'));
 /** the work claim of a launch: branch + touched from its worktree (merge-base with origin/main), scope from its brief's Scope: line
  *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others).
  *  ttlMs: touched may be up to ttlMs old for an unchanged HEAD (the queue walk's pre-check; a start reads it fresh) */
@@ -159,8 +159,8 @@ export function briefIntent({ lane, brief, item = null, stage = null, role = nul
 }
 
 // ---------- S1b: the cases (COL-n, records.mjs kind collision) and the pair rulings ----------
-/** the collision records of a home: { COL-n: item } */
-export const casesOf = state => { try { return fold(readEvents(recordsFile(state, 'collision'))).items; } catch { return {}; } };
+/** the collision records of a home: { COL-n: item }; a torn log throws (read as empty it would erase every owner allow ruling) */
+export const casesOf = state => fold(readEvents(recordsFile(state, 'collision'))).items;
 const undoneOf = c => new Set(c.history.filter(h => h.ev === 'undo').map(h => h.data.action));
 /** the actions of a case, each with its history index and whether it was undone */
 export const actionsOf = c => { const u = undoneOf(c); return c.history.map((h, i) => ({ ...h, i })).filter(h => h.ev === 'action').map(h => ({ ...h.data, at: h.ts, by: h.by, i: h.i, undone: u.has(h.i) })); };
@@ -199,4 +199,4 @@ export function itemStages(events) {
 /** { at, rows: [open collision rows, each with its COL id and SloppaChoppa's pick], handled: [Norn's automatic actions of the last day],
  *  wide: [other homes' claims of the whole repo] } */
 export const collideFile = state => path.join(state, 'collide.json');
-export const readCollide = state => { try { return JSON.parse(fs.readFileSync(collideFile(state), 'utf8')) || {}; } catch { return {}; } };
+export const readCollide = state => { try { return JSON.parse(fs.readFileSync(collideFile(state), 'utf8')) || {}; } catch (e) { if (e.code === 'ENOENT') return {}; throw e; } };
