@@ -10,6 +10,7 @@ import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 import { measureFile } from '../engine/lib/testlean.mjs';
 import { suiteKind, pythonOf, parseJunit, pytestMeasure, pytestCov, describeTest, timesTable, breakdown, slowestTests, impactMap, testsFor, repoFile, testId } from '../engine/lib/testtimes.mjs';
+process.env.TZ = 'UTC';   // the dash prints local time (cells.mjs fmtTime): pin the zone these expectations are written in
 
 test.after(cleanTmp);
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '..');
@@ -207,7 +208,7 @@ test('Tests tab: the summary (when, which run, alerts as Inbox questions) and ea
     assert.deepEqual(TESTS_SUBS.map(x => x[1]), ['Suite', 'Costs and health', 'Impact', 'Trends'], '4 sub-views (CLAUDE.md: never a fifth)');
     const s = await view('suite');
     assert.equal(s.d.times.run, 'RUN-7'); assert.equal(s.d.alerts.length, 1);
-    assert.match(s.html, /id="tests-when"[^]*Timings taken <b>10:00Z<\/b> at <span class="mono">abc123<\/span> by <button[^>]*>RUN-7<\/button>/);
+    assert.match(s.html, /id="tests-when"[^]*Timings taken <b>10:00<\/b> at <span class="mono">abc123<\/span> by <button[^>]*>RUN-7<\/button>/);
     assert.match(s.html, /id="tests-alerts"[^]*failed 3 times under load[^]*data-act="answer"[^]*data-choice="a"[^]*quarantine this test - recommended[^]*data-tab="inbox"/);
     assert.match(s.html, /id="tests-sum"[^]*<b class="mono">6<\/b><span class="small mute">node:test tests timed[^]*<b class="mono">300 ms<\/b><span class="small mute">slowest: two/);
     assert.match(s.html, /id="tests-breakdown"[^]*tests\/a\.test\.mjs<\/span> <b class="mono">600 ms<\/b> <span class="small mute">66\.7 %[^]*outer<\/span> <b class="mono">400 ms<\/b> <span class="small mute">44\.4 %/);

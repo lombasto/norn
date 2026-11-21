@@ -17,13 +17,13 @@
   <span class="brand" aria-hidden="true"></span><h1><img class="art h1-norn" data-asset="wordmark" alt="Norn" style="width:calc(160 * var(--d1));height:calc(40 * var(--d1))"><span class="h1-classic">Meta controller</span></h1>
   <select aria-label="Project" id="project"></select>
   <button class="ghost" id="needs-btn" hidden title="What needs you, in the thread"></button>
-  <span class="mute small" id="status">loading ...</span>
+  <span class="pool small" id="pool" role="group" aria-label="Agent sessions on this computer"></span>
   <span class="spacer"></span>
   <button class="ghost" id="orc" hidden title="SloppaChoppa: call him up" aria-label="SloppaChoppa"></button>
-  <button class="ghost" id="look" title="Norn look / classic look">Look: norn</button>
-  <button class="ghost" id="theme" title="Light / dark / system">Theme: system</button>
-  <button id="pause" aria-expanded="false" aria-controls="pause-pop">Pause &#9662;</button><button id="tick">Run tick now</button>
+  <fieldset class="ckbox" id="ckbox"><legend>Check-ins</legend><span class="mute small" id="status">loading ...</span>
+    <button id="pause" aria-expanded="false" aria-controls="pause-pop">Pause &#9662;</button><button id="tick">Run tick now</button></fieldset>
   <div id="pause-pop" class="ppop" hidden aria-label="Pause"></div>
+  <a id="tab-settings" class="cog" href="?tab=settings" data-tab="settings" title="Settings" aria-label="Settings"></a>
 </header>
 <nav class="pagebar" id="tabs" aria-label="Pages"></nav>
 <div class="sstrip" id="status-strip" aria-label="Status"></div>
@@ -31,6 +31,10 @@
 <div id="error" role="alert"></div>
 <div id="dupask" hidden></div>
 <main id="main"></main>
+<aside id="setview" class="drawer wide" hidden role="dialog" aria-label="Settings">
+  <div class="dh"><b class="small">Settings</b><span class="spacer"></span><button class="ghost" data-act="settings-close" title="Close (Esc)">Close</button></div>
+  <div id="setview-body"></div>
+</aside>
 <aside id="srcview" class="drawer" hidden aria-label="Code viewer">
   <div class="dh"><div id="srcview-head" style="display:flex;flex-direction:column;min-width:0"></div><span class="spacer"></span><button class="ghost" id="srcview-close" title="Close (Esc)">Close</button></div>
   <div id="srcview-body"></div>
@@ -53,10 +57,11 @@
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, matchText, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
-import { fmtTime, esc } from '/cells.mjs';
+import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { esc } from '/cells.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards, syncLines } from '/ui.mjs';
+import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards } from '/ui.mjs';
+import { matchText, syncLines } from '/pages/settings.mjs';
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
@@ -74,7 +79,8 @@ const laneTypeQs = v => v || null;
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
 import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, stillOnly, createStage, avoidRects } from '/norn/orc.mjs';
 import { createScheduler } from '/norn/motion.mjs';
-import { routeTab, renderBar, renderMore, renderStatus, keysOf, refetchFor } from '/shell.mjs';
+import { routeTab, renderBar, renderMore, renderStatus, renderCog, checkinStatus, keysOf, refetchFor } from '/shell.mjs';
+import { poolLine } from '/widgets.mjs';
 import { renderThread, pickProject, threadOnly, chatState, chatStateClass, slashMenu, HOME_FILTERS } from '/home.mjs';
 // META-CI-WORKCLASS R2 (DEC-332): body.dataset.step = the last boot / render() step reached (a test timeout names where ready stalled)
 const step = n => { document.body.dataset.step = n; };
@@ -109,14 +115,14 @@ function fxPaint() {
 document.addEventListener('change', e => { if (e.target.matches?.('#fixall input[data-fx-key]')) { fxKeys(); fxCount(); } });
 const err = m => { $('#error').textContent = m || ''; $('#error').style.display = m ? 'block' : 'none'; };
 const modes = ['system', 'light', 'dark'];
-function theme(m) { const c = document.documentElement.classList; c.toggle('light', m === 'light'); c.toggle('dark', m === 'dark'); $('#theme').textContent = 'Theme: ' + m; setTheme(m); try { localStorage.setItem('meta-theme', m); } catch {} }
+// UI redesign item 2: Look and Theme are two buttons at the top of Settings (pages/settings.mjs lookBar), per browser; S.theme feeds their words
+function theme(m) { const c = document.documentElement.classList; c.toggle('light', m === 'light'); c.toggle('dark', m === 'dark'); S.theme = m; setTheme(m); try { localStorage.setItem('meta-theme', m); } catch {} }
 const theme0 = qs.get('theme') || (() => { try { return localStorage.getItem('meta-theme'); } catch { return null; } })() || 'system';
 step('look');
-await initLook({ look: qs.get('look'), theme: theme0, onChange: l => { $('#look').textContent = 'Look: ' + l; render(); } });
-$('#look').textContent = 'Look: ' + look();
-$('#look').onclick = () => setLook(look() === 'norn' ? 'classic' : 'norn');
+// a Look / Theme tap relabels its button in place: a re-render of Settings would drop unsaved edits
+const lookWords = () => { const l = $('#setview [data-act=look]'), m = $('#setview [data-act=theme]'); if (l) l.textContent = 'Look: ' + look(); if (m) m.textContent = 'Theme: ' + S.theme; };
+await initLook({ look: qs.get('look'), theme: theme0, onChange: () => { lookWords(); render(); } });
 theme(theme0);
-$('#theme').onclick = () => { theme(modes[(modes.indexOf($('#theme').textContent.slice(7)) + 1) % 3]); };
 
 async function header(g = get) {
   if (!S.project) {   // META-ADOPT A3: zero projects - the page is Add a project; nothing to pause or check in
@@ -127,7 +133,7 @@ async function header(g = get) {
   if (want !== S.project) return null;
   S.needs = needsCount(ov); S.usage = ov.usage ?? null; S.pause = ov.pause; S.ov = ov; S.at = Date.now(); pausePaint(); paintStrip(); paintNav(); paintStripCards();
   document.title = pageTitle(S.needs, S.project, look());
-  $('#status').innerHTML = `status ${fmtTime(ov.now)} · ${ov.pause ? `<b>${esc(ov.pause.label)}</b>` : 'check-ins <b>on</b>'}${ov.checkin_locked ? ' · tick running' : ''} · ${S.live ? 'live' : 'reconnecting ...'}${REMOTE ? ` · remote: ${esc(REMOTE.name)}` : ''}`;
+  $('#status').innerHTML = checkinStatus(ov, { live: S.live, remote: REMOTE?.name }); $('#pool').outerHTML = poolLine(ov.pool ?? null);
   $('#pause').disabled = $('#tick').disabled = S.project === 'all';
   $('#tick').disabled = $('#tick').disabled || !!ov.pause?.checkins || ov.checkin_locked;
   $('#needs-btn').hidden = !S.needs || S.project === 'all'; $('#needs-btn').textContent = `${S.needs} need you`;   // META-CONTROLLER C2: phone header
@@ -154,11 +160,11 @@ function paintOrc() {
 // NORN-UI-NAV: the bar and the More sheet (shell.mjs) paint from the static page list - at boot, before any fetch - and repaint when the
 // needs count or a Health state lands; the strip paints "…" until /api/strip answers
 const health = () => healthStates({ usage: S.usage, rows: S.guard?.rows ?? null });
-function paintNav() { const o = { project: S.project, needs: S.needs, health: health(), open: !!S.moreOpen }; $('#tabs').outerHTML = renderBar(S.tab, o); $('#more-sheet').outerHTML = renderMore(S.tab, o); }
+function paintNav() { const o = { project: S.project, needs: S.needs, health: health(), open: !!S.moreOpen }; $('#tabs').outerHTML = renderBar(S.tab, o); $('#more-sheet').outerHTML = renderMore(S.tab, o); $('#tab-settings').outerHTML = renderCog(S.tab, o); }
 // the page cards that read the strip (Lanes onboarding): repainted in place when a newer strip lands, never the page
 function paintStripCards() { const c = $('#strip-cards'); if (c) c.outerHTML = stripCards(S.tab, S.ov ?? null); }
 function paintStrip() { $('#status-strip').outerHTML = S.project ? renderStatus(S.ov ?? null, { look: look(), project: S.project }) : '<div class="sstrip" id="status-strip" hidden></div>'; }
-// a phone keeps its header controls (Look, Theme, Pause, Run tick) behind More: body.more shows them while the sheet is open
+// a phone keeps its header controls (the worker pool, the check-ins box) behind More: body.more shows them while the sheet is open
 function moreShow(on, back = true) { S.moreOpen = on; $('#more-sheet').hidden = !on; document.body.classList.toggle('more', on);
   const r = $('#tab-more').getBoundingClientRect(), st = document.documentElement.style; st.setProperty('--more-top', r.bottom + 'px'); st.setProperty('--more-left', r.left + 'px'); $('#tab-more').setAttribute('aria-expanded', String(on));
   if (on) $('#more-sheet a')?.focus(); else if (back) $('#tab-more').focus(); }
@@ -208,11 +214,26 @@ async function partsFetch(tab, d) {
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
 const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'slop' && S.finding ? '&finding=' + encodeURIComponent(S.finding) : ''}${S.tab === 'slop' && S.slopKind ? '&kind=ready' : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
-addEventListener('popstate', () => {
+/** the page state from the URL (Back / Forward, Settings' Close) */
+function fromUrl() {
   const q = new URLSearchParams(location.search), t = routeTab(q.get('tab'));
   if (q.get('project') !== S.project) return;
   S.tab = t; S.run = t === 'runs' ? q.get('run') : null; S.sub = q.get('sub'); S.finding = q.get('finding'); S.findScroll = !!S.finding; S.slopKind = q.get('kind') === 'ready' ? 'ready' : null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('show')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
-});
+}
+addEventListener('popstate', fromUrl);
+// UI redesign item 2: Settings is an overlay (#setview) over the page you were on - the header's cog, any "Settings" link or a
+// setting's own link opens it; the page under it keeps its state, and Close (Esc) puts that page's URL back (S.setFrom)
+function settingsOpen(q) {
+  if (S.moreOpen) moreShow(false, false); if (S.tab !== 'settings') S.setFrom = location.search;
+  S.pickOpen = false; S.tab = 'settings'; if (q) { S.setQ = q; S.jump = 'set-' + q; }
+  history.pushState(null, '', `?project=${encodeURIComponent(S.project)}&tab=settings${q ? '&setq=' + encodeURIComponent(q) : ''}`); render();
+}
+function settingsClose() {
+  if (S.setDirty && !confirm('Close Settings and drop the unsaved changes?')) return;
+  S.setDirty = 0; S.setProfile = null; S.setVersion = null; $('#setview').hidden = true;
+  history.pushState(null, '', S.setFrom || `?project=${encodeURIComponent(S.project)}&tab=lanes`); S.setFrom = null; fromUrl();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#setview').hidden && !e.defaultPrevented) settingsClose(); });
 async function render(force = false, why = []) {
   try {
     if (threadOnly(why, S.tab) && $('#thread')) { await paintThread(); return; }   // META-HOME-POLISH R1: a chat line repaints the thread only
@@ -224,14 +245,14 @@ async function render(force = false, why = []) {
     const tab = S.project ? S.tab : 'adopt';
     const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, finding: tab === 'slop' ? S.finding : null, kind: S.slopKind, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     // NORN-UI-NAV: the bar paints first, the strip (GET /api/strip) beside the page's own fetch, never in front of it
-    document.body.dataset.tab = S.tab; paintNav(); if (!S.ov) paintStrip();
+    document.body.dataset.tab = S.tab; $('#setview').hidden = S.tab !== 'settings'; paintNav(); if (!S.ov) paintStrip();   // Settings opens over the page (#setview)
     step('render:header'); header(g).catch(e => err('Status failed: ' + e.message)); guardHeader();
     chatLive(S.tab === 'talk' && S.project && S.project !== 'all' ? S.project : null);
     S.tab = tab;
     step('render:loadTab ' + S.tab); const d = await want;
     if (seq !== S.renderSeq) return;
     // Settings: a stream re-render never wipes edits, search or scroll - re-render only on a new version (and never over unsaved edits)
-    if (S.tab === 'settings' && !force && $('#main .settings')) {
+    if (S.tab === 'settings' && !force && $('#setview .settings')) {
       if (d.version === S.setVersion) { err(''); return; }
       if (S.setDirty) { err('Settings changed elsewhere: Discard to reload (saving these edits would be refused, 409).'); return; }
     }
@@ -286,7 +307,7 @@ function paintMain(d) {
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
   const rs = S.tab === 'runs' ? ['#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run drawer keeps its scroll (the same run's document only), a focused row its focus
-  $('#main').innerHTML = renderTab(S.tab, d, { run: S.run, strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, laneDetail: S.laneDetail, laneDet: S.laneDet, laneFile: S.laneFile, br: S.br, brUndo: S.brUndo });
+  (S.tab === 'settings' ? $('#setview-body') : $('#main')).innerHTML = renderTab(S.tab, d, { theme: S.theme, run: S.run, strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, laneDetail: S.laneDetail, laneDet: S.laneDet, laneFile: S.laneFile, br: S.br, brUndo: S.brUndo });
   draftsRestore(keep);
   mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
@@ -620,7 +641,10 @@ document.addEventListener('click', e => {
   if (d.act === 'slash') { const t = $('#chat-text'); t.value = d.slash + ' '; draftNote(t); t.focus(); $('#slash-menu').hidden = true; return; }
   if (d.act === 'chat-pick') { act(pickNow); return; }
   if (d.act === 'chat-default') { act(async () => { await pickNow(); await post('/api/chat/default', { project: S.project }); }); return; }
-  if (d.act === 'open-setting') { S.pickOpen = false; S.tab = 'settings'; S.setQ = d.setting; S.jump = 'set-' + d.setting; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=settings&setq=${encodeURIComponent(d.setting)}`); render(); return; }
+  if (d.act === 'open-setting') { settingsOpen(d.setting); return; }
+  if (d.act === 'settings-close') { settingsClose(); return; }
+  if (d.act === 'look') { setLook(look() === 'norn' ? 'classic' : 'norn'); return; }   // Settings' Look / Theme (this browser)
+  if (d.act === 'theme') { theme(modes[(modes.indexOf(S.theme) + 1) % 3]); lookWords(); return; }
   if (d.act === 'chat-send') { chatSend(); return; }
   if (d.act === 'feed-doc') { if (F.project && F.project !== S.project) { S.project = F.project; $('#project').value = S.project; openStream(); } goTo({ tab: 'docs', path: d.path }); return; }   // RM-36: a file the run touched opens in the Docs reader
   // C3: an approval card's tap and a done card's Undo - straight to the records as the owner, no model in between
@@ -646,6 +670,7 @@ document.addEventListener('click', e => {
   if (d.act === 'tests-impact') { const v = ($('#tests-impact-files')?.value || '').split(',').map(x => x.trim()).filter(Boolean).join(','); S.batch = v ? 'files:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'tests-impact-lane') { const v = $('#tests-impact-lane')?.value; S.batch = v ? 'lane:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
+  if (d.tab && routeTab(d.tab) === 'settings') { if (S.tab === 'settings' && b.id === 'tab-settings') settingsClose(); else settingsOpen(); return; }   // the cog toggles
   if (d.tab) { if (S.moreOpen) moreShow(false, false); S.run = null; S.sub = null; S.finding = null; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = routeTab(d.tab); history.pushState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
   // META-UX-BUILD S3: Docs - a tap opens the file (pushed: Back returns to the list), Back on the reader, Rendered / Source
   if (d.docfile) { S.doc = d.docfile; S.docLine = null; history.pushState(null, '', tabUrl()); render(); return; }
@@ -679,7 +704,7 @@ document.addEventListener('click', e => {
     if (el) { el.value = Array.isArray(v) ? v.join(', ') : String(v ?? ''); dirty(); el.focus(); } return; }
   if (d.act === 'notify-test') { const o = $('#notify-test-out'); o.textContent = 'Sending...';
     post('/api/notify-test', { project: p }).then(r => { o.textContent = r.sent ? `Sent via ${r.backend}: check your phone / desktop.` : 'Not sent.'; }, e => { o.textContent = e.message; }); return; }
-  // NORN-UI-SYNC: Settings > Sync - each button posts /api/sync/* and shows the answer's lines (ui.mjs syncLines) in its pane's <pre>
+  // NORN-UI-SYNC: Settings > Sync - each button posts /api/sync/* and shows the answer's lines (pages/settings.mjs syncLines) in its pane's <pre>
   if (d.act?.startsWith('sync-')) { syncAct(d); return; }
   if (d.act === 'remote-pair') { const o = $('#remote-code'); o.textContent = 'Making a code ...';   // C6: a single-use code for one phone
     post('/api/remote/pair', {}).then(r => { o.innerHTML = `<div class="rc mono">${esc(r.code)}</div><div class="small mute">On your phone open the address above and type this code. It works once, until ${esc(new Date(r.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}.</div>`; }, e => { o.textContent = e.message; }); return; }

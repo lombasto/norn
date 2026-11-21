@@ -177,7 +177,7 @@ test, which runs on all three systems.
 - **Executors.** A project's `project.json` defines them: `claude-compatible` (Claude Code against a compatible endpoint),
   `openai-compatible` (the Codex CLI with a custom provider) or `cli` (any headless CLI, its arguments as a template). Norn never
   stores an API key; the project names the environment variable that holds it. `projects/example/project.json` has one of each.
-- **Settings.** Machine-wide limits live in `local/budget.json`, per-project policy in `project.json`; the Settings tab edits both.
+- **Settings.** Machine-wide limits live in `local/budget.json`, per-project policy in `project.json`; Settings (the cog at the top right of the dashboard) edits both.
 
 ### Done checks
 
