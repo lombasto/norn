@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TABS, loadTab, renderTab } from '../engine/dash/ui.mjs';
+import { loadTab, renderTab } from '../engine/dash/ui.mjs';
 import { spendGroup } from '../engine/dash/pages/spend.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';

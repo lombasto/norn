@@ -14,7 +14,7 @@ import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-import { esc, fin, dash, int, mTok, fmtMin, pct, plural, runWho, chip, exClass, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, guardOn, guardChip } from './cells.mjs';
+import { esc, fin, dash, int, fmtMin, pct, plural, runWho, chip, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, guardOn, guardChip } from './cells.mjs';
 import { diffBlock } from './diffview.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
