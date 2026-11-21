@@ -46,8 +46,10 @@ export const UNREADABLE = 'no machine-readable Scope: territory is judged from c
 
 // ---------- first come (SPEC 3.3) ----------
 const RANK = { running: 0, unlanded: 0, remote: 0, upstream: 0, queued: 1, new: 2 };
-/** a is ahead of b: running and unlanded work is ahead of every queued or starting run; between two queued runs the queue order */
-export const ahead = (a, b) => RANK[a.state] < RANK[b.state] || (a.state === 'queued' && b.state === 'queued' && a.since < b.since);
+/** a is ahead of b: running and unlanded work is ahead of every queued or starting run; between two queued runs the queue order (a tie
+ *  in the same millisecond: the older run id, as the fill orders them) */
+const runNo = x => Number(String(x.run ?? '').match(/(\d+)$/)?.[1] ?? Infinity);
+export const ahead = (a, b) => RANK[a.state] < RANK[b.state] || (a.state === 'queued' && b.state === 'queued' && (a.since < b.since || (a.since === b.since && runNo(a) < runNo(b))));
 
 // ---------- the judge ----------
 const literal = g => String(g).split(/[*?]/)[0];

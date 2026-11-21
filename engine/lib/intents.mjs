@@ -172,3 +172,10 @@ export function openCase(state, h, me, other, { door, by = 'launcher', cases = c
 /** one action on a case (S1b: hold, after, told, released, allow) */
 export const caseAction = (state, id, action, { by = 'launcher', auto = by === 'launcher', args, why } = {}) =>
   record(state, { kind: 'collision', ev: 'action', id, by, data: { action, auto, ...(args ? { args } : {}), ...(why ? { why } : {}) } });
+/** the planned stages per roadmap item from the item events (create / edit `stages`): { RM-n: { stages } } - the judge's order / planned
+ *  input (the door cannot import roadmap.mjs: it imports runs.mjs) */
+export function itemStages(events) {
+  const out = {};
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) if (e.kind === 'item' && (e.ev === 'create' || e.ev === 'edit') && Array.isArray(e.data?.stages)) out[e.id] = { stages: [...e.data.stages] };
+  return out;
+}
