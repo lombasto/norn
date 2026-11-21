@@ -8,9 +8,9 @@ import { renderBar } from '../engine/dash/shell.mjs';
 import { renderHome } from '../engine/dash/home.mjs';
 import { isNeed, needsYou } from '../engine/dash/terms.mjs';
 
-test('terms.mjs: answered questions and model advice are listed in the Inbox but do not need you; everything else does', () => {
-  const items = [{ type: 'question' }, { type: 'answered' }, { type: 'advice' }, { type: 'parked' }, { type: 'unreviewed' }, { type: 'fixresult' }, { type: 'login' }, { type: 'setup' }];
-  assert.equal(needsYou(items), 6); assert.equal(needsYou(null), 0); assert.equal(isNeed(null), false);
+test('terms.mjs: a resolved question and an enforce card already asked for are listed in the Inbox but do not need you; every other row does', () => {
+  const items = [{ type: 'question' }, { type: 'resolved' }, { type: 'enforce', asked: { id: 'DIR-1' } }, { type: 'enforce' }, { type: 'fixresult' }, { type: 'login' }, { type: 'setup' }];
+  assert.equal(needsYou(items), 5); assert.equal(needsYou(null), 0); assert.equal(isNeed(null), false);
 });
 
 test('the needs-you count: status strip = Inbox page = Inbox badge = page title = Talk filter = project picker, per project and for all', async () => {
@@ -19,12 +19,13 @@ test('the needs-you count: status strip = Inbox page = Inbox badge = page title 
     for (const project of ['kestrel', 'all']) {
       const q = `project=${project}`;
       const ov = (await f.get(`/api/strip?${q}`)).data, ib = (await f.get(`/api/inbox?${q}`)).data;
-      const n = needsYou(ib.items);
-      assert.ok(ib.items.length > n, `${project}: the fixture has Inbox rows that do not need you (advice), so the test can tell the counts apart`);
+      const n = needsYou(ib.items), qs = ib.items.filter(i => i.type === 'question').length;
+      assert.ok(n > 0, `${project}: the fixture has an open question`);
       assert.equal(ov.needs_you, n, `${project}: the strip = Inbox rows that need you`);
       assert.equal(ib.needs_you, n, `${project}: /api/inbox says the same count`);
       const ctx = { project, now: Date.parse(ov.now) };
-      assert.match(renderTab('inbox', ib, ctx), new RegExp(`id="inbox-needs">Needs you <b>${n}</b>`), `${project}: Inbox page head`);
+      // the Inbox page counts on its chips (Questions, Cards): its questions all need you
+      assert.match(renderTab('inbox', ib, ctx), new RegExp(`id="inbox-needs"[^]*?Questions <b>${qs}</b>`), `${project}: Inbox page head`);
       // index.html: S.needs = needsCount(the strip) feeds the badge and the title
       assert.match(renderBar('talk', { project, needs: needsCount(ov) }), new RegExp(`id="tab-inbox"[^]*?Inbox</span><span class="count" aria-label="${n} need you">${n}</span>`), `${project}: tab badge`);
       assert.match(pageTitle(needsCount(ov), project), new RegExp(`^\\(${n}\\) `), `${project}: page title`);

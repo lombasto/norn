@@ -153,12 +153,10 @@ function profileBar(d, level) {
 // fair-slots item 8: Settings > Capacity - the pool as it is now (every project, widgets.mjs capStrip) above the reserve + ceiling rows
 // of every project, and the Undo of the last capacity change while its values are still in force (server.mjs capUndoOf)
 const capPane = d => `${d.capacity?.rows?.length ? `<div class="srow" id="set-capstrip-row" data-search="capacity pool reserve ceiling ${esc(d.capacity.rows.map(r => r.project).join(' '))}" data-mod="0" data-basic="1"><div class="sl">${capStrip(d.capacity, { id: 'set-capstrip', mine: d.project })}</div></div>` : ''}${d.capacity_undo ? `<div class="banner" id="cap-undo">Last capacity change <span class="id">${esc(d.capacity_undo.id)}</span>: ${esc(d.capacity_undo.choice)}. <button data-act="cap-undo" data-project="${esc(d.project)}" data-id="${esc(d.capacity_undo.id)}">Undo</button></div>` : ''}`;
-// RM-26 the mark "below floor": a decision a check-in recorded while its run's model / effort was below the check-in floor
-// (records.mjs made_under.below_floor). A record without made_under is unmarked.
+// RM-26 the mark "below floor" as the notice shows it (the Records rows carry it per decision: pages/ledger.mjs decMark)
 const BELOW_FLOOR = '<span class="chip warn below-floor">below floor</span>';
-export const decMark = r => (r.data?.made_under?.below_floor ? ` <span class="chip warn below-floor" title="${esc(`made under ${r.data.made_under.model}, effort ${r.data.made_under.effort ?? 'default'}`)}">below floor</span>` : '');
 // RM-26: while the check-in model / effort in force is below the check-in floor (policy checkinBelowFloor) a notice heads Settings;
-// a warning, nothing is refused. The decisions such a check-in records carry the mark (decMark).
+// a warning, nothing is refused. The decisions such a check-in records carry the mark (pages/ledger.mjs decMark).
 function checkinNotice(rows) {
   if (!rows?.length) return '';
   return `<div class="banner" id="checkin-floor-notice"><b>Check-in below the floor.</b> ${rows.map(r => `${r.kind === 'model' ? 'Model' : 'Effort'} ${esc(r.value)} (floor ${esc(r.to)})`).join(' · ')}: ${esc(rows[0].text)}. Its decisions are marked ${BELOW_FLOOR}.</div>`;

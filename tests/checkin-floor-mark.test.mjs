@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { checkinBelow } from '../engine/lib/floor.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
-import { decMark } from '../engine/dash/pages/settings.mjs';
+import { decMark } from '../engine/dash/pages/ledger.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture, budget0 } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';

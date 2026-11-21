@@ -1,6 +1,6 @@
 // LANE-TRUTH (owner 2026-11-20, P0): one answer to "is this work on main" (dlvmerge.mjs landedOf / laneShipped) for every reader - the
 // Lanes row and board, the next line, the PR track, the Inbox, norn_inbox, the archive gate, the tick and another home's copies. One test
-// per evidence case of the brief (rm29, rm26, solve-shack model-tab-residual-trail, the Inbox done-not-merged list, the needs-you count)
+// per evidence case of the brief (rm29, rm26, solve-shack model-tab-residual-trail, the done-not-merged count, the needs-you count)
 // plus the git fixtures: a cherry-equal branch, a branch deleted after its merged PR, a branch renamed norn/x -> norn/b/x.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +15,6 @@ import { laneNext, laneNow } from '../engine/lib/laneout.mjs';
 import { deliverablesView, latchMerged, mergeBacklog, loadDeliverables } from '../engine/lib/deliverables.mjs';
 import { dlvCopyRow } from '../engine/lib/roadmap.mjs';
 import { needsYou } from '../engine/lib/mcp.mjs';
-import { deliverablesCard } from '../engine/dash/ui.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 
 test.after(cleanTmp);
@@ -84,7 +83,7 @@ test('solve-shack model-tab-residual-trail: parked "archive refused" with DLV-24
   assert.equal(loadState(state).items[`L:${L}`].state, 'archived');
 });
 
-test('the Inbox deliverables list: another home\'s merged DLV is merged and at its target, never DONE-not-merged', () => {
+test('a deliverable copy: another home\'s merged DLV is merged and at its target, never DONE-not-merged', () => {
   const copy = (evs, state = 'open') => ({ id: 'DLV-a-7', home: 'a', state, created: '2026-11-19T10:00:00Z', data: { branch: 'norn/a/x', lane: 'x', delivers: 'x' },
     history: [{ ev: 'create', ts: '2026-11-19T10:00:00Z' }, ...evs] });
   const m = dlvCopyRow(copy([{ ev: 'merged', ts: 't', data: { how: 'pr', pr: 7 } }]));
@@ -92,8 +91,7 @@ test('the Inbox deliverables list: another home\'s merged DLV is merged and at i
   const open = dlvCopyRow(copy([])); assert.equal(open.state, 'done'); assert.equal(open.at_target, false);
   const redone = dlvCopyRow(copy([{ ev: 'merged', ts: 't', data: { how: 'pr', pr: 7 } }, { ev: 'done', ts: 't2', data: {} }]));
   assert.equal(redone.state, 'done', 'a DONE after the merge = new work, not merged');
-  const html = deliverablesCard({ rows: [{ ...m, project: 'norn' }], backlog: mergeBacklog([m]) });
-  assert.match(html, /Done, not installed <b>0<\/b>/); assert.doesNotMatch(html, /DLV-a-7/);
+  assert.equal(mergeBacklog([m]).n, 0, 'a merged copy is not in the done-not-merged count');
 });
 
 test('needs you: a parked lane with shipped work, no branch left or nothing off main asks nothing; one with unlanded work does', () => {

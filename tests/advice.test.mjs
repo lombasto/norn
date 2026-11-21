@@ -136,10 +136,10 @@ test('dash: Usage has the Advice strip + the replay table; Inbox has the card; o
     // a phone stacks the side-by-side rows (each cell labelled by its column): 4 columns clipped the cheaper models at 390 px
     assert.match(html, /<td data-label="recorded"[^>]*>dispatch river S1[\s\S]*<td data-label="sonnet-5-5 medium">/);
     assert.ok(fs.existsSync(path.join(f.pa.state, 'advice.json')), 'the digest cache');
-    const ib = await f.get('/api/inbox?project=kestrel');
-    const item = ib.data.items.find(i => i.type === 'advice' && i.cls === 'planning');
+    // the card lives on the usage page only (UI redesign 2026-11-20: the Inbox holds only what the owner must answer)
+    const item = { id: card.key, change: card.change };
     assert.deepEqual(item.change, { 'policy.executors.planning.effort': 'high' });
-    assert.match(renderTab('inbox', ib.data, { project: 'kestrel', now: Date.now() }), /id="inbox-advice"[\s\S]*Planning above[\s\S]*data-act="advice-keep"/);
+    assert.ok(!(await f.get('/api/inbox?project=kestrel')).data.items.some(i => i.id === item.id), 'advice is no Inbox row');
     assert.equal((await f.post('/api/advice', { project: 'kestrel', key: item.id, verdict: 'maybe' })).status, 400);
     const r = await f.post('/api/advice', { project: 'kestrel', key: item.id, verdict: 'apply' });
     assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -148,7 +148,7 @@ test('dash: Usage has the Advice strip + the replay table; Inbox has the card; o
     assert.equal(dec.by, 'dashboard');
     assert.match(dec.data.choice, /^applied: policy\.executors\.planning\.effort = high/);
     assert.match(dec.data.why, /test for 5 runs, then keep or revert/);
-    assert.ok(!(await f.get('/api/inbox?project=kestrel')).data.items.some(i => i.id === item.id), 'decided: gone');
+    assert.ok(!(await f.get('/api/usage?project=kestrel')).data.parts[0].advice.cards.some(c => c.key === item.id), 'decided: gone');
     assert.equal((await f.post('/api/advice', { project: 'kestrel', key: item.id, verdict: 'apply' })).status, 409);
   } finally { await f.done(); }
 });

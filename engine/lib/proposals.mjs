@@ -1,12 +1,14 @@
-// RM-28 S1: a finished design proposal reaches the Inbox as a decision. A planner run that ended DONE leaves its notes, its plan file
-// and one brief-S<n>.md per proposed stage in its notes folder; this module turns that folder into ONE proposal (its 10-line summary,
-// the plan path, the stages) and each stage into an owner pick: queue (launch the brief now, --item = the planner's roadmap item),
-// later (a child roadmap item, horizon next, linking the brief) or drop. Every pick is a decision record (data.proposal = the planner
-// run, data.stage = the stage key); a stage is open until it has one, or until a run was launched from its brief (a check-in did it
-// by hand). Pure over folded items + the snapshot-aware file readers (fsnap.mjs: the dash primes them with primeProposals, never a
-// sync read on a GET); the CLI (`norn proposal`) acts, the dashboard Inbox shows the cards. Node built-ins.
+// RM-28 S1: a finished design proposal. A planner run that ended DONE leaves its notes, its plan file and one brief-S<n>.md per
+// proposed stage in its notes folder; this module turns that folder into ONE proposal (its 10-line summary, the plan path, the stages).
+// UI redesign 2026-11-20: the plan goes ahead inside its lane - the tick queues each open stage in turn (tickProposals), no owner card;
+// the Lanes drawer shows where each stage is. A stage is open until a run was launched from its brief or a pick was recorded on it:
+// `norn proposal rule` stays for the controller or the owner to steer one stage - queue (launch the brief now, --item = the planner's
+// roadmap item), later (a child roadmap item, horizon next, linking the brief) or drop - each a decision record (data.proposal = the
+// planner run, data.stage = the stage key). Pure over folded items + the snapshot-aware file readers (fsnap.mjs: the dash primes them
+// with primeProposals, never a sync read on a GET), except tickProposals, which acts through the CLI. Node built-ins.
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA } from './fsnap.mjs';
+import { laneId } from './records.mjs';
 
 export const PICKS = ['queue', 'later', 'drop'];
 export const PICK_WORDS = { queue: 'Queue now', later: 'Later', drop: 'Drop' };
@@ -94,6 +96,28 @@ export function openStage(props, run, key) {
 export const queueArgv = (p, s) => ['run', '--queue', '--executor', p.executor || 'claude', '--lane', p.lane, '--stage', s.key, '--brief', s.brief,
   '--notes', fwd(path.join(p.dir, `NOTES-${s.key}.md`)), ...(p.worktree ? ['--worktree', p.worktree] : []), ...(p.item ? ['--item', p.item] : [])];
 
+/**
+ * The tick's step (UI redesign 2026-11-20, owner: "the agent plans, then executes"): a lane's plan goes ahead inside its lane, no owner
+ * card. Per proposal of an ACTIVE lane (the owner approved the lane; a parked or archived one waits) with nothing live on it, its first
+ * open stage is queued (queueArgv: `norn run --queue`); the run's brief marks the stage launched, so the next stage goes when the lane
+ * is idle again - one stage at a time, in number order. A stage whose run was withdrawn holds the plan: someone stopped it on purpose,
+ * so the rest waits for a ruling (norn proposal rule). o: { cli (args) -> { code, out } (none = nothing is queued), loc (the CLI's
+ * --project / --state args; default --state <state>), dry, read, list }.
+ * -> [{ lane, run, stage, act: queued | refused, note }]
+ */
+export function tickProposals(state, items, R, { cli = null, loc = ['--state', state], dry = false, ...o } = {}) {
+  const xs = Object.values(items), out = [], busy = lane => xs.some(i => i.kind === 'run' && i.data?.lane === lane && ['queued', 'claimed', 'running'].includes(i.state));
+  for (const p of proposalsOf(items, R, o)) {
+    const s = p.stages.find(x => x.state === 'open');
+    if (!s || !p.lane || items[laneId(p.lane, state)]?.state !== 'active' || busy(p.lane) || xs.some(i => i.kind === 'run' && i.state === 'withdrawn' && i.data?.brief && same(i.data.brief, s.brief))) continue;
+    if (dry || !cli) { out.push({ lane: p.lane, run: p.run, stage: s.key, act: 'queued', note: `would queue ${s.key} (dry)` }); continue; }
+    const r = cli([...queueArgv(p, s), ...loc]), m = r.out.match(/\b(?:QUEUED|STARTED) (RUN-\d+)/);
+    out.push(r.code === 0 && m ? { lane: p.lane, run: p.run, stage: s.key, act: 'queued', note: `${m[1]} launches ${path.basename(s.brief)} (plan of ${p.run})` }
+      : { lane: p.lane, run: p.run, stage: s.key, act: 'refused', note: `norn run --queue exit ${r.code}: ${r.out.split('\n')[0].slice(0, 160)}` });
+  }
+  return out;
+}
+
 /** the roadmap create event of a Later pick: a child item of the planner's item, horizon next, linking the brief (doc:) */
 export const laterItem = (p, s, by) => ({ kind: 'item', ev: 'create', by, data: { kind: 'item', title: `${p.lane} ${s.key}: ${s.title || path.basename(s.brief)}`.slice(0, 200),
   parent: p.item, horizon: 'next', note: `Proposed by ${p.run} (planner, lane ${p.lane}); brief ${s.brief}`, links: ['doc:' + s.brief] } });
@@ -103,7 +127,7 @@ export function pickDecision(p, s, pick, by, ref = null) {
   const choice = pick === 'queue' ? `queue now: ${ref} launches ${path.basename(s.brief)}${p.item ? ` (--item ${p.item})` : ''}`
     : pick === 'later' ? `later: roadmap item ${ref} under ${p.item}, horizon next` : 'drop: the stage is not built';
   return { kind: 'decision', ev: 'create', by, data: { lane: p.lane, proposal: p.run, stage: s.key, pick, ...(pick === 'queue' && ref ? { run: ref } : {}), ...(pick === 'later' && ref ? { item: ref } : {}),
-    question: `Proposal ${p.run} (${p.lane}) ${s.key}: ${s.title || path.basename(s.brief)}`, choice, why: `The owner's pick on the Inbox proposal card of planner run ${p.run}.` } };
+    question: `Proposal ${p.run} (${p.lane}) ${s.key}: ${s.title || path.basename(s.brief)}`, choice, why: `${by}'s pick on stage ${s.key} of planner run ${p.run} (norn proposal rule).` } };
 }
 
 /** one line per proposal for the CLI */

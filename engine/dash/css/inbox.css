@@ -1,0 +1,7 @@
+/* The Inbox page (pages/inbox.mjs): the title line with its filter chips and ? help, a question's head row, the answer row, the
+   "possibly answered" hint. The question card itself (.q, .opts, .qthread) is base.css's. */
+#inbox-needs .lhelp{margin-left:auto}
+.qhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.qtitle{font-size:15px;min-width:0;overflow-wrap:anywhere}
+.qanswer{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.qanswer textarea{flex:1;min-width:0}
+.qmaybe{margin:8px 0;padding:8px 10px}.qmaybe .primary{margin-left:8px}.qans{margin:6px 0}
+#inbox-machine,#inbox-audit,#inbox-fixer,#inbox-enforce{margin-bottom:12px}#inbox-clear{margin-bottom:12px}

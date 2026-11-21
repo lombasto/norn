@@ -4,7 +4,8 @@ import { renderMarkdown } from '../docs.mjs';
 import { esc, fin, int, chip, fmtTime } from '../cells.mjs';
 import { subMore } from '../subviews.mjs';
 import { placeFindings, findingsByLine } from '../docparts.mjs';
-import { tk, INS_LOAD, INS_CHIP, SEV_CHIP, memGauge } from './context.mjs';
+import { tk, INS_LOAD, INS_CHIP, memGauge } from './context.mjs';
+import { SEV_CHIP } from '../cards.mjs';
 
 // META-UX-BUILD S3 (REPORT s.2): Docs = the one reader. A side list of every file the agents read + the project's own docs, grouped by
 // who loads it (docparts.mjs; each group capped, "show more"); the Memory group is headed by its gauge. The open file is its own part:

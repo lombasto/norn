@@ -76,14 +76,14 @@ test('each tab has a data endpoint from records / runs / transcripts', async () 
     assert.equal(by.render.executor, 'codex-sol'); assert.match(by.render.text, /^running codex-sol .*\/ budget 90$/);
     assert.equal(by.gen.text, 'parked by Q-1'); assert.equal(by.seabed.text, 'exited: STOPPED: red test');
     const inbox = (await f.get('/api/inbox')).data.items;
-    // META-TEND P4: + one model-advice card - the engine default planning effort (xhigh) is above the vendor's start (high)
-    assert.deepEqual(inbox.map(i => i.type === 'advice' ? `advice ${i.cls} ${i.check}` : `${i.type} ${i.id}`).sort(), ['advice planning effort-above-start', 'parked L:gen', 'question Q-1', 'unreviewed RUN-1']);
+    // UI redesign 2026-11-20: only what the owner must answer - the parked lane and the unreviewed run show on Lanes, the advice on Usage
+    assert.deepEqual(inbox.map(i => `${i.type} ${i.id}`).sort(), ['question Q-1']);
     const tree = (await f.get('/api/agents')).data.tree;
     const w = tree.find(n => n.id === 'RUN-1'), c = tree.find(n => n.id === 'RUN-2');
     assert.equal(w.ctx, 4 + 33810 + 31513); assert.equal(w.children[0].agentType, 'kestrel-implementer'); assert.equal(w.ctx_limit, 110000);
     assert.equal(c.model, 'gpt-5.4'); assert.equal(c.tokens, 60559); assert.equal(c.tokens_src, 'live');
     const o = (await f.get('/api/overview')).data;
-    assert.equal(o.needs_you, 3); assert.equal(o.running.codex.n, 1); assert.equal(o.running.codex.cap, 5); assert.equal(o.running.lanes[0].name, 'render');
+    assert.equal(o.needs_you, 1); assert.equal(o.running.codex.n, 1); assert.equal(o.running.codex.cap, 5); assert.equal(o.running.lanes[0].name, 'render');
     assert.equal(o.burn.usage.source, 'live'); assert.equal(o.burn.usage.weeklyUsed, 96); assert.equal(o.burn.usage.guard, 'STOP'); assert.equal(o.burn.usage.estimate.weekly, 60);
     const r = (await f.get('/api/records')).data;
     assert.equal(r.decisions[0].id, 'DEC-1'); assert.equal(r.directives[0].history.length, 1);
@@ -112,12 +112,12 @@ test('usage falls back to the STATUS.md estimate when live usage is stale', asyn
 test('project switcher: two projects, ?project= scopes every tab, all sums the overview', async () => {
   const f = await fixture();
   try {
-    assert.deepEqual((await f.get('/api/projects')).data.projects, [{ name: 'kestrel', title: 'KESTREL', needs: 3 }, { name: 'other', title: 'OTHER', needs: 1 }]);
-    const b = (await f.get('/api/inbox?project=other')).data.items.filter(i => i.type !== 'advice');   // META-TEND P4: advice is advisory, not a need
+    assert.deepEqual((await f.get('/api/projects')).data.projects, [{ name: 'kestrel', title: 'KESTREL', needs: 1 }, { name: 'other', title: 'OTHER', needs: 1 }]);
+    const b = (await f.get('/api/inbox?project=other')).data.items;
     assert.deepEqual(b.map(i => i.title), ['other project question']);
     assert.equal((await f.get('/api/lanes?project=other')).data.lanes.length, 0);
     const all = (await f.get('/api/overview?project=all')).data;
-    assert.equal(all.needs_you, 4); assert.deepEqual(all.projects, ['kestrel', 'other']);
+    assert.equal(all.needs_you, 2); assert.deepEqual(all.projects, ['kestrel', 'other']);
     assert.ok((await f.get('/api/inbox?project=all')).data.items.some(i => i.project === 'other'));
     assert.equal((await f.get('/api/records?project=all')).status, 400);
     assert.equal((await f.get('/api/inbox?project=nope')).status, 404);

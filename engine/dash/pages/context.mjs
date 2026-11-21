@@ -1,13 +1,14 @@
 // The Context page (moved from ui.mjs, ui-context-docs): what every session loads before any work and what it costs - the summary
 // numbers once under the view switch, Per role / Per file / Is it growing? / Check-ins per day, and the checks page one link away
 // (sub=checks: findings, the ladder, said again, audits, memory). Every file name opens the Docs reader. ui.mjs keeps the dispatch line.
-// The shared steering-file cells (load words and chips, ~tokens, severity chips, the memory gauge) live here; pages/docs.mjs imports them.
+// The shared steering-file cells (load words and chips, ~tokens, the memory gauge) live here; pages/docs.mjs imports them. The audit
+// and enforce cards and the severity chips are cards.mjs's (the Inbox shows the same cards).
 import { esc, fin, dash, int, plural, chip, fmtTime, goAttrs, filterChips } from '../cells.mjs';
 import { bars, stack, board, lines } from '../widgets.mjs';
 import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextNumbers, standingRows, perDay, worstFiles, measuredRows } from '../insparts.mjs';
 import { diffBlock } from '../diffview.mjs';
-import { renderProse } from '../prose.mjs';
+import { SEV_CHIP, baseName, auditCard, enforceCard } from '../cards.mjs';
 
 // META-INSTRUCTIONS R1: every file that steers the agents - load class, ~size, what it cost today, drift, read-only hints; a row
 // opens the file rendered.
@@ -126,7 +127,6 @@ function ctxChecks(d) {
 // META-TEND P3 (REPORT 5.3 view 6): the ladder - every must / never rule as a card in its state's column (prose only -> repeated n
 // times -> enforced -> retired): its home (a click opens the source line), its enforcement, when that last fired. Built on board().
 const ENF_LABEL = { prose: 'prose only', hook: 'hook', deny: 'deny rule', test: 'test', lint: 'lint', gate: 'gate', 'git-hook': 'git hook' };
-export const baseName = p => String(p ?? '').split('/').pop();
 function insRuleChips(c) {
   if (!c?.total) return '';
   return ` ${chip('idle', `${c.total} rule${c.total > 1 ? 's' : ''}`)}${c.prose ? ` ${chip('warn', `${c.prose} prose only`)}` : ''}${c.repeated ? ` ${chip('bad', `${c.repeated} repeated`)}` : ''}${c.enforced ? ` ${chip('ok', `${c.enforced} enforced`)}` : ''}`;
@@ -184,7 +184,7 @@ function insRepeats(L) {
     ${cs.length ? `<ul>${cs.map(c => enforceCard(c, null)).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no correction said 3 times</p>'}</div>`;
 }
 // META-PRACTICE-P1: the static checks in place - one "managed" line, then the findings per file (severity chips, counts, the fix)
-export const SEV_CHIP = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' }, SEVS = ['high', 'medium', 'low', 'count'];
+const SEVS = ['high', 'medium', 'low', 'count'];
 function insManaged(m) {
   if (!m) return '';
   const sev = SEVS.filter(s => m.by_severity?.[s]).map(s => chip(SEV_CHIP[s], `${m.by_severity[s]} ${s}`)).join(' ');
@@ -261,25 +261,4 @@ function insMemory(m) {
    ${orphans ? `<div class="small" style="margin-top:6px"><b>In no index</b> <span class="mute">(a session never finds them)</span></div><div class="small" style="overflow-wrap:anywhere">${orphans}</div>` : ''}
    <details style="margin:6px 0"><summary class="small">all ${int(m.topics.length)} topic files, last opened first</summary><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>index</th><th>last opened</th><th class="insopt">last changed</th></tr></thead><tbody>${tops}</tbody></table></div></details>
    <div class="small mute" style="padding-bottom:6px">${esc(m.opened_method)}</div></div></div>`;
-}
-
-const fmtLocal = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
-  const d = new Date(t); return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} local`; };
-// META-TEND P5 (REPORT 3.3): one vendor-audit hunk = one card; accept = a decision + a directive (the check-in applies it), decline = a decision
-export function auditCard(c, project) {
-  const pj = project ? ` data-project="${esc(project)}"` : '';
-  return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
-    ${diffBlock({ patch: c.fix.patch ?? '' }, { title: `${baseName(c.path)}:${c.line}`, sub: 'vendor audit hunk' })}
-    <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
-}
-// META-TEND P3 (REPORT 3.6): the repeat detector's cards - one per cluster, ranked; approve = a directive (the one approvals path)
-// RM-30 S1: a card its directive already asks for (rules.mjs askedBy) reads "Asked as DIR-n (state) - date" with a link and has no
-// Approve; Approve is one tap (the directive is the record and can be revoked) and sends the card id, which the directive keeps
-export function enforceCard(c, project, px = { project }) {
-  const a = c.asked;
-  return `<li class="insfind${a ? ' asked' : ''}" id="enf-${esc(c.id)}">${chip(a ? 'ok' : c.severity === 'medium' ? 'warn' : 'idle', a ? 'asked' : c.severity)} <div class="enf-why">${renderProse(c.why, px)}</div>
-    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${renderProse(x.text, px)}</li>`).join('')}</ul>${diffBlock({ patch: c.fix.patch ?? '' }, { title: 'the draft', sub: 'repeat detector draft' })}</details>
-    ${a ? `<div class="small enf-asked">Asked as <a class="rid r-dir" href="#" data-rid="${esc(a.id)}"${project ? ` data-project="${esc(project)}"` : ''}>${esc(a.id)}</a> (${esc(a.state)}) - ${esc(fmtLocal(a.at))}</div>`
-    : `<div class="small mute">${esc(c.fix.action)}</div>
-    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button>`}</li>`;
 }

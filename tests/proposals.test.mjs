@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { proposalsOf, summaryOf, briefTitle, openStage, queueArgv } from '../engine/lib/proposals.mjs';
+import { proposalsOf, summaryOf, briefTitle, openStage, queueArgv, tickProposals } from '../engine/lib/proposals.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -107,4 +107,29 @@ test('norn proposal rule refuses: later with no roadmap item, a launch the launc
   assert.equal(r.status, 2); assert.match(r.stderr, /queue\|later\|drop/);
   r = norn(['proposal', 'list', '--state', state, '--json'], root);
   assert.equal(JSON.parse(r.stdout)[0].open, 3);
+});
+
+test('tickProposals: an active idle lane gets its first open stage queued (no card); then one at a time; a parked lane or a dry tick queues nothing', () => {
+  const { state, notesDir, wt } = fixture();
+  if (!loadState(state).items['L:sizing']) record(state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'sizing' } });
+  const calls = [], cli = args => { calls.push(args); const n = 2 + calls.length - 1;
+    record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'sizing', stage: args[args.indexOf('--stage') + 1], worktree: wt, brief: args[args.indexOf('--brief') + 1] } });
+    return { code: 0, out: `QUEUED RUN-${n} lane sizing` }; };
+  const tick = o => tickProposals(state, loadState(state).items, loadRoadmap(state), { cli, ...o });
+  assert.deepEqual(tick({ dry: true }).map(x => [x.stage, x.act]), [['S1', 'queued']]); assert.equal(calls.length, 0, 'a dry tick calls nothing');
+  const [x] = tick();
+  assert.deepEqual([x.lane, x.run, x.stage, x.act], ['sizing', 'RUN-1', 'S1', 'queued']); assert.match(x.note, /RUN-2 launches brief-S1\.md/);
+  assert.deepEqual(calls[0].slice(0, 8), ['run', '--queue', '--executor', 'fake', '--lane', 'sizing', '--stage', 'S1']); assert.deepEqual(calls[0].slice(-2), ['--state', state]);
+  assert.equal(path.resolve(calls[0][calls[0].indexOf('--brief') + 1]), path.resolve(notesDir, 'brief-S1.md'));
+  assert.deepEqual(tick(), [], 'RUN-2 is live on the lane: S2 waits');
+  record(state, { kind: 'run', ev: 'end', id: 'RUN-2', by: 'launcher', data: { exit: 0, outcome: 'done' } });
+  assert.deepEqual(props(state)[0].stages.map(s => s.state), ['launched', 'open', 'open']);
+  assert.deepEqual(tick().map(y => y.stage), ['S2'], 'the lane is idle again: the next stage, in number order');
+  record(state, { kind: 'run', ev: 'end', id: 'RUN-3', by: 'launcher', data: { exit: 0, outcome: 'done' } });
+  record(state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'sizing', stage: 'S10', worktree: wt, brief: path.join(notesDir, 'brief-S10.md') } });
+  record(state, { kind: 'run', ev: 'withdraw', id: 'RUN-4', by: 'owner', data: { why: 'not this one' } });
+  assert.deepEqual(tick(), [], 'a withdrawn stage run holds the plan: never re-queued by the tick');
+  const p = fixture(); record(p.state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'sizing' } }); record(p.state, { kind: 'lane', ev: 'park', id: 'L:sizing', by: 'checkin', data: { why: 'held' } });
+  assert.deepEqual(tickProposals(p.state, loadState(p.state).items, loadRoadmap(p.state), { cli: () => assert.fail('a parked lane queues nothing') }), []);
+  const r = tickProposals(fixture().state, {}, { items: {} }, { cli }); assert.deepEqual(r, [], 'no planner run: nothing');
 });

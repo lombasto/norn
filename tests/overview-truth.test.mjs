@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { whyNotMerged, stoppedLine } from '../engine/lib/dlvwhy.mjs';
 import { mergeBacklog } from '../engine/lib/deliverables.mjs';
-import { deliverablesCard, renderDeliverable } from '../engine/dash/ui.mjs';
+import { dlvWhyNot, renderDeliverable } from '../engine/dash/ui.mjs';
 import { stateOf } from '../engine/dash/cells.mjs';
 import { lanesView } from '../engine/lib/lanes.mjs';
 import { laneHooks } from '../engine/lib/lifecycle.mjs';
@@ -27,7 +27,7 @@ const row = (o = {}) => ({ id: 'DLV-21', project: 'solve-shack', record_state: '
   lane: 'a', delivers: 'the thing', done_utc: T(-10), days: 0.4, behind: 2, ahead: 3, native: false, pr: null, ...o });
 
 // ---------- (2) why a DONE deliverable is not merged ----------
-test('why not merged: each reason from a fixture, in words with its link, rendered on the card and the drawer', () => {
+test('why not merged: each reason from a fixture, in words with its link, rendered as the why-not line and on the drawer', () => {
   const notes = path.join(mkTmp('ot-notes-'), 'MERGE-NOTES.md');
   fs.writeFileSync(notes, '# merge\n\nran the suite\n\nSTOPPED: main moved; conflict in engine/lib/x.mjs needs a design call\n');
   const cases = [
@@ -45,7 +45,7 @@ test('why not merged: each reason from a fixture, in words with its link, render
   for (const [kind, r, o, text] of cases) {
     const w = whyNotMerged(r, o);
     assert.equal(w.kind, kind); assert.equal(w.text, text, kind);
-    const html = deliverablesCard({ rows: [{ ...r, why_not: w }] }, { project: 'solve-shack' });
+    const html = dlvWhyNot({ ...r, why_not: w });
     assert.ok(html.includes(`data-why="${kind}"`), kind);
     assert.ok(html.includes(text.replace(/&/g, '&amp;')), `${kind} renders its words`);
     if (w.run) assert.match(html, new RegExp(`data-feed="${w.run}"`), `${kind} links its run to the live feed`);
@@ -59,12 +59,10 @@ test('why not merged: each reason from a fixture, in words with its link, render
 });
 
 // ---------- (3) one done-not-merged count, shared with the merge backlog ----------
-test('the card heading counts done-not-merged by mergeBacklog: same N and oldest as the Lanes and Plan line', () => {
+test('done-not-merged is counted by mergeBacklog: the one N and oldest the Lanes line shows', () => {
   const rows = [row({ id: 'DLV-1', done_utc: T(-13) }), row({ id: 'DLV-2', done_utc: T(-2) }), row({ id: 'DLV-3', pr: { url: 'u', number: 4 } }), row({ id: 'DLV-4', state: 'merged' })];
   const b = mergeBacklog(rows, { now: NOW, max: 3 });
   assert.equal(b.text, 'done, not merged: 2 (oldest 13h)');
-  const html = deliverablesCard({ rows, backlog: b }, {});
-  assert.match(html, /id="dlv-counts"[^]*done, not merged: 2 \(oldest 13h\)[^]*1 with a PR open[^]*1 merged, not installed/);
 });
 
 // ---------- (5) the Lanes page ----------

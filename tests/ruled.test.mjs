@@ -36,20 +36,20 @@ test('a lane parked on an answered question reads "waiting: your ruling is being
   assert.notEqual(l.group, 'needs');
 });
 
-test('the dashboard: an answer starts a tick at once; the parked lane leaves the needs-you count and says what it waits for', async () => {
+// UI redesign 2026-11-20: the Inbox holds only what the owner must answer - the open Q; its parked lane shows on Lanes (lanesView above)
+test('the dashboard: an answer starts a tick at once; the Q leaves the needs-you count; the parked lane is no Inbox row', async () => {
   const f = await fixture();
   try {
     const before = (await f.get('/api/inbox?project=kestrel')).data;
-    const row = before.items.find(i => i.type === 'parked' && i.id === 'L:gen');
-    assert.ok(row && !row.ruled, 'parked on an open Q: needs you'); assert.equal(row.lane, 'gen', 'the lane name (records.mjs laneName), for the Inbox');
+    assert.ok(before.items.some(i => i.type === 'question' && i.id === 'Q-1'), 'the open Q needs you');
+    assert.ok(!before.items.some(i => i.id === 'L:gen'), 'the lane it parks is no Inbox row');
     const t0 = f.counts.ticks;
     const r = await f.post('/api/answer', { project: 'kestrel', id: 'Q-1', choice: 'b', text: 'go' });
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.equal(f.counts.ticks, t0 + 1, 'the answer starts a tick');
     const after = (await f.get('/api/inbox?project=kestrel')).data;
-    const p = after.items.find(i => i.type === 'parked' && i.id === 'L:gen');
-    assert.equal(p.ruled?.q, 'Q-1'); assert.equal(p.ruled?.choice, 'b');
-    assert.equal(after.needs_you, before.needs_you - 2, 'the Q and its parked lane both leave the count');
+    assert.ok(after.items.some(i => i.type === 'resolved' && i.id === 'Q-1'), 'answered: in the Resolved group');
+    assert.equal(after.needs_you, before.needs_you - 1, 'the answered Q leaves the count');
   } finally { await f.done(); }
 });
 

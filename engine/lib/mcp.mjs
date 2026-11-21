@@ -90,7 +90,7 @@ const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) 
 
 // The needs-you set (HARNESS-DESIGN sec. 4 norn_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs. LANE-TRUTH:
 // with a project's lane hooks (h = laneHooks(state), stateDir = its state dir) a parked lane whose work shipped or that has no branch left,
-// and an unreviewed run of a shipped lane, ask nothing (lifecycle.mjs laneAsksOwner: the rule the dash Inbox reads).
+// and an unreviewed run of a shipped lane, ask nothing (lifecycle.mjs laneAsksOwner).
 export function needsYou(i, h = null, stateDir = null) {
   const asks = (lane, o) => !h || laneAsksOwner(h, lane(), o);
   if (i.kind === 'question' && i.state === 'open') return 'open question';

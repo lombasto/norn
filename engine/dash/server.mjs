@@ -20,7 +20,7 @@ import { profileChoices, profileChanges, profileBudget, getProfile, loadProfiles
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy, REQUIRED_CAPS } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneName, laneNameIn, laneIdIn, homeOfId, copyItemsAsync, crewFile } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneNameIn, laneIdIn, homeOfId, copyItemsAsync, crewFile } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
@@ -32,9 +32,9 @@ import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax, loadDeliverables, isLanded } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
-import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile, laneAsksOwner } from '../lib/lifecycle.mjs';
+import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
+import { agentsTree, primeAgents, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
 import { listProcsAsync } from '../lib/strays.mjs';
 import { agentSessions } from '../lib/agentprocs.mjs';
@@ -102,6 +102,7 @@ import { slopHolds, openBlocks, slopFiles, slopDir, meterSeries, waiverCmd, voic
 import { meterDelta, loadMeter } from '../lib/slop/meter.mjs';
 import { effectiveRules, explainOf, primeRules } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
+import { recordWeights } from '../lib/recordweight.mjs';
 import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
 import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
 
@@ -114,7 +115,7 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscree
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
-const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs', 'settings.mjs', 'context.mjs', 'context-acts.mjs', 'docs.mjs', 'roadmap.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css', 'slop.css', 'context.css', 'roadmap.css'];
+const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs', 'settings.mjs', 'context.mjs', 'context-acts.mjs', 'docs.mjs', 'roadmap.mjs', 'inbox.mjs', 'inbox-acts.mjs', 'ledger.mjs', 'ledger-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css', 'slop.css', 'context.css', 'roadmap.css', 'inbox.css', 'ledger.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
 export const TABS = ['talk', 'lanes', 'runs', 'inbox', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
@@ -434,8 +435,8 @@ export function createDashboard(o) {
   }
 
   // ---------- tab data ----------
-  // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
-  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
+  // UI redesign 2026-11-20: the Inbox holds only what the owner must answer - open questions and the owner cards (a resolved Q is for information);
+  // parked lanes and unreviewed runs show in Lanes, model advice on Spend, a lane's plan goes ahead inside its lane (no proposal card).
   // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
   const RESOLVED_MAX = 20;   // INBOX-REPLIES: the Resolved view's newest answered / applied Qs per project
   const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
@@ -464,32 +465,15 @@ export function createDashboard(o) {
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: laneFrom(p, q.id, q.data.lane), ...foreign(p, s, q.id), title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
       origin: q.data.origin ?? null, thread: threadOf(q), waiting: unanswered(q).length, proposal: rulingOf(q),
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
-    // RM-28 S1: a finished planner run = ONE decision card (its summary, plan, a Queue now / Later / Drop per open stage)
-    await primeProposals(s.items);
-    for (const x of proposalsOf(s.items, loadRoadmap(p.state))) out.push({ type: 'proposal', id: x.run, project: p.name, lane: x.lane, item: x.item, title: `Decide: ${x.lane} plan`,
-      summary: x.summary, plans: x.plans, stages: x.stages, open: x.open, created: x.ended });
     // META-TEND P3: the repeat detector's approval cards (one per cluster, ranked): approve = a directive the check-in turns into a brief
     for (const c of await enforceCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, asked: c.asked, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
     for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
-    for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
     // INBOX-REPLIES: the Resolved view - answered / applied Qs, newest first, each with its thread kept (for information: never a need)
     for (const q of items.filter(i => i.kind === 'question' && ['answered', 'applied'].includes(i.state)).sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, RESOLVED_MAX))
       out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
-    // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in.
-    // LANE-TRUTH (lifecycle.mjs laneAsksOwner): a parked lane whose work shipped or that has no branch left asks nothing - no row at all
-    const lh = laneHooks(p.state), asks = (lane, o) => laneAsksOwner(lh, lane, o);
-    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked' && asks(laneName(i.id, p.state), { parked: true, rec: i }))) { const q = l.park?.q ? s.items[l.park.q] : null;
-      out.push({ type: 'parked', id: l.id, lane: laneName(l.id, p.state), project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
-        ...(q?.state === 'answered' ? { ruled: { q: q.id, choice: q.answer?.choice ?? null, text: q.answer?.text ?? null, at: q.updated } } : {}) }); }
-    // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
-    let adv = [];
-    try { adv = (await adviceOf(p)).cards; } catch { adv = []; }
-    for (const c of adv) out.push({ type: 'advice', id: c.key, project: p.name, check: c.check, cls: c.id, title: c.title, severity: c.severity, text: c.text, fix: c.fix, change: c.change, source: c.source, trial: c.trial, created: null });
-    for (const r of runsOf(s).filter(r => ['exited', 'lost', 'killed'].includes(r.state) && !r.review && r.data.role !== 'helper' && (r.state !== 'exited' || r.end?.outcome === 'stopped') && asks(r.data.lane ?? null)))
-      out.push({ type: 'unreviewed', id: r.id, ...doerOf(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
   // fair-slots item 2: the PRs merge-land opened (a deliverable's `pr` event) whose branch is not on main yet, per lane - from the cached
@@ -680,8 +664,9 @@ export function createDashboard(o) {
     const n = url.searchParams.get('count'), o = url.searchParams.get('offset');
     const count = Math.min(2000, Math.max(1, Number.parseInt(n ?? '', 10) || 100)), offset = Math.max(0, Number.parseInt(o ?? '', 10) || 0);
     const all = p.ledger ? await tail(p.ledger, Infinity) : [], end = Math.max(0, all.length - offset), start = Math.max(0, end - count);
-    const [s, sync] = await Promise.all([stAsync(p), syncBlocks(p)]);
-    return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(s))], ...sync };
+    const sync = await syncBlocks(p);
+    const ledger = all.slice(start, end), prose = await proseOf(p, [{ body: ledger.join('\n') }]);   // the prose renderer's lanes / repo / Docs keys
+    return { file: p.ledger ?? null, ledger, total: all.length, count, offset, more: start > 0, prose, ...sync };
   }
   // RM-46 S3 (SPEC sec. 8 S3): a synced project's Ledger page carries the Homes block (each other home's fetched head, the last fetch, lag,
   // clock offset) and the Claims block (work claims with the stale flag on this home's clock, the merge leader). Async git on the local
@@ -951,11 +936,24 @@ export function createDashboard(o) {
       backlog: backlogOf(ps),   // MERGE-FIRST (4)
       setup: ps.length === 1 ? setupOf(ps[0]) : null };   // META-ADOPT A3: the setup gaps (rules, caps nobody chose, no merge gate)
   }
-  function records(p, url) {
+  // the Records page: every directive and decision with its weight (recordweight.mjs: cited where, by whom, edits, conflicts, age,
+  // recorded violations) over the ledger lines, the newest NOTES_MAX runs' notes (read once per file version) and the scope refusals
+  const NOTES_MAX = 400, noteIds = new Map();   // path -> { m: mtime, text: the DIR / DEC ids it names }
+  async function noteTexts(runs) {
+    const xs = runs.filter(r => r.data?.notes).sort((a, b) => String(b.created).localeCompare(String(a.created))).slice(0, NOTES_MAX);
+    return (await Promise.all(xs.map(async r => { const f = r.data.notes, m = (await statA(f))?.mtimeMs; if (!m) return null;
+      let c = noteIds.get(f); if (!c || c.m !== m) { c = { m, text: ((await readA(f)).match(/\b(?:DIR|DEC)-\d+\b/g) || []).join(' ') }; noteIds.set(f, c); }
+      return { run: r.id, lane: r.data.lane ?? null, path: f.replace(/\\/g, '/'), text: c.text }; }))).filter(Boolean);
+  }
+  async function records(p, url) {
     const kinds = ['decision', 'directive'], k = url.searchParams.get('kind'), s = url.searchParams.get('state');
-    const S = st(p), items = Object.values(S.items).filter(i => kinds.includes(i.kind) && (!k || i.kind === k) && (!s || i.state === s))
-      .map(i => ({ id: i.id, kind: i.kind, state: i.state, by: i.by, created: i.created, updated: i.updated, data: i.data, history: i.history, ...foreign(p, S, i.id) }));
-    return { project: p.name, decisions: items.filter(i => i.kind === 'decision'), directives: items.filter(i => i.kind === 'directive') };
+    const S = await stAsync(p), all = Object.values(S.items);
+    const [ledger, notes, refused] = await Promise.all([p.ledger ? tail(p.ledger, Infinity) : [], noteTexts(all.filter(i => i.kind === 'run')), readA(refusalsFile(p.state))]);
+    const W = recordWeights(S.items, { ledger, notes, refusals: refused.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) });
+    const items = all.filter(i => kinds.includes(i.kind) && (!k || i.kind === k) && (!s || i.state === s))
+      .map(i => ({ id: i.id, kind: i.kind, state: i.state, by: i.by, created: i.created, updated: i.updated, data: i.data, history: i.history, superseded_by: i.superseded_by ?? null, weight: W[i.id], ...foreign(p, S, i.id) }));
+    const prose = await proseOf(p, items.map(i => ({ body: [i.data.text, i.data.question, i.data.choice, i.data.why].filter(Boolean).join('\n') })));
+    return { project: p.name, decisions: items.filter(i => i.kind === 'decision'), directives: items.filter(i => i.kind === 'directive'), prose };
   }
   // cost per lane (META-OPS-R1 #7): the roll-up of engine/lib/cost.mjs, cached one UI tick; ended runs memoized (never re-read),
   // running transcripts / rollouts tailed from their last byte offset; the fold is the cached one (re-read on a records change)
@@ -1446,7 +1444,7 @@ export function createDashboard(o) {
   async function homeOf(p) {
     await drainChatA(p);
     const s = st(p), runs = runsOf(s), lines = readThread(p.state).items, seg = threadState(lines).seg;
-    // an unreviewed run / a parked lane sits in the thread at its record's last event (the inbox row has no created time)
+    // a card with no created time sits in the thread at its record's last event
     const needs = (await inbox(p)).filter(isNeed).map(n => (n.created ? n : { ...n, created: s.items[n.id]?.updated ?? null }));
     const events = homeEvents({ thread: lines, runs, dwarf: dwarfOf, items: Object.values(s.items), ledger: p.ledger ? (await tail(p.ledger, 400)).map(parseLedgerLine) : [], needs });
     const m = withDefaults(settingsState(p).view), usageLine = [...lines].reverse().find(l => l.kind === 'usage' && (!seg || l.seg === seg.n));
@@ -1466,7 +1464,7 @@ export function createDashboard(o) {
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
       checkins_paused: stopsCheckins(pauseOfP(p)), limits: limitLines(p.state),   // RM-37: Pause check-ins / Pause everything   // META-LIMIT-GATE: executors out of quota
-      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${n.lane} parked` : n.id), created: n.created ?? null })),
+      waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? n.id, created: n.created ?? null })),
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };
@@ -1955,13 +1953,6 @@ data: ${JSON.stringify(l)}
       if (typeof data.fp !== 'string' || typeof data.up !== 'boolean') throw fail(400, 'fp (a finding fingerprint) and up (true or false) are needed');
       try { return { ok: true, ...hostWrite(p.state, { type: 'rating', fp: data.fp, up: data.up, by: 'dashboard' }) }; } catch (e) { throw fail(400, e.message); }
     }
-    if (route === '/api/proposal') {   // RM-28 S1: a stage's pick on the proposal card = `norn proposal rule` (the decision + the act: one path)
-      if (!['queue', 'later', 'drop'].includes(data.pick)) throw fail(400, 'pick must be queue, later or drop');
-      if (!/^RUN-\d+$/.test(String(data.run)) || !/^S\d+$/i.test(String(data.stage))) throw fail(400, 'run must be a RUN-n and stage an S<n>');
-      const r = await metaCli(['proposal', 'rule', String(data.run), String(data.stage), data.pick, '--as', 'dashboard', ...(p.file ? ['--project', p.file] : []), '--state', p.state]);
-      if (r.code !== 0) { const e = cliFail(r); throw fail(/decided already/.test(e.message) ? 409 : e.status, e.message); }
-      return { ok: true, lines: r.out.trim().split(/\r?\n/) };
-    }
     if (route === '/api/advice') {   // META-TEND P4: the advice card's one tap - apply its Settings change, or keep the setting; both recorded
       if (!['apply', 'keep'].includes(data.verdict)) throw fail(400, 'verdict must be apply or keep');
       const c = (await adviceOf(p, true)).cards.find(x => x.key === data.key);
@@ -2090,7 +2081,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile(), file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('data-asset="wordmark"', `data-asset="wordmark"${(await existsA(path.join(ART, 'wordmark.png'))) ? ' src="/norn/art/wordmark.png"' : ''}`).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/shell.mjs' || route === '/cells.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/shell.mjs' || route === '/cells.mjs' || route === '/cards.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         if (route === '/lib/testcmd.mjs') return send(200, await readA(path.join(DASH, '..', 'lib', 'testcmd.mjs')), 'text/javascript; charset=utf-8');   // activity.mjs's one lib import (TEST-GOVERNANCE S1: the test-command classifier)
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
@@ -2136,7 +2127,7 @@ data: ${JSON.stringify(l)}
           const away = (await Promise.all(ps.map(async p => (await copyItemsAsync(p.state, 'deliverable')).map(it => ({ ...dlvCopyRow(it), project: p.name }))))).flat();
           return send(200, { rows: [...vs.flatMap(v => v.rows), ...away], backlog: backlogOf(ps), pending: vs.some(v => v.pending), error: vs.map(v => v.error).filter(Boolean).join('; ') || null, install: vs[0]?.install ?? null, git: vs.map(v => v.git ?? null) });
         }
-        if (route === '/api/records') return send(200, records(one(url), url));
+        if (route === '/api/records') return send(200, await records(one(url), url));
         if (route === '/api/roadmap') return send(200, await roadmapOf(one(url)));
         if (route === '/api/handedit/diff') {   // RM-35: last written by Norn vs now, for the diff viewer
           try { return send(200, await handEditDiff(one(url).state, url.searchParams.get('file') || '')); } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }

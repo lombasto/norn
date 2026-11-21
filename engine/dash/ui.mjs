@@ -2,9 +2,7 @@
 // The same module runs in the browser (index.html imports /ui.mjs) and in node --test (server-side render check of the ids).
 // Rules (section 7): status = text + colour (a chip always carries a word), numbers with units, ids everywhere, tabular
 // numerals (CSS), one accent colour for "needs you", no animation and no timer (index.html re-renders from the /api/stream state stream).
-import { renderMarkdown } from './docs.mjs';
 import { renderProse } from './prose.mjs';
-import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
 import { bars, columns, stack, meter } from './widgets.mjs';
@@ -13,16 +11,17 @@ import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc } from './docparts.mjs';
-import { needsYou } from './terms.mjs';
-import { esc, fin, int, fmtMin, pct, plural, runWho, chip, stateOf, projTag, homeChip, pendingChips, pauseAct, cut, fmtTime, goAttrs, filterChips } from './cells.mjs';
+import { esc, fin, int, fmtMin, pct, plural, chip, pauseAct, fmtTime, goAttrs, filterChips } from './cells.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
-import { context, auditCard, enforceCard } from './pages/context.mjs';
+import { context } from './pages/context.mjs';
 import { docs } from './pages/docs.mjs';
 import { roadmap } from './pages/roadmap.mjs';
-import { spend, adviceRow } from './pages/spend.mjs';
-import { slopPage, fxSection } from './pages/slop.mjs';
-import { settings, decMark } from './pages/settings.mjs';
+import { spend } from './pages/spend.mjs';
+import { slopPage } from './pages/slop.mjs';
+import { settings } from './pages/settings.mjs';
+import { inbox } from './pages/inbox.mjs';
+import { records, ledger } from './pages/ledger.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE), then Settings (the header's
 // cog, shell.mjs COG). Label = id = URL (?tab=<id>)
 export const TABS = [['talk', 'Talk'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'],
@@ -30,7 +29,6 @@ export const TABS = [['talk', 'Talk'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['i
   ['roadmap', 'Roadmap'], ['settings', 'Settings']];
 export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
-const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? (now - t) / 60000 : null; };
 
 const panel = (tab, html) => `<div id="panel-${tab}">${html}</div>`;
 const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose one project in the header: the ${esc(tab)} tab belongs to one project (its own records / files).</p></div>`);
@@ -44,12 +42,8 @@ export function healthStates({ usage = null, rows = null } = {}) {
   const of = types => (rows ? (rows.some(r => types.includes(r.type) && (r.severity === 'high' || r.severity === 'medium')) ? 'warn' : 'ok') : null);
   return { spend: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
 }
-// a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
-const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(name, cls) : '');
 
 // ---------- data: one loader per tab over the S6 endpoints; get(path) -> JSON (throws on non-200) ----------
-// the deliverables card is extra: a missing / failing /api/deliverables never breaks the tab
-const dlvGet = (get, q) => Promise.resolve().then(() => get(`/api/deliverables?${q}`)).catch(() => null);
 // META-TEND P6: the Guard rows for the chips in place (one project; a missing / failing /api/guard never breaks the tab)
 const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve().then(() => get(`/api/guard?${q}`)).catch(() => null));
 // META-UX-BUILD S1 + S2: the ONE part loader. Instructions: its 5 parts of one view (project + its scan time), fetched in parallel after
@@ -83,7 +77,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
   const q = `project=${encodeURIComponent(project)}`, all = project === 'all';
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
   if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
-  if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
+  if (tab === 'inbox') return get(`/api/inbox?${q}`);
   if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table (+ the queue's plan: Up next on the Waiting lanes), or every branch / worktree of the repo (branches.mjs, the cached scan)
     const sub = pickSub(LANES_SUBS, ctx.sub), limit = ctx.limit || SUB_CAP;
     if (sub !== 'lanes') return { ...(await get(`/api/branches?${q}`)), sub, limit };
@@ -312,25 +306,6 @@ function tests(d, ctx) {
   return subviewPage('tests', { title: 'Tests', lead: why + testsAlerts(d), numbers: testsNumbers(d), views, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : testsWhen(d.sub === 'suite' ? d.times : null, ctx) + TESTS_PART[d.sub](d, ctx) });
 }
 
-// OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
-const loginRow = (i, ctx) => `<div class="item">${chip('needs', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${i.cls === 'vendor' ? 'nothing to do - a vendor outage, not your login' : `open a terminal and run <span class="mono">${esc(i.command)}</span>`}; held: ${esc((i.runs || []).join(', '))} - they resume by themselves${i.line ? ` · "${esc(i.line)}"` : ''}</div></div></div>`;
-// GAP-1 (lib/holds.mjs): ALL queued work held on one machine-level hold - what, since when, why in plain words and the fix (Settings /
-// the command / Resume); it leaves by itself when the hold clears
-const holdRow = (i, ctx) => `<div class="item" id="hold-${esc(i.project)}">${chip('bad', 'all held')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}held ${fmtMin(i.minutes)} · ${esc((i.runs || []).join(', '))}</div>
-  <div class="small">Fix: ${esc(i.fix)}${i.command ? ` <span class="mono">${esc(i.command)}</span>` : ''}${i.clears ? ` <span class="mute">- or it clears ${esc(i.clears)}</span>` : ''}</div></div>
-  <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.setting ? `<button class="primary" data-tab="settings" title="${esc(i.setting)}">Open Settings</button>` : ''}${i.resume ? `<button class="primary" data-act="hold-resume" data-project="${esc(i.project)}">Resume</button>` : ''}</div></div>`;
-// GAP-8 (lib/handedits.mjs): a generated file edited by hand is no longer regenerated - take it back (a .bak keeps the hand text) or keep it
-// the words say what Norn saw and what each button does. RM-35: then what changed and who probably did it (handedits.mjs explain: the
-// write record's lines, plain text), "View diff" (last written by Norn vs now in the diff viewer) and, when the text is clearly Norn's
-// own (an older copy, or its last text with a lost hash), the recommendation to take it back with the reason
-const editRow = (i, ctx, px = { project: i.project, sanitize: ctx.sanitize }) => `<div class="item" id="${esc(i.id)}">${chip('warn', 'changed outside Norn')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${renderProse('`' + i.file + '`', px)}${i.created ? ` · changed ${fmtMin(minsSince(i.created, ctx.now))} ago` : ''}</div>
-  <div class="small">Norn writes this file itself, and its text no longer matches what Norn last wrote, so Norn leaves it alone rather than overwrite someone's edit.</div>
-  ${i.lines?.length ? `<ul class="small hedwho">${i.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : i.generated ? '<div class="small">It still carries Norn\'s GENERATED header, so it was most likely not edited by a person.</div>' : ''}
-  ${i.recommend === 'takeback' ? `<div class="small"><b>Recommended: Let Norn take it back</b> - ${esc(i.why)}.</div>` : ''}
-  <div class="small mute"><b>Let Norn take it back</b>: the current text is saved beside it as .bak and Norn updates the file again. <b>Keep my version</b>: Norn never updates this file again, until you take it back.</div></div>
-  <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap">${i.diff ? `<button class="ghost" data-act="diff-open" data-dv-url="/api/handedit/diff?project=${encodeURIComponent(i.project ?? '')}&amp;file=${encodeURIComponent(i.file)}" data-dv-title="${esc(i.file.split('/').pop())}" data-dv-sub="last written by Norn vs now">View diff</button>` : ''}<button class="primary" data-act="handedit" data-choice="takeback" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Let Norn take it back</button><button class="ghost" data-act="handedit" data-choice="keep" data-project="${esc(i.project)}" data-file="${esc(i.file)}">Keep my version</button></div></div>`;
-// META-ADOPT A3: ONE needs-you row while a drafted setup waits (Review / Not now = a close with the reason)
-const setupRow = (i, ctx) => `<div class="item">${chip('open', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}drafted ${fmtMin(minsSince(i.created, ctx.now))} ago · nothing is applied before you approve it</div></div><span class="spacer"></span><button class="primary" data-act="adopt-review" data-project="${esc(i.project)}">Review</button><button data-act="adopt-notnow" data-project="${esc(i.project)}">Not now</button></div>`;
 // META-ADOPT A3 (SPEC sec. 5): the setup gaps of one project - each names what is missing in one line and offers the next action
 function setupGaps(g) {
   if (!g) return '';
@@ -374,115 +349,8 @@ export function pauseMenu(o, ctx = {}) {
   return `${now}${modes}${wait ? `<div><b class="small">Waiting on the pause</b>${wait}</div>` : ''}
     <div class="acts"><button class="ghost" data-act="pause-half" title="Ask the newer half of the running runs to stop at a clean point and hand off">Pause half</button><button data-act="pause-resume-all"${pz || w.handoffs.length ? '' : ' disabled'}>Resume all</button></div>${pick}`;
 }
-// RM-30 S1: the Inbox's text goes through the one prose renderer (prose.mjs) with its project's lanes / repo / Docs keys (/api/inbox prose)
-const proseCx = (d, ctx, project, key) => ({ ...(d.prose?.[project] || {}), project, sanitize: ctx.sanitize, ...(key ? { clamp: true, key } : {}) });
-// an option = a small card: its key, its text, its cost; the recommended one is marked and carries its why
-function optCard(o, rk, q, px) {
-  const k = o.key ?? o.k, rec = k === rk, cost = o.cost ?? o.c;
-  return `<div class="opt${rec ? ' rec' : ''}" data-key="${esc(k)}"><div class="ohead"><b class="okey">${esc(k)}</b>${rec ? ` ${chip('needs', `recommended${recFrom(q.recommend) ? ` · ${recFrom(q.recommend)}` : ''}`)}` : ''}${o.added_by ? ` <span class="small mute qadded">added by ${esc(o.added_by)}</span>` : ''}</div>${renderProse(o.text ?? o.t, px)}
-    ${cost ? `<div class="ocost"><span class="olab">cost</span>${renderProse(cost, px)}</div>` : ''}${rec && q.recommend.why ? `<div class="owhy"><span class="olab">why</span>${renderProse(q.recommend.why, px)}</div>` : ''}</div>`;
-}
-
-// RM-28 S1: a finished planner run's proposal - its 10-line summary, the plan file, and per stage Queue now / Later / Drop (each
-// tap = `norn proposal rule`: a decision by dashboard, then the act). A decided stage shows what it became; the card goes when none is open.
-const PICK_DONE = { queue: 'queued', later: 'later', drop: 'dropped', launched: 'launched' };
-export function proposalCard(i, ctx) {
-  const btn = (s, pick, words, cls = '') => `<button class="${cls}" data-act="proposal" data-project="${esc(i.project)}" data-run="${esc(i.id)}" data-stage="${esc(s.key)}" data-pick="${pick}"${pick === 'later' && !i.item ? ' disabled title="No roadmap item links this lane or run"' : ''}>${words}</button>`;
-  const stage = s => `<li class="pstage" id="prop-${esc(i.id)}-${esc(s.key)}"><div><b>${esc(s.key)}</b> ${esc(s.title || s.brief.split('/').pop())}</div>${s.state === 'open'
-    ? `<div class="pacts">${btn(s, 'queue', 'Queue now', 'primary')}${btn(s, 'later', 'Later')}${btn(s, 'drop', 'Drop', 'ghost')}</div>`
-    : `<div class="small">${chip(s.state === 'drop' ? 'withdrawn' : 'applied', PICK_DONE[s.state] ?? s.state)}${s.ref ? ` <span class="mono">${esc(s.ref)}</span>` : ''}${s.dec ? ` <span class="mute">(${esc(s.dec)})</span>` : ''}</div>`}</li>`;
-  return `<article class="q openq proposal" id="prop-${esc(i.id)}"><div class="phead">${chip('open', `${i.open} open`)}<b style="font-size:15px">${esc(i.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, i.project)}${esc(i.id)}${i.item ? ` · ${esc(i.item)}` : ''} · ${fmtMin(minsSince(i.created, ctx.now))} ago</span></div>
-    ${i.summary.length ? `<ol class="psum">${i.summary.map(l => `<li>${esc(l.replace(/^\d+[.)]\s*/, ''))}</li>`).join('')}</ol>` : '<p class="small mute">The NOTES file has no summary section.</p>'}
-    ${i.plans.length ? `<div class="small">Plan: ${i.plans.map(f => `<span class="mono ppath">${esc(f)}</span>`).join(', ')}</div>` : ''}
-    <ul class="pstages">${i.stages.map(stage).join('')}</ul>
-    <div class="small mute">Each pick writes a decision (by dashboard). Queue now queues the brief on lane ${esc(i.lane)}${i.item ? ` linked to ${esc(i.item)}` : ''}; Later adds it to the roadmap${i.item ? ` under ${esc(i.item)}` : ''}, horizon next; Drop records only.</div></article>`;
-}
-
-// RM-28 S2: Decisions - every open proposal in one section of the Inbox so the owner rules several in one sitting: a count, an index
-// (one link per proposal: lane, run, open stages) and the S1 cards themselves (same buttons, same /api/proposal path). Empty = nothing.
-export function decisionsSection(items, ctx) {
-  const ps = items.filter(i => i.type === 'proposal');
-  if (!ps.length) return '';
-  const stages = ps.reduce((n, i) => n + i.open, 0);
-  const idx = ps.length > 1 ? `<div class="pindex small">${ps.map(i => `<a href="#prop-${esc(i.id)}">${projTag(ctx, i.project)}<b>${esc(i.lane)}</b> ${esc(i.id)} · ${plural(i.open, 'open stage')}</a>`).join('')}</div>` : '';
-  return `<section id="inbox-decisions" class="decisions"><h2>Decisions <span class="mute small">${plural(ps.length, 'proposal')} · ${plural(stages, 'open stage')} · each stage is ruled on its own: Queue now, Later or Drop</span></h2>${idx}${ps.map(i => proposalCard(i, ctx)).join('')}</section>`;
-}
-
-// INBOX-REPLIES: a question's thread - the owner's messages, the controller's replies (each options revision shown), the ruling it
-// proposed from the owner's words (one tap confirms it). (6b) where the options came from and whose recommendation it is.
-const recFrom = r => (!r?.from ? '' : r.from === 'source' ? 'plan default' : r.from === 'checkin' || r.from === 'controller' ? "the controller's own" : `${r.from}'s own`);
-const optsHead = q => `<div class="small mute qsrc" id="qsrc-${esc(q.id)}">${plural((q.options || []).length, 'option')}${q.origin ? ` · from <button class="lnk" data-ins="${esc(`path:${q.origin.file}`)}"${q.origin.line ? ` data-line="${esc(q.origin.line)}"` : ''} title="${esc(q.origin.file)}">${esc(`${String(q.origin.file).split(/[\\/]/).pop()}#${q.origin.section}`)}</button>` : ''}</div>`;
-const tmsg = (x, q, now) => {
-  const who = x.ev === 'reply' ? esc(x.who === 'checkin' ? 'controller (check-in)' : x.who) : 'you';
-  const body = x.ev === 'answer' ? `answered${x.choice ? ` <b>(${esc(x.choice)})</b>` : ''}${x.ruling ? ' - confirmed the ruling' : ''}: ${esc(x.text)}` : x.ev === 'reopen' ? 'reopened' : esc(x.text);
-  const rev = x.options ? `<div class="small qrev">revised the options: ${x.options.map(o => `<b>(${esc(o.key)})</b> ${esc(o.text)}`).join(' · ')}</div>` : '';
-  const prop = x.propose ? `<div class="small qprop">Rule: ${x.propose.key ? `<b>(${esc(x.propose.key)})</b> ` : ''}${esc(x.propose.text)}?</div>` : '';
-  return `<li class="qmsg ${x.ev === 'reply' ? 'ctl' : 'own'}" id="qm-${esc(q.id)}-${esc(x.seq)}"><span class="small mute">${who} · ${esc(fmtTime(x.ts, now))}</span><div>${body}</div>${rev}${prop}</li>`;
-};
-function qThread(q, now) {
-  const t = q.thread || [], P = q.proposal;
-  if (!t.length) return '';
-  const wait = q.waiting ? `<li class="small mute qwait">${chip('run', 'replying')} the controller answers here (a check-in started when you sent it, or the next one)</li>` : '';
-  const conf = P ? `<div class="card needs qconfirm" id="qconfirm-${esc(q.id)}"><span>Rule: ${P.key ? `<b>(${esc(P.key)})</b> ` : ''}${esc(P.text)}?</span> <button class="primary" data-act="rule" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-ruling="${esc(P.seq)}">Yes, rule it</button></div>` : '';
-  return `<ol class="qthread" id="qt-${esc(q.id)}">${t.map(x => tmsg(x, q, now)).join('')}${wait}</ol>${conf}`;
-}
-// the Resolved view: answered / applied questions, newest first, each with its thread
-function resolvedView(rs, ctx) {
-  if (!rs.length) return '';
-  const one = r => `<article class="q" id="qr-${esc(r.id)}"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${chip(r.state, `${r.id} ${r.state}`)}<b>${esc(r.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, r.project)}${esc(r.lane ?? '-')} · ${fmtTime(r.updated, ctx.now)}</span></div>
-    ${r.origin || r.options.length ? optsHead(r) : ''}${r.answer ? `<p class="small" style="margin:6px 0">${r.answer.choice ? `<b>(${esc(r.answer.choice)})</b> ` : ''}${esc(r.answer.text ?? '')}</p>` : ''}${(r.thread || []).some(x => x.ev !== 'answer') ? qThread({ ...r, waiting: 0, proposal: null }, ctx.now) : ''}</article>`;
-  return `<details class="tablecard" id="inbox-resolved" style="margin-bottom:12px"><summary><b>Resolved</b> <span class="mute small">${int(rs.length)} answered or applied, newest first · the thread is kept</span></summary>${rs.map(one).join('')}</details>`;
-}
-
-function inbox(d, ctx) {
-  const items = d.items || [];
-  const qs = items.filter(i => i.type === 'question').map(q => {
-    const rk = q.recommend ? q.recommend.key ?? q.recommend.k : null, opts = q.options || [], px = proseCx(d, ctx, q.project);
-    const answered = (q.pending || []).some(e => e.ev === 'answer');   // RM-46 S3: answered here, its home relays it - no second answer (SPEC 3.8)
-    return `<article class="q openq" id="q-${esc(q.id)}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${chip('open', q.id + ' open')}${homeChip(q)}${pendingChips(q)}<b style="font-size:15px;min-width:0;overflow-wrap:anywhere">${esc(q.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, q.project)}${esc(q.lane ?? '-')} · ${fmtMin(minsSince(q.created, ctx.now))} ago${q.class ? ` · class ${esc(q.class)}` : ''}</span></div>
-    ${q.body ? `<div class="qbody">${renderProse(q.body, proseCx(d, ctx, q.project, `${q.project}:${q.id}`))}</div>` : ''}
-    ${opts.length ? `${optsHead(q)}<div class="opts">${opts.map(o => optCard(o, rk, q, px)).join('')}</div>` : ''}
-    ${rk && !opts.some(o => (o.key ?? o.k) === rk) ? `<div class="small owhy"><b>Recommendation (${esc(rk)}${recFrom(q.recommend) ? `, ${esc(recFrom(q.recommend))}` : ''}):</b> ${renderProse(q.recommend.why ?? '', px)}</div>` : ''}
-    ${qThread(q, ctx.now)}
-    ${q.answered_by ? `<div class="card needs" style="margin:8px 0;padding:8px 10px"><span class="small">Possibly answered in <b class="mono">${esc(q.answered_by.id)}</b>${q.answered_by.words ? `: <q>${esc(q.answered_by.words)}</q>` : ` (${esc(q.answered_by.why ?? '')})`}</span>
-      ${q.answered_by.words ? `<button class="primary" style="margin-left:8px" data-act="answer-from" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-from="${esc(q.answered_by.id)}">Yes - already answered in ${esc(q.answered_by.id)}</button>` : ''}</div>` : ''}
-    ${answered ? `<div class="small mute qpending">Your answer is written on this home; home ${esc(q.home)} applies it at its next sync pass (a refusal comes back as a conflict card).</div>` : `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${opts.map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(q.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">Choose (${esc(k)})${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
-    <textarea id="ans-${esc(q.id)}" rows="2" placeholder="or write to the controller (a doubt, a question) ..." aria-label="Answer ${esc(q.id)} in your words" style="flex:1;min-width:0"></textarea><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>`}
-    <div class="small mute" style="margin-top:6px">A Choose button answers <span class="mono">${esc(q.id)}</span>; the next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}. Words you type go to the controller, who replies here: ${esc(q.id)} stays open until you pick an option or confirm a ruling (a bare key such as <span class="mono">b</span> picks it).</div></article>`;
-  }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
-  const props = decisionsSection(items, ctx);
-  const aud = items.filter(i => i.type === 'audit');
-  const audCard = aud.length ? `<section class="tablecard" id="inbox-audit" style="margin-bottom:12px"><h3>Audit hunks <span class="mute small">${int(aud.length)} open · the vendor prompt audit proposed them; accept = the check-in applies it, decline = keep the text; Norn edits nothing</span></h3><ul>${aud.map(i => auditCard(i.card, i.project)).join('')}</ul></section>` : '';
-  const fxCard = fxSection(items.filter(i => i.type === 'fixresult').map(i => [i.card, i.project, proseCx(d, ctx, i.project)]), 'inbox-fixer', 'tablecard');
-  const enf = items.filter(i => i.type === 'enforce');
-  const enfCard = enf.length ? `<section class="tablecard" id="inbox-enforce" style="margin-bottom:12px"><h3>Make it enforced? <span class="mute small">${int(enf.length)} correction(s) said again · approve = a directive asks the check-in for a brief; Norn installs nothing</span></h3><ul>${enf.map(i => enforceCard({ ...i.card, approve: i.approve, asked: i.asked }, i.project, proseCx(d, ctx, i.project))).join('')}</ul></section>` : '';
-  const dlvCard = (items.some(i => ['setup', 'login', 'hold', 'handedit'].includes(i.type)) ? `<section class="card needs" style="margin-bottom:12px">${items.filter(i => i.type === 'hold').map(i => holdRow(i, ctx)).join('')}${items.filter(i => i.type === 'login').map(i => loginRow(i, ctx)).join('')}${items.filter(i => i.type === 'handedit').map(i => editRow(i, ctx, proseCx(d, ctx, i.project))).join('')}${items.filter(i => i.type === 'setup').map(i => setupRow(i, ctx)).join('')}</section>` : '')
-    + (d.deliverables ? `<div style="margin-bottom:12px">${deliverablesCard(d.deliverables, ctx)}</div>` : '');
-  const row = (i, st, what) => `<tr id="in-${esc(i.id)}"><td class="id">${esc(i.id)}</td><td>${st}</td><td>${projTag(ctx, i.project)}${what}</td></tr>`;
-  const other = [
-    ...items.filter(i => i.type === 'parked').map(i => i.ruled ? row(i, chip('answered'), `lane <b>${esc(i.lane)}</b> waiting: your ruling is being applied<div class="small mute">${esc(rulingWords(i.ruled, ctx))}</div>`)
-      : row(i, chip('parked'), `lane <b>${esc(i.lane)}</b> ${i.q ? `parked by ${renderProse(i.q, { ...proseCx(d, ctx, i.project), inline: true })}` : renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}`)),
-    ...items.filter(i => i.type === 'unreviewed').map(i => row(i, chip(stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state)[0], String(i.outcome ?? i.state).toUpperCase()),
-      `<b>${esc(i.lane ?? '-')}</b> ${renderProse(i.why ?? '', proseCx(d, ctx, i.project, `${i.project}:${i.id}`))}<div class="small mute">${runWho(i.dwarf, i.kind_word)} unreviewed: ended with no review event</div>`)),
-    ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${renderProse(i.title, proseCx(d, ctx, i.project))}<div class="small mute">${esc(rulingWords({ q: i.id, choice: i.answer?.choice, text: i.answer?.text, at: i.updated }, ctx))}</div>`)),
-  ].join('');
-  const adv = items.filter(i => i.type === 'advice');
-  const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Spend) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  const rsv = items.filter(i => i.type === 'resolved'), nNeeds = needsYou(items), nInfo = items.length - nNeeds - rsv.length;   // UX review 4: the one needs-you count (terms.mjs)
-  return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice; cards already asked for)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${props}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
-   <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>
-    ${resolvedView(rsv, ctx)}`;
-}
-
-// item 8 (MAIL-9 a): an answered question in plain words wherever it shows - the owner's part is done, a check-in applies it
-const rulingWords = (r, ctx) => `You ruled: ${r.choice ?? r.text ?? '?'} (${fmtTime(r.at, ctx.now)}) on ${r.q} - waiting for the next check-in to apply it (an answer starts one at once)`;
 
 
-
-const DLV_WORD = { done: 'DONE', merged: 'merged', installed: 'installed', unknown: 'cannot tell if merged' };
-const dlvChip = r => r.record_state === 'parked'
-  ? chip('parked', `parked ${Math.floor(r.park?.days ?? 0)} d${r.park?.expired ? ' (expired)' : ''}`)
-  : chip(r.state === 'done' ? 'warn' : r.state === 'unknown' ? 'needs' : r.state === 'merged' ? 'running' : 'ok', `${DLV_WORD[r.state] ?? r.state}${r.merged_how === 'equivalent' ? ' (equivalent)' : ''}`);
 const onMain = r => r.state === 'merged' || r.state === 'installed';
 // DLV-MERGED-TRUTH: why Norn cannot tell, and the one Inbox ruling that settles it
 const dlvWhy = r => r.state === 'unknown' ? `<div class="small mute">${esc(r.unknown_why ?? '')}${r.ruling ? ` · ruling <a href="#" data-rid="${esc(r.ruling)}">${esc(r.ruling)}</a> in the Inbox` : ' · the next check-in asks you'}</div>` : '';
@@ -491,26 +359,6 @@ const dlvWhy = r => r.state === 'unknown' ? `<div class="small mute">${esc(r.unk
 const whyLink = (w, r) => w.url ? ` <a href="${esc(w.url)}" target="_blank" rel="noopener">open</a>`
   : w.run ? ` <span class="link" role="button" tabindex="0" data-feed="${esc(w.run)}" data-project="${esc(r.project)}" title="Open ${esc(w.run)} in the live feed">${esc(w.run)}</span>` : '';
 export const dlvWhyNot = r => (!r.why_not ? '' : `<div class="small dlvwhy" data-why="${esc(r.why_not.kind)}">${r.why_not.warn ? chip('warn', r.why_not.text) : `<span class="mute">${esc(r.why_not.text)}</span>`}${whyLink(r.why_not, r)}</div>`);
-const dlvNative = r => (r.native === true ? chip('bad', 'native') : r.native === false ? '<span class="small mute">no</span>' : '<span class="small mute">?</span>');
-export function deliverablesCard(dl, ctx = {}) {
-  const rows = (dl?.rows || []).filter(r => !r.at_target).sort((a, b) => (b.days ?? 0) - (a.days ?? 0));
-  const body = rows.map(r => `<tr id="dlv-${esc(r.id)}"><td><b>${projTag(ctx, r.project)}${esc(r.branch)}</b> ${homeChip(r)}<div class="small mute"><span class="id">${esc(r.id)}</span> ${esc(r.lane ?? '')}</div></td>
-    <td>${esc(cut(r.delivers, 90))}${r.park ? `<div class="small mute">${esc(r.park.why)}</div>` : ''}${dlvWhy(r)}${dlvWhyNot(r)}</td>
-    <td class="mono">${fin(r.days) ? r.days.toFixed(1) + ' d' : '-'}</td>
-    <td class="mono">${fin(r.behind) ? r.behind + ' behind' : onMain(r) ? 'on main' : '-'}</td>
-    <td>${dlvNative(r)}</td>
-    <td>${dlvChip(r)}${r.due ? ' ' + chip('open', 'question due') : r.asked ? ` <span class="small mute">asked ${esc(r.asked)}</span>` : ''}</td>
-    <td>${r.readonly ? '' : `<button data-dlv="${esc(r.id)}" data-project="${esc(r.project)}">Open</button>`}</td></tr>`).join('');
-  // OVERVIEW-TRUTH (3): the heading's count is mergeBacklog's (deliverables.mjs, server backlogOf) - the one count Lanes and Plan show too
-  const b = dl?.backlog, k = n => rows.filter(n).length, pr = k(r => r.state === 'done' && r.pr), mi = k(r => r.state === 'merged');
-  const head = b && !b.pending ? `${chip(b.over ? 'warn' : b.n ? 'idle' : 'ok', b.text)}${b.over ? ` <span class="mute small">over ${int(b.max)}: new lanes wait while finished work lands</span>` : ''}` : '';
-  if (dl?.pending && !rows.length) return `<section class="card" id="deliverables"><h2>Done, not installed <b>-</b></h2><div class="small mute">reading git and the install receipts ... (the next refresh shows them)</div></section>`;
-  return `<section class="card" id="deliverables"><h2>Done, not installed <b>${rows.length}</b> <span class="mute small">this project's deliverables not at their target, oldest first · state from git, the PR and the last install receipt</span></h2>
-   ${head || pr || mi ? `<p class="small" id="dlv-counts">${head}${pr ? ` <span class="mute">· ${int(pr)} with a PR open</span>` : ''}${mi ? ` <span class="mute">· ${int(mi)} merged, not installed</span>` : ''}</p>` : ''}
-   ${dl?.error ? `<div class="small" style="color:var(--bad)">${esc(dl.error)}</div>` : ''}
-   ${rows.length ? `<table><thead><tr><th>branch</th><th>delivers</th><th>done</th><th>vs main</th><th>native</th><th>state</th><th></th></tr></thead><tbody>${body}</tbody></table>`
-    : `<div class="item">${art(ctx, 'empty-all-delivered', 'empty')}${chip('ok', 'all clear')}<span>Nothing done-not-installed</span></div>`}</section>`;
-}
 export function renderDeliverable(r, ctx = {}) {
   if (!r) return '<div class="small mute">deliverable not found (refresh the page)</div>';
   const reached = { done: 1, unknown: 1, merged: 2, installed: 3 }[r.state] ?? 0;
@@ -534,33 +382,6 @@ norn deliverables ask ${esc(r.id)}      (the check-in: one question per delivera
 norn deliverables resolve ${esc(r.id)}  (${esc(r.resolve.why)}; native = door work)` : ''}</div>
    <div class="small mute" style="margin-top:8px">MERGED comes from the PR on GitHub, else git, else the change itself found on main (equivalent); INSTALLED from the last install receipt. Only a 'cannot tell' asks you.</div></div>`;
 }
-function history(r, ctx) {
-  return `<details><summary class="small mute">history (${(r.history || []).length})</summary><div class="small mono">${(r.history || []).map(h => `${esc(h.seq)} ${fmtTime(h.ts, ctx.now)} ${esc(h.ev)} by ${esc(h.by)}${h.data?.text && h.ev !== 'create' ? ': ' + esc(h.data.text) : ''}`).join('<br>')}</div></details>`;
-}
-// RECORDS-TEXT R1: a text cell = the ledger-style blocks (ledger.mjs recordBlocks); over ~3 lines it clamps behind a "more" button
-// (index.html drops the button when the text fits); the full text stays in the DOM, so the search filter matches all of it
-function recText(key, parts) {
-  const lines = parts.reduce((n, p) => n + p.lines, 0), long = lines > 3;
-  return `<div class="rtext${long ? ' rclamp' : ''}" data-key="${esc(key)}">${parts.map(p => p.html).join('')}</div>${long ? '<button type="button" class="ghost rmore" data-act="rec-more" aria-expanded="false">more</button>' : ''}`;
-}
-function records(d, ctx) {
-  const o = { project: ctx.project }, blk = (t, cpl) => recordBlocks(t, { ...o, cpl });
-  const why = r => { if (!r.data.why) return { html: '', lines: 0 }; const b = blk(r.data.why, 50); return { html: `<div class="rwhy small mute">${b.html}</div>`, lines: b.lines }; };
-  // META-UX-BUILD S6: a Fix all record (decision + directive) carries the finding ids it was sent with - folded under the text
-  const fids = r => (Array.isArray(r.data.findings) && r.data.findings.length ? `<details class="small recids"><summary>${int(r.data.findings.length)} finding ids${r.data.fixall ? ` · ${esc(r.data.fixall)}` : ''}</summary><span class="mono">${esc(r.data.findings.join(' '))}</span></details>` : '');
-  const dir = d.directives.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)} ${homeChip(r)}${pendingChips(r)}</td><td class="rt">${recText(`${r.id}:text`, [blk(r.data.text, 110)])}${fids(r)}${r.superseded_by ? `<div class="small mute">superseded by ${esc(r.superseded_by)}</div>` : ''}${history(r, ctx)}</td>
-    <td class="small mute rnw">${fmtTime(r.created, ctx.now)} · ${esc(r.data.via ?? r.by)}</td><td>${r.state === 'active' ? `<button class="ghost" data-act="revoke" data-project="${esc(d.project)}" data-id="${esc(r.id)}">Revoke</button>` : ''}</td></tr>`).join('')
-    || '<tr><td colspan="5" class="mute">no directives</td></tr>';
-  const dec = d.decisions.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}${r.data.fyi ? ' ' + chip('needs', 'FYI') : ''}${decMark(r)} ${homeChip(r)}${pendingChips(r)}</td><td>${esc(r.data.lane ?? '-')}</td><td class="rt" data-label="question">${recText(`${r.id}:q`, [blk(r.data.question, 50)])}</td>
-    <td class="rt" data-label="choice + why">${recText(`${r.id}:c`, [blk(r.data.choice, 50), why(r)])}${history(r, ctx)}</td><td class="small mute rnw">${esc(r.by)} · ${fmtTime(r.created, ctx.now)}</td><td class="small mute">${esc(r.data.source ?? '-')}</td>
-    <td>${r.state === 'in-force' ? `<button class="ghost" data-act="overrule" data-project="${esc(d.project)}" data-id="${esc(r.id)}">Overrule</button>` : ''}</td></tr>`).join('')
-    || '<tr><td colspan="8" class="mute">no decisions</td></tr>';
-  const active = d.directives.filter(r => r.state === 'active').length;
-  return `<div class="filters"><input type="search" data-filter="records" placeholder="search id, lane, text  (e.g. DEC-1, relief)"><select data-filter-state="records"><option value="">all states</option><option value="in-force active">in force / active</option><option value="superseded overruled revoked done">ended</option></select>
-    <span class="small mute">${d.decisions.length} decisions · ${d.directives.length} directives (${active} active)</span></div>
-   <div class="tablecard"><h3>Directives <span class="mute small">only active ones bind the check-in</span><span class="spacer"></span><button class="strong" data-act="directive" data-project="${esc(d.project)}">Add directive</button></h3><table class="rectab" data-rows="records"><thead><tr><th>id</th><th>state</th><th>text</th><th>when · via</th><th></th></tr></thead><tbody>${dir}</tbody></table></div>
-   <div class="tablecard"><h3>Decisions</h3><table class="rectab" data-rows="records"><thead><tr><th>id</th><th>state</th><th>lane</th><th>question</th><th>choice + why</th><th>by</th><th>source</th><th></th></tr></thead><tbody>${dec}</tbody></table></div>`;
-}
 
 /**
  * RM-30 S1: a directive the page sent was refused as a restatement of an active one (/api/directive 409 { dup }). x = { text, dup:
@@ -574,41 +395,4 @@ export function dupRefusal(x) {
     <div class="dupcmp small"><div><span class="olab">${id} says</span>${renderProse(x.dup.line ?? '')}</div><div><span class="olab">you wrote</span>${renderProse(String(x.text ?? '').slice(0, 400))}</div></div>
     <div class="small mute">Matched by ${esc(x.dup.why ?? 'its words')}. Two active directives that say the same thing get read twice at every check-in.</div>
     <div class="dupbtns"><button data-act="dup-open" data-id="${id}">Open ${id}</button><button class="primary" data-act="dup-replace" data-id="${id}">Replace it with this wording</button><button class="ghost" data-act="dup-new">Keep both</button><button class="ghost" data-act="dup-close">Cancel</button></div></div>`;
-}
-
-// Ledger (LEDGER-UX R1): one row per entry in the Records look, newest first - time, kind chip, headline + labelled sub-lines;
-// record ids link where they live (ledger.mjs), headings / prose render as markdown; search + kind filter like Records
-const LED_CHIP = { 'check-in': 'ok', minor: 'idle', auto: 'warn', controller: 'claude', other: 'idle' };
-// compact (the Overview card): the sub-lines go on one muted line, clamped by CSS, so 4 entries stay a glance
-export function ledgerRows(entries, d, ctx, compact = false) {
-  const o = { runs: d.runs || [], project: ctx.project };
-  const subOf = x => `${x.label ? `<b>${esc(x.label)}</b> ` : ''}${ledgerInline(x.text, o)}`;
-  return [...entries].reverse().map((e, i) => {
-    const subs = !e.subs.length ? '' : compact ? `<div class="ledsub clamp">${e.subs.map(subOf).join(' · ')}</div>` : e.subs.map(x => `<div class="ledsub">${subOf(x)}</div>`).join('');
-    const body = e.kind === 'other' ? `<div class="md ledmd">${renderMarkdown(e.raw, { sanitize: ctx.sanitize }).html}</div>`
-      : `<div class="ledhead">${ledgerInline(e.headline, o)}</div>${subs}`;
-    const who = e.kind === 'controller' ? `<div class="id">${esc(e.label)}</div>` : '';
-    return `<tr${compact ? '' : ` id="led-${entries.length - 1 - i}" data-state="${esc(e.kind)}"`}><td class="small mute ledt">${e.ts ? fmtTime(e.ts, ctx.now) : ''}</td><td class="ledk">${chip(LED_CHIP[e.kind], e.kind === 'other' ? 'note' : e.kind)}${who}</td><td class="ledb">${body}</td></tr>`;
-  }).join('');
-}
-// RM-46 S3: a synced project's Homes + Claims blocks, above the ledger lines on the same page (no new tab); secs = a duration in words
-const secs = v => v == null ? '-' : v < 120 ? `${v} s` : v < 7200 ? `${Math.round(v / 60)} min` : `${Math.round(v / 3600)} h`;
-function syncBlocks(d, ctx) {
-  if (!d.homes) return '';
-  const h = d.homes, c = d.claims || { work: [] };
-  const homes = `<div class="tablecard" id="ledger-homes"><h3>Homes <span class="mute small">this home: ${esc(h.home)} · last fetch ${h.fetched_at ? fmtTime(h.fetched_at, ctx.now) : 'never'}${h.fetch_error ? ` · ${esc(h.fetch_error)}` : ''}</span></h3>
-   <table><thead><tr><th>home</th><th>head</th><th>lag</th><th>clock ahead</th></tr></thead><tbody>${h.rows.map(r => `<tr><td>${homeChip(r)}</td><td class="id">${esc(String(r.head).slice(0, 10))}</td><td>${secs(r.lag_s)}</td><td>${secs(r.ahead_s)}</td></tr>`).join('') || '<tr><td colspan="4" class="mute">no other home fetched yet</td></tr>'}</tbody></table></div>`;
-  const work = c.work.map(w => `<tr><td>${homeChip(w)}<b>${esc(w.lane)}</b></td><td class="id">${esc(w.run ?? '-')} n=${esc(w.n)}</td><td class="small">${w.renewed_at ? fmtTime(w.renewed_at, ctx.now) : '-'}</td>
-    <td>${w.stale ? `${chip('bad', 'stale')} <button class="ghost" data-act="claim-take" data-project="${esc(ctx.project ?? '')}" data-lane="${esc(`${w.home}/${w.lane}`)}">Take over</button>` : chip('ok', 'active')}</td></tr>`).join('');
-  const claims = `<div class="tablecard" id="ledger-claims"><h3>Claims <span class="mute small">merge leader: ${c.leader ? `${esc(c.leader.home)} · renewed ${fmtTime(c.leader.renewed_at, ctx.now)}` : 'none'}</span></h3>
-   <table><thead><tr><th>lane</th><th>run</th><th>renewed</th><th>state</th></tr></thead><tbody>${work || '<tr><td colspan="4" class="mute">no work claims</td></tr>'}</tbody></table></div>`;
-  return homes + claims;
-}
-function ledger(d, ctx) {
-  const entries = parseLedger(d.ledger), more = d.more ? `<button class="ghost" data-act="ledger-more">Show older (${esc(d.count ?? 100)} more lines)</button>` : '';
-  return `${syncBlocks(d, ctx)}<div class="filters"><input type="search" data-filter="ledger" placeholder="search text, ids  (e.g. RUN-12, merged)"><select data-filter-state="ledger"><option value="">all kinds</option>${LEDGER_KINDS.map(k => `<option value="${k}">${k === 'other' ? 'notes / headings' : k}</option>`).join('')}</select>
-    <span class="small mute">${entries.length} entries · ${esc(d.ledger.length)} of ${esc(d.total ?? d.ledger.length)} lines</span></div>
-   <div class="tablecard"><h3>Ledger <span class="mute small">${esc(d.file ?? 'no ledger file in project.json')} · newest first</span></h3>
-   <table class="ledtab" id="ledger-lines" data-rows="ledger"><thead><tr><th>when</th><th>kind</th><th>entry</th></tr></thead><tbody>${ledgerRows(entries, d, ctx) || '<tr><td colspan="3" class="mute">empty</td></tr>'}</tbody></table>
-   ${more ? `<div style="padding:10px 14px">${more}</div>` : ''}</div>`;
 }

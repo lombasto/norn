@@ -164,8 +164,6 @@ const inPart = (r, part, items) => { const p = r.data?.role === 'helper' && item
 /** why run r ended: its last end / lost / kill event as { ev, by, why } (who stopped it and the reason); null while running */
 export const stopOf = r => { const h = ended(r) ? [...(r.history || [])].reverse().find(x => x.ev === 'end' || x.ev === 'lost' || x.ev === 'kill') : null;
   return h ? { ev: h.ev, by: h.by ?? null, why: h.data?.why ?? null } : null; };
-/** The run ids the Runs tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
-export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(r => r.kind === 'run' && shown(r, now)).map(r => r.id));
 
 /**
  * META-DASH-ASYNC R1: every file agentsTree(runs, o) reads, read on fs.promises into the request snapshot (lib/fsnap.mjs) and the

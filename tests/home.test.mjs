@@ -49,7 +49,7 @@ test('C2 homeEvents: the chat thread, check-in ledger lines, run starts / ends, 
   ];
   const ledger = [{ kind: 'check-in', ts: T(6), headline: 'reviewed RUN-5', subs: [] }, { kind: 'other', ts: null, headline: '# heading', subs: [] },
     { kind: 'minor', ts: T(7), headline: 'nothing new', subs: [] }];
-  const needs = [{ type: 'question', id: 'Q-1', title: 'pick', created: T(8), options: [] }, { type: 'answered', id: 'Q-2', title: 'old', updated: T(8) }];
+  const needs = [{ type: 'question', id: 'Q-1', title: 'pick', created: T(8), options: [] }];
   const ev = homeEvents({ thread, runs, ledger, needs });
   assert.deepEqual(ev.map(e => [e.cat, e.kind]), [
     ['chat', 'segment'], ['chat', 'you'], ['chat', 'tools'], ['chat', 'controller'], ['run', 'run-start'], ['merge', 'run-start'], ['merge', 'run-end'],
@@ -135,8 +135,7 @@ test('C2 /api/home on the fixture state: the thread file, runs, needs, the side 
     const d = r.data, kinds = d.events.map(e => e.kind);
     assert.ok(kinds.includes('you') && kinds.includes('controller') && kinds.includes('question') && kinds.includes('run-end') && kinds.includes('checkin'), kinds.join());
     assert.equal(d.needs_you, d.events.filter(e => e.cat === 'needs' && e.kind !== 'approval').length); assert.equal(d.approvals, 0);   // UX review 4: the Inbox's count (terms.mjs needsYou); approvals beside it
-    const un = d.events.find(e => e.kind === 'unreviewed' && e.id === 'RUN-1');
-    assert.ok(un && Date.parse(un.ts) > 0, 'an unreviewed run sits in the thread at its end, not at the top');
+    assert.ok(!d.events.some(e => e.kind === 'unreviewed'), 'an unreviewed run is no needs-you row (Lanes shows it)');
     assert.equal(d.status.running, false); assert.equal(d.status.ctx, 62000); assert.equal(d.status.handoff_k, 110); assert.equal(d.status.executor, 'claude');
     assert.ok(d.side.now.some(n => n.run === 'RUN-2' && n.state === 'running'));
     assert.ok(d.side.waiting.some(w => w.id === 'Q-1')); assert.ok(d.side.orders.some(o => o.text === 'keep going'));
