@@ -492,16 +492,18 @@ export function dwarfWait(o, staleMs = STALE_MS) {
   if (!Object.values(st.dwarves).some(d => d.state === 'active' && d.pins.includes(key))) return null;
   return pickDwarf(st, { project: projectOf(o.state), lane: o.lane }, crewLoad(o.state, staleMs).busy).wait ?? null;
 }
-// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf;
-// a busy pinned dwarf refuses (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
+// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf; the
+// event carries its id and its name then (dwarf_name: what the other homes show, records.mjs copyItems); a busy pinned dwarf refuses
+// (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
 function withDwarf(o, info, staleMs, write) {
-  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write(undefined);
+  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write({});
   try {
     return withCrew(o.state, c => {
       const { busy, past } = crewLoad(o.state, staleMs);
       const p = pickDwarf(c.state, { project: projectOf(o.state), lane: o.lane }, busy, past);
       if (p.wait) throw new RunRefused(p.wait, 3);
-      return write(p.dwarf ?? c.hire(p.hire));
+      const id = p.dwarf ?? c.hire();
+      return write({ dwarf: id, dwarf_name: c.state.dwarves[id].name });
     });
   } catch (e) { if (e instanceof CrewError) throw new RunRefused(e.message, 3); throw e; }
 }
@@ -867,7 +869,7 @@ export function startRun(o) {
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     // WORK-SIZING S1: the context marks the run starts under, on its record (enforcement still reads the live policy: ctxlimit.mjs)
     const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
-    const ev = withDwarf(o, info, staleMs, dwarf => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), dwarf, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
+    const ev = withDwarf(o, info, staleMs, dw => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), ...dw, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
