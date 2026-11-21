@@ -1,7 +1,7 @@
 // NORN-DOD-GATE-FAST: the worker Done check's gate follows policy.merge.suite (mergebrief.mjs suiteMode). changed (default): a
 // ci-suite gate runs on the change only (--changed <the branch's merge base>), so a worker's Done check runs the tests its diff
 // touches, never the full suite (RUN-1491: 209/227 files at the 20 min timeout); skip: no gate (as mergeq / landing); a gate that
-// is not ci-suite runs as configured. Known reds (the worktree's tests/KNOWN-REDS.txt) read green. Mode + files show on the card.
+// is not ci-suite runs as configured (all of it under policy.tests.mode = changed). Known reds (the worktree's tests/KNOWN-REDS.txt) read green. Mode + files show on the card.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,6 +17,8 @@ import { mkTmp } from './helpers/tmp.mjs';
 const SUITE = path.join(import.meta.dirname, '..', 'engine', 'bin', 'ci-suite.mjs').split(path.sep).join('/');
 const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const READY = parseReady('Scope: src/**, tests/**\nTests: `node -e ""`\nDone: ## DONE\n');
+// the gate runs under policy.tests.mode = changed only (light replaces it with the light set: tests/dod.test.mjs)
+const CHANGED = { mode: 'changed' };
 const PASS = "import test from 'node:test';\ntest('ok', () => {});\n", FAIL = name => `import test from 'node:test';\ntest('${name}', () => { throw new Error('red'); });\n`;
 
 /** main: tests/a (green), tests/b (an unlisted red), tests/k (a red KNOWN-REDS lists); the lane branch feat/x changes src/<changed>.mjs */
@@ -34,7 +36,7 @@ const gateOf = d => d.tests.find(x => x.name === 'gate');
 
 test('changed mode (the default): a ci-suite gate gets --changed <merge base>; only the touched test file runs', async () => {
   const t = mkTmp('meta-dodgate-ch-'), { wt, base } = suiteRepo(t, 'a');
-  const d = await doneCheck({ worktree: wt, dod: { ready: READY, gate: { cmd: `node "${SUITE}"`, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
+  const d = await doneCheck({ worktree: wt, dod: { ready: READY, tests: CHANGED, gate: { cmd: `node "${SUITE}"`, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
   const g = gateOf(d), log = fs.readFileSync(g.log, 'utf8');
   assert.equal(d.ok, true, `${JSON.stringify(d)}\n${log}`);
   assert.equal(g.cmd, `node "${SUITE}" --changed ${base}`);
@@ -44,19 +46,19 @@ test('changed mode (the default): a ci-suite gate gets --changed <merge base>; o
 
 test('a red KNOWN-REDS lists (red on main too) reads green; an unlisted red fails', async () => {
   const t = mkTmp('meta-dodgate-kr-'), { wt } = suiteRepo(t, 'k');
-  const d = await doneCheck({ worktree: wt, dod: { ready: READY, gate: { cmd: `node "${SUITE}"`, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
+  const d = await doneCheck({ worktree: wt, dod: { ready: READY, tests: CHANGED, gate: { cmd: `node "${SUITE}"`, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
   assert.equal(d.ok, true, fs.readFileSync(gateOf(d).log, 'utf8'));
   assert.match(fs.readFileSync(gateOf(d).log, 'utf8'), /listed red: tests\/k\.test\.mjs :: k red/);
   const u = mkTmp('meta-dodgate-kr2-'), b = suiteRepo(u, 'b');
-  const r = await doneCheck({ worktree: b.wt, dod: { ready: READY, gate: { cmd: `node "${SUITE}"`, suite: 'changed' } }, logDir: path.join(u, 'logs'), run: 'RUN-2' });
+  const r = await doneCheck({ worktree: b.wt, dod: { ready: READY, tests: CHANGED, gate: { cmd: `node "${SUITE}"`, suite: 'changed' } }, logDir: path.join(u, 'logs'), run: 'RUN-2' });
   assert.equal(r.ok, false); assert.match(r.why, /gate exit 1/);
 });
 
 test('skip mode runs no gate (as the batch gate and the landing check); a gate that is not ci-suite runs as configured', async () => {
   const t = mkTmp('meta-dodgate-sk-'), { wt } = suiteRepo(t, 'a'), cmd = 'node -e "console.log(\'ℹ pass 2\')"';
-  const s = await doneCheck({ worktree: wt, dod: { ready: READY, gate: { cmd: `node "${SUITE}"`, suite: 'skip' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
+  const s = await doneCheck({ worktree: wt, dod: { ready: READY, tests: CHANGED, gate: { cmd: `node "${SUITE}"`, suite: 'skip' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
   assert.equal(s.ok, true); assert.equal(gateOf(s), undefined); assert.match(s.gate_skipped, /merge\.suite = skip/);
-  const o = await doneCheck({ worktree: wt, dod: { ready: READY, gate: { cmd, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-2' });
+  const o = await doneCheck({ worktree: wt, dod: { ready: READY, tests: CHANGED, gate: { cmd, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-2' });
   assert.equal(gateOf(o).cmd, cmd, 'the command is untouched');
   assert.deepEqual(gateOf(o).suite, { mode: 'as-configured', files: null, done: null });
 });
@@ -75,7 +77,7 @@ test('gateProgress reads the files to run and the files done from a ci-suite log
   assert.deepEqual(gateProgress('no suite here'), { files: null, done: null });
   const t = mkTmp('meta-dodgate-to-'), { wt } = suiteRepo(t, 'a'), fake = path.join(t, 'ci-suite.mjs');
   fs.writeFileSync(fake, "console.log('ci-suite: 227 test file(s) to run'); for (let i = 0; i < 209; i++) console.log('ci-suite: done f' + i); setInterval(() => {}, 1000);\n");
-  const d = await doneCheck({ worktree: wt, dod: { ready: READY, gate: { cmd: `node "${fake.split(path.sep).join('/')}"`, suite: 'changed', timeout_min: 0.02 } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
+  const d = await doneCheck({ worktree: wt, dod: { ready: READY, tests: CHANGED, gate: { cmd: `node "${fake.split(path.sep).join('/')}"`, suite: 'changed', timeout_min: 0.02 } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
   assert.equal(d.ok, false);
   assert.match(d.why, /gate exit \S+ \(timed out after 0\.02 min: changed, 209\/227 files done\)/);
   assert.match(dodPrompt(d), /gate: changed, 209\/227 files/);

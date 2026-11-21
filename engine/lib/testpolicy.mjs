@@ -18,6 +18,7 @@ import { classify } from './testcmd.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { isBrowserTest, importsOf, pickTests } from './cisuite.mjs';
 import { workInit, onWork } from './progress.mjs';
+import { TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
 
 export const TEST_MODES = ['light', 'changed', 'off'], BROWSER_MODES = ['ci', 'allow'], FULL_SUITE = ['deny', 'allow'];
 /** the env a run's test process gets while policy.tests.browser = ci: tests/helpers/cdp.mjs skipWhy reads it */
@@ -107,4 +108,13 @@ export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, pe
     for (const t of pick) run.add(t);
   }
   return { run: [...run].sort(), none, left: [] };
+}
+/** pickRun over a repo's own tests/*.test.mjs (none when it has no tests/ folder: a project that is not node-tested), with the last
+ * `norn tests measure` of project state dir `state` (its times.json for fastest-first, impact.json) when there (state null: none) */
+export function pickInRepo(repo, state, mode, changed) {
+  let tests = [];
+  try { tests = fs.readdirSync(path.join(repo, 'tests')).filter(x => x.endsWith('.test.mjs')).map(x => `tests/${x}`); } catch { /* no tests folder */ }
+  const m = f => { const t = state ? readOr(path.join(state, 'tests', f)) : null; try { return t === null ? null : JSON.parse(t); } catch { return null; } };
+  const ms = Object.fromEntries((m(TIMES_FILE)?.files ?? []).map(x => [x.file, x.ms]));
+  return pickRun({ mode: mode === 'off' ? 'light' : mode, changed, tests, read: f => readOr(path.join(repo, f)), impact: m(IMPACT_FILE), ms });
 }

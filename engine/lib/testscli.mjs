@@ -16,7 +16,7 @@ import { crossings } from './advisory.mjs';
 import { subdirOf, inDir, projectHome } from './monorepo.mjs';
 import { suiteKind, runPytest, timesTable, impactMap, testsFor, breakdown, slowestTests, TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
 import { repoIndex, runCached, cacheDir, prune } from './testcache.mjs';
-import { testsPolicy, pickRun, policyWords, BROWSER_SKIP_ENV } from './testpolicy.mjs';
+import { testsPolicy, pickInRepo, policyWords, BROWSER_SKIP_ENV } from './testpolicy.mjs';
 
 export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore] | for FILE... | run [FILE...] [--changed [--base REF]] [-- node flags]    '
   + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer; for = the test files that cover each FILE, from the last measure\'s coverage; '
@@ -189,15 +189,9 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
 // picks for the branch's change against the merge base (committed, uncommitted and untracked). Inside a run (META_RUN_ID) browser tests
 // skip while policy.tests.browser = ci. One line per file, a red's output tail (failures only); exit 1 = a red, 2 = nothing runnable.
 const sec = ms => `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
-const readRepo = repo => x => { try { return fs.readFileSync(path.join(repo, x), 'utf8'); } catch { return null; } };
 /** the branch's changed files against the merge base with base (committed, uncommitted, untracked), repo-relative */
 export const changedFiles = (repo, base) => { const mb = git(repo, ['merge-base', base, 'HEAD']);
   return [...new Set([...git(repo, ['diff', '--name-only', '--relative', mb]).split('\n'), ...git(repo, ['ls-files', '--others', '--exclude-standard']).split('\n')].map(fwd).filter(Boolean))]; };
-/** the test files policy.tests.mode picks for a change (testpolicy.mjs pickRun), with the last measure's times and impact map when there */
-export function pickFor(repo, state, mode, changed) {
-  const tests = fs.readdirSync(path.join(repo, 'tests')).filter(x => x.endsWith('.test.mjs')).map(x => `tests/${x}`), ms = Object.fromEntries((read(state, TIMES_FILE)?.files ?? []).map(x => [x.file, x.ms]));
-  return pickRun({ mode: mode === 'off' ? 'light' : mode, changed, tests, read: readRepo(repo), impact: read(state, IMPACT_FILE), ms });
-}
 async function testsRun(f, { repo, state, project, rest, out, err, env, print }) {
   const t = testsPolicy(project?.policy), run = env.META_RUN_ID || null;
   if (run && t.mode === 'off') { err('error: tests run: policy.tests.mode = off - tests do not run in a run of this project; CI runs them on the PR'); return 2; }
@@ -206,7 +200,7 @@ async function testsRun(f, { repo, state, project, rest, out, err, env, print })
     const base = f.base || 'origin/main';
     let changed;
     try { changed = changedFiles(repo, base); } catch (e) { err(`error: tests run --changed: no diff against ${base} (${String(e.stderr || e.message).trim().split('\n')[0]})`); return 2; }
-    picked = pickFor(repo, state, t.mode, changed);
+    picked = pickInRepo(repo, state, t.mode, changed);
     if (!f.json) out(`tests run: ${changed.length} file(s) changed since ${base}: ${picked.run.length} test file(s) by policy.tests.mode = ${t.mode}${picked.none.length ? `; no test covers ${picked.none.join(' ')} directly (left to CI)` : ''}${picked.left.length ? `; ${picked.left.length} more importers left to CI` : ''}`);
     files = [...new Set([...files, ...picked.run])];
   }

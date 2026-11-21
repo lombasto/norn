@@ -19,6 +19,8 @@ import { mkTmp } from './helpers/tmp.mjs';
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
 const fwd = p => p.split(path.sep).join('/');
 const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+// policy.tests.mode = changed: the brief's Tests line and the gate as written (light, the default, has its own tests below)
+const CHANGED = { mode: 'changed' };
 const READY = 'Scope: src/**, README.md\nTests: `node -e "console.log(\'# pass 3\'); console.log(\'# fail 0\')"`\nDone: ## DONE\n';
 
 /** a repo on main + a lane worktree feat/x with one committed change to `file` */
@@ -62,6 +64,8 @@ test('readyGate: policy.dod.ready off | warn | refuse (default off); a MERGE sta
   assert.equal(readyGate({ brief: bad, policy: { dod: { ready: 'refuse' } }, stage: 'MERGE' }).refused, null);
   const g = readyGate({ brief: good, policy: { dod: { ready: 'refuse' } } });
   assert.equal(g.refused, null); assert.deepEqual(g.dod.ready.scope, ['src/**', 'README.md']); assert.equal(g.dod.ok, true);
+  assert.deepEqual(g.dod.tests, { mode: 'light', run_budget_min: 3, browser: 'ci', full_suite: 'deny' }, 'policy.tests rides on the spec');
+  assert.deepEqual(readyGate({ brief: good, policy: { dod: { ready: 'warn' }, tests: { mode: 'off', run_budget_min: 9 } } }).dod.tests, { mode: 'off', run_budget_min: 9, browser: 'ci', full_suite: 'deny' });
   assert.match(readyGate({ brief: path.join(t, 'none.md'), policy: { dod: { ready: 'refuse' } } }).refused, /not readable/);
   const row = SETTINGS.find(s => s.key === 'policy.dod.ready');
   assert.deepEqual([row.type, row.options, sectionOf(row).join('/')], ['enum', ['off', 'warn', 'refuse'], 'agents/rounds']);
@@ -76,7 +80,7 @@ test('testCounts: node test / TAP and pytest summaries; none = null', () => {
 
 test('doneCheck: green = clean tree, changes in Scope, Tests + gate exit 0 with counts and logs - Norn\'s own record', async () => {
   const t = mkTmp('meta-dod-green-'), { wt } = laneRepo(t);
-  const d = await doneCheck({ worktree: wt, dod: { ready: parseReady(READY), gate: { cmd: 'node -e "console.log(\'ℹ pass 7\')"' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
+  const d = await doneCheck({ worktree: wt, dod: { ready: parseReady(READY), tests: CHANGED, gate: { cmd: 'node -e "console.log(\'ℹ pass 7\')"' } }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
   assert.equal(d.ok, true, JSON.stringify(d));
   assert.deepEqual(d.changed, ['src/a.mjs']);
   assert.deepEqual(d.tests.map(x => [x.name, x.code, x.ok, x.counts]), [['tests', 0, true, { pass: 3, fail: 0 }], ['gate', 0, true, { pass: 7, fail: 0 }]]);
@@ -90,12 +94,12 @@ test('doneCheck: a docs-only branch (the CI paths-ignore) skips the gate, its Te
   const t = mkTmp('meta-dod-docs-'), { wt } = laneRepo(t, 'docs/img/a.png');
   fs.writeFileSync(path.join(wt, 'README.md'), 'r2\n'); git(wt, 'commit', '-q', '-am', 'readme');
   const tests = 'Tests: `node -e "console.log(\'# pass 1\')"`\nDone: ## DONE\n', gate = { cmd: 'node -e "process.exit(1)"' };
-  const d = await doneCheck({ worktree: wt, dod: { ready: parseReady(`Scope: README.md, docs/**\n${tests}`), gate }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
+  const d = await doneCheck({ worktree: wt, dod: { ready: parseReady(`Scope: README.md, docs/**\n${tests}`), tests: CHANGED, gate }, logDir: path.join(t, 'logs'), run: 'RUN-1' });
   assert.equal(d.ok, true, JSON.stringify(d));
   assert.deepEqual(d.tests.map(x => x.name), ['tests'], 'no gate job');
   assert.match(d.gate_skipped, /docs-only/);
   fs.writeFileSync(path.join(wt, 'a.mjs'), 'x\n'); git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', 'code');
-  const c = await doneCheck({ worktree: wt, dod: { ready: parseReady(`Scope: README.md, docs/**, a.mjs\n${tests}`), gate }, logDir: path.join(t, 'logs'), run: 'RUN-2' });
+  const c = await doneCheck({ worktree: wt, dod: { ready: parseReady(`Scope: README.md, docs/**, a.mjs\n${tests}`), tests: CHANGED, gate }, logDir: path.join(t, 'logs'), run: 'RUN-2' });
   assert.deepEqual(c.tests.map(x => [x.name, x.ok]), [['tests', true], ['gate', false]], 'a code change runs the gate');
   assert.equal(c.gate_skipped, undefined);
 });
@@ -113,14 +117,14 @@ test('doneCheck: an untracked file, a path outside Scope and a red test each fai
   const ready = parseReady('Scope: src/**\nTests: tests/a.test.mjs\nDone: ## DONE\n');
   fs.mkdirSync(path.join(wt, 'tests')); fs.writeFileSync(path.join(wt, 'tests', 'a.test.mjs'), '');
   git(wt, 'add', 'tests'); git(wt, 'commit', '-q', '-m', 't');
-  const d = await doneCheck({ worktree: wt, dod: { ready, test_cmd: 'node -e "process.exit(3)" -- {files}' }, logDir: path.join(t, 'logs'), run: 'RUN-2' });
+  const d = await doneCheck({ worktree: wt, dod: { ready, tests: CHANGED, test_cmd: 'node -e "process.exit(3)" -- {files}' }, logDir: path.join(t, 'logs'), run: 'RUN-2' });
   assert.equal(d.ok, false);
   assert.deepEqual(d.dirty, ['stray.txt']);
   assert.deepEqual(d.out_of_scope, ['lib/b.mjs', 'tests/a.test.mjs']);
   assert.deepEqual(d.tests.map(x => [x.name, x.cmd, x.code, x.ok]), [['tests', 'node -e "process.exit(3)" -- tests/a.test.mjs', 3, false]]);
   assert.match(d.why, /1 uncommitted \/ untracked file\(s\); 2 changed path\(s\) outside Scope; tests exit 3/);
   assert.match(dodPrompt(d, 'B.md'), /stray\.txt[\s\S]*lib\/b\.mjs[\s\S]*exit 3[\s\S]*B\.md/);
-  const none = await doneCheck({ worktree: wt, dod: { ready: parseReady('Scope: **\nTests: the suite\nDone: x\n') }, logDir: path.join(t, 'l2'), run: 'RUN-3' });
+  const none = await doneCheck({ worktree: wt, dod: { ready: parseReady('Scope: **\nTests: the suite\nDone: x\n'), tests: CHANGED }, logDir: path.join(t, 'l2'), run: 'RUN-3' });
   assert.match(none.why, /Tests: nothing runnable/);
 });
 
@@ -131,6 +135,61 @@ test('doneCheck: the NOTES file and its shots are allowed beside Scope', async (
   git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', 'n');
   const d = await doneCheck({ worktree: wt, dod: { ready: parseReady(READY), notes: path.join(wt, 'notes', 'N.md') }, logDir: path.join(t, 'logs'), run: 'RUN-4' });
   assert.deepEqual(d.out_of_scope, ['notes/other.mjs']);
+});
+
+// test-diet S1: the Done check follows policy.tests. A lane that changed src/a.mjs (tests/a.test.mjs covers it) and src/b.mjs (no test).
+function lightLane(t, { red = false } = {}) {
+  const { wt } = laneRepo(t);
+  fs.mkdirSync(path.join(wt, 'tests'));
+  fs.writeFileSync(path.join(wt, 'tests', 'a.test.mjs'), `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { a } from '../src/a.mjs';\ntest('a', () => assert.equal(a, ${red ? 2 : 1}));\n`);
+  fs.writeFileSync(path.join(wt, 'tests', 'z.test.mjs'), "import test from 'node:test';\ntest('z', () => {});\n");
+  fs.writeFileSync(path.join(wt, 'src', 'b.mjs'), 'export const b = 1;\n');
+  git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', 'tests');
+  return { wt, cache: path.join(t, 'cache'), logDir: path.join(t, 'logs') };
+}
+const LIGHT_READY = parseReady('Scope: src/**, tests/**\nTests: light (policy.tests)\nDone: ## DONE\n'), GATE = { cmd: 'node -e "process.exit(1)"' };
+
+test('doneCheck light: the light set runs through the test cache (a second check reuses it), no gate, the uncovered module named; a red fails', async () => {
+  const t = mkTmp('meta-dod-light-'), { wt, cache, logDir } = lightLane(t);
+  const d = await doneCheck({ worktree: wt, dod: { ready: LIGHT_READY, gate: GATE }, logDir, run: 'RUN-1', cache });
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.deepEqual(d.tests.map(x => [x.name, x.cmd, x.ok, x.cached]), [['tests/a.test.mjs', 'norn tests run tests/a.test.mjs', true, 'ran'], ['tests/z.test.mjs', 'norn tests run tests/z.test.mjs', true, 'ran']]);
+  assert.deepEqual(d.tests[0].counts, { pass: 1, fail: 0 });
+  assert.match(d.gate_skipped, /light set replaces the gate; CI runs the rest/);
+  assert.deepEqual(d.tests_uncovered, ['src/b.mjs']);
+  assert.match(fs.readFileSync(d.tests[0].log, 'utf8'), /pass tests\/a\.test\.mjs ran/);
+  const again = await doneCheck({ worktree: wt, dod: { ready: LIGHT_READY, gate: GATE }, logDir, run: 'RUN-2', cache });
+  assert.deepEqual(again.tests.map(x => [x.cached, x.by]), [['reused', 'RUN-1'], ['reused', 'RUN-1']], 'the same content: no second run');
+  const u = mkTmp('meta-dod-light-red-'), r = lightLane(u, { red: true });
+  const red = await doneCheck({ worktree: r.wt, dod: { ready: LIGHT_READY }, logDir: r.logDir, run: 'RUN-3', cache: r.cache });
+  assert.equal(red.ok, false);
+  assert.match(red.why, /tests\/a\.test\.mjs exit 1/);
+  assert.match(fs.readFileSync(red.tests[0].log, 'utf8'), /FAIL tests\/a\.test\.mjs ran[\s\S]*strictly equal/, 'a red\'s output tail in the log');
+});
+
+test('doneCheck light: the Tests line\'s node test files join the set, its other commands run as written; past run_budget_min nothing more starts - left to CI, not red', async () => {
+  const t = mkTmp('meta-dod-budget-'), { wt, cache, logDir } = lightLane(t);
+  const ready = parseReady('Scope: src/**, tests/**\nTests: `node --test tests/z.test.mjs` and `node -e "console.log(\'# pass 1\')"`\nDone: x\n');
+  const all = await doneCheck({ worktree: wt, dod: { ready, tests: { run_budget_min: 0 } }, logDir, run: 'RUN-1', cache });
+  assert.equal(all.ok, true, JSON.stringify(all));
+  assert.deepEqual(all.tests.map(x => x.name), ['tests/a.test.mjs', 'tests/z.test.mjs', 'tests'], 'budget 0 = none: every job runs');
+  assert.equal(all.tests[2].cmd, 'node -e "console.log(\'# pass 1\')"');
+  const cut = await doneCheck({ worktree: wt, dod: { ready, tests: { run_budget_min: 0.002 } }, logDir, run: 'RUN-2', cache: path.join(t, 'cache2') });
+  assert.equal(cut.ok, true, 'what the budget left is unknown, not red');
+  assert.deepEqual(cut.tests.map(x => x.name), ['tests/a.test.mjs']);
+  assert.deepEqual(cut.tests_left, ['tests/z.test.mjs', 'node -e "console.log(\'# pass 1\')"']);
+  assert.match(cut.tests_left_why, /run_budget_min = 0\.002 spent in the Done check: left to CI \(unknown, not a pass\)/);
+});
+
+test('doneCheck off: no tests and no gate, said so; Tests: none still holds a writing run to its word', async () => {
+  const t = mkTmp('meta-dod-off-'), { wt, cache, logDir } = lightLane(t);
+  const d = await doneCheck({ worktree: wt, dod: { ready: LIGHT_READY, gate: GATE, tests: { mode: 'off' } }, logDir, run: 'RUN-1', cache });
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.deepEqual(d.tests, []);
+  assert.match(d.tests_off, /policy\.tests\.mode = off: the Done check runs no tests and no gate/);
+  assert.match(d.gate_skipped, /mode = off/);
+  const none = await doneCheck({ worktree: wt, dod: { ready: parseReady('Scope: **\nTests: none - a design\nDone: x\n'), tests: { mode: 'off' } }, logDir, run: 'RUN-2', cache });
+  assert.match(none.why, /the brief declares no tests/);
 });
 
 /** a sandboxed project + `norn run --executor fake` on the lane worktree; -> { r, state } */
@@ -185,7 +244,11 @@ test('run end: a green Done check keeps DONE and records the evidence (exit code
   await waitFor(() => settled(loadState(state).items[id]), { what: 'the run ends' });
   const e = loadState(state).items[id].end;
   assert.equal(e.outcome, 'done'); assert.equal(e.dod.ok, true);
-  assert.deepEqual(e.dod.tests.map(x => [x.name, x.code]), [['tests', 0], ['gate', 0]]);
+  // policy.tests at its default (light): the brief's `node -e` command runs as written, the light set replaces the gate
+  assert.deepEqual(e.dod.tests.map(x => [x.name, x.code]), [['tests', 0]]);
+  assert.match(e.dod.gate_skipped, /policy\.tests\.mode = light: the light set replaces the gate/);
+  assert.equal(e.dod.tests_policy, 'policy.tests: mode light, budget 3 min, browser ci, full suite deny');
+  assert.deepEqual(e.dod.tests_uncovered, ['src/a.mjs'], 'no test covers the changed module: named, left to CI');
 });
 
 test('Agents shows Ready and Done with the evidence', () => {
