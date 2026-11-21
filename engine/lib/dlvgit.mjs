@@ -100,12 +100,19 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
   const inst = installed.map(full).filter(Boolean), hist = history.map(full).filter(Boolean);
   const tipOf = branch => refs.get(`refs/remotes/${remote}/${branch}`)?.sha || refs.get('refs/heads/' + branch)?.sha || null;
   const nativeRe = native ? native.map(globToRe) : null;
+  // LANE-TRUTH: the multi-home cut renamed norn/x to norn/<home>/x (synccut.mjs) and rewrote the records of the branches it renamed;
+  // a record naming the old form whose branch is gone under it is read under the renamed one (remote first, as below): it exists, and
+  // with no tip recorded at DONE its tip is the renamed branch's (a recorded tip stays the work the deliverable delivered)
+  const renamed = branch => { const i = String(branch ?? '').indexOf('/'); if (i < 0) return null;
+    const pre = branch.slice(0, i + 1), rest = branch.slice(i + 1), hit = base => [...refs.keys()].find(k => { if (!k.startsWith(base + pre)) return false;
+      const t = k.slice(base.length + pre.length), j = t.indexOf('/'); return j > 0 && /^[a-z][a-z0-9]{0,7}$/.test(t.slice(0, j)) && t.slice(j + 1) === rest; });
+    const k = hit(`refs/remotes/${remote}/`) || hit('refs/heads/'); return k ? refs.get(k) : null; };
   const info = (branch, fallbackTip = null) => {
-    const ref = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null;
-    const tip = ref?.sha || fallbackTip || null;
+    const direct = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null, ren = direct ? null : renamed(branch);
+    const ref = direct || (fallbackTip ? null : ren), tip = ref?.sha || fallbackTip || null;
     const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
-    const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!ref, merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
+    const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(direct || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
     if (tip && mainSha && !merged) {
       const k = `${tip}:${mainSha}`;
       if (!c.counts[k]) {

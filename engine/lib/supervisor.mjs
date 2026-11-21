@@ -12,7 +12,7 @@ import { record, RecordError, loadState } from './records.mjs';
 import { providerEnv, limitPatterns, authPatterns, executorInfo } from './executors.mjs';
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
 import { ADAPTERS, capsOf } from './harness/index.mjs';
-import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN } from './mail.mjs';
+import { nudgeDue, nudgePrompt, NUDGE_AFTER_MIN, mailWaiting, raiseFlag, clearFlag } from './mail.mjs';
 import { buildCommand, hbPath, hbWriter, refreshLock, releaseLock, startRun, stopOrphans, RunRefused, classifyLimit, queueRun, fillAll, fillWords, killTree, autoResumeRefusal, sweepLost, recordEnd, endFilePath } from './runs.mjs';
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
@@ -36,7 +36,7 @@ import { makeTool } from './slop/tools.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { pauseOf } from './pause.mjs';
 import { readPause, holdsStarts } from './pausemode.mjs';
-import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
+import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy, orderDue } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
 import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
@@ -66,6 +66,7 @@ let finished = false;
 let capTimer = null, capped = false;
 let nudging = null, nudgeTimer = null, nudgeWaitLast = null;   // META-GTP-MAIL piece 3 (nudgeCheck)
 let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // META-CTX-ENFORCE R1 (ctxCheck)
+let flagTimer = null;   // hook-fast S1 (flagCheck)
 
 // a pid alone names whatever process holds it NOW (Windows reuses a freed pid; CI-HANG-6E54DAB R2): hb + end name the supervisor
 // as (pid, OS start time) - the value procStart gives a reader, so the two compare equal while this process lives.
@@ -150,6 +151,7 @@ if (cmd) {
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);
     if (ctxWatched()) ctxTimer = setInterval(ctxCheck, spec.hbMs);
+    if (spec.mail_hook) flagTimer = setInterval(flagCheck, spec.hbMs);
     if (spec.capMs) capTimer = setTimeout(() => { capped = true; logLine(`time cap ${spec.capMs} ms: stopping the executor`); killTree(childPid, { state, killer: `${run} supervisor ${process.pid}`, reason: `time cap ${spec.capMs} ms` }); }, spec.capMs);
   } catch (e) { finish(null, null, String(e.message)); }
 }
@@ -191,6 +193,7 @@ async function finish(code, signal, error) {
   clearInterval(timer);
   if (nudgeTimer) clearInterval(nudgeTimer);
   if (ctxTimer) clearInterval(ctxTimer);
+  if (flagTimer) { clearInterval(flagTimer); try { clearFlag(state, run); } catch { /* state gone */ } }   // an ended run takes no more mail by hook
   if (capTimer) clearTimeout(capTimer);
   for (const fd of fds) { try { fs.closeSync(fd); } catch { /* closed */ } }
   logLine(`exit=${code}${signal ? ' signal=' + signal : ''}${error ? ' error=' + error : ''}`);
@@ -548,6 +551,12 @@ function nudgeResume() {
 // request) is held against its role's hard_max_k from the CURRENT project policy (ctxlimit.mjs); past it the tree is stopped and
 // the run ends as HANDOFF (Norn writes its result + HANDOFF.md; committed work is kept; auto-resume as for any HANDOFF). The no-new-step
 // and hand-off orders before it are the PostToolUse hook's (norn mail check --inject). A claude-shaped run with a transcript only.
+// hook-fast S1: the mail flag (mail.mjs flagFile) for queued mail no sender flagged - another home's, synced in, or a sender that
+// crashed between its record and the flag. The hook (norn-hook) starts Node only on the flag.
+function flagCheck() {
+  if (finished || !childPid) return;
+  try { if (mailWaiting(state, run)) raiseFlag(state, run); } catch (e) { logLine(`mail flag check: ${e.message}`); }
+}
 function ctxWatched() { return cmd?.parse === 'claude' && !!spec.session_id && !!spec.projectsDir; }
 function ctxWait(why) { if (why !== ctxWaitLast) logLine(`context check waits: ${why}`); ctxWaitLast = why; }
 function ctxCheck() {
@@ -556,8 +565,9 @@ function ctxCheck() {
   if (!ctxFile) return;
   let c;
   try { c = ctxLimits(specPolicy(spec), ctxRole(spec)); } catch (e) { ctxWait(`policy not readable: ${e.message}`); return; }
-  const ctx = transcriptCtx(ctxFile);
-  if (ctxLevel(ctx, c) !== 'hard_max') return;
+  const ctx = transcriptCtx(ctxFile), level = ctxLevel(ctx, c);
+  if (spec.mail_hook && orderDue(state, run, level)) raiseFlag(state, run);   // hook-fast S1: the hook's order goes out at the next tool call
+  if (level !== 'hard_max') return;
   ctxForced = { ctx, hard_max_k: c.hard_max_k, role: c.role };
   logLine(`context ${Math.round(ctx / 1000)}k past the hard max (${c.hard_max_k}k, role ${c.role}): stopping the executor, the run ends as HANDOFF`);
   // the run's result is the hand-off Norn writes for it - unless the worker handed off itself first (its own HANDOFF.md is better)

@@ -24,8 +24,8 @@ import { briefMarker } from './mergebrief.mjs';
 import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
-import { hookCommand } from './mail.mjs';
-import { scopeHookOf, guardSettings } from './scope.mjs';
+import { mailHook, raiseFlag } from './mail.mjs';
+import { scopeHookOf, guardSettings, writeScopeFile } from './scope.mjs';
 import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
@@ -66,11 +66,11 @@ export { prompt } from './harness/common.mjs';
 export const claudeCmd = (o, remote) => adapterFor('claude').command({ ...o, remote });
 /** The command { exe, args, stdin, stdout, parse } of run spec `o`, built by its executor's harness adapter. */
 // META-GTP-MAIL delivery (a): a run whose adapter runs the mail hook (caps.hooks settings + adapter.mailHook: claude) gets the
-// PostToolUse hook `norn mail check --inject`; the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
+// PostToolUse hook (norn-hook mail -> `norn mail check --inject` while its flag is up); the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
 export function mailHookOf(o) {
   const fam = harnessOf(o.executor, o.provider);
   const a = fam ? adapterFor(fam) : null;
-  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? hookCommand(o.state) : undefined;
+  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? mailHook(o.state) : undefined;
 }
 // META-DOD 2: the same executors get the scope guard (scope.mjs): deny rules, the write block and the PreToolUse hook - write runs only
 // ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too); TEST-GOVERNANCE S1:
@@ -493,16 +493,18 @@ export function dwarfWait(o, staleMs = STALE_MS) {
   if (!Object.values(st.dwarves).some(d => d.state === 'active' && d.pins.includes(key))) return null;
   return pickDwarf(st, { project: projectOf(o.state), lane: o.lane }, crewLoad(o.state, staleMs).busy).wait ?? null;
 }
-// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf;
-// a busy pinned dwarf refuses (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
+// the dwarf is picked (or hired) under the crew lock and the start event written inside it, so two launches never take one dwarf; the
+// event carries its id and its name then (dwarf_name: what the other homes show, records.mjs copyItems); a busy pinned dwarf refuses
+// (exit 3: a --queue start and the fill wait on it), and so does an unreadable store
 function withDwarf(o, info, staleMs, write) {
-  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write(undefined);
+  if (!takesDwarf({ ...o, kind: o.kind || info.kind })) return write({});
   try {
     return withCrew(o.state, c => {
       const { busy, past } = crewLoad(o.state, staleMs);
       const p = pickDwarf(c.state, { project: projectOf(o.state), lane: o.lane }, busy, past);
       if (p.wait) throw new RunRefused(p.wait, 3);
-      return write(p.dwarf ?? c.hire(p.hire));
+      const id = p.dwarf ?? c.hire();
+      return write({ dwarf: id, dwarf_name: c.state.dwarves[id].name });
     });
   } catch (e) { if (e instanceof CrewError) throw new RunRefused(e.message, 3); throw e; }
 }
@@ -838,7 +840,7 @@ export function startRun(o) {
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     // WORK-SIZING S1: the context marks the run starts under, on its record (enforcement still reads the live policy: ctxlimit.mjs)
     const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
-    const ev = withDwarf(o, info, staleMs, dwarf => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), dwarf, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
+    const ev = withDwarf(o, info, staleMs, dw => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), ...dw, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
@@ -851,6 +853,10 @@ export function startRun(o) {
     const specFile = path.join(o.state, 'runs', run + '.spec.json');
     fs.mkdirSync(path.dirname(specFile), { recursive: true });
     fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
+    // hook-fast S1: norn-hook's inputs - the scope file of a guarded run, and the mail flag up once, so the first tool call delivers what
+    // waited for this run's mailbox before it started (lane mail sent between two runs of a lane, a nudge's resume)
+    if (spec.scope) writeScopeFile(o.state, run, spec);
+    if (spec.mail_hook) raiseFlag(o.state, run);
     // NORN-WATCH S5: started from inside a reaped run's job (META_JOB) = break away, unless it is that run's own helper (dies with it).
     // RM-48 S1 (DEC-1088): an independent run that cannot leave the job is refused, naming it - never started inside (nested, the
     // job's reap or close would kill it with the run that happened to launch it)

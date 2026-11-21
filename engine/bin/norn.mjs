@@ -21,7 +21,7 @@ import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
 import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
-import { withCrew, crewState, readCrew, dwarfDisplay, CrewError } from '../lib/crew.mjs';
+import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
@@ -63,7 +63,8 @@ import { openProjectPrs, prLine, LAND_EXIT, makeGh } from '../lib/mergeland.mjs'
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
-import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged } from '../lib/deliverables.mjs';
+import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, closeLandedQuestions } from '../lib/deliverables.mjs';
+import { tickLanes, othersShipped } from '../lib/lifecycle.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -73,7 +74,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -1322,11 +1323,19 @@ function deliverablesCmd(argv, env, out, err) {
       out(r.id);
       return 0;
     }
-    if (sub === 'recheck') {   // DLV-MERGED-TRUTH: what the tick does now - ask GitHub about each PR, latch every merge, ask / apply the rulings
+    if (sub === 'recheck') {   // DLV-MERGED-TRUTH + LANE-TRUTH: the tick's merge and lane steps now, in its order - latch every merge
+      // (GitHub, git, rulings), withdraw the questions landed work made moot, then archive the lanes whose work shipped (lifecycle.mjs
+      // tickLanes: parked / stopped + shipped at once, a done one once it aged out); the other homes' shipped lanes are listed, never written
       if (id) throw new RunError(`unexpected ${id}`);
-      const done = latchMerged(state, { project, gh: makeGh(), dry: !!flags.dry });
+      const dry = !!flags.dry, done = latchMerged(state, { project, gh: makeGh(), dry });
       for (const c of done) out(`${c.dlv} ${c.ev} - ${c.why}`);
-      out(`${flags.dry ? 'DRY RUN - nothing written: ' : ''}${done.length} change(s)`);
+      const qs = closeLandedQuestions(state, { project, dry });
+      for (const c of qs) out(`${c.q} withdrawn - ${c.why}`);
+      const ls = tickLanes(state, { project, dry });
+      for (const x of ls) out(x.refused ? `${x.id} (${x.rule}) not archived: ${x.refused}` : `${x.id} archived (${x.rule}${dry ? '' : `; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}`}) - ${x.why}`);
+      const away = othersShipped(state);
+      for (const x of away) out(`${x.id} (${x.state}, home ${x.home}: read-only here - for home ${x.home}) work on main: ${x.why}`);
+      out(`${dry ? 'DRY RUN - nothing written: ' : ''}${done.length} deliverable change(s), ${qs.length} question(s) withdrawn, ${ls.filter(x => !x.refused).length} lane(s) archived${ls.some(x => x.refused) ? `, ${ls.filter(x => x.refused).length} refused` : ''}${away.length ? `; ${away.length} other-home lane(s) listed` : ''}`);
       return 0;
     }
     if (sub === 'resolve') {   // META-DLV-R2: a ready resolve brief, dispatched through the normal `norn run` path (--queue)
@@ -2072,13 +2081,13 @@ function crewCmd(argv, env, out, err) {
       const line = r => `${r.id}  ${r.name}  ${r.state}${r.state === 'active' ? `  ${r.busy ? `on ${r.busy}` : 'free'}` : `  ${r.why ?? ''}`}  ${r.runs} run${r.runs === 1 ? '' : 's'}${r.pins.length ? `  pinned ${r.pins.join(', ')}` : ''}`;
       if (sub === 'list') {
         const rows = Object.values(st.dwarves).sort((a, b) => a.order - b.order).map(row);
-        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires Thorin'); else for (const r of rows) out(line(r));
+        if (flags.json) out(JSON.stringify(rows, null, 1)); else if (!rows.length) out('no dwarf hired yet: the first worker run hires one'); else for (const r of rows) out(line(r));
         return 0;
       }
       if (!id || !st.dwarves[id]) throw new RunError(id ? `no dwarf ${id} in the crew (norn crew list)` : 'show needs a dwarf id');
       const r = { ...row(st.dwarves[id]), career: past.filter(p => p.dwarf === id).sort((a, b) => String(a.at).localeCompare(String(b.at))) };
       if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
-      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}${r.succeeds ? `, after ${dwarfDisplay(r.succeeds)}` : ''}`);
+      out(`${line(r)}\n  hired ${r.hired}${r.retired ? `, retired ${r.retired}` : ''}`);
       for (const p of r.career) out(`  ${p.at}  ${p.project}/${p.lane ?? '-'}  ${p.run}  ${p.state}`);
       return 0;
     }
@@ -3035,6 +3044,7 @@ function mailCmd(argv, env, out, err) {
       if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
       if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
+      if (inject && reader) clearFlag(state, reader);   // hook-fast S1: down before the read (mail.mjs flagFile): a mail that lands meanwhile raises it again
       const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }
