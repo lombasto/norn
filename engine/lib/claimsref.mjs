@@ -3,12 +3,13 @@
 // commits its edits on the claims tip it fetched and pushes WITHOUT force: git's receive-pack updates the ref only from the old value the
 // push was built on (non-fast-forward = rejected; a concurrent update = a failed ref lock) - a compare-and-swap on the branch.
 // Locally the fetched tip is refs/sync/claims of this machine's ledger repo (bare). Endpoint f = { dir: that repo, remote, host }.
-// Node built-ins + the git binary only.
+// Node built-ins + the git binary only; every git child is bounded (jobguard boundedSync: a timeout kills its tree, no orphan at birth).
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { boundedSync } from './jobguard.mjs';
+import { refSha } from './gitfacts.mjs';
 
 export class ClaimsError extends Error {}
 
@@ -23,7 +24,7 @@ export function rgit(f, args, { input, ok = [0], index } = {}) {
     GIT_COMMITTER_NAME: 'norn-fed', GIT_COMMITTER_EMAIL: `fed@${f.host}` };
   for (const k of ['GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[k];
   if (index) env.GIT_INDEX_FILE = index;
-  const r = spawnSync('git', args, { env, input, encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
+  const r = boundedSync('git', args, { env, input, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw new ClaimsError(`git ${args[0]}: ${r.error.message}`);
   if (!ok.includes(r.status)) throw new ClaimsError(`git ${args[0]} failed (${r.status}): ${(r.stderr || '').trim().split('\n').pop()}`);
   return { out: r.stdout, status: r.status, err: r.stderr };
@@ -32,7 +33,7 @@ export function rgit(f, args, { input, ok = [0], index } = {}) {
 export function initRepo(f) {
   if (fs.existsSync(path.join(f.dir, 'HEAD'))) return;
   fs.mkdirSync(f.dir, { recursive: true });
-  const r = spawnSync('git', ['init', '-q', '--bare', f.dir], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
+  const r = boundedSync('git', ['init', '-q', '--bare', f.dir], { timeout: 120000 });
   if (r.status !== 0) throw new ClaimsError(`git init failed: ${(r.stderr || '').trim()}`);
 }
 /** the remote's claims branch into refs/sync/claims, plus `extra` refspecs in the same fetch (fed: the machine branches) */
@@ -46,7 +47,7 @@ const tipOf = f => rgit(f, ['rev-parse', '-q', '--verify', `${SYNC_CLAIMS}^{comm
 export function catBatch(f, shas, { heads = false } = {}) {
   if (!shas.length) return [];
   const env = { ...process.env, GIT_DIR: f.dir };
-  const r = spawnSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', windowsHide: true, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
+  const r = boundedSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', encoding: null, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new ClaimsError(`git cat-file failed: ${String(r.stderr).trim()}`);
   const buf = r.stdout, out = [];
   let i = 0;
@@ -63,8 +64,24 @@ export function catBatch(f, shas, { heads = false } = {}) {
 // ENGINE-GIT (DEC-88): the listing names the ref and the one cat-file --batch resolves the tip with the bodies (2 spawns, was 3:
 // rev-parse + ls-tree + cat-file). refs/sync/claims moves only under the claims lock (fetchRefs, casClaims), so both see one tip.
 // A failed ls-tree is a missing ref (no claims yet) only when rev-parse agrees; anything else throws as before.
+// git-perf S1: the claims at one tip never change, and the queue walk reads them on every fill: the answer is kept per tip (read from the
+// ref files, no git) in this process and in <dir>/norn-claims.json; a moved tip (a fetch, a CAS) is read from git again
+const claimsMemo = new Map();
+const memoFile = f => path.join(f.dir, 'norn-claims.json');
 /** { tip, claims: { key: claim } } at the fetched claims tip (no fetch) */
 export function readClaims(f) {
+  const at = refSha(f.dir, SYNC_CLAIMS), key = `${f.dir}|${at}`;
+  if (at && !claimsMemo.has(key)) { try { const m = JSON.parse(fs.readFileSync(memoFile(f), 'utf8')); if (m.tip === at) claimsMemo.set(key, m); } catch { /* none yet */ } }
+  if (at && claimsMemo.has(key)) return structuredClone(claimsMemo.get(key));
+  const r = readClaimsGit(f);
+  if (r.tip && r.tip === at) {
+    claimsMemo.set(key, r);
+    const t = `${memoFile(f)}.${process.pid}.tmp`;
+    try { fs.writeFileSync(t, JSON.stringify(r)); fs.renameSync(t, memoFile(f)); } catch { try { fs.unlinkSync(t); } catch { /* gone */ } }   // the memo is a shortcut only
+  }
+  return structuredClone(r);
+}
+function readClaimsGit(f) {
   const ls = rgit(f, ['ls-tree', '-r', '-z', `${SYNC_CLAIMS}^{commit}`], { ok: [0, 128] });
   if (ls.status !== 0) {
     if (!tipOf(f)) return { tip: null, claims: {} };

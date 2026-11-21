@@ -772,12 +772,15 @@ export function claimDoor(o) {
 // queue-stall (11-21: queued runs read READY in norn ready while every fill's claimDoor held them on another home's claim - nothing
 // recorded): the walk's term for queued spec o = claimDoor's no-network pre-check (claims.mjs claimHold on the last fetched tip), so
 // the dry walk and the fill agree. cache: ledger dir -> fetched claims (one read per walk). -> null | { term, why, home }
+// git-perf S1: the walk runs on every fill, the view and the digest (several walks per tick): its claim facts read the worktree's touched
+// files at most every WALK_TOUCH_TTL_MS for an unchanged HEAD (gitfacts.mjs); claimDoor, at the start itself, reads them fresh
+const WALK_TOUCH_TTL_MS = 10 * 60000;
 function claimTerm(o, cache) {
   if (claimExempt(o)) return null;
   const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
   if (!f) return null;
   if (!cache.has(f.dir)) { let c = null; try { c = readClaims(f).claims; } catch { /* no fetched claims yet: the start's CAS round decides */ } cache.set(f.dir, c); }
-  const claims = cache.get(f.dir), h = claims && claimHold(claims, workOf(o, home, path.basename(path.resolve(o.state))));
+  const claims = cache.get(f.dir), h = claims && claimHold(claims, workOf(o, home, path.basename(path.resolve(o.state)), { ttlMs: WALK_TOUCH_TTL_MS }));
   return h ? { term: `claim: ${h.why} (held by ${h.hit.home})`, why: `claim: ${h.why}`, home: h.hit.home ?? null } : null;
 }
 export function startRun(o) {

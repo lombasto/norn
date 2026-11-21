@@ -3,21 +3,19 @@
 // whose last run ended within recent_days. Git facts: the changed files (merge-base with main), the commits ahead, the tip, and which
 // unmerged branch another one contains (order / stacked). Also the work claim of a launch (claims.mjs's `me`): runs.mjs imports it back.
 // Not here yet: the other homes' claims and the upstream branches (SPEC stage S8), the item's lead (S6).
+// git-perf S1: every git fact comes from gitfacts.mjs (HEAD and refs from the files, sha-keyed answers memoized, bounded children).
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { readEvents, recordsFile, fold, idNum } from './records.mjs';
 import { parseReady } from './ready.mjs';
 import { readScope, ahead } from './collide.mjs';
+import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts } from './gitfacts.mjs';
 
-const gitOut = (cwd, args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 2 ** 20 }); return r.status === 0 ? r.stdout.trim() : null; };
 const lines = s => String(s ?? '').split('\n').map(x => x.trim()).filter(Boolean);
 const have = p => !!p && fs.existsSync(p);
-/** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main) */
-export function touchedOf(worktree) {
-  const wt = have(worktree) ? worktree : null, base = wt && gitOut(wt, ['merge-base', 'HEAD', 'origin/main']);
-  return base ? lines(gitOut(wt, ['diff', '--name-only', base])) : [];
-}
+/** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main).
+ * ttlMs: a list read within ttlMs for the same HEAD and merge-base is reused (gitfacts worktreeFacts) */
+export const touchedOf = (worktree, { ttlMs = 0 } = {}) => worktreeFacts(worktree, { ttlMs, commits: false })?.touched ?? [];
 // the open roadmap items linking one of `links`, from the item events (roadmap.mjs imports runs.mjs: its fold here would close a cycle)
 export function laneItems(events, links) {
   const L = {}, open = {};
@@ -34,9 +32,10 @@ export function laneItems(events, links) {
 }
 const itemEvents = state => { try { return readEvents(recordsFile(state, 'item')); } catch { return []; } };
 /** the work claim of a launch: branch + touched from its worktree (merge-base with origin/main), scope from its brief's Scope: line
- *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others) */
-export function workOf(o, home, project) {
-  const wt = have(o.worktree) ? o.worktree : null, br = wt && gitOut(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), touched = touchedOf(wt);
+ *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others).
+ *  ttlMs: touched may be up to ttlMs old for an unchanged HEAD (the queue walk's pre-check; a start reads it fresh) */
+export function workOf(o, home, project, { ttlMs = 0 } = {}) {
+  const f = worktreeFacts(o.worktree, { ttlMs, commits: false }), br = f?.branch, touched = f?.touched ?? [];
   let scope = [];
   try { scope = parseReady(fs.readFileSync(o.brief, 'utf8')).scope; } catch { /* no brief file: the whole repo */ }
   const items = laneItems(itemEvents(o.state), [`lane:${home}/${o.lane}`, `lane:${o.lane}`]);
@@ -61,27 +60,30 @@ export function briefFacts(file) {
 }
 
 // ---------- git facts ----------
-/** the main ref git compares against: <remote>/<main> when it exists, else <main> */
-export const mainRef = (repo, { main = 'main', remote = 'origin' } = {}) => (gitOut(repo, ['rev-parse', '--verify', '-q', `${remote}/${main}`]) ? `${remote}/${main}` : main);
-/** a tip's facts against main: { touched, commits } */
+/** the main ref git compares against: { name (<remote>/<main> when it exists, else <main>), ref (its full name), sha } */
+export function mainRef(repo, { main = 'main', remote = 'origin' } = {}) {
+  const r = shaOf(repo, `refs/remotes/${remote}/${main}`);
+  return r ? { name: `${remote}/${main}`, ref: `refs/remotes/${remote}/${main}`, sha: r } : { name: main, ref: `refs/heads/${main}`, sha: shaOf(repo, `refs/heads/${main}`) };
+}
+const commonOf = repo => gitDirs(repo)?.common ?? repo;
+/** a tip's facts against main: { touched, commits } (memoized by commit id) */
 function tipFacts(repo, tip, ref) {
-  const base = tip && gitOut(repo, ['merge-base', tip, ref]);
-  return base ? { touched: lines(gitOut(repo, ['diff', '--name-only', base, tip])), commits: Number(gitOut(repo, ['rev-list', '--count', `${ref}..${tip}`]) || 0) } : { touched: [], commits: 0 };
+  const c = commonOf(repo), base = tip && ref.sha && mergeBase(repo, c, tip, ref.sha);
+  return base ? { touched: diffNames(repo, c, base, tip) ?? [], commits: countOf(repo, c, ref.sha, tip) } : { touched: [], commits: 0 };
 }
 /** a worktree's facts: { branch, tip, touched (commits + tracked edits), commits } | null */
-function treeFacts(wt, ref) {
-  if (!have(wt)) return null;
-  const br = gitOut(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), tip = gitOut(wt, ['rev-parse', 'HEAD']), base = tip && gitOut(wt, ['merge-base', 'HEAD', ref]);
-  return { branch: br && br !== 'HEAD' ? br : null, tip, touched: base ? lines(gitOut(wt, ['diff', '--name-only', base])) : [], commits: base ? Number(gitOut(wt, ['rev-list', '--count', `${ref}..HEAD`]) || 0) : 0 };
+function treeFacts(wt, ref, ttlMs = 0) {
+  const f = worktreeFacts(wt, { main: ref.ref, ttlMs });
+  return f && { branch: f.branch, tip: f.tip, touched: f.touched, commits: f.commits };
 }
-const onMain = (repo, tip, ref) => !!tip && spawnSync('git', ['merge-base', '--is-ancestor', tip, ref], { cwd: repo, windowsHide: true }).status === 0;
+const onMain = (repo, tip, ref) => !!tip && !!ref.sha && isAncestorOf(repo, commonOf(repo), tip, ref.sha);
 /** order / stacked (a git fact): for each pair whose merge-base is not on main, the later one is stacked on the one whose tip it holds */
 export function stackPairs(repo, intents, ref) {
-  const t = intents.filter(x => x.tip);
+  const t = intents.filter(x => x.tip), c = commonOf(repo);
   for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) {
-    const a = t[i], b = t[j], mb = a.tip !== b.tip && gitOut(repo, ['merge-base', a.tip, b.tip]);
+    const a = t[i], b = t[j], mb = a.tip !== b.tip && mergeBase(repo, c, a.tip, b.tip);
     if (!mb || onMain(repo, mb, ref)) continue;
-    const n = Number(gitOut(repo, ['rev-list', '--count', mb, `^${ref}`]) || 0), [base, top] = mb === a.tip ? [a, b] : mb === b.tip ? [b, a] : ahead(b, a) ? [b, a] : [a, b];
+    const n = ref.sha ? countOf(repo, c, ref.sha, mb) : 0, [base, top] = mb === a.tip ? [a, b] : mb === b.tip ? [b, a] : ahead(b, a) ? [b, a] : [a, b];
     if (n) top.stacked_on = [...(top.stacked_on || []), { lane: base.lane, n }];
   }
 }
