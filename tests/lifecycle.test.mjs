@@ -211,6 +211,21 @@ test('unpushed at the end: a DONE lane\'s unpushed commits are pushed, then stag
   assert.equal(loadState(state).items['L:rm26'].state, 'archived', 'the owner\'s explicit override archives it');
 });
 
+// land-push: the run end records a deliverable for every DONE branch; its open record stopped the step before the push, so ui-shell,
+// dwarf-names and ui-runs-lanes sat unpushed on home b (no PR, no landing). The push comes first, on every home.
+test('a DONE lane with an open deliverable and unpushed commits is pushed by the tick; its path reads in the merge queue', () => {
+  const t = mkTmp('lc-dlvpush-'), state = path.join(t, 'state', 'p'), f = originFixture(t); fs.mkdirSync(state, { recursive: true });
+  const w = f.wt('ui-shell', 2, { push: false }), run = doneLane(state, f, 'ui-shell', w, T0), head = f.g(w, 'rev-parse', 'HEAD');
+  const dlv = rec(state, { kind: 'deliverable', ev: 'create', by: 'launcher', data: { repo: f.repo, branch: 'lane/ui-shell', tip: head, lane: 'ui-shell', run } }).id;
+  const calls = [], project = { name: 'p', file: path.join(t, 'project.json'), root: f.repo, briefs_dir: path.join(t, 'briefs') };
+  assert.deepEqual(tickPaths(state, { project, now: T0 + 2 * H, cli: fakeCli(state, calls) }).map(x => [x.id, x.act]), [['L:ui-shell', 'pushed']]);
+  assert.equal(f.g(f.origin, 'rev-parse', 'lane/ui-shell'), head, 'a plain push: origin has the lane head');
+  assert.deepEqual(calls, [], 'its deliverable is in the merge queue: no MERGE stage');
+  const row = lanesView(loadState(state), { all: true, now: T0 + 2 * H, ...laneHooks(state) }).find(x => x.name === 'ui-shell');
+  assert.equal(row.path.text, `${dlv} open: in the merge queue`);
+  assert.deepEqual(tickPaths(state, { project, now: T0 + 3 * H, cli: fakeCli(state, calls) }), [], 'pushed once');
+});
+
 test('work not on main past 2 h with no merge step is a red finding on the Lanes page and in the digest', () => {
   const t = mkTmp('lc-stuck-'), state = path.join(t, 'state', 'p'), f = originFixture(t); fs.mkdirSync(state, { recursive: true });
   doneLane(state, f, 'rm28', f.wt('rm28', 2), T0);
