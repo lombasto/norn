@@ -121,7 +121,7 @@ test('guardHistory: recorded check-in moves through the guards as the door met t
   assert.equal(rep.classes.find(c => c.cls === 'dispatch').refused, 1);
 });
 
-test('dash: the Usage replay card shows before / after with refused as its own colour; Agents shows a refused move as a plain row', async () => {
+test('dash: the Usage replay card shows before / after with refused as its own colour; the Runs drawer shows a refused move in its facts', async () => {
   const { fixture } = await import('./helpers/dash-fixture.mjs');
   const { replayReportFile } = await import('../engine/lib/eval/report.mjs');
   const { renderTab } = await import('../engine/dash/ui.mjs');
@@ -140,6 +140,7 @@ test('dash: the Usage replay card shows before / after with refused as its own c
     record(f.pa.state, { kind: 'run', ev: 'refuse', id: ck, by: 'launcher', data: { guard: 'busy', why: 'lane busy: worktree C:/w has live run RUN-1 (river S1)', lane: 'river', stage: 'S2' } });
     const a = (await f.get('/api/agents?project=kestrel')).data;
     assert.deepEqual(a.tree.find(n => n.id === ck).refused.map(x => [x.words, x.lane, x.stage]), [['lane busy', 'river', 'S2']]);
-    assert.match(renderTab('runs', a, { project: 'kestrel', now: Date.now() }), new RegExp(`id="node-${ck}"[^]*class="node lvl1 refusedrow" data-p="p-${ck}"[^]*refused: lane busy</span> river S2[^]*has live run RUN-1`));
+    const doc = renderTab('runs', a, { project: 'kestrel', now: Date.now(), run: ck });
+    assert.match(doc, new RegExp(`id="node-${ck}"[^]*<article class="rdoc drawer" id="run-doc" data-run="${ck}"[^]*<span class="mute">refused</span><span><div><span class="chip refused">refused: lane busy</span> <span class="mute">[^<]* - lane busy: worktree C:/w has live run RUN-1 \\(river S1\\)</span>`));
   } finally { await f.done(); }
 });
