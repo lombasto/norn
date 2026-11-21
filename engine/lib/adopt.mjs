@@ -15,7 +15,8 @@ import { runSteps, runStepsAsync } from './steps.mjs';
 import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 import { normSubdir, subdirOf } from './monorepo.mjs';
-import { floorOf } from './floor.mjs';
+import { profileCaps } from './setup.mjs';
+import { loadProfiles, getProfile } from './profiles.mjs';
 import { lineAt } from './slop/scan.mjs';
 
 export class AdoptError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
@@ -358,15 +359,8 @@ export function renderImport(plan) {
 export const PARTS = ['profile', 'commands', 'rules', 'instructions', 'roadmap', 'first'];
 const PART_TITLE = { profile: 'Caps profile', commands: 'Test, lint and build commands', rules: 'Project rules', instructions: 'Agent instructions (AGENTS.md etc.)',
   roadmap: 'Roadmap', first: 'First task' };
-const PROFILES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets', 'profiles');
-/** the caps profiles as DATA (engine/presets/profiles, F-6); none installed -> the names only: the pick is recorded, caps are not written */
-function profileLines() {
-  let all = [];
-  try { all = fs.readdirSync(PROFILES_DIR).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(PROFILES_DIR, f), 'utf8').replace(/^﻿/, ''))); } catch { /* not installed */ }
-  const ps = all.filter(x => x.kind === 'profile').sort((a, b) => a.order - b.order);
-  if (ps.length) return ps.map(x => ({ id: x.name, text: `${x.label || x.name}: ${x.summary || ''}`.trim(), source: `profile data ${x.name}.json`, ...(x.default ? { default: true } : {}) }));
-  return ['try-it', 'solo', 'heavy'].map((n, i) => ({ id: n, text: `${n} (the profile data is not installed: the pick is recorded, the caps are not written)`, source: 'profile names', ...(i ? {} : { default: true }) }));
-}
+/** the caps profiles (engine/presets/profiles, F-6) as the lines of the profile part */
+const profileLines = () => loadProfiles().profiles.map(x => ({ id: x.name, text: `${x.label || x.name}: ${x.summary || ''}`.trim(), source: `profile data ${x.name}.json`, ...(x.default ? { default: true } : {}) }));
 export const RULES_FILE = 'rules/RULES.md';
 const RULES_HEAD = '# Project rules\n\nEvery worker reads this file whole. Drafted from the repository; it is yours to edit.\n\n';
 /**
@@ -580,22 +574,19 @@ function* closeSteps(stateDir, { why, by } = {}) {
 /**
  * Apply every approved part not applied yet (one lock). Roadmap lines -> item records by role migration with legacy_by = the
  * approver; rules -> RULES.md beside project.json (written once, then only additions) + rules_read_whole; commands -> merge.gate.cmd
- * + the Commands block of RULES.md; profile -> a decision record of the pick + the caps through the profile data when installed;
+ * + the Commands block of RULES.md; profile -> a decision record of the pick + its caps (setup.mjs profileCaps, as norn setup applies one);
  * first task -> a lane (newLane) linked from its roadmap item; instructions -> nothing (the repo is never written).
  * -> { id, lines (what was / would be written), complete }. dryRun writes nothing.
  */
 export async function adoptApply(stateDir, { project, by, dryRun = false, metaRoot, extra = {} } = {}) {
-  const profiles = await profileData();
-  return withLock(path.join(stateDir, 'adopt-apply.lock'), () => runSteps(applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra }), SYNC_IO));
+  return withLock(path.join(stateDir, 'adopt-apply.lock'), () => runSteps(applySteps(stateDir, { project, by, dryRun, metaRoot, extra }), SYNC_IO));
 }
 /** adoptApply for the dash server: the same steps under the same lock file, the writes on fs.promises, the lane's git as an async child */
 export async function adoptApplyAsync(stateDir, { project, by, dryRun = false, metaRoot, extra = {} } = {}) {
-  const profiles = await profileData();
-  return withLockAsync(path.join(stateDir, 'adopt-apply.lock'), () => runStepsAsync(applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra }), ASYNC_IO));
+  return withLockAsync(path.join(stateDir, 'adopt-apply.lock'), () => runStepsAsync(applySteps(stateDir, { project, by, dryRun, metaRoot, extra }), ASYNC_IO));
 }
-async function profileData() { try { return await import('./profiles.mjs'); } catch { return null; /* the profile data is not installed (F-6) */ } }
 
-function* applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra = {} }) {
+function* applySteps(stateDir, { project, by, dryRun, metaRoot, extra = {} }) {
   const p = openOf(stateDir), lines = [], done = [], wrote = {};
   const todo = p.parts.filter(x => x.status === 'approved' && !x.applied);
   const P = id => todo.find(x => x.id === id);
@@ -646,17 +637,15 @@ function* applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra 
   }
   if (pj && !dryRun) yield ['write', project.file, JSON.stringify(raw, null, 1) + '\n'];
   if (P('instructions')) { for (const l of sel(P('instructions'))) say('instructions', `${l.text} (nothing written)`); done.push('instructions'); }
-  // profile: the pick is a decision record; the caps go through the profile data when it is installed
+  // profile: the pick is a decision record; its caps are applied as norn setup applies a profile (one function: the Codex caps kept)
   const prof = sel(P('profile'))[0];
   if (prof) {
     say('profile', `decision: caps profile ${prof.id}`);
-    if (profiles?.getProfile && profiles?.profileBudget && metaRoot) {
-      const bf = path.join(metaRoot, 'local', 'budget.json');
-      let cur = {};
-      try { cur = JSON.parse(fs.readFileSync(bf, 'utf8').replace(/^﻿/, '')); } catch { /* none yet */ }
+    if (metaRoot) {
+      const bf = path.join(metaRoot, 'local', 'budget.json'), { cur, next } = profileCaps(metaRoot, getProfile(prof.id));
       say('profile', `caps of ${prof.id} -> ${fwd(bf)} (the scheduler is never installed by apply)`);
-      if (!dryRun) { yield ['mkdir', path.dirname(bf)]; yield ['budget', bf, cur, { ...cur, ...profiles.profileBudget(profiles.getProfile(prof.id), { floor: floorOf(cur) }) }]; }
-    } else say('profile', 'caps not written: the profile data is not installed (the pick is recorded; the starter caps stay in force)');
+      if (!dryRun) { yield ['mkdir', path.dirname(bf)]; yield ['budget', bf, cur, next]; }
+    } else say('profile', 'caps not written: no meta root (the pick is recorded; the caps in force stay)');
     if (!dryRun) yield ['record', stateDir, { kind: 'decision', ev: 'create', by, data: { lane: 'adopt', question: `${p.id} caps profile`, choice: prof.id, why: `picked in ${p.id} (norn adopt)` } }, project.views ? { views: project.views } : {}];
   }
   if (P('profile')) done.push('profile');
