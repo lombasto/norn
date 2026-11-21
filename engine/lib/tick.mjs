@@ -13,7 +13,7 @@ import { tryDigest } from './digest.mjs';
 import { providersOf, executorInfo } from './executors.mjs';
 import { authRefusal, authNoticeDue, loginHolds } from './authguard.mjs';
 import { limitRefusal } from './limitgate.mjs';
-import { readEvents, recordsFile, fold, loadState, record, RecordError, homeOf, laneId } from './records.mjs';
+import { readEvents, recordsFile, fold, loadState, record, RecordError, homeOf, laneId, idNum } from './records.mjs';
 import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate, rateBand, idleProbe, STALL_IDLE_MIN } from './gate.mjs';
 import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, metaCli, isMergeRun } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
@@ -26,18 +26,22 @@ import { syncStep } from './sync.mjs';
 import { tickMergeq, mqProbe, spawnDetached, mergeqOn } from './mergeq.mjs';
 import { followerPrs, makeGh } from './mergeland.mjs';
 import { tickFix } from './fixer.mjs';
-import { closeLandedQuestions, latchMerged } from './deliverables.mjs';
+import { closeLandedQuestions, latchMerged, deliverableConfig } from './deliverables.mjs';
 import { sweepAsks, applyRulings } from './runasks.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { tickTests } from './testscli.mjs';
 import { tickBranches } from './branches.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
-import { projectOverlap } from './overlap.mjs';
+import { projectOverlap, laneConflicts } from './overlap.mjs';
+import { gatherIntents, casesOf, actionsOf, rulingsOf, openCase, caseAction, itemStages, collideFile } from './intents.mjs';
+import { collisions, collidePolicy, staleCaveats, caveatSuffix, laneAlive, ahead, wholeRepo } from './collide.mjs';
+import { sendMail } from './mail.mjs';
+import { gitOut } from './gitfacts.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
 import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
-import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
+import { loadRoadmap, buildTree, itemsOf, setCaveat } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { tickDerelicts } from './derelict.mjs';
 import { tickLanes, lanesProbe } from './lifecycle.mjs';
@@ -289,6 +293,87 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
   return out;
 }
 
+// ---------- lane-collide S1c (SPEC 3.4 every tick, 4A.1, 4A.5): the collisions of this home's open lanes ----------
+const HANDLED_MS = 864e5;   // SPEC 4A.5: the "handled by Norn" lines stay for one day
+const AUTO_ACTS = ['hold', 'after', 'caveat', 'claim-release'];
+const tellBody = (h, o) => `Lane ${o.lane} (${o.run ?? o.state}${o.branch ? `, branch ${o.branch}` : ''}) ${h.grade === 'conflict' ? 'and your branch conflict (git merge-tree)' : 'changes the same files as your run'}: `
+  + `${h.files.slice(0, 12).join(', ')}${h.files.length > 12 ? ` (+${h.files.length - 12})` : ''}. Do not move or rewrite them wholesale; merge main into your branch after it lands, before you end DONE. (${h.col}, SloppaChoppa)`;
+/**
+ * collidePass(state, p, { now, ledger, mergeTree }) -> { rows, handled, wide, told, caveats, released } - judges every open lane of this home
+ * against the others (the later side of each pair; merge-tree for the pairs that share changed files) into <state>/collide.json, one case
+ * per row; mails the later of two running runs once per pair and grade; corrects the stale records behind the proof of death (a caveat
+ * gains the fact, this home's claim of a dead lane is released) and lists the other homes' `**` claims. Never another home's claim, a live
+ * successor's run or a lane with uncommitted work.
+ */
+export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTree } = {}) {
+  const P = collidePolicy(p.policy), out = { at: new Date(now).toISOString(), rows: [], handled: [], wide: [], told: [], caveats: [], released: [] };
+  const save = () => { const f = collideFile(state), t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify({ at: out.at, rows: out.rows, handled: out.handled, wide: out.wide })); fs.renameSync(t, f); return out; };
+  if (P.enabled === false) return save();
+  const cfg = deliverableConfig(p), repo = cfg.repo || p.root, home = homeOf(state)?.id ?? null;
+  const g = gatherIntents({ state, repo, main: cfg.main, remote: cfg.remote, now, recent_days: P.recent_days, home });
+  const cases = casesOf(state), X = g.intents, pairs = [];
+  for (let i = 0; i < X.length; i++) for (let j = i + 1; j < X.length; j++) if (X[i].tip && X[j].tip && X[i].tip !== X[j].tip && X[i].touched.some(f => X[j].touched.includes(f))) pairs.push([X[i].tip, X[j].tip]);
+  const conflicts = pairs.length && repo ? laneConflicts(state, repo, pairs, { now, ...(mergeTree ? { mergeTree } : {}) }) : {};
+  const ctx = { policy: p.policy?.collide, tracked: g.tracked, items: itemStages(g.itemEvents), rulings: rulingsOf(cases), conflicts, now };
+  // each pair once, from the later side: first come, and between two running lanes the later start
+  const later = (x, o) => ahead(o, x) || (!ahead(x, o) && (x.since > o.since || (x.since === o.since && x.lane > o.lane)));
+  for (const x of X) for (const h of collisions(x, X, ctx)) {
+    const o = X.find(y => y.lane === h.other);
+    if (!later(x, o) || h.verdict === 'shadow') continue;
+    h.col = openCase(state, h, x, o, { door: 'tick', by: 'tick', cases });
+    out.rows.push({ col: h.col, kind: h.kind, grade: h.grade ?? null, verdict: h.verdict, lane: x.lane, run: x.run, state: x.state, other: o.lane, other_run: o.run ?? null,
+      other_state: o.state, other_dlv: o.dlv ?? null, why: h.why, files: (h.files || []).slice(0, 20), files_n: (h.files || []).length, after: h.after ?? null, land: h.land ?? null, pick: h.pick ?? null });
+    // SPEC 4A.1 the worker is told: one mail to the later of two running runs when same-files or conflict first appears
+    if (!P.auto.tell_worker || !['same-files', 'conflict'].includes(h.grade) || x.state !== 'running' || o.state !== 'running' || !x.run) continue;
+    if (cases[h.col] && actionsOf(cases[h.col]).some(a => a.action === 'told' && a.args?.mail)) continue;
+    const m = sendMail(state, { by: 'tick', to: x.run, subject: `collision ${h.col}: ${h.grade} with lane ${o.lane}`.slice(0, 120), body: tellBody(h, o) });
+    caseAction(state, h.col, 'told', { by: 'tick', auto: true, args: { run: x.run, grade: h.grade, mail: m.id } });
+    out.told.push(h.col);
+  }
+  if (P.auto.stale_fix) {
+    // a caveat that names a dead run as running gains the fact (its words stay); an undone correction is not made again
+    const openDlvRuns = new Set(Object.values(g.dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state)).flatMap(x => (x.history || []).map(e => e.data?.run).filter(Boolean)));
+    const hbAge = id => { try { return now - fs.statSync(hbPath(state, id)).mtimeMs; } catch { return null; } };
+    for (const s of staleCaveats(loadRoadmap(state).items, { runs: g.runs, hbAge, openDlvRuns, staleMs: STALE_MS }, p.policy?.collide)) {
+      const key = `stale/caveat:${s.item}>${s.run}`, was = Object.values(cases).filter(c => c.data.key === key);
+      if (was.some(c => actionsOf(c).some(a => a.action === 'caveat' && a.undone))) continue;
+      const lane = g.runs[s.run]?.data?.lane ?? s.item, text = s.text + caveatSuffix(s.dead, now);
+      const col = was.find(c => c.state === 'open')?.id ?? record(state, { kind: 'collision', ev: 'open', by: 'tick', data: { key, kind: 'stale', grade: 'caveat', verdict: s.verdict, door: 'tick',
+        a: { lane, run: s.run }, b: { lane }, item: s.item, files: [], files_n: 0, why: s.why, recommended: s.pick } }).id;
+      setCaveat(state, s.item, text, 'tick');
+      caseAction(state, col, 'caveat', { by: 'tick', auto: true, args: { item: s.item, run: s.run, before: s.text, after: text }, why: s.why });
+      out.caveats.push(col);
+    }
+  }
+  const f = home && ledger ? fedOf(ledger) : null;
+  if (f) {
+    // this home's own claim with no open work behind it (the proof of death of its lane) is released on the claims branch
+    const open = new Set(X.map(x => x.lane)), runsOf = lane => Object.values(g.runs).filter(r => r.kind === 'run' && r.data?.lane === lane).sort((a, b) => idNum(b.id) - idNum(a.id));
+    for (const [k, c] of P.auto.stale_fix ? Object.entries(readSync(state, 'own')) : []) {
+      const rs = runsOf(c.lane), wt = rs[0]?.data?.worktree, there = !!wt && fs.existsSync(wt);
+      if (!rs.length) continue;   // a claim before its first run record: not judged
+      const tipAt = Math.max(there ? Number(gitOut(wt, ['log', '-1', '--format=%ct'])) * 1000 || 0 : 0, Date.parse(rs[0].history?.at(-1)?.ts ?? '') || 0) || null;
+      const dirty = there ? (gitOut(wt, ['status', '--porcelain']) ?? 'unreadable').trim() !== '' : null;
+      if (laneAlive({ live: rs.some(r => ['running', 'queued', 'claimed'].includes(r.state)), open: open.has(c.lane), dirty, tipAt }, now, p.policy?.collide)) continue;
+      let r = null;
+      try { r = releaseWork(f, c); } catch { /* offline: the next pass */ }
+      if (!(r?.ok || r?.gone)) continue;
+      updateSync(state, 'own', cur => Object.fromEntries(Object.entries(cur).filter(([x]) => x !== k)));
+      const why = `${c.home}/${c.lane}: this home's claim with no open work behind it (no live run, no open deliverable, a clean worktree, tip unchanged ${P.recent_days} days)`;
+      const col = record(state, { kind: 'collision', ev: 'open', by: 'tick', data: { key: `stale/claim:${k}`, kind: 'stale', grade: 'claim', verdict: P.kinds.stale, door: 'tick', a: { lane: c.lane }, b: { lane: c.lane }, files: [], files_n: 0, why } }).id;
+      caseAction(state, col, 'claim-release', { by: 'tick', auto: true, args: { key: k, claim: c }, why });
+      out.released.push(k);
+    }
+    // another home's claim is never touched (its stale clock and `norn claim take` are the owner's); a `**` claim is listed (SPEC Q1)
+    let claims = {};
+    try { claims = localClaims(f); } catch { /* no ledger yet */ }
+    out.wide = Object.entries(claims).filter(([, c]) => c?.kind === 'work' && c.home !== home && wholeRepo(c)).map(([key, c]) => ({ key, home: c.home, lane: c.lane, why: `${c.home}/${c.lane} claims the whole repo (no Scope: line)` }));
+  }
+  for (const c of Object.values(casesOf(state))) for (const a of actionsOf(c)) if (a.auto && !a.undone && AUTO_ACTS.includes(a.action) && now - Date.parse(a.at) < HANDLED_MS)
+    out.handled.push({ col: c.id, kind: c.data.kind, grade: c.data.grade ?? null, action: a.action, at: a.at, lane: c.data.b?.lane ?? null, why: c.data.why, undo: a.action === 'caveat' });
+  return save();
+}
+
 // GAP-1 (holds.mjs): the hold episode of ALL queued work, from the dry fill walk after the fill (the PAUSED exit too); never fails the tick
 function holdStep(state, tag) { try { trackHold(state, readiness(state)); } catch (e) { tickLog(state, `${tag}: hold: ${e.message}`); } }
 function tickPass(o, g = {}) {
@@ -362,6 +447,11 @@ function tickPass(o, g = {}) {
     // lane norn-lifecycle item 5 (lifecycle.mjs): no lane sits - the orphan / stopped-and-landed / done-merged-and-old lanes archived by code
     // before the digest (which then lists the idle and stopped ones for the check-in); never fails the tick
     if (!o.dry || o.lanes) try { for (const x of tickLanes(state, { project: p, ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, x.refused ? `${tag}: ${x.id} (${x.rule}) not archived: ${x.refused}` : `${tag}: archived ${x.id} (${x.rule}; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}) - ${x.why}`); } catch (e) { tickLog(state, `${tag}: lanes: ${e.message}`); }
+    // lane-collide S1c: this home's collisions into collide.json (the digest reads it), the told mails, the stale corrections - after the
+    // merge latch and the lane archive (a merged or archived lane is no open work), before the digest; never fails the tick
+    if (o.collide !== false && (!o.dry || o.collide)) try { const c = collidePass(state, p, { ledger: o.ledger, ...(o.now ? { now: o.now().getTime() } : {}) });
+      for (const l of [...c.told.map(id => `${id}: the later run told`), ...c.caveats.map(id => `${id}: a stale caveat gained the fact`), ...c.released.map(k => `claim ${k} released (no open work)`)]) tickLog(state, `${tag}: collide ${l}`); }
+    catch (e) { tickLog(state, `${tag}: collide: ${e.message}`); }
     // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag
     try { const tr = Object.keys(loadRoadmap(state).items).length ? buildTree({ stateDir: state, project: p }) : null; const sw = stuckSweep(state, tr ? itemsOf(tr) : [], { project: p.name }); if (sw.notices.length) g.stuck = sw.notices; }
     catch (e) { tickLog(state, `${tag}: stuck sweep failed: ${e.message}`); }

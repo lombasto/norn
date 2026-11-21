@@ -4,8 +4,9 @@
 //   intent = { lane, run, stage, state: new | queued | running | unlanded, since (ms), role: work | landing | review | helper | none,
 //              items: [RM-n], part_of, scope: [globs] | [] (Scope: none) | null (not readable), exclusive: [globs], touched: [paths],
 //              commits, branch, tip, dlv, stacked_on: [{ lane, n }], names: { runs, dlvs, lanes }, tests, done, brief }
-// Kinds built here: item, territory (grades exclusive > covers > scopes, the commons dropped), order (stacked, planned, named), stale
-// (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1). First come: a hold only from an intent ahead.
+// Kinds built here: item, territory (grades exclusive > conflict > same-files > covers > scopes, the commons dropped; conflict from the tick's merge-tree), order (stacked, planned, named), stale
+// (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1, of a run and of a lane). First come: a hold only
+// from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix.
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -62,8 +63,9 @@ const held = o => (o.state === 'unlanded' ? `${o.branch ? `branch ${o.branch} ` 
 const condOf = o => (o.dlv ? `dlv:${o.dlv}:merged` : o.run ? `run:${o.run}:merged` : null);
 const exempt = { item: x => x.role !== 'work', territory: x => ['helper', 'none'].includes(x.role) || (x.scope?.length === 0 && !x.touched?.length), order: x => x.role !== 'work' && x.role !== 'landing' };
 
-/** the territory grade of me against o (strongest first) | null */
-function territory(me, o, P, tracked) {
+/** the territory grade of me against o (strongest first) | null. conflicts: { 'tipA tipB' (sorted): { conflict, files } } - the tick's
+ *  merge-tree answers for pairs that share changed files (overlap.mjs laneConflicts) */
+function territory(me, o, P, tracked, conflicts) {
   if (exempt.territory(me) || exempt.territory(o)) return null;
   for (const [x, y] of [[me, o], [o, me]]) {
     const ex = uncommon(x.exclusive, P);
@@ -71,6 +73,10 @@ function territory(me, o, P, tracked) {
     const met = files(y.touched, P).filter(f => inScope(f, ex)), scope = uncommon(y.scope, P).filter(g => globsIntersect(ex, [g]));
     if (met.length || scope.length) return { grade: 'exclusive', files: met, by: x === me ? 'me' : 'other', why: `Exclusive: ${ex.join(' ')} of ${x === me ? 'this run' : `lane ${x.lane}`} meets ${x === me ? `lane ${y.lane}'s` : "this run's"} ${met.length ? `changed files ${met.slice(0, 8).join(' ')}` : `Scope ${scope.join(' ')}`}` };
   }
+  const m = me.tip && o.tip ? conflicts?.[[me.tip, o.tip].sort().join(' ')] : null;
+  if (m?.conflict) return { grade: 'conflict', files: m.files, why: `merging lane ${o.lane}'s branch${o.branch ? ` ${o.branch}` : ''} with this one conflicts (git merge-tree): ${m.files.slice(0, 8).join(' ')}` };
+  const mineT = new Set(files(me.touched, P)), same = files(o.touched, P).filter(f => mineT.has(f));
+  if (same.length) return { grade: 'same-files', files: same, why: `both change ${says(same.length, 'file')} (lane ${o.lane}: ${held(o)}): ${same.slice(0, 8).join(' ')}` };
   const cov = (x, y) => (x.scope?.length ? files(y.touched, P).filter(f => inScope(f, x.scope)) : []);
   const mine = cov(me, o), theirs = cov(o, me);
   if (mine.length) return { grade: 'covers', files: mine, why: `Scope ${me.scope.join(' ')} covers ${says(mine.length, 'file')} lane ${o.lane} changes (${held(o)}): ${mine.slice(0, 8).join(' ')}` };
@@ -101,9 +107,16 @@ export const pairKey = (a, b) => [a, b].sort().join('+');
 /** a recorded allow covers this pair for kind k: rulings = { pairKey: { verdict: allow | hold, kinds: [] (all) | [kind] } } */
 export const allowedBy = (rulings, a, b, k) => { const r = rulings?.[pairKey(a, b)]; return r?.verdict === 'allow' && (!r.kinds?.length || r.kinds.includes(k)); };
 
+/** SPEC 4A.1 the land-first wait: a starting or queued run whose territory warn (covers, same-files) meets a DONE deliverable not merged
+ *  waits up to auto.land_wait_min from its queue time while the merge queue lands it -> { until (ms), dlv } | null */
+const landWait = (h, me, o, P, now) => {
+  const min = Number(P.auto.land_wait_min) || 0;
+  return min > 0 && h.verdict === 'warn' && ['covers', 'same-files'].includes(h.grade) && o.state === 'unlanded' && o.dlv && ['new', 'queued'].includes(me.state)
+    && now - me.since < min * 6e4 ? { until: me.since + min * 6e4, min, dlv: o.dlv } : null;
+};
 /**
- * collisions(me, others, ctx = { policy, tracked: [paths] | null, items: { RM-n: { stages } }, rulings }) -> [{ kind, grade, other, verdict, why,
- * files, after, pick: recommend() }] - the hits for intent `me`; a pair of one lane never collides (one writer per lane is runs.mjs's).
+ * collisions(me, others, ctx = { policy, tracked: [paths] | null, items: { RM-n: { stages } }, rulings, conflicts, now }) -> [{ kind, grade, other,
+ * verdict, why, files, after, land, pick: recommend() }] - the hits for intent `me`; a pair of one lane never collides (one writer per lane is runs.mjs's).
  */
 export function collisions(me, others, ctx = {}) {
   const P = pol(ctx.policy), out = [];
@@ -114,8 +127,9 @@ export function collisions(me, others, ctx = {}) {
     const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, other: o.lane, pick: recommend(h, me, o) }); };
     const items = exempt.item(me) || exempt.item(o) || me.part_of === o.lane || o.part_of === me.lane ? [] : (me.items || []).filter(i => (o.items || []).includes(i));
     if (items.length) add({ kind: 'item', grade: null, verdict: loud('item', o), items, why: `${items.join(' ')}: lane ${o.lane} holds it (${held(o)}); this run is not a declared part` });
-    const t = territory(me, o, P, ctx.tracked);
-    if (t) add({ kind: 'territory', ...t, verdict: loud(t.grade === 'exclusive' ? 'exclusive' : 'territory', o) });
+    const t = territory(me, o, P, ctx.tracked, ctx.conflicts);
+    if (t) { const h = { kind: 'territory', ...t, verdict: loud(t.grade === 'exclusive' ? 'exclusive' : 'territory', o) }, land = landWait(h, me, o, P, ctx.now ?? Date.now());
+      add(land ? { ...h, verdict: 'hold', land } : h); }
     for (const r of order(me, o, ctx.items)) add({ kind: 'order', ...r, verdict: loud(r.grade === 'named' ? 'order_named' : 'order', o) });
   }
   return out;
@@ -166,13 +180,30 @@ export function staleCaveats(items = {}, facts = {}, policy) {
     const t = n.caveat?.text;
     if (!t || n.state === 'dropped' || !LIVE_WORDS.test(t)) continue;
     for (const id of new Set(t.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/g) || [])) {
+      if (noted(t, id)) continue;
       const d = dead(id, facts);
       if (d && P.kinds.stale !== 'off') out.push({ kind: 'stale', grade: 'caveat', item: n.id, run: id, verdict: P.kinds.stale, text: t,
-        why: `${n.id}'s caveat names ${id} as running; ${id} ended${d.at ? ` ${String(d.at).slice(0, 16).replace('T', ' ')}Z` : ''} (${d.outcome ?? d.state})`,
+        why: `${n.id}'s caveat names ${id} as running; ${id} ended${d.at ? ` ${String(d.at).slice(0, 16).replace('T', ' ')}Z` : ''} (${d.outcome ?? d.state})`, dead: d,
         pick: { remedy: 'correct', args: { item: n.id, run: id }, why: 'Norn adds the fact to the caveat by itself (S1c); the words stay' } });
     }
   }
   return out;
+}
+
+const stamp = t => { const d = new Date(t); return Number.isFinite(d.getTime()) ? d.toISOString().slice(5, 16).replace('T', ' ') + 'Z' : '?'; };
+const noted = (text, id) => text.includes(`: ${id} ended `);
+/** SPEC 4A.1: the fact a stale caveat gains (its words stay): " [norn 11-20 21:04Z: RUN-2984 ended 11-19 22:10Z, stopped]" */
+export const caveatSuffix = (d, now) => ` [norn ${stamp(now)}: ${d.run} ended ${stamp(d.at)}, ${d.outcome ?? d.state}]`;
+/** SPEC 4A.1 the proof of death of a lane: no live or queued run, no open deliverable (neither is an open intent), a clean worktree and a
+ *  branch tip unchanged for recent_days -> null (dead) | why it is alive. f = { open: bool, live: bool, dirty: bool | null (no worktree),
+ *  tipAt: ms | null } */
+export function laneAlive(f, now, policy) {
+  const P = pol(policy);
+  if (f.live) return 'a run is live or queued';
+  if (f.open) return 'open work (a deliverable, or a branch with a recent run)';
+  if (f.dirty) return 'uncommitted changes in its worktree (work at risk)';
+  if (f.tipAt != null && now - f.tipAt < P.recent_days * 864e5) return `its branch tip moved within ${P.recent_days} days`;
+  return null;
 }
 
 // ---------- the words ----------
@@ -197,10 +228,11 @@ export const caseKey = (h, me) => `${h.kind}${h.grade ? '/' + h.grade : ''}:${h.
 /** the hits that hold a run: verdict hold, from an automatic reaction policy.collide.auto has on (exclusive: hold_exclusive, order: order_after) */
 export function holdsOf(hits, policy) {
   const A = pol(policy).auto;
-  return hits.filter(h => h.verdict === 'hold' && (h.kind === 'territory' ? A.hold_exclusive : h.kind === 'order' ? A.order_after : true));
+  return hits.filter(h => h.verdict === 'hold' && (h.land ? true : h.kind === 'territory' ? A.hold_exclusive : h.kind === 'order' ? A.order_after : true));
 }
 /** the term the fill walk shows for one hold: the derived condition for order (SPEC 4A.1: after (auto)), the holder for the rest */
-export const holdTerm = h => (h.kind === 'order' && h.after ? `after (auto): ${h.after} - ${h.why}` : `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}${h.col ? ` (${h.col})` : ''} - waits for lane ${h.other}`);
+export const holdTerm = h => (h.kind === 'order' && h.after ? `after (auto): ${h.after} - ${h.why}`
+  : h.land ? `collide: territory (${h.grade}) land-first: waits up to ${h.land.min} min for ${h.land.dlv} of lane ${h.other}${h.col ? ` (${h.col})` : ''}` : `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}${h.col ? ` (${h.col})` : ''} - waits for lane ${h.other}`);
 /** SPEC 5.4: the worker's prompt line for the territory warns of a run that starts (null = none) */
 export function workerLine(hits) {
   const t = hits.filter(h => h.kind === 'territory' && h.verdict === 'warn' && h.files?.length);
