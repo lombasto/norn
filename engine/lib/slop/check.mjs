@@ -345,12 +345,12 @@ const pathspecs = rule => [...(rule.files || ['**']).map(g => `:(glob)${g}`), ..
 /**
  * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve, brief, machine }) -> the ONE result:
  * { base, head, at, findings: [{ rule, level, file, line, msg, snippet, fp, new, value?, base_value?, token?, shadow?, voice? }],
- *   blocks: [the new BLOCK findings of rules not in shadow], ran: [ids], skipped: [{ rule, why }] }
+ *   blocks: [the new BLOCK findings of rules not in shadow], ran: [ids], files: [the paths the diff changes] }
  * base / head are any revisions (base = the merge base the caller chose). tool(rule, side, { dir, files }) -> raw output | null.
  * resolve(record id) -> its state | null: K22's cited ids (no resolver: an id only has to be named). brief: the run's brief text (the
  * model rules read its Scope and numbered items). The model rules run last: they read the other rules' new findings (their hits).
- * machine false: a rule flagged `machine` in its data (it reads this machine's state, K14) is skipped - CI and a landing's after-check
- * have no such state to read.
+ * machine false: a rule flagged `machine` in its data (it reads this machine's state, K14) is not run - CI and a landing's after-check
+ * have no such state to read. A rule whose detector throws is a finding of its own (couldNotRun): no check passes by not checking.
  */
 export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, now = Date.now() }) {
   const sha = r => gitRun(repo, ['rev-parse', '--verify', r + '^{commit}']).trim();
@@ -358,7 +358,7 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
   const entries = diffEntries(repo, B, H), picked = rules.filter(r => !only || only.includes(r.id)), run = [...picked.filter(r => r.kind !== 'model'), ...picked.filter(r => r.kind === 'model')];
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
-  const findings = [], ran = [], skipped = [];
+  const findings = [], ran = [];
   const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, lintRules: run.filter(r => r.kind === 'eslint' || r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
@@ -383,14 +383,18 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
   };
   const renamed = new Map(entries.filter(e => e.old && e.old !== e.path).map(e => [e.old, e.path]));
   for (const rule of run) {
-    if (rule.machine && !machine) { skipped.push({ rule: rule.id, why: 'machine state: the rule reads this machine, not the diff (its flag machine), so it is not run here' }); continue; }
+    if (rule.machine && !machine) continue;
     let got;
-    try { got = DETECT[rule.kind](rule, ctx); } catch (e) { skipped.push({ rule: rule.id, why: e.message.split('\n')[0] }); continue; }
+    try { got = DETECT[rule.kind](rule, ctx); } catch (e) { findings.push(couldNotRun(rule, e.message.split('\n')[0])); continue; }
     ran.push(rule.id);
     const inBase = token => grep('base', ['-l', '-F', '-w', '-e', token], pathspecs(rule)).length > 0;
     findings.push(...pairFindings(rule, got, { renamed, inBase }).filter(f => !(rule.key === 'match' && f.new && allowedToken(rule, f.token, ctx))));
   }
-  return { base: B, head: H, hash: rulesHash(rules), at: new Date(now).toISOString(), findings, blocks: findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow), ran, skipped };
+  return { base: B, head: H, hash: rulesHash(rules), at: new Date(now).toISOString(), findings, blocks: findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow), ran, files: entries.map(e => e.path) };
 }
+// SPEC 3.4: a rule that could not run is a finding of that rule, so holds, resumes, the doors and waivers treat it as any other: BLOCK,
+// except the model voice, which is advisory (WARN: "not read", never a hold)
+export const couldNotRun = (rule, why) => ({ rule: rule.id, level: rule.kind === 'model' ? 'WARN' : 'BLOCK', file: '*', line: 0, msg: `could not run: ${why}`,
+  snippet: 'could-not-run', fp: fingerprint(rule.id, '*', 'could-not-run'), new: true, unrun: true, ...(rule.shadow ? { shadow: true } : {}) });
 // key: match + allow { token (regex), listed_in (a file at head) }: a new token that follows the naming rule and is listed there passes (K21)
 const allowedToken = (rule, token, ctx) => !!rule.allow && new RegExp(rule.allow.token).test(token) && (ctx.text('head', rule.allow.listed_in) || '').includes(token);

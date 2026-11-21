@@ -30,10 +30,11 @@ export function npxArgv(pkg, args, env = process.env) {
   return resolveShim(npx, ['--yes', pkg, ...args]);
 }
 
-/** ESLint `-f json` output -> [{ file (relative to dir), rule, line, column, endLine, endColumn, msg }] */
+/** ESLint `-f json` output -> [{ file (relative to dir), rule (PARSE: the file does not parse, SPEC 1.3 F6), line, column, endLine, endColumn, msg }] */
+export const PARSE = 'parse';
 export function parseEslint(raw, dir) {
-  return JSON.parse(raw).flatMap(r => r.messages.filter(m => m.ruleId).map(m => ({
-    file: (path.isAbsolute(r.filePath) ? path.relative(dir, r.filePath) : r.filePath).replace(/\\/g, '/'), rule: m.ruleId,
+  return JSON.parse(raw).flatMap(r => r.messages.filter(m => m.ruleId || m.fatal).map(m => ({
+    file: (path.isAbsolute(r.filePath) ? path.relative(dir, r.filePath) : r.filePath).replace(/\\/g, '/'), rule: m.ruleId || PARSE,
     line: m.line, column: m.column, endLine: m.endLine ?? m.line, endColumn: m.endColumn ?? m.column, msg: m.message,
   })));
 }
@@ -43,7 +44,7 @@ export function parseEslint(raw, dir) {
  * ONE ESLint run of a check: { tool: 'eslint', rules, selectors } (its eslint and ast rules together, one npx start per side). A
  * command rule runs once, at check time (its output is the machine's, not a side's: the check keeps only the lines whose source
  * the diff touches). A model read (kind `model`: { id, prompt }) is one no-tools call on o.voice, the route voiceRoute picked at the
- * launch; with no route (a door, `norn slop check`) it throws and the model rules are skipped: the second voice reads at the run end. o.env.
+ * launch; with no route (a door, `norn slop check`) it throws: each model rule is a WARN "could not run" (the voice holds nothing) and reads at the run end. o.env.
  */
 export function makeTool({ env = process.env, voice = null } = {}) {
   return (rule, side, { dir, files } = {}) => {
@@ -62,7 +63,7 @@ export function makeTool({ env = process.env, voice = null } = {}) {
     const { exe, args } = npxArgv(t.pkg, ['-f', 'json', ...files], env);
     const r = spawnSync(exe, args, { cwd: dir, env: { ...env, npm_config_cache: toolCache(env), npm_config_update_notifier: 'false' }, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
     if (r.error) throw r.error;
-    if (r.status !== 0 && r.status !== 1) throw new Error(`${t.pkg} exited ${r.status}: ${String(r.stderr).trim().split('\n').slice(-2).join(' ')}`);
+    if ((r.status !== 0 && r.status !== 1) || !r.stdout.trim()) throw new Error(`${t.pkg} exited ${r.status}${r.stdout.trim() ? '' : ' with no report'}: ${String(r.stderr).trim().split('\n').slice(-2).join(' ')}`);
     return r.stdout;
   };
 }

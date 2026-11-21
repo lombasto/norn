@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseEslint } from './tools.mjs';
+import { parseEslint, PARSE } from './tools.mjs';
 import { CODE, classify, commentsIn, exportsOf, helpers, isJs, isReason, lineAt, lineText, masked, norm, usesOf } from './scan.mjs';
 
 const SIDE_KEY = { head: 'path', base: 'old' };
@@ -55,7 +55,9 @@ export function lint(rule, ctx) {
     const by = lintSide(ctx, side);
     if (by === null) return null;
     return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
-      const f = rule.kind === 'eslint' ? (x.rule in rule.rules ? { msg: x.msg } : null) : astHit(rule, x, text);
+      // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6)
+      const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK' } : null)
+        : rule.kind === 'eslint' ? (x.rule in rule.rules ? { msg: x.msg } : null) : astHit(rule, x, text);
       return f ? [{ file: e.path, line: x.line, snippet: lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
     }));
   });
