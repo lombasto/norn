@@ -7,7 +7,7 @@ only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the p
 ## Where things are (stage NAV: 5 destinations, plain names, both looks)
 The bar is **Lanes · Runs · Inbox · Talk · More** (`shell.mjs` `BAR`), the same on a desktop and a phone (at the bottom there),
 as link nav (`<nav>` + `aria-current`). Lanes is the landing page. **More** is a menu, not a page: a popover on a desktop, a
-bottom sheet on a phone (`MORE`): **Health** = Usage, Slop, Tests, Context; **History** = Records, Ledger, Docs; **Plan** =
+bottom sheet on a phone (`MORE`): **Health** = Spend, Slop, Tests, Context; **History** = Records, Ledger, Docs; **Plan** =
 Roadmap (and Plan until stage RUNS retires it); then Settings. When one of those is open, More is marked current; a
 Health page in a bad state puts a dot on More. Every page's label, tab id and URL are the same word (`?tab=runs` is Runs); an
 unknown or retired id (`overview`, `work`, `health`, `history`, `home`) opens Lanes - there is no alias or redirect table.
@@ -29,8 +29,9 @@ refreshes the strip only, a record refetches the open page only when the page re
   body is a 3-line preview + "more" on the phone. A repeat-detector card its directive already asks for reads "Asked as DIR-n".
 - Plan (`norn plan`): up next (every queued run in start order, what it waits for, its time estimate and start), the chains
   of runs that wait for other runs, landing next (finished work heading to main, in merge order).
-- Usage: what the work used, and the forecast (from `norn plan`): the rate now against the hourly cap, this week against the
-  weekly stop, and whether the queued work fits before the reset. With API billing, the last 24 h of spend against the daily cap.
+- Spend: one screen - the last 24 h, the window total, runs, the guard and the top 5 spenders; Details opens the drawer with every
+  breakdown (by lane, lane and stage, agent CLI, day, kind of work, check-ins, tokens) and the forecast (from `norn plan`). The
+  advice icon shows the open model-advice cards. With API billing, the last 24 h of spend against the daily cap.
 - Roadmap (`norn road`): themes and items with a status derived from the linked lanes, runs and records (never typed); a tree
   or a board, filters, and the unplaced work that has no item yet.
 - Lanes: the attention board (stage LANES), one list grouped by what the owner must do: Needs you (an Inbox row names the lane),

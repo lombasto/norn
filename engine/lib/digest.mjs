@@ -207,7 +207,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // META-SLOP-A: ONE line - the last daily slop report + the branches slop holds now
   const sl = slopOn(project?.policy) ? digestRow(stateDir, now) : null;   // META-BETA-PREP: not while the one switch is off
   if (sl) sections.slop = [sl];
-  // META-TEND P4: ONE line - the open model-advice cards (advice.json, the last count the Usage tab / norn advise made)
+  // META-TEND P4: ONE line - the open model-advice cards (advice.json, the last count the Spend page / norn advise made)
   const adv = adviceDigestRow(stateDir);
   if (adv) sections.advice = [adv];
   // META-DOD 3: the plan reviews with findings (or no clean end) the check-in has not reviewed yet - the builds they hold wait for it

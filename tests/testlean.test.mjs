@@ -192,7 +192,7 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   assert.match(costs, /kills 0/); assert.match(costs, /inside: <span class="mute">a\.test\.mjs<\/span> big/);
   assert.match(trends, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
   assert.match(trends, /gate passed/);
-  assert.match(renderMore('tests', {}), /<h3>Health<\/h3><ul>[^]*data-tab="usage"[^]*data-tab="tests" aria-current="page"/, 'beside Usage under Health in More (stage NAV)');
+  assert.match(renderMore('tests', {}), /<h3>Health<\/h3><ul>[^]*data-tab="spend"[^]*data-tab="tests" aria-current="page"/, 'beside Spend under Health in More (stage NAV)');
   const empty = renderTab('tests', { history: [], git: null, times: null, commands: { measure: 'norn tests measure', history: 'norn tests history' }, sub: 'suite', breakdown: null, tests: { rows: [], n: 0 } }, {});
   assert.match(empty, /not measured yet/); assert.match(empty, /norn tests measure/);
   assert.match(empty, /id="tests-scope"[^>]*>Nothing measured yet\. The tick fills/, 'an empty page says why and what fills it');
