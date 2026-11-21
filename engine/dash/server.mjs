@@ -29,10 +29,10 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
 import { SHARE_KEY, RESERVE, shareOf } from '../lib/share.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
-import { mergeBacklog, backlogMax, loadDeliverables } from '../lib/deliverables.mjs';
+import { mergeBacklog, backlogMax, loadDeliverables, isLanded } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
-import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile } from '../lib/lifecycle.mjs';
+import { lanePolicy, laneHooks, laneRulesFile, lanePathsFile, laneAsksOwner } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA, RUN_WINDOWS, RUN_PARTS, windowMs } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
@@ -473,21 +473,23 @@ export function createDashboard(o) {
     // INBOX-REPLIES: the Resolved view - answered / applied Qs, newest first, each with its thread kept (for information: never a need)
     for (const q of items.filter(i => i.kind === 'question' && ['answered', 'applied'].includes(i.state)).sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, RESOLVED_MAX))
       out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
-    // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in
-    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) { const q = l.park?.q ? s.items[l.park.q] : null;
+    // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in.
+    // LANE-TRUTH (lifecycle.mjs laneAsksOwner): a parked lane whose work shipped or that has no branch left asks nothing - no row at all
+    const lh = laneHooks(p.state), asks = (lane, o) => laneAsksOwner(lh, lane, o);
+    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked' && asks(laneName(i.id, p.state), { parked: true, rec: i }))) { const q = l.park?.q ? s.items[l.park.q] : null;
       out.push({ type: 'parked', id: l.id, lane: laneName(l.id, p.state), project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
         ...(q?.state === 'answered' ? { ruled: { q: q.id, choice: q.answer?.choice ?? null, text: q.answer?.text ?? null, at: q.updated } } : {}) }); }
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
     let adv = [];
     try { adv = (await adviceOf(p)).cards; } catch { adv = []; }
     for (const c of adv) out.push({ type: 'advice', id: c.key, project: p.name, check: c.check, cls: c.id, title: c.title, severity: c.severity, text: c.text, fix: c.fix, change: c.change, source: c.source, trial: c.trial, created: null });
-    for (const r of runsOf(s).filter(r => ['exited', 'lost', 'killed'].includes(r.state) && !r.review && r.data.role !== 'helper' && (r.state !== 'exited' || r.end?.outcome === 'stopped')))
+    for (const r of runsOf(s).filter(r => ['exited', 'lost', 'killed'].includes(r.state) && !r.review && r.data.role !== 'helper' && (r.state !== 'exited' || r.end?.outcome === 'stopped') && asks(r.data.lane ?? null)))
       out.push({ type: 'unreviewed', id: r.id, ...doerOf(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
   // fair-slots item 2: the PRs merge-land opened (a deliverable's `pr` event) whose branch is not on main yet, per lane - from the cached
   // deliverables rows (git runs in their child, never here); before the first answer no lane reads 'awaiting PR approval'
-  const openPrs = p => Object.fromEntries((deliverablesOf(p).rows || []).filter(r => r.lane && r.pr && r.state === 'done' && !r.superseded).map(r => [r.lane, r.pr]));
+  const openPrs = p => Object.fromEntries((deliverablesOf(p).rows || []).filter(r => r.lane && r.pr && !isLanded(r)).map(r => [r.lane, r.pr]));
   // RM-30 S1: what the prose renderer (prose.mjs) needs per project: its lane names, its GitHub repo (PR / commit links; the origin is
   // read once per root) and the Docs key of each path the Inbox texts name that the Docs reader can show (a scan row or a project doc)
   const repoOf = new Map();
@@ -579,7 +581,8 @@ export function createDashboard(o) {
   const cardOf = (l, pg) => ({ lane: l.name, objective: l.driver?.objective ?? null, source: l.driver?.sources?.[0] ?? null, finding: l.driver?.finding ?? null,
     type: l.lane_type?.type ?? null, output: l.output?.text ?? null, stage: pg ? [l.stage ?? null, pg.run].filter(Boolean).join(' · ') : null, progress: pg ?? null, ...l.steps });
   async function withCards(p, rows) {
-    const items = st(p).items, pg = await progressOf(p, rows.map(l => l.run).filter(Boolean));
+    // LANE-TRUTH: a shipped row has one state - no pace ("on track") or checklist ("1 of 7 items done · stopped") of its last run beside it
+    const items = st(p).items, pg = await progressOf(p, rows.filter(l => !l.shipped).map(l => l.run).filter(Boolean));
     return rows.map(l => { const g = pg.get(l.run), steps = laneSteps(l.name, items);
       return { ...l, ...(g ? { progress: g } : {}), card: cardOf({ ...l, stage: items[l.run]?.data?.stage, steps }, g) }; });
   }
@@ -594,7 +597,7 @@ export function createDashboard(o) {
     const props = proposalsOf(items, R, { all: true }), dl = deliverablesOf(p).rows || [];
     return Promise.all(rows.map(async l => {
       const r = last.get(l.name), o = outcomeOf(r);
-      if (!o) return l;
+      if (!o || l.shipped) return l;   // LANE-TRUTH: a shipped row says shipped once (its now line); no second 'shipped' chip or stale next step
       const written = ['no-result', 'crash', 'lost', 'killed'].includes(o) ? (await walkOutputs(notesDirOf(p.state, l.name, items))).filter(f => Date.parse(f.mtime) >= Date.parse(r.created) - 60e3) : [];
       return { ...l, ...laneNow({ lane: l.name, items, R, rows: dl, prop: props.find(x => x.lane === l.name) ?? null, written, notes: r.data.notes ? readText(r.data.notes) : null }) };
     }));
@@ -616,7 +619,7 @@ export function createDashboard(o) {
     const notes = notesFile.map(readText).find(t => t !== null) ?? null;
     const written = r && ['no-result', 'crash', 'lost', 'killed'].includes(outcomeOf(r)) ? files.filter(f => Date.parse(f.mtime) >= Date.parse(r.created) - 60e3) : [];
     return { project: p.name, lane, dir: dir.split(path.sep).join('/'), findings: ownerSummary(notes), outputs: groupOutputs(files, runs), plan: lanePlan(prop, { items, R, rows: dl }),
-      asks: laneAsks(items, lane), prs: lanePrs(dl, lane), ...laneNow({ lane, items, R, rows: dl, prop, written, notes }), written: written.map(f => f.rel),
+      asks: laneAsks(items, lane), prs: lanePrs(dl, lane), ...laneNow({ lane, items, R, rows: dl, prop, written, notes, shipped: laneHooks(p.state).shipped(lane, r) }), written: written.map(f => f.rel),
       runs: runs.sort((a, b) => b.id.localeCompare(a.id, 'en', { numeric: true })).map(x => ({ id: x.id, stage: x.data.stage ?? null, state: x.state, outcome: outcomeOf(x), cutoff: x.end?.cutoff ?? null })) };
   }
   function lanesWithSpend(ps) {
