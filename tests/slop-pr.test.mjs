@@ -71,7 +71,8 @@ test('the PR workflow\'s slop job: every pull request (no path filter: a require
   assert.match(y, /git merge-base "origin\/\$\{\{ github\.base_ref \}\}" HEAD/);
   assert.match(y, /node engine\/bin\/norn\.mjs slop check --ci --diff "\$base\.\.HEAD"/);
   assert.match(y, /META_ROOT: \$\{\{ runner\.temp \}\}\/norn/, 'the tool cache lives under META_ROOT: one path per runner');
-  assert.match(y, /actions\/cache@v4[\s\S]*path: \$\{\{ runner\.temp \}\}\/norn\/state\/tools\/npm/);
+  // 92ee4b63: the cache holds the whole tool cache (the locked tool set tools/lint + npm's own cache), keyed by its lock file
+  assert.match(y, /actions\/cache@v4[\s\S]*path: \$\{\{ runner\.temp \}\}\/norn\/state\/tools\n[\s\S]*key: slop-tools-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('tools\/lint\/package-lock\.json'\) \}\}/);
   const docs = fs.readFileSync(path.join(ROOT, 'engine', 'lib', 'slop', 'rules', 'README.md'), 'utf8');
   assert.match(docs, /## On a pull request[\s\S]*\.github\/workflows\/pr\.yml[\s\S]*required status/i);
   assert.match(docs, /`slop`/);
