@@ -76,6 +76,9 @@ test('the status strip: running / cap, usage vs guard and hourly cap, the next c
   assert.ok(!/Urd|Verdandi|Skuld/.test(c), 'classic: plain labels');
   const n = txt(renderStatus(s, { look: 'norn', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
   assert.match(n, /Urd[^]*Verdandi[^]*Skuld/); assert.match(n, /2 running \/ 7/); assert.match(n, /2 need you/);
+  // merge-slot: the merge slot is its own pool beside the lane workers
+  const m = txt(renderStatus({ ...s, running: { ...s.running, merge: { n: 1, cap: 1 } } }, { look: 'classic', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
+  assert.match(m, /2 running \/ 7 · merge 1 \/ 1/);
 });
 
 test('the header: the cog links Settings, the check-ins status line, the worker pool counted apart; times print local, no Z', () => {
@@ -151,7 +154,7 @@ test('/api/strip: counts from the run records, never the run tree; /api/lanes ro
     const q3 = record(S, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'seabed: depth', lane: 'seabed', options: [{ key: 'a', text: 'x' }] } });
     record(S, { kind: 'question', ev: 'answer', id: q3.id, by: 'owner', data: { text: 'a', via: 'chat' } });
     const ov = (await f.get('/api/overview?project=kestrel')).data, st = (await f.get('/api/strip?project=kestrel')).data;
-    assert.equal(st.needs_you, ov.needs_you, 'one needs-you count'); assert.deepEqual(st.running, { claude: ov.running.claude, codex: ov.running.codex });
+    assert.equal(st.needs_you, ov.needs_you, 'one needs-you count'); assert.deepEqual(st.running, { claude: ov.running.claude, merge: ov.running.merge, codex: ov.running.codex });
     assert.deepEqual(st.usage, ov.burn.usage); assert.deepEqual(st.checkin, ov.strip.checkin); assert.equal(st.strip.questions, ov.strip.questions);
     const items = (await f.get('/api/inbox?project=kestrel')).data.items, lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
     for (const l of lanes) assert.equal(l.needs, items.filter(i => isNeed(i) && i.lane === l.name && i.project === l.project).length, l.name);

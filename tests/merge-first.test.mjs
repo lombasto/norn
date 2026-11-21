@@ -65,10 +65,11 @@ test('fill order: a queued MERGE outranks the build and plan runs of its own pri
   assert.deepEqual(queueOf(runs(d)).map(x => x.id), [m0, m1, m2, p0, p0b, p1]);
 });
 
-test('one queued MERGE and one P1 build with one slot: the MERGE starts', async () => {
+test('one queued MERGE and one P1 build with one slot (no merge slot): the MERGE starts', async () => {
   const d = sandbox();
-  const build = d.q({ lane: 'build', stage: 'BUILD', priority: 'P1' });
-  const merge = d.q({ lane: 'land', stage: 'MERGE' });
+  const budget = { max_claude_workers: 1, merge_workers: 0 };   // merge-slot.test.mjs: with the default merge slot both would start
+  const build = d.q({ lane: 'build', stage: 'BUILD', priority: 'P1', budget });
+  const merge = d.q({ lane: 'land', stage: 'MERGE', budget });
   const rows = readiness(d.state, { resources: () => PIN });
   assert.deepEqual(rows.map(r => [r.id, r.ready]), [[merge, true], [build, false]]);
   assert.match(rows[1].terms.join(), /^cap: 1 claude workers running, budget max_claude_workers=1$/);
@@ -80,7 +81,7 @@ test('one queued MERGE and one P1 build with one slot: the MERGE starts', async 
 
 test('merge reserve: while a merge waits (here on its held worktree), other runs leave policy.fill.merge_reserve slots free', async () => {
   const d = sandbox();
-  const budget = { max_claude_workers: 2 };
+  const budget = { max_claude_workers: 2, merge_workers: 0 };   // no merge slot: the reserve keeps a normal one (merge-slot.test.mjs: with one)
   const mwt = d.wt(99);
   fs.writeFileSync(lockPath(d.locks, mwt), JSON.stringify({ run: 'RUN-other', pid: process.pid, ts: new Date().toISOString() }));
   const merge = d.q({ lane: 'land', stage: 'MERGE', worktree: mwt, budget });

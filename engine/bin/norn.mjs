@@ -1710,7 +1710,7 @@ function mergeqCmd(argv, env, out, err) {
         if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
         for (const u of r.updates) if (u.action !== 'skip') out(`${u.id} ${u.branch} update ${u.action}: ${u.why}`);
         for (const id of r.land?.landed || []) out(`LANDED ${id}`);
-        for (const f of r.land?.fallback || []) out(`MERGE ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
+        for (const f of r.land?.fallback || []) out(`${f.stage} ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
         out(`mergeq: ${r.why}`);
         if (r.batch?.dispatch && r.batch.status === 'green') out(`MERGE: norn ${r.batch.dispatch.join(' ')}`);
         if (r.fix) out(`FIX ${r.fix.id}: norn ${r.fix.run.join(' ')}`);

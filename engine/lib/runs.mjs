@@ -15,6 +15,7 @@ import { findTranscript } from './harness/claude.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
 export { readyWords };
 import { writeQueueView, sleepMs } from './views.mjs';
+import { noteFillWhy } from './mqwhy.mjs';
 import { spawnOutside, procList, procListAsync } from './jobguard.mjs';
 import { receiptTree } from './kills.mjs';
 import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
@@ -40,7 +41,7 @@ import { claimWork, claimHold, renewWork, workKey, readSync, updateSync, leaderW
 import { ClaimsError, readClaims } from './claimsref.mjs';
 import { touchedOf, workOf } from './intents.mjs';
 export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
-import { syncPolicy, POLICY_DEFAULTS } from './policy.mjs';
+import { syncPolicy, POLICY_DEFAULTS, MACHINE_DEFAULTS } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -549,20 +550,46 @@ export function laneWriter({ state, locksDir, lane, worktree, staleMs = STALE_MS
   return live ? `lane ${lane} has live run ${live.id} in ${live.data.worktree ?? '?'}` : null;
 }
 
+// merge-slot (owner 11-21: "a dedicated merge worker"): budget.merge_workers Claude slots (default 1) on top of max_claude_workers,
+// machine-wide, that only a landing run (MERGE / resolve) may take - so finished work never waits behind lanes that started first.
+// A landing run fills the merge slots first and may take a normal slot too; lane work counts only the landing runs past the merge slots.
+export const MERGE_WORKERS_DEFAULT = MACHINE_DEFAULTS.merge_workers;   // the Settings row's default (policy.mjs)
+export const mergeWorkers = budget => (Number.isInteger(budget?.merge_workers) && budget.merge_workers >= 0 ? budget.merge_workers : MERGE_WORKERS_DEFAULT);
+const MERGE_POOL = 'max_claude_workers';
+// the Claude pool split: lane = live non-landing runs, land = live landing runs (machine-wide, plus extra: the dry walk's pending starts)
+function claudePool(state, staleMs, extra = []) {
+  const live = [...liveRuns(state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin' && capsOfRun(it.data).includes(MERGE_POOL));
+  const land = live.filter(it => isLandingStage(it.data.stage)).length;
+  return { lane: live.length - land, land };
+}
+/** may landing run spec o start in a free merge slot now (no normal slot taken)? - the slot the CPU gate and the shares never hold */
+export function inMergeSlot(o, staleMs = STALE_MS, extra = []) {
+  if (o.kind === 'checkin' || !isLandingStage(o.stage) || !(infoOf(o)?.caps || []).includes(MERGE_POOL) || !Number.isInteger(o.budget?.[MERGE_POOL])) return false;
+  return claudePool(o.state, staleMs, extra).land < mergeWorkers(o.budget);
+}
 // a check-in is not a worker: it never counts against (or is refused by) the worker caps
 // the first full cap of run spec o as a refusal message, or null (room in every cap)
-// reserve (MERGE-FIRST, policy.fill.merge_reserve): the slots of each cap a non-landing run must leave free while a landing run waits
-function capFull(o, staleMs, extra = [], reserve = 0) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
+// reserve (MERGE-FIRST, policy.fill.merge_reserve): the normal slots of each cap a non-landing run must leave free while more landing runs
+// wait (waiting, every project on this machine) than the free merge slots take
+function capFull(o, staleMs, extra = [], { reserve = 0, waiting = 0 } = {}) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
   if (o.kind === 'checkin') return null;
   const typed = !EXECUTORS[o.executor];
   const capOf = k => (Number.isInteger(o.budget?.[k]) ? o.budget[k] : typed ? capDefault(o.provider) : null);  // a typed executor always has a cap
   const caps = (infoOf(o).caps || []).filter(k => capOf(k) !== null);
   if (!caps.length) return null;
   const live = [...liveRuns(o.state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin');
+  const landing = isLandingStage(o.stage), mw = mergeWorkers(o.budget);
   for (const k of caps) {
+    if (k === MERGE_POOL) {
+      const p = claudePool(o.state, staleMs, extra), used = p.lane + Math.max(0, p.land - mw), cap = capOf(k);
+      if (landing && p.land < mw) continue;   // a free merge slot
+      if (used >= cap) return `${p.lane + p.land} claude workers running, budget ${k}=${cap}${!mw ? '' : landing ? ` + merge_workers=${mw} (${p.land} merging)` : p.land ? ` (+ ${p.land} merging, merge_workers=${mw})` : ''}`;
+      if (!landing && reserve > 0 && waiting > Math.max(0, mw - p.land) && used + reserve >= cap) return `${p.lane + p.land} claude workers running, budget ${k}=${cap}: ${reserve} slot(s) kept for the queued merges (fill.merge_reserve)`;
+      continue;
+    }
     const n = live.filter(it => capsOfRun(it.data).includes(k)).length;
     if (n >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}`;
-    if (reserve > 0 && n + reserve >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}: ${reserve} slot(s) kept for the queued merges (fill.merge_reserve)`;
+    if (!landing && reserve > 0 && waiting > 0 && n + reserve >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}: ${reserve} slot(s) kept for the queued merges (fill.merge_reserve)`;
   }
   return null;
 }
@@ -572,8 +599,9 @@ function capCheck(o, staleMs) { const full = capFull(o, staleMs); if (full) thro
 function shareCheck(o, staleMs) {
   if (o.kind === 'checkin' || o.role === 'helper' || !(infoOf(o)?.caps || []).includes('max_claude_workers')) return;
   if (!Number.isInteger(o.budget?.max_claude_workers)) return;   // no machine cap: no share to keep (slotVerdict's rule), no walk of the other projects
+  if (inMergeSlot(o, staleMs)) return;   // merge-slot: the merge slot is no project's share
   const me = path.basename(path.resolve(o.state));
-  const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me), waiting: slotWaiters(o.state, { now: o.now ?? Date.now(), resources: o.resources || sampleResources }), mine: -Infinity });
+  const sv = slotVerdict({ budget: o.budget, project: me, live: claudeLive(o.state, staleMs, [], me, o.budget), waiting: slotWaiters(o.state, { now: o.now ?? Date.now(), resources: o.resources || sampleResources }), mine: -Infinity });
   if (sv) throw new RunRefused(sv, 4);
 }
 
@@ -737,16 +765,21 @@ export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 
 const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
-/** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else RunRefused 3 */
-function leaderDoor(o) {
+/** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else the why, null = it may */
+export const LEADER_ONLY_PRS = 'this home only opens PRs';
+export function leaderRefusal(o) {
+  if (o.stage !== 'MERGE') return null;
   const f = homeOf(o.state) ? fedOf(o.git_ledger) : null;
-  if (!f) return;
+  if (!f) return null;
   const why = leaderWhy(o.state, f, { project: path.basename(path.resolve(o.state)), now: o.now ?? Date.now(), pol: syncPolicy(specPolicy({ ctx_from: policySource(o) })) });
-  if (why) throw new RunRefused(`MERGE: ${why} - this home only opens PRs`, 3);
+  return why ? `MERGE: ${why} - ${LEADER_ONLY_PRS}` : null;
 }
+// merge-slot: another home leads the merges - the MERGE can never start here (a fenced or unconfirmed own lead may come back)
+const leaderGone = why => /^MERGE: merge leader is /.test(why || '');
+function leaderDoor(o) { const why = leaderRefusal(o); if (why) throw new RunRefused(why, 3); }
 /** the claim of launch o: null (exempt / not synced) | { key, n } (won) - throws RunRefused 3 (item / branch) or ClaimHeld (wait queued) */
 export function claimDoor(o) {
-  if (o.stage === 'MERGE') leaderDoor(o);
+  leaderDoor(o);
   if (claimExempt(o)) return null;
   const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
   if (!f) return null;
@@ -814,7 +847,7 @@ export function startRun(o) {
     if (dw) return { ...queueRun(rest), queued: true, why: dw };
     { const a = queuedAhead(rest); if (a.length) return { ...queueRun(rest), queued: true, why: aheadWords(a) }; }   // fair-slots item 4
     // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
-    const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
+    const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources, inMergeSlot(rest, rest.staleMs ?? STALE_MS));   // + piece 5, META-AUTH
     if (refused) return { ...queueRun(rest), queued: true, why: refused };
     try { return startRun(rest); } catch (e) { if (!(e instanceof RunRefused) || e.code !== 4) throw e; return { ...queueRun(rest), queued: true, why: e.message }; }
   }
@@ -942,6 +975,7 @@ export function liveBudget(spec) {
  */
 export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
+  if (!o.fromQueue) { const lw = leaderRefusal(o); if (leaderGone(lw)) throw new RunRefused(lw, 3); }   // merge-slot: a MERGE that can never start here is refused, not queued behind the caps
   const caller = o.caller;
   o = { ...o, budget_file: path.resolve(o.budget_file ?? machineBudgetFile()) };   // GAP-2: the fill reads this file, never a copy
   o = mergeSpec(withFloor(landingPriority(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) })))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
@@ -1042,7 +1076,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
         started.push(...fillPass(state, at, res, authProbe));
         onPass?.();
       } while (flagged());
-      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
+      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); noteFillWhy(state, ready, isLandingStage, { now: at }); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
     } finally { release(); }
     if (!flagged()) return started;
   }
@@ -1204,16 +1238,17 @@ export function readCpu({ file = cpuLogFile(), from = -Infinity, to = Infinity }
   let text = ''; try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
   return text.split('\n').flatMap(l => { try { const j = JSON.parse(l), t = Date.parse(j.ts); return t >= from && t <= to && Number.isFinite(j.cpu) ? [{ t, cpu: j.cpu, src: j.src }] : []; } catch { return []; } });
 }
-/** null = room; else the reason (the words norn ready prints after "resources: ") */
-export function resourceRefusal(res, fill = {}) {
+/** null = room; else the reason (the words norn ready prints after "resources: "). cpu false: the CPU gate is skipped (a merge in the merge slot) */
+export function resourceRefusal(res, fill = {}, { cpu = true } = {}) {
   const f = { ...FILL_DEFAULTS, ...(fill || {}) };
   if (res.free_gb < f.min_free_gb) return `free RAM ${res.free_gb.toFixed(1)} GB < fill.min_free_gb ${f.min_free_gb}`;
-  if (res.cpu_pct > f.max_cpu_pct) return `CPU busy ${Math.round(res.cpu_pct)} % > fill.max_cpu_pct ${f.max_cpu_pct}`;
+  if (cpu && res.cpu_pct > f.max_cpu_pct) return `CPU busy ${Math.round(res.cpu_pct)} % > fill.max_cpu_pct ${f.max_cpu_pct}`;
   return null;
 }
 // META-AUTH: the login gate of the run's harness (authguard.mjs); a spec without a state dir is never held
 const authGate = (spec, o = {}) => (spec.state ? authRefusal(spec.state, infoOf(spec)?.harness, { spec, ...o }) : null);
-const resourceGate = (spec, sample) => { if (!spec.policy?.fill) return null; const r = resourceRefusal(sample(), spec.policy.fill); return r ? `resources: ${r}` : null; };
+// merge-slot: a merge in the merge slot is short and unblocks other work - the CPU gate never holds it (the memory gate does)
+const resourceGate = (spec, sample, slot = false) => { if (!spec.policy?.fill) return null; const r = resourceRefusal(sample(), spec.policy.fill, { cpu: !slot }); return r ? `resources: ${r}` : null; };
 /** readiness(state, { now }) -> the dry walk's rows in fill order: { id, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
 export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null });
 
@@ -1223,7 +1258,8 @@ export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null }
 // that is ready or waits only for capacity (cap, resources) is waiting for a slot.
 const CAPACITY_TERM = /^(cap[: ]|resources: )/;
 const lastStart = runs => Math.max(0, ...runs.filter(r => r.kind === 'run' && r.history?.[0]?.ev === 'start' && onClaudeCap(r.data)).map(r => Date.parse(r.created) || 0));
-const slotWaiting = r => r.account && (r.ready || (r.terms.length > 0 && r.terms.every(x => CAPACITY_TERM.test(x))));
+// a row the merge reserve holds yields to the merges: it waits for no share (else a lane and a merge of two projects hold each other)
+const slotWaiting = r => r.account && (r.ready || (r.terms.length > 0 && r.terms.every(x => CAPACITY_TERM.test(x) && !x.includes('fill.merge_reserve'))));
 /** { project: { n, since } } of the projects beside `state` that have queued Claude runs waiting only for a slot */
 export function slotWaiters(state, o = {}) {
   const out = {}, here = path.resolve(state);
@@ -1236,12 +1272,22 @@ export function slotWaiters(state, o = {}) {
   }
   return out;
 }
-const claudeLive = (state, staleMs, pending, me) => {
+// merge-slot: the landing runs that sit in the merge slots (the first merge_workers of them) are no project's share
+const claudeLive = (state, staleMs, pending, me, budget) => {
   const live = {};
-  for (const r of liveRuns(state, { staleMs })) if (onClaudeCap(r.data)) { const p = path.basename(r.state_dir); live[p] = (live[p] ?? 0) + 1; }
-  for (const d of pending) if (onClaudeCap(d)) live[me] = (live[me] ?? 0) + 1;
+  let slots = mergeWorkers(budget);
+  const add = (p, d) => { if (!onClaudeCap(d)) return; if (slots > 0 && isLandingStage(d.stage)) { slots--; return; } live[p] = (live[p] ?? 0) + 1; };
+  for (const r of liveRuns(state, { staleMs })) add(path.basename(r.state_dir), r.data);
+  for (const d of pending) add(me, d);
   return live;
 };
+// the queued landing runs of a project's queue that wait for a slot only: no future not_before, every after: met (ev: its evaluator)
+// and a MERGE this home may start (leaderRefusal)
+function waitingLanding(state, queue, now, ev = () => makeEval(state)) {
+  let E = null;
+  return queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now) && !(q.after.length && !evalAll(q.after, (E ??= ev())).conds.every(c => c.met))
+    && !(q.stage === 'MERGE' && leaderRefusal({ ...(readJson(queueSpecPath(state, q.id)) || {}), now })));
+}
 function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
   let E = null, R, L, CL, W = null, mine = Infinity, last = null;
@@ -1249,12 +1295,14 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
   const me = path.basename(path.resolve(state));
   const shareGate = (spec, q, staleMs) => {   // null = this row may take a Claude slot
     mine = Math.min(mine, Math.max(Date.parse(q.queued) || 0, (last ??= lastStart(runsOf(state)))));
-    return slotVerdict({ budget: spec.budget, project: me, live: claudeLive(state, staleMs, pending, me), waiting: fair ? (W ??= slotWaiters(state, { now, resources: res, authProbe })) : {}, mine });
+    return slotVerdict({ budget: spec.budget, project: me, live: claudeLive(state, staleMs, pending, me, spec.budget), waiting: fair ? (W ??= slotWaiters(state, { now, resources: res, authProbe })) : {}, mine });
   };
   const queue = queueOf(runsOf(state));
-  // MERGE-FIRST: the landing runs that hold the merge reserve - queued, and not waiting on a condition or a clock (those may wait for hours)
-  const landing = new Set(queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now)
-    && !(q.after.length && !evalAll(q.after, (E ??= makeEval(state))).conds.every(c => c.met))).map(q => q.id));
+  // MERGE-FIRST: the landing runs that hold the merge reserve - queued, and not waiting on a condition or a clock (those may wait for hours);
+  // merge-slot: the other projects' waiting ones count too (the cap is machine-wide), read once per walk when a lane row needs them
+  const landing = new Set(waitingLanding(state, queue, now, () => (E ??= makeEval(state))).map(q => q.id)), landRows = new Set(queue.filter(q => isLandingStage(q.stage)).map(q => q.id));
+  let OW = null;
+  const othersLanding = () => (OW ??= projectStates(state).filter(s => s !== path.resolve(state)).reduce((n, s) => { try { return n + waitingLanding(s, queueOf(runsOf(s)), now).length; } catch { return n; } }, 0));
   for (const q of queue) {
     const row = { id: q.id, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
     rows.push(row);
@@ -1271,6 +1319,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     let spec = readJson(queueSpecPath(state, q.id));
     if (!spec) { gone('queue spec missing'); continue; }
     try { spec = { ...spec, budget: liveBudget(spec) }; } catch (e) { row.terms.push(e.message); continue; }   // GAP-2: caps, usage guard, floor of NOW
+    { const lw = leaderRefusal({ ...spec, now }); if (lw) { if (leaderGone(lw)) { gone(lw); continue; } row.terms.push(lw); } }   // merge-slot: never shown as held by a cap / the CPU
     const paused = readPause(spec.paused);   // RM-37: Hold the queue / Pause everything hold every queued run; Pause check-ins none
     if (holdsStarts(paused)) row.terms.push(pauseTerm(paused));
     const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;
@@ -1279,7 +1328,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     if (usage) row.terms.push(`usage: ${usage}`);
     const lim = limitRefusal(state, spec, { limits: (L ??= openLimits(state, { now })) });   // META-LIMIT-GATE: waits for the reset, holds no cap
     if (lim) row.terms.push(lim);
-    const bc = caps.filter(k => blocked.has(k));
+    const land = isLandingStage(q.stage), bc = caps.filter(k => blocked.has(k) && (!land || landRows.has(blocked.get(k))));   // merge-slot: lane rows never block a merge
     if (bc.length) row.terms.push(`cap ${bc.join(', ')}: kept for ${[...new Set(bc.map(k => blocked.get(k)))].join(', ')} (fill order per cap)`);
     for (const h of heldTrees(spec, staleMs)) row.terms.push(heldWords(h));   // META-MERGELOCK: a rebase MERGE waits for its lane worktree too
     { const sf = slotsFull(spec, staleMs); if (sf) row.terms.push(sf); }   // GAP-6: a MERGE waits for a merge slot
@@ -1294,11 +1343,12 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const served = spec.node_labels ?? [osLabel()], miss = unserved(q.labels, served);
     if (miss.length) { if (!row.terms.length) row.offer = true; row.terms.push(`labels ${miss.join(',')}: not served here (serves ${served.join(',')}) - a node serving them claims it`); continue; }
     if (row.terms.length) continue;   // the terms above wait without holding a cap for younger runs
-    const reserve = !isLandingStage(q.stage) && landing.size ? Math.max(0, Number({ ...FILL_DEFAULTS, ...(spec.policy?.fill || {}) }.merge_reserve) || 0) : 0;
-    const full = capFull(spec, staleMs, pending, reserve);
+    const reserve = land ? 0 : Math.max(0, Number({ ...FILL_DEFAULTS, ...(spec.policy?.fill || {}) }.merge_reserve) || 0);
+    const full = capFull(spec, staleMs, pending, { reserve, waiting: reserve ? landing.size + othersLanding() : 0 });
     if (full) { row.terms.push(`cap: ${full}`); if (!full.includes('fill.merge_reserve')) for (const k of caps) blocked.set(k, q.id); continue; }   // a reserve refusal holds no cap
-    { const sv = caps.includes('max_claude_workers') && spec.kind !== 'checkin' ? shareGate(spec, q, staleMs) : null; if (sv) { row.terms.push(sv); for (const k of caps) blocked.set(k, q.id); continue; } }
-    const rr = resourceGate(spec, res);   // piece 5: machine pressure is global, so it holds no cap for later rows
+    const slot = inMergeSlot(spec, staleMs, pending);   // merge-slot: a merge in the merge slot passes the shares and the CPU gate
+    { const sv = !slot && caps.includes('max_claude_workers') && spec.kind !== 'checkin' ? shareGate(spec, q, staleMs) : null; if (sv) { row.terms.push(sv); for (const k of caps) blocked.set(k, q.id); continue; } }
+    const rr = resourceGate(spec, res, slot);   // piece 5: machine pressure is global, so it holds no cap for later rows
     if (rr) { row.terms.push(rr); continue; }
     // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)
     { const a = authGate(spec, { now, probe: authProbe, dry: !act }); if (a) { row.terms.push(a); continue; } }
