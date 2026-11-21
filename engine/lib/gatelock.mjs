@@ -10,7 +10,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { metaRoot } from './config.mjs';
 import { running, procStart } from './legacy.mjs';
-import { testOwner, SAME_START_MS } from './derelict.mjs';
+import { testOwner, SAME_START_MS, TEST_OWNER } from './derelict.mjs';
 import { readJsonS as readJson } from './fsnap.mjs';   // never inside a dash request snapshot: a plain sync read of the lock
 
 export const GATE_FILE = 'gate.lock', HELD_ENV = 'META_GATE_HELD';
@@ -32,12 +32,14 @@ export function holderGone(cur, { alive = running, start = procStart, seen = new
 /**
  * Take the machine gate lock, waiting for a live holder up to waitMs. Never rejects. Resolves { held, file, why, waited_ms, env, release }:
  * held = this process holds it (release() frees it; exit frees it too); env = what the gate's children need to run under it ({} when
- * not held). o: { what, locksDir, env, waitMs, pollMs, say (a progress line), alive, start, pid, started } (the last four: tests).
+ * not held; inside a test: the test owner, so they stay inside it). o: { what, locksDir, env, waitMs, pollMs, say (a progress line), alive, start, pid, started } (the last four: tests).
  */
 export async function acquireGate({ what = 'gate', locksDir, env = process.env, waitMs = GATE_WAIT_MIN * 60e3, pollMs = GATE_POLL_MS, say = () => {},
   alive = running, start = procStart, pid = process.pid, started = Math.round(performance.timeOrigin) } = {}) {
   const free = (why, file = null, waited = 0, childEnv = {}) => ({ held: false, file, why, waited_ms: waited, env: childEnv, release: () => {} });
-  if (testOwner(env)) return free('inside a test: no machine gate lock');
+  // the test owner passes on to the gate's children: runGate drops META_* from its child env, and without it the ci-suite a test's gate
+  // starts took the real machine lock and waited out the CI suite holding it (CI 44932573347: tests/dod-gate.test.mjs hung 600 s)
+  if (testOwner(env)) return free('inside a test: no machine gate lock', null, 0, { [TEST_OWNER]: env[TEST_OWNER] });
   const outer = env[HELD_ENV] ? readJson(env[HELD_ENV]) : null;
   if (outer && !holderGone(outer, { alive, start })) return free(`inside the gate of pid ${outer.pid} (${outer.what})`, env[HELD_ENV], 0, { [HELD_ENV]: env[HELD_ENV] });
   const dir = locksDir || gateLocksDir(env), file = path.join(dir, GATE_FILE), t0 = performance.now(), seen = new Map();

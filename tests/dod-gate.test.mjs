@@ -63,6 +63,14 @@ test('skip mode runs no gate (as the batch gate and the landing check); a gate t
   assert.deepEqual(gateOf(o).suite, { mode: 'as-configured', files: null, done: null });
 });
 
+// CI 44932573347: runGate drops every META_* var from the gate's env, so a gate run inside a test lost META_TEST_OWNER; the nested
+// ci-suite then took the real machine gate lock (the engine root's state/locks) and waited 90 min for the CI suite that held it
+test('a gate run inside a test keeps META_TEST_OWNER, so the ci-suite it starts takes no machine gate lock', async () => {
+  const t = mkTmp('meta-dodgate-own-'), { wt } = suiteRepo(t, 'a'), cmd = 'node -e "console.log(\'owner=\' + (process.env.META_TEST_OWNER || \'none\'))"';
+  const d = await doneCheck({ worktree: wt, dod: { ready: READY, tests: CHANGED, gate: { cmd, suite: 'changed' } }, logDir: path.join(t, 'logs'), run: 'RUN-1', locksDir: path.join(t, 'locks') });
+  assert.match(fs.readFileSync(gateOf(d).log, 'utf8'), new RegExp(`owner=${process.env.META_TEST_OWNER}`));
+});
+
 test('readyGate records the suite mode from suiteMode (default changed; a bad value is refused)', () => {
   const t = mkTmp('meta-dodgate-rg-'), b = path.join(t, 'b.md');
   fs.writeFileSync(b, 'Scope: a/**\nTests: `x`\nDone: d\n');
@@ -90,11 +98,12 @@ test('the run card\'s Done evidence shows the gate mode, its files and its time'
   assert.match(dodChips(null, { ok: false, why: 'x', tests: cut }, { evidence: true }), /gate: changed, 209\/227 files, 1200 s/);
 });
 
-test('the Runs card carries the Done gate entry\'s mode, files and time (agentsTree passes ms + suite)', () => {
+// a8b060ac: Runs is one table and a row opens the run document - the Done chip there carries the gate evidence (its title)
+test('the Runs run document carries the Done gate entry\'s mode, files and time (agentsTree passes ms + suite)', () => {
   const now = Date.now(), at = new Date(now - 60000).toISOString();
   const runs = [{ id: 'RUN-1', kind: 'run', state: 'ended', created: at, data: { lane: 'x', executor: 'fake' }, history: [],
     end: { outcome: 'done', dod: { ok: true, why: null, tests: [{ name: 'gate', code: 0, counts: { pass: 9, fail: 0 }, log: 'L', ms: 41000, suite: { mode: 'changed', files: 6, done: 6 } }] } } }];
   const tree = agentsTree(runs, { now });
   assert.deepEqual(tree[0].dod.tests[0].suite, { mode: 'changed', files: 6, done: 6 }); assert.equal(tree[0].dod.tests[0].ms, 41000);
-  assert.match(renderTab('runs', { tree }, { now, projects: [] }), /gate exit 0, 9 pass 0 fail \(gate: changed, 6 files, 41 s\)/);
+  assert.match(renderTab('runs', { tree }, { now, projects: [], run: 'RUN-1' }), /gate exit 0, 9 pass 0 fail \(gate: changed, 6 files, 41 s\)/);
 });
