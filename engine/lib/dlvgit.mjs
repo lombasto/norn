@@ -283,7 +283,7 @@ export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) 
  * The change = the diff merge-base(main, tip)..tip. It is on main when, for every file it touched, main's file equals the tip's, or
  * (a text file) every line it added is on main at least as many times as it added it (blank lines aside; line ends ignored). A file
  * the branch deleted must be gone from main; a binary file must equal main's.
- * -> { on: true | false, why } | { on: null, why } (cannot tell: the tip is gone from the repo)
+ * -> { on: true | false, why } | { on: null, why } (cannot tell: the tip is gone from the repo, or git diff failed)
  */
 /** the content check's answer for a tip the repo does not have (also scanRepo present()'s gone tips: no git asked) */
 export const goneTip = tip => ({ on: null, why: `the tip ${String(tip).slice(0, 9)} recorded at DONE is gone from the repo` });
@@ -291,19 +291,24 @@ export function contentOnMain(repo, tip, main = 'main', { git = makeGit(), maxFi
   if (git(repo, ['cat-file', '-e', `${tip}^{commit}`], { allowFail: true }) === null) return goneTip(tip);
   const show = (rev, f) => git(repo, ['show', `${rev}:${f}`], { allowFail: true });
   const count = text => { const m = new Map(); for (const l of String(text).split('\n')) { const k = l.trimEnd(); if (k.trim()) m.set(k, (m.get(k) || 0) + 1); } return m; };
-  let seen = false;
+  let seen = false, failed = null;
+  // a diff git could not give (timeout, maxBuffer) says nothing: it is never read as an empty change
+  const diff = (base, args) => { const out = git(repo, ['diff', '--no-renames', ...args], { allowFail: true }); if (out === null) failed = `git diff failed (against ${base})`; return out === null ? null : out.split('\0').filter(Boolean); };
   for (const base of [main, `refs/remotes/origin/${main}`]) {
     const b = git(repo, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { allowFail: true })?.trim();
     const mb = b && git(repo, ['merge-base', b, tip], { allowFail: true })?.trim();
     if (!mb) continue;
     seen = true;
-    const st = String(git(repo, ['diff', '--no-renames', '--name-status', '-z', mb, tip], { allowFail: true }) ?? '').split('\0').filter(Boolean);
+    const st = diff(base, ['--name-status', '-z', mb, tip]);
+    if (!st) continue;
     const touched = new Map();
     for (let i = 0; i + 1 < st.length; i += 2) touched.set(st[i + 1], st[i][0]);
     if (!touched.size) return { on: true, why: 'the branch changes nothing against main' };
-    const differ = String(git(repo, ['diff', '--no-renames', '--name-only', '-z', b, tip, '--', ...touched.keys()], { allowFail: true }) ?? '').split('\0').filter(Boolean);
-    if (differ.length > maxFiles) continue;
-    const bin = new Set(String(git(repo, ['diff', '--no-renames', '--numstat', '-z', mb, tip], { allowFail: true }) ?? '').split('\0').filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)));
+    const differ = diff(base, ['--name-only', '-z', b, tip, '--', ...touched.keys()]);
+    if (!differ || differ.length > maxFiles) continue;
+    const numstat = diff(base, ['--numstat', '-z', mb, tip]);
+    if (!numstat) continue;
+    const bin = new Set(numstat.filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)));
     const fileOn = f => {
       if (touched.get(f) === 'D' || bin.has(f)) return false;   // differs from main: the deletion / the binary is not there
       const onMain = show(b, f), atTip = show(tip, f);
@@ -314,5 +319,6 @@ export function contentOnMain(repo, tip, main = 'main', { git = makeGit(), maxFi
     };
     if (differ.every(fileOn)) return { on: true, why: differ.length ? `every line it added is on ${base}` : `its files equal ${base}'s` };
   }
+  if (failed) return { on: null, why: failed };
   return { on: false, why: seen ? 'its change is not on main' : 'it shares no history with main' };
 }
