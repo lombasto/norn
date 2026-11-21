@@ -50,6 +50,19 @@ test('norn smoke passes end to end in a temp clone (exit 0, < 60 s)', () => {
   assert.ok(s < 60, `smoke took ${s} s`);
 });
 
+// SMOKE-RUSTUP R1 (DEC-a-498): the sandbox moves HOME / USERPROFILE to a temp home, so rustup and cargo would look for <temp>/.rustup
+// and <temp>/.cargo ("rustup has no default toolchain") and setup could not build norn-hook; the sandbox keeps the real tool homes.
+test('smoke sandboxEnv keeps the real RUSTUP_HOME / CARGO_HOME (env value, else <real home>/.rustup / .cargo)', async () => {
+  const { sandboxEnv } = await import('../engine/lib/smoke.mjs');
+  const home = path.join(os.tmpdir(), 'h'), real = os.homedir();
+  const e = sandboxEnv({ home, bin: 'b', cfg: 'c', root: 'm' }, { PATH: 'p', HOME: real, USERPROFILE: real });
+  assert.equal(e.HOME, home);
+  assert.equal(e.RUSTUP_HOME, path.join(real, '.rustup'));
+  assert.equal(e.CARGO_HOME, path.join(real, '.cargo'));
+  const set = sandboxEnv({ home, bin: 'b', cfg: 'c', root: 'm' }, { PATH: 'p', RUSTUP_HOME: 'R', CARGO_HOME: 'C' });
+  assert.deepEqual([set.RUSTUP_HOME, set.CARGO_HOME], ['R', 'C']);
+});
+
 // META-SMOKE-CLONE R1: the clone takes only what smoke needs - a shallow pack transfer over file:// (only HEAD's objects, never
 // hardlinks, so B-1 still holds) instead of --no-hardlinks copying the whole, ever-growing object store.
 test('smoke cloneCommitted: shallow file:// clone (--depth 1, no --local / hardlinks) holding exactly one commit', async () => {

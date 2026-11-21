@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { hookReady } from './helpers/hook.mjs';
 import { runEnded, waitFor, stateBusy } from './helpers/wait.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadMachine, loadProject } from '../engine/lib/config.mjs';
@@ -27,6 +28,7 @@ const FILES = { 'package.json': JSON.stringify({ name: 'tide', scripts: { test: 
   'ROADMAP.md': '# Roadmap\n\n## Sync\n- [IN PROGRESS] Offline sync (branch feat/sync)\n- [ ] Retry queue\n\n## Now\n- [ ] Export to CSV\n' };
 
 function sandbox() {
+  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
   const t = mkTmp('meta-adopt-dash-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });
