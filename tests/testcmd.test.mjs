@@ -72,4 +72,3 @@ test('classify: the strongest segment wins (a full suite after a test file is fu
   assert.equal(isTest(undefined), false);
   assert.deepEqual(classify('META_ROOT=x node --test tests/a.test.mjs ./tests/b.test.mjs').paths, ['tests/a.test.mjs', './tests/b.test.mjs'], 'the paths as written (the hook reads them)');
 });
-

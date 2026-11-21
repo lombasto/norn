@@ -19,12 +19,11 @@ import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { importsOf, suiteEnv } from './cisuite.mjs';
 import { holderGone } from './gatelock.mjs';
-import { metaRoot } from './config.mjs';
+import { metaRoot, fwd } from './config.mjs';
 import { testCounts } from './progress.mjs';
-import { readText } from './fsnap.mjs';
+import { readText, readJsonS as readJson } from './fsnap.mjs';
 
 export const RESULT_TTL_MS = 24 * 3600e3, LOG_DAYS = 7, WAIT_POLL_MS = 1000, FILE_CAP_MS = 600e3;
-const fwd = s => String(s).replace(/\\/g, '/');
 /** the cache folder of a project state dir (<state root>/testcache), and of the calling process (its run's state, else META_ROOT's) */
 export const cacheDirOf = state => path.join(path.dirname(path.resolve(state)), 'testcache');
 export const cacheDir = (env = process.env) => (env.META_RUN_STATE ? cacheDirOf(env.META_RUN_STATE) : path.join(metaRoot(env), 'state', 'testcache'));
@@ -69,7 +68,6 @@ export function keyOf(file, ix, extra = '') {
 }
 
 // ---------- results, locks, the log ----------
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const resFile = (dir, key) => path.join(dir, `${key}.json`), lockFile = (dir, key) => path.join(dir, `${key}.lock`);
 /** the reusable result of a key: a pass younger than RESULT_TTL_MS, else null */
 export function freshPass(dir, key, now = Date.now()) { const r = readJson(resFile(dir, key)); return r?.ok === true && now - Date.parse(r.at) < RESULT_TTL_MS ? r : null; }
@@ -95,7 +93,7 @@ export function cacheLog(dir, { since = 0 } = {}) {
 }
 /** drop results past RESULT_TTL_MS and log rows past LOG_DAYS (once the log passes 256 KB) */
 export function prune(dir, now = Date.now()) {
-  let names = []; try { names = fs.readdirSync(dir); } catch { return; }
+  let names = []; try { names = fs.readdirSync(dir); } catch { return; /* no cache folder yet: nothing to prune, the first run makes it */ }
   for (const n of names.filter(n => /^[0-9a-f]{40}\.json$/.test(n))) { const r = readJson(path.join(dir, n)); if (!r || now - Date.parse(r.at) > RESULT_TTL_MS) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* raced */ } } }
   try { if (fs.statSync(logFile(dir)).size > 256 * 1024) fs.writeFileSync(logFile(dir), cacheLog(dir, { since: now - LOG_DAYS * 86400e3 }).map(r => JSON.stringify(r) + '\n').join('')); } catch { /* no log yet */ }
 }

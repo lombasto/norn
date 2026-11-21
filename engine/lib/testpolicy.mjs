@@ -19,11 +19,12 @@ import { POLICY_DEFAULTS } from './policy.mjs';
 import { isBrowserTest, importsOf, pickTests } from './cisuite.mjs';
 import { workInit, onWork } from './progress.mjs';
 import { TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
+import { fwd } from './config.mjs';
+import { readText } from './fsnap.mjs';
 
 export const TEST_MODES = ['light', 'changed', 'off'], BROWSER_MODES = ['ci', 'allow'], FULL_SUITE = ['deny', 'allow'];
 /** the env a run's test process gets while policy.tests.browser = ci: tests/helpers/cdp.mjs skipWhy reads it */
 export const BROWSER_SKIP_ENV = { META_TEST_BROWSER: 'skip' };
-const fwd = s => String(s).replace(/\\/g, '/');
 
 /** a project policy -> its policy.tests with every default filled and every bad value replaced by the default */
 export function testsPolicy(policy) {
@@ -68,7 +69,8 @@ export function testsCheck(cmd, t, { testMs = null, cwd = '.', read = readOr } =
   }
   return viaNorn(r, t);
 }
-const readOr = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+// the hook must answer whatever the disk says: a file it may not read (EACCES, a lock) counts as missing, the check goes on without it
+const readOr = f => { try { return readText(f); } catch { return null; } };
 
 // ---------- the run's test time, from its own transcript (the same fold as norn speed: progress.mjs onWork + testcmd classify) ----------
 /** the wall time of a transcript's finished test calls (their union: background calls may overlap), ms */
