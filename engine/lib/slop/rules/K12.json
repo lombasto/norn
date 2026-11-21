@@ -9,36 +9,20 @@
     "why": "Commented-out code does not run and is not tested. Readers cannot tell if it is a plan, a left-over or a bug. Git already keeps the old version.",
     "fix": "Delete it. If it explains something, write the explanation in words."
   },
-  "files": [
-    "**/*.mjs",
-    "**/*.js",
-    "**/*.cjs"
-  ],
-  "exclude": [
-    "**/vendor/**"
-  ],
-  "in": [
-    "comment"
-  ],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "exclude": ["**/vendor/**"],
+  "in": ["comment"],
   "patterns": [
     "(?<=^|\\n)[ \\t]*//[ \\t]*(?:(?:const|let|var)[ \\t]+[\\w$]+[ \\t]*=.*;|(?:return|await|throw)\\b.*;|import\\b.*\\bfrom[ \\t]+['\"]|export[ \\t]+(?:const|let|function|default)\\b.*[;{]|(?:if|for|while)[ \\t]*\\(.*\\)[ \\t]*\\{|[\\w$.]+\\([^)]*\\);|[\\w$.\\[\\]]+[ \\t]*=[ \\t]*[^=\\s].*;|\\}[ \\t]*(?:else[ \\t]*\\{)?)[ \\t]*(?=\\r?\\n|$)"
   ],
   "fixture": {
     "hit": {
-      "base": {
-        "src/a.mjs": "export const a = 1;\n"
-      },
-      "head": {
-        "src/a.mjs": "export const a = 1;\n// const b = a + 1;\n// if (a) {\n//   go(a);\n// }\n"
-      }
+      "base": {"src/a.mjs":"export const a = 1;\n"},
+      "head": {"src/a.mjs":"export const a = 1;\n// const b = a + 1;\n// if (a) {\n//   go(a);\n// }\n"}
     },
     "miss": {
-      "base": {
-        "src/a.mjs": "export const a = 1;\n"
-      },
-      "head": {
-        "src/a.mjs": "// a is one: the tests read it\n// see go(a) in b.mjs for the caller; it returns null when the file is gone\nexport const t = '// const x = 1;';\nexport const a = 1; // set once\n"
-      }
+      "base": {"src/a.mjs":"export const a = 1;\n"},
+      "head": {"src/a.mjs":"// a is one: the tests read it\n// see go(a) in b.mjs for the caller; it returns null when the file is gone\nexport const t = '// const x = 1;';\nexport const a = 1; // set once\n"}
     }
   }
 }

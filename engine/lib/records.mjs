@@ -513,7 +513,7 @@ const isOwnerRecord = it => it && (it.kind === 'directive' || (it.kind === 'ques
 function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'waiver') {
     if (ev === 'create') {
-      str(d.rule, 'rule'); if (!/^[A-Z]+\d+$/.test(d.rule)) fail('rule must be a slop rule id (K2, T1, ...)');
+      str(d.rule, 'rule'); if (!/^[A-Z]+\d*[A-Z]?(?:\/[\w@:-]+)?$/.test(d.rule)) fail('rule must be a slop rule id (K2, K11A, LJ, a lint sub-rule LJ/no-console, ...)');
       str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false }); str(d.q, 'q', { req: false });
       if (d.until !== undefined && !Number.isFinite(Date.parse(d.until))) fail(`until must be an ISO time (got ${JSON.stringify(d.until)})`);
     }

@@ -1,55 +1,32 @@
 {
- "id": "M1",
- "level": "WARN",
- "shadow": true,
- "kind": "model",
- "title": "a new catch, default or ?? that hides a failure the caller must see",
- "question": "Does a new catch, default or `??` hide a failure the caller must see?",
- "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
- "explain": {
-  "what": "A model read the diff and found a new catch, default value or ?? that hides a failure the caller must see.",
-  "why": "A hidden failure lets the code go on as if the step worked; the real fault shows up later, far from its cause.",
-  "fix": "Let the failure reach the caller, or handle it and say in a comment what happens next. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
- },
- "files": [
-  "**/*.mjs",
-  "**/*.js",
-  "**/*.cjs",
-  "**/*.ts",
-  "**/*.py",
-  "**/*.rs",
-  "**/*.md"
- ],
- "on": [
-  "code"
- ],
- "hits": [
-  "K2",
-  "K19"
- ],
- "context": [],
- "fixture": {
-  "hit": {
-   "base": {
-    "src/cfg.mjs": "export const port = c => c.port;\n"
-   },
-   "head": {
-    "src/cfg.mjs": "export const port = c => c.port;\nexport const load = f => { try { return JSON.parse(f()); } catch { return {}; } };\n"
-   },
-   "recorded": {
-    "head": "{\"findings\":[{\"rule\":\"M1\",\"file\":\"src/cfg.mjs\",\"quote\":\"export const load = f => { try { return JSON.parse(f()); } catch { return {}; } };\",\"why\":\"a broken config file reads as an empty one: the caller never learns it is broken\"}]}"
-   }
+  "id": "M1",
+  "level": "WARN",
+  "shadow": true,
+  "kind": "model",
+  "title": "a new catch, default or ?? that hides a failure the caller must see",
+  "question": "Does a new catch, default or `??` hide a failure the caller must see?",
+  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
+  "explain": {
+    "what": "A model read the diff and found a new catch, default value or ?? that hides a failure the caller must see.",
+    "why": "A hidden failure lets the code go on as if the step worked; the real fault shows up later, far from its cause.",
+    "fix": "Let the failure reach the caller, or handle it and say in a comment what happens next. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
   },
-  "miss": {
-   "base": {
-    "src/cfg.mjs": "export const port = c => c.port;\n"
-   },
-   "head": {
-    "src/cfg.mjs": "export const port = c => c.port;\nexport const load = f => { try { return JSON.parse(f()); } catch { return {}; } };\n"
-   },
-   "recorded": {
-    "head": "{\"findings\":[{\"rule\":\"M1\",\"file\":\"src/cfg.mjs\",\"quote\":\"export const port = c => c.port;\",\"why\":\"not an added line: the base had it\"}]}"
-   }
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.py","**/*.rs","**/*.md"],
+  "on": ["code"],
+  "hits": ["K2","K19"],
+  "context": [],
+  "fixture": {
+    "hit": {
+      "base": {"src/cfg.mjs":"export const port = c => c.port;\n"},
+      "head": {"src/cfg.mjs":"export const port = c => c.port;\nexport const load = f => { try { return JSON.parse(f()); } catch { return {}; } };\n"},
+      "recorded": {
+        "head": "{\"findings\":[{\"rule\":\"M1\",\"file\":\"src/cfg.mjs\",\"quote\":\"export const load = f => { try { return JSON.parse(f()); } catch { return {}; } };\",\"why\":\"a broken config file reads as an empty one: the caller never learns it is broken\"}]}"
+      }
+    },
+    "miss": {
+      "base": {"src/cfg.mjs":"export const port = c => c.port;\n"},
+      "head": {"src/cfg.mjs":"export const port = c => c.port;\nexport const load = f => { try { return JSON.parse(f()); } catch { return {}; } };\n"},
+      "recorded": {"head":"{\"findings\":[{\"rule\":\"M1\",\"file\":\"src/cfg.mjs\",\"quote\":\"export const port = c => c.port;\",\"why\":\"not an added line: the base had it\"}]}"}
+    }
   }
- }
 }

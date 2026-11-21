@@ -20,7 +20,7 @@ fixed or waived (`norn rec add waiver`).
 those of the rule file.
 
 ```json
-{ "K17": { "level": "WARN" }, "K24": { "enabled": false }, "K12": { "params": { "exclude": ["**/vendor/**", "gen/**"] } } }
+{ "K16": { "level": "WARN" }, "K11": { "enabled": false }, "LJ": { "params": { "levels": { "no-undef": "BLOCK" } } }, "K12": { "params": { "exclude": ["**/vendor/**", "gen/**"] } } }
 ```
 
 ## Kinds
@@ -30,13 +30,15 @@ those of the rule file.
 | `pattern` | `patterns` (regexes), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked), `unless`, `cite` | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
 | `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
-| `eslint` | `rules`: ESLint core rules from an allow list (`LINT_RULES`, `engine/lib/slop/tools.mjs`) | yes |
+| `lint` | `tool`, `config` (the repo config, read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (core rules), `levels` (per sub-rule, `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
+| `shim` | `files`, `exclude` | no |
 | `ast` | `selectors`: `{ selector, message, text? }`, ESLint `no-restricted-syntax` through the pinned ESLint; `reason` | yes |
 | `model` | `question` (plain words), `files`, `on` (`code` / `tests`: which branch it reads), `hits` (rule ids whose findings it is sent), `context` (quality files) | no |
-| `diff-check`, `swallow`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
+| `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
 
-A rule file never loads code: the engine writes the ESLint config from the rule's data, with inline config comments off, and
-accepts core rules only.
+A rule file never loads code: the engine writes the ESLint config from the rule's data and the merge base's `eslint.config.mjs`
+(plain data, core rules only), with inline config comments off. ESLint is the locked tool set in `tools/lint`, installed by
+`npm ci --ignore-scripts` into `<meta root>/state/tools/lint/<lock hash>`; a tool that cannot install or run is a BLOCK "could not run".
 
 ## The second voice (`model`)
 

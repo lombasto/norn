@@ -69,9 +69,9 @@ test('project rules and overrides.json: P-* rules load (id = file name, project 
   const builtin = effectiveRules().map(r => r.id);
   const eff = effectiveRules({ projectDir: SYNTH }), by = Object.fromEntries(eff.map(r => [r.id, r]));
   assert.ok(by['P-hide'] && by['P-retired'], 'the project rules join the built-ins');
-  assert.equal(eff.length, builtin.length + 2 - 1, 'K24 switched off');
-  assert.equal(by.K24, undefined);
-  assert.equal(by.K17.level, 'WARN');
+  assert.equal(eff.length, builtin.length + 2 - 1, 'K11 switched off');
+  assert.equal(by.K11, undefined);
+  assert.equal(by.K16.level, 'WARN');
   assert.equal(by.K22.shadow, true);
   assert.deepEqual(by.K12.exclude, ['**/vendor/**', 'gen/**']);
   const k12 = JSON.parse(fs.readFileSync(path.join(RULES_DIR, 'K12.json'), 'utf8'));
@@ -88,18 +88,21 @@ test('project rules and overrides.json: P-* rules load (id = file name, project 
     [{ 'overrides.json': { K99: { enabled: false } } }, /no rule K99/],
     [{ 'overrides.json': { K12: { level: 'LOUD' } } }, /level is one of/],
     [{ 'P-other.json': p }, /id is its file name/],
-    [{ 'P-run.json': { ...p, id: 'P-run', kind: 'command', argv: ['gen'] } }, /kind one of pattern, junk, imports, ast, eslint/],
-    [{ 'P-lint.json': { ...p, id: 'P-lint', kind: 'eslint', tool: 'eslint', rules: { 'some-plugin/rule': 'error' } } }, /core rules from/],
+    [{ 'P-run.json': { ...p, id: 'P-run', kind: 'command', argv: ['gen'] } }, /kind one of pattern, junk, imports, ast, lint/],
+    [{ 'P-lint.json': { ...p, id: 'P-lint', kind: 'lint', tool: 'eslint', rules: { 'some-plugin/rule': 'error' } } }, /core rules only/],
     [{ 'P-ast.json': { ...p, id: 'P-ast', kind: 'ast', tool: 'eslint', selectors: ['Identifier'] } }, /\{ selector, message \}/],
   ]) assert.throws(() => effectiveRules({ projectDir: proj(files) }), re, JSON.stringify(files).slice(0, 80));
 });
 
-test('the ESLint config is written from data: core rules and selectors, inline config comments off', () => {
+test('the ESLint config is written from data: Choppa\'s core rules, the merge base\'s repo config, then the selectors and inline config comments off', () => {
   const t = eslintConfig({ rules: { 'no-unused-vars': 'error' }, selectors: [{ selector: 'DebuggerStatement', message: 'K: x' }] });
-  const cfg = JSON.parse(t.replace(/^export default \[/, '').replace(/\];\n$/, ''));
-  assert.deepEqual(cfg.rules, { 'no-unused-vars': 'error', 'no-restricted-syntax': ['error', { selector: 'DebuggerStatement', message: 'K: x' }] });
-  assert.equal(cfg.linterOptions.noInlineConfig, true, 'a file under check cannot switch a rule off');
+  const [head, tail] = t.replace(/^export default \[/, '').replace(/\];\n$/, '').split(', ...[], ').map(s => JSON.parse(s));
+  assert.deepEqual(head.rules, { 'no-unused-vars': 'error' });
+  assert.deepEqual(tail.rules, { 'no-restricted-syntax': ['error', { selector: 'DebuggerStatement', message: 'K: x' }] });
+  assert.equal(tail.linterOptions.noInlineConfig, true, 'a file under check cannot switch a rule off: last, so no repo block can');
   assert.ok(!/import|plugins/.test(t), 'no code is loaded');
+  const r = eslintConfig({ rules: {}, repo: true });
+  assert.match(r, /^import repo from '\.\/repo\.eslint\.config\.mjs';\nexport default \[\{.*\}, \.\.\.repo, \{.*\}\];\n$/s, 'the repo config sits between Choppa\'s rules and the tail');
 });
 
 test('checkBranch: the rules of the project folder join the check; K22 passes a cited open id and holds a closed one', () => {
@@ -111,7 +114,7 @@ test('checkBranch: the rules of the project folder join the check; K22 passes a 
   fs.writeFileSync(path.join(repo, 'a.mjs'), '// for now the retry is off (RM-1)\n// a stop-gap until RM-2 lands\nexport const a = 1;\n');
   git('add', '-A'); git('commit', '-qm', 'head');
   const c = checkBranch({ repo, projectDir: SYNTH, tool: () => null });
-  assert.ok(c.result.ran.includes('P-retired') && !c.result.ran.includes('K24'), c.result.ran.join(' '));
+  assert.ok(c.result.ran.includes('P-retired') && !c.result.ran.includes('K11'), c.result.ran.join(' '));
   assert.deepEqual(c.result.findings.filter(f => f.rule === 'P-retired').map(f => [f.token, f.new]), [['oldtool stop', true]]);
   assert.equal(c.result.findings.filter(f => f.rule === 'K22').every(f => f.shadow), true, 'the synthetic overrides put K22 in shadow');
   const states = { 'RM-1': 'open', 'RM-2': 'dropped' };
