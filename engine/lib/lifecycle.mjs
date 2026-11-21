@@ -199,9 +199,11 @@ export function ciFixPlan(st, red, { landed = r => !!r.landed } = {}) {
 // pushed commits not on main and no merge run, ever - the merge was left to a check-in and none staged it. Each tick (lanepaths.mjs
 // tickPaths), for every active / done lane whose last work run ended DONE (a hand-off chain: its last run) and has no live work run, its branch is read:
 //   no commits off main (a planner / design run) -> no path;  on main (workOnMain: ancestry, clean merges, git cherry, squash) -> merged
-//   a MERGE run of the lane after that run is live -> merge step queued;  an open deliverable of the branch -> PR open / in the merge queue
+//   a MERGE run of the lane after that run is live -> merge step queued
 //   commits not pushed -> pushed (a plain push, never a force); a refused push, or unpushed commits beside uncommitted files -> work at
-//   risk, named, never staged;  a dirty worktree with its commits pushed -> staged, and named at risk
+//   risk, named, never staged. This is the one push of a finished lane branch, on every home (the merge leader's queue and a follower's
+//   PR both need it on origin);  an open deliverable of the branch -> PR open / in the merge queue (its skip reason: mqwhy.mjs)
+//   a dirty worktree with its commits pushed -> staged, and named at risk
 //   else -> its MERGE stage queued: merge-brief --sha <head> + norn run --queue --stage MERGE --priority P1 (checkins.mjs stageArgs).
 //   A MERGE run after it that ended without landing the work is not re-queued (a loop): a finding.
 // Work not on main for OFF_MAIN_H with no merge step is red (Lanes page + digest). The paths go to lane-paths.json for the dash, the
