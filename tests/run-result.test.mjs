@@ -115,10 +115,13 @@ test('a hand-off: the end names HANDOFF.md and the auto-resume hands it to the n
   assert.equal(fs.readFileSync(end.handoff, 'utf8'), 'next: the fake step\n');
   const next = loadState(d.state).items[id].resume?.next;
   assert.ok(next, 'auto-resumed');
-  await runEnded(d.state, next);
-  const spec = JSON.parse(fs.readFileSync(path.join(d.state, 'runs', `${next}.spec.json`), 'utf8'));
+  // the resume is a continuation (supervisor.mjs continuation: queue): a gate of a loaded runner (resources, usage, runs ahead) holds it
+  // queued, and the fill starts it as a new run (CI 44923548243, windows: RUN-2 filled, no RUN-2.spec.json) - follow the fill
+  const q = await runEnded(d.state, next), ran = q.state === 'filled' ? q.fill.next : next;
+  if (ran !== next) await runEnded(d.state, ran);
+  const spec = JSON.parse(fs.readFileSync(path.join(d.state, 'runs', `${ran}.spec.json`), 'utf8'));
   assert.equal(spec.handoffFile, end.handoff);
-  assert.equal(loadState(d.state).items[next].end.outcome, 'done');
+  assert.equal(loadState(d.state).items[ran].end.outcome, 'done');
   assert.ok(it);
 });
 

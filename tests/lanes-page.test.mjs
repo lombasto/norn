@@ -63,17 +63,22 @@ test('the run strip: oldest left, a hand-off bead joined, a fresh start apart, h
   assert.match(strip({ name: 'x', runs: [] }), /no runs/);
   const h = page(), help = h.slice(h.indexOf('class="lhelp'), h.indexOf('</details>', h.indexOf('class="lhelp')));
   assert.ok(!h.includes('class="llegend'), 'no legend footer');
-  for (const w of ['hand-off', 'fresh start', 'open question', 'done → PR → merged → installed']) assert.ok(help.includes(w), `the ? popover: ${w}`);
+  for (const w of ['hand-off', 'fresh start', 'open question', 'done → PR → merged (→ installed, for a project that installs)']) assert.ok(help.includes(w), `the ? popover: ${w}`);
 });
 
-test('the PR track: done -> PR -> merged -> installed, the reached steps filled, the current one marked, the PR number linked', () => {
+test('the PR track: done -> PR -> merged (-> installed for an install target, c3d33977), the reached steps filled, the current one marked, the PR number linked', () => {
   ['done', 'pr', 'merged', 'installed'].forEach((step, k) => {
-    const t = track({ step, pr: 7, url: 'https://example.invalid/pr/7' });
+    const t = track({ step, install: true, pr: 7, url: 'https://example.invalid/pr/7' });
+    assert.equal((t.match(/<i /g) ?? []).length, 4, `${step}: an install target has 4 pips`);
     assert.equal((t.match(/<i class="on/g) ?? []).length, k + 1, `${step}: ${k + 1} filled`);
     assert.equal((t.match(/ at"/g) ?? []).length, 1, `${step}: one current`);
     assert.match(t, new RegExp(`aria-label="PR track: ${['done', 'PR', 'merged', 'installed'][k]} \\(PR #7\\)"`));
     assert.match(t, /<a href="https:\/\/example\.invalid\/pr\/7" target="_blank" rel="noopener">#7<\/a>/);
   });
+  const m = track({ step: 'merged', install: false, pr: 7, url: 'https://example.invalid/pr/7' });
+  assert.equal((m.match(/<i /g) ?? []).length, 3, 'a main target ends at merged: no fourth pip');
+  assert.equal((m.match(/<i class="on/g) ?? []).length, 3, 'merged fills the whole main track');
+  assert.match(m, /title="done → PR → merged: merged"/);
   assert.match(track({ step: 'done', pr: null }), />done<\/span><\/span>$/, 'no PR yet: the step word');
   assert.equal(track(null), '<span class="ltrack none"></span>');
 });
