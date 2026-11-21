@@ -176,6 +176,16 @@ export const KINDS = {
     rule: { from: ['open'], to: 'ruled', roles: [...CK, ...OWNER] },
     close: { from: ['open', 'ruled'], to: 'closed', roles: ['launcher', ...CK, ...OWNER] },
   } },
+  // lane-collide S1b (SPEC 4A.6): a collision case COL-n in its own file (collide.jsonl) - history, never a verdict: the judge reads the
+  // facts and the pair rulings (an allow action not undone). open { key (kind/grade:a>b, one case while the cause lasts), kind, grade,
+  // verdict, door, a, b (a = ahead), item?, files (<= 20), files_n, why, recommended }; action { action, auto, args?, why? }; undo
+  // { action (its history index), why }; outcome (S1c / S3: { closed_at, cause, ... }) closes it.
+  collision: { prefix: 'COL-', file: 'collide', events: {
+    open: { from: null, to: 'open', roles: ['launcher', 'tick', ...CK, ...OWNER] },
+    action: { from: ['open'], to: null, roles: ['launcher', 'tick', ...CK, ...OWNER] },
+    undo: { from: ['open'], to: null, roles: [...CK, ...OWNER] },
+    outcome: { from: ['open'], to: 'closed', roles: ['launcher', 'tick', ...CK, ...OWNER] },
+  } },
   // META-SLOP-A (SPEC 3.4.2): a slop finding waived - { rule, scope (a fingerprint or a path glob), why, until? } in its own file
   // (waivers.jsonl). The owner or the controller; a check-in only on the owner's word: { q: an answered Q } (waiverGuard - RUN-61 / RUN-68
   // left Q-1 "waive" unapplied for an hour, mailing the controller). Past `until` it no longer counts (derived, no event).
@@ -185,6 +195,9 @@ export const KINDS = {
   } },
 };
 // META-ROADMAP S1: a roadmap link is a kind:id term (the --after grammar); existence is checked by roadmap.mjs checkLinks
+// lane-collide S1b: the kinds a case names (SPEC 2; any = a ruling on a whole pair) and the actions S1b records (SPEC 4A.1 hold, after, told; allow)
+export const COLLIDE_KINDS = ['item', 'lead', 'goal', 'territory', 'resource', 'order', 'stale', 'any'];
+export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow'];
 const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
 // RM-46 S1a: a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
 const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
@@ -517,6 +530,13 @@ function validateData(kind, ev, d, target, st, by, home = null) {
       str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false }); str(d.q, 'q', { req: false });
       if (d.until !== undefined && !Number.isFinite(Date.parse(d.until))) fail(`until must be an ISO time (got ${JSON.stringify(d.until)})`);
     }
+    return;
+  }
+  if (kind === 'collision') {
+    if (ev === 'open') { str(d.key, 'key'); oneOf(d.kind, 'kind', COLLIDE_KINDS); str(d.why, 'why', { max: 2000 }); for (const k of ['a', 'b']) str(d[k]?.lane, `${k}.lane`); list(d.files, 'files'); if ((d.files || []).length > 20) fail('files: at most 20 (files_n counts them)'); }
+    if (ev === 'action') { oneOf(d.action, 'action', COLLIDE_ACTIONS); str(d.why, 'why', { req: false, max: 600 }); }
+    if (ev === 'undo') { if (!Number.isInteger(d.action) || target?.history?.[d.action]?.ev !== 'action') fail('undo: action must name an action of the case (its history index)'); str(d.why, 'why', { max: 600 }); }
+    if (ev === 'outcome') { str(d.closed_at, 'closed_at'); str(d.cause, 'cause'); }
     return;
   }
   if (kind === 'guard') {

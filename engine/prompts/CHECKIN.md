@@ -136,6 +136,7 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - For each, this pass: write the stage's brief from the item's note and stage line (sec. 3: Ready lines, stop rule, time budget),
   and launch it with `--item RM-n` - started when a slot is free, else `--queue` (it waits its turn; queued work is never lost).
   A directive that names no item gets one first (sec. 2e).
+- Before any launch: `META collide plan` first (sec. 3, its first line).
 - Ledger: `dispatched: <lane/stage> -> <executor>` or `queued: <lane/stage> (<why>)` for each; "none" only when both lists are empty.
 
 ## 2j. Lanes nothing acts on (digest sec. 13; no lane sits)
@@ -153,6 +154,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   the merge, or ask the owner. A lane whose work is not on main cannot be archived without the owner's override.
 
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
+- BEFORE a new lane or a new stage: `META collide plan` (once a pass; `--lane L --brief F` for a brief you just wrote).
+  Dispatch only what it lists under "Open now". A row under "Would collide" is not dispatched as it is: apply the remedy its
+  line names (one command) and dispatch, or leave it to the next pass. Never pass a collision by choosing a new lane name.
 - {{policy}} <!-- policy:checkin -->
 - First apply BUDGET `lanes[<lane>]` (missing = `{executor: auto}`). `paused` = NEVER dispatch that lane;
   `claude`, `astra`, or `sol` = ONLY that executor (if its gates are closed, park the lane; never fall back).

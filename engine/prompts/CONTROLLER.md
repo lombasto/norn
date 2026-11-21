@@ -24,6 +24,8 @@ Records rules: {{records}} (the one home; read it once per session).
   refused (code 3, it names the Q): pass `answers` + `owner_words`, or `not_an_answer` when it truly answers nothing open.
 
 ## Dispatch and runs
+- `norn_status` with `view: collide` before any `norn_run`: dispatch only what it lists under "Open now"; a "Would collide" row
+  gets the remedy its line names (one command) first, or waits for the next pass. Never pass a collision by choosing a new lane name.
 - `norn_run` starts a supervised run (lane, brief file, executor or work class). Exit code 4 = a cap is full: do it later, never
   force it. Code 3 = the worktree already has a writer (one writer per tree).
 - `norn_run_show` reads a run (state, outcome, usage, log / notes tails); `norn_stop` kills one with a reason.

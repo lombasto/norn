@@ -6,10 +6,10 @@
 // git-perf S1: every git fact comes from gitfacts.mjs (HEAD and refs from the files, sha-keyed answers memoized, bounded children).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, fold, idNum } from './records.mjs';
+import { readEvents, recordsFile, fold, idNum, record } from './records.mjs';
 import { parseReady } from './ready.mjs';
-import { readScope, ahead } from './collide.mjs';
-import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines } from './gitfacts.mjs';
+import { readScope, ahead, caseKey, pairKey } from './collide.mjs';
+import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines, memo } from './gitfacts.mjs';
 
 const have = p => !!p && fs.existsSync(p);
 /** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main).
@@ -76,14 +76,29 @@ function treeFacts(wt, ref, ttlMs = 0) {
   return f && { branch: f.branch, tip: f.tip, touched: f.touched, commits: f.commits };
 }
 const onMain = (repo, tip, ref) => !!tip && !!ref.sha && isAncestorOf(repo, commonOf(repo), tip, ref.sha);
-/** order / stacked (a git fact): for each pair whose merge-base is not on main, the later one is stacked on the one whose tip it holds */
+// each tip's commits ahead of main, from ONE `git rev-list --parents` of all tips (the DAG walked here): a merge-base per pair cost the
+// door a git child per other lane for every new tip (SPEC 4.2 cost, 8 live lanes)
+function aheadSets(repo, tips, ref) {
+  const par = new Map(lines(gitOut(repo, ['rev-list', '--parents', ...new Set(tips), `^${ref.sha}`]) ?? '').map(l => { const [h, ...p] = l.split(' '); return [h, p]; }));
+  return new Map(tips.map(t => { const seen = new Set(), st = [t]; while (st.length) { const h = st.pop(); if (!seen.has(h) && par.has(h)) { seen.add(h); st.push(...par.get(h)); } } return [t, seen]; }));
+}
+/** order / stacked (a git fact): for each pair that shares commits not on main (n of them), the later one is stacked on the one whose tip
+ *  it holds (neither: the one ahead in the queue is the base); memoized per main tip and pair */
 export function stackPairs(repo, intents, ref) {
   const t = intents.filter(x => x.tip), c = commonOf(repo);
+  if (!ref.sha) return;
+  let sets;
   for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) {
-    const a = t[i], b = t[j], mb = a.tip !== b.tip && mergeBase(repo, c, a.tip, b.tip);
-    if (!mb || onMain(repo, mb, ref)) continue;
-    const n = ref.sha ? countOf(repo, c, ref.sha, mb) : 0, [base, top] = mb === a.tip ? [a, b] : mb === b.tip ? [b, a] : ahead(b, a) ? [b, a] : [a, b];
-    if (n) top.stacked_on = [...(top.stacked_on || []), { lane: base.lane, n }];
+    const a = t[i], b = t[j];
+    if (a.tip === b.tip) continue;
+    const [x, y] = [a.tip, b.tip].sort(), k = memo(c, `stack ${ref.sha} ${x} ${y}`, () => {
+      sets ??= aheadSets(repo, t.map(z => z.tip), ref);
+      const X = sets.get(x), Y = sets.get(y), n = [...X].filter(h => Y.has(h)).length;
+      return { n, holds: Y.has(x) ? x : X.has(y) ? y : null };   // holds: the tip the other one holds (its base)
+    });
+    if (!k?.n) continue;
+    const [base, top] = k.holds === a.tip ? [a, b] : k.holds === b.tip ? [b, a] : ahead(b, a) ? [b, a] : [a, b];
+    top.stacked_on = [...(top.stacked_on || []), { lane: base.lane, n: k.n }];
   }
 }
 
@@ -92,15 +107,16 @@ const tsOf = r => Date.parse(r.history?.[0]?.ts ?? r.created ?? 0) || 0;
 const endOf = r => Date.parse(r.history?.at(-1)?.ts ?? 0) || 0;
 
 /**
- * gatherIntents({ state, repo, main, remote, now, recent_days, home }) -> { intents, runs, dlvs, ref, tracked, itemEvents } - the open work
- * of one home, newest run per lane. Read-only: git reads and record reads, nothing written.
+ * gatherIntents({ state, repo, main, remote, now, recent_days, home, ttlMs, tracked }) -> { intents, runs, dlvs, ref, tracked, itemEvents } - the open
+ * work of one home, newest run per lane. Read-only: git reads and record reads, nothing written. ttlMs: a worktree's changed files may be
+ * that old for an unchanged HEAD (the fill walk's); tracked: false = no `git ls-files` (only the scopes grade reads it, and it never holds)
  */
-export function gatherIntents({ state, repo, main = 'main', remote = 'origin', now = Date.now(), recent_days = 3, home = null }) {
+export function gatherIntents({ state, repo, main = 'main', remote = 'origin', now = Date.now(), recent_days = 3, home = null, ttlMs = 0, tracked = true }) {
   const runs = fold(readEvents(recordsFile(state, 'run'))).items, dlvs = fold(readEvents(recordsFile(state, 'deliverable'))).items, ev = itemEvents(state);
   const ref = have(repo) ? mainRef(repo, { main, remote }) : null, out = new Map();
   const itemsOf = (lane, run, extra = []) => [...new Set([...laneItems(ev, [`lane:${lane}`, ...(home ? [`lane:${home}/${lane}`] : []), ...(run ? [`run:${run}`] : [])]), ...extra])];
   const intentOf = (r, state0) => {
-    const d = r.data || {}, b = briefFacts(d.brief), g = state0 === 'running' && ref ? treeFacts(d.worktree, ref) : null;
+    const d = r.data || {}, b = briefFacts(d.brief), g = state0 === 'running' && ref ? treeFacts(d.worktree, ref, ttlMs) : null;
     return { lane: d.lane, run: r.id, stage: d.stage ?? null, state: state0, since: tsOf(r), role: roleOf(d), items: itemsOf(d.lane, r.id, b.items), part_of: d.part_of ?? null,
       scope: b.scope, scope_why: b.why, exclusive: b.exclusive, touched: g?.touched || [], commits: g?.commits || 0, branch: g?.branch ?? null, tip: g?.tip ?? null,
       dlv: null, stacked_on: [], names: b.names, tests: b.tests, done: b.done, brief: d.brief ?? null, worktree: d.worktree ?? null };
@@ -121,21 +137,60 @@ export function gatherIntents({ state, repo, main = 'main', remote = 'origin', n
   for (const r of all) last.set(r.data.lane, r);
   for (const [lane, r] of last) {
     if (out.has(lane) || LIVE[r.state] || now - endOf(r) > recent_days * 864e5 || !ref) continue;
-    const g = treeFacts(r.data.worktree, ref);
+    const g = treeFacts(r.data.worktree, ref, ttlMs);
     if (g?.commits) out.set(lane, { ...intentOf(r, 'unlanded'), ...g, since: endOf(r) });
   }
   const intents = [...out.values()];
   if (ref) stackPairs(repo, intents, ref);
-  return { intents, runs, dlvs, ref, tracked: ref ? lines(gitOut(repo, ['ls-files'])) : null, itemEvents: ev };
+  return { intents, runs, dlvs, ref, tracked: ref && tracked ? lines(gitOut(repo, ['ls-files'])) : null, itemEvents: ev };
 }
 
-/** the intent of a run that would start now: lane L, brief F (its worktree = the lane's newest run's, when it is still there) */
-export function briefIntent({ lane, brief, item = null, stage = null, role = null, kind = 'worker', now = Date.now(), home = null }, g, { repo } = {}) {
+/** the intent of a run that would start now: lane L, brief F (its worktree = the one given, else the lane's newest run's, when it is still
+ *  there). S1b: a queued run judged by the fill walk passes state 'queued', its run id and its queue time as since */
+export function briefIntent({ lane, brief, item = null, stage = null, role = null, kind = 'worker', critique = null, now = Date.now(), home = null, worktree = null,
+  state = 'new', run = null, since = now, part_of = null, ttlMs = 0 }, g, { repo } = {}) {
   const b = briefFacts(brief), prev = Object.values(g.runs).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.worktree).sort((a, b2) => idNum(b2.id) - idNum(a.id))[0];
-  const t = g.ref ? treeFacts(prev?.data.worktree, g.ref) : null, d = { kind, role, stage };
-  const me = { lane, run: null, stage, state: 'new', since: now, role: roleOf(d), items: [...new Set([...laneItems(g.itemEvents, [`lane:${lane}`, ...(home ? [`lane:${home}/${lane}`] : [])]), ...b.items, ...(item ? [item] : [])])],
-    part_of: null, scope: b.scope, scope_why: b.why, exclusive: b.exclusive, touched: t?.touched || [], commits: t?.commits || 0, branch: t?.branch ?? null, tip: t?.tip ?? null,
+  const t = g.ref ? treeFacts(worktree ?? prev?.data.worktree, g.ref, ttlMs) : null, d = { kind, role, stage, critique };
+  const me = { lane, run, stage, state, since, role: roleOf(d), items: [...new Set([...laneItems(g.itemEvents, [`lane:${lane}`, ...(home ? [`lane:${home}/${lane}`] : [])]), ...b.items, ...(item ? [item] : [])])],
+    part_of, scope: b.scope, scope_why: b.why, exclusive: b.exclusive, touched: t?.touched || [], commits: t?.commits || 0, branch: t?.branch ?? null, tip: t?.tip ?? null,
     dlv: null, stacked_on: [], names: b.names, tests: b.tests, done: b.done, brief: brief ? path.resolve(brief) : null };
   if (g.ref && me.tip) stackPairs(repo, [me, ...g.intents.filter(x => x.lane !== lane).map(x => ({ ...x, stacked_on: [] }))], g.ref);   // copies: only me's facts change
   return me;
+}
+
+// ---------- S1b: the cases (COL-n, records.mjs kind collision) and the pair rulings ----------
+/** the collision records of a home: { COL-n: item } */
+export const casesOf = state => { try { return fold(readEvents(recordsFile(state, 'collision'))).items; } catch { return {}; } };
+const undoneOf = c => new Set(c.history.filter(h => h.ev === 'undo').map(h => h.data.action));
+/** the actions of a case, each with its history index and whether it was undone */
+export const actionsOf = c => { const u = undoneOf(c); return c.history.map((h, i) => ({ ...h, i })).filter(h => h.ev === 'action').map(h => ({ ...h.data, at: h.ts, by: h.by, i: h.i, undone: u.has(h.i) })); };
+/** the pair rulings the judge reads: { pairKey: { verdict: 'allow', kinds: [] (every kind) | [kind], col, by, at, why } } - every allow
+ *  action not undone, on any case (a ruling outlives the case that took it: an allow is per pair, not per case) */
+export function rulingsOf(cases) {
+  const out = {};
+  for (const c of Object.values(cases)) for (const a of actionsOf(c)) {
+    if (a.action !== 'allow' || a.undone) continue;
+    const k = a.args?.pair, r = out[k], kinds = a.args?.kinds || [];
+    out[k] = { verdict: 'allow', kinds: r && (!r.kinds.length || !kinds.length) ? [] : [...new Set([...(r?.kinds || []), ...kinds])], col: c.id, by: a.by, at: a.at, why: a.why ?? null };
+  }
+  return out;
+}
+const side = x => Object.fromEntries(Object.entries({ lane: x.lane, run: x.run ?? null, state: x.state, branch: x.branch ?? null, tip: x.tip ?? null, dlv: x.dlv ?? null }).filter(([, v]) => v != null));
+/** the open case of hit h for intent me (one per key while it is open), else a new one -> COL id */
+export function openCase(state, h, me, other, { door, by = 'launcher', cases = casesOf(state) } = {}) {
+  const key = caseKey(h, me), was = Object.values(cases).find(c => c.state === 'open' && c.data.key === key);
+  if (was) return was.id;
+  const files = h.files || [];
+  return record(state, { kind: 'collision', ev: 'open', by, data: { key, kind: h.kind, grade: h.grade ?? null, verdict: h.verdict, door, a: side(other ?? { lane: h.other }), b: side(me),
+    ...(h.items?.length ? { item: h.items[0] } : {}), files: files.slice(0, 20), files_n: files.length, why: String(h.why).slice(0, 2000), recommended: h.pick ?? null, pair: pairKey(h.other, me.lane) } }).id;
+}
+/** one action on a case (S1b: hold, after, told, released, allow) */
+export const caseAction = (state, id, action, { by = 'launcher', auto = by === 'launcher', args, why } = {}) =>
+  record(state, { kind: 'collision', ev: 'action', id, by, data: { action, auto, ...(args ? { args } : {}), ...(why ? { why } : {}) } });
+/** the planned stages per roadmap item from the item events (create / edit `stages`): { RM-n: { stages } } - the judge's order / planned
+ *  input (the door cannot import roadmap.mjs: it imports runs.mjs) */
+export function itemStages(events) {
+  const out = {};
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) if (e.kind === 'item' && (e.ev === 'create' || e.ev === 'edit') && Array.isArray(e.data?.stages)) out[e.id] = { stages: [...e.data.stages] };
+  return out;
 }

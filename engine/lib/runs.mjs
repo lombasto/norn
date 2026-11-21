@@ -32,14 +32,16 @@ import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
-import { pathKey, metaRoot } from './config.mjs';
+import { pathKey, metaRoot, loadProject } from './config.mjs';
 import { withCrew, pickDwarf, readCrew, crewState, projectOf, CrewError } from './crew.mjs';
 import { shareOf, slotVerdict } from './share.mjs';
 import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, claimHold, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
 import { ClaimsError, readClaims } from './claimsref.mjs';
-import { touchedOf, workOf } from './intents.mjs';
+import { touchedOf, workOf, gatherIntents, briefIntent, casesOf, rulingsOf, openCase, caseAction, itemStages } from './intents.mjs';
+import { collisions, collidePolicy, holdsOf, holdTerm, workerLine, hitLines, caseKey } from './collide.mjs';
+import { prompt as basePrompt } from './harness/common.mjs';
 export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
 import { syncPolicy, POLICY_DEFAULTS, MACHINE_DEFAULTS } from './policy.mjs';
 
@@ -816,10 +818,93 @@ function claimTerm(o, cache) {
   const claims = cache.get(f.dir), h = claims && claimHold(claims, workOf(o, home, path.basename(path.resolve(o.state)), { ttlMs: WALK_TOUCH_TTL_MS }));
   return h ? { term: `claim: ${h.why} (held by ${h.hit.home})`, why: `claim: ${h.why}`, home: h.hit.home ?? null } : null;
 }
+// ---------- lane-collide S1b (SPEC 3.4, 4A.1): the collision door ----------
+// Every dispatch passes startRun, so collideDoor stands at claimDoor's position: it judges the run's intent against the home's open work
+// (intents.mjs gathers, collide.mjs judges) and applies the automatic reactions. territory / exclusive and order (stacked, planned) hold
+// the run queued - a direct start is queued, a fill's stays queued - and the walk's collideTerm re-judges it on every pass (level-
+// triggered: nothing stored decides). Every other hit warns: one `collide:` line each, the hits on the start record, the worker's prompt
+// line (5.4). Each hit that holds or warns opens its case (COL-n), so a prevented collision is counted. Only a lane run of a project
+// (its project.json) is judged; exempt: check-ins, audits, talks, helpers, resumes (the run they continue was judged at its start).
+export class CollideHeld extends RunRefused { constructor(msg) { super(msg, 3); } }
+const collideExempt = o => !o.lane || !o.state || !!o.resumeOf || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper';
+/** <state>/collide-holds.json: { RUN-n (the queued run held): { cols, holders: [lanes], since, why } } - mergeq.mjs's waiters, tick.mjs's P0 */
+export const collideHoldsFile = state => path.join(state, 'collide-holds.json');
+export const readCollideHolds = state => readJson(collideHoldsFile(state)) || {};
+const writeHolds = (state, fn) => writeAtomic(collideHoldsFile(state), fn(readCollideHolds(state)));
+// a queued run's place in the queue: its first event, as intents.mjs reads every other queued run's (one clock for first come)
+const queuedAt = r => Date.parse(r?.history?.[0]?.ts ?? r?.created ?? '') || 0;
+/** judge launch spec o now -> null (exempt, no project, policy.collide off) | { me, hits, held, warns, g, cases }. queued: the id of
+ *  the queued run the fill judges; tracked: false = no `git ls-files` (the walk: the scopes grade only warns); cache: one gather per walk;
+ *  ttlMs: a lane's touched files per unchanged tip (SPEC 4.2 cost: cached per tip; fresh, 8 live lanes cost the start about 700 ms) */
+export function judgeLaunch(o, { queued = null, now = o.now ?? Date.now(), ttlMs = WALK_TOUCH_TTL_MS, tracked = true, cache = null } = {}) {
+  const pf = collideExempt(o) ? null : policySource(o);
+  if (!pf || !fs.existsSync(pf)) return null;
+  const pj = loadProject(pf), P = collidePolicy(pj.policy);
+  if (P.enabled === false) return null;
+  // project.json `deliverables` read here, not through deliverables.mjs (it imports this module); main / remote: gatherIntents' defaults
+  const cfg = pj.deliverables || {}, repo = cfg.repo || pj.root || o.worktree, home = homeOf(o.state)?.id ?? null, key = `${o.state}|${repo}`;
+  const g = cache?.[key] ?? gatherIntents({ state: o.state, repo, main: cfg.main, remote: cfg.remote, now, recent_days: P.recent_days, home, ttlMs, tracked });
+  if (cache) cache[key] = g;
+  const me = briefIntent({ lane: o.lane, brief: o.brief, stage: o.stage ?? null, role: o.role ?? null, kind: o.kind ?? 'worker', critique: o.critique ?? null, now, home,
+    worktree: o.worktree ?? null, part_of: o.part_of ?? null, ttlMs, ...(queued ? { state: 'queued', run: queued, since: queuedAt(g.runs[queued]) } : {}) }, g, { repo });
+  const cases = casesOf(o.state);   // never cached: a walk's hold opens cases the next row must see
+  const hits = collisions(me, g.intents, { policy: pj.policy?.collide, tracked: g.tracked, items: itemStages(g.itemEvents), rulings: rulingsOf(cases) });
+  const held = holdsOf(hits, pj.policy?.collide);
+  return { me, hits, held, warns: hits.filter(h => !held.includes(h)), g, P, cases };
+}
+const caseOf = (state, h, j, door) => (h.col = openCase(state, h, j.me, j.g.intents.find(x => x.lane === h.other), { door, cases: j.cases }));
+/** a queued run held: its case per held hit (opened once per key), the action once per case (hold, or after with the derived condition),
+ *  the holds entry (written only on a change: the walk runs on every fill) */
+export function noteCollideHeld(state, run, j, { door }) {
+  const H = readCollideHolds(state), was = H[run], cols = j.held.map(h => caseOf(state, h, j, door));
+  j.held.forEach((h, i) => { if (!was?.cols?.includes(cols[i])) caseAction(state, cols[i], h.kind === 'order' ? 'after' : 'hold', { args: { run, ...(h.after ? { after: h.after } : {}) }, why: h.why }); });
+  const holders = [...new Set(j.held.map(h => h.other))], why = j.held.map(holdTerm).join('; ');
+  if (was && was.why === why && String(was.cols) === String(cols)) return was;
+  writeHolds(state, m => ({ ...m, [run]: { cols, holders, since: was?.since ?? new Date().toISOString(), why } }));
+  return { cols, holders, why };
+}
+/** a held run is free again (the holder merged, ended without commits, or an allow): `released` on each of its cases, the entry gone */
+export function noteCollideFree(state, run, now = Date.now()) {
+  const was = readCollideHolds(state)[run];
+  if (!was) return;
+  const held_min = Math.round((now - Date.parse(was.since)) / 60000);
+  for (const col of was.cols || []) caseAction(state, col, 'released', { args: { run, held_min } });
+  writeHolds(state, ({ [run]: _x, ...rest }) => rest);
+}
+/**
+ * the door at a start: null (not judged) | { held: [hits], j, lines } (a direct start that waits: startRun queues it) | { stamp, lines,
+ * promptText } (it starts: the hits for the start record, the `collide:` lines for `norn run`, the prompt with the worker's line or
+ * undefined). A fill's start that is held throws CollideHeld (it stays queued; the walk names the holder).
+ */
+export function collideDoor(o) {
+  const j = judgeLaunch(o, { queued: o.fromQueue ?? null });
+  if (!j) return null;
+  if (j.held.length) {
+    if (!o.fromQueue) return { held: j.held, j, lines: [] };
+    const n = noteCollideHeld(o.state, o.fromQueue, j, { door: 'fill' });
+    throw new CollideHeld(n.why);
+  }
+  if (o.fromQueue) noteCollideFree(o.state, o.fromQueue);
+  const shown = j.warns.filter(h => h.verdict === 'warn');
+  for (const h of shown) caseOf(o.state, h, j, 'run');
+  const line = j.P.auto.tell_worker ? workerLine(shown) : null;
+  if (line) for (const h of shown.filter(x => x.kind === 'territory' && x.files?.length)) caseAction(o.state, h.col, 'told', { args: { line } });
+  return { stamp: shown.map(h => drop({ kind: h.kind, grade: h.grade ?? undefined, other: h.other, verdict: h.verdict, col: h.col })), lines: shown.flatMap(h => hitLines(h, j.me)),
+    promptText: line && !o.promptText ? `${basePrompt(o)}\n\n${line}` : undefined };
+}
+// the walk's term for queued spec q: the door's judgement with the walk's cache and ttl -> { held: [hits] | null, j }
+function collideTerm(spec, q, cache, now) {
+  const j = judgeLaunch(spec, { queued: q.id, now, ttlMs: WALK_TOUCH_TTL_MS, tracked: false, cache });
+  for (const h of j?.held || []) h.col = Object.values(j.cases).find(c => c.state === 'open' && c.data.key === caseKey(h, j.me))?.id;   // the dry walk names the case too
+  return j && { held: j.held.length ? j.held : null, j };
+}
+
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
   o = mergeSpec(withFloor(landingPriority(withEpic(noCaller(o)))));
+  // lane-collide S1b: a resume of a run whose prompt the door built drops it, so the resume's own prompt is built again
+  if (o.resumeOf && o.collide_prompt) { const { collide_prompt: cp, promptText: pt, ...r } = o; o = pt === cp ? r : { ...r, promptText: pt }; }
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
@@ -865,6 +950,13 @@ export function startRun(o) {
   sweepLost(o.state, { staleMs, by: 'launcher' });
   const mr = mergeStageRefusal(o, staleMs);
   if (mr) throw new RunRefused(mr, 3);
+  // lane-collide S1b: the collision door, beside the claim (a held direct start waits queued; a fill's start that is held stays queued)
+  const col = collideDoor(o);
+  if (col?.held) {
+    const q = queueRun(o), n = noteCollideHeld(o.state, q.run, col.j, { door: 'run' });
+    return { ...q, queued: true, why: n.why, collide: col.held.flatMap(h => hitLines(h, col.j.me)) };
+  }
+  if (col?.promptText) o = { ...o, promptText: col.promptText, collide_prompt: col.promptText };
   let claim;   // RM-46 S2b: the work claim, last before the worktree lock; a direct dispatch it holds waits queued, a fill's stays queued
   try { claim = claimDoor(o); } catch (e) {
     if (!(e instanceof ClaimHeld) || o.fromQueue) throw e;
@@ -887,7 +979,7 @@ export function startRun(o) {
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     // WORK-SIZING S1: the context marks the run starts under, on its record (enforcement still reads the live policy: ctxlimit.mjs)
     const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
-    const ev = withDwarf(o, info, staleMs, dw => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), ...dw, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) }));
+    const ev = withDwarf(o, info, staleMs, dw => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), ...dw, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined, collide: col?.stamp?.length ? col.stamp : undefined }) }));
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
@@ -922,7 +1014,7 @@ export function startRun(o) {
     // pid) wins: the launcher writes only while the hb still names no supervisor.
     if (pid && !readJson(hbPath(o.state, run))?.supervisor_pid) writeAtomic(hbPath(o.state, run), { run, pid: null, supervisor_pid: pid, ts: new Date().toISOString() });
     lock.refresh({ pid });
-    return { run, pid, log, final, session_id, ...(warnings.length ? { warnings } : {}), spawned: away ? 'breakaway' : 'plain' };
+    return { run, pid, log, final, session_id, ...(warnings.length ? { warnings } : {}), ...(col?.lines?.length ? { collide: col.lines } : {}), spawned: away ? 'breakaway' : 'plain' };
   } catch (e) { lock.release(); throw e; }
 }
 
@@ -1128,6 +1220,8 @@ function fillPass(state, now, resources, authProbe) {
     },
     // the walk's claim term: the digest's "held by <home>" row, as a start's ClaimHeld writes it (rewritten only on a new why)
     claimHeld(id, ct) { if (readSync(state, 'holds')[id]?.why !== ct.why) noteClaimHold(state, id, { message: ct.why, home: ct.home }); },
+    // lane-collide S1b: the walk's collision hold - the case and the holds entry (mergeq's waiters); null = free again (released)
+    collideHeld(id, j) { if (j) noteCollideHeld(state, id, j, { door: 'fill' }); else noteCollideFree(state, id, now); },
     skipped: (id, why) => noteSkip(state, id, why, now),
   } });
   return started;
@@ -1290,7 +1384,7 @@ function waitingLanding(state, queue, now, ev = () => makeEval(state)) {
 }
 function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
-  let E = null, R, L, CL, W = null, mine = Infinity, last = null;
+  let E = null, R, L, CL, CC, W = null, mine = Infinity, last = null;
   const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
   const me = path.basename(path.resolve(state));
   const shareGate = (spec, q, staleMs) => {   // null = this row may take a Claude slot
@@ -1336,6 +1430,8 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     if (mr) row.terms.push(mr);
     { const dw = dwarfWait(spec, staleMs); if (dw) row.terms.push(dw); }   // DWARVES 1.3: a busy pinned dwarf; holds no cap
     { const ct = claimTerm(spec, (CL ??= new Map())); if (ct) { row.terms.push(ct.term); act?.claimHeld?.(q.id, ct); } }   // queue-stall: the claim door's no-network pre-check; holds no cap
+    // lane-collide S1b: the collision door's judgement, re-done every pass (level-triggered); a held row names its holder or after (auto)
+    { const ct = collideTerm(spec, q, (CC ??= {}), now); if (ct?.held) { row.terms.push(...ct.held.map(holdTerm)); act?.collideHeld?.(q.id, ct.j); } else if (ct) act?.collideHeld?.(q.id, null); }
     // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
     // this walk stays the one readiness evaluator (META-GTP-DAG piece 3): a node claims only an offered row
     // META-GTP-FED-2 piece 3: Claude rows are offered too (DEC-47 interim "node 2 non-Claude only" lifted): the usage term above is the same
