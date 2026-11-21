@@ -4,7 +4,20 @@
 import { loadState, fold, readEvents, recordsFile } from './records.mjs';
 import fs from 'node:fs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
-import { dlvMerged } from './dlvmerge.mjs';
+import { dlvMerged, lastEv } from './dlvmerge.mjs';
+import { gitDirs, refSha, memo } from './gitfacts.mjs';
+
+// git-perf S1: the landing rule (workOnMain, dlvMerged) asks ~16 git questions, and a queued run waiting on RUN-x:merged / dlv:DLV-n
+// asked them again in every walk. The answer is memoized (gitfacts memo: per process and in <common>/norn-memo.json) under every
+// input it reads - the head, main's and origin main's shas, the extra key (a DLV's branch shas and history) - so any move asks again.
+// null = the refs cannot be read from files (no checkout, reftable): not memoized.
+function landKey(repo, main, extra) {
+  const d = gitDirs(repo);
+  if (!d) return null;
+  const m = refSha(d.common, `refs/heads/${main}`), o = refSha(d.common, `refs/remotes/origin/${main}`);
+  return m === undefined || o === undefined ? null : { common: d.common, key: `${main} ${m} ${o} ${extra}` };
+}
+const landed = (repo, main, extra, fn) => { const k = landKey(repo, main, extra); return k ? memo(k.common, `land ${k.key}`, fn) : fn(); };
 
 // kind -> { prefix, default state, allowed states }
 export const AFTER_KINDS = {
@@ -68,8 +81,10 @@ export function follow(runs, r, seen = new Set()) {
 /**
  * makeEval(stateDir, { git }) -> cond => { met: bool, gone: why | null }. gone = the condition can no longer be met (Q withdrawn /
  * superseded, run killed / lost / withdrawn / ended not DONE, DIR revoked / superseded). Records are read once per evaluator.
+ * The real git's landing answers are memoized (landKey); an injected one (a test's) is asked every time.
  */
 export function makeEval(stateDir, { git = makeGit() } = {}) {
+  const ask = git.real ? landed : (repo, main, extra, fn) => fn();
   let items = null, dlv = null;
   const recs = () => (items ??= loadState(stateDir).items);
   const dlvs = () => (dlv ??= fold(readEvents(recordsFile(stateDir, 'deliverable'))).items);
@@ -83,13 +98,17 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
     if (!head) return { met: false, gone: `${r.id} ended done with no head sha evidence` };
     const repo = [d?.data.repo, r.data.worktree].find(p => p && fs.existsSync(p));
     if (!repo) return { met: false, gone: `${r.id}: no repo to check (DLV / worktree gone)` };
-    return { met: workOnMain(repo, head, d?.data.main || 'main', { git }), gone: null };
+    const main = d?.data.main || 'main';
+    return { met: ask(repo, main, `wom ${head}`, () => workOnMain(repo, head, main, { git })), gone: null };
   };
   return c => {
     if (c.kind === 'dlv') {
       const d = dlvs()[c.id];
       if (!d) return { met: false, gone: `${c.id} does not exist` };
-      return { met: d.state === 'superseded' || dlvMerged(d, { git }).merged, gone: null };   // DLV-MERGED-TRUTH: the one rule (dlvmerge.mjs)
+      if (d.state === 'superseded') return { met: true, gone: null };
+      const dd = d.data, gd = gitDirs(dd.repo || ''), br = r => (gd ? refSha(gd.common, r) : null);
+      const extra = `dlv ${c.id} ${lastEv(d, ['done'])?.data?.tip || dd.tip} ${br(`refs/heads/${dd.branch}`)} ${br(`refs/remotes/origin/${dd.branch}`)} ${d.history.length}`;
+      return { met: ask(dd.repo || '', 'main', extra, () => dlvMerged(d, { git }).merged), gone: null };   // DLV-MERGED-TRUTH: the one rule (dlvmerge.mjs)
     }
     const all = recs(), it = all[c.id];
     if (!it) return { met: false, gone: `${c.id} does not exist` };
