@@ -9,6 +9,7 @@ import { CHECKS } from '../engine/lib/instrchecks.mjs';
 import { guardRows, guardView } from '../engine/lib/guardview.mjs';
 import { guardSummary, fixSheet, fixPick, fixOne } from '../engine/dash/guardparts.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderRecord } from '../engine/dash/pages/ledger.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -73,10 +74,10 @@ test('fixOne: one finding from the Docs reader\'s line popover -> fixPick\'s sha
   assert.throws(() => fixOne({ ...g, rows: g.rows.map(r => (r.id === d.id ? { ...r, sent: 'DEC-1' } : r)) }, { id: d.id }), /not open to fix/);
 });
 
-test('the Slop page: Fix all (n) beside his line; the sheet: ticks, two buttons per your call, Send the fixer (n), the usage line', () => {
+test('the Slop page: Fix all (n) in the action line; the sheet: ticks, two buttons per your call, Send the fixer (n), the usage line', () => {
   const g = view(), s = guardSummary(g), base = { ...s, limit: 40, sub: 'fix', fix: { batches: [], nb: 0, n: 0 }, parts_loading: false };
   const page = renderTab('slop', base, { project: 'kestrel' });
-  assert.match(page, /id="slop-orc"[^]*<button[^>]*data-act="fixall-open"[^>]*>Fix all \(3\)<\/button>/);
+  assert.match(page, /id="slop-act"[^]*<button[^>]*data-act="fixall-open"[^>]*>Fix all \(3\)<\/button>/);
   const usage = { line: 'One fixer run (docs work: runner, claude-sonnet-5-5 medium) · the median is ~0.2 M cache reads (4 runs, 7 days)' };
   const html = renderTab('slop', { ...base, sheet: { ...fixSheet(g), usage } }, { project: 'kestrel' });
   assert.match(html, /id="fixall"/);
@@ -156,8 +157,10 @@ test('POST /api/fixall: ONE decision + ONE directive with the ids, the picked wa
     assert.ok(!sh2.items.some(i => keys.includes(i.key) || i.key === call.key), 'the sent batches are not offered again');
     const last = (await f.get('/api/records?project=kestrel')).data;
     assert.equal(last.decisions.length + last.directives.length, after.decisions.length + after.directives.length);
-    const rec = renderTab('records', last, { project: 'kestrel' });
-    assert.match(rec, new RegExp(`id="rec-${dir.id}"[^]*${n} finding ids[^]*${dec.data.findings.at(-1)}`), 'Records shows the directive with its ids');
+    // Records lists the directive; its drawer (the record whole, ui-inbox-ledger) folds the finding ids it was sent with
+    const rec = renderTab('records', last, { project: 'kestrel' }), doc = renderRecord(last.directives.find(r => r.id === dir.id), last, {});
+    assert.match(rec, new RegExp(`id="rec-${dir.id}"[^]*data-act="rec-open" data-id="${dir.id}"`), 'Records lists the directive, its id opens the drawer');
+    assert.match(doc, new RegExp(`${n} finding ids[^]*${dec.data.findings.at(-1)}`), 'the drawer shows the directive with its ids');
     if (skipWhy) { t.diagnostic(`browser part skipped: ${skipWhy}`); return; }
     const pg = await openPage([390, 844]);
     try {
