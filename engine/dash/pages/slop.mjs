@@ -20,20 +20,21 @@ const declinedLine = r => `<div class="small gdecl">${chip('idle', 'declined')} 
 // RM-27: a SloppaChoppa finding explains itself - its rule's what / why / what to do and the waiver path, folded under the row
 const slopExplain = x => `<details class="sexplain"><summary class="small">what this is, why it matters, what to do</summary><dl class="small">
     <dt>What</dt><dd>${esc(x.what)}</dd><dt>Why</dt><dd>${esc(x.why)}</dd><dt>What to do</dt><dd>${esc(x.fix)}</dd>${x.waiver ? `<dt>If it must stay</dt><dd>only the owner or the controller waives it: <code>${esc(x.waiver)}</code></dd>` : ''}</dl></details>`;
-const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
+// hit = the row a link named (&finding=<id>): highlighted, and index.html scrolls to it once
+const guardRow = (r, labels, hit = false) => `<li class="grow${hit ? ' hit' : ''}" id="slop-${esc(r.id)}"${hit ? ' aria-current="true"' : ''}><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
     <span>${esc(r.why)}</span></div><div class="small mute">${r.sent ? chip('prov', `sent ${esc(r.sent)}`) + ' ' : ''}${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} ${r.rate ? voiceThumbs(r) : `<button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button>`}</div>${r.quote ? `<code class="small">${esc(r.quote)}</code>` : ''}${r.explain ? slopExplain(r.explain) : ''}${r.declined ? declinedLine(r) : ''}${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
 // META-UX-BUILD S5 (REPORT s.2-3): To fix = ONE list in batches (check + the kind of fix the check declares), the kinds apart:
 // ready (the exact text is known), to draft (a worker writes the text), your call (two ways), and the rows that only count (folded).
 // A batch shows its first rows; "all n" opens it (one batch at a time, every row, capped + show more). The two ways are named here;
 // picking one is the Fix all sheet (slice 6).
 const KIND_HEAD = { ready: 'Ready', drafts: 'To draft', call: 'Your call' };
-function slopBatch(b, labels, open) {
+function slopBatch(b, labels, open, hit = null) {
   const paths = b.rows.filter(r => r.path).map(r => `${shortPath(r.path)}${r.line ? ':' + r.line : ''}`);
   const all = b.n > b.rows.length ? ` <button class="lnk" data-act="slop-batch" data-batch="${esc(b.key)}">all ${int(b.n)}</button>` : '';
   return `<li class="sbatch" id="slop-b-${esc(b.key.replace(/[^\w-]/g, '_'))}"><div><b>${esc(b.title)}</b> <span class="mute">× ${int(b.n)}</span> ${chip(G_SEV[b.severity] ?? 'idle', b.severity)}${b.new ? ' ' + chip('needs', `${int(b.new)} new`) : ''}</div>
     ${open ? '' : `<div class="small mute sbpaths">${esc(paths.join(' · '))}${b.n > paths.length && paths.length ? ` +${int(b.n - paths.length)}` : ''}</div>`}
     ${b.action ? `<div class="small"><i>fix: ${esc(b.action)}</i></div>` : ''}${b.ways ? `<div class="small sbways">${b.ways.map(w => chip('prov', w)).join(' ')}</div>` : ''}
-    ${open ? `<ol class="glist">${b.rows.map(r => guardRow(r, labels)).join('')}</ol>${subMore(b.rows.length, b.n)} <button class="lnk" data-act="slop-batch" data-batch="">close</button>`
+    ${open ? `<ol class="glist">${b.rows.map(r => guardRow(r, labels, r.id === hit)).join('')}</ol>${subMore(b.rows.length, b.n)} <button class="lnk" data-act="slop-batch" data-batch="">close</button>`
       : `<details class="sbrows"><summary class="small">the first ${int(b.rows.length)}</summary><ol class="glist">${b.rows.map(r => guardRow(r, labels)).join('')}</ol></details>${all}`}</li>`;
 }
 // ui-spend-slop: one filter-chip row - Open (every kind) / Ready (only the rows whose exact text is known); the pick is &kind=ready in
@@ -42,14 +43,15 @@ function slopFix(P, d, labels) {
   const only = d.kind === 'ready' ? 'ready' : null;
   const of = k => P.batches.filter(b => b.kind === k), rows = k => of(k).reduce((n, b) => n + b.n, 0);
   const sec = k => !of(k).length || (only && k !== only) ? '' : `<section class="card slopkind" id="slop-${k}" data-kind="${k}"><h2>${KIND_HEAD[k]} <span class="mute small">${int(rows(k))}</span></h2>
-    <ul class="sblist">${of(k).map(b => slopBatch(b, labels, P.open === b.key)).join('')}</ul></section>`;
+    <ul class="sblist">${of(k).map(b => slopBatch(b, labels, P.open === b.key, P.finding)).join('')}</ul></section>`;
   const counts = only ? [] : of('count'), nc = rows('count');
   const fold = counts.length ? `<details class="small" id="slop-count"${P.open && counts.some(b => b.key === P.open) ? ' open' : ''}><summary>${plural(nc, 'more row')} only count something (${esc(counts.map(b => b.title).join(', '))}): nothing to fix</summary>
-    <ul class="sblist">${counts.map(b => slopBatch(b, labels, P.open === b.key)).join('')}</ul></details>` : '';
+    <ul class="sblist">${counts.map(b => slopBatch(b, labels, P.open === b.key, P.finding)).join('')}</ul></details>` : '';
+  const gone = P.finding && !P.found ? `<p class="small" id="slop-gone">${chip('ok', 'closed')} ${esc(P.finding)} is not open any more: fixed, or its file changed</p>` : '';
   const empty = P.n && !(only && !of(only).length) ? '' : `<p class="mute">${chip('ok', 'all clear')} nothing ${only ? 'ready' : 'open'}</p>`;
   const more = P.nb > P.batches.length ? subMore(P.batches.length, P.nb) : '';
   const chips = filterChips('Show', [{ act: 'slop-kind', data: { kind: '' }, text: 'Open', n: d.total ?? P.n, on: !only }, { act: 'slop-kind', data: { kind: 'ready' }, text: 'Ready', n: d.kinds?.ready ?? 0, on: !!only }], 'slop-show');
-  return `${chips}${sec('ready')}${sec('drafts')}${sec('call')}${fold}${empty}${more}`;
+  return `${chips}${gone}${sec('ready')}${sec('drafts')}${sec('call')}${fold}${empty}${more}`;
 }
 // META-UX-BUILD S6 (REPORT s.3 "End to end" 1-2, DIR-65 Q2 A): the Fix all sheet - ready + to draft ticked, your call as its two ways
 // (a pick adds it), the owner's own files offered unticked; Send the fixer (n) = one decision + one directive (POST /api/fixall). Nothing

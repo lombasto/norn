@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { SUB_CAP, capList, pickSub, subviewPage } from '../engine/dash/subviews.mjs';
 import { GUARD_SUBS, guardSummary, guardPart, BATCH_ROWS } from '../engine/dash/guardparts.mjs';
 import { renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
+import { goAttrs } from '../engine/dash/cells.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -115,6 +116,24 @@ test('To fix: the Open / Ready chips (&kind=ready filters what the part holds) a
   assert.ok(!ready.includes('id="slop-drafts"') && !ready.includes('id="slop-count"'), 'Ready shows only the ready kind');
   assert.match(ready, /data-kind="ready" aria-pressed="true"/);
   assert.match(ready, /nothing ready/);
+});
+
+test('&finding=<id>: To fix, unfiltered, its batch open with the row kept past the cap, highlighted; a closed id says so', async () => {
+  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP };
+  assert.equal(goAttrs({ tab: 'slop', sub: 'fix', finding: 'A-70' }), 'data-go="slop" data-gosub="fix" data-gofinding="A-70"', 'a link carries the row it opens');
+  const d = await loadTab('slop', 'kestrel', async () => s, { sub: 'rules', kind: 'ready', finding: 'A-70' });
+  assert.deepEqual([d.sub, d.kind, d.finding], ['fix', null, 'A-70'], 'the link opens To fix with no chip filter');
+  const asked = []; await loadParts('slop', 'kestrel', d, async u => { asked.push(u); return {}; });
+  assert.deepEqual(asked, [`/api/guard?project=kestrel&part=fix&limit=${SUB_CAP}&finding=A-70`]);
+  assert.notEqual(partsKey('slop', 'kestrel', d), partsKey('slop', 'kestrel', { ...d, finding: null }), 'another finding = another part');
+  const fix = guardPart(g, 'fix', SUB_CAP, null, 'A-70').fix, b = fix.batches.find(x => x.key === fix.open);
+  assert.deepEqual([fix.found, b.rows.length, b.rows.at(-1).id], [true, SUB_CAP + 1, 'A-70'], 'its batch opens; the row rides past the cap');
+  const html = renderTab('slop', { ...base, sub: 'fix', finding: 'A-70', fix, parts_loading: false }, {});
+  assert.match(html, /<li class="grow hit" id="slop-A-70" aria-current="true">/);
+  assert.equal((html.match(/class="grow hit"/g) || []).length, 1, 'one row highlighted');
+  const gone = guardPart(g, 'fix', SUB_CAP, null, 'A-999').fix;
+  assert.equal(gone.found, false);
+  assert.match(renderTab('slop', { ...base, sub: 'fix', fix: gone, parts_loading: false }, {}), /id="slop-gone">[^]*A-999 is not open any more/);
 });
 
 test('Per type: the closed store (lib/slophist.mjs) adds closed and 7-day counts per bar, the types that never caught anything and the fastest growing', () => {

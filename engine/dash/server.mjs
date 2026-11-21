@@ -110,7 +110,7 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscree
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
-const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css'];
+const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css', 'slop.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
 export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
@@ -1156,7 +1156,7 @@ export function createDashboard(o) {
     const g = await guardOf(p), name = url.searchParams.get('part'), lim = Number(url.searchParams.get('limit'));
     if (name === null) return chipView(g);   // S5: the header + chips: no hint / tighten rows, no patch text
     if (name === 'sheet') return { sheet: { ...fixSheet(g), usage: fixUsage(p) } };   // S6: the Fix all sheet
-    return name === 'summary' ? guardSummary(g) : guardPart(g, name, Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP, url.searchParams.get('batch'));
+    return name === 'summary' ? guardSummary(g) : guardPart(g, name, Number.isInteger(lim) && lim > 0 ? lim : SUB_CAP, url.searchParams.get('batch'), url.searchParams.get('finding'));
   }
   // TESTS-RUNTIME: the Tests tab = a summary (testsView + the open Inbox questions the test machinery raised: data.area 'tests') and the
   // chosen sub-view's part (?part=suite|costs|impact|trends&limit=). Impact takes &files=a,b or &lane=<name> (that lane's changed files:

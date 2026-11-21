@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/css/lanes.css">
 <link rel="stylesheet" href="/css/runs.css">
 <link rel="stylesheet" href="/css/spend.css">
+<link rel="stylesheet" href="/css/slop.css">
 <link rel="stylesheet" href="/norn/norn.css">
 </head>
 <body>
@@ -82,7 +83,7 @@ const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs m
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
 const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, drafts: new Map(), adoptForm: null, project: qs.get('project') || null, laneType: laneTypeQs(qs.get('type')), laneShow: laneShowQs(qs.get('show')), laneOpen: new Set(), runsView: runsViewOf(qs), archiving: new Set(), laneRefused: {}, laneUndo: null, laneDetail: null, laneDet: null, laneFile: null, br: { states: new Set(), where: 'all', lane: '' }, brUndo: null, ledgerN: 100, recOpen: new Set(), proseOpen: new Set(), dupAsk: null, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), pause: null, ov: null, pauseOpen: false, half: null, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0, syncOut: {},
   quiet: false,
-  sub: qs.get('sub'), slopKind: qs.get('kind') === 'ready' ? 'ready' : null, subLimit: null, parts: {}, partsBusy: {},
+  sub: qs.get('sub'), finding: qs.get('finding'), findScroll: !!qs.get('finding'), slopKind: qs.get('kind') === 'ready' ? 'ready' : null, subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
 // META-ROADMAP S2b: the Roadmap view (tree / board) - the hash first, else this viewer's last choice, else the tree (also on a phone)
 S.rm.view = S.rm.view || (() => { try { return localStorage.getItem('meta-rmview'); } catch { return null; } })() || null;
@@ -187,7 +188,7 @@ function popUp() {
 // a Guard row / chip: the tab that fixes it, opened at its file + line, its doc, or its element
 // META-UX-BUILD S3: a file (an Instructions file link, a doc) opens in the Docs reader at its line
 function goTo(g) {
-  if (S.moreOpen) moreShow(false, false); S.tab = routeTab(g.tab); S.sub = g.sub || null; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null;
+  if (S.moreOpen) moreShow(false, false); S.tab = routeTab(g.tab); S.sub = g.sub || null; S.finding = g.finding || null; S.findScroll = !!S.finding; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null;
   const file = g.ins ? g.ins : g.path ? `path:${g.path}` : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
   if (file) { S.tab = 'docs'; S.doc = file; S.docLine = Number(g.line) || null; S.docScroll = !!S.docLine; }
   if (g.jump) S.jump = g.jump;
@@ -206,11 +207,11 @@ async function partsFetch(tab, d) {
   } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
-const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'slop' && S.slopKind ? '&kind=ready' : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.tab === 'runs' && S.run ? '&run=' + encodeURIComponent(S.run) : ''}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'lanes' ? '&show=' + [...S.laneShow].join(',') + (S.laneType ? '&type=' + encodeURIComponent(S.laneType) : '') : ''}${S.tab === 'runs' ? runsViewQs(S.runsView) : ''}${S.tab === 'slop' && S.finding ? '&finding=' + encodeURIComponent(S.finding) : ''}${S.tab === 'slop' && S.slopKind ? '&kind=ready' : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
   const q = new URLSearchParams(location.search), t = routeTab(q.get('tab'));
   if (q.get('project') !== S.project) return;
-  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; S.sub = q.get('sub'); S.slopKind = q.get('kind') === 'ready' ? 'ready' : null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('show')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
+  S.tab = t; S.run = t === 'runs' ? q.get('run') : null; S.sub = q.get('sub'); S.finding = q.get('finding'); S.findScroll = !!S.finding; S.slopKind = q.get('kind') === 'ready' ? 'ready' : null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; S.laneShow = laneShowQs(q.get('show')); S.laneType = laneTypeQs(q.get('type')); S.runsView = runsViewOf(q); render();
 });
 async function render(force = false, why = []) {
   try {
@@ -221,7 +222,7 @@ async function render(force = false, why = []) {
     // overtook (a click while a slow fetch was out) never paints
     const seq = S.renderSeq = (S.renderSeq || 0) + 1, memo = new Map(), g = u => { if (!memo.has(u)) memo.set(u, get(u)); return memo.get(u); };
     const tab = S.project ? S.tab : 'adopt';
-    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, kind: S.slopKind, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
+    const want = loadTab(tab, S.project, g, { doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, runsWindow: S.runsView.window, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, finding: tab === 'slop' ? S.finding : null, kind: S.slopKind, limit: S.subLimit, batch: S.batch, fixall: tab === 'slop' ? S.fixall : null });
     // NORN-UI-NAV: the bar paints first, the strip (GET /api/strip) beside the page's own fetch, never in front of it
     document.body.dataset.tab = S.tab; paintNav(); if (!S.ov) paintStrip();
     step('render:header'); header(g).catch(e => err('Status failed: ' + e.message)); guardHeader();
@@ -298,6 +299,7 @@ function paintMain(d) {
   }
   if (fx) { const q = document.querySelector(fxSel); if (q) { q.focus(); q.setSelectionRange(...fx); } }   // a filter box keeps its focus and caret
   if (S.tab === 'roadmap') document.documentElement.style.setProperty('--rm-top', ($('header')?.offsetHeight || 0) + 'px');   // S2b: the board's heads stick under the header
+  if (S.tab === 'slop' && S.findScroll && $('#main .grow.hit')) { S.findScroll = false; $('#main .grow.hit').scrollIntoView({ block: 'center' }); }   // &finding=: its row, once its part has painted
   if (S.tab === 'roadmap' && S.rmJump && S.rm.item) { S.rmJump = false; document.getElementById('rm-' + S.rm.item)?.scrollIntoView({ block: 'center' }); }
 }
 // ---- META-CONTROLLER C2: the Home thread. The composer text / focus / caret and the thread's scroll (pinned to the newest when it
@@ -626,7 +628,7 @@ document.addEventListener('click', e => {
   if (d.act === 'undo' && confirm('Undo this?')) { act(() => post('/api/chat/undo', { project: p, line: Number(d.line) })); return; }
   if (d.act === 'more') { moreShow(!S.moreOpen); return; }
   if (b.id === 'orc' || d.act === 'orc-call') { callUp(); return; }
-  if (d.go) { goTo({ tab: d.go, sub: d.gosub, ins: d.goins, line: d.goline, doc: d.godoc, jump: d.gojump }); return; }
+  if (d.go) { goTo({ tab: d.go, sub: d.gosub, ins: d.goins, line: d.goline, doc: d.godoc, jump: d.gojump, finding: d.gofinding }); return; }
   if (b.id === 'needs-btn') { S.tab = 'inbox'; history.pushState(null, '', `?project=${encodeURIComponent(S.project)}&tab=inbox`); render(); return; }
   if (b.matches('.caret[data-t]')) { const kids = document.querySelectorAll(`[data-p="${d.t}"]`), hide = kids[0] && kids[0].style.display !== 'none';
     kids.forEach(k => { k.style.display = hide ? 'none' : ''; }); b.innerHTML = hide ? '&#9656;' : '&#9662;'; return; }
@@ -644,7 +646,7 @@ document.addEventListener('click', e => {
   if (d.act === 'tests-impact') { const v = ($('#tests-impact-files')?.value || '').split(',').map(x => x.trim()).filter(Boolean).join(','); S.batch = v ? 'files:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'tests-impact-lane') { const v = $('#tests-impact-lane')?.value; S.batch = v ? 'lane:' + v : null; S.subLimit = null; render(); return; }
   if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
-  if (d.tab) { if (S.moreOpen) moreShow(false, false); S.run = null; S.sub = null; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = routeTab(d.tab); history.pushState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
+  if (d.tab) { if (S.moreOpen) moreShow(false, false); S.run = null; S.sub = null; S.finding = null; S.slopKind = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = routeTab(d.tab); history.pushState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
   // META-UX-BUILD S3: Docs - a tap opens the file (pushed: Back returns to the list), Back on the reader, Rendered / Source
   if (d.docfile) { S.doc = d.docfile; S.docLine = null; history.pushState(null, '', tabUrl()); render(); return; }
   if (d.act === 'doc-back') { S.doc = null; S.docLine = null; history.pushState(null, '', tabUrl()); render(); window.scrollTo(0, 0); return; }
