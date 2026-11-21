@@ -92,6 +92,15 @@ test('ledger secrets: a staged file holding a machine.json secret value refuses 
   assert.ok(commitLedger(cfg, 'clean').sha);
 });
 
+test('ledger secrets (L-01): a machine.json that does not parse fails the commit with an error; nothing is committed', () => {
+  const { mf, cfg } = ledgerTree();
+  fs.writeFileSync(mf, '{ "notify": { "topic": "half');
+  assert.throws(() => secretsOf(mf));
+  const r = commitLedger(cfg, 'blind');
+  assert.equal(r.sha, undefined); assert.ok(r.error, JSON.stringify(r));
+  assert.throws(() => lg(cfg, 'rev-parse', '--verify', cfg.branch));   // nothing committed
+});
+
 test('ledger lock: a held lock (one writer) fails the commit with "lock busy", never waits forever', () => {
   const { cfg } = ledgerTree();
   commitLedger(cfg, 'init');
