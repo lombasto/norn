@@ -10,7 +10,7 @@ import { doneCheck } from '../engine/lib/dod.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
-const dod = tests => ({ ready: { scope: ['src/**'], tests, done: '## DONE', missing: [] }, timeout_min: 1 });
+const dod = (tests, policy) => ({ ready: { scope: ['src/**'], tests, done: '## DONE', missing: [] }, timeout_min: 1, ...(policy ? { tests: policy } : {}) });
 
 /** a repo on main + a lane worktree feat/x with no commit of its own */
 function laneRepo(root) {
@@ -21,7 +21,7 @@ function laneRepo(root) {
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   return { repo, wt };
 }
-const check = (wt, tests) => doneCheck({ worktree: wt, dod: dod(tests), logDir: path.join(wt, '..'), run: 'RUN-t' });
+const check = (wt, tests, policy) => doneCheck({ worktree: wt, dod: dod(tests, policy), logDir: path.join(wt, '..'), run: 'RUN-t' });
 
 test('Tests: none + a branch with no change: green, the result records why', async () => {
   const { wt } = laneRepo(mkTmp('dod-none-green-'));
@@ -49,11 +49,14 @@ test('Tests: none + an uncommitted edit of a tracked file: red, the edit counts 
   assert.match(d.why, /the branch changed 1 file but the brief declares no tests/);
 });
 
+// policy.tests.mode = changed: the brief's Tests line runs as written (light, the default since test-diet S1, runs the light set of the
+// changed files whatever the line names - `Tests: light (policy.tests)` names nothing and is fine there)
+const CHANGED = { mode: 'changed' };
 test('a Tests line that names nothing runnable and does not say none stays as before', async () => {
   const { wt } = laneRepo(mkTmp('dod-none-other-'));
-  const d = await check(wt, 'the design review by hand');
+  const d = await check(wt, 'the design review by hand', CHANGED);
   assert.equal(d.ok, false);
   assert.match(d.why, /Tests: nothing runnable/);
   assert.equal(d.tests_none, undefined);
-  assert.equal((await check(wt, 'nonexistent stuff')).ok, false, '"none" must be a word of its own');
+  assert.equal((await check(wt, 'nonexistent stuff', CHANGED)).ok, false, '"none" must be a word of its own');
 });
