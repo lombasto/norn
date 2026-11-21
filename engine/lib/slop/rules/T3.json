@@ -10,16 +10,9 @@
     "why": "With only, the runner runs that test and silently skips the rest; a skipped test checks nothing. The suite still looks green.",
     "fix": "Fix the test, or delete it if it no longer applies. If it must skip on some machines, make skip a condition (for example the platform)."
   },
-  "files": [
-    "tests/**",
-    "**/*.test.*",
-    "**/*.spec.*"
-  ],
+  "files": ["tests/**","**/*.test.*","**/*.spec.*"],
   "selectors": [
-    {
-      "selector": "CallExpression[callee.name=/^(?:describe|it|test|suite)$/] > ObjectExpression > Property[key.name='only'][value.value=true]",
-      "message": "a committed { only: true }: the rest of the suite stops running"
-    },
+    {"selector":"CallExpression[callee.name=/^(?:describe|it|test|suite)$/] > ObjectExpression > Property[key.name='only'][value.value=true]","message":"a committed { only: true }: the rest of the suite stops running"},
     {
       "selector": "Property[key.name='skip'][value.value=true], Property[key.name='skip'][value.type='Literal'][value.raw=/^['\"]/], Property[key.name='skip'][value.type='TemplateLiteral']",
       "message": "a skip with no condition: make skip a condition, or fix the test"
@@ -27,76 +20,28 @@
   ],
   "fixture": {
     "hit": {
-      "base": {
-        "tests/a.test.mjs": "import test from 'node:test';\n"
-      },
-      "head": {
-        "tests/a.test.mjs": "import test from 'node:test';\ntest('alone', { only: true }, () => {});\ntest('y', { skip: 'flaky' }, () => {});\ntest('z', { skip: true }, () => {});\n"
-      },
+      "base": {"tests/a.test.mjs":"import test from 'node:test';\n"},
+      "head": {"tests/a.test.mjs":"import test from 'node:test';\ntest('alone', { only: true }, () => {});\ntest('y', { skip: 'flaky' }, () => {});\ntest('z', { skip: true }, () => {});\n"},
       "recorded": {
         "head": [
           {
             "filePath": "tests/a.test.mjs",
             "messages": [
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "T3: a committed { only: true }: the rest of the suite stops running",
-                "line": 2,
-                "column": 17,
-                "endLine": 2,
-                "endColumn": 27
-              },
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "T3: a skip with no condition: make skip a condition, or fix the test",
-                "line": 3,
-                "column": 13,
-                "endLine": 3,
-                "endColumn": 26
-              },
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "T3: a skip with no condition: make skip a condition, or fix the test",
-                "line": 4,
-                "column": 13,
-                "endLine": 4,
-                "endColumn": 23
-              }
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"T3: a committed { only: true }: the rest of the suite stops running","line":2,"column":17,"endLine":2,"endColumn":27},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"T3: a skip with no condition: make skip a condition, or fix the test","line":3,"column":13,"endLine":3,"endColumn":26},
+              {"ruleId":"no-restricted-syntax","severity":2,"message":"T3: a skip with no condition: make skip a condition, or fix the test","line":4,"column":13,"endLine":4,"endColumn":23}
             ]
           }
         ],
-        "base": [
-          {
-            "filePath": "tests/a.test.mjs",
-            "messages": []
-          }
-        ]
+        "base": [{"filePath":"tests/a.test.mjs","messages":[]}]
       }
     },
     "miss": {
-      "base": {
-        "tests/a.test.mjs": "import test from 'node:test';\n"
-      },
+      "base": {"tests/a.test.mjs":"import test from 'node:test';\n"},
       "head": {
         "tests/a.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\ntest('v', { only: false }, () => {});\nexport const doc = 'skip: true';\n"
       },
-      "recorded": {
-        "head": [
-          {
-            "filePath": "tests/a.test.mjs",
-            "messages": []
-          }
-        ],
-        "base": [
-          {
-            "filePath": "tests/a.test.mjs",
-            "messages": []
-          }
-        ]
-      }
+      "recorded": {"head":[{"filePath":"tests/a.test.mjs","messages":[]}],"base":[{"filePath":"tests/a.test.mjs","messages":[]}]}
     }
   }
 }

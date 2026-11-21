@@ -1,52 +1,30 @@
 {
- "id": "M5",
- "level": "WARN",
- "shadow": true,
- "kind": "model",
- "title": "a header comment, usage string or doc that still describes the old behaviour",
- "question": "Does a changed function's header comment, usage string or doc paragraph still describe the old behaviour?",
- "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
- "explain": {
-  "what": "A model read the diff and found a header comment, usage string or doc that still describes the old behaviour.",
-  "why": "A stale description misleads the next reader, human or agent, who trusts it over the code.",
-  "fix": "Rewrite the comment, usage string or doc to say what the code does now. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
- },
- "files": [
-  "**/*.mjs",
-  "**/*.js",
-  "**/*.cjs",
-  "**/*.ts",
-  "**/*.py",
-  "**/*.rs",
-  "**/*.md"
- ],
- "on": [
-  "code"
- ],
- "hits": [],
- "context": [],
- "fixture": {
-  "hit": {
-   "base": {
-    "src/sum.mjs": "// sum: adds two numbers\nexport const sum = (a, b) => a + b;\n"
-   },
-   "head": {
-    "src/sum.mjs": "// sum: adds two numbers\nexport const sum = (...xs) => xs.reduce((a, b) => a + b, 0);\n"
-   },
-   "recorded": {
-    "head": "{\"findings\":[{\"rule\":\"M5\",\"file\":\"src/sum.mjs\",\"quote\":\"export const sum = (...xs) => xs.reduce((a, b) => a + b, 0);\",\"why\":\"the header still says two numbers; it now adds any count\"}]}"
-   }
+  "id": "M5",
+  "level": "WARN",
+  "shadow": true,
+  "kind": "model",
+  "title": "a header comment, usage string or doc that still describes the old behaviour",
+  "question": "Does a changed function's header comment, usage string or doc paragraph still describe the old behaviour?",
+  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
+  "explain": {
+    "what": "A model read the diff and found a header comment, usage string or doc that still describes the old behaviour.",
+    "why": "A stale description misleads the next reader, human or agent, who trusts it over the code.",
+    "fix": "Rewrite the comment, usage string or doc to say what the code does now. The second voice is in shadow: it warns only. Rate the finding (thumbs up or down) so its precision can be measured."
   },
-  "miss": {
-   "base": {
-    "src/sum.mjs": "// sum: adds two numbers\nexport const sum = (a, b) => a + b;\n"
-   },
-   "head": {
-    "src/sum.mjs": "// sum: adds two numbers\nexport const sum = (...xs) => xs.reduce((a, b) => a + b, 0);\n"
-   },
-   "recorded": {
-    "head": "{\"findings\":[{\"rule\":\"M5\",\"file\":\"src/sum.mjs\",\"quote\":\"// sum: adds two numbers\",\"why\":\"not an added line\"}]}"
-   }
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.py","**/*.rs","**/*.md"],
+  "on": ["code"],
+  "hits": [],
+  "context": [],
+  "fixture": {
+    "hit": {
+      "base": {"src/sum.mjs":"// sum: adds two numbers\nexport const sum = (a, b) => a + b;\n"},
+      "head": {"src/sum.mjs":"// sum: adds two numbers\nexport const sum = (...xs) => xs.reduce((a, b) => a + b, 0);\n"},
+      "recorded": {"head":"{\"findings\":[{\"rule\":\"M5\",\"file\":\"src/sum.mjs\",\"quote\":\"export const sum = (...xs) => xs.reduce((a, b) => a + b, 0);\",\"why\":\"the header still says two numbers; it now adds any count\"}]}"}
+    },
+    "miss": {
+      "base": {"src/sum.mjs":"// sum: adds two numbers\nexport const sum = (a, b) => a + b;\n"},
+      "head": {"src/sum.mjs":"// sum: adds two numbers\nexport const sum = (...xs) => xs.reduce((a, b) => a + b, 0);\n"},
+      "recorded": {"head":"{\"findings\":[{\"rule\":\"M5\",\"file\":\"src/sum.mjs\",\"quote\":\"// sum: adds two numbers\",\"why\":\"not an added line\"}]}"}
+    }
   }
- }
 }
