@@ -17,7 +17,7 @@ import { readText } from './fsnap.mjs';
 import { spawnSync } from 'node:child_process';
 import { parseReady, inScope } from './ready.mjs';
 import { feedFiles, oneLine } from './harness/common.mjs';
-import { META_BIN } from './mail.mjs';
+import { hookLine } from './hookbin.mjs';
 import { classify, fullSuiteDeny } from './testcmd.mjs';
 import { specPolicy } from './ctxlimit.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -36,7 +36,8 @@ const under = (p, root) => p === root || p.startsWith(root + '/');
 const mayPushMain = spec => spec.kind === 'checkin';
 
 export const refusalsFile = state => path.join(state, 'scope', 'refusals.jsonl');
-export const scopeHookCommand = state => `"${fwd(process.execPath)}" "${fwd(META_BIN)}" scope check --run $META_RUN_ID --state "${fwd(path.resolve(state))}"`;
+/** the PreToolUse hook command line: norn-hook, which passes the calls this file surely allows and hands the rest to `norn scope check` */
+export const scopeHookCommand = state => hookLine('scope', state);
 /** the hook command of a run whose executor runs Claude Code hooks (the claude family; a write run with a state dir), else undefined */
 export function scopeHookOf(o) {
   return o.state && o.mode !== 'read-only' && o.mode !== 'no-tools' && o.readonly !== true ? scopeHookCommand(o.state) : undefined;
@@ -81,6 +82,17 @@ export function scopeOf(spec) {
   // a monorepo project's run (spec.subdir) whose brief names no Scope: stays inside the project's folder
   const scope = parseReady(text).scope, own = scope.length ? scope : spec.subdir ? [spec.subdir] : [];
   return { worktree: norm(spec.worktree), free, scope: own, pushMain: mayPushMain(spec), shown: [spec.worktree, ...(spec.addDirs || []), ...(notesDir(spec) ? [notesDir(spec)] : [])].map(fwd) };
+}
+
+// hook-fast S1: what norn-hook needs to pass a call without Node (<state>/runs/<run>.scope.json, written at launch beside the spec):
+// scopeOf's paths normalised and folded as checkFile compares them, the Scope entries as inScope reads them, and the brief's mtime -
+// scopeOf reads the brief at every call, so a brief edited since launch makes norn-hook hand every file call to Node
+export const scopeFile = (state, run) => path.join(state, 'runs', `${run}.scope.json`);
+export function writeScopeFile(state, run, spec) {
+  const c = scopeOf(spec), brief = spec.brief && spec.brief !== '-' ? path.resolve(spec.brief) : null;
+  let ms = null;
+  try { ms = brief ? String(Math.floor(fs.statSync(brief).mtimeMs)) : null; } catch { ms = null; }
+  fs.writeFileSync(scopeFile(state, run), JSON.stringify({ worktree: c.worktree, free: c.free, scope: c.scope.map(x => fold(fwd(x).replace(/^\.\//, '').replace(/\/+$/, ''))), brief, brief_ms: ms }));
 }
 
 // ---------- paths ----------

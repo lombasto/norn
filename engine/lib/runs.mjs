@@ -24,8 +24,8 @@ import { briefMarker } from './mergebrief.mjs';
 import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
-import { hookCommand } from './mail.mjs';
-import { scopeHookOf, guardSettings } from './scope.mjs';
+import { hookCommand, raiseFlag } from './mail.mjs';
+import { scopeHookOf, guardSettings, writeScopeFile } from './scope.mjs';
 import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
@@ -851,6 +851,10 @@ export function startRun(o) {
     const specFile = path.join(o.state, 'runs', run + '.spec.json');
     fs.mkdirSync(path.dirname(specFile), { recursive: true });
     fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
+    // hook-fast S1: norn-hook's inputs - the scope file of a guarded run, and the mail flag up once, so the first tool call delivers what
+    // waited for this run's mailbox before it started (lane mail sent between two runs of a lane, a nudge's resume)
+    if (spec.scope) writeScopeFile(o.state, run, spec);
+    if (spec.mail_hook) raiseFlag(o.state, run);
     // NORN-WATCH S5: started from inside a reaped run's job (META_JOB) = break away, unless it is that run's own helper (dies with it).
     // RM-48 S1 (DEC-1088): an independent run that cannot leave the job is refused, naming it - never started inside (nested, the
     // job's reap or close would kill it with the run that happened to launch it)

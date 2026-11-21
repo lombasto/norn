@@ -213,7 +213,7 @@ test('the launcher adds the mail hook to executors that run hooks (claude: --set
   const { ADAPTERS } = await import('../engine/lib/harness/index.mjs');
   const s = tmp();
   const hook = mailHookOf({ executor: 'claude', state: s });
-  assert.match(hook, /mail check --inject --run \$META_RUN_ID --state "[^"]+"$/);
+  assert.match(hook, /norn-hook(\.exe)?" mail --run \$META_RUN_ID --state "[^"]+" --node "[^"]+" --norn "[^"]+\/norn\.mjs"$/);
   assert.equal(mailHookOf({ executor: 'codex-sol', state: s }), undefined);
   assert.equal(mailHookOf({ executor: 'fake', state: s }), undefined);
   const base = { executor: 'claude', exe: '/x/claude', brief: 'B', worktree: 'W', notes: 'N', model: 'm', effort: 'e', session_id: 'sid', lane: 'l' };

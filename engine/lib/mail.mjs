@@ -5,11 +5,9 @@
 // hooks, (c) the nudge (supervisor.mjs). Every path takes a mail through ONE deliver event (records.mjs: the compare-and-set).
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
-
-export const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
+import { hookLine } from './hookbin.mjs';
 const fwd = p => String(p).replace(/\\/g, '/');
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
@@ -30,7 +28,27 @@ export function mailRole(state, env, as) {
 /** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>, role:<by>@<home> in a home); returns the envelope */
 export function sendMail(state, { by, run = null, to, subject, body, body_file, urgent }) {
   const from = by === 'worker' ? run : roleAddr(by, state);
-  return record(state, { kind: 'mail', ev: 'create', by, data: drop({ from, to, subject, body, body_file, urgent: urgent ? true : undefined }) }, { run });
+  const e = record(state, { kind: 'mail', ev: 'create', by, data: drop({ from, to, subject, body, body_file, urgent: urgent ? true : undefined }) }, { run });
+  flagRecipients(state, e.data.to);
+  return e;
+}
+
+// ---------- hook-fast S1 (Q-b-46 ruling "flag"): <state>/mail/flag/<RUN-n> = the mail hook has something for the run (a queued mail, a
+// context order). norn-hook (hookbin.mjs) starts Node only while it exists. Raised AFTER the record is written: a crash between the
+// two leaves a record with no flag, and the run's supervisor raises it at its next beat (mailWaiting). The hook clears it BEFORE it
+// reads (norn mail check --inject), so a mail that lands during the read raises it again and is not left waiting. ----------
+export const flagFile = (state, run) => path.join(state, 'mail', 'flag', run);
+export function raiseFlag(state, run) { fs.mkdirSync(path.dirname(flagFile(state, run)), { recursive: true }); fs.writeFileSync(flagFile(state, run), ''); }
+export const clearFlag = (state, run) => fs.rmSync(flagFile(state, run), { force: true });
+/** raise the flag of every running run whose mailbox takes `to` (a run id, lane:L, role:checkin: records.mailboxOf) */
+export function flagRecipients(state, to) {
+  const runs = loadRuns(state), home = homeOf(state)?.id;
+  for (const r of Object.values(runs)) if (r.state === 'running' && mailboxOf(runs, r.id, home).has(to)) raiseFlag(state, r.id);
+}
+/** a queued mail waits in run's mailbox: the supervisor's beat raises the flag for mail no sender flagged (another home's, synced in) */
+export function mailWaiting(state, run) {
+  const box = boxOf(state, { run });
+  return Object.values(loadMail(state)).some(m => m.state === 'queued' && box.has(m.data.to));
 }
 
 /** the addresses a reader takes mail for: a run's mailbox (records.mailboxOf), or one address (the controller's role:controller) */
@@ -120,5 +138,5 @@ export function hookWatchdog(ms = Number(process.env.NORN_HOOK_MAX_MS) || HOOK_M
   return w;
 }
 
-/** the hook command line the launcher adds (claude runs hook commands in Git Bash / sh: $META_RUN_ID expands there; the CLI falls back to the env) */
-export const hookCommand = state => `"${fwd(process.execPath)}" "${fwd(META_BIN)}" mail check --inject --run $META_RUN_ID --state "${fwd(path.resolve(state))}"`;
+/** the PostToolUse hook command line the launcher adds: norn-hook, which runs `norn mail check --inject` only while the run's flag is up */
+export const hookCommand = state => hookLine('mail', state);

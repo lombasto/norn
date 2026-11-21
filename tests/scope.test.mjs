@@ -114,7 +114,7 @@ test('gh: repo edit / visibility / delete are refused; other gh calls pass', () 
 
 test('the claude command of a guarded run: one --settings with the deny rules, the write block, the PreToolUse scope hook beside the mail hook; the NOTES folder is a working directory', () => {
   const w = world(), hook = scopeHookOf({ executor: 'claude', state: w.state });
-  assert.match(hook, /scope check --run \$META_RUN_ID --state "[^"]+"$/);
+  assert.match(hook, /norn-hook(\.exe)?" scope --run \$META_RUN_ID --state "[^"]+" --node "[^"]+" --norn "[^"]+\/norn\.mjs"$/);
   const base = { ...w.spec, exe: 'claude', executor: 'claude', mode: 'write', model: 'opus', effort: 'medium', session_id: 'S', promptText: 'p', mail_hook: 'MAILHOOK' };
   const before = adapterFor('claude').command(base).args;
   assert.equal(before.filter(a => a === '--settings').length, 1, 'mail only: as before');

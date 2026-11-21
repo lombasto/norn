@@ -73,7 +73,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -3035,6 +3035,7 @@ function mailCmd(argv, env, out, err) {
       if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
       if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
+      if (inject && reader) clearFlag(state, reader);   // hook-fast S1: down before the read (mail.mjs flagFile): a mail that lands meanwhile raises it again
       const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }
