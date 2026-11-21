@@ -19,7 +19,8 @@ export function ledgerTree() {
   const meta = path.join(t, 'sdd-codex'), st = path.join(meta, 'state', 'p'), rev = path.join(t, 'reviews');
   const mf = path.join(meta, 'local', 'machine.json');
   w(mf, JSON.stringify({ schema: 1, notify: { backend: 'ntfy', topic: FAKE_TOPIC }, api: { token: 'tok-ABCDEFGH123' }, ledger: {} }));
-  for (const [f, s] of [['records.jsonl', '{"a":1}\n'], ['runs.jsonl', 'r\n'], ['runs-2026-10.jsonl', 'r\n'], ['deliverables.jsonl', 'd\n'], ['notify.jsonl', 'n\n'],
+  // runs.jsonl stays JSON: a run started in a sibling state dir reads it (liveRuns: the caps and the crew's busy dwarves)
+  for (const [f, s] of [['records.jsonl', '{"a":1}\n'], ['runs.jsonl', '{"r":1}\n'], ['runs-2026-10.jsonl', 'r\n'], ['deliverables.jsonl', 'd\n'], ['notify.jsonl', 'n\n'],
     ['notify-batch.jsonl', 'b\n'], ['STATUS.md', 's'], ['DIGEST.md', 'g'], ['checkin-gate.json', '{}'], ['runs/RUN-1.spec.json', '{}'], ['views/hashes.json', '{}'],
     ['views/OWNER-QUESTIONS.md', 'q'], ['logs/RUN-1.log', 'L'], ['hb/RUN-1.hb', ''], ['records.lock', ''], ['usage-cache.json', '{}'], ['deliverables-cache.json', '{}'],
     ['tick.log', 't'], ['runs/RUN-1.log', 'x']]) w(path.join(st, f), s);
