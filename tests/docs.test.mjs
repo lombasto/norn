@@ -67,7 +67,7 @@ test('record conventions: id chips (not in code / links), DONE / STOPPED / HANDO
 
 test('vendored renderer files are pinned (VENDOR.md sha256) and served locally; nothing else under /vendor', async () => {
   const V = path.join(ENGINE, 'dash', 'vendor'), pins = [...fs.readFileSync(path.join(V, 'VENDOR.md'), 'utf8').matchAll(/`([a-z.]+\.m?js)`[^\n]*sha256 `([0-9a-f]{64})`/g)];
-  assert.deepEqual(pins.map(p => p[1]).sort(), ['highlight.min.js', 'marked.esm.js', 'purify.es.mjs', 'three.core.js', 'three.module.js']);   // + three (META-VISUAL-B; fonts: norn-look.test)
+  assert.deepEqual(pins.map(p => p[1]).sort(), ['highlight.min.js', 'marked.esm.js', 'purify.es.mjs']);   // fonts: norn-look.test
   for (const [, f, sha] of pins) assert.equal(createHash('sha256').update(fs.readFileSync(path.join(V, f))).digest('hex'), sha, f + ' pinned');
   const f = await fixture();
   try {
