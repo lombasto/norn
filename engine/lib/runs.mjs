@@ -697,24 +697,7 @@ export function landingPriority(o) {
   return { ...o, priority: higher(o.priority ?? (o.state ? workPriority(runsOf(o.state), o.lane) : DEFAULT_PRIORITY), LANDING_FLOOR) };
 }
 
-// META-ONBOARD cut-over: <state root>/SWAP.lock (written by onboard-cutover.mjs --apply for its swap steps, < 2 min) holds NEW starts:
-// a start waits while it is fresh (swapWaitMs, default 5 min), then refuses with code 4 (a --queue start queues). A lock older than
-// SWAP_STALE_MS (a crashed cut-over) is ignored. Live runs are never touched.
-export const SWAP_STALE_MS = 15 * 60000;
-export function swapLockFile(state) { return path.join(path.dirname(path.resolve(state)), 'SWAP.lock'); }
-function swapWait(o) {
-  const f = swapLockFile(o.state), end = Date.now() + (o.swapWaitMs ?? 5 * 60000);
-  for (;;) {
-    let ts;
-    try { ts = Date.parse(JSON.parse(fs.readFileSync(f, 'utf8')).ts); } catch { return; }   // no lock (or unreadable = being removed)
-    if (!(Date.now() - ts < SWAP_STALE_MS)) return;
-    if (Date.now() >= end) throw new RunRefused(`swap lock held (${fwd(f)}: a cut-over is swapping the install) - retry in a minute`, 4);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-  }
-}
-
-// META-CONTROLLER C4 (SPEC sec. 2): a check-in's new run on a lane the controller holds is refused (exit 5); a fill of a run queued
-// before the hold is the launcher's, not the check-in's, and goes on
+// a check-in's new run on a held lane (held from any home) is refused (exit 5); a fill of a run queued before the hold is the launcher's
 export function heldRefusal(state, lane, caller, now = Date.now()) {
   if (caller !== 'checkin' || !lane) return;
   const h = holdOf(loadShared(state, 'lane').items[laneId(lane, state)], now);
@@ -944,7 +927,6 @@ export function startRun(o) {
     const a = authGate(o);
     if (a) return { ...queueRun(o), queued: true, why: a };
   }
-  swapWait(o);
   const info = launchable(o);
   const staleMs = o.staleMs ?? STALE_MS, hbMs = o.hbMs ?? HB_MS;
   sweepLost(o.state, { staleMs, by: 'launcher' });
