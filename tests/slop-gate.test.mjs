@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck, rulesHash } from '../engine/lib/slop/check.mjs';
 import { hostWrite, slopHolds, slopChecks, slopDir } from '../engine/lib/slop/host.mjs';
 import { doorCheck, doorWhy, storedCheck } from '../engine/lib/slop/door.mjs';
+import { projectSlop } from '../engine/lib/slop/runend.mjs';
 import { sweep } from '../engine/lib/slop/sweep.mjs';
 import { tickSlop, digestRow } from '../engine/lib/slop/daily.mjs';
 import { pickBatch, batchSlop } from '../engine/lib/mergeq.mjs';
@@ -354,4 +355,18 @@ test('K10 on Norn itself: the engine has no import cycle (the chat -> checkins -
   // every cycle is new against an empty base; the older after -> fed -> records -> views one predates PR 11 and is not this break's
   const named = /engine\/lib\/(chat|checkins|digest|guard|look|roadmap|standing|stuck)\.mjs/;
   assert.deepEqual(k10.map(b => b.msg).filter(m => named.test(m)), [], 'no cycle through the chat / roadmap modules');
+});
+
+test('L-16: a waiver and a roadmap item written on another home count here (waiver and item are shared kinds)', () => {
+  const home = id => { const d = mkTmp(`meta-slopgate-${id}-`); fs.writeFileSync(path.join(d, 'home.json'), JSON.stringify({ id, bare_home: 'a' }) + '\n'); return d; };
+  const a = home('a'), b = home('b'), repo = repoWith();
+  git(repo, 'checkout', '-q', '-b', 'feat/x');
+  const head = commit(repo, { 'a.txt.orig': 'left by a merge\n' }, 'oops');
+  assert.deepEqual(doorCheck({ state: a, repo, branch: 'feat/x', head, tool: noTool }).open.map(x => x.rule), ['K15'], 'no waiver yet: held');
+  record(b, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K15', scope: 'a.txt.orig', why: 'kept on purpose' } }, { views: false });
+  const rm = record(b, { kind: 'item', ev: 'create', by: 'owner', data: { title: 'T', kind: 'theme' } }, { views: false }).id;
+  fs.mkdirSync(path.join(a, 'homes', 'b'), { recursive: true });
+  for (const f of ['waivers.jsonl', 'roadmap.jsonl']) fs.copyFileSync(path.join(b, f), path.join(a, 'homes', 'b', f));   // the fetch, simulated
+  assert.deepEqual(doorCheck({ state: a, repo, branch: 'feat/x', head, tool: noTool }).open, [], 'the waiver from home b covers the block');
+  assert.equal(projectSlop({ state: a }).resolve(rm), 'open', `K22 resolves ${rm} from home b`);
 });
