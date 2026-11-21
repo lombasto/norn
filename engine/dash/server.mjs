@@ -768,7 +768,7 @@ export function createDashboard(o) {
     let facts = null; try { facts = JSON.parse(await readA(branchesFile(p.state), 'null')); } catch { facts = null; }
     const items = st(p).items, runs = runsOf(st(p)).filter(r => r.state === 'running');
     await prime({ stats: Object.values(items).filter(i => i.kind === 'lane' && i.state !== 'archived' && i.data?.worktree).map(i => i.data.worktree) });
-    const v = branchesView({ facts, items, live: new Set(runs.filter(r => hbAge(p)(r.id) < STALE_MS).map(r => r.id)), dlvs: Object.values(loadDeliverables(p.state)), project: p.name, exists: existsS });
+    const v = branchesView({ facts, items, live: new Set(runs.filter(r => hbAge(p)(r.id) < STALE_MS).map(r => r.id)), dlvs: Object.values(loadDeliverables(p.state)), project: p.name, home: homeIdOf(p.state)?.id, exists: existsS });
     return { ...v, project: p.name, rows: v.rows.map(r => ({ ...r, project: p.name, ...(r.acts.includes('pr') ? { pr_new: prUrl(v.github, v.main, r.name) } : {}) })) };
   }
   // DELIVERABLES-SPEC 3: `norn deliverables --json --all` in a child process (git never blocks a poll), per project, served from a

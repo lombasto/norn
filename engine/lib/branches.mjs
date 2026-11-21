@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { boundedAsync } from './bounded.mjs';
 import { fileURLToPath } from 'node:url';
 import { makeGit, workOnMain } from './dlvgit.mjs';
-import { loadState, record } from './records.mjs';
+import { loadState, record, idNum, laneNameIn, homeOf } from './records.mjs';
 import { liveRuns } from './runs.mjs';
 import { deliverableConfig, loadDeliverables, deliverablesView } from './deliverables.mjs';
 import { githubRepo } from './overlap.mjs';
@@ -25,7 +25,6 @@ export const BRANCHES_TTL_MS = 10 * 60000;
 export const STALE_DAYS = 14;
 const DAY = 864e5;
 const lines = s => String(s ?? '').split(/\r?\n/).filter(Boolean);
-const runNum = id => Number(String(id).replace(/^\D+-/, '')) || 0;
 export const branchesFile = state => path.join(state, 'branches.json');
 const NORN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 
@@ -202,16 +201,16 @@ export function spawnRefresh(p, state, { spawnFn, mark = path.join(state, 'branc
 
 // ---------- the fast half: rows from the cached facts + the records now ----------
 /**
- * branchesView({ facts, items (loadState().items), live (Set of live run ids), dlvs (loadDeliverables() values), project (name), now,
+ * branchesView({ facts, items (loadState().items), live (Set of live run ids), dlvs (loadDeliverables() values), project (name), home (the home id: lane L:b/x is x), now,
  * staleDays, exists (path -> bool) }) -> { at, error, rows, counts { state: n } }. A row: name, kind branch|worktree, where local|remote|both,
  * diverged, tip, ahead, behind, last, author, subject, merged, how, worktree { path, dirty, missing, primary } | null, lane { name, state } | null,
  * run (the lane's / worktree's newest run) | null, dlv { id, via branch|lane|name } | null, pr { number, state, url } | null, state, why, acts.
  */
-export function branchesView({ facts, items = {}, live = new Set(), dlvs = [], project = null, now = Date.now(), staleDays = STALE_DAYS, exists = p => fs.existsSync(p) } = {}) {
+export function branchesView({ facts, items = {}, live = new Set(), dlvs = [], project = null, home = null, now = Date.now(), staleDays = STALE_DAYS, exists = p => fs.existsSync(p) } = {}) {
   if (!facts) return { at: null, error: null, rows: [], counts: {} };
   const all = Object.values(items), laneRecs = all.filter(i => i.kind === 'lane'), runs = all.filter(i => i.kind === 'run');
-  const laneByName = new Map(laneRecs.map(l => [l.id.slice(2), l]));
-  const newest = xs => xs.sort((a, b) => runNum(b.id) - runNum(a.id))[0] || null;
+  const laneByName = new Map(laneRecs.map(l => [laneNameIn(l.id, home), l]));
+  const newest = xs => xs.sort((a, b) => idNum(b.id) - idNum(a.id))[0] || null;
   const runsOfLane = new Map(), runsOfWt = new Map();
   for (const r of runs) {
     if (r.data?.lane) (runsOfLane.get(r.data.lane) || runsOfLane.set(r.data.lane, []).get(r.data.lane)).push(r);
@@ -225,14 +224,14 @@ export function branchesView({ facts, items = {}, live = new Set(), dlvs = [], p
   for (const p of facts.prs || []) { const o = prOf.get(p.head); if (!o || (p.state === 'open' && o.state !== 'open') || (o.state !== 'open' && p.number > o.number)) prOf.set(p.head, p); }
   const openDlvs = dlvs.filter(d => d.kind === 'deliverable' && d.state !== 'superseded');
   const dlvOf = (name, lane) => {
-    const pick = (xs, via) => { const d = xs.sort((a, b) => runNum(b.id) - runNum(a.id))[0]; return d ? { d, via } : null; };
+    const pick = (xs, via) => { const d = xs.sort((a, b) => idNum(b.id) - idNum(a.id))[0]; return d ? { d, via } : null; };
     return pick(openDlvs.filter(d => d.data?.branch === name), 'branch') || (lane ? pick(openDlvs.filter(d => d.data?.lane === lane), 'lane') : null)
       || pick(openDlvs.filter(d => branchSlug(d.data?.branch) === branchSlug(name)), 'name');
   };
   // the lane of a branch: a LANE record naming it, the lane of the runs in its worktree, then norn/<lane> or norn/<project>/<lane>
   const laneOf = (name, wt) => {
     const rec = laneRecs.find(l => l.data?.branch === name) || (wt && laneRecs.find(l => l.data?.worktree && pathKey(l.data.worktree) === pathKey(wt.path)));
-    if (rec) return { name: rec.id.slice(2), rec };
+    if (rec) return { name: laneNameIn(rec.id, home), rec };
     const r = wt ? newest([...(runsOfWt.get(pathKey(wt.path)) || [])].filter(x => x.data?.lane)) : null;
     const m = /^norn\/(?:([^/]+)\/)?([^/]+)$/.exec(name), guess = m && (!m[1] || !project || m[1] === project) ? m[2] : null;
     const n = r?.data.lane ?? guess;
@@ -287,7 +286,7 @@ export const prUrl = (github, main, branch) => `https://github.com/${github}/com
 /** the view of one loaded project: its cache + its records now */
 export function projectBranches(p, { now = Date.now(), items = null, live = null } = {}) {
   const st = items ? { items } : loadState(p.state);
-  return branchesView({ facts: readBranches(p.state), items: st.items, live: live ?? new Set(liveRuns(p.state).map(r => r.id)), dlvs: Object.values(loadDeliverables(p.state)), project: p.name, now });
+  return branchesView({ facts: readBranches(p.state), items: st.items, live: live ?? new Set(liveRuns(p.state).map(r => r.id)), dlvs: Object.values(loadDeliverables(p.state)), project: p.name, home: homeOf(p.state)?.id, now });
 }
 
 // ---------- the owner's actions (a click on the page; each returns what its Undo needs) ----------
