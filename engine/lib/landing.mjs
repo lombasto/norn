@@ -148,7 +148,7 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
     const cp = checkinPolicy(project.policy);
     const q = cli(['run', '--queue', '--project', fwd(project.file), '--lane', r.lane, '--stage', 'MERGE', '--brief', brief, '--executor', 'claude',
       ...(cp.merge_agent ? ['--agent', cp.merge_agent] : []), '--model', cp.merge_model, '--effort', cp.merge_effort, '--as', 'launcher']);
-    const queued = q?.code === 0 ? (q.out.match(/RUN-\d+/) || [])[0] ?? null : null;
+    const queued = q?.code === 0 ? (q.out.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/) || [])[0] ?? null : null;   // a home's id too (RUN-b-12)
     saveLand(stateDir, r.id, { ...st, brief, queued });
     return { gated, skip: skip(queued), fallback: { id: r.id, kind: f.kind, queued }, why: `${r.id} ${f.kind}: ${f.why}; ${queued ? `MERGE ${queued} queued` : `norn run --queue failed: ${String(q?.out || '').slice(0, 160)}`}` };
   }
