@@ -193,7 +193,7 @@ const asksOf = items => { const o = {}; for (const q of items) if (q.kind === 'q
 export function prStep(rows) {
   const r = [...(rows || [])].sort((a, b) => runNum(b.id) - runNum(a.id))[0]; if (!r) return null;
   const step = ['merged', 'installed'].includes(r.state) ? r.state : r.superseded ? 'merged' : r.pr ? 'pr' : 'done';   // LANE-TRUTH: superseded = landed (deliverables.mjs isLanded)
-  return { step, pr: r.merge_pr ?? r.pr?.number ?? null, url: /^https:\/\//.test(r.pr?.url ?? '') ? r.pr.url : null, branch: r.branch ?? null };
+  return { step, install: r.target === 'install', pr: r.merge_pr ?? r.pr?.number ?? null, url: /^https:\/\//.test(r.pr?.url ?? '') ? r.pr.url : null, branch: r.branch ?? null };
 }
 // The board groups (ids; labels and page order: pages/lanes.mjs LANE_SHOW). Needs you = an Inbox row names the lane (the server's `needs`, terms.mjs isNeed: never
 // counted here); Stopped = the last run ended without DONE in the last STOPPED_DAYS and nothing asks the owner; Old = that, longer ago

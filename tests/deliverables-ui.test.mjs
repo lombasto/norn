@@ -25,12 +25,17 @@ test('drawer: the deliverable opened - state, tip, behind / ahead, native files,
 });
 
 test('lanes: a lane\'s newest deliverable is its PR track; the row draws the step', () => {
-  assert.deepEqual(prStep([row({ lane: 'gen' })]), { step: 'done', pr: null, url: null, branch: 'feat/shader-cache' });
+  assert.deepEqual(prStep([row({ lane: 'gen' })]), { step: 'done', install: true, pr: null, url: null, branch: 'feat/shader-cache' });
   assert.equal(prStep([row({ lane: 'gen' }), row({ id: 'DLV-4', lane: 'gen', state: 'merged', branch: 'feat/b' })]).step, 'merged', 'the newest deliverable wins');
   assert.equal(prStep([]), null);
   const lane = { name: 'gen', id: 'L:gen', project: 'kestrel', board: 'land', state: 'active', data: {}, run: 'RUN-1', run_state: 'exited', text: 'exited: DONE', dlv: prStep([row({ lane: 'gen' })]) };
   const html = renderTab('lanes', { lanes: [lane] }, { project: 'kestrel', now: NOW, laneShow: ['land'] });
   assert.match(html, /id="lane-gen"[^]*class="ltrack" role="img" aria-label="PR track: done"/);
+  assert.equal((html.match(/class="ltrack"[^]*?<span class="small">/)[0].match(/<i /g) || []).length, 4, 'an install target draws the installed pip');
+  const main = renderTab('lanes', { lanes: [{ ...lane, dlv: prStep([row({ lane: 'gen', target: 'main', state: 'merged' })]) }] }, { project: 'kestrel', now: NOW, laneShow: ['land', 'old', 'done'] });
+  const pips = main.match(/class="ltrack"[^]*?<span class="small">/)?.[0] ?? '';
+  assert.equal((pips.match(/<i /g) || []).length, 3, 'a main target ends at merged: no fourth pip that can never fill');
+  assert.equal((pips.match(/<i class="on/g) || []).length, 3, 'a merged main-target lane has every pip on');
 });
 
 test('server: /api/deliverables (git-derived, cached child CLI) feeds the Lanes PR track', async () => {
