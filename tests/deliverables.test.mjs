@@ -371,6 +371,23 @@ test('a merged deliverable with an earlier question shows no asked and its quest
   assert.equal(items['Q-2'].state, 'withdrawn'); assert.equal(items['Q-3'].state, 'open', 'a question about other work stays');
 });
 
+// slop C3: questions are a shared kind - on a synced home a question another home asked about this home's deliverable counts as
+// asked (loadState's set, records.loadShared), and a records log that does not read is an error, never "never asked" (asked twice)
+test('two homes: home a\'s question on home b\'s DLV-b-1 reads asked on b; a torn records log throws instead of reading unasked', () => {
+  const { repo, a } = fixture();
+  const home = id => { const d = tmp(`home-${id}`); fs.writeFileSync(path.join(d, 'home.json'), JSON.stringify({ id, bare_home: 'a', cut_at: '2026-11-01T00:00:00Z' }) + '\n'); return d; };
+  const ha = home('a'), hb = home('b'), p = { ...project(repo, tmp('doors'), { target: 'main' }), state: hb };
+  assert.equal(mkDlv(hb, { repo, branch: 'feat/a', tip: a, lane: 'a', delivers: 'native a', done_utc: at(-30).toISOString() }, -30).id, 'DLV-b-1');
+  const q = record(ha, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'DLV-b-1 feat/a: merge, batch or park?', lane: 'a', deliverable: 'DLV-b-1', options: [] } }, { views: false, now: () => at(-2) }).id;
+  fs.mkdirSync(path.join(hb, 'homes', 'a'), { recursive: true });
+  fs.copyFileSync(path.join(ha, 'records.jsonl'), path.join(hb, 'homes', 'a', 'records.jsonl'));   // the fetch (foldhomes.test)
+  assert.equal(loadState(hb).items[q]?.state, 'open', 'b\'s loadState holds a\'s question');
+  assert.equal(deliverablesView({ stateDir: hb, project: p, now: NOW }).rows[0].asked, q);
+  assert.match(askDeliverable(hb, 'DLV-b-1', { project: p, by: 'checkin', nowMs: NOW }).refused, new RegExp(`already asked ${q}`));
+  fs.appendFileSync(path.join(hb, 'records.jsonl'), '{"torn"');
+  assert.throws(() => deliverablesView({ stateDir: hb, project: p, now: NOW }), /integrity error/);
+});
+
 test('due + ask: one question per deliverable; parked = quiet; a park resurfaces after 7 days and may be asked again', () => {
   const { repo, a } = fixture();
   const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
