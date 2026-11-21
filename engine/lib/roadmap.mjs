@@ -272,7 +272,7 @@ export function unplacedOf(nodes, W) {
 
 // ---------- the world from a state dir + project.json (IO) ----------
 /** the install is the target only when the project names install receipts (SPEC sec. 2 "Target"); else main */
-export const hasInstallTarget = project => { const c = deliverableConfig(project || {}); return c.target === 'install' && (c.receipts || []).length > 0; };
+export const hasInstallTarget = project => deliverableConfig(project || {}).target === 'install';
 
 /** RM-46 S3 (SPEC 3.3): another home's deliverable (records.mjs copyItems) as a read-only deliverables row. Its git facts are that
  * home's: no git from here, only what its record says - LANE-TRUTH: landed by the one rule (dlvmerge.mjs landedOf: a merge that home

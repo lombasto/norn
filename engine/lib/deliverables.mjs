@@ -22,7 +22,8 @@ const DAY = 864e5;
 // project.json `deliverables` over the defaults; repo defaults to the project root
 export function deliverableConfig(project = {}) {
   const d = project.deliverables || {};
-  return { ...DEFAULTS, ...d, repo: fwd(d.repo || project.root || '') };
+  const c = { ...DEFAULTS, ...d, repo: fwd(d.repo || project.root || '') };
+  return { ...c, target: c.target === 'install' && !(c.receipts || []).length ? 'main' : c.target };   // no install receipts: nothing can ever read "installed", so main is the target
 }
 
 export const loadDeliverables = stateDir => {

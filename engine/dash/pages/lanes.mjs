@@ -94,13 +94,14 @@ export function strip(l) {
     `<li class="bd t-${RUN_TOKEN[r.cls] ?? 'idle'}${r.cont ? ' cont' : ''}" title="${esc(beadTip(r))}"><span class="sr">${esc(beadTip(r))}</span>${shape(RUN_TOKEN[r.cls] ?? 'idle')}${r.helpers ? `<b class="hc">${r.helpers}</b>` : ''}</li>`).join('')}${
     l.ask ? `<li class="bd t-needs ask" title="${esc(`${l.ask}: an open question parks the lane`)}"><span class="sr">${esc(`${l.ask}: open question`)}</span>${shape('needs')}</li>` : ''}</ol>`;
 }
-// ---------- the PR track: done -> PR -> merged -> installed (lib/lanes.mjs prStep), with the PR number ----------
-const STEPS = [['done', 'done'], ['pr', 'PR'], ['merged', 'merged'], ['installed', 'installed']];
+// ---------- the PR track: done -> PR -> merged (-> installed, only when the project's target is an install), with the PR number ----------
+const MAIN_STEPS = [['done', 'done'], ['pr', 'PR'], ['merged', 'merged']], INSTALL_STEPS = [...MAIN_STEPS, ['installed', 'installed']];
 export function track(d) {
   if (!d) return '<span class="ltrack none"></span>';
+  const STEPS = d.install ? INSTALL_STEPS : MAIN_STEPS;   // a main-target lane ends at merged: no fourth pip that can never fill
   const k = STEPS.findIndex(s => s[0] === d.step), num = d.pr != null ? `#${d.pr}` : '';
   const label = `PR track: ${STEPS[k][1]}${num ? ` (PR ${num})` : ''}`;
-  return `<span class="ltrack" role="img" aria-label="${esc(label)}" title="${esc(`done → PR → merged → installed: ${STEPS[k][1]}`)}">${STEPS.map((s, i) => `<i class="${i <= k ? 'on' : ''}${i === k ? ' at' : ''}"></i>`).join('')}<span class="small">${
+  return `<span class="ltrack" role="img" aria-label="${esc(label)}" title="${esc(`${STEPS.map(s => s[1]).join(' → ')}: ${STEPS[k][1]}`)}">${STEPS.map((s, i) => `<i class="${i <= k ? 'on' : ''}${i === k ? ' at' : ''}"></i>`).join('')}<span class="small">${
     d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(num)}</a>` : esc(num || STEPS[k][1])}</span></span>`;
 }
 // ---------- the row's actions: at most 3, the first the way out of its group (in the accent where it answers the owner) ----------
@@ -218,7 +219,7 @@ export function lanes(d, ctx) {
   const groups = LANE_SHOW.filter(([k]) => show.has(k)).map(([k, w]) => { const rs = rows.filter(l => l.board === k); if (k === 'waiting') rs.sort(fill);
     return !rs.length ? '' : `<section class="lgroup g-${k}" aria-labelledby="lg-${k}"><h2 class="lgh" id="lg-${k}">${esc(w)} <b>${rs.length}</b></h2>${rs.map(l => row(l, ctx, k === 'waiting' ? upOf(d, l) : null)).join('')}</section>`; }).join('');
   const link = ([k, w]) => `<button class="lnk" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(w)} <b>${n(k)}</b></button>`;
-  const help = `<details class="lhelp"><summary aria-label="About this list">?</summary><div class="small">Lanes come from LANE records only (no folder scan). A lane's state is its latest run, whatever executor owns it. <b>Needs you</b> holds only the lanes an Inbox row names; <b>Old</b> = ended more than 7 days ago without DONE, or done before today. <b>Waiting</b> = the queued lanes in the order they start. The beads are the lane's runs, oldest first (joined = a hand-off, a gap = a fresh start, "!" = an open question); the pips are done → PR → merged → installed. Hover any of them for its words.</div></details>`;
+  const help = `<details class="lhelp"><summary aria-label="About this list">?</summary><div class="small">Lanes come from LANE records only (no folder scan). A lane's state is its latest run, whatever executor owns it. <b>Needs you</b> holds only the lanes an Inbox row names; <b>Old</b> = ended more than 7 days ago without DONE, or done before today. <b>Waiting</b> = the queued lanes in the order they start. The beads are the lane's runs, oldest first (joined = a hand-off, a gap = a fresh start, "!" = an open question); the pips are done → PR → merged (→ installed, for a project that installs). Hover any of them for its words.</div></details>`;
   return `${backlogLine(d.backlog)}
    ${undo ? `<div class="banner lane-undo" id="lane-undo">Archived ${esc(undo.lane)}. <button data-act="lane-undo" data-project="${esc(undo.project)}" data-lane="${esc(undo.lane)}">Undo</button></div>` : ''}
    <div class="filters lfilters">${filterChips('Show lane groups', LANE_SHOW.filter(g => !LINKS.includes(g[0])).map(([k, w]) => ({ act: 'lane-show', data: { show: k }, text: w, n: n(k), on: show.has(k) })))}
