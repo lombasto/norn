@@ -42,6 +42,7 @@ import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { tickDerelicts } from './derelict.mjs';
 import { tickLanes, lanesProbe } from './lifecycle.mjs';
 import { tickPaths } from './lanepaths.mjs';
+import { tickProposals } from './proposals.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
 import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
 import { fedOf } from './fed.mjs';
@@ -342,6 +343,9 @@ function tickPass(o, g = {}) {
     if (!o.dry) try { for (const x of sweepAsks(state, { views: p.views || {}, ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: ${x.run} asks the owner: ${x.posted.map(q => q.id ?? `(refused) ${q.title}`).join(', ')}`); for (const x of applyRulings(state)) tickLog(state, `${tag}: ruling ${x.q} written into ${x.brief}`); } catch (e) { tickLog(state, `${tag}: owner asks: ${e.message}`); }
     // item 9 (MAIL-20, lanepaths.mjs tickPaths): finished work reaches a PR by code - unpushed commits pushed, the MERGE stage queued (P1)
     if (!o.dry || o.lanes) try { for (const x of tickPaths(state, { project: p, dry: !!o.dry, cli: o.cli || metaCli(META_CMD), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: path to main ${x.id}: ${x.act} - ${x.note}`); } catch (e) { tickLog(state, `${tag}: path to main: ${e.message}`); }
+    // UI redesign 2026-11-20 (proposals.mjs tickProposals): a finished plan goes ahead inside its lane - the next open stage of an active,
+    // idle lane queued by code, no owner card (a parked lane waits); never fails the tick
+    if (!o.dry) try { const st = loadState(state); for (const x of tickProposals(state, st.items, loadRoadmap(state), { cli: o.cli || metaCli(META_CMD), loc: [...(p.file ? ['--project', p.file] : []), '--state', state, '--as', 'launcher'] })) tickLog(state, `${tag}: plan of ${x.run} ${x.stage} on ${x.lane}: ${x.act} - ${x.note}`); } catch (e) { tickLog(state, `${tag}: plan stages: ${e.message}`); }
     // lane norn-lifecycle item 5 (lifecycle.mjs): no lane sits - the orphan / stopped-and-landed / done-merged-and-old lanes archived by code
     // before the digest (which then lists the idle and stopped ones for the check-in); never fails the tick
     if (!o.dry || o.lanes) try { for (const x of tickLanes(state, { project: p, ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, x.refused ? `${tag}: ${x.id} (${x.rule}) not archived: ${x.refused}` : `${tag}: archived ${x.id} (${x.rule}; worktree ${x.worktree}${x.at_risk ? ', at risk: ' + x.at_risk : ''}) - ${x.why}`); } catch (e) { tickLog(state, `${tag}: lanes: ${e.message}`); }

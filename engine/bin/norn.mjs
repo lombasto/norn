@@ -1441,7 +1441,7 @@ Plan and land work:
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
   norn collide                     lane collisions: what a run would meet now, and SloppaChoppa's pick (plan)
-  norn proposal                    finished planner runs: rule each proposed stage queue / later / drop (the Inbox cards)
+  norn proposal                    finished planner runs and their stages (the tick queues each in turn); rule one stage queue / later / drop
   norn asks                        post the rulings a lane's notes ask of the owner as Inbox questions (the run end does it by itself)
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
   norn plan                        what happens next, and when (up next, chains, landing, forecast)
@@ -2368,8 +2368,8 @@ function asksCmd(argv, env, out, err) {
   }
 }
 
-// RM-28 S1 (proposals.mjs): a planner run's DONE = a proposal; each stage is ruled queue (launch its brief now, --item = the planner's
-// roadmap item) / later (a child roadmap item, horizon next) / drop - every pick ONE decision. The dashboard Inbox card calls rule.
+// RM-28 S1 (proposals.mjs): a planner run's DONE = a proposal; the tick queues its stages in turn (tickProposals). rule steers one stage:
+// queue (launch its brief now, --item = the planner's roadmap item) / later (a child roadmap item, horizon next) / drop - each ONE decision.
 const PROPOSAL_USAGE = 'norn proposal [list] [--json] [--all (also the decided ones)] | rule RUN-n S<k> queue|later|drop [--as owner|dashboard|checkin]    [--project F | --state D]';
 function proposalCmd(argv, env, out, err) {
   try {
