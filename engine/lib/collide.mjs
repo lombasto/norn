@@ -8,6 +8,7 @@
 // (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1). First come: a hold only from an intent ahead.
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
+import { POLICY_DEFAULTS } from './policy.mjs';
 
 // ---------- the claim overlap of two homes (moved from claims.mjs; its results are unchanged) ----------
 // no Scope: line = the whole repo (multi-home SPEC 5, DECIDED: the safe reading)
@@ -25,11 +26,11 @@ export function overlapOf(a, b) {
 export const whyOf = h => `${h.kind} overlaps ${h.home}/${h.lane}: ${h.what.join(' ')}${h.kind === 'scope' && h.noScope ? ' (brief has no Scope: line)' : ''}`;
 export const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true, hit: h, why: whyOf(h) });
 
-// ---------- policy (policy.collide arrives in S1b; these are its SPEC 4.3 defaults) ----------
-export const COMMONS = ['tests/**', 'docs/**'];
-export const COLLIDE_DEFAULTS = { kinds: { item: 'warn', territory: 'warn', exclusive: 'hold', order: 'hold', order_named: 'warn', stale: 'warn' },
-  commons: COMMONS, narrow_files: 25, recent_days: 3 };
-const pol = p => ({ ...COLLIDE_DEFAULTS, ...(p || {}), kinds: { ...COLLIDE_DEFAULTS.kinds, ...(p?.kinds || {}) } });
+// ---------- policy (S1b: policy.collide, POLICY_DEFAULTS in policy.mjs) ----------
+const D = POLICY_DEFAULTS.collide;
+const pol = p => ({ ...D, ...(p || {}), kinds: { ...D.kinds, ...(p?.kinds || {}) }, auto: { ...D.auto, ...(p?.auto || {}) } });
+/** a project's policy (the whole policy object) -> its policy.collide with the defaults filled in */
+export const collidePolicy = policy => pol(policy?.collide);
 
 // ---------- reading a Scope line (SPEC 3.2) ----------
 /** a Scope word that names files: holds a '/', a wildcard, or ends in a file extension */
@@ -92,16 +93,23 @@ function order(me, o, items) {
   return out;
 }
 
+// ---------- the pair rulings (SPEC 4A.2): wait and allow, the only records the judge reads ----------
+/** the key of an unordered lane pair */
+export const pairKey = (a, b) => [a, b].sort().join('+');
+/** a recorded allow covers this pair for kind k: rulings = { pairKey: { verdict: allow | hold, kinds: [] (all) | [kind] } } */
+export const allowedBy = (rulings, a, b, k) => { const r = rulings?.[pairKey(a, b)]; return r?.verdict === 'allow' && (!r.kinds?.length || r.kinds.includes(k)); };
+
 /**
- * collisions(me, others, ctx = { policy, tracked: [paths] | null, items: { RM-n: { stages } } }) -> [{ kind, grade, other, verdict, why,
+ * collisions(me, others, ctx = { policy, tracked: [paths] | null, items: { RM-n: { stages } }, rulings }) -> [{ kind, grade, other, verdict, why,
  * files, after, pick: recommend() }] - the hits for intent `me`; a pair of one lane never collides (one writer per lane is runs.mjs's).
  */
 export function collisions(me, others, ctx = {}) {
   const P = pol(ctx.policy), out = [];
+  if (P.enabled === false) return out;
   const loud = (key, o) => { const v = P.kinds[key] ?? 'warn'; return (v === 'hold' || v === 'refuse') && !ahead(o, me) ? 'warn' : v; };
   for (const o of others) {
     if (!o || o.lane === me.lane) continue;
-    const add = h => { if (h.verdict !== 'off') out.push({ ...h, other: o.lane, pick: recommend(h, me, o) }); };
+    const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, other: o.lane, pick: recommend(h, me, o) }); };
     const items = exempt.item(me) || exempt.item(o) || me.part_of === o.lane || o.part_of === me.lane ? [] : (me.items || []).filter(i => (o.items || []).includes(i));
     if (items.length) add({ kind: 'item', grade: null, verdict: loud('item', o), items, why: `${items.join(' ')}: lane ${o.lane} holds it (${held(o)}); this run is not a declared part` });
     const t = territory(me, o, P, ctx.tracked);
@@ -173,10 +181,37 @@ const REMEDY = {
   narrow: (a, me, h) => `narrow leave out of this Scope the files lane ${h.other} holds: ${a.drop.slice(0, 8).join(' ')}${a.drop.length > 8 ? ' ...' : ''}`,
   correct: a => `correct  automatic: Norn adds the run's end to ${a.item}'s caveat`,
 };
-const head = h => `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}, ${h.verdict}`;
+const head = h => `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}, ${h.verdict}${h.col ? ` (${h.col})` : ''}`;
 /** one hit -> its lines: the head with the evidence, then SloppaChoppa's pick */
 export function hitLines(h, me = {}) {
   const pick = h.pick, line = pick && REMEDY[pick.remedy] ? REMEDY[pick.remedy](pick.args || {}, me, h) : null;
   return [`${head(h)}${h.other ? ` - lane ${h.other}` : ''}. ${h.why}`, ...(h.after && h.kind === 'order' && h.verdict === 'hold' ? [`  waits for ${h.after}`] : []),
     ...(line ? [`  SloppaChoppa: ${line} (${pick.why})`] : [])];
+}
+
+// ---------- the door (S1b, SPEC 3.4 and 4A.1): the case key, the hold, the worker's line ----------
+/** one case per kind + grade + pair while the cause lasts (SPEC 4A.6 key); a = the side ahead (the other lane), b = the run's lane */
+export const caseKey = (h, me) => `${h.kind}${h.grade ? '/' + h.grade : ''}:${h.other}>${me.lane}`;
+/** the hits that hold a run: verdict hold, from an automatic reaction policy.collide.auto has on (exclusive: hold_exclusive, order: order_after) */
+export function holdsOf(hits, policy) {
+  const A = pol(policy).auto;
+  return hits.filter(h => h.verdict === 'hold' && (h.kind === 'territory' ? A.hold_exclusive : h.kind === 'order' ? A.order_after : true));
+}
+/** the term the fill walk shows for one hold: the derived condition for order (SPEC 4A.1: after (auto)), the holder for the rest */
+export const holdTerm = h => (h.kind === 'order' && h.after ? `after (auto): ${h.after} - ${h.why}` : `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}${h.col ? ` (${h.col})` : ''} - waits for lane ${h.other}`);
+/** SPEC 5.4: the worker's prompt line for the territory warns of a run that starts (null = none) */
+export function workerLine(hits) {
+  const t = hits.filter(h => h.kind === 'territory' && h.verdict === 'warn' && h.files?.length);
+  if (!t.length) return null;
+  const what = t.map(h => `lane ${h.other} changes ${h.files.slice(0, 6).join(', ')}${h.files.length > 6 ? ` (+${h.files.length - 6})` : ''}`).join('; ');
+  return `Other open work in your Scope: ${what} (not merged). Do not move or rewrite those files wholesale. If you must change them, say which and why in NOTES.`;
+}
+// SPEC 4A.3, the allow column (S2a checks the whole menu against policy.collide.apply_by): the lowest role that may allow a kind
+const ALLOW_BY = { item: 'controller', goal: 'controller', lead: 'owner', exclusive: 'controller' };
+const RANK_OF = { checkin: 0, controller: 1, owner: 2, dashboard: 2 };
+/** may role allow a pair past kind k (grade g)? -> null (yes) | why not */
+export function allowRefusal(role, k, g) {
+  const need = ALLOW_BY[g === 'exclusive' ? 'exclusive' : k] ?? 'checkin';
+  if (!(role in RANK_OF)) return `${role} may not allow a collision (checkin, controller or owner)`;
+  return RANK_OF[role] < RANK_OF[need] ? `an allow past ${k}${g ? ` (${g})` : ''} is the ${need}'s (SPEC 4A.3); a ${role} may ask for it` : null;
 }
