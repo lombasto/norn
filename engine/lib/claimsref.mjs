@@ -3,12 +3,12 @@
 // commits its edits on the claims tip it fetched and pushes WITHOUT force: git's receive-pack updates the ref only from the old value the
 // push was built on (non-fast-forward = rejected; a concurrent update = a failed ref lock) - a compare-and-swap on the branch.
 // Locally the fetched tip is refs/sync/claims of this machine's ledger repo (bare). Endpoint f = { dir: that repo, remote, host }.
-// Node built-ins + the git binary only; every git child is bounded (jobguard boundedSync: a timeout kills its tree, no orphan at birth).
+// Node built-ins + the git binary only; every git child is bounded (bounded.mjs boundedSync: a timeout kills its tree, no orphan at birth).
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import { refSha } from './gitfacts.mjs';
 
 export class ClaimsError extends Error {}

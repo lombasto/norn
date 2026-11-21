@@ -8,7 +8,8 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
-import { jobguardExe, jobguardExeAsync, winQuote, holdGone } from '../engine/lib/jobguard.mjs';
+import { holdGone } from '../engine/lib/jobguard.mjs';
+import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/bounded.mjs';
 import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -131,7 +132,7 @@ process.exit(0);`;
 // proc-hygiene (2): the orphaned git / powershell were children of a killed child (suspended at birth). boundedSync's timeout kills
 // the whole tree - the grandchild too - and keeps spawnSync's shape (exit code, stdout, input, ETIMEDOUT, ENOENT).
 test('proc-hygiene: boundedSync kills the whole tree at its timeout; exit code, output and input pass through', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
-  const { boundedSync } = await import('../engine/lib/jobguard.mjs');
+  const { boundedSync } = await import('../engine/lib/bounded.mjs');
   const t = mkTmp('meta-bsy-'), gpid = path.join(t, 'g.pid');
   const kid = `const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); require('fs').writeFileSync(${JSON.stringify(gpid)}, String(c.pid)); setTimeout(()=>{},60000);`;
   const t0 = Date.now();
@@ -148,7 +149,7 @@ test('proc-hygiene: boundedSync kills the whole tree at its timeout; exit code, 
 
 // git-perf S1: the async twin (branches.mjs / the sync loop's git) - the same tree kill and the same shape, off the event loop
 test('proc-hygiene: boundedAsync kills the whole tree at its timeout; exit code and output pass through', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
-  const { boundedAsync, jobguardExe } = await import('../engine/lib/jobguard.mjs');
+  const { boundedAsync } = await import('../engine/lib/bounded.mjs');
   const exe = jobguardExe();
   assert.ok(exe, 'the helper compiles');
   const t = mkTmp('meta-bas-'), gpid = path.join(t, 'g.pid');

@@ -1,12 +1,12 @@
 // Git facts for deliverables (the Norn project's design/DELIVERABLES-SPEC.md 1): branch tips, merged / installed sets, commits behind main,
 // native-touching paths. Read-only git, batched: a warm scan is ONE `for-each-ref`; everything else is cached by commit ids
 // (merged sets by main sha, behind counts by tip + main, native paths by tip). Node built-ins only; no records import.
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// proc-hygiene: every call is bounded (GIT_TIMEOUT_MS) and its timeout kills the whole tree (jobguard boundedSync), never a lone
+// proc-hygiene: every call is bounded (GIT_TIMEOUT_MS) and its timeout kills the whole tree (bounded.mjs boundedSync), never a lone
 // git.exe orphaned under Git's cmd launcher
 export const GIT_TIMEOUT_MS = 120000;
 // exec wrapper that counts calls (the cost gate); null on a non-zero exit when allowFail; status: { code, out } whatever the exit

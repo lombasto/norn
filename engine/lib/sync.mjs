@@ -23,7 +23,7 @@ import { syncCut, cutLines } from './synccut.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
 import { setPause, clearPause } from './pause.mjs';
-import { boundedAsync } from './jobguard.mjs';
+import { boundedAsync } from './bounded.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const COPIED = ['run', 'deliverable'];

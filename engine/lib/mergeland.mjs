@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { mergeConfig } from './mergecfg.mjs';
 import { loadDeliverables } from './deliverables.mjs';

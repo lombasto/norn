@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadState, homeOf, fold, readEvents, recordsFile } from './records.mjs';
 import { deliverableConfig } from './deliverables.mjs';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import { headOf, worktreeFacts } from './gitfacts.mjs';
 
 export const OVERLAP_TTL_MS = 10 * 60000;

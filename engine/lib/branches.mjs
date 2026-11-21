@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { boundedAsync } from './jobguard.mjs';
+import { boundedAsync } from './bounded.mjs';
 import { fileURLToPath } from 'node:url';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { loadState, record } from './records.mjs';
