@@ -52,10 +52,11 @@
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, matchText, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, matchText } from '/ui.mjs';
+import { rmScopeNext, rmUrlHash, parseRmHash, renderRmEditor, rmEditBody } from '/pages/roadmap.mjs';
 import { fmtTime, esc } from '/cells.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards, syncLines } from '/ui.mjs';
+import { renderDeliverable, dupRefusal, pauseMenu, stripCards, syncLines } from '/ui.mjs';
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
