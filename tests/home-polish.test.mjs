@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { homeEvents, renderThread, checkinFacts, checkinLine, pickProject, threadOnly } from '../engine/dash/home.mjs';
 import { parseLedgerLine } from '../engine/dash/ledger.mjs';
+import { fmtTime } from '../engine/dash/cells.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
 import { dashCss } from './helpers/dash-css.mjs';
@@ -71,8 +72,9 @@ test('renderThread: the check-in is ONE line (never the ledger prose) that expan
     assert.ok(!/<details[^>]* open/.test(li), 'closed by default');
   }
   const first = lis[0][2].match(/<summary[^>]*>([\s\S]*?)<\/summary>/)[1].replace(/<[^>]+>/g, '');
-  assert.match(first, /^check-in RUN-40 · \d\d:\d\d · reviewed RUN-31, RUN-33 · ruled DEC-9/);
-  assert.match(lis[1][2].match(/<summary[^>]*>([\s\S]*?)<\/summary>/)[1].replace(/<[^>]+>/g, ''), /^check-in · \d\d:\d\d · no run record$/);
+  // the time is cells.mjs fmtTime (3d9472b3 / e3c98e3c): local wall time, a past day adds its date
+  assert.ok(first.startsWith(`check-in RUN-40 · ${fmtTime(T(2))} · reviewed RUN-31, RUN-33 · ruled DEC-9`), first);
+  assert.equal(lis[1][2].match(/<summary[^>]*>([\s\S]*?)<\/summary>/)[1].replace(/<[^>]+>/g, ''), `check-in · ${fmtTime(T(40))} · no run record`);
   // the expand survives a repaint: the client keeps the open keys and hands them back
   const key = lis[0][1], again = renderThread(ev, { project: 'tidewatch', open: new Set([key]) });
   assert.match(again, new RegExp(`data-key="${key}"><details class="ck" open>`));
