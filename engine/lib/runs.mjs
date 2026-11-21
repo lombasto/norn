@@ -269,6 +269,10 @@ export function hbWriter(file, { log = () => {}, rename = fs.renameSync, write =
   };
 }
 const runsOf = state => Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
+// a state race (RecordError code 2: the run moved on meanwhile) is the sweep's / fill's to skip; a log that does not read or a busy
+// lock (code 1) throws - skipping it would leave the run to be handled again on the next pass
+const raced = e => e instanceof RecordError && e.code === 2;
+const tryRecord = (state, ev) => { try { record(state, ev); return true; } catch (e) { if (!raced(e)) throw e; return false; } };
 const hbAge = (state, it, now) => {
   const f = hbPath(state, it.id);
   const t = fs.existsSync(f) ? fs.statSync(f).mtimeMs : Date.parse(it.created);
@@ -310,8 +314,7 @@ function endEvidence(state, it) {
 }
 // the end a sweep records from a finished run's evidence (and its heartbeat goes) -> true when recorded
 function endFromEvidence(state, it, ev) {
-  try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { ...ev.data, swept: `end not recorded by its supervisor: recorded by the sweep from ${ev.from}` } }); }
-  catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
+  if (!tryRecord(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { ...ev.data, swept: `end not recorded by its supervisor: recorded by the sweep from ${ev.from}` } })) return false;
   try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
   return true;
 }
@@ -370,8 +373,7 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
       const { age, has } = hbAge(state, it, t), hb = has ? readJson(hbPath(state, it.id)) : null;
       const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
       if (has && age <= staleMs && t - age > lostAt && hb && !gone(hb.supervisor_pid)) {
-        try { record(state, { kind: 'run', ev: 'alive', id: it.id, by, data: { why: `heartbeat ${Math.round(age / 1000)} s old again (lost for a stale heartbeat at ${new Date(lostAt).toISOString().slice(11, 19)}Z); supervisor pid ${hb.supervisor_pid} alive` } }); }
-        catch (e) { if (!(e instanceof RecordError)) throw e; }
+        tryRecord(state, { kind: 'run', ev: 'alive', id: it.id, by, data: { why: `heartbeat ${Math.round(age / 1000)} s old again (lost for a stale heartbeat at ${new Date(lostAt).toISOString().slice(11, 19)}Z); supervisor pid ${hb.supervisor_pid} alive` } });
       }
       continue;
     }
@@ -387,7 +389,7 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
     const ev = DEAD_CAUSES.includes(cause) ? endEvidence(state, it) : null;   // MAIL-28 (2): a finished run is ended, never lost
     if (ev && endFromEvidence(state, it, ev)) continue;
-    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    if (tryRecord(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) })) lost.push(it.id);
   }
   return lost;
 }
@@ -425,10 +427,8 @@ export function relaunchLost(state, { now = Date.now(), start = startRun } = {})
       } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
     }
     const why = `${it.lost.cause}: ${it.lost.why}`;
-    try {
-      record(state, { kind: 'run', ev: 'resume', id: it.id, by: 'launcher', data: next ? { next, count: count + 1, max, why } : { refused, count, max, why } });
-      if (next) record(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
-    } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    if (tryRecord(state, { kind: 'run', ev: 'resume', id: it.id, by: 'launcher', data: next ? { next, count: count + 1, max, why } : { refused, count, max, why } }) && next)
+      tryRecord(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
     out.push(drop({ id: it.id, cause: it.lost.cause, boot: it.lost.boot, next, refused }));
   }
   return out;
@@ -449,8 +449,7 @@ export function endLost(state, { now = Date.now(), gone = pidGone } = {}) {
     const ev = endEvidence(state, it);   // MAIL-28: the end its supervisor could not record, else a crash
     if (ev) { if (endFromEvidence(state, it, ev)) out.push(it.id); continue; }
     const why = `lost: ${it.lost?.why ?? 'no heartbeat'}; supervisor and executor gone, no end record`;
-    try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } }); }
-    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    if (!tryRecord(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } })) continue;
     try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
     out.push(it.id);
   }
@@ -1198,14 +1197,14 @@ function atFill(spec) {
 }
 function fillPass(state, now, resources, authProbe) {
   const started = [];
-  const withdraw = (id, why) => { try { record(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; } };
+  const withdraw = (id, why) => tryRecord(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } });
   fedPass(state, now);
   // META-AUTONOMY R1: a hold is recorded once per why (and cleared once) - the walk runs on every fill, the log grows only on a change
   const holds = new Map(runsOf(state).filter(r => r.state === 'queued' && r.hold).map(r => [r.id, r.hold]));
   const hold = (id, why) => {
     const cur = holds.get(id), held = cur && !cur.cleared;
     if (why ? held && cur.why === why : !held) return;
-    try { record(state, { kind: 'run', ev: 'hold', id, by: 'launcher', data: why ? { why } : { cleared: true } }); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    tryRecord(state, { kind: 'run', ev: 'hold', id, by: 'launcher', data: why ? { why } : { cleared: true } });
   };
   walkQueue(state, { now, resources, authProbe, act: {
     withdraw,
@@ -1263,7 +1262,7 @@ function fedPass(state, now) {
   let claims;
   try { claims = fetchClaims(f); } catch (e) { fedLog(state, `claims not read: ${e.message}`); return; }
   try { writeForeign(state, importForeign(f, project)); } catch (e) { fedLog(state, `node runs not imported: ${e.message}`); }
-  const rec = (id, ev, data) => { try { record(state, { kind: 'run', ev, id, by: 'launcher', data: drop(data) }); return true; } catch (e) { if (!(e instanceof RecordError)) throw e; return false; } };
+  const rec = (id, ev, data) => tryRecord(state, { kind: 'run', ev, id, by: 'launcher', data: drop(data) });
   for (const r of watch) {
     const key = claimKey(f.host, project, r.id), c = claims[key];
     let st = r.state;
@@ -1607,7 +1606,7 @@ function* orphanSteps(state, { by = 'launcher' } = {}) {
     if (p?.state === 'running') continue;
     const hb = readJson(hbPath(state, it.id)) || {}, why = `parent ${it.data.parent} ${p?.state ?? 'missing'}`;
     try { yield ['record', state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why } }]; }
-    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    catch (e) { if (!raced(e)) throw e; continue; }
     const rc = { state, killer: `stopOrphans by ${by} (pid ${process.pid}${process.env.META_RUN_ID ? `, ${process.env.META_RUN_ID}` : ''})`, reason: `orphaned helper ${it.id}: ${why}` };
     yield ['kill', hb.supervisor_pid, rc];
     yield ['kill', hb.pid, rc];
