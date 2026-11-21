@@ -57,7 +57,7 @@ test('server: /api/deliverables (git-derived, cached child CLI) feeds the Lanes 
     assert.equal(r.data.rows.length, 1); assert.equal(r.data.rows[0].branch, 'feat/a'); assert.equal(r.data.rows[0].state, 'done'); assert.equal(r.data.rows[0].project, 'kestrel');
     assert.equal((await f.get('/api/deliverables?project=all')).data.rows.length, 1);
     const lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
-    assert.deepEqual(lanes.find(l => l.name === 'render').dlv, { step: 'done', pr: null, url: null, branch: 'feat/a' });
+    assert.deepEqual(lanes.find(l => l.name === 'render').dlv, { step: 'done', install: false, pr: null, url: null, branch: 'feat/a' });
     g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
     void loadState;
   } finally { await f.done(); }

@@ -63,8 +63,8 @@ test('boardOf: needs you (Inbox rows only), running, stopped, waiting, to land, 
 
 test('prStep: done -> PR -> merged -> installed, with the PR number of the newest deliverable', () => {
   assert.equal(prStep([]), null);
-  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done' }]), { step: 'done', pr: null, url: null, branch: null });
-  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done', pr: { number: 9, url: 'https://github.com/o/r/pull/9' } }]), { step: 'pr', pr: 9, url: 'https://github.com/o/r/pull/9', branch: null });
+  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done' }]), { step: 'done', install: false, pr: null, url: null, branch: null });
+  assert.deepEqual(prStep([{ id: 'DLV-1', state: 'done', pr: { number: 9, url: 'https://github.com/o/r/pull/9' } }]), { step: 'pr', install: false, pr: 9, url: 'https://github.com/o/r/pull/9', branch: null });
   assert.equal(prStep([{ id: 'DLV-2', state: 'merged', merge_pr: 4 }, { id: 'DLV-1', state: 'done' }]).step, 'merged');
-  assert.deepEqual(prStep([{ id: 'DLV-3', state: 'installed', pr: { number: 3 } }]), { step: 'installed', pr: 3, url: null, branch: null });
+  assert.deepEqual(prStep([{ id: 'DLV-3', state: 'installed', pr: { number: 3 } }]), { step: 'installed', install: false, pr: 3, url: null, branch: null });
 });
