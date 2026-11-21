@@ -135,7 +135,7 @@ const pressed = h => [...h.matchAll(/data-rm-scope="(\w+)" aria-pressed="(true|f
 const views = h => [...h.matchAll(/data-rm-view="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 
 test('roadmap tab: in More under Plan (stage NAV); one-project tab; the view switch Tree / Board, Tree the default', () => {
-  assert.deepEqual(MORE.find(g => g[0] === 'Plan')[1], ['roadmap', 'plan']);
+  assert.deepEqual(MORE.find(g => g[0] === 'Plan')[1], ['roadmap']);
   assert.deepEqual(RM_VIEWS.map(v => v[0]), ['tree', 'board']);
   const h = rmRender(); clean(h, 'roadmap');
   assert.ok(h.includes('id="panel-roadmap"')); assert.deepEqual(views(h), ['tree:true', 'board:false'], 'the switch, Tree pressed by default');

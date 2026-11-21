@@ -112,7 +112,7 @@ const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs'
 const PAGES = ['lanes.mjs', 'runs.mjs', 'plan.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'plan', 'settings'];
+export const TABS = ['lanes', 'runs', 'inbox', 'talk', 'usage', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -1804,11 +1804,11 @@ data: ${JSON.stringify(l)}
     }
     // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
     if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
-    if (route === '/api/requeue') {   // MERGE-FIRST: Plan > Up next's priority control - the queued run re-queued at that priority, its after: kept
+    if (route === '/api/requeue') {   // MERGE-FIRST: the priority control of a queued run (Runs, Lanes) - re-queued at that priority, its after: kept
       const r = st(p).items[String(data.run)];
       if (!r || r.kind !== 'run' || r.state !== 'queued') throw fail(409, 'Run is not queued any more. Refresh.');
       let out;
-      try { out = requeueRun({ state: p.state, run: r.id, by: 'dashboard', why: `priority ${data.priority} set on the Plan page`, priority: data.priority }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
+      try { out = requeueRun({ state: p.state, run: r.id, by: 'dashboard', why: `priority ${data.priority} set on the dashboard`, priority: data.priority }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
       await viewsA(p);
       if (plans.has(p.name)) plans.get(p.name).at = 0;   // the next Plan read asks again
       return { ok: true, ...out };
@@ -2045,7 +2045,7 @@ data: ${JSON.stringify(l)}
           const by = new Map((await Promise.all(ps.map(async p => withNow(p, await withCards(p, rows.filter(l => l.project === p.name)))))).flat().map(l => [`${l.project}|${l.name}`, l]));
           const need = new Map(); for (const i of (await Promise.all(ps.map(inbox))).flat().filter(isNeed)) if (i.lane) need.set(`${i.project}|${i.lane}`, (need.get(`${i.project}|${i.lane}`) ?? 0) + 1);
           const now = Date.now();   // stage LANES: the board group needs the Inbox's needs count (boardOf)
-          return send(200, { lanes: rows.map(l => { const r = { ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 }; return { ...r, board: boardOf(r, now) }; }), backlog: backlogOf(ps), capacity: await capacityOf() }); }
+          return send(200, { lanes: rows.map(l => { const r = { ...by.get(`${l.project}|${l.name}`), needs: need.get(`${l.project}|${l.name}`) ?? 0 }; return { ...r, board: boardOf(r, now) }; }), backlog: backlogOf(ps) }); }
         if (route === '/api/lane') return send(200, await laneDetail(one(url), String(url.searchParams.get('lane') ?? '')));
         if (route === '/api/agents') {   // ?window= 2h (default) | 12h | 24h | today: how long ended runs stay in the tree
           // NORN-UI-RUNS: ?part=live (running runs + the queue: the Runs page's first paint) | history (the ended runs in the window) | none: all

@@ -1,5 +1,5 @@
 // Stage LANES (SPEC 4.2, Tests): the attention board as the page draws it - every group with its count (Old / Archived as links,
-// Parked / Done today off until asked), "Needs you" = the lanes the Inbox's isNeed rows name, the run strip and its legend, the PR
+// Parked / Done today off until asked), "Needs you" = the lanes the Inbox's isNeed rows name, the run strip (no legend footer: titles and the ? popover), the PR
 // track per step, no timer in the page module, nothing under engine/dash imports three.js, and in a private headless browser: 390 px
 // with no sideways scroll and 44 px actions in both looks on both grounds. Synthetic rows and the shared dash fixture only.
 import test from 'node:test';
@@ -52,7 +52,7 @@ test('Needs you = the lanes the Inbox\'s isNeed rows name; its count is never ab
   } finally { await f.done(); }
 });
 
-test('the run strip: oldest left, a hand-off bead joined, a fresh start apart, helpers on the running bead, "!" for an open question, "+n" older; one legend under the list', () => {
+test('the run strip: oldest left, a hand-off bead joined, a fresh start apart, helpers on the running bead, "!" for an open question, "+n" older; no legend footer (owner 2026-11-20): the words are in the bead titles and the ? popover', () => {
   const l = { name: 'reef', ask: 'Q-9', runs_total: 5, runs: [{ id: 'RUN-1', cls: 'stopped', word: 'STOPPED', min: 3, cont: false, helpers: 0 },
     { id: 'RUN-2', cls: 'handoff', word: 'HANDOFF', min: 40, cont: false, helpers: 0 }, { id: 'RUN-3', cls: 'running', word: 'running', min: 12, cont: true, helpers: 2 }] };
   const s = strip(l), beads = [...s.matchAll(/<li class="bd t-(\w+)( cont)?( ask)?"/g)].map(m => m[1] + (m[2] ? '+' : '') + (m[3] ? '?' : ''));
@@ -61,10 +61,9 @@ test('the run strip: oldest left, a hand-off bead joined, a fresh start apart, h
   assert.match(s, /RUN-3: running, 12 min, resumes the run before, 2 helpers<\/span>[^]*?<b class="hc">2<\/b>/, 'the helper count on the running bead, said in words too');
   assert.match(s, /^<ol class="lstrip" aria-label="Runs of reef, oldest first">/);
   assert.match(strip({ name: 'x', runs: [] }), /no runs/);
-  const h = page(), legend = h.slice(h.indexOf('class="llegend'));
-  assert.equal(h.split('class="llegend').length, 2, 'one legend');
-  assert.ok(h.indexOf('class="llegend') > h.lastIndexOf('class="lrow'), 'under the list');
-  for (const w of ['hand-off chain', 'fresh start', 'helpers', 'open question', 'done → PR → merged → installed']) assert.ok(legend.includes(w), `legend: ${w}`);
+  const h = page(), help = h.slice(h.indexOf('class="lhelp'), h.indexOf('</details>', h.indexOf('class="lhelp')));
+  assert.ok(!h.includes('class="llegend'), 'no legend footer');
+  for (const w of ['hand-off', 'fresh start', 'open question', 'done → PR → merged → installed']) assert.ok(help.includes(w), `the ? popover: ${w}`);
 });
 
 test('the PR track: done -> PR -> merged -> installed, the reached steps filled, the current one marked, the PR number linked', () => {

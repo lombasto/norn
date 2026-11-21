@@ -4,7 +4,7 @@
 // mounts into the document's slot). The view lives in the URL (index.html: S.runsView, runsViewOf / runsViewQs).
 import { esc, fin, dash, int, mTok, fmtMin, fmtTime, runWho, chip, exChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, laneCard, guardOn, guardChip, filterChips } from '../cells.mjs';
 import { dodChips, critiqueChip, hoChip } from '../widgets.mjs';
-import { LANE_SHOW } from './lanes.mjs';
+import { LANE_SHOW, prioSelect } from './lanes.mjs';
 
 // RM-34: a run's lane (a link to its row on Lanes, every filter on so it shows) and the stage beside it; a check-in reads "check-in",
 // a run with no lane (a talk session) a dash
@@ -138,8 +138,6 @@ function queuedCell(n, d) {
   return `<div class="rtimes small">${u ? prioSelect(n.project ?? part.project, n.id, u.priority, part.priorities) : ''}${u?.estimate?.word ? `<span>${esc(u.estimate.word)}</span>` : ''}${start && !holds.includes(u.start.word) ? `<span>${esc(start)}</span>` : ''}</div>
     ${holds.length ? `<div class="rline small">${holds.map(esc).join(' · ')}</div>` : ''}`;
 }
-/** the priority control of a queued run (index.html: a change posts /api/requeue): re-queued at that priority, its conditions kept */
-export const prioSelect = (project, run, p, priorities) => !(priorities || []).length ? '' : `<select class="pl-prio" data-act="prio" data-project="${esc(project)}" data-run="${esc(run)}" aria-label="priority of ${esc(run)}" title="re-queue at this priority (its conditions are kept)">${priorities.map(x => `<option${x === (p ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
 const COLS = ['state', 'run', 'lane · stage', 'model', 'age', 'tools', 'words', 'commits', 'pace'];
 // check-ins (ended, more than one) collapse to one row: how many, the last one, how they went; "show them" opens them in place
 function checkinFold(cks, ctx) {
