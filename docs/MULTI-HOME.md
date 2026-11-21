@@ -118,6 +118,9 @@ A lane whose branch is predicted to conflict with another home's open branch car
   queued with a hold such as "scope overlaps b/slop: engine/lib/slop/**". A brief without a `Scope:` line claims the whole repo. Claims
   are renewed every 10 minutes; a claim whose renewals stop goes stale, and the owner may take it over: `norn claim take b/slop --project demo`.
   `norn claim list` shows every claim; `norn claim allow a/x b/y --project demo` lets two claims overlap.
+  The tick releases a home's own claim when its lane is done or archived, or, with no run live or queued on the lane, when the lane's
+  work has landed (merged on main, or a `norn runs landed` ruling) or the lane has had no run for longer than the lease. The release
+  deletes the allow files that name the claim, and the digest's claims rows say why. A new run on the lane claims again.
 - **Combined views.** Roadmap, Records, Inbox, Lanes and Runs show the other homes' rows with a home chip ("on b"). Their runs and
   deliverables are read-only. Answering another home's question from here is allowed: it shows "answered on a, pending b" until home b
   takes it. The Ledger page has a Homes block (head, last fetch, lag) and a Claims block. `norn runs --homes` lists the other homes' runs.
