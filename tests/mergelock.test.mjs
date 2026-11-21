@@ -143,3 +143,17 @@ test('a MERGE run swept lost while its supervisor lives: its exit still frees th
   d.ends(bRun.id);
   assert.equal(d.slot(), null);
 });
+
+// slop C6: the supervisor refreshes its locks every beat; a lock that names another run now (taken over, or broken as stale and
+// re-taken) is no longer this run's - its run log says so once, never a silent skip
+test('a MERGE run whose slot lock another run took over: its supervisor logs it once (not every beat)', () => {
+  const d = sandbox();
+  const go = path.join(d.t, 'go-a'), a = startRun(d.opts('a', d.wtA, d.staged('a', d.wtA, go)));
+  const log = JSON.parse(fs.readFileSync(path.join(d.state, 'runs', a.run + '.spec.json'), 'utf8')).log, said = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '').match(/lock .* names RUN-999/g) || [];
+  fs.writeFileSync(lockPath(d.locks, slotKey(fwd(d.main), 0)), JSON.stringify({ run: 'RUN-999', pid: 1, ts: new Date().toISOString() }));
+  waitForSync(() => said().length, { producer: supervisorAlive(d.state, () => d.item(a.run)), what: `${a.run} logs the lost slot`, capMs: 30000 });
+  fs.writeFileSync(go, 'go');
+  d.ends(a.run);
+  assert.equal(said().length, 1, 'once per streak');
+  assert.equal(d.slot()?.run, 'RUN-999', 'the other run\'s lock is never undone');
+});
