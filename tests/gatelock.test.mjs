@@ -118,7 +118,8 @@ test('runGate: a heavy gate waits for the machine lock (its lines in the gate lo
 });
 
 // the real ci-suite, outside a test (no META_TEST_OWNER), its machine root a temp dir
-const ciEnv = (root, extra = {}) => { const e = { ...suiteEnv(process.env), META_ROOT: root, ...extra }; delete e[TEST_OWNER]; return e; };
+// a SECOND suite, not a child of this one's gate: under a gate-holding ci-suite (CI) the inherited META_GATE_HELD made it skip the lock
+const ciEnv = (root, extra = {}) => { const e = { ...suiteEnv(process.env), META_ROOT: root, ...extra }; delete e[TEST_OWNER]; delete e[HELD_ENV]; return e; };
 const ciRun = (args, env) => {
   const c = spawn(process.execPath, [CI, ...args], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = { text: '', code: undefined };
