@@ -56,7 +56,7 @@ for (const rule of [...loadRules(), ...projectRules]) {
       const repo = fixtureRepo(fx);
       const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
       // a lint rule's findings carry their sub-rule's level and id (LJ/no-console); the held ones (not shadow) are what the hit must show
-      const level = rule.levels ? 'BLOCK' : rule.level, at = r.findings.filter(f => f.new && f.level === level && !f.shadow);
+      const level = rule.levels ? 'BLOCK' : rule.level, at = r.findings.filter(f => f.new && f.level === level && !(rule.levels && f.shadow));
       assert.deepEqual(r.ran, [rule.id], `${rule.id} ${which} ran`);
       assert.equal(at.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
       assert.equal(r.blocks.length > 0, want && level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
@@ -69,11 +69,11 @@ for (const rule of [...loadRules(), ...projectRules]) {
 const LINT = loadRules().filter(r => r.kind === 'lint' || r.kind === 'ast');
 test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could not run: <why>", fingerprint rule + could-not-run); the result has no skipped list', () => {
   const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n' } });
-  const down = () => { throw new Error('npx not found on PATH'); };
+  const down = () => { throw new Error('npm not found on PATH'); };
   const r = slopCheck({ repo, base: 'main', rules: LINT, tool: down });
   assert.equal('skipped' in r, false, 'skipped leaves the result shape');
   assert.deepEqual(r.ran, []);
-  assert.deepEqual(r.blocks.map(b => [b.rule, b.level, b.msg]), LINT.map(x => [x.id, 'BLOCK', 'could not run: npx not found on PATH']), 'every lint rule, the WARN one too');
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.level, b.msg]), LINT.map(x => [x.id, 'BLOCK', 'could not run: npm not found on PATH']), 'every lint rule, the WARN one too');
   assert.equal(new Set(r.blocks.map(b => b.fp)).size, LINT.length, 'one fingerprint per rule');
   assert.deepEqual(slopCheck({ repo, base: 'main', rules: LINT, tool: down }).blocks.map(b => b.fp), r.blocks.map(b => b.fp), 'stable: a waiver can name it');
 });
@@ -132,14 +132,16 @@ test('only new: a finding the base already had never blocks, even in a renamed f
   const rest = Array.from({ length: 12 }, (_, i) => `export const k${i} = ${i};\n`).join('');   // enough unchanged lines to stay a rename
   const repo = fixtureRepo({ base: { 'src/a.mjs': body + rest }, head: { 'src/a.mjs': body + rest } });
   git(repo, 'mv', 'src/a.mjs', 'src/b.mjs'); git(repo, 'commit', '-q', '-m', 'rename');
-  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'] });
+  // K2 is an ast rule: ESLint's recorded answer, one empty catch per copy of body (line 2, and 17 for the twin); both sides lint under the head's path
+  const k2 = (file, lines) => ({ filePath: file, messages: lines.map(line => ({ ruleId: 'no-restricted-syntax', severity: 2, message: 'K2: empty catch: say what happens next, or let it throw', line, column: 16, endLine: line, endColumn: 28 })) });
+  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: [k2('src/b.mjs', [2])], head: [k2('src/b.mjs', [2])] }) });
   assert.equal(r.findings.length, 1, 'the old swallow is seen in the renamed file');
   assert.equal(r.findings[0].file, 'src/b.mjs');
   assert.equal(r.findings[0].new, false);
   assert.deepEqual(r.blocks, []);
   fs.appendFileSync(path.join(repo, 'src/b.mjs'), body.replace('old', 'twin'));   // the same swallow written a second time IS new
   git(repo, 'commit', '-qam', 'twin');
-  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'] });
+  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: [k2('src/b.mjs', [2])], head: [k2('src/b.mjs', [2, 17])] }) });
   assert.equal(r2.blocks.length, 1);
   assert.equal(r2.blocks[0].line, 17);
 });
@@ -275,11 +277,11 @@ test('daily: the tick starts `norn slop daily` once a day; the report has absolu
   assert.ok(renderDigest(d).includes(`## 9 SloppaChoppa (1)\n- ${line}\n`),'one row in the digest view');
 });
 
-test("K3's tool: npm >= 10's npx.cmd (the entry in a SET variable) resolves to node + npx-cli.js, no shell", () => {
-  const shim = String.raw`C:\nodejs\npx.cmd`, entry = String.raw`C:\nodejs\node_modules\npm\bin\npx-cli.js`, node = String.raw`C:\other\node.exe`;
+test("the lint tool set's installer: npm >= 10's npm.cmd (the entry in a SET variable) resolves to node + npm-cli.js, no shell", () => {
+  const shim = String.raw`C:\nodejs\npm.cmd`, entry = String.raw`C:\nodejs\node_modules\npm\bin\npm-cli.js`, node = String.raw`C:\other\node.exe`;
   const text = ['@ECHO OFF', 'SETLOCAL', String.raw`SET "NODE_EXE=%~dp0\node.exe"`, 'IF NOT EXIST "%NODE_EXE%" (', '  SET "NODE_EXE=node"', ')',
-    String.raw`SET "NPX_CLI_JS=%~dp0\node_modules\npm\bin\npx-cli.js"`, '"%NODE_EXE%" "%NPX_CLI_JS%" %*', ''].join('\r\n');
+    String.raw`SET "NPM_CLI_JS=%~dp0\node_modules\npm\bin\npm-cli.js"`, '"%NODE_EXE%" "%NPM_CLI_JS%" %*', ''].join('\r\n');
   const vfs = { readText: () => text, isFile: p => p === entry };
-  assert.deepEqual(resolveShim(shim, ['--yes', 'eslint@10.15.0'], { platform: 'win32', execPath: node, fs: vfs }),
-    { exe: node, args: [entry, '--yes', 'eslint@10.15.0'] });
+  assert.deepEqual(resolveShim(shim, ['ci', '--ignore-scripts'], { platform: 'win32', execPath: node, fs: vfs }),
+    { exe: node, args: [entry, 'ci', '--ignore-scripts'] });
 });

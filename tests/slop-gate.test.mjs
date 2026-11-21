@@ -288,12 +288,12 @@ test('F4 + F5 at the CLI: a broken tool is a BLOCK "could not run" (exit 1); a -
   git(repo, 'checkout', '-q', '-b', 'feat/x'); commit(repo, { 'b.mjs': 'export const b = 1;\n' }, 'js');
   let r = slopCli(repo, env, '--ci', '--diff', 'main..HEAD', '--state', state);
   assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.match(r.stdout, /^BLOCK K3 `\*` could not run: /m);
-  assert.match(r.stdout, /; could not run: K11A K19 K21 K23 K3/);
+  assert.match(r.stdout, /^BLOCK LJ `\*` could not run: /m);
+  assert.match(r.stdout, /; could not run: K11A K19 K2 K21 LJ T3/);
   assert.deepEqual(slopChecks(state), [], 'a --diff check is not stored: it opens no door');
   r = slopCli(repo, env, '--ci', '--state', state);
   assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.ok(slopChecks(state).at(-1).findings.some(f => f.rule === 'K3' && /could not run/.test(f.msg)));
+  assert.ok(slopChecks(state).at(-1).findings.some(f => f.rule === 'LJ' && /could not run/.test(f.msg)));
 });
 
 test('F5: a check with a broken tool holds the merge at all three doors (merge-brief, the merge queue, merge-land)', () => {
@@ -306,14 +306,14 @@ test('F5: a check with a broken tool holds the merge at all three doors (merge-b
   const r = spawnSync(process.execPath, [NORN, 'merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', path.join(root, 'N.md'),
     '--out', path.join(root, 'MB.md'), '--sha', head], { encoding: 'utf8', windowsHide: true, env: { ...process.env, META_ROOT: root } });
   assert.equal(r.status, 3, r.stdout + r.stderr);
-  assert.match(r.stdout, /REFUSED: merge-brief feat\/x: \d+ open slop BLOCK finding\(s\) at [0-9a-f]{7}[\s\S]*K3 `\*` could not run/);
-  const down = () => { throw new Error('npx not found on PATH'); }, st2 = stateDir();
+  assert.match(r.stdout, /REFUSED: merge-brief feat\/x: \d+ open slop BLOCK finding\(s\) at [0-9a-f]{7}[\s\S]*LJ `\*` could not run/);
+  const down = () => { throw new Error('npm not found on PATH'); }, st2 = stateDir();
   const door = (branch, tip) => doorCheck({ state: st2, repo, branch, head: tip, tool: down });
   const row = { id: 'DLV-1', gate: 'batch', word: 'clean', tip: head, lane: 'x', branch: 'feat/x', repo, into: 'main' };
   assert.deepEqual(pickBatch([row], { cfg: { batch_max: 4 }, mq: { red: {} }, stateDir: st2, writer: () => null, door: (x, sha) => door(x.branch, sha).open.length }), []);
   const d = door('feat/x', head);
   assert.ok(d.open.length > 0 && d.open.every(f => /could not run/.test(f.msg)), 'the door merge-land asks holds it too');
-  assert.match(doorWhy(d), /K3 `\*` could not run: npx not found on PATH/);
+  assert.match(doorWhy(d), /LJ `\*` could not run: npm not found on PATH/);
 });
 
 test('F7: a run-end check that throws stores a "could not check" hold for the branch and one digest row', async () => {
