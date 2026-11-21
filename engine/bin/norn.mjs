@@ -1574,7 +1574,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'size') return sizeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
-  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
+  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, env, where: f => where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {

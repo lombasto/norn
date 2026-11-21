@@ -85,13 +85,13 @@ export const readTestMs = file => { const t = file ? readOr(file) : null; return
 // ---------- which test files a run runs (norn tests run --changed; the Done check) ----------
 const stem = f => (/\.m?js$/.test(f) && !f.startsWith('tests/') ? f.split('/').pop().replace(/\.m?js$/, '') : null);
 /**
- * mode light: the test files that DIRECTLY cover the changed files - every changed test file, then per changed source module up to `per`
+ * mode light: the test files that DIRECTLY cover the changed files - every changed test file, then per changed source module `per` (1)
  * of: its own test (<stem>.test.mjs), the tests named after it (<stem>-*.test.mjs), the tests that import it directly (when an impact
  * map from `norn tests measure` exists, only those its coverage confirms); fastest first by `ms` (file -> ms of the last measure). A
  * module none of them reaches is named in `none` (left to CI). mode changed: ci-suite's pick (cisuite.mjs pickTests, importers capped
  * at 20). -> { run: [test files], none: [changed modules no test covers directly], left: [importers past the cap] }
  */
-export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, per = 2 }) {
+export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, per = 1 }) {
   const ch = [...new Set(changed.map(fwd))], all = tests.map(fwd);
   if (mode === 'changed') { const p = pickTests(ch, all, read, 20); return { run: p.run, none: [], left: p.left }; }
   const run = new Set(all.filter(t => ch.includes(t))), none = [], text = new Map();
