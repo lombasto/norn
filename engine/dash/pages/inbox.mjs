@@ -5,7 +5,8 @@
 // (Questions, Cards, Resolved); every text goes through the one prose renderer (prose.mjs). ui.mjs keeps the dispatch line.
 import { renderProse } from '../prose.mjs';
 import { esc, int, fmtMin, plural, chip, projTag, homeChip, pendingChips, fmtTime, filterChips } from '../cells.mjs';
-import { art, minsSince, holdRow, loginRow, editRow, setupRow, auditCard, enforceCard, fxSection } from '../ui.mjs';
+import { art, minsSince, holdRow, loginRow, editRow, setupRow, auditCard, enforceCard } from '../ui.mjs';
+import { fxSection } from './slop.mjs';
 
 // the groups the chip row shows; the view lives in this module (one per page: the acts flip it, a stream repaint keeps it)
 export const INBOX_SHOW = [['questions', 'Questions'], ['cards', 'Cards'], ['resolved', 'Resolved']];

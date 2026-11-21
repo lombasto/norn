@@ -1,7 +1,7 @@
 // META-TEND P6: SloppaChoppa, the ONE voice (owner DIR-49 = option A; DEC-264 = Clippy-like). The pure part (node tests drive it):
 // the header badge (NEW warn-level findings since the Slop page was last opened), his line (a template, the number in plain words),
 // the one best action, and the pop-up gate (Settings mode off / on / quiet, the daily cap, once per finding, never while the owner
-// types, Mute, one appearance at a time). The browser part (createStage) plays the ORC-1 round-6 strips frame by frame at their real
+// types, one appearance at a time). The browser part (createStage) plays the ORC-1 round-6 strips frame by frame at their real
 // times; still frames when the mode is quiet or nothing may move (motion.mjs: QUIET, reduced motion, a hidden page).
 export const STRIPS = {   // ORC-1 R8 (norn-art-orc out-r8/anim/timings.json): frames left to right, ms per frame
   appear: [80, 90, 90, 100, 110, 300], idle: [700, 180, 260, 180, 100, 380], speak: [120, 110, 150, 110, 100, 150], 'fidget-axe': [300, 140, 240, 170, 150, 350],
@@ -14,7 +14,7 @@ const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eig
 export const inWords = n => (Number.isInteger(n) && n >= 0 && n <= 20 ? WORDS[n] : String(n));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const warns = s => s === 'high' || s === 'medium';
-const TAB_WORD = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
+const TAB_WORD = { context: 'Context', tests: 'Tests', spend: 'Spend', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 
 /** the badge: warn-level findings first seen after the Guard page was last opened (never opened: the ones new in the last day) */
 export function badgeCount(rows = [], seenAt = 0) {
@@ -38,9 +38,8 @@ export const badgeLabel = n => `SloppaChoppa: ${inWords(n)} new finding${n === 1
  * may he pop up by himself? -> { ok, why, row }. mode = Settings popups (off | on | quiet), cap = the daily cap, log = { day, n, shown [ids] }
  * (this browser's), rows = the ranked Guard rows. Only a NEW finding at warn level or above, once per finding.
  */
-export function mayAppear({ mode = 'off', cap: max = 3, log = {}, rows = [], typing = false, mutedUntil = 0, onStage = false, now = Date.now() } = {}) {
+export function mayAppear({ mode = 'off', cap: max = 3, log = {}, rows = [], typing = false, onStage = false, now = Date.now() } = {}) {
   if (mode === 'off') return { ok: false, why: 'pop-ups are off (Settings)' };
-  if (mutedUntil > now) return { ok: false, why: 'muted' };
   if (onStage) return { ok: false, why: 'one appearance at a time' };
   if (typing) return { ok: false, why: 'the owner is typing' };
   const day = new Date(now).toISOString().slice(0, 10), n = log.day === day ? log.n || 0 : 0;

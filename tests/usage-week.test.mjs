@@ -65,7 +65,7 @@ test('norn usage [--week] [--json]: the CLI prints the table (read-only)', () =>
   assert.equal(main(['usage', '--bogus', '--state', st], process.env, () => {}, () => {}), 2);
 });
 
-test('dashboard: the Usage tab shows the weekly table + top 5; an Agents run node carries its usage-guard chip', async () => {
+test('dashboard: the Spend page shows the top 5, its drawer the lane and stage table; an Agents run node carries its usage-guard chip', async () => {
   const { renderTab } = await import('../engine/dash/ui.mjs');
   const { part } = fixture();
   const week = usageWeek([part], { now: NOW, cacheRPerPct: 1e6 });
@@ -73,9 +73,9 @@ test('dashboard: the Usage tab shows the weekly table + top 5; an Agents run nod
   const p = { project: 'x', window: 'rolling', days: 7, since: '2026-11-06T12:00:00Z', rows: [], totals: { claude: zero, codex: zero, provider: zero, unmeasured: 0 },
     checkins: { ticks: 0 }, calib: { cacheR_per_pct: 1e6, mix: 1, weights: { input: 10, output: 50, cache_create_1h: 20, cache_create_5m: 12.5 } }, cost: { runs: 0, ms: 1, bytesRead: 0 },
     secondary: null, headline: null, account: null, week };
-  const html = renderTab('usage', { parts: [p] }, { project: 'x', now: NOW });
-  assert.match(html, /id="usage-week"[\s\S]*Where the tokens went[\s\S]*<b>water<\/b><\/td><td>S1<\/td>/);
-  assert.match(html, /id="usage-top"[\s\S]*200 turns x ~100k context/);
+  const html = renderTab('spend', { parts: [p] }, { project: 'x', now: NOW }), stage = renderTab('spend', { parts: [p], sub: 'stage' }, { project: 'x', now: NOW });
+  assert.match(stage, /id="spend-stage"[\s\S]*Lane and stage[\s\S]*<b>water<\/b><\/td><td>S1<\/td>/);
+  assert.match(html, /id="spend-top"[\s\S]*200 turns x ~100k context/);
   const ag = renderTab('runs', { tree: [{ id: 'RUN-7', kind: 'run', state: 'running', executor: 'claude', lane: 'water', project: 'x',
     guard: [{ id: 'GRD-1', cls: 'runaway', why: '43.5M cache reads = 6.1x', state: 'open', action: null }] }], queue: [] }, { project: 'x', now: NOW });
   assert.match(ag, /guard-chip" title="GRD-1: 43\.5M cache reads = 6\.1x"><span class="chip bad">runaway<\/span>/);

@@ -26,13 +26,12 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { checkBranch, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
+import { endCheck, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
 import { procStartAsync, running } from './legacy.mjs';
 import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
-import { makeTool } from './slop/tools.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { pauseOf } from './pause.mjs';
 import { readPause, holdsStarts } from './pausemode.mjs';
@@ -423,15 +422,21 @@ function pausedEnd() {
   return false;
 }
 
+// the spec of a resume this supervisor starts (hand-off, fix, nudge): a continuation, never a fill's start. The queue entry the run came
+// from (fromQueue) is not carried over - it let a resume skip the doors a fill already passed (RUN-b-549 resumed, while RUN-b-544 and
+// RUN-b-545, started directly by a check-in, met queuedAhead, were refused exit 4 and dropped). queue: a full cap or a queued run
+// ahead holds the resume queued in fill order - never refused and lost.
+function continuation(sp) { const { fromQueue: _q, ...rest } = sp; return { ...rest, queue: true }; }
+
 function autoResume(handoff) {
   let { refused, count, max } = autoResumeRefusal(spec, state);   // one home with the lost relaunch (runs.mjs)
   let next = null, spawned = null, held = null;
   if (!refused) {
     try {
       // a HANDOFF is a fresh agent on the same brief: never the nudged session or its mail prompt (META-GTP-MAIL)
-      const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, resumeSid: _rs, nudge: _n, ...rest } = spec;
+      const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, resumeSid: _rs, nudge: _n, ...rest } = continuation(spec);
       if (spec.nudge) delete rest.promptText;
-      ({ run: next, spawned, why: held } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));   // a pause holds it queued (held = why)
+      ({ run: next, spawned, why: held } = startRun({ ...rest, resumes: count + 1, resumeOf: run, handoffFile: handoff }));   // a pause, a full cap or runs ahead hold it queued (held = why)
     } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   }
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, count: count + 1, max, ...(held ? { held } : {}) } : { refused, count, max } }); }
@@ -454,7 +459,8 @@ function slopEnd() {
   // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
   let brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
-  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, tool: makeTool({ voice: spec.policy?.slop?.voice ?? null }), brief }); } catch (e) {
+  // SloppaChoppa 2 S2: endCheck reads the check `norn done` stored at this head and rule set instead of running it twice
+  try { c = endCheck({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, voice: spec.policy?.slop?.voice ?? null, brief, lane: spec.lane, run }); } catch (e) {
     // SPEC 1.3 F7: a check that threw is no "no findings" - the branch is held "could not check" (the dashboard and the digest show it);
     // no resume: the worker cannot fix the check, and the door runs its own
     const why = e.message.split('\n')[0];
@@ -462,11 +468,10 @@ function slopEnd() {
     try { const p = couldNotCheck(spec.worktree, why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e2) { logLine(`slop: the could-not-check hold was not stored: ${e2.message.split('\n')[0]}`); }
     return [];
   }
-  if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
-  const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings }).open;
-  const unrun = c.result.findings.filter(f => f.unrun).map(f => f.rule);
-  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
-  return open;
+  if (!c) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
+  const unrun = c.check.findings.filter(f => f.unrun).map(f => f.rule);
+  logLine(`slop: ${c.open.length} open BLOCK finding(s) on ${c.branch} (${c.result ? c.result.ran.join(' ') : `the check stored at ${c.check.head.slice(0, 7)} by ${c.check.run ?? '-'}`}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
+  return c.open;
 }
 
 // a DONE with open slop findings and / or a red Done check goes back to the SAME lane ONCE, as one resume carrying both lists (slop
@@ -479,12 +484,13 @@ function fixEnd(open, d) {
   if (!slop.length && !dod) return false;
   let next = null, refused = null;
   try {
-    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
+    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = continuation(spec);
     // the full slop list goes to a file; the prompt carries a summary that names it (solve-shack RUN-140)
     const list = slop.length ? path.join(RESULT_DIR, 'slop-blocks.md') : null;
     if (list) { fs.mkdirSync(RESULT_DIR, { recursive: true }); fs.writeFileSync(list, slopList(slop)); }
     const promptText = [...(slop.length ? [slopPrompt(slop, null, { listFile: fwdPath(list) })] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
-    next = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText }).run;
+    const s = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText });
+    next = s.run; if (s.queued) logLine(`resume ${next} queued: ${s.why}`);
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   const what = { ...(slop.length ? { slop: slop.length } : {}), ...(dod ? { dod: dod.why } : {}) };
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, ...what } : { refused, ...what } }); }
@@ -538,8 +544,9 @@ function nudgeResume() {
   const id = nudging.mail.id;
   let next = null, refused = null;
   try {
-    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, ...rest } = spec;
-    next = startRun({ ...rest, resumeOf: run, resumeSid: sid, nudge: id, promptText: nudgePrompt(nudging.mail, nudging.afterMin) }).run;
+    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, ...rest } = continuation(spec);
+    const s = startRun({ ...rest, resumeOf: run, resumeSid: sid, nudge: id, promptText: nudgePrompt(nudging.mail, nudging.afterMin) });
+    next = s.run; if (s.queued) logLine(`nudge ${id}: resume ${next} queued: ${s.why}`);
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, nudge: id } : { refused, nudge: id } }); }
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }

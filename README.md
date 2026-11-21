@@ -92,7 +92,7 @@ open a row of pages.
 - **Context** (Health): the context limits per role, the tokens per loaded file, and whether they are growing.
 - **Roadmap** (Work, `norn road`): themes and items whose status comes from the runs and records, never typed by hand.
 - **The other pages**: Overview (what needs you and what is running), Lanes and Map (every lane and its latest run), Runs
-  (running and recent runs with their tokens and context), Usage (usage against the limits, and which model suits which work),
+  (running and recent runs with their tokens and context), Spend (usage against the limits, and which model suits which work),
   Tests (which tests check real behaviour), Records and Ledger (every decision and check-in), and Settings.
 
 Around the dashboard:

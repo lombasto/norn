@@ -25,7 +25,7 @@ test('guardRows: every phase and SloppaChoppa typed, each with the tab that fixe
   assert.deepEqual(by['memory:C:/m/MEMORY.md'].go, { tab: 'docs', ins: 'r-mem' });
   assert.deepEqual(by['docs:C:\\p\\docs\\SPEC.md'].go, { tab: 'docs', doc: 2 }, 'a finding on a listed doc is fixed on the Docs tab');
   assert.equal(by['rules:C:/p/CLAUDE.md'].go.ins, 'r-claude');
-  assert.deepEqual(by['models:class chores'].go, { tab: 'usage', jump: 'usage-advice' });
+  assert.deepEqual(by['models:class chores'].go, { tab: 'spend', sub: 'advice' });
   assert.equal(by['models:class chores'].cls, 'chores');
   assert.ok(!rows.some(r => r.id === 'M-k2'), 'a decided advice card is closed');
   assert.deepEqual(by['code:a.mjs'].go, { tab: 'slop', jump: 'slop-S-f00' });

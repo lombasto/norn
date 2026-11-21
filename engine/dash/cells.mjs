@@ -166,9 +166,9 @@ const PACE_CLS = { 'on track': 'ok', testing: 'ok', slow: 'warn', stalled: 'bad'
 export const progDetail = g => !g ? '' : `<ol class="prog-items small">${g.items.map(it => `<li class="prog-${esc(it.state)}"><span aria-hidden="true">${ITEM_MARK[it.state]}</span> ${esc(it.title)}<span class="mute"> - ${esc(it.state)}${it.evidence ? `: ${esc(it.evidence)}` : ''}</span></li>`).join('')}</ol>
   <div class="small"><b>Pace</b> ${esc(g.pace.words)}</div>${g.slow?.line ? `<div class="small"><b>Why</b> ${esc(g.slow.line)}</div>` : ''}
   ${(g.alarms || []).map(a => `<div class="small prog-alarm">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} ${esc(a.words)}<div class="mute">${esc(a.numbers)}</div><div>${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc(a.act.join(' / '))}</div></div>`).join('')}`;
-/** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
+/** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id, a Slop row: finding) */
 export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="${esc(go.sub)}"` : '', go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
-  go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
+  go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : '', go.finding ? `data-gofinding="${esc(go.finding)}"` : ''].filter(Boolean).join(' ');
 const OUTCOME = { done: 'DONE', stopped: 'STOPPED', handoff: 'HANDOFF' };
 const MARK = { DONE: 'done', STOPPED: 'stopped', HANDOFF: 'handoff' };
 const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };

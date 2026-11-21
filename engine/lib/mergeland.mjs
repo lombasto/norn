@@ -20,6 +20,7 @@ import { isMergeRun } from './checkins.mjs';
 import { LIVE } from './lifecycle.mjs';
 import { slopOn } from './policy.mjs';
 import { doorCheck, doorWhy, doorWarns } from './slop/door.mjs';
+import { noteMqWhy } from './mqwhy.mjs';
 
 export const fwd = p => String(p || '').replace(/\\/g, '/');
 export const s7 = s => String(s || '').slice(0, 7);
@@ -103,9 +104,10 @@ export function openProjectPrs(p, { wt, branches, run, git, gh, door: d } = {}) 
 // whose last work run ended DONE on a pushed branch to openPrs, with the lane's own worktree as the "tested merge" (SPEC F21: its HEAD
 // holds the branch's commits). The PR's GitHub CI is the test; the slop door still applies. An opened (or open) PR is noted per branch
 // tip in <state>/sync/leader-prs.json, so it costs no gh call again until the lane moves; a refusal is retried and said again only when its why changes.
+// land-push: a refusal is the branch's skip in mqwhy.mjs too (the deliverable and the Lanes row say it); an opened PR clears it.
 /** followerPrs(p, state, { git, gh, door }) -> [{ branch, status, why, url?, lane, run }] of the branches it tried this pass (new words only) */
 export function followerPrs(p, state, { git = makeGit(), gh, door } = {}) {
-  const items = loadState(state).items, main = mergeConfig(p).main, memo = readSync(state, 'prs'), out = [];
+  const items = loadState(state).items, main = mergeConfig(p).main, memo = readSync(state, 'prs'), out = [], skips = {};
   const runs = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane && isWork(r.data) && !isMergeRun(r.data)).sort((a, b) => runNum(a.id) - runNum(b.id));
   for (const l of Object.values(items)) {
     if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
@@ -118,7 +120,10 @@ export function followerPrs(p, state, { git = makeGit(), gh, door } = {}) {
     const [x] = openProjectPrs(p, { wt, branches: [branch], run: r.id, git, ...(gh ? { gh } : {}), ...(door !== undefined ? { door } : {}) });
     if (!(was?.tip === tip && was.why === x.why)) out.push({ ...x, lane: name, run: r.id });
     memo[branch] = { tip, status: x.status, why: x.why, ...(x.url ? { url: x.url } : {}) };
+    const unpushed = /is not on .*push the lane branch/.test(x.why);
+    skips[branch] = x.status !== 'refused' ? null : { tip, kind: unpushed ? 'unpushed' : /slop/i.test(x.why) ? 'slop' : 'failed', why: unpushed ? `not pushed at ${tip.slice(0, 7)}: the tick's path to main pushes it, then its PR opens` : `PR not opened: ${x.why}` };
   }
   writeSync(state, 'prs', memo);
+  noteMqWhy(state, skips, { by: 'pr' });
   return out;
 }
