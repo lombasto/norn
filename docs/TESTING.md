@@ -27,7 +27,7 @@ The book's "nothing to lose except computer time" (p. 142) does not hold on a sh
 
 | Tier | What runs | Where | When |
 |---|---|---|---|
-| **W: worker** | The test files of the files you changed (and any test you added), one file at a time | your run, local | while building |
+| **W: worker** | The light set (policy.tests): the test files that directly cover what you changed, through `norn tests run`; no browser tests | your run, local | while building |
 | **L: landing** | The quick check: syntax plus the changed test files. A MERGE run: the changed and conflicted files' tests plus smoke (ruling Q-26) | the tick (code) or the MERGE run | each deliverable |
 | **P: PR check** | slop, smoke, `node engine/bin/ci-suite.mjs --changed` (.github/workflows/pr.yml) | GitHub runner | each PR |
 | **B: batch / main** | The full suite (.github/workflows/ci.yml) | GitHub runner, never local for norn | on main and nightly |
@@ -36,13 +36,24 @@ The book's "nothing to lose except computer time" (p. 142) does not hold on a sh
 The owner makes the PR check's `slop` job a required status (Settings > Rules > Rulesets: "Require status checks to pass", check
 `slop`); only that repository setting lets it hold a merge. engine/lib/slop/rules/README.md ("On a pull request") has the details.
 
-## The run budget (ruling Q-28)
+## The run budget: policy.tests (ruling Q-28, test-diet S1)
 
-- **A full suite is denied.** The PreToolUse scope hook refuses a full-suite command in every worker, MERGE, resumed and check-in
-  run, even when a hand-off asks for "one full suite". Policy: `tests.budget.full_suite` (deny). The full suite is
-  `node engine/bin/ci-suite.mjs` without `--changed`, `node --test tests/`, bare `pytest` or `pytest tests`, `npm test`.
-- **Test time is budgeted.** Past 25 % of the run's wall time in tests, the run is warned. Past 50 %, after an urgent mail, it is
-  stopped as a hand-off. (The share check is TEST-GOVERNANCE stage S3; until it lands, keep to the share by hand.)
+One policy, `policy.tests`, sets what a claude run (worker, MERGE, check-in, resumed) may test. It shows in Settings (agents /
+rounds); the scope hook enforces it at each test command and the run-end Done check follows it. Briefs say "Tests: light
+(policy.tests)" instead of naming page tests. The Tests tab's **Run time** view shows each run's test time against its wall time.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `mode` | `light` | `light`: only the test files that directly cover what you changed (your changed test files, then per changed module its own test, else one named after it, else one that imports it). `changed`: every test file touching the change (ci-suite's pick). `off`: no tests in a run; CI runs them. |
+| `run_budget_min` | 3 | The test wall time a run may spend, from its own transcript. Past it the hook refuses the next test command: stop testing and finish. The Done check stays inside it too: what it could not start is left to CI (unknown, not a pass, not red). 0 = no budget. |
+| `browser` | `ci` | Browser (page) tests never run in a run: `norn tests run` skips them, a direct `node --test` of such a file is refused. CI runs them. `allow` lets a run start them. |
+| `full_suite` | `deny` | The hook refuses a full suite in every run, even when a hand-off asks for "one full suite". The full suite is `node engine/bin/ci-suite.mjs` without `--changed`, `node --test tests/`, bare `pytest` or `pytest tests`, `npm test`. |
+
+- **Node tests in a run go through `norn tests run`.** It runs each file on an empty META_ROOT through the machine's test-result
+  cache: a file another run already passed on the same content (the file, everything it imports, the node version) in the last
+  day is reused, and one running now in another run is waited for, never started twice. A direct `node --test` or
+  `ci-suite --changed` is refused with the `norn tests run` command to use.
+- This replaces TEST-GOVERNANCE S3's share budget (25 % warn / 50 % stop of the run's wall time, budgets.jsonl).
 
 ## Load reds and reruns
 
@@ -69,8 +80,8 @@ watcher never exits and outlives your run. If you need one, bound it (`timeout N
 | Need | Command |
 |---|---|
 | The test files that cover a source file (node; from the last measure's coverage) | `norn tests for engine/lib/testcmd.mjs` |
-| One node test file, kept off the live state | `META_ROOT="$TEMP/emptyroot-<name>" node --test tests/<file>.test.mjs` |
-| The tests of the files your branch changed (node) | `node engine/bin/ci-suite.mjs --changed origin/main` |
+| One node test file (or a few), kept off the live state, through the machine's test cache | `norn tests run tests/<file>.test.mjs` |
+| The tests that directly cover the files your branch changed (node; policy.tests.mode picks them) | `norn tests run --changed` |
 | One pytest file | `python -m pytest tests/test_<module>.py -q -p no:cacheprovider` |
 | The measured battery: never-failing, duplicate and slowest tests | `norn tests lean` |
 
