@@ -71,7 +71,7 @@ import { loopOf } from '../lib/sync.mjs';
 import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
-import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
+import { guardSummary, guardPart, chipView, fixSheet, fixPick, fixOne } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
 import { isNeed, needsYou } from './terms.mjs';
 import { docsList as docsListOf, docKey } from './docparts.mjs';
@@ -1870,8 +1870,9 @@ data: ${JSON.stringify(l)}
     if (route === '/api/fixall') {   // META-UX-BUILD S6 (REPORT s.3 step 2, DIR-65 Q2 A): Send the fixer = ONE decision + ONE directive (the audit card's path) with the ids
       const g = await guardOf(p);
       if (g.pending) throw fail(409, 'The instruction-file scan is still running: reload the sheet when it lands.');
-      if (data.sig !== fixSheet(g).sig) throw fail(409, 'The findings changed since the sheet was drawn. Reload it and look again.');
-      let x; try { x = fixPick(g, { keys: data.keys, picks: data.picks }); } catch (e) { throw fail(e.status ?? 400, e.message); }
+      if (!data.id && data.sig !== fixSheet(g).sig) throw fail(409, 'The findings changed since the sheet was drawn. Reload it and look again.');
+      // ui-context-docs: { id, way? } = one finding from the Docs reader's line popover, the same decision + directive as the sheet
+      let x; try { x = data.id ? fixOne(g, { id: String(data.id), way: data.way ?? null }) : fixPick(g, { keys: data.keys, picks: data.picks }); } catch (e) { throw fail(e.status ?? 400, e.message); }
       const items = Object.values(st(p).items);   // the same open set sent again (a second tap): the pair it wrote, no second pair
       const was = items.find(i => i.kind === 'decision' && i.state === 'in-force' && i.data.lane === 'fixall' && i.data.set === x.set);
       const wasDir = was && items.find(i => i.kind === 'directive' && i.state === 'active' && i.data.fixall === was.id);

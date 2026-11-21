@@ -9,3 +9,16 @@
 .stkdot.st-measured{background:var(--mute)}
 .ctxmeas td:first-child{color:var(--mute)}
 .ctxfhead{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 12px 0}
+/* Docs: line numbers in a left gutter (Rendered: each paragraph's first line, its left edge coloured by age), a line's findings one
+   marker there; its popover floats over the text, so a paragraph keeps its normal height and spacing */
+.md.gutter{padding-left:12px}
+.md.gutter .docpara,.md.gutter .docpara.hasfind{grid-template-columns:3.4em minmax(0,1fr);gap:10px;background:none;padding:0;border-radius:0}
+.dgut{display:flex;flex-direction:column;align-items:flex-end;gap:3px;padding:.35em 6px 0 0;border-right:1px solid var(--line);user-select:none}
+.dln{font-size:12px;line-height:1.5;color:var(--mute);font-variant-numeric:tabular-nums;border-right:3px solid transparent;padding-right:4px}
+.dln.gage-new{border-right-color:var(--ok)}.dln.gage-mid{border-right-color:var(--warn)}.dln.gage-old{border-right-color:var(--mute)}
+.dmark{position:relative}.dmark>summary{list-style:none;cursor:pointer;min-width:24px;min-height:22px;justify-content:center}.dmark>summary::-webkit-details-marker{display:none}
+.dpop{position:absolute;z-index:6;left:0;top:26px;width:min(380px,78vw);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;box-shadow:0 6px 18px var(--shadow);font-size:13px;line-height:1.45;text-align:left;white-space:normal;color:var(--ink)}
+.dpop .dfind{margin:0 0 8px;padding-bottom:8px;border-bottom:1px solid var(--line)}.dpop .dfind:last-child{border:0;margin:0;padding:0}
+.dfix{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.docsrc .ln{white-space:nowrap}.docsrc .ln .dmark{display:inline-block;margin-right:4px;vertical-align:top}.docsrc td.lt{width:auto}
+@media (max-width:700px){.docsrc tr td:last-child{grid-column:auto}.md.gutter{padding-left:6px}.md.gutter .docpara,.md.gutter .docpara.hasfind{grid-template-columns:2.8em minmax(0,1fr);gap:6px}}
