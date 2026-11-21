@@ -26,6 +26,7 @@ export function makeGit(exec = null) {
     }
   };
   git.calls = 0;
+  git.real = !exec;   // real git: an answer about commit ids may be memoized (after.mjs landKey); an injected exec is asked every time
   return git;
 }
 

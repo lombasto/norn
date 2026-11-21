@@ -13,6 +13,7 @@ import { deliverablesView } from '../engine/lib/deliverables.mjs';
 import { mergeQueue } from '../engine/lib/mergeq.mjs';
 import { makeEval } from '../engine/lib/after.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
+import { saveMemos } from '../engine/lib/gitfacts.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 
 test.after(cleanTmp);
@@ -125,6 +126,10 @@ test('git-perf: a not-landed answer outlives a main move, a merge commit is seen
   assert.equal(rows[s.ids.sq].state, 'done'); assert.equal(rows[s.ids.mrg].state, 'done');
   assert.equal(rows[goneId].state, 'unknown'); assert.match(rows[goneId].unknown_why, /gone from the repo/);
   assert.ok(!seen.some(a => a[0] !== 'cat-file' && a.some(x => String(x).includes(gone))), `no per-tip git about the gone tip: ${JSON.stringify(seen.filter(a => a.some(x => String(x).includes(gone))))}`);
+  // the walk's dlv: check (after.mjs) is memoized under main's shas: kept in <common>/norn-memo.json, asked again once main moves
+  assert.equal(makeEval(s.state)({ kind: 'dlv', id: s.ids.sq, state: 'merged' }).met, false);
+  saveMemos();
+  assert.ok(Object.keys(JSON.parse(fs.readFileSync(path.join(s.repo, '.git', 'norn-memo.json'), 'utf8'))).some(k => k.startsWith(`land main ${g(s.repo, 'rev-parse', 'main')}`)), 'memoized');
   g(s.repo, 'merge', '-q', '--squash', 'feat/sq'); g(s.repo, 'commit', '-q', '-m', 'squash sq');
   g(s.repo, 'merge', '-q', '--no-ff', '-m', 'merge: feat/mrg', 'feat/mrg');
   pushBranches(s.repo);
@@ -133,6 +138,7 @@ test('git-perf: a not-landed answer outlives a main move, a merge commit is seen
   assert.equal(rows[s.ids.mrg].state, 'merged', 'a merge commit: seen at once');
   assert.equal(rows[s.ids.sq].state, 'done', 'the squash waits for the refresh (the kept answer)');
   assert.ok(!seen.some(a => a[0] === 'cherry' || a[0] === 'commit-tree'), `no landing rule re-asked: ${JSON.stringify(seen.map(a => a[0]))}`);
+  assert.equal(makeEval(s.state)({ kind: 'dlv', id: s.ids.sq, state: 'merged' }).met, true, 'main moved: the dlv: check asks again (no lag there)');
   rows = view({ refresh: true });
   assert.equal(rows[s.ids.sq].state, 'merged', 'the refresh asks again: squash');
   assert.equal(view()[s.ids.sq].state, 'merged', 'and the landed answer stays');
