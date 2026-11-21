@@ -745,8 +745,9 @@ export function queuedAhead(o) {
     let rows;
     try { if (!runsOf(s).some(r => r.kind === 'run' && r.state === 'queued')) continue; rows = walkQueue(s, { now: o.now ?? Date.now(), act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
     for (const r of rows) {
-      const rc = EXECUTORS[r.executor]?.caps ?? [];
-      if (!rc.some(k => caps.includes(k)) || PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
+      if (PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
+      const rc = infoOf(readJson(queueSpecPath(s, r.id)) ?? {})?.caps ?? [];   // a typed executor's caps come with its entry (the queue spec's provider)
+      if (!rc.some(k => caps.includes(k))) continue;
       if (r.ready || (r.terms.length && r.terms.every(x => CAPACITY_TERM.test(x)))) out.push({ id: r.id, project: path.basename(s), priority: r.priority ?? DEFAULT_PRIORITY, position: r.position });
     }
   }

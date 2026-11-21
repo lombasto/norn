@@ -138,5 +138,5 @@ test('a typed executor: a direct start never passes an older queued run on the s
   assert.match(readiness(norn.state, { resources: busy })[0].terms.join(), /^resources: CPU busy 95 %/);
   const r = startRun(norn.opts({ ...grok, queue: true, resources: busy }));
   assert.equal(r.queued, true);
-  assert.match(r.why, new RegExp(`^1 queued run\(s\) of the same or a higher priority go first: norn ${old} P1 #1`));
+  assert.match(r.why, new RegExp(`^1 queued run\\(s\\) of the same or a higher priority go first: norn ${old} P1 #1`));
 });
