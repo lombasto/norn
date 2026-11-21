@@ -1,5 +1,5 @@
 // git-perf S1: the git-call profile behind NORN_GIT_PROFILE=<file>. Every git child of this process - whichever helper starts it
-// (dlvgit makeGit, jobguard boundedSync, a module's own spawnSync) - is counted with its verb, its wall time and its call site (the
+// (dlvgit makeGit, bounded.mjs boundedSync, a module's own spawnSync) - is counted with its verb, its wall time and its call site (the
 // first frame outside the spawn helpers), and at exit one JSON line per process is appended to <file>: child node processes (a
 // tick's fill, a supervisor) inherit the variable, so one file holds a whole tick. Off (the default): nothing is
 // patched. The patch rebinds node:child_process's exports (syncBuiltinESMExports), so `import { spawnSync }` sees it.
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const HELPERS = /[\\/](gitprof|jobguard|dlvgit|gitfacts)\.mjs|node:child_process|node:internal/;
+const HELPERS = /[\\/](gitprof|bounded|dlvgit|gitfacts)\.mjs|node:child_process|node:internal/;
 const isGit = f => /(^|[\\/])git(\.exe)?$/i.test(String(f || ''));
 // the git verb (args after -C <dir> / -c k=v), and for boundedSync's `jobguard run <ms> <cwd> "<git> args..."` the inner command line
 function verbOf(file, args) {
@@ -50,4 +50,3 @@ export function gitProfile(env = process.env) {
   return tally;
 }
 gitProfile();
-

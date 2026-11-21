@@ -9,9 +9,8 @@ import path from 'node:path';
 import { readEvents, recordsFile, fold, idNum } from './records.mjs';
 import { parseReady } from './ready.mjs';
 import { readScope, ahead } from './collide.mjs';
-import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts } from './gitfacts.mjs';
+import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines } from './gitfacts.mjs';
 
-const lines = s => String(s ?? '').split('\n').map(x => x.trim()).filter(Boolean);
 const have = p => !!p && fs.existsSync(p);
 /** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main).
  * ttlMs: a list read within ttlMs for the same HEAD and merge-base is reused (gitfacts worktreeFacts) */

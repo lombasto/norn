@@ -3,18 +3,20 @@
 //   - a worktree's HEAD (branch + sha) and a ref's sha are read from the files (.git, HEAD, loose refs, packed-refs): no process;
 //   - a fact about commit ids never changes (a merge-base of two shas, the files and the commit count between two shas): it is
 //     memoized per process and in <git common dir>/norn-memo.json across processes (a sha means the same commit in every worktree);
-//   - every git child runs through jobguard boundedSync: its timeout kills the whole tree, and the child is born inside a job, so a
+//   - every git child runs through bounded.mjs boundedSync: its timeout kills the whole tree, and the child is born inside a job, so a
 //     parent killed while it starts never leaves a suspended git.exe (the leak doctor found: raw spawnSync, no timeout).
 // A repo whose refs cannot be read from files (reftable) falls through to git for the same answer.
 import fs from 'node:fs';
 import path from 'node:path';
-import { boundedSync } from './jobguard.mjs';
+import { boundedSync } from './bounded.mjs';
 import { pathKey } from './config.mjs';
+import { readText as read } from './harness/common.mjs';
 
 export const GIT_MS = 60000;
 const MEMO_MAX = 4000;   // entries per repo memo file; the oldest go first
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-const lines = s => String(s ?? '').split('\n').map(x => x.trim()).filter(Boolean);
+/** the non-empty trimmed lines of a git output */
+export const lines = s => String(s ?? '').split('\n').map(x => x.trim()).filter(Boolean);
 
 /** git in cwd, bounded: stdout (trimmed) | null (a non-zero exit, a timeout, no git) */
 export function gitOut(cwd, args, { timeout = GIT_MS, input } = {}) {
@@ -23,7 +25,6 @@ export function gitOut(cwd, args, { timeout = GIT_MS, input } = {}) {
 }
 
 // ---------- refs from files ----------
-const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 /** a worktree's (or a repo's) git dir and common dir, or null when it is no git checkout */
 export function gitDirs(wt) {
   const dot = path.join(wt, '.git');
@@ -98,7 +99,7 @@ export function saveMemos() {
     const keys = Object.keys(cur);
     if (keys.length > MEMO_MAX) for (const k of keys.sort((a, b) => (cur[a].at ?? 0) - (cur[b].at ?? 0)).slice(0, keys.length - MEMO_MAX)) delete cur[k];
     const t = `${m.file}.${process.pid}.tmp`;
-    try { fs.writeFileSync(t, JSON.stringify(cur)); fs.renameSync(t, m.file); } catch { try { fs.unlinkSync(t); } catch { /* gone */ } }
+    try { fs.writeFileSync(t, JSON.stringify(cur)); fs.renameSync(t, m.file); } catch { try { fs.unlinkSync(t); } catch { /* no temp file left: the memo file stays as it was, the next exit writes again */ } }
     m.dirty.clear();
   }
 }
