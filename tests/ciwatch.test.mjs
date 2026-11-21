@@ -89,6 +89,19 @@ test('ciMain: one gh call per call at most - the list once per 10 min, the faile
   assert.equal(n, 2, 'one failed log read inside the TTL');
 });
 
+test('ciMain (L-14): gh fails after a red - the red is kept with its first-seen time and the answer carries the error; gh back = no error', () => {
+  const cacheFile = path.join(tmp('meta-ciwk-'), 'ci-main.json');
+  const gh = fakeGh([run(9, 'failure', '2026-11-09T17:43:00Z')]);
+  assert.equal(ciMain({ repo: 'o/r', cacheFile, gh, now: min(0) }).red.databaseId, 9);
+  const down = () => { throw new Error('gh: HTTP 502'); };
+  const c = ciMain({ repo: 'o/r', cacheFile, gh: down, now: new Date(T0 + CI_TTL_MS) });
+  assert.equal(c.red?.databaseId, 9, 'a red main stays red while gh is down');
+  assert.equal(c.red.seen, min(0).toISOString(), 'first seen kept: the gate fact does not move');
+  assert.match(c.error, /HTTP 502/);
+  const up = ciMain({ repo: 'o/r', cacheFile, gh, now: new Date(T0 + 2 * CI_TTL_MS) });
+  assert.equal(up.error, undefined); assert.equal(up.red.seen, min(0).toISOString());
+});
+
 test('gate fact: a red main run wakes the check-in once (ci:red:<run>, MAJOR); the same red does not re-wake; green leaving is no news; a new red wakes', () => {
   const state = path.join(tmp('meta-ciwg-'), 'state', 'demo');
   const gh = fakeGh([run(100, 'success', '2026-11-09T17:00:00Z')]);
