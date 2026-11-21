@@ -97,7 +97,7 @@ test('a clean deliverable lands with no Claude run: merged in a merge worktree, 
 test('a red quick check (a changed test file fails) queues an LLM MERGE with the failure attached; the same tip is not tried again', async () => {
   const f = fixture([['feat/b', { 'tests/b.test.mjs': RED_TEST }]]), x = { ...fakeCli(), ...fakeGh() };
   const r = await pass(f, x);
-  assert.deepEqual(r.land.fallback, [{ id: 'DLV-1', kind: 'red', queued: 'RUN-90' }], r.why);
+  assert.deepEqual(r.land.fallback, [{ id: 'DLV-1', kind: 'red', queued: 'RUN-90', stage: 'MERGE' }], r.why);
   assert.match(fs.readFileSync(path.join(f.state, 'mq', 'land', 'DLV-1-gate.log'), 'utf8'), /RED test tests\/b\.test\.mjs/);
   const run = x.calls.find(c => c[0] === 'run');
   assert.deepEqual(run.slice(0, 8), ['run', '--queue', '--project', f.project.file, '--lane', 'b', '--stage', 'MERGE']);
@@ -113,7 +113,7 @@ test('a red quick check (a changed test file fails) queues an LLM MERGE with the
   // land-push: the skip stays in words while the tip stands - on the deliverable (why_not) and the lane's next line
   const w = loadMqWhy(f.state)['feat/b'];
   assert.equal(w.kind, 'gate'); assert.equal(w.tip, f.tips['feat/b']);
-  assert.match(w.why, /^quick check red at [0-9a-f]{7}: .* exit 1 on the merge of .*; its MERGE RUN-90 is queued$/);
+  assert.match(w.why, /^quick check red at [0-9a-f]{7}: .* exit 1 on the merge of .*; RUN-90 is queued$/, 'the fake CLI records no run: no stage to name');
   const row = deliverablesView({ stateDir: f.state, project: f.project, git: ghGit() }).rows.find(r => r.id === 'DLV-1');
   assert.deepEqual([row.why_not.kind, row.why_not.text], ['mq', w.why]);
 });
@@ -125,6 +125,16 @@ test('a conflict with main queues the MERGE naming the files', async () => {
   const run = x.calls.find(c => c[0] === 'run');
   assert.match(fs.readFileSync(run[run.indexOf('--brief') + 1], 'utf8'), /Merge conflict: merging feat\/c [0-9a-f]{7} into main conflicts in README\.md/);
   assert.match(loadMqWhy(f.state)['feat/c'].why, /^merge conflict at [0-9a-f]{7}: merging feat\/c .* conflicts in README\.md; its MERGE RUN-90 is queued$/);
+});
+
+// merge-slot: on a home that is not the merge leader the MERGE queue is refused (exit 3): the conflicting branch gets its resolve run
+test('a conflict on a non-leader home queues the resolve run, not a MERGE', async () => {
+  const f = fixture([['feat/r', { 'README.md': 'lane\n' }]], { mainEdit: ['README.md', 'main\n'] }), calls = [];
+  const cli = args => { calls.push(args); return args[0] === 'run' ? { code: 3, out: 'refused: MERGE: merge leader is a - this home only opens PRs' } : { code: 0, out: 'RUN-91 queued' }; };
+  const r = await pass(f, { cli, ...fakeGh() });
+  assert.deepEqual(r.land.fallback, [{ id: 'DLV-1', kind: 'conflict', queued: 'RUN-91', stage: 'resolve' }], r.why);
+  assert.deepEqual(calls.map(c => c.slice(0, 3)), [['run', '--queue', '--project'], ['deliverables', 'resolve', 'DLV-1']]);
+  assert.match(loadMqWhy(f.state)['feat/r'].why, /; its resolve RUN-91 is queued$/);
 });
 
 // land-push: ui-shell, dwarf-names, ui-runs-lanes sat DONE with "not pushed" only in the mergeq output; the Lanes row said nothing

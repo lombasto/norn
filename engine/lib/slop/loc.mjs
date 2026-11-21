@@ -52,12 +52,13 @@ const dayOf = t => new Date(t).toISOString().slice(0, 10);
  * that changes nothing there is another project's landing (left out). */
 export function landings(repo, ref, since) {
   const below = gitRun(repo, ['rev-parse', '--show-prefix']).trim() !== '';
-  const log = gitRun(repo, ['log', '--first-parent', '--format=%H%x09%cI%x09%P%x09%s', `--since=${since}T00:00:00Z`, ref]).split('\n').filter(Boolean);
-  return log.map(l => {
-    const [sha, at, parents, subject] = l.split('\t');
+  // ONE git log (the slop meter reads 30 days of landings in its 3 s budget): each commit is \x01<header>\0\n<numstat>\0<numstat>\0...,
+  // a merge diffed against its first parent, the root commit against the empty tree (log.showRoot)
+  const log = gitRun(repo, ['-c', 'log.showRoot=true', 'log', '--first-parent', '--diff-merges=first-parent', '--numstat', '-z', '--no-renames', '--relative', '--format=%x01%H%x09%cI%x09%s', `--since=${since}T00:00:00Z`, ref]).split('\x01').filter(Boolean);
+  return log.map(chunk => {
+    const cut = chunk.indexOf('\0'), [sha, at, subject] = (cut < 0 ? chunk : chunk.slice(0, cut)).split('\t');
     const added = {}, deleted = {};
-    const p1 = parents.split(' ')[0];   // none = the root commit: everything it adds
-    const ns = gitRun(repo, p1 ? ['diff', '--numstat', '-z', '--no-renames', '--relative', p1, sha] : ['diff-tree', '-r', '--root', '--no-commit-id', '--numstat', '-z', '--no-renames', '--relative', sha]).split('\0').filter(Boolean);
+    const ns = cut < 0 ? [] : chunk.slice(cut + 1).replace(/^\n/, '').split('\0').filter(Boolean);
     if (below && !ns.length) return null;
     for (const x of ns) {
       const [a, d, f] = x.split('\t');
@@ -93,7 +94,7 @@ export function locReport(repo, { since = null, until = null, ref = null } = {})
   return { ref, head, ...(snaps.get(head) || snapshot(repo, head)), series, landings: landings(repo, ref, since) };
 }
 
-const num = n => n.toLocaleString('en-US');
+export const num = n => n.toLocaleString('en-US');
 export function formatLoc(r) {
   const L = [`lines of code (non-blank, git) at ${r.ref} ${r.head.slice(0, 7)}: ${CLASSES.map(c => `${c} ${num(r.totals[c])}`).join(', ')}; apart: ${APART.map(c => `${c} ${num(r.apart[c])}`).join(', ')}`];
   L.push('', 'area                      ' + CLASSES.map(c => c.padStart(8)).join(''));

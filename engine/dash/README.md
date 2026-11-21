@@ -60,7 +60,8 @@ refreshes the strip only, a record refetches the open page only when the page re
 The dashboard says these words and only these; a count of the same thing comes from one function, so every place agrees.
 - **Lane** (`L:<name>`): one line of work with its own branch and worktree (a LANE record). Not "thread", not "task".
 - **Run** (`RUN-n`): one session of an agent on a lane, from start to end. The Runs page lists them; the Overview's "Running" counts
-  runs in flight against the caps. **Worker** appears only in the cap names (`max_claude_workers`): the most runs at once.
+  runs in flight against the caps. **Worker** appears only in the cap names (`max_claude_workers`, `merge_workers`): the most runs at once.
+  The status strip shows the merge slot apart ("merge 1 / 1"): the merges in it are not counted against `max_claude_workers`.
 - **Needs you**: an Inbox row that waits for you - an open question, a fixer result to apply, an approval card, a login or setup to do,
   a parked lane, an unreviewed run. Answered questions (waiting for the next check-in), model advice and an enforce card already
   asked for (its directive exists) are listed in the Inbox for information but are not counted. ONE count: `terms.mjs` `needsYou` - the Overview card, the Inbox head, the Inbox badge, the page

@@ -214,7 +214,7 @@ test('policy.dod.scope: off (and the default) launches a claude run with no deny
   assert.equal(SETTINGS.indexOf(row), SETTINGS.findIndex(r => r.key === 'policy.dod.ready') + 1, 'the row sits beside dod.ready');
 });
 
-test('TEST-GOVERNANCE S1: a fake worker (a resumed run too) issuing the full suite is denied by the hook, naming the changed-file command; scope off still denies it; full_suite = allow lets it run', () => {
+test('TEST-GOVERNANCE S1 + test-diet S1: a fake worker (a resumed run too) issuing the full suite is denied, naming norn tests run --changed; a direct node --test / ci-suite --changed is sent to norn tests run; a free policy.tests passes every test command', () => {
   const w = world();
   fs.mkdirSync(path.join(w.state, 'runs'), { recursive: true });
   const project = policy => { const f = path.join(w.root, `project-${JSON.stringify(policy).replace(/\W/g, '')}.json`); fs.writeFileSync(f, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy })); return f; };
@@ -229,26 +229,31 @@ test('TEST-GOVERNANCE S1: a fake worker (a resumed run too) issuing the full sui
   for (const spec of [w.spec, off, { ...off, resumes: 1, resumeOf: 'RUN-0' }, { ...off, stage: 'MERGE' }]) {
     const why = hook(spec, 'cd ' + w.wt + ' && node engine/bin/ci-suite.mjs');
     assert.match(why, /^Norn refused this Bash call: a full test suite \(ci-suite\)/);
-    assert.match(why, /node engine\/bin\/ci-suite\.mjs --changed origin\/main/);
-    assert.equal(hook(spec, 'node engine/bin/ci-suite.mjs --changed origin/main'), null);
-    assert.equal(hook(spec, 'META_ROOT=/tmp/r node --test tests/a.test.mjs'), null);
+    assert.match(why, /norn tests run --changed/);
+    assert.match(hook(spec, 'node engine/bin/ci-suite.mjs --changed origin/main'), /`norn tests run --changed`/);
+    assert.match(hook(spec, 'META_ROOT=/tmp/r node --test tests/a.test.mjs'), /`norn tests run tests\/a\.test\.mjs`/);
+    assert.equal(hook(spec, 'norn tests run tests/a.test.mjs'), null, 'the cached runner itself passes (under budget)');
   }
   assert.match(hook(off, 'python -m pytest tests -q'), /python -m pytest <tests\/test_x\.py>/);
   // scope off: the full-suite deny only, no file guard
   assert.equal(hook(off, 'git push --force'), null);
   assert.match(hook(w.spec, 'git push --force'), /force/, 'a spec with no project file keeps the whole guard');
-  assert.equal(hook({ ...w.spec, ctx_from: project({ tests: { budget: { full_suite: 'allow' } }, dod: { scope: 'on' } }) }, 'node engine/bin/ci-suite.mjs'), null);
+  const free = project({ tests: { mode: 'changed', run_budget_min: 0, browser: 'allow', full_suite: 'allow' }, dod: { scope: 'on' } });
+  for (const c of ['node engine/bin/ci-suite.mjs', 'node engine/bin/ci-suite.mjs --changed origin/main', 'node --test tests/a.test.mjs']) assert.equal(hook({ ...w.spec, ctx_from: free }, c), null, c);
+  assert.match(hook({ ...w.spec, ctx_from: project({ tests: { full_suite: 'allow' } }) }, 'node engine/bin/ci-suite.mjs'), /norn tests run --changed/, 'full_suite allow alone: the suite may run, through norn tests run');
   assert.ok(refusals(w.state).some(r => /full test suite/.test(r.why)), 'the deny is recorded for the run feed and the Slop list');
 });
 
-test('TEST-GOVERNANCE S1: the launch installs the hook alone (shell tools) when the scope guard is off and full_suite = deny; none with allow; the Settings row', () => {
+test('TEST-GOVERNANCE S1 + test-diet S1: the launch installs the hook alone (shell tools) when the scope guard is off and policy.tests checks something; none with a free policy.tests; the Settings rows', () => {
   const w = world(), f = policy => { const p = path.join(w.root, `p-${Object.keys(policy).join('')}.json`); fs.writeFileSync(p, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy })); return p; };
   const s = scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ dod: { scope: 'off' } }) });
   assert.deepEqual(s, { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [scopeHookOf({ state: w.state })] }] } });
-  assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ tests: { budget: { full_suite: 'allow' } } }) }), undefined);
+  assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ tests: { mode: 'changed', run_budget_min: 0, browser: 'allow', full_suite: 'allow' } }) }), undefined);
+  assert.ok(scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ tests: { full_suite: 'allow' } }) }), 'the light / budget / browser defaults still need the hook');
   assert.equal(scopeOfLaunch({ ...w.spec, executor: 'claude', mode: 'read-only' }), undefined);
-  assert.equal(withDefaults({}).policy.tests.budget.full_suite, 'deny');
-  const row = SETTINGS.find(r => r.key === 'policy.tests.budget.full_suite');
+  assert.deepEqual(withDefaults({}).policy.tests, { mode: 'light', run_budget_min: 3, browser: 'ci', full_suite: 'deny' });
+  for (const k of ['mode', 'run_budget_min', 'browser']) assert.equal(sectionOf(SETTINGS.find(r => r.key === 'policy.tests.' + k)).join('/'), 'agents/rounds', k);
+  const row = SETTINGS.find(r => r.key === 'policy.tests.full_suite');
   assert.deepEqual([row.type, row.options, row.recommended, sectionOf(row).join('/')], ['enum', ['deny', 'allow'], 'deny', 'agents/rounds']);
   assert.match(row.help, /runs in CI/);
 });

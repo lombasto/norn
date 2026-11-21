@@ -24,6 +24,8 @@ const ratingsFile = state => path.join(slopDir(state), 'ratings.jsonl');
 export const slopHolds = state => readJ(holdsFile(state), {});
 export const slopReport = state => readJ(path.join(slopDir(state), 'report.json'), null);
 export const slopSeries = state => readJ(path.join(slopDir(state), 'series.json'), { days: {} });
+/** slop-meter S1: the days that carry a meter, oldest first: [{ day, ...point.meter }] (the band's hysteresis, the strip, the gauge) */
+export const meterSeries = state => Object.entries(slopSeries(state).days).filter(([, p]) => p?.meter).sort(([a], [b]) => (a < b ? -1 : 1)).map(([day, p]) => ({ day, ...p.meter }));
 
 export function activeWaivers(state, now = Date.now()) {
   return Object.values(fold(readEvents(recordsFile(state, 'waiver'))).items)

@@ -44,7 +44,7 @@ function suiteStep(p, rebase, dir, metaRoot) {
 // its monorepo subdir) - pytest with its python, another runner its own way - else Norn's node --test and ci-suite
 const runner = p => {
   const g = p?.merge?.gate, dir = g?.dir ?? subdirOf(p), cd = dir ? `cd ${dir} && ` : '';
-  if (!g?.cmd) return { one: '`node --test tests/<file>.test.mjs` each, with META_ROOT set', whole: '`node engine/bin/ci-suite.mjs` without --changed' };
+  if (!g?.cmd) return { one: '`norn tests run tests/<file>.test.mjs` (each file through the machine cache, on an empty META_ROOT)', whole: '`node engine/bin/ci-suite.mjs` without --changed' };
   const py = (String(g.cmd).match(/^\s*("[^"]+"|\S+)\s+-m\s+pytest\b/) || [])[1], whole = `the project's merge gate \`${gateText(g.dir === undefined && dir ? { ...g, dir } : g)}\``;
   return { one: py ? `\`${cd}${py} -m pytest <test_x.py>\` each` : `the project's own runner on one test file at a time${dir ? ` in ${dir}` : ''}`, whole };
 };

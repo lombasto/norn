@@ -26,7 +26,7 @@ import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
-import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile } from '../lib/runs.mjs';
+import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile, isLandingStage, mergeWorkers } from '../lib/runs.mjs';
 import { SHARE_KEY, RESERVE, shareOf } from '../lib/share.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax, loadDeliverables, isLanded } from '../lib/deliverables.mjs';
@@ -84,7 +84,8 @@ import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE, markDeclines, DECLINE_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
-import { testsView, testsFiles, suiteOf, testsPart } from '../lib/testscli.mjs';
+import { testsView, testsFiles, suiteOf, testsPart, runtimePart, RUNTIME_DAYS } from '../lib/testscli.mjs';
+import { cacheLog, cacheDirOf } from '../lib/testcache.mjs';
 import { repoFile } from '../lib/testtimes.mjs';
 import { projectHome, subdirOf, inDir } from '../lib/monorepo.mjs';
 import { guardChips } from '../lib/guard.mjs';
@@ -97,7 +98,8 @@ import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHist } from '../lib/slophist.mjs';
-import { slopHolds, openBlocks, slopFiles, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
+import { slopHolds, openBlocks, slopFiles, slopDir, meterSeries, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
+import { meterDelta, loadMeter } from '../lib/slop/meter.mjs';
 import { effectiveRules, explainOf, primeRules } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
 import { recordWeights } from '../lib/recordweight.mjs';
@@ -883,18 +885,23 @@ export function createDashboard(o) {
   // NORN-UI-NAV: the shell's status strip (GET /api/strip) - light: running runs counted from the run records (never agents(), the
   // run tree: it took 40-60 s on a big project), the needs-you count (terms.mjs), usage vs the guard and the hourly cap, the next
   // check-in, the pause; + the first-run box and the setup gaps the landing shows. Same numbers as the Overview's fields.
+  // merge-slot: the Claude pool as the fill splits it - the merges in the merge slots (budget.merge_workers) apart from the lane workers
+  const claudePool = (stages, m) => { const merge = Math.min(stages.filter(isLandingStage).length, mergeWorkers(m));
+    return { claude: { n: stages.length - merge, cap: m.max_claude_workers ?? null }, merge: { n: merge, cap: mergeWorkers(m) } }; };
   async function statusStrip(ps) {
     const m = withDefaults(settingsState(ps[0]).view), live = ps.flatMap(p => runsOf(st(p)).filter(r => r.state === 'running').map(r => ({ ...r, project: p.name })));
     const codexR = r => String(r.data.executor).startsWith('codex'), claudeR = r => !codexR(r) && (r.data.kind === 'worker' || r.data.kind === 'fake');
     let needs = 0; for (const p of ps) needs += needsYou(await inbox(p));
+    const meterP = ps.length === 1 && m.policy?.slop?.enabled ? ps[0] : null;
+    if (meterP) await prime({ files: [path.join(slopDir(meterP.state), 'series.json')] });
     const lanesRunning = ps.flatMap(p => lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running')));
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needs,
-      running: { claude: { n: live.filter(claudeR).length, cap: m.max_claude_workers ?? null }, codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
+      running: { ...claudePool(live.filter(claudeR).map(r => r.data.stage), m), codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
       pool: await poolOf(),
       usage: usage(ps[0], m), checkin: stripOf(ps, lanesRunning, m).checkin, strip: stripOf(ps, lanesRunning, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
-      setup: ps.length === 1 ? setupOf(ps[0]) : null };
+      setup: ps.length === 1 ? setupOf(ps[0]) : null, slop: meterP ? meterView(meterP, { full: false }) : null };
   }
   // end statusStrip
   // the header's worker pool, machine-wide (never the page's projects): the Claude worker slots in use of the cap (capacityOf, every
@@ -909,7 +916,7 @@ export function createDashboard(o) {
     for (const p of ps) { needs.push(...(await inbox(p)).filter(isNeed)); running.push(...lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running'))); tree.push(...await agents(p)); }
     const live = tree.filter(n => n.state === 'running');
     const isCodex = n => String(n.executor).startsWith('codex'), isClaude = n => n.kind === 'worker' || n.kind === 'fake';
-    const codex = live.filter(isCodex).length, claude = live.filter(isClaude).length;
+    const codex = live.filter(isCodex).length;
     // the Running table lists exactly the runs its header counts (VISUAL-B S1 bug 1): a counted run whose lane has no LANE record
     // (or whose lane row is not "running") gets a row from its agents-tree node; a LANE row keeps its fields
     const laneRow = new Map(running.map(l => [`${l.project}|${l.run}`, l]));
@@ -920,7 +927,7 @@ export function createDashboard(o) {
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
       .sort((a, b) => b.burn30 - a.burn30).slice(0, 5);
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
-      running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
+      running: { ...claudePool(live.filter(isClaude).map(n => n.stage), m), codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
       strip: stripOf(ps, running, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
@@ -1128,6 +1135,17 @@ export function createDashboard(o) {
     const c = insCache(p);
     return { v: c.v ?? (c.error ? { error: c.error } : null), pending: !c.v && !c.error };
   }
+  // slop-meter S1: the meter as the daily report stored it (series.json: a file read, never a scan) - the score, the band, the change in
+  // 7 days; full: + the groups, 30 days of the total and the 10 worst offenders, each with its absolute path (the Docs reader's path: key)
+  function meterView(p, { full = true } = {}) {
+    const s = meterSeries(p.state), last = s.at(-1);
+    if (!last) return null;
+    const head = { day: last.day, score: last.score, band: last.band, delta: meterDelta(s.slice(0, -1), last.day, last.score) };
+    if (!full) return head;
+    const home = projectHome(p), since = new Date(Date.parse(last.day + 'T00:00:00Z') - 29 * 864e5).toISOString().slice(0, 10);
+    return { ...head, bands: loadMeter().bands, groups: last.groups || {}, trend: s.filter(x => x.day >= since).map(x => ({ day: x.day, score: x.score })),
+      top: (last.top || []).map(o => ({ ...o, abs: path.join(home, o.file).replace(/\\/g, '/') })) };
+  }
   async function guardOf(p) {
     await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
@@ -1142,6 +1160,7 @@ export function createDashboard(o) {
     // not NEW to anyone, on that scan or later - only a crossing after it warns. It is written once the instruction scan has landed.
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
     let at = null; try { at = Date.parse(JSON.parse(await readA(bf, 'null')).at); } catch { at = null; }
+    const meter = !slop ? null : part('meter', () => meterView(p), null);
     const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
     // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
     const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
@@ -1152,7 +1171,7 @@ export function createDashboard(o) {
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
     // ui-spend-slop: the closed findings per type (lib/slophist.mjs), stepped only on a whole view - a pending scan or a failed part would close ids it merely lacks
     const hist = await slopHist(p.state, rows, { types: v.types.map(t => t.type), step: !ig.pending && !errors.length }).catch(() => null);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors, hist };
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors, hist, meter };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
@@ -1211,7 +1230,17 @@ export function createDashboard(o) {
       const lf = lane ? (lanes.includes(lane) ? await laneFiles(p, lane) : { error: `no lane ${lane} in ${p.name}` }) : null;
       return testsPart(p.state, 'impact', { picked: { lanes, lane, files: lf ? lf.files ?? [] : files, error: lf?.error ?? null } });
     }
+    if (name === 'runtime') return testsRuntime(p);
     return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [] });
+  }
+  // test-diet S1: the Run time view - the worker runs of the last RUNTIME_DAYS with their wall / test split (the Runs page's transcript
+  // tail, speed.mjs runSpeedA), the machine's test-cache log and the project's policy.tests
+  async function testsRuntime(p) {
+    const now = Date.now(), since = now - RUNTIME_DAYS * 86400e3, ended = r => (r.state === 'running' ? null : r.end?.at ?? r.updated);
+    const ws = runsOf(await stAsync(p)).filter(r => isWorker(r) && (r.state === 'running' || Date.parse(ended(r)) >= since));
+    const runs = await Promise.all(ws.map(async r => { const s = await runSpeedA(r, { projectsDir, cache, now }).catch(() => null);
+      return { id: r.id, lane: r.data.lane ?? null, state: r.state, started: r.created, ended: ended(r), speed: s ? { wall_ms: s.wall_ms, test_ms: s.test_ms } : null }; }));
+    return runtimePart({ runs, cache: cacheLog(cacheDirOf(p.state), { since }), policy: withDefaults(settingsState(p).view).policy, now });
   }
   // TESTS-RUNTIME: a test's file for the code viewer - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
   // no .. or link out, nothing under .git), text only, at most 2 MB

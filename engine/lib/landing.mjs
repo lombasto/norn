@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile, record } from './records.mjs';
 import { makeGit } from './dlvgit.mjs';
-import { acquireLock, laneWriter, isLandingStage } from './runs.mjs';
+import { acquireLock, laneWriter, isLandingStage, LEADER_ONLY_PRS } from './runs.mjs';
 import { mergeWtPath, slotKey, mergeParallel, ensureMergeWorktree, removeMergeWorktree } from './mergewt.mjs';
 import { renderMergeBrief, suiteMode } from './mergebrief.mjs';
 import { openProjectPrs, fwd, s7 } from './mergeland.mjs';
@@ -70,7 +70,7 @@ export async function landPass(o) {
     if (r.into !== cfg.main) { out.skips[r.branch] = { tip: r.tip, kind: 'target', why: `goes to its epic's branch ${r.into} first` }; continue; }
     const last = loadLand(stateDir, r.id);
     if (last?.tip === r.tip) {   // tried at this tip: its fallback MERGE (or a no-gate note) is the answer until the tip moves
-      if (last.status !== 'landed') out.skips[r.branch] = { tip: r.tip, kind: LAND_KIND[last.status] ?? last.status, why: `${LAND_WORDS[last.status] ?? last.status} at ${s7(r.tip)}: ${last.why}${last.queued ? `; its MERGE ${last.queued} is queued` : '; no MERGE queued'}` };
+      if (last.status !== 'landed') out.skips[r.branch] = { tip: r.tip, kind: LAND_KIND[last.status] ?? last.status, why: `${LAND_WORDS[last.status] ?? last.status} at ${s7(r.tip)}: ${last.why}${last.queued ? `; ${[runs.find(x => x.id === last.queued)?.data?.stage, last.queued].filter(Boolean).join(' ')} is queued` : '; none queued'}` };
       continue;
     }
     if (git(cfg.repo, ['rev-parse', '--verify', '--quiet', `refs/remotes/${cfg.remote}/${r.branch}`], { allowFail: true })?.trim() !== r.tip) { skip(r, 'unpushed', `not pushed at ${s7(r.tip)}: the tick's path to main pushes it`); continue; }
@@ -137,7 +137,8 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
   // a failed landing -> the LLM MERGE run with the failure attached (queued via the CLI, as the routine stage does)
   function fail(f, gated = false) {
     const st = { tip: r.tip, at: ts, status: f.kind, why: f.why, log: f.log ?? null };
-    const skip = q => ({ kind: LAND_KIND[f.kind], why: `${LAND_WORDS[f.kind]} at ${s7(r.tip)}: ${f.why}${q ? `; its MERGE ${q} is queued` : '; no MERGE queued'}` });
+    let stage = 'MERGE';
+    const skip = q => ({ kind: LAND_KIND[f.kind], why: `${LAND_WORDS[f.kind]} at ${s7(r.tip)}: ${f.why}${q ? `; its ${stage} ${q} is queued` : `; no ${stage} queued`}` });
     const done = runs.find(x => x.id === r.run) || null;
     if (!cli || !project.file) { saveLand(stateDir, r.id, { ...st, queued: null }); return { gated, skip: skip(null), why: `${r.id} ${f.kind}: ${f.why}; no norn CLI / project file to queue its MERGE` }; }
     const brief = fwd(path.join(project.briefs_dir || project.root || '.', `task-${String(r.lane).toUpperCase()}-MERGE-brief.md`));
@@ -146,10 +147,13 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
     fs.mkdirSync(path.dirname(brief), { recursive: true });
     fs.writeFileSync(brief, text);
     const cp = checkinPolicy(project.policy);
-    const q = cli(['run', '--queue', '--project', fwd(project.file), '--lane', r.lane, '--stage', 'MERGE', '--brief', brief, '--executor', 'claude',
+    let q = cli(['run', '--queue', '--project', fwd(project.file), '--lane', r.lane, '--stage', 'MERGE', '--brief', brief, '--executor', 'claude',
       ...(cp.merge_agent ? ['--agent', cp.merge_agent] : []), '--model', cp.merge_model, '--effort', cp.merge_effort, '--as', 'launcher']);
+    // merge-slot: a home that is not the merge leader never queues a MERGE (it could never start) - its conflicting branch gets the resolve
+    // run (merge main into the lane branch, fix, push; the tick then opens its PR); a red check or a slop block there has none
+    if (q?.code === 3 && String(q.out).includes(LEADER_ONLY_PRS)) { stage = 'resolve'; q = cli(['deliverables', 'resolve', r.id, '--project', fwd(project.file), '--as', 'launcher']); }
     const queued = q?.code === 0 ? (q.out.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/) || [])[0] ?? null : null;   // a home's id too (RUN-b-12)
     saveLand(stateDir, r.id, { ...st, brief, queued });
-    return { gated, skip: skip(queued), fallback: { id: r.id, kind: f.kind, queued }, why: `${r.id} ${f.kind}: ${f.why}; ${queued ? `MERGE ${queued} queued` : `norn run --queue failed: ${String(q?.out || '').slice(0, 160)}`}` };
+    return { gated, skip: skip(queued), fallback: { id: r.id, kind: f.kind, queued, stage }, why: `${r.id} ${f.kind}: ${f.why}; ${queued ? `${stage} ${queued} queued` : `${stage === 'MERGE' ? 'norn run --queue' : 'norn deliverables resolve'} failed: ${String(q?.out || '').slice(0, 160)}`}` };
   }
 }

@@ -8,7 +8,8 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
-import { jobguardExe, jobguardExeAsync, winQuote, holdGone } from '../engine/lib/jobguard.mjs';
+import { holdGone } from '../engine/lib/jobguard.mjs';
+import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/bounded.mjs';
 import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -131,7 +132,7 @@ process.exit(0);`;
 // proc-hygiene (2): the orphaned git / powershell were children of a killed child (suspended at birth). boundedSync's timeout kills
 // the whole tree - the grandchild too - and keeps spawnSync's shape (exit code, stdout, input, ETIMEDOUT, ENOENT).
 test('proc-hygiene: boundedSync kills the whole tree at its timeout; exit code, output and input pass through', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
-  const { boundedSync } = await import('../engine/lib/jobguard.mjs');
+  const { boundedSync } = await import('../engine/lib/bounded.mjs');
   const t = mkTmp('meta-bsy-'), gpid = path.join(t, 'g.pid');
   const kid = `const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); require('fs').writeFileSync(${JSON.stringify(gpid)}, String(c.pid)); setTimeout(()=>{},60000);`;
   const t0 = Date.now();
@@ -144,6 +145,25 @@ test('proc-hygiene: boundedSync kills the whole tree at its timeout; exit code, 
   const ok = boundedSync(process.execPath, ['-e', 'process.stdin.pipe(process.stdout); process.stdin.on("end", () => process.exit(3))'], { timeout: 10000, input: 'a "b" c' });
   assert.equal(ok.status, 3); assert.equal(ok.stdout, 'a "b" c');
   assert.equal(boundedSync('no-such-program-zz', [], { timeout: 5000 }).error?.code, 'ENOENT');
+});
+
+// git-perf S1: the async twin (branches.mjs / the sync loop's git) - the same tree kill and the same shape, off the event loop
+test('proc-hygiene: boundedAsync kills the whole tree at its timeout; exit code and output pass through', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {
+  const { boundedAsync } = await import('../engine/lib/bounded.mjs');
+  const exe = jobguardExe();
+  assert.ok(exe, 'the helper compiles');
+  const t = mkTmp('meta-bas-'), gpid = path.join(t, 'g.pid');
+  const kid = `const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); require('fs').writeFileSync(${JSON.stringify(gpid)}, String(c.pid)); setTimeout(()=>{},60000);`;
+  const t0 = Date.now();
+  const r = await boundedAsync(process.execPath, ['-e', kid], { timeout: 1500, exe });
+  assert.ok(Date.now() - t0 < 12000, 'bounded');
+  assert.equal(r.error?.code, 'ETIMEDOUT'); assert.equal(r.status, null);
+  const g = Number(fs.readFileSync(gpid, 'utf8'));
+  await waitFor(() => !alive(g), 5000).catch(() => { /* the assert below names it */ });
+  try { assert.equal(alive(g), false, `grandchild ${g} died with the timeout`); } finally { if (alive(g)) process.kill(g); }
+  const ok = await boundedAsync(process.execPath, ['-e', 'process.stdout.write("a \\"b\\" c"); process.exit(3)'], { timeout: 10000, exe });
+  assert.equal(ok.status, 3); assert.equal(ok.stdout, 'a "b" c');
+  assert.equal((await boundedAsync('no-such-program-zz', [], { timeout: 5000, exe })).error?.code, 'ENOENT');
 });
 
 // LEAK RED (CI 44141688462 mergelock, 43996467416 queue, Windows): a `jobguard hold` was alive after its test file, its supervisor

@@ -1,3 +1,15 @@
 /* The Slop page (pages/slop.mjs): the row a link named (&finding=<id>, e.g. Context's "in Slop") - highlighted where it stands in its
    open batch; index.html scrolls it into view once. */
 .glist .grow.hit{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent);padding-left:8px;scroll-margin:80px}
+/* slop-meter S1: the gauge above the views (a details: the summary is the gauge, the body the drawer) - the number, the band word, the
+   7-day change, then the five band segments with the needle; it wraps on a phone, never wider than the page. */
+.smeter{margin:0 0 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:8px 12px;max-width:100%}
+.smeter>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;list-style:none}
+.smeter>summary::-webkit-details-marker{display:none}
+.smnum{font-size:20px}.smturn.up{color:var(--bad)}.smturn.down{color:var(--ok)}
+.smbar{position:relative;display:flex;flex:1 1 160px;min-width:0;height:10px;border-radius:5px;overflow:visible}
+.smseg{display:block;height:100%}.smseg:first-child{border-radius:5px 0 0 5px}.smseg:last-child{border-radius:0 5px 5px 0}
+.smseg-0{background:var(--ok)}.smseg-1{background:var(--ok-bg)}.smseg-2{background:var(--warn-bg)}.smseg-3{background:var(--warn)}.smseg-4{background:var(--bad)}
+.smbar u{position:absolute;top:-4px;bottom:-4px;width:3px;margin-left:-1px;background:var(--ink);border-radius:2px}
+.smdrawer{margin-top:10px;display:grid;gap:12px;min-width:0}
+.smtop{margin:0;padding-left:22px}.smtop li{margin:3px 0;overflow-wrap:anywhere}

@@ -2,6 +2,7 @@
 // norn CLI (META-GENERAL-DESIGN 3.5). S1: `norn rec` - the only writer of records.jsonl.
 // State dir: --state <dir> or env META_STATE. Role: --as <role> or env META_ROLE. Run id: env META_RUN_ID.
 // Exit: 0 ok, 1 integrity / lock / refused view (`rec views`), 2 invalid input (with a usage line).
+import '../lib/gitprof.mjs';   // first: NORN_GIT_PROFILE=<file> counts every git call of this process (git-perf S1); unset, a no-op
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -414,6 +415,15 @@ function pickProject(flags, env) {
   return reg.length === 1 ? reg[0].config : null;
 }
 const noProjectHint = env => { const n = registeredProjects(env).map(p => p.name); return n.length ? ` (registered: ${n.join(', ')})` : ' (none registered: norn project new --root <repo>)'; };
+// test-diet S1: `norn tests run` inside a run with no --project / --state: the run's own state and project (its spec's ctx_from, whose
+// policy.tests applies) - a worker on a machine with several projects registered names neither, and must not need to
+function runWhere(flags, env) {
+  if (flags.project || flags.state || !env.META_RUN_STATE || !env.META_RUN_ID) return null;
+  let spec = null;
+  try { spec = JSON.parse(fs.readFileSync(path.join(env.META_RUN_STATE, 'runs', `${env.META_RUN_ID}.spec.json`), 'utf8')); } catch { return null; }
+  const project = spec?.ctx_from && fs.existsSync(spec.ctx_from) ? loadProject(spec.ctx_from) : null, state = env.META_RUN_STATE;
+  return { project, state, locks: path.join(path.dirname(path.resolve(state)), 'locks') };
+}
 function where(flags, env) {
   const pf = pickProject(flags, env);
   const project = pf ? loadProject(pf) : null;
@@ -1575,7 +1585,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'size') return sizeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
-  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
+  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, env, where: f => runWhere(f, env) ?? where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {
@@ -1700,7 +1710,7 @@ function mergeqCmd(argv, env, out, err) {
         if (flags.json) { out(JSON.stringify(r, null, 1)); return 0; }
         for (const u of r.updates) if (u.action !== 'skip') out(`${u.id} ${u.branch} update ${u.action}: ${u.why}`);
         for (const id of r.land?.landed || []) out(`LANDED ${id}`);
-        for (const f of r.land?.fallback || []) out(`MERGE ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
+        for (const f of r.land?.fallback || []) out(`${f.stage} ${f.id} (${f.kind}): ${f.queued || 'not queued'}`);
         out(`mergeq: ${r.why}`);
         if (r.batch?.dispatch && r.batch.status === 'green') out(`MERGE: norn ${r.batch.dispatch.join(' ')}`);
         if (r.fix) out(`FIX ${r.fix.id}: norn ${r.fix.run.join(' ')}`);

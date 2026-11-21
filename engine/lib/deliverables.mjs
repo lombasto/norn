@@ -11,7 +11,7 @@ import { pathKey } from './config.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv, fwd } from './dlvmerge.mjs';
 import { whyNotMerged } from './dlvwhy.mjs';
-import { loadMqWhy } from './mqwhy.mjs';
+import { loadMqWhy, loadFillWhy } from './mqwhy.mjs';
 import { queueOf } from './runs.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
@@ -101,8 +101,9 @@ function prsOf(it, merged, prs) {
  * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due,
  * why_not (OVERVIEW-TRUTH 2, dlvwhy.mjs whyNotMerged: a DONE row's reason it is not merged, { kind, text, warn, run?, url? }) | null,
  * pr (the last PR) | null, prs (every PR, newest first: url, number, run, opened, state, merged_at, closed_at; prsOf).
+ * refresh (git-perf S1; `norn branches --refresh`): ask the slow landing rules again for the tips whose answer predates main's last move.
  */
-export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null } = {}) {
+export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null, refresh = false } = {}) {
   const t0 = Date.now();
   const cfg = deliverableConfig(project);
   const items = Object.values(loadDeliverables(stateDir));
@@ -111,13 +112,14 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
   const scanner = repoScanner({ cfg, cache, git, install });
   const qs = questions || (() => { try { return Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items).filter(i => i.kind === 'question'); } catch { return []; } })();
   const rulingOf = id => qs.find(q => q.data?.deliverable === id && q.data?.ruling && q.state === 'open')?.id ?? null;   // the open 'cannot tell' ruling
+  scanner.prime(items);
   const later = items.map(it => {
     const d = it.data, lastDone = lastEv(it, ['done']);
     const doneUtc = lastDone?.data?.done_utc || lastDone?.ts || d.done_utc || it.created;
     const tipAtDone = lastDone?.data?.tip || d.tip || null;
     const target = d.target || (sameRepo(d.repo, cfg.repo) ? cfg.target : 'main');
     const sc = scanner.get(d.repo);
-    const j = judge(it, sc, { cfg, git }), g = j.g, m = j.merge;   // DLV-MERGED-TRUTH: the one rule
+    const j = judge(it, sc, { cfg, git, refresh }), g = j.g, m = j.merge;   // DLV-MERGED-TRUTH: the one rule
     if (g.tip) sc.tips.push(g.tip);
     const state = m ? (j.installed && target === 'install' ? 'installed' : 'merged') : j.unknown ? 'unknown' : 'done';
     const at_target = target === 'main' ? state === 'merged' || state === 'installed' : state === 'installed';
@@ -150,8 +152,8 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
   const st = (() => { try { return loadState(stateDir); } catch { return { items: {} }; } })(), queue = queueOf(Object.values(st.items));
   const readNotes = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
-  const mq = loadMqWhy(stateDir);   // land-push: the merge queue's skip of each branch
-  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r), why_not: whyNotMerged(r, { items: st.items, queue, readNotes, mq }) }));
+  const mq = loadMqWhy(stateDir), fill = loadFillWhy(stateDir);   // land-push: the merge queue's skip of each branch; merge-slot: why each queued merge waits
+  const rows = later.map(f => f()).map(r => ({ ...r, state_word: stateWord(r), why_not: whyNotMerged(r, { items: st.items, queue, readNotes, mq, fill }) }));
   scanner.finish();
   writeCache(stateDir, cache, before);
   rows.sort((a, b) => b.days - a.days);

@@ -22,7 +22,7 @@ export const stoppedLine = text => String(text ?? '').split(/\r?\n/).map(l => l.
  *   none     no merge queued (warn)
  * o: { items (loadState items), queue (runs.mjs queueOf rows: position), readNotes (file) -> text | null, mq (mqwhy.mjs loadMqWhy) }
  */
-export function whyNotMerged(row, { items = {}, queue = [], readNotes = () => null, mq = {} } = {}) {
+export function whyNotMerged(row, { items = {}, queue = [], readNotes = () => null, mq = {}, fill = {} } = {}) {
   if (!row || row.state !== 'done' || row.superseded || row.record_state === 'parked') return null;
   if (row.pr?.url) return { kind: 'pr', text: `PR #${row.pr.number ?? '?'} open, awaiting approval`, warn: false, url: row.pr.url };
   const all = Object.values(items), lane = row.lane;
@@ -32,7 +32,7 @@ export function whyNotMerged(row, { items = {}, queue = [], readNotes = () => nu
   const run = landing.find(r => r.state === 'running');
   if (run) return { kind: 'merging', text: `merging now as ${run.id}`, warn: false, run: run.id };
   const q = landing.find(r => r.state === 'queued' || r.state === 'claimed'), m = mqWhyOf(mq, row);
-  if (q) { const pos = queue.find(x => x.id === q.id)?.position ?? null; return { kind: 'queued', text: `merge queued as ${q.id}${pos ? ` (#${pos})` : ''}${m ? ` - ${m.why}` : ''}`, warn: false, run: q.id, position: pos }; }
+  if (q) { const pos = queue.find(x => x.id === q.id)?.position ?? null, w = fill[q.id]?.why; return { kind: 'queued', text: `merge queued as ${q.id}${pos ? ` (#${pos})` : ''}${w ? `, waits: ${w}` : ''}${m ? ` - ${m.why}` : ''}`, warn: false, run: q.id, position: pos }; }   // merge-slot: the fill's why (mqwhy.mjs loadFillWhy)
   const last = landing.find(r => r.state === 'exited' && Date.parse(r.created) >= done);
   if (last?.end?.outcome === 'stopped') {
     const line = stoppedLine(last.data.notes ? readNotes(last.data.notes) : null) || last.end.why || 'no STOPPED line in its notes';

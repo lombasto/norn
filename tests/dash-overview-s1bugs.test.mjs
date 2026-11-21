@@ -15,7 +15,7 @@ test('the Running card lists every run its header counts (a worker with no LANE 
     fs.writeFileSync(path.join(S, 'hb', `${id}.hb`), '{}');
     const o = (await f.get('/api/overview')).data, runs = o.running.lanes.map(l => l.run);
     assert.ok(o.running.claude.n >= 1, 'the running worker is counted');
-    assert.equal(o.running.lanes.length, o.running.claude.n + o.running.codex.n, 'one row per counted run');
+    assert.equal(o.running.lanes.length, o.running.claude.n + o.running.codex.n + o.running.merge.n, 'one row per counted run (merge-slot: the merges apart)');
     assert.ok(runs.includes(id), 'the worker without a LANE record has a row');
     assert.equal(o.running.lanes.find(l => l.run === id).name, 'nolane');
     assert.equal(o.running.lanes.find(l => l.name === 'render')?.run, 'RUN-2', 'a lane row keeps its LANE fields');

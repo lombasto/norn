@@ -154,7 +154,7 @@ const content = (rule, ctx, fn) => {
 
 // RM-45: `in` (code | comment | string: the other classes blanked), `unless` (a line that also matches is no finding), `cite`
 // (K22: the line must name a record id that resolves to an open item), `key: match` (the matched token, capture 1 or all)
-function patterns(rule, text, file, ctx) {
+export function patterns(rule, text, file, ctx) {
   const seen = rule.in ? masked(text, rule.in, file) : text, unless = rule.unless && new RegExp(rule.unless);
   return rule.patterns.flatMap(p => [...seen.matchAll(new RegExp(p, 'g'))].flatMap(m => {
     const line = lineAt(seen, m.index), lt = lineText(text, line);

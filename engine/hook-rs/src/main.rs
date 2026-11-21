@@ -16,7 +16,7 @@ use std::process::{exit, Command, Stdio};
 use std::time::UNIX_EPOCH;
 
 // ---------- a minimal JSON reader (the hook payload, the scope file) ----------
-enum J { Null, Bool, Num, Str(String), Arr(Vec<J>), Obj(Vec<(String, J)>) }
+enum J { Null, Bool(bool), Num, Str(String), Arr(Vec<J>), Obj(Vec<(String, J)>) }
 impl J {
     fn get(&self, k: &str) -> Option<&J> { if let J::Obj(v) = self { v.iter().rev().find(|(n, _)| n == k).map(|(_, x)| x) } else { None } }   // last key wins, as JSON.parse
     fn str(&self) -> Option<&str> { if let J::Str(s) = self { Some(s) } else { None } }
@@ -50,7 +50,7 @@ impl<'a> P<'a> {
                 }
             }
             b'"' => self.string().map(J::Str),
-            b't' => self.lit("true", J::Bool), b'f' => self.lit("false", J::Bool), b'n' => self.lit("null", J::Null),
+            b't' => self.lit("true", J::Bool(true)), b'f' => self.lit("false", J::Bool(false)), b'n' => self.lit("null", J::Null),
             b'-' | b'0'..=b'9' => { while self.i < self.b.len() && matches!(self.b[self.i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9') { self.i += 1; } Some(J::Num) }
             _ => None,
         }
@@ -181,7 +181,7 @@ fn in_scope(rel: &str, scope: &[String]) -> bool {
     scope.iter().any(|g| if g.contains(['*', '?']) { glob(g, rel) } else { rel == g || under(rel, g) })
 }
 
-struct Scope { worktree: String, free: Vec<String>, scope: Vec<String>, brief_same: bool }
+struct Scope { worktree: String, free: Vec<String>, scope: Vec<String>, brief_same: bool, tests_free: bool }
 fn file_ok(file: &str, cwd: Option<&str>, c: &Scope) -> bool {
     if !c.brief_same { return false; }   // scopeOf reads the brief at every call: an edited brief may carry another Scope
     if file.chars().any(|ch| ch as u32 > 0xFFFF || ch == '\u{FFFD}') { return false; }   // UTF-16 vs chars: Node decides
@@ -191,17 +191,19 @@ fn file_ok(file: &str, cwd: Option<&str>, c: &Scope) -> bool {
     c.scope.is_empty() || in_scope(&p[c.worktree.len() + 1..], &c.scope)
 }
 
-// Could scope.mjs (checkShell) or testcmd.mjs (classify, the full-suite deny) act on this command? Both act only on a shell word
+// Could scope.mjs (checkShell) or testpolicy.mjs (testsCheck: policy.tests) act on this command? Both act only on a shell word
 // whose base name (lowercased, .exe / .cmd dropped) is one of a few commands; every such word is a token here, in one of two
 // readings: split at every char outside [a-z0-9_-], once as written and once with quotes and backslashes removed (`g"i"t`, g\it).
-// More tokens than words = more calls for Node, never fewer. git and gh count only beside the subcommands their checks read.
-fn shell_may_act(cmd: &str) -> bool {
+// More tokens than words = more calls for Node, never fewer. git and gh count only beside the subcommands their checks read; the test
+// words (a test runner, `norn tests run`) only while the run's policy.tests has something to check (the scope file's tests_free).
+fn shell_may_act(cmd: &str, tests_free: bool) -> bool {
     let lower = cmd.to_lowercase();
     let bare: String = lower.chars().filter(|c| !matches!(c, '"' | '\'' | '\\')).collect();
     let mut toks: Vec<&str> = Vec::new();
     for s in [lower.as_str(), bare.as_str()] { toks.extend(s.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-')).filter(|t| !t.is_empty())); }
     let has = |w: &[&str]| toks.iter().any(|t| w.contains(t));
-    has(&["rm", "remove-item", "ri", "del", "erase", "rmdir", "rd", "--test", "ci-suite", "pytest", "npm", "yarn", "pnpm"])
+    let tests = !tests_free && (has(&["--test", "ci-suite", "pytest", "npm", "yarn", "pnpm"]) || (has(&["norn", "meta"]) && has(&["tests"]) && has(&["run"])));
+    tests || has(&["rm", "remove-item", "ri", "del", "erase", "rmdir", "rd"])
         || (has(&["git"]) && has(&["push", "reset", "clean", "branch", "worktree"]))
         || (has(&["gh"]) && has(&["repo", "api"]))
 }
@@ -211,7 +213,7 @@ fn surely_allowed(p: &J, c: &Scope) -> bool {
     let i = p.get("tool_input");
     let field = |k: &str| i.and_then(|i| i.get(k)).filter(|v| !v.nullish());
     match t {
-        "Bash" | "PowerShell" => match field("command") { None => true, Some(J::Str(cmd)) => !shell_may_act(cmd), Some(_) => true },   // not a string: checkTool / suiteCheck pass it
+        "Bash" | "PowerShell" => match field("command") { None => true, Some(J::Str(cmd)) => !shell_may_act(cmd, c.tests_free), Some(_) => true },   // not a string: checkTool / testsHook pass it
         "Edit" | "Write" | "NotebookEdit" => match field("file_path").or_else(|| field("notebook_path")) {
             None => true,
             Some(J::Str(f)) if f.is_empty() => true,
@@ -236,6 +238,7 @@ fn scope(a: &Args) -> ! {
     let sc = run.as_ref().and_then(|r| fs::read(Path::new(&a.state).join("runs").join(format!("{r}.scope.json"))).ok()).and_then(|b| parse(&b));
     let c = sc.as_ref().and_then(|j| Some(Scope {
         worktree: j.get("worktree")?.str()?.to_string(), free: j.get("free")?.strs()?, scope: j.get("scope")?.strs()?, brief_same: brief_same(j),
+        tests_free: matches!(j.get("tests_free"), Some(J::Bool(true))),   // absent (a file from before test-diet) = Node judges every test command
     }));
     match (c, parse(&input)) {
         (Some(c), Some(p)) if surely_allowed(&p, &c) => exit(0),
@@ -256,9 +259,14 @@ mod tests {
         assert!(!glob("engine/*.mjs", "engine/lib/x.mjs")); assert!(glob("a?c", "abc")); assert!(!glob("a?c", "a/c")); assert!(glob("eng**.md", "engine/x.md"));
     }
     #[test] fn shell() {
-        for c in ["grep -n x a.mjs", "git status", "git diff --stat", "node engine/bin/norn.mjs done", "git status --branch", "sed -n 1,5p f"] { assert!(!shell_may_act(c), "{c}"); }
-        for c in ["git push", "C:/Git/bin/git.exe push", "g\"i\"t push", "rm -rf x", "Remove-Item x", "node --test tests/a.test.mjs", "npm test", "bash -c 'gh repo delete x'", "node engine/bin/ci-suite.mjs"] { assert!(shell_may_act(c), "{c}"); }
+        for c in ["grep -n x a.mjs", "git status", "git diff --stat", "node engine/bin/norn.mjs done", "git status --branch", "sed -n 1,5p f", "norn tests for engine/lib/x.mjs"] { assert!(!shell_may_act(c, false), "{c}"); }
+        for c in ["git push", "C:/Git/bin/git.exe push", "g\"i\"t push", "rm -rf x", "Remove-Item x", "node --test tests/a.test.mjs", "npm test", "bash -c 'gh repo delete x'", "node engine/bin/ci-suite.mjs",
+            "norn tests run --changed", "node engine/bin/norn.mjs tests run tests/a.test.mjs"] { assert!(shell_may_act(c, false), "{c}"); }
+        // test-diet S1: a run whose policy.tests checks nothing passes its test commands here; the other checks stay
+        for c in ["node --test tests/a.test.mjs", "npm test", "node engine/bin/ci-suite.mjs", "norn tests run --changed"] { assert!(!shell_may_act(c, true), "{c}"); }
+        for c in ["git push", "rm -rf x", "node --test tests/a.test.mjs && git push"] { assert!(shell_may_act(c, true), "{c}"); }
     }
+    #[test] fn bools() { assert!(matches!(parse(b"{\"tests_free\":true}").unwrap().get("tests_free"), Some(J::Bool(true)))); assert!(matches!(parse(b"{\"a\":false}").unwrap().get("a"), Some(J::Bool(false)))); }
     #[test] fn ids() { assert!(run_id("RUN-12")); assert!(run_id("RUN-b-553")); assert!(!run_id("$META_RUN_ID")); assert!(!run_id("RUN-B-1")); assert!(!run_id("RUN-")); }
     #[test] fn json() {
         let j = parse(br#"{"tool_name":"Bash","tool_input":{"command":"a \"b\" \u00e9 \ud83d\ude00"},"n":[1,-2.5e3,true,null]}"#).unwrap();

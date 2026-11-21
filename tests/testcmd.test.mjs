@@ -2,7 +2,7 @@
 // the test files named and the runner. Pure: no files, no processes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, isTest, fullSuiteDeny } from '../engine/lib/testcmd.mjs';
+import { classify, isTest } from '../engine/lib/testcmd.mjs';
 
 const TABLE = [
   // the full suite in its spellings
@@ -32,6 +32,9 @@ const TABLE = [
   ['for f in a b; do node --test tests/$f.test.mjs; done', 'test', 'node', []],
   ['node "C:/n/engine/bin/norn.mjs" smoke', 'test', 'node', []],
   ['cargo test', 'test', 'cargo', []],
+  // test-diet S1: the run's node runner, with the paths it names
+  ['norn tests run tests/a.test.mjs --changed', 'test', 'norn', ['a.test.mjs']],
+  ['node engine/bin/norn.mjs tests run --changed --base origin/main', 'test', 'norn', []],
   // watchers: no bound but the run's own end
   ['tail -f state/x.log', 'watch', 'tail', []],
   ['tail -n 20 -F log.txt', 'watch', 'tail', []],
@@ -44,6 +47,11 @@ const TABLE = [
   ['git status && git log --oneline -3', null, null, []],
   ['grep -n "--test" engine/lib/x.mjs', null, null, []],
   ['for i in 1 2 3; do echo $i; done', null, null, []],
+  // ci-suite.mjs read, not run (these were refused as a full suite before test-diet S1)
+  ['cat engine/bin/ci-suite.mjs', null, null, []],
+  ['grep -n browser engine/bin/ci-suite.mjs', null, null, []],
+  ['node --check engine/bin/ci-suite.mjs', null, null, []],
+  ['norn tests for engine/lib/x.mjs', null, null, []],
 ];
 
 test('classify: each command -> its kind, runner and test files', () => {
@@ -62,14 +70,5 @@ test('classify: the strongest segment wins (a full suite after a test file is fu
   assert.equal(isTest('node engine/bin/ci-suite.mjs'), true);
   assert.equal(isTest('tail -f x.log'), false);
   assert.equal(isTest(undefined), false);
-});
-
-test('fullSuiteDeny: names the changed-file command for the runner, the rulings and CI', () => {
-  const node = fullSuiteDeny(classify('node engine/bin/ci-suite.mjs'));
-  assert.match(node, /node engine\/bin\/ci-suite\.mjs --changed origin\/main/);
-  assert.match(node, /node --test tests\/<file>\.test\.mjs/);
-  assert.match(node, /Q-28/);
-  assert.match(node, /runs in CI/);
-  assert.match(node, /resumed run/);
-  assert.match(fullSuiteDeny(classify('pytest tests')), /python -m pytest <tests\/test_x\.py>/);
+  assert.deepEqual(classify('META_ROOT=x node --test tests/a.test.mjs ./tests/b.test.mjs').paths, ['tests/a.test.mjs', './tests/b.test.mjs'], 'the paths as written (the hook reads them)');
 });

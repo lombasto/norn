@@ -11,14 +11,14 @@ const P = { name: 'kestrel', root: 'C:/r/kestrel', state: 'C:/s/kestrel', lane_d
 const fakeIo = made => ({ git: () => ({ ok: true, out: 'main' }), exists: f => !/\.md$/.test(f), mkdir: () => {}, state: () => ({ items: {} }),
   record: (s, ev) => ({ id: ev.kind === 'directive' ? 'DIR-1' : 'L:a' }), create: (f, t) => { made[f] = t; } });
 
-test('a lane brief carries one Tests: line: the changed files\' tests, never the full suite, and the rules\' path', () => {
+test('a lane brief carries one Tests: line: light (policy.tests), never the full suite or page tests, and the rules\' path', () => {
   const made = {}, r = runSteps(laneSteps(P, { name: 'a', task: 'Add a usage line' }), fakeIo(made));
   assert.equal(r.brief_created, true);
   const text = made[Object.keys(made)[0]];
   assert.match(text, /Add a usage line/);
   assert.equal(text.split('\n').filter(l => l.startsWith('Tests:')).length, 1);
   assert.ok(text.includes(BRIEF_TESTS));
-  assert.match(BRIEF_TESTS, /never the full suite/);
+  assert.match(BRIEF_TESTS, /^Tests: light \(policy\.tests\): norn tests run --changed .*never the full suite, no page tests/);
   assert.match(parseReady(text).tests, /docs\/TESTING\.md$/, 'the Ready parser reads it as the Tests line');
   assert.ok(fs.existsSync(TESTING_DOC), 'the rules file exists in the engine checkout');
   assert.doesNotMatch(BRIEF_TESTS, /`/, 'no backticks: the Done check runs no command from the placeholder');
