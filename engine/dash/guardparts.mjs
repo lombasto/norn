@@ -104,6 +104,15 @@ export function fixPick(g, { keys = [], picks = {} } = {}) {
   const all = [...ids].sort();
   return { ids: all, picks: out, batches: new Set(keys).size + out.length, set: fnv(JSON.stringify([all, out.map(p => [p.key, p.way])])) };
 }
+/** ui-context-docs: ONE finding from the Docs reader's line popover ({ id, way? }) -> fixPick's shape, from the same offered rows (sent,
+ *  declined and count rows are not offered); a your-call finding needs one of its ways */
+export function fixOne(g, { id, way = null } = {}) {
+  const r = (g.rows || []).filter(OFFER).find(x => x.id === id);
+  if (!r) throw bad(`${id} is not open to fix: sent already, declined, or a count. Reload.`);
+  const b = batchesOf([r])[0], picks = b.kind === 'call' ? [{ key: b.key, way, ids: [id] }] : [];
+  if (b.kind === 'call' && !(b.ways || []).includes(way)) throw bad(`${id} is your call: pick one of ${(b.ways || []).join(' | ')}`);
+  return { ids: [id], picks, batches: 1, set: fnv(JSON.stringify([[id], picks.map(p => [p.key, p.way])])) };
+}
 
 /** one sub-view's part of the guard view; throws (400) on an unknown name. fix: the batches (capped at the limit), each with its first
  * BATCH_ROWS rows - the open one (batch = its key) with every row up to the limit. finding = one row's id (Slop &finding=): its batch

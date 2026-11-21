@@ -183,16 +183,6 @@
 .rmst.sg-running { border-color: var(--rm-now); }
 .rmdrift { margin-top: 6px; padding: 3px 8px; font-size: 12px; color: var(--bad); border-left: 3px solid var(--bad); background: var(--bad-bg); }
 :root.norn .rmdrift { color: var(--ink); }
-/* the time line: the theme window on 0 .. 88 % (first activity -> now), NOW at 88 %, the future side after it (a dashed stub, no dates) */
-.rmtl { grid-column: 2; grid-row: 1 / span 4; position: relative; height: 16px; margin-top: 3px; }
-.rmtl > i { position: absolute; display: block; }
-.rmtrack { left: 0; width: 88%; top: 7px; height: 2px; background: var(--line); }
-.rmthr { top: 7px; height: 2px; background: var(--c); }
-.rmsp { top: 2px; height: 12px; min-width: 3px; background: var(--k, var(--mute)); }
-.rmknot { top: 4px; width: 8px; height: 8px; margin-left: -4px; background: var(--rm-past); }
-.rmnow { left: 88%; top: 0; bottom: 0; width: 2px; background: var(--rm-now); }
-.rmstub { left: calc(88% + 5px); right: 0; top: 7px; height: 0; border-top: 2px dashed var(--rm-fut); }
-.rmtl.empty .rmtrack { background: transparent; border-top: 1px dotted var(--line); height: 0; }
 /* the tree: theme -> past fold -> NOW -> present -> future fold */
 .rmth { margin: 0 0 10px; background: var(--panel); border: 1px solid var(--line); }
 .rmth > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; list-style: none; font-size: 14px; cursor: pointer; }
@@ -245,11 +235,9 @@
 .rmgk { display: none; color: var(--c); }
 .rmnone { padding: 0 4px 6px; }
 .rmboard .rmi { grid-template-columns: minmax(0, 1fr); margin-bottom: 5px; }
-.rmboard .rmtl { grid-column: 1; grid-row: auto; margin: 4px 0 0; }
 .rmboard .rmfold > .rmi { margin-left: 0; } .rmboard .rmfold > .rmi::before { display: none; }
 @media (max-width: 700px) {
   .rmi { grid-template-columns: minmax(0, 1fr); }
-  .rmtl { grid-column: 1; grid-row: auto; margin: 4px 0 2px; }
   .rmbody { padding: 8px 6px 6px 22px; } .rmbody::before { left: 9px; } .rmbody > .rmi::before, .rmbody > .rmfold::before { left: -13px; width: 11px; }
   .nowline { margin-left: -18px; } .rmfold > .rmi { margin-left: 6px; }
   .rmthread.mini { display: none; }

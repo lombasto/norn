@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { advisory } from '../engine/lib/advisory.mjs';
 import { CHECKS } from '../engine/lib/instrchecks.mjs';
 import { guardRows, guardView } from '../engine/lib/guardview.mjs';
-import { guardSummary, fixSheet, fixPick } from '../engine/dash/guardparts.mjs';
+import { guardSummary, fixSheet, fixPick, fixOne } from '../engine/dash/guardparts.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
@@ -59,6 +59,18 @@ test('fixPick: the ticked keys + the picked ways -> the finding ids; a wrong way
   assert.throws(() => fixPick(g, { keys: ['nope|drafts'], picks: {} }), /no batch/);
   assert.throws(() => fixPick(g, { keys: ['instr-c9|count'], picks: {} }), /no batch/);
   assert.throws(() => fixPick(g, { keys: [], picks: {} }), /nothing/);
+});
+
+test('fixOne: one finding from the Docs reader\'s line popover -> fixPick\'s shape; your call needs one of its ways; a count or a sent row is refused', () => {
+  const g = view(), row = k => g.rows.find(r => r.batch === k && !r.owner_file);
+  const d = row('instr-c16|drafts'), x = fixOne(g, { id: d.id });
+  assert.deepEqual([x.ids, x.picks, x.batches], [[d.id], [], 1]);
+  const c = row('rule-drift-claim|call'), y = fixOne(g, { id: c.id, way: 'Drop the claim' });
+  assert.deepEqual(y.picks, [{ key: 'rule-drift-claim|call', way: 'Drop the claim', ids: [c.id] }]);
+  assert.notEqual(fixOne(g, { id: c.id, way: 'Add the enforcement' }).set, y.set);
+  assert.throws(() => fixOne(g, { id: c.id }), /your call: pick one of/);
+  assert.throws(() => fixOne(g, { id: row('instr-c9|count').id }), /not open to fix/);
+  assert.throws(() => fixOne({ ...g, rows: g.rows.map(r => (r.id === d.id ? { ...r, sent: 'DEC-1' } : r)) }, { id: d.id }), /not open to fix/);
 });
 
 test('the Slop page: Fix all (n) beside his line; the sheet: ticks, two buttons per your call, Send the fixer (n), the usage line', () => {

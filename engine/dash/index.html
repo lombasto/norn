@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="/css/base.css">
 <link rel="stylesheet" href="/css/lanes.css">
 <link rel="stylesheet" href="/css/runs.css">
+<link rel="stylesheet" href="/css/context.css">
+<link rel="stylesheet" href="/css/roadmap.css">
 <link rel="stylesheet" href="/css/spend.css">
 <link rel="stylesheet" href="/css/slop.css">
 <link rel="stylesheet" href="/norn/norn.css">
@@ -57,15 +59,17 @@
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { loadTab, loadParts, partsKey, renderTab, healthStates, pageTitle, needsCount } from '/ui.mjs';
+import { rmScopeNext, rmUrlHash, parseRmHash, renderRmEditor, rmEditBody } from '/pages/roadmap.mjs';
 import { esc } from '/cells.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
-import { renderDeliverable, renderRmEditor, rmEditBody, dupRefusal, pauseMenu, stripCards } from '/ui.mjs';
+import { renderDeliverable, dupRefusal, pauseMenu, stripCards } from '/ui.mjs';
 import { matchText, syncLines } from '/pages/settings.mjs';
 import { LANE_SHOW, LANE_SHOW_DEFAULT } from '/pages/lanes.mjs';
 import { runsViewOf, runsViewQs } from '/pages/runs.mjs';
 import { acts as laneActs, laneEsc } from '/pages/lanes-acts.mjs';
 import { acts as runActs, runsClose } from '/pages/runs-acts.mjs';
+import { acts as contextActs } from '/pages/context-acts.mjs';
 import { acts as spendActs } from '/pages/spend-acts.mjs';
 import { acts as slopActs } from '/pages/slop-acts.mjs';
 import { createFeed } from '/pages/runs-feed.mjs';
@@ -503,7 +507,7 @@ const { F, mountFeed } = createFeed({ onFollow: (p, r) => feedGo(p, r) });
 // the Runs drawer: Esc closes it (the focus back on its row)
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.tab === 'runs' && S.run && document.getElementById('run-doc')) runsClose(C); });
 // the pages' handlers (pages/*-acts.mjs): one registry, one context
-const ACTS = { ...laneActs, ...runActs, ...spendActs, ...slopActs };
+const ACTS = { ...laneActs, ...runActs, ...contextActs, ...spendActs, ...slopActs };
 const C = { S, render: () => render(), get, post, $, go: g => goTo(g), act, err, tabUrl, lanesRepaint, runsRepaint, feedGo: (p, r) => feedGo(p, r) };
 // ---- roadmap edit drawer (META-ROADMAP S3): a row's / theme's "..." or + Add opens it; each action = one POST /api/roadmap/<op>
 // (the page token, one record by dashboard). The reply's tree repaints the tab and the drawer at once; every other tab gets the

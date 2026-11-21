@@ -54,9 +54,11 @@ test('findings sit beside their paragraph (Rendered) or line (Source); no line =
 
 const FILE = { key: 's1', name: 'CLAUDE.md', path: 'C:/r/CLAUDE.md', load: 'session', tokens: 1234, lines: 7, text: '# Rules\n\nNever push to main.\n\nRun the tests.\n\nEnd.',
   paras: [{ anchor: 'p1', line: 1, end: 1, age_days: 2, changed: '2026-11-12T00:00:00Z' }, { anchor: 'p3', line: 3, end: 3, age_days: 70, stale: true, changed: '2026-09-01T00:00:00Z' }, { anchor: 'p5', line: 5, end: 5 }, { anchor: 'p7', line: 7, end: 7 }],
-  findings: [{ id: 'A-1', check: 14, line: 3, severity: 'medium', why: 'a never line nothing enforces', fix: { action: 'bind it with a hook' } }, { id: 'A-9', check: 16, severity: 'low', why: 'history in an always-loaded file' }] };
+  findings: [{ id: 'A-1', check: 14, line: 3, severity: 'medium', surface: 'emphasis density', why: 'a never line nothing enforces', fix: { action: 'bind it with a hook', kind: 'call', ways: ['Bind it with a hook or gate', 'Accept it as prose'] } },
+    { id: 'A-3', check: 15, line: 3, severity: 'low', surface: 'dated-model phrases', why: 'names a dated model', fix: { action: 'drop the date', kind: 'drafts' } },
+    { id: 'A-9', check: 16, severity: 'low', surface: 'history in an always-loaded file', why: 'history in an always-loaded file', fix: { action: 'move it', kind: 'drafts', tier: 'flag' } }] };
 
-test('the Docs page: the grouped list beside the reader; the file rendered with each finding beside its paragraph; Source puts it beside its line', () => {
+test('the Docs page: the grouped list beside the reader; line numbers in the gutter, a line\'s findings one gutter marker whose popover names each rule and sends it to the fixer', () => {
   const l = docsList({ v: view(), docs: DOCS });
   const base = { project: 'kestrel', ...l, pending: false, sig: 's', limit: 40, file: 's1', picked: false, doc: FILE, parts_loading: false };
   const html = renderTab('docs', base, { project: 'kestrel' });
@@ -65,14 +67,20 @@ test('the Docs page: the grouped list beside the reader; the file rendered with 
   assert.match(html, /57 files/);
   assert.match(html, /id="docf-s1"[^>]*data-docfile="s1" aria-current="true"/);
   assert.match(html, /docs-g-memory[^]*showing 40 of 46[^]*data-act="sub-more"/);
-  assert.match(html, /id="ins-p3"><div class="docptext">[^]*Never push to main\.[^]*<aside class="docfind">[^]*C14 L3[^]*a never line nothing enforces[^]*fix: bind it with a hook/, 'the finding beside its paragraph');
-  assert.match(html, /70 d · STALE/, 'the age badge stays');
+  assert.match(html, /id="ins-p3"><div class="dgut"><span class="dln gage-old" title="70 d old[^"]*STALE">3<\/span><details class="dmark"><summary class="chip warn" aria-label="2 findings on line 3">2<\/summary><div class="dpop"[^>]*>[^]*<b>emphasis density<\/b> <span class="small mute">line 3 · check 14[^]*a never line nothing enforces[^]*Fix:<\/span> bind it with a hook/, 'the gutter: the line number (coloured by its age), then one marker for the line');
+  assert.match(html, /<\/details><\/div><div class="docptext"><p>Never push to main\.<\/p>\s*<\/div><\/div>/, 'the text itself carries no line number and no finding');
+  assert.doesNotMatch(html, /<aside class="docfind">|class="small mute">L\d/, 'nothing inline any more');
+  assert.match(html, /data-act="doc-fix" data-id="A-1" data-way="Bind it with a hook or gate"[^]*data-act="doc-fix" data-id="A-1" data-way="Accept it as prose"/, 'your call: one button per way');
+  assert.match(html, /data-act="doc-fix" data-id="A-3"[^>]*>Send to the fixer</, 'a drafts finding: one button');
+  assert.doesNotMatch(html, /data-act="doc-fix" data-id="A-9"/, 'a finding outside the project (tier flag) has no button');
+  assert.match(html, /id="ins-strip"[^]*loaded whole with every session: ~0 loads a day/, 'bug 4: an always-loaded file is read on every load');
+  assert.doesNotMatch(html, /read 0x/);
   assert.match(html, /id="doc-file-findings"[^]*history in an always-loaded file/, 'a finding with no line: about the whole file');
   assert.match(html, /data-act="doc-view" data-view="md" aria-pressed="true"/);
   assert.match(html, /data-act="doc-back"/);
   assert.match(html, /<h1 id="rules">Rules<\/h1>/);
   const src = renderTab('docs', { ...base, src: true }, { project: 'kestrel' });
-  assert.match(src, /id="doc-src"/); assert.match(src, /id="docl-3"[^>]*><td class="ln mute">3<\/td><td class="lt"><code>Never push to main\.<\/code><\/td><td><aside class="docfind">[^<]*<div class="insfind">/);
+  assert.match(src, /id="doc-src"/); assert.match(src, /id="docl-3"[^>]*><td class="ln mute"><details class="dmark">[^]*<\/details>3<\/td><td class="lt"><code>Never push to main\.<\/code><\/td><\/tr>/, 'Source: the marker beside the line number, no third column');
   assert.match(src, /data-view="src" aria-pressed="true"/);
   assert.match(renderTab('docs', { ...base, doc: null, parts_loading: true }, {}), /id="docs-loading"/);
   assert.match(renderTab('docs', { ...base, picked: true }, {}), /class="docsplit picked"/, 'a picked file: the phone shows the reader');
