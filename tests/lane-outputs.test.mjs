@@ -223,7 +223,7 @@ test('laneDetail: Findings verbatim first, what happens next, the follow-up, eve
   const h = laneDetail(d, { project: 'p', now: Date.parse('2026-11-19T13:00:00Z') });
   assert.ok(h.indexOf('id="lane-findings"') < h.indexOf('id="lane-outputs"'));
   assert.match(h, /<strong>Lanes<\/strong>/);
-  assert.match(h, /needs your input: 2 rulings/); assert.match(h, /Open decisions: 2/); assert.match(h, /background work cut off: Measure/); assert.match(h, /last line/);
+  assert.match(h, /needs your input: 2 rulings/); assert.match(h, /Questions: 2/); assert.match(h, /background work cut off: Measure/); assert.match(h, /last line/);
   assert.match(h, /S1<\/b> outputs - on the roadmap as RM-40, horizon next/); assert.match(h, /picked by dashboard/);
   assert.match(h, /answer: \(default\) details - owner/);
   assert.match(h, /href="https:\/\/github.com\/o\/r\/pull\/12"[^>]*>PR #12<\/a> <span class="chip ok">merged<\/span> merged/);
