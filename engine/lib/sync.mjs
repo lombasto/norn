@@ -18,6 +18,7 @@ import { writeBlob, secretsOf, ensureLedger, ledgerConfig } from './ledger.mjs';
 import { rgit, fetchRefs, claimsLock, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { fedOf } from './fed.mjs';
 import { readJsonS } from './fsnap.mjs';
+import { updateMachine } from './config.mjs';
 import { localClaims, observeClaims, updateSync, listClaims, registerHome, homeKey, projectKey } from './claims.mjs';
 import { syncCut, cutLines } from './synccut.mjs';
 import { ghSlug } from './mergeland.mjs';
@@ -471,7 +472,7 @@ export function syncJoin(o) {
     }
     // 4. machine.json (the doorbell topic is a machine.json secret, never in the ledger: SPEC 7)
     if (JSON.stringify(ledger) === JSON.stringify(L)) lines.push('4. machine.json ledger: unchanged');
-    else { writeAtomic(machineFile, JSON.stringify({ ...machine, ledger }, null, 2) + '\n'); changed = true; lines.push(`4. machine.json ledger: remote, home_id ${home}${topic ? ', doorbell topic' : ''}`); }
+    else { updateMachine(machineFile, () => ({ ledger })); changed = true; lines.push(`4. machine.json ledger: remote, home_id ${home}${topic ? ', doorbell topic' : ''}`); }
     // 5. the cut (S1b), one per joined project: paused here unless the owner paused it, the dry run, then applied (resumed at the end)
     for (const p of joined) {
       if (homeOf(p.state)?.id === home) { lines.push(`5. ${p.name}: cut before as home ${home}`); continue; }
