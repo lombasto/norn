@@ -254,9 +254,12 @@ const copyNames = runs => { const m = new Map(); for (const r of [...runs].sort(
 const withNames = (f, names) => { for (const r of Object.values(f.items)) if (r.kind === 'run' && names.has(r.data?.dwarf)) r.data = { ...r.data, dwarf_name: names.get(r.data.dwarf) }; return f; };
 const ownNames = stateDir => { try { return crewNames(readEvents(crewFile(stateDir))); } catch { return new Map(); } };
 
+// only a missing file is solo: one that does not parse is an integrity error (read as solo, new ids would lose the home prefix)
 const idFile = (stateDir, file, re) => {
+  const raw = readText(path.join(stateDir, file));   // snapshot-aware (recordAsync primes it); null = no such file
+  if (raw === null) return null;
   let j;
-  try { j = JSON.parse(readText(path.join(stateDir, file))); } catch { return null; }   // snapshot-aware (recordAsync primes it)
+  try { j = JSON.parse(raw); } catch { throw new RecordError(`${path.join(stateDir, file)}: not JSON - integrity error`, 1); }
   return typeof j?.id === 'string' && re.test(j.id) ? j : null;
 };
 // RM-46 S1a: <state>/home.json { id, bare_home } = a synced project's state dir (the cut writes it): new ids <P><id>-n, lanes
