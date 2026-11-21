@@ -96,14 +96,14 @@ test('the Inbox deliverables list: another home\'s merged DLV is merged and at i
   assert.match(html, /Done, not installed <b>0<\/b>/); assert.doesNotMatch(html, /DLV-a-7/);
 });
 
-test('needs you: a parked lane with shipped work or no branch left asks nothing; one with a branch and unlanded work does', () => {
-  const state = mkTmp('lt-needs-');
-  for (const n of ['shipped-one', 'no-branch', 'has-branch']) { lane(state, n); park(state, n, 'deferred'); }
+test('needs you: a parked lane with shipped work, no branch left or nothing off main asks nothing; one with unlanded work does', () => {
+  const state = mkTmp('lt-needs-'), names = ['shipped-one', 'no-branch', 'on-main', 'has-branch'];
+  for (const n of names) { lane(state, n); park(state, n, 'deferred'); }
   const d = dlv(state, 'shipped-one'); mergedEv(state, d, 30); dlv(state, 'has-branch');
   const ask = n => laneAsksOwner(laneHooks(state), n, { parked: true });
-  assert.deepEqual(['shipped-one', 'no-branch', 'has-branch'].map(ask), [false, true, true], 'no branch scan yet: unknown keeps the row');
-  fs.writeFileSync(path.join(state, 'branches.json'), JSON.stringify({ refs: [{ name: 'norn/has-branch', merged: false }] }));
-  assert.deepEqual(['shipped-one', 'no-branch', 'has-branch'].map(ask), [false, false, true]);
+  assert.deepEqual(names.map(ask), [false, true, true, true], 'no branch scan yet: unknown keeps the row');
+  fs.writeFileSync(path.join(state, 'branches.json'), JSON.stringify({ refs: [{ name: 'norn/has-branch', merged: false }, { name: 'norn/on-main', merged: true }] }));
+  assert.deepEqual(names.map(ask), [false, false, false, true]);
   const items = Object.values(loadState(state).items), h = laneHooks(state);
   assert.equal(items.filter(i => needsYou(i, h, state)).length, 1, 'norn_inbox counts the one real item');
 });

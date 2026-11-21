@@ -51,7 +51,9 @@ export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = 
     const name = laneNameIn(l.id, home), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id)), r = runs.at(-1);
     if (runs.some(x => LIVE.includes(x.state))) continue;
     const row = (rule, act, text, why, at = null) => out.push({ lane: name, id: l.id, rule, act, at, run: r?.id ?? null, text, why });
-    const doneLane = l.state !== 'parked' && (l.state === 'done' || (r?.state === 'exited' && r.end?.outcome === 'done'));
+    // b = its newest run that is no queue bookkeeping (lanes.mjs BOOKKEEPING: a MERGE entry withdrawn before it started is no outcome)
+    const b = runs.filter(x => !['withdrawn', 'filled'].includes(x.state)).at(-1) ?? r;
+    const doneLane = l.state !== 'parked' && (l.state === 'done' || (b?.state === 'exited' && b.end?.outcome === 'done'));
     // LANE-TRUTH: a parked lane, or one whose last run ended without DONE, whose work is on main archives at the next tick (its one state
     // is shipped; a done one ages out below). Its words never repeat "stopped" / "parked": the row already says shipped.
     const sh = doneLane ? null : shipped(name, r);
@@ -63,9 +65,9 @@ export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = 
       continue;
     }
     if (doneLane) {
-      if (!archiveDays || !r) continue;
-      const ended = Date.parse(endTs(r) ?? l.updated);
-      if (!merged(name, r)) { row('archive', 'wait', 'done, not merged: stays until its work is on main', null); continue; }
+      if (!archiveDays || !b) continue;
+      const ended = Date.parse(endTs(b) ?? l.updated);
+      if (!merged(name, b)) { row('archive', 'wait', 'done, not merged: stays until its work is on main', null); continue; }
       const at = ended + archiveDays * D;
       row('archive', 'tick', `archives ${inDays(at - now)}`, `done, its work merged, nothing open: archived ${archiveDays} d after its end (policy.done_lanes.archive_days)`, new Date(at).toISOString());
       continue;
@@ -93,10 +95,12 @@ export function laneHooks(state) {
   // active list), and landed / merged for its rule too - the row never says shipped while its rule still waits
   const shipped = laneShippedIn(state, ps), home = homeOf(state)?.id ?? null;
   const has = k => (l, r) => !!r.landed || !!c?.[k]?.includes(l) || !!shipped(l, r);
-  // LANE-TRUTH: does the lane still have a branch? (branches.json, the tick's `norn branches --refresh`; no scan yet = null: unknown)
-  const br = readJsonS(path.join(state, 'branches.json')), names = br ? new Set((br.refs || []).map(r => r.name)) : null;
-  const branchLeft = (l, lane = null) => !names ? null : laneBranchNames(l, { home, lane, dlvs: shipped.dlvs(l) }).some(b => names.has(b));
-  return { home, landed: has('landed'), merged: has('merged'), shipped, branchLeft, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
+  // LANE-TRUTH: the lane's branch (branches.json, the tick's `norn branches --refresh`): gone (none of its names is a branch), merged (every
+  // one left is on main: ancestry or cherry - nothing left to land), open, or null (no scan yet: unknown)
+  const br = readJsonS(path.join(state, 'branches.json')), refs = br ? new Map((br.refs || []).map(r => [r.name, r])) : null;
+  const branchOf = (l, lane = null) => { if (!refs) return null; const xs = laneBranchNames(l, { home, lane, dlvs: shipped.dlvs(l) }).map(b => refs.get(b)).filter(Boolean);
+    return !xs.length ? 'gone' : xs.every(r => r.merged) ? 'merged' : 'open'; };
+  return { home, landed: has('landed'), merged: has('merged'), shipped, branchOf, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
 }
 // LANE-TRUTH: shipped (lane, ...runs) -> why | null over a state dir's deliverable records (superseded ones included) and its lane paths:
 // dlvmerge.mjs laneShipped, the one rule. .dlvs(lane) = the lane's deliverable records.
@@ -118,9 +122,10 @@ export function othersShipped(state) {
   });
 }
 /** LANE-TRUTH: does an Inbox row about a lane need the owner? Needs you holds an open question, or a lane stopped with no shipped work:
- * a parked lane (parked: true; rec = its LANE record) whose work shipped or that has no branch left asks nothing, nor does an unreviewed
- * stopped run of a shipped lane. h = laneHooks(state); no lane = not a lane row (true). The dash Inbox and norn_inbox (mcp.mjs) read it. */
-export const laneAsksOwner = (h, lane, { parked = false, rec = null } = {}) => !lane || (!h.shipped(lane) && !(parked && h.branchLeft(lane, rec) === false));
+ * a parked lane (parked: true; rec = its LANE record) whose work shipped, that has no branch left or whose branch holds nothing off main
+ * asks nothing, nor does an unreviewed stopped run of a shipped lane. h = laneHooks(state); no lane = not a lane row (true). The dash
+ * Inbox and norn_inbox (mcp.mjs) read it. */
+export const laneAsksOwner = (h, lane, { parked = false, rec = null } = {}) => !lane || (!h.shipped(lane) && !(parked && ['gone', 'merged'].includes(h.branchOf(lane, rec))));
 // the names a lane's branch may have: its LANE record's, its deliverables', norn/<lane> and the multi-home form norn/<home>/<lane>
 export const laneBranchNames = (l, { home = null, lane = null, dlvs = [] } = {}) =>
   [...new Set([lane?.data?.branch, ...dlvs.map(d => d.data?.branch), `norn/${l}`, home ? `norn/${home}/${l}` : null].filter(Boolean))];
