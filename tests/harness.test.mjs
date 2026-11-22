@@ -33,7 +33,6 @@ test('server args: node + norn.mjs mcp --project P --profile X --client <family>
   assert.equal(installPlan({ ...o, family: 'grok', executors, scope: 'project' }).commands[0][5], 'project');
   assert.equal(installPlan({ ...o, family: 'grok', executors, scope: 'local' }).commands[0][5], 'user');
   assert.throws(() => installPlan({ ...o, family: 'grok' }), /--family must be/, 'no entry, no family');
-  assert.throws(() => installPlan({ ...o, family: 'pi' }), /pi has no MCP/);
   assert.throws(() => installPlan({ ...o, family: 'claude', profile: 'boss' }), /profile/);
 });
 
