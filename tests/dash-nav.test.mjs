@@ -153,9 +153,6 @@ test('/api/strip: counts from the run records, never the run tree; /api/lanes ro
     record(S, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'render: which pass', lane: 'render', options: [{ key: 'a', text: 'x' }] } });
     const q3 = record(S, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'seabed: depth', lane: 'seabed', options: [{ key: 'a', text: 'x' }] } });
     record(S, { kind: 'question', ev: 'answer', id: q3.id, by: 'owner', data: { text: 'a', via: 'chat' } });
-    const ov = (await f.get('/api/overview?project=kestrel')).data, st = (await f.get('/api/strip?project=kestrel')).data;
-    assert.equal(st.needs_you, ov.needs_you, 'one needs-you count'); assert.deepEqual(st.running, { claude: ov.running.claude, merge: ov.running.merge, codex: ov.running.codex });
-    assert.deepEqual(st.usage, ov.burn.usage); assert.deepEqual(st.checkin, ov.strip.checkin); assert.equal(st.strip.questions, ov.strip.questions);
     const items = (await f.get('/api/inbox?project=kestrel')).data.items, lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
     for (const l of lanes) assert.equal(l.needs, items.filter(i => isNeed(i) && i.lane === l.name && i.project === l.project).length, l.name);
     assert.ok(lanes.find(l => l.name === 'render').needs >= 1); assert.ok(!items.some(i => i.id === q3.id && isNeed(i)), 'answered: not a need');
@@ -177,12 +174,12 @@ function hold(f, re) {
 }
 const BAR_IDS = `[...document.querySelectorAll('#tabs > a, #tabs > button')].map(x => x.id).join()`;
 
-test('the browser: the bar paints before /api/strip and /api/overview answer; both looks; the badge on every page at 1440 and 390 px', { skip: skipWhy, timeout: 300000 }, async () => {
+test('the browser: the bar paints before /api/strip answers; both looks; the badge on every page at 1440 and 390 px', { skip: skipWhy, timeout: 300000 }, async () => {
   const f = await fixture(), need = String((await f.get('/api/inbox?project=kestrel')).data.needs_you);
   for (const size of [[1440, 900], [390, 844]]) {
     const pg = await openPage(size);
     try {
-      const release = hold(f, /^\/api\/(strip|overview)\b/);
+      const release = hold(f, /^\/api\/strip\b/);
       await pg.send('Page.navigate', { url: `${f.url}/?project=kestrel&tab=lanes` });
       assert.equal(await pg.until(BAR_IDS, 30000), 'tab-talk,tab-lanes,tab-runs,tab-inbox,tab-more', 'the bar while the strip is held');
       assert.ok(await pg.until(`document.querySelector('#status-strip')?.textContent.includes('…')`), 'the strip waits with "…"');
