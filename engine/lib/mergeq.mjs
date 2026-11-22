@@ -213,9 +213,10 @@ export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acqu
 /**
  * land-push: each queue row's reason it did not land this pass, for mqwhy.mjs (the deliverable's why_not, the Lanes row): the landing's
  * (land: landPass skips, by branch), else - a batch pass (picked: the batch's ids) - the pick's rule, else the update's conflict / failure
- * or its "not pushed"; a look item's hold (q.held) too. -> { branch: { tip, kind, why } | null (judged: nothing holds it) }
+ * or its "not pushed"; a look item's hold (q.held) too. skips: pickBatch's reason for each row it left out. -> { branch: { tip, kind, why } | null
+ * (judged: nothing holds it) }
  */
-export function queueSkips(q, { updates = [], land = null, picked = null } = {}) {
+export function queueSkips(q, { updates = [], land = null, picked = null, skips = {} } = {}) {
   const out = {}, s7 = s => String(s || '').slice(0, 7);
   for (const h of q.held || []) out[h.branch] = { tip: null, kind: 'held', why: h.why };
   for (const r of q.rows) {
@@ -227,7 +228,7 @@ export function queueSkips(q, { updates = [], land = null, picked = null } = {})
     out[r.branch] = picked.includes(r.id) ? null : r.gate === 'door' ? { tip: r.tip, kind: 'door', why: 'native-touching: it lands through the door flow' }
       : r.red ? { tip: r.tip, kind: 'red', why: `red in the merge queue at ${s7(r.red)}: its fix stage merges main itself` }
       : r.word !== 'clean' ? { tip: r.tip, kind: 'conflict', why: `${r.word}: the resolve path (norn deliverables resolve ${r.id})` }
-      : r.slop ? { tip: r.tip, kind: 'slop', why: `${r.slop} slop BLOCK finding(s) at ${s7(r.tip)}: fix or waive them` } : uw;
+      : r.slop ? { tip: r.tip, kind: 'slop', why: `${r.slop} slop BLOCK finding(s) at ${s7(r.tip)}: fix or waive them` } : skips[r.id] ?? uw;
   }
   return out;
 }
@@ -283,17 +284,21 @@ export async function runGate(gate, { cwd, log, state, heavy = true, locksDir, a
 // The sha merged = the pushed tip, or the tip recorded at DONE while the lane has a live writer (the staged rule of piece 0).
 // RM-44 D1: the door - door(row, sha) -> its open BLOCK count (the stored check of that sha, or the check run now); a door that
 // throws (no main, an unreadable sha) leaves the row out. Slop off (META-BETA-PREP): the caller passes () => 0.
-export function pickBatch(rows, { cfg, mq, stateDir, locksDir, writer = laneWriter, door = (r, sha) => doorCheck({ state: stateDir, repo: r.repo || cfg.repo, branch: r.branch, head: sha }).open.length }) {
-  const pick = [];
+// skips: filled with the reason of each batchable row left out (queueSkips: the Lanes "why not"); the row's own fields say the rest.
+export function pickBatch(rows, { cfg, mq, stateDir, locksDir, writer = laneWriter, door = (r, sha) => doorCheck({ state: stateDir, repo: r.repo || cfg.repo, branch: r.branch, head: sha }).open.length, skips = {} }) {
+  const pick = [], s7 = s => String(s || '').slice(0, 7), skip = (r, kind, why) => { skips[r.id] = { tip: r.tip, kind, why }; };
   for (const r of rows) {
     if (r.gate !== 'batch' || r.word !== 'clean') continue;
+    if (pick.length >= cfg.batch_max) { skip(r, 'busy', `the batch is full (batch_max ${cfg.batch_max}): the next pass`); continue; }
     const live = writer({ state: stateDir, locksDir, lane: r.lane, worktree: null });
     const sha = live ? r.done_tip : r.tip;
-    if (!sha || mq.red[r.id] === sha) continue;
-    if (pick.length && r.into !== pick[0].into) continue;
-    try { if (door(r, sha)) continue; } catch { continue; }
+    if (!sha) { skip(r, 'unpushed', live ? 'its lane has a live writer and no tip was recorded at DONE' : 'no pushed tip to merge'); continue; }
+    if (mq.red[r.id] === sha) continue;
+    if (pick.length && r.into !== pick[0].into) { skip(r, 'target', `it merges into ${r.into}; this batch goes into ${pick[0].into}`); continue; }
+    let block;
+    try { block = door(r, sha); } catch (e) { skip(r, 'slop', `the slop check of ${s7(sha)} failed: ${String(e.message).split(/\r?\n/)[0]}`); continue; }
+    if (block) { skip(r, 'slop', `${block} slop BLOCK finding(s) at ${s7(sha)}: fix or waive them`); continue; }
     pick.push({ id: r.id, branch: r.branch, lane: r.lane, sha, into: r.into, staged: !!live });
-    if (pick.length >= cfg.batch_max) break;
   }
   return pick;
 }
@@ -492,8 +497,8 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
         fixers = fixesMain(rows, { files: mainRedsOf(redBase).map(t => t.file), base: redBase.base, into: redBase.into, cfg, git });
         rows = [...rows.filter(r => fixers.includes(r.id)), ...rows.filter(r => !fixers.includes(r.id))];
       }
-      const pick = pickBatch(rows, { cfg, mq, stateDir, locksDir, ...(slopOn(project.policy) ? {} : { door: () => 0 }) });
-      noteMqWhy(stateDir, queueSkips(q, { updates: out.updates, picked: pick.map(p => p.id) }), { now });
+      const skips = {}, pick = pickBatch(rows, { cfg, mq, stateDir, locksDir, skips, ...(slopOn(project.policy) ? {} : { door: () => 0 }) });
+      noteMqWhy(stateDir, queueSkips(q, { updates: out.updates, picked: pick.map(p => p.id), skips }), { now });
       if (!pick.length) return { ...out, why: 'no batchable row (clean, fast-gated, slop-checked clean, not red at its sha)' };
       const key = ms => ms.map(m => `${m.id}@${m.sha}`).sort().join(' ');
       // D7: the same members on the same base whose merged result slop held: not rebuilt (nor re-gated) while the hold stands

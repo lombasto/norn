@@ -106,3 +106,13 @@ test('a solo dir allocates exactly as before: bare ids, max over every id of the
   assert.equal(rec(n, item).id, 'RM-wsl-10');
   assert.equal(rec(n, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'x' } }).id, 'L:x');
 });
+
+test('C17: a home.json that does not parse is an integrity error, never a solo dir (no id loses its home prefix)', () => {
+  const d = mkTmp('meta-home-');
+  seed(d, 'item', ['RM-b-29']);
+  fs.writeFileSync(path.join(d, 'home.json'), '{"id": "b", "bare_home": "a"');
+  assert.throws(() => homeOf(d), /home\.json.*not JSON/);
+  assert.throws(() => idPrefix(d), /home\.json.*not JSON/);
+  assert.throws(() => rec(d, item), /home\.json.*not JSON/);
+  assert.equal(readEvents(recordsFile(d, 'item')).length, 1, 'nothing recorded');
+});

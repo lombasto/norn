@@ -106,14 +106,14 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
   const onBase = (tip, base) => {
     if (!tip || !base || gone.has(tip)) return false;
     if (allShas.includes(tip)) return mergedSet(base).on.includes(tip);
-    const k = `${tip}:${base}`;   // a tip that is no ref any more (branch deleted): one is-ancestor, cached
-    if (!(k in c.anc)) c.anc[k] = git(repo, ['merge-base', '--is-ancestor', tip, base], { allowFail: true }) !== null;
+    const k = `${tip}:${base}`;   // a tip that is no ref any more (branch deleted): one is-ancestor, cached; a failure (no exit 0 / 1) is asked again
+    if (!(k in c.anc)) { const r = git(repo, ['merge-base', '--is-ancestor', tip, base], { status: true, allowFail: true }); if (r?.code !== 0 && r?.code !== 1) return false; c.anc[k] = r.code === 0; }
     return c.anc[k];
   };
-  // receipts carry short ids: resolve once (immutable), cache
+  // receipts carry short ids: resolve once (immutable), cache; exit 1 = no such commit, any other failure is no answer and asked again
   const full = id => {
     if (!id) return null;
-    if (!(id in c.full)) c.full[id] = (git(repo, ['rev-parse', '--verify', '--quiet', id + '^{commit}'], { allowFail: true }) || '').trim() || null;
+    if (!(id in c.full)) { const r = git(repo, ['rev-parse', '--verify', '--quiet', id + '^{commit}'], { status: true, allowFail: true }); if (r?.code !== 0 && r?.code !== 1) return null; c.full[id] = (r.code === 0 && r.out.trim()) || null; }
     return c.full[id];
   };
   const inst = installed.map(full).filter(Boolean), hist = history.map(full).filter(Boolean);
@@ -132,20 +132,20 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
     const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(direct || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
-    if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it)
+    if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it); a failed count is not kept
       const k = `${tip}:${mainSha}`;
       if (!c.counts[k]) {
         const out = git(repo, ['rev-list', '--left-right', '--count', `${mainSha}...${tip}`], { allowFail: true });
-        c.counts[k] = out ? out.trim().split(/\s+/).map(Number) : [null, null];
+        if (out) c.counts[k] = out.trim().split(/\s+/).map(Number);
       }
-      [r.behind, r.ahead] = c.counts[k];
+      [r.behind, r.ahead] = c.counts[k] || [null, null];
     } else if (merged) { r.ahead = 0; }
     if (nativeRe && tip && mainSha && !gone.has(tip)) {
-      if (!(tip in c.native)) {
+      if (!(tip in c.native)) {   // merged: no native paths; a failed diff is not kept
         const out = merged ? null : git(repo, ['diff', '--name-only', `${mainSha}...${tip}`], { allowFail: true });
-        c.native[tip] = out === null ? null : out.split('\n').filter(Boolean);
+        if (merged || out !== null) c.native[tip] = out === null ? null : out.split('\n').filter(Boolean);
       }
-      const files = c.native[tip];
+      const files = c.native[tip] ?? null;
       if (files) { r.native_files = files.filter(f => nativeRe.some(re => re.test(f))).slice(0, 5); r.native = r.native_files.length > 0; }
     }
     return r;
@@ -163,10 +163,10 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     if (!tip || !mainSha) return null;
     const k = `${tip}:${mainSha}`;
     if (!(k in c.rehearse)) {
-      try {
-        const r = scratchEnv(env => git(repo, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', mainSha, tip], { status: true, env }));
-        c.rehearse[k] = r.code === 0 ? { clean: true, files: [] } : r.code === 1 ? { clean: false, files: [...new Set(r.out.split('\0').slice(1).filter(Boolean))] } : null;
-      } catch { c.rehearse[k] = null; }
+      let r;   // git failed (no exit 0 / 1): null, not kept, asked again
+      try { r = scratchEnv(env => git(repo, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', mainSha, tip], { status: true, env })); } catch { return null; }
+      if (r.code !== 0 && r.code !== 1) return null;
+      c.rehearse[k] = r.code === 0 ? { clean: true, files: [] } : { clean: false, files: [...new Set(r.out.split('\0').slice(1).filter(Boolean))] };
     }
     return c.rehearse[k];
   };
@@ -283,7 +283,7 @@ export function workOnMain(repo, head, main = 'main', { git = makeGit() } = {}) 
  * The change = the diff merge-base(main, tip)..tip. It is on main when, for every file it touched, main's file equals the tip's, or
  * (a text file) every line it added is on main at least as many times as it added it (blank lines aside; line ends ignored). A file
  * the branch deleted must be gone from main; a binary file must equal main's.
- * -> { on: true | false, why } | { on: null, why } (cannot tell: the tip is gone from the repo)
+ * -> { on: true | false, why } | { on: null, why } (cannot tell: the tip is gone from the repo, or git diff failed)
  */
 /** the content check's answer for a tip the repo does not have (also scanRepo present()'s gone tips: no git asked) */
 export const goneTip = tip => ({ on: null, why: `the tip ${String(tip).slice(0, 9)} recorded at DONE is gone from the repo` });
@@ -291,19 +291,24 @@ export function contentOnMain(repo, tip, main = 'main', { git = makeGit(), maxFi
   if (git(repo, ['cat-file', '-e', `${tip}^{commit}`], { allowFail: true }) === null) return goneTip(tip);
   const show = (rev, f) => git(repo, ['show', `${rev}:${f}`], { allowFail: true });
   const count = text => { const m = new Map(); for (const l of String(text).split('\n')) { const k = l.trimEnd(); if (k.trim()) m.set(k, (m.get(k) || 0) + 1); } return m; };
-  let seen = false;
+  let seen = false, failed = null;
+  // a diff git could not give (timeout, maxBuffer) says nothing: it is never read as an empty change
+  const diff = (base, args) => { const out = git(repo, ['diff', '--no-renames', ...args], { allowFail: true }); if (out === null) failed = `git diff failed (against ${base})`; return out === null ? null : out.split('\0').filter(Boolean); };
   for (const base of [main, `refs/remotes/origin/${main}`]) {
     const b = git(repo, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { allowFail: true })?.trim();
     const mb = b && git(repo, ['merge-base', b, tip], { allowFail: true })?.trim();
     if (!mb) continue;
     seen = true;
-    const st = String(git(repo, ['diff', '--no-renames', '--name-status', '-z', mb, tip], { allowFail: true }) ?? '').split('\0').filter(Boolean);
+    const st = diff(base, ['--name-status', '-z', mb, tip]);
+    if (!st) continue;
     const touched = new Map();
     for (let i = 0; i + 1 < st.length; i += 2) touched.set(st[i + 1], st[i][0]);
     if (!touched.size) return { on: true, why: 'the branch changes nothing against main' };
-    const differ = String(git(repo, ['diff', '--no-renames', '--name-only', '-z', b, tip, '--', ...touched.keys()], { allowFail: true }) ?? '').split('\0').filter(Boolean);
-    if (differ.length > maxFiles) continue;
-    const bin = new Set(String(git(repo, ['diff', '--no-renames', '--numstat', '-z', mb, tip], { allowFail: true }) ?? '').split('\0').filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)));
+    const differ = diff(base, ['--name-only', '-z', b, tip, '--', ...touched.keys()]);
+    if (!differ || differ.length > maxFiles) continue;
+    const numstat = diff(base, ['--numstat', '-z', mb, tip]);
+    if (!numstat) continue;
+    const bin = new Set(numstat.filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)));
     const fileOn = f => {
       if (touched.get(f) === 'D' || bin.has(f)) return false;   // differs from main: the deletion / the binary is not there
       const onMain = show(b, f), atTip = show(tip, f);
@@ -314,5 +319,6 @@ export function contentOnMain(repo, tip, main = 'main', { git = makeGit(), maxFi
     };
     if (differ.every(fileOn)) return { on: true, why: differ.length ? `every line it added is on ${base}` : `its files equal ${base}'s` };
   }
+  if (failed) return { on: null, why: failed };
   return { on: false, why: seen ? 'its change is not on main' : 'it shares no history with main' };
 }

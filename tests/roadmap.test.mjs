@@ -11,6 +11,7 @@ import { record, loadState, readEvents, fold, RecordError } from '../engine/lib/
 import { loadRoadmap, foldRoadmap, childrenOf, derive, worldOf, detect, unplacedOf, goneLinks, buildTree, renderTree, renderRoadmapView,
   ROADMAP_HEADER, writeRoadmapView, checkLinks, RoadmapError } from '../engine/lib/roadmap.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { makeGit } from '../engine/lib/dlvgit.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const meta = (args, env = {}) => {
@@ -325,6 +326,19 @@ test('checkLinks refuses a link to something that does not exist (records, lanes
   checkLinks(s, ['lane:alpha', 'dir:DIR-1', 'run:RUN-1']);
   assert.throws(() => checkLinks(s, ['lane:nope', 'dir:DIR-9']), e => e instanceof RoadmapError && /lane:nope/.test(e.message) && /dir:DIR-9/.test(e.message));
   assert.throws(() => checkLinks(s, ['branch:feat/x']), e => e instanceof RoadmapError && /repo/.test(e.message));
+});
+
+test('C8: a deliverables view or an epics read that fails is that error, never "every dlv: / ep: link is gone"', () => {
+  const s = seedState(), repo = mkTmp('meta-road-repo-');
+  const g = (...a) => spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8', windowsHide: true }).stdout.trim();
+  g('init', '-q', '-b', 'main'); fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); g('add', '-A'); g('commit', '-qm', 'init');
+  g('checkout', '-q', '-b', 'feat/x'); fs.writeFileSync(path.join(repo, 'a.txt'), 'b\n'); g('commit', '-qam', 'x'); const tip = g('rev-parse', 'HEAD'); g('checkout', '-q', 'main');
+  const id = record(s, { kind: 'deliverable', ev: 'create', by: 'controller', data: { repo, branch: 'feat/x', tip, delivers: 'x', done_utc: new Date().toISOString() } }, { views: false }).id;
+  const real = makeGit(), broken = (r, args, o) => { if (args[0] === 'cherry') throw new Error('git cherry: boom'); return real(r, args, o); };
+  assert.throws(() => checkLinks(s, [`dlv:${id}`], { git: broken }), e => !(e instanceof RoadmapError) && /git cherry: boom/.test(e.message));
+  checkLinks(s, [`dlv:${id}`]);   // the same link with a working git: valid
+  fs.appendFileSync(path.join(s, 'epics.jsonl'), '{"torn"');
+  assert.throws(() => checkLinks(s, ['ep:EP-1']), e => !(e instanceof RoadmapError) && /integrity/.test(e.message));
 });
 
 // ---------- piece 5: norn road (SPEC sec. 3) ----------

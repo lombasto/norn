@@ -22,8 +22,8 @@ import { readJsonS as readJson } from './fsnap.mjs';
 import { renameRetry } from './runs.mjs';
 
 export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
-const PREFIXES = ['Q', 'DEC', 'DIR', 'RUN', 'DLV', 'EP', 'MAIL', 'RM', 'ADP', 'ICF', 'GRD', 'WVR'];
-/** SPEC 6 step 4: a bare numeric id token of the 12 numeric kinds */
+const PREFIXES = Object.values(KINDS).map(k => k.prefix).filter(p => p.endsWith('-')).map(p => p.slice(0, -1));
+/** SPEC 6 step 4: a bare numeric id token of every numeric kind in KINDS (the lane's L: is a name, not a number) */
 export const ID_RE = new RegExp(`\\b(${PREFIXES.join('|')})-(\\d+)\\b`);
 const FILE_ID = new RegExp(`^(${PREFIXES.join('|')})-(\\d+)(?!\\w)`);   // a file / dir keyed by id: RUN-12.spec.json, RUN-12-dod-gate.log, RUN-12/
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;

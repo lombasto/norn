@@ -171,6 +171,19 @@ test('norn scope check = the PreToolUse hook: a refusal is a deny with its reaso
   assert.match(JSON.parse(lost.stdout).hookSpecificOutput.permissionDecisionReason, /spec/);
 });
 
+test('C7: a run whose brief cannot be read is refused with the reason, never left with no Scope (the guard fails closed)', () => {
+  const w = world();
+  fs.mkdirSync(path.join(w.state, 'runs'), { recursive: true });
+  const gone = path.join(w.root, 'gone-brief.md');
+  fs.writeFileSync(path.join(w.state, 'runs', 'RUN-3.spec.json'), JSON.stringify({ ...w.spec, run: 'RUN-3', brief: gone }));
+  const r = spawnSync(process.execPath, [META, 'scope', 'check', '--run', 'RUN-3', '--state', w.state],
+    { input: JSON.stringify({ session_id: 'S', hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(w.wt, 'x.txt') }, cwd: w.wt }), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.trim(), 'refused, not passed');
+  const why = JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason;
+  assert.match(why, /cannot read this run's brief/); assert.match(why, /gone-brief\.md/); assert.match(why, /ENOENT/);
+});
+
 // ROUND 2: the guard is per project - policy.dod.scope off | on (default off), read at launch from the run's CURRENT project.json
 const projectWith = (w, dod) => {
   const f = path.join(w.root, `project-${dod?.scope ?? 'none'}.json`);

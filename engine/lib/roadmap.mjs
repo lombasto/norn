@@ -285,8 +285,8 @@ export const dlvCopyRow = it => { const l = landedOf(it); return { id: it.id, ho
 export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle } = {}) {
   project = project || {};
   const st = loadState(stateDir), away = copyItems(stateDir, 'run');   // RM-46 S3: + the other homes' runs and DLVs (read-only copies)
-  let rows = [];
-  try { rows = deliverablesView({ stateDir, project, now, git, questions: Object.values(st.items).filter(i => i.kind === 'question') }).rows; } catch { rows = []; }
+  // a view that fails is that error: an empty list would read every dlv: link as gone (repoScanner already copes with an unreadable repo)
+  let rows = deliverablesView({ stateDir, project, now, git, questions: Object.values(st.items).filter(i => i.kind === 'question') }).rows;
   const cfg = deliverableConfig(project), hasInstall = hasInstallTarget(project);
   let scan;
   const sc = () => {
@@ -313,7 +313,7 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
 }
 
 function epicsOf(stateDir) {
-  try { return Object.fromEntries(Object.entries(loadEpics(stateDir)).map(([id, e]) => [id, { state: e.state, title: e.data.title, members: epicMembers(e) }])); } catch { return {}; }
+  return Object.fromEntries(Object.entries(loadEpics(stateDir)).map(([id, e]) => [id, { state: e.state, title: e.data.title, members: epicMembers(e) }]));
 }
 
 /** META-ROADMAP S3: the audit's Unplaced list (D3) for the digest - no git (lanes, DLV rows, directives, epics); null = no roadmap yet */

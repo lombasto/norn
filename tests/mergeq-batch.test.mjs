@@ -12,7 +12,7 @@ import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { startRun, lockPath, readiness } from '../engine/lib/runs.mjs';
 import { deliverablesView, askDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
 import { main } from '../engine/bin/norn.mjs';
-import { mergeQueue, mergeqRun, loadBatch, loadMq, setBatching, mqProbe } from '../engine/lib/mergeq.mjs';
+import { mergeQueue, mergeqRun, loadBatch, loadMq, setBatching, mqProbe, pickBatch, queueSkips } from '../engine/lib/mergeq.mjs';
 import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { tick, gateProbes } from '../engine/lib/tick.mjs';
@@ -290,4 +290,17 @@ test('the check-in gate probe: a green batch / a fix ask / batching OFF wake the
   const probes = gateProbes({ ...f.project, state: f.state }, {});
   assert.ok(probes.length >= 2 && probes.some(p => p({ at: Date.now() + 1000, running: [], runs: [], items: [] }).includes('mq:batch-1:green')));
   assert.ok(!gateProbes({ ...f.project, merge: undefined, state: f.state }, {}).some(p => p({ at: Date.now() + 1000, running: [], runs: [], items: [] }).some(x => x.startsWith('mq:'))));
+});
+
+test('C18: every row the batch pick leaves out says why (a failed slop check, an unchecked BLOCK, no tip, another target, a full batch), never null', () => {
+  const row = (n, more = {}) => ({ id: `DLV-${n}`, branch: `feat/${n}`, lane: `l${n}`, gate: 'batch', word: 'clean', tip: `${n}`.repeat(7), into: 'main', slop: 0, ...more });
+  const rows = [row(1), row(2), row(3, { tip: null }), row(4, { into: 'int/x' }), row(5), row(6), row(7)];
+  const door = r => { if (r.id === 'DLV-2') throw new Error('no main'); return r.id === 'DLV-5' ? 2 : 0; };
+  const skips = {};
+  const pick = pickBatch(rows, { cfg: { batch_max: 2 }, mq: { red: {} }, writer: () => null, door, skips });
+  assert.deepEqual(pick.map(p => p.id), ['DLV-1', 'DLV-6']);
+  const why = queueSkips({ rows }, { picked: pick.map(p => p.id), skips });
+  assert.equal(why['feat/1'], null); assert.equal(why['feat/6'], null);
+  assert.deepEqual(Object.fromEntries(Object.entries(why).filter(([, w]) => w).map(([b, w]) => [b, w.kind])), { 'feat/2': 'slop', 'feat/3': 'unpushed', 'feat/4': 'target', 'feat/5': 'slop', 'feat/7': 'busy' });
+  assert.match(why['feat/2'].why, /no main/); assert.match(why['feat/5'].why, /2 slop BLOCK/); assert.match(why['feat/7'].why, /batch_max 2/);
 });
