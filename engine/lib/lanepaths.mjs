@@ -2,7 +2,7 @@
 // stages a MERGE through checkins.mjs, and lifecycle.mjs (read by lanes.mjs) must not import checkins (a K10 cycle through standing / agents).
 // The rule and its words: lifecycle.mjs ("path to main": pathWords, lane-paths.json).
 import fs from 'node:fs';
-import { loadState, readEvents, recordsFile, fold, idNum as runNum, laneName } from './records.mjs';
+import { loadState, readEvents, recordsFile, fold, idNum as runNum, laneName, NID } from './records.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { stageArgs, isMergeRun, checkinPolicy } from './checkins.mjs';
@@ -58,7 +58,7 @@ export function tickPaths(state, { project: p = {}, now = Date.now(), git = make
     if (dry || !cli || !p.file || !wt) { stuck(!wt ? `its worktree ${r.data.worktree ?? '(none)'} is gone` : 'nothing could queue one here (no meta CLI / project file)'); continue; }
     const a = stageArgs(p, r, { branch, sha: tip }, cp), b = cli(a.brief);
     if (b.code !== 0) { stuck(`merge-brief exit ${b.code}: ${b.out.split('\n')[0].slice(0, 160)}`); continue; }
-    const q = cli([...a.run, '--priority', 'P1']), m = q.out.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/);   // a home's id too (RUN-b-12)
+    const q = cli([...a.run, '--priority', 'P1']), m = q.out.match(new RegExp(`\\b${NID('RUN')}\\b`));
     if (q.code !== 0 || !m) { stuck(`norn run --queue exit ${q.code}: ${q.out.split('\n')[0].slice(0, 160)}`); continue; }
     set({ state: 'staged', merge: m[0], risk });
     out.push({ id: l.id, act: 'staged', note: `${ahead} commit(s) of ${r.id} on ${branch} not on main -> MERGE ${m[0]} (P1)` });

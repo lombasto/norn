@@ -10,6 +10,7 @@
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
+import { NID } from './records.mjs';
 
 // ---------- the claim overlap of two homes (moved from claims.mjs; its results are unchanged) ----------
 // no Scope: line = the whole repo (multi-home SPEC 5, DECIDED: the safe reading)
@@ -179,7 +180,7 @@ export function staleCaveats(items = {}, facts = {}, policy) {
   for (const n of Object.values(items)) {
     const t = n.caveat?.text;
     if (!t || n.state === 'dropped' || !LIVE_WORDS.test(t)) continue;
-    for (const id of new Set(t.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/g) || [])) {
+    for (const id of new Set(t.match(new RegExp(`\\b${NID('RUN')}\\b`, 'g')) || [])) {
       if (noted(t, id)) continue;
       const d = dead(id, facts);
       if (d && P.kinds.stale !== 'off') out.push({ kind: 'stale', grade: 'caveat', item: n.id, run: id, verdict: P.kinds.stale, text: t,

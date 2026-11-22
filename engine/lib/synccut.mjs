@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { KINDS, readEvents, recordsFile, fold, loadState, homeOf } from './records.mjs';
+import { KINDS, readEvents, recordsFile, fold, loadState, homeOf, HOME_RE } from './records.mjs';
 import { writeViews } from './views.mjs';
 import { buildTree, writeRoadmapView, roadmapViewPath } from './roadmap.mjs';
 import { commitLedger } from './ledger.mjs';
@@ -21,7 +21,6 @@ import { fwd, updateMachine } from './config.mjs';
 import { readJsonS as readJson } from './fsnap.mjs';
 import { renameRetry } from './runs.mjs';
 
-export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
 const PREFIXES = Object.values(KINDS).map(k => k.prefix).filter(p => p.endsWith('-')).map(p => p.slice(0, -1));
 /** SPEC 6 step 4: a bare numeric id token of every numeric kind in KINDS (the lane's L: is a name, not a number) */
 export const ID_RE = new RegExp(`\\b(${PREFIXES.join('|')})-(\\d+)\\b`);
