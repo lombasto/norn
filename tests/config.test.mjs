@@ -39,6 +39,11 @@ test('loadProject: a cycle through root and vars is refused; a var may not shado
   assert.throws(() => loadProject(write(tmp(), proj({ vars: { home: '/x' } })), { home: H, meta: M }), /vars\.home shadows a builtin/);
 });
 
+test('loadProject (L-05): a subdir outside the repo or absolute is refused, never read as the whole repo', () => {
+  for (const subdir of ['web/..', '../x', '/abs']) assert.throws(() => loadProject(write(tmp(), proj({ subdir })), { home: H, meta: M }), e => e instanceof ConfigError && /subdir/.test(e.message), subdir);
+  assert.equal(loadProject(write(tmp(), proj({ subdir: 'web' })), { home: H, meta: M }).subdir, 'web');
+});
+
 test('schema: required, type, additionalProperties and enum are checked with the json path', () => {
   const { name, ...noName } = proj();
   assert.throws(() => loadProject(write(tmp(), noName), { home: H, meta: M }), /project\.json: \$\.name is required/);

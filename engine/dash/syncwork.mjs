@@ -17,7 +17,7 @@ export function syncOp(op, o) {
   if (op !== 'reconcile') throw new Error(`unknown sync op ${op}`);
   if (!homeOf(o.state)) return { off: true, pairs: [], carded: 0, written: [], applied: [] };
   const cfg = ledgerConfig(o.machine, { metaRoot: o.metaRoot, machineFile: o.machineFile });
-  const claims = (() => { try { return localClaims(fedOf(cfg)); } catch { return {}; } })();   // the last fetched claims, as norn sync reconcile
+  const claims = localClaims(fedOf(cfg));   // the last fetched claims, as norn sync reconcile
   return reconcile(path.resolve(o.state), { by: o.by, claims, dry: !!o.dry });
 }
 

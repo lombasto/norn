@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { providerProblems } from './executors.mjs';
 import { expandPresets } from './presets.mjs';
 import { readText } from './fsnap.mjs';
+import { normSubdir } from './monorepo.mjs';
 
 export class ConfigError extends Error {}
 
@@ -112,6 +113,7 @@ export function checkProject(obj, label = 'project.json') {
   for (const k of Object.keys(obj.vars || {})) if (BUILTINS.includes(k)) throw new ConfigError(`${label}: vars.${k} shadows a builtin`);
   const pe = providerProblems(obj);
   if (pe.length) throw new ConfigError(`${label}: ${pe.join('; ')}`);
+  try { normSubdir(obj.subdir); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
 }
 
 export function loadProject(file, { home = homeDir(), meta = metaRoot() } = {}) {

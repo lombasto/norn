@@ -267,7 +267,7 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
         event('taken', k, `${c.home}/${c.lane}: ${why}${r ? ` - ${r.id} stopped` : ''}; it claims again only through a normal dispatch`);
         delete own[k]; out.taken.push(k);
       }
-      try { claims = localClaims(f); } catch { /* keep the fetched */ }
+      claims = localClaims(f);
     }
   }
   for (const [k, c] of Object.entries(own)) {
@@ -292,7 +292,7 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
   }
   if (led) writeSync(state, 'leader', led); else writeSync(state, 'leader', {});
   if (led && !lead.why) Object.assign(lead, { leader: true, holder: home });
-  else if (!led) { const c = (() => { try { return localClaims(f)[lk]; } catch { return null; } })(); lead.holder = c?.home ?? null; lead.why ||= c ? `merge leader is ${c.home}` : 'no merge leader'; }
+  else if (!led) { const c = localClaims(f)[lk]; lead.holder = c?.home ?? null; lead.why ||= c ? `merge leader is ${c.home}` : 'no merge leader'; }
   out.leader = lead;
   const stale = Object.entries(seen).filter(([k]) => claims[k]?.kind === 'work' && isStale(seen[k], claims[k], now, pol)).map(([k]) => {
     const c = claims[k];
@@ -380,9 +380,8 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
       caseAction(state, col, 'claim-release', { by: 'tick', auto: true, args: { key: k, claim: c }, why });
       out.released.push(k);
     }
-    // another home's claim is never touched (its stale clock and `norn claim take` are the owner's); a `**` claim is listed (SPEC Q1)
-    let claims = {};
-    try { claims = localClaims(f); } catch { /* no ledger yet */ }
+    // another home's claim is never touched (its stale clock and `norn claim take` are the owner's); a `**` claim is listed
+    const claims = localClaims(f);
     out.wide = Object.entries(claims).filter(([, c]) => c?.kind === 'work' && c.home !== home && wholeRepo(c)).map(([key, c]) => ({ key, home: c.home, lane: c.lane, why: `${c.home}/${c.lane} claims the whole repo (no Scope: line)` }));
   }
   for (const c of Object.values(casesOf(state))) for (const a of actionsOf(c)) if (a.auto && !a.undone && AUTO_ACTS.includes(a.action) && now - Date.parse(a.at) < HANDLED_MS)

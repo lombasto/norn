@@ -23,8 +23,8 @@ export function normSubdir(s) {
   return t;
 }
 
-/** the project's subdir ('' when it is the whole repo) */
-export const subdirOf = p => { try { return normSubdir(p?.subdir); } catch { return ''; } };
+/** the project's subdir ('' when it is the whole repo); a bad one throws (config refuses it at load) */
+export const subdirOf = p => normSubdir(p?.subdir);
 
 /**
  * dir (inside a git work tree) -> { root: the repo's top level, subdir: dir relative to it ('' at the top) }, or null when not a git

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { record, RecordError } from '../engine/lib/records.mjs';
-import { casesOf, actionsOf, rulingsOf, openCase, caseAction } from '../engine/lib/intents.mjs';
+import { casesOf, actionsOf, rulingsOf, openCase, caseAction, readCollide, collideFile } from '../engine/lib/intents.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
 function fixture() {
@@ -89,4 +89,14 @@ test('allow <a> <b>: a ruling on a pair with no case opens one (kind any); a che
   assert.equal(all.status, 0, all.stderr);
   assert.equal(Object.keys(casesOf(f.state)).length, 1, 'the open ruling case of the pair takes the second allow');
   assert.deepEqual(rulingsOf(casesOf(f.state))['lib-a+lib-b'].kinds, [], 'every kind');
+});
+
+test('L-15: a torn collision log throws, never reads as "no cases" (that would erase every allow ruling); a corrupt collide.json throws, a missing one is {}', () => {
+  const f = fixture();
+  f.held();
+  assert.deepEqual(readCollide(f.state), {}, 'no collide.json yet');
+  fs.appendFileSync(path.join(f.state, 'collide.jsonl'), '{"half');
+  assert.throws(() => casesOf(f.state), RecordError);
+  fs.writeFileSync(collideFile(f.state), '{"rows": [');
+  assert.throws(() => readCollide(f.state), SyntaxError);
 });

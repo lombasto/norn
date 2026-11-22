@@ -221,8 +221,9 @@ export function leaderWhy(state, f, { project, now = Date.now(), pol = syncPolic
   const c = localClaims(f)[key];
   return c?.kind === 'leader' ? `merge leader is ${c.home}` : 'no merge leader confirmed yet (the tick claims it)';
 }
-/** the claims as last fetched (no network; {} before the first fetch) */
-export const localClaims = f => { try { return readClaims(f).claims; } catch { return {}; } };
+/** the claims as last fetched (no network; {} with no ledger endpoint f, before its repo exists or before a first fetch). A git failure
+ *  throws: read as {} it restarted every foreign claim's stale timer */
+export const localClaims = f => (f && fs.existsSync(path.join(f.dir, 'HEAD')) ? readClaims(f).claims : {});
 
 // ---------- the home's own bookkeeping: <state>/sync/<file> (local, never published) ----------
 // own: { key: { project, home, lane, nonce, n, confirmed_ms } } (confirmed_ms = this clock when a claim / renew push landed: the fence);
@@ -231,7 +232,8 @@ export const localClaims = f => { try { return readClaims(f).claims; } catch { r
 // (a non-leader's PRs of its DONE lane branches, so an opened PR costs no gh call per tick)
 export const SYNC_FILES = { own: 'claims-own.json', seen: 'claims-seen.json', holds: 'claim-holds.json', rows: 'claims-digest.json', leader: 'leader.json', prs: 'leader-prs.json' };
 const syncPath = (state, name) => path.join(state, 'sync', SYNC_FILES[name]);
-export const readSync = (state, name) => { try { return JSON.parse(fs.readFileSync(syncPath(state, name), 'utf8')) || {}; } catch { return {}; } };
+// none yet = {}; a corrupt one throws (read as {} the home forgot its own claims and stopped renewing them)
+export const readSync = (state, name) => { try { return JSON.parse(fs.readFileSync(syncPath(state, name), 'utf8')) || {}; } catch (e) { if (e.code === 'ENOENT') return {}; throw e; } };
 export function writeSync(state, name, v) {
   const p = syncPath(state, name), tmp = `${p}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`;
   fs.mkdirSync(path.dirname(p), { recursive: true });

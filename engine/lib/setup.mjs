@@ -271,13 +271,22 @@ const CODEX_EXECUTORS = ['codex-sol', 'codex-astra'];
 const choose = o => { try { checkChoice(o); return getProfile(o.profile); } catch (e) { throw new SetupError(e.message); } };
 const under = (p, dir) => { const a = key(p), d = key(dir).replace(/\/+$/, ''); return a === d || a.startsWith(d + '/'); };
 
-/** o: { root, name, title, branch, ci, executors, dir, nonInteractive, register, print, env, out, err, ask } -> exit code */
-// FOLLOWUP R1: the caps in force for the starter routing = local/budget.json (absent / unreadable = none set = no limit)
+// the caps in force (local/budget.json; none yet = no limit set). One that does not parse throws: read as {} it lifted every cap, and
+// the starter routing and the packs went to an executor the owner capped at 0
 function capsInForce(meta) {
   if (!meta) return {};
-  try { return JSON.parse(fs.readFileSync(path.join(meta, 'local', 'budget.json'), 'utf8').replace(/^﻿/, '')); } catch { return {}; }
+  const f = path.join(meta, 'local', 'budget.json');
+  let t; try { t = fs.readFileSync(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
+  try { return JSON.parse(t.replace(/^﻿/, '')); } catch (e) { throw new SetupError(`${fwd(f)}: ${e.message}`, 1); }
+}
+/** a caps profile on this machine (setup and adopt both apply one through here) -> { cur, next }: the caps in force and them with the
+ *  profile's keys merged in - Codex caps only when machine.json has a Codex (else 0), the worker raised to the floor in force */
+export function profileCaps(meta, prof, cost) {
+  const cur = capsInForce(meta), codex = exists(machineFile(meta)) && !!rawMachine(meta).codex?.exe;
+  return { cur, next: { ...cur, ...profileBudget(prof, { found: ['claude', ...(codex ? CODEX_EXECUTORS : [])], cost, floor: floorOf(cur) }) } };
 }
 
+/** o: { root, name, title, branch, ci, executors, dir, nonInteractive, register, print, env, out, err, ask } -> exit code */
 export function projectNew(o) {
   const { env = process.env, out, err } = o;
   const meta = metaRoot(env);
@@ -556,21 +565,20 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   notifyFinish(nr, { meta, env, interactive, ask, out, noPing: noTestPing });
   // META-OOTB F-3 / F-6: caps before the scheduler - a machine with no budget gets the profile's caps (default try-it); an existing
   // budget.json is touched only when the human names --profile / --cost (the profile keys merged in, a .pre-profile backup kept)
-  const bf = path.join(meta, 'local', 'budget.json'), found = ['claude', ...(d.codex ? CODEX_EXECUTORS : [])];
-  const pb = profileBudget(prof, { found, cost, floor: floorOf(capsInForce(meta)) }), named = `profile ${prof.name}, cost ${cost ?? 'balanced'}`;
+  const bf = path.join(meta, 'local', 'budget.json'), { cur, next } = profileCaps(meta, prof, cost), named = `profile ${prof.name}, cost ${cost ?? 'balanced'}`;
   let applied = true;
   if (!exists(bf)) {
-    fs.writeFileSync(bf, JSON.stringify(pb, null, 2) + '\n', { flag: 'wx' });
-    out(`wrote ${fwd(bf)} (starter caps: ${pb.max_claude_workers} Claude worker, ${pb.max_codex} Codex, weekly stop ${pb.weekly_stop_pct} %, rate cap ${pb.usage_rate_cap_pct_per_h} %/h; ${named} - change them in the dashboard Settings)`);
+    fs.writeFileSync(bf, JSON.stringify(next, null, 2) + '\n', { flag: 'wx' });
+    out(`wrote ${fwd(bf)} (starter caps: ${next.max_claude_workers} Claude worker, ${next.max_codex} Codex, weekly stop ${next.weekly_stop_pct} %, rate cap ${next.usage_rate_cap_pct_per_h} %/h; ${named} - change them in the dashboard Settings)`);
   } else if (!chosen) { out(`${fwd(bf)}: kept (existing caps)`); applied = false; }
   else {
-    const text = fs.readFileSync(bf, 'utf8'), b = JSON.parse(text.replace(/^\uFEFF/, '')), diff = Object.keys(pb).filter(k => JSON.stringify(b[k]) !== JSON.stringify(pb[k]));
+    const diff = Object.keys(next).filter(k => JSON.stringify(cur[k]) !== JSON.stringify(next[k]));
     if (!diff.length) out(`${fwd(bf)}: kept (already ${named})`);
     else {
-      fs.writeFileSync(bf + '.pre-profile', text);
-      fs.writeFileSync(bf, JSON.stringify({ ...b, ...pb }, null, 2) + '\n');
+      fs.copyFileSync(bf, bf + '.pre-profile');
+      fs.writeFileSync(bf, JSON.stringify(next, null, 2) + '\n');
       out(`wrote ${fwd(bf)} (${named}; backup ${fwd(bf)}.pre-profile):`);
-      for (const k of diff) out(`  ${k} ${b[k] === undefined ? 'unset' : JSON.stringify(b[k])} -> ${JSON.stringify(pb[k])}`);
+      for (const k of diff) out(`  ${k} ${cur[k] === undefined ? 'unset' : JSON.stringify(cur[k])} -> ${JSON.stringify(next[k])}`);
     }
   }
   if (applied) out(prof.scheduler.on ? `profile ${prof.name}: check-ins every ${prof.scheduler.interval_min} min - install the scheduler with: norn sched install`
