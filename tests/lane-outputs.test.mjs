@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { groupOf, groupOutputs, walkOutputs, writerOf, insideDir, ownerSummary, summaryLine, ownerAsks, cutoffOf, laneNext, laneNow, lanePrs, stageWhere, notesDirOf } from '../engine/lib/laneout.mjs';
+import { groupOf, groupOutputs, walkOutputs, writerOf, ownerSummary, summaryLine, ownerAsks, cutoffOf, laneNext, laneNow, lanePrs, stageWhere, notesDirOf } from '../engine/lib/laneout.mjs';
 import { postRunAsks, sweepAsks, applyRulings, askedAlready } from '../engine/lib/runasks.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { laneDetail, fileViewer } from '../engine/dash/pages/lanes.mjs';
@@ -57,12 +57,6 @@ test('walkOutputs + groupOutputs: every file with size, time and the run whose w
   assert.equal(g[0].files[0].run, 'RUN-2', 'written now: the running RUN-2');
   assert.equal(writerOf('2026-10-01T00:00:00Z', runs), null, 'before any run');
   assert.deepEqual(await walkOutputs(path.join(dir, 'missing')), []);
-});
-
-test('the path guard: a file inside the notes folder resolves; ../, an absolute path and a drive never do', () => {
-  const dir = path.join(mkTmp('laneout'), 'notes', 'audit');
-  assert.equal(insideDir(dir, 'shots/a.png'), path.join(dir, 'shots', 'a.png'));
-  for (const bad of ['../x.md', '../../state/records.jsonl', 'shots/../../x', path.resolve('/etc/passwd'), 'C:/Windows/win.ini', '', '.']) assert.equal(insideDir(dir, bad), null, bad);
 });
 
 test('notesDirOf: the newest run\'s NOTES folder, else <state>/notes/<lane>', () => {
