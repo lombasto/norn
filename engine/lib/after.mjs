@@ -1,7 +1,7 @@
 // NORN-WATCH S4: triggers as records. A queued run's `after: [{kind, id, state}]` conditions and `inputs: [DLV ids]`, parsed at
 // queue time and evaluated by fillPass (runs.mjs) on every fill, by the digest (sec. 2) and the META-QUEUE view. Conditions name
 // records of the SAME state dir (ids are per state). Level-triggered: a condition is evaluated from the records every time.
-import { loadState, fold, readEvents, recordsFile } from './records.mjs';
+import { loadState, fold, readEvents, recordsFile, idNum, NID } from './records.mjs';
 import fs from 'node:fs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { dlvMerged, lastEv } from './dlvmerge.mjs';
@@ -35,7 +35,7 @@ export function parseAfter(s) {
     const [kind, id, state, ...more] = t.split(':');
     const k = AFTER_KINDS[kind];
     if (!k || more.length) throw new AfterError(`--after ${JSON.stringify(t)}: want kind:id[:state], kind ${Object.keys(AFTER_KINDS).join(' | ')}`);
-    if (!new RegExp('^' + k.prefix + '\\d+$').test(id || '')) throw new AfterError(`--after ${JSON.stringify(t)}: ${kind} needs a ${k.prefix}n id`);
+    if (!new RegExp(`^${NID(k.prefix.slice(0, -1))}$`).test(id || '')) throw new AfterError(`--after ${JSON.stringify(t)}: ${kind} needs a ${k.prefix}n id`);
     const st = state || k.def;
     if (!k.states.includes(st)) throw new AfterError(`--after ${JSON.stringify(t)}: ${kind} state is ${k.states.join(' | ')}`);
     return { kind, id, state: st };
@@ -45,7 +45,7 @@ export function parseAfter(s) {
 export function parseInputs(s) {
   if (s === undefined || s === null || s === '') return [];
   const ids = String(s).split(',').map(t => t.trim()).filter(Boolean);
-  for (const id of ids) if (!/^DLV-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(id)) throw new AfterError(`--inputs ${JSON.stringify(id)}: want DLV-n ids`);
+  for (const id of ids) if (!new RegExp(`^${NID('DLV')}$`).test(id)) throw new AfterError(`--inputs ${JSON.stringify(id)}: want DLV-n ids`);
   return ids;
 }
 export const condText = c => `${c.kind}:${c.id}:${c.state}`;
@@ -148,9 +148,8 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
 export function successorOf(runs, r, seen = new Set()) {
   const { lane, stage } = r.data ?? {};
   if (!lane || !stage) return null;
-  const n = id => Number(String(id).replace(/^RUN-(?:[^-]+-)?/, ''));
-  return Object.values(runs).filter(x => x.kind === 'run' && !seen.has(x.id) && n(x.id) > n(r.id) && x.data.lane === lane && x.data.stage === stage
-    && x.data.kind !== 'checkin' && x.data.role !== 'helper' && !(x.state === 'withdrawn' && !x.withdraw?.next)).sort((a, b) => n(b.id) - n(a.id))[0] ?? null;
+  return Object.values(runs).filter(x => x.kind === 'run' && !seen.has(x.id) && idNum(x.id) > idNum(r.id) && x.data.lane === lane && x.data.stage === stage
+    && x.data.kind !== 'checkin' && x.data.role !== 'helper' && !(x.state === 'withdrawn' && !x.withdraw?.next)).sort((a, b) => idNum(b.id) - idNum(a.id))[0] ?? null;
 }
 
 /** { met: all met, gone: [why] , conds: [{cond, met, gone}] } for one queued run's after list */
