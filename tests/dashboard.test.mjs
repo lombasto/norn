@@ -41,9 +41,6 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     assert.match(fs.readFileSync(path.join(f.pa.state, 'views', 'OWNER-QUESTIONS.md'), 'utf8'), /yes next/, 'views regenerated');
     assert.equal((await f.post('/api/answer', { id: 'Q-1', text: 'twice' })).status, 409);
     assert.equal((await f.post('/api/answer', { id: 'Q-1', text: '' })).status, 400);
-    const log = await fetch(f.url + '/log?run=RUN-1'); assert.equal(log.status, 200);
-    const lines = (await log.text()).trim().split('\n'); assert.equal(lines.length, 200); assert.equal(lines[0], 'line 31');
-    assert.equal((await fetch(f.url + '/log?run=../budget')).status, 404);
     assert.equal((await f.post('/api/directive', { text: 'hold gen' })).status, 200);
     assert.equal((await f.post('/api/directive/revoke', { id: 'DIR-1' })).status, 200);
     assert.equal((await f.post('/api/directive/revoke', { id: 'DIR-1' })).status, 409);

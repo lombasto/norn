@@ -90,7 +90,6 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
     const lane = (await f.get('/api/lanes?project=kestrel')).data.lanes.find(l => l.name === 'relay');
     assert.equal(lane.handoff?.step, 'closing', JSON.stringify(lane));
     assert.match(renderTab('lanes', await loadTab('lanes', 'kestrel', ui), ctx), /id="lane-relay"[^]*?class="lnow small"[^>]*>Hand-off in progress - session 2 next \(the last session is closing\)\.</, 'the Lanes row says it in its now line');
-    assert.match(await (await fetch(`${f.url}/log?project=kestrel&run=${a}`)).text(), /^\[norn\] hand-off in progress - session 2 next .*\nstart RUN-x/);
     // 2. it ended; the supervisor started session 2, which has said nothing yet
     end(S, a); fs.rmSync(path.join(S, 'hb', `${a}.hb`));
     const b = start(S, { log, session_id: sid2, resume_of: a, resumes: 1 }); resume(S, a, { next: b, count: 1, max: 2 });

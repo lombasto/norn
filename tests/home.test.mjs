@@ -140,7 +140,7 @@ test('C2 /api/home on the fixture state: the thread file, runs, needs, the side 
     assert.ok(d.side.now.some(n => n.run === 'RUN-2' && n.state === 'running'));
     assert.ok(d.side.waiting.some(w => w.id === 'Q-1')); assert.ok(d.side.orders.some(o => o.text === 'keep going'));
     assert.ok(d.side.ruled.some(x => /which/.test(x.text)), 'a decision made today'); assert.equal(d.side.interval_min, 15);
-    assert.equal(f.app.sessions && (await f.get('/api/chat?project=kestrel')).data.status.running, false, 'reading the home starts no chat');
+    assert.equal((await f.get('/api/home?project=kestrel')).data.status.running, false, 'reading the home starts no chat');
     assert.equal((await f.get('/api/home?project=all')).status, 400, 'one project');
   } finally { await f.done(); }
 });

@@ -2020,7 +2020,7 @@ data: ${JSON.stringify(l)}
         who.device = dev; pairing.touch(dev.id); store.via = `remote:${dev.id}`;
       }
       if (req.method === 'GET') {
-        if ((route.startsWith('/api/') || route === '/log') && !NO_STATE.test(route)) {   // the snapshot of the projects this GET reads (fs.promises, concurrently)
+        if (route.startsWith('/api/') && !NO_STATE.test(route)) {   // the snapshot of the projects this GET reads (fs.promises, concurrently)
           const want = url.searchParams.get('project') ?? firstP()?.name, t = performance.now();
           await primeFor(route === '/api/projects' || want === 'all' ? projects : projects.filter(x => x.name === want));
           tr.prime = performance.now() - t;
@@ -2086,8 +2086,6 @@ data: ${JSON.stringify(l)}
         if (route === '/api/guard') return send(200, await guardAt(one(url), url));   // META-TEND P6
         if (route === '/api/tests') return send(200, await testsAt(one(url), url));   // META-TEND TESTS; TESTS-RUNTIME: the summary or one sub-view's part
         if (route === '/api/tests/source') return send(200, await testSource(one(url), url));   // TESTS-RUNTIME: the code viewer
-        const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
-        if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
         if (route === '/api/settings') { const p = one(url); return send(200, { ...settingsInfo(p), sync: await syncInfo(p), capacity: await capacityOf() }); }
         if (route === '/api/feed') return await openFeed(req, res, url);
@@ -2098,16 +2096,7 @@ data: ${JSON.stringify(l)}
           const p = one(url), last = req.headers['last-event-id'];
           await drainChatA(p);
           const from = Math.max(0, (last ? Number(last) + 1 : Number(url.searchParams.get('from'))) || 0);
-          if (url.searchParams.get('live') === '1') return await openChat(p, res, from);
-          return send(200, { project: p.name, ...readThread(p.state, from), status: chatStatus(p) });
-        }
-        if (route === '/log') {
-          const p = one(url), r = st(p).items[url.searchParams.get('run') ?? ''];
-          const f = r?.kind === 'run' ? r.data.log : null, logs = path.resolve(p.state, 'logs');
-          if (!f || path.dirname(path.resolve(f)).toLowerCase() !== logs.toLowerCase() || !(await existsA(f))) throw fail(404, 'Log not found');
-          // the live hand-off state first (lanes.mjs handoffOf): the log's last line is the old session's, not where the run is now
-          const h = hoOf(p, r), top = h ? `[norn] ${h.text}${h.run !== r.id ? ` (${h.run})` : ''}\n` : '';
-          return send(200, top + (await tail(f, 200)).join('\n') + '\n', 'text/plain; charset=utf-8');
+          return await openChat(p, res, from);
         }
         throw fail(404, 'Not found');
       }

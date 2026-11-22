@@ -95,7 +95,7 @@ test('GET /api/instructions never scans in the handler: pending at once, the wor
     assert.ok(row);
     assert.ok((await f.get('/api/instructions?project=kestrel&part=hints')).data.hints.some(h => /missing\.md/.test(h.text)));
     assert.equal((await f.get('/api/instructions?project=kestrel&part=nope')).status, 400);
-    const one = (await f.get(`/api/instructions/${row.id}?project=kestrel`)).data;
+    const one = (await f.get(`/api/docs?project=kestrel&part=file&file=${row.id}`)).data.doc;
     assert.match(one.text, /# Rules/); assert.ok(Array.isArray(one.findings), 'the open file carries its own findings');
     const g = (await f.get('/api/guard?project=kestrel')).data;
     assert.equal(g.pending, false, 'the Guard reads the same scan');
@@ -108,7 +108,7 @@ test('GET /api/instructions never scans in the handler: pending at once, the wor
       const u2 = `http://127.0.0.1:${app2.server.address().port}`;
       const w = await (await fetch(`${u2}/api/instructions?project=kestrel`)).json();
       assert.equal(w.pending, false); assert.equal(w.at, s.at); assert.equal(w.refreshing, false, 'a fresh view on disk: no rebuild');
-      assert.equal((await (await fetch(`${u2}/api/instructions/${row.id}?project=kestrel`)).json()).id, row.id, 'the file reader works from the disk view');
+      assert.equal((await (await fetch(`${u2}/api/docs?project=kestrel&part=file&file=${row.id}`)).json()).doc.key, row.id, 'the file reader works from the disk view');
     } finally { await app2.close(); }
   } finally { await f.done(); }
 });

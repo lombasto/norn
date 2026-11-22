@@ -179,7 +179,7 @@ test('chat: messages queue in order on one process; an executor without chat is 
   } finally { await chat.close(); }
 });
 
-// ---------- piece 3: the endpoints - /api/chat (thread + live events) and /api/chat/send ----------
+// ---------- piece 3: the endpoints - /api/chat?live=1 (the live events) and /api/chat/send ----------
 // the dashboard runs the claude chat command; the spawn is the scripted fake CLI (no real claude)
 const toFake = calls => (exe, args, opts) => { calls.push({ exe, args, opts }); const i = args.findIndex(a => a === '--session-id' || a === '--resume'); return spawn(process.execPath, [FAKE_CHAT, ...args.slice(i, i + 2)], opts); };
 async function sse(url, until, ms = 15000) {
@@ -202,11 +202,11 @@ async function sse(url, until, ms = 15000) {
   } finally { clearTimeout(t); ac.abort(); }
 }
 
-test('endpoints: POST /api/chat/send starts the chat lazily (token-guarded); GET /api/chat = the thread + status; ?live=1 = the live events', async () => {
+test('endpoints: POST /api/chat/send starts the chat lazily (token-guarded); GET /api/chat?live=1 = the live events', async () => {
   const calls = [], f = await fixture({ dash: { chatSpawnFn: toFake(calls), chatIdleMs: 60000 } });
   try {
-    const empty = (await f.get('/api/chat?project=kestrel')).data;
-    assert.deepEqual([empty.count, empty.items, empty.status.running], [0, [], false]);
+    const status = async () => (await f.get('/api/home?project=kestrel')).data.status;
+    assert.equal((await status()).running, false);
     assert.equal((await f.post('/api/chat/send', { project: 'kestrel', text: 'hi' }, { 'x-dash-token': 'wrong' })).status, 403);
     assert.equal((await f.post('/api/chat/send', { project: 'kestrel', text: ' ' })).status, 400);
     assert.equal((await f.post('/api/chat/send', { project: 'kestrel', text: 'x'.repeat(8001) })).status, 400);
@@ -219,13 +219,11 @@ test('endpoints: POST /api/chat/send starts the chat lazily (token-guarded); GET
     assert.deepEqual(evs.map(e => e.line.kind).filter(k => k !== 'usage'), ['segment', 'owner', 'start', 'session', 'text', 'turn']);
     assert.equal(calls[0].exe, 'claude'); assert.ok(calls[0].args.includes('--input-format'));
     assert.equal(calls[0].args[calls[0].args.indexOf('--model') + 1], 'claude-opus-5-5', 'model + effort per Settings (chatModel)');
-    const t = (await f.get('/api/chat?project=kestrel')).data;
-    assert.equal(t.count, evs.length); assert.equal(t.status.running, true); assert.equal(t.status.segment, 1);
-    assert.equal((await f.get('/api/chat?project=kestrel&from=4')).data.items[0].kind, evs[4].line.kind);
-    // a reconnect with Last-Event-ID replays only what came after it
-    const again = sse(f.url + '/api/chat?project=kestrel&live=1&from=' + (t.count - 1), got => got.length >= 1);
-    assert.deepEqual((await again).map(g => g.id), [t.count - 1]);
-    assert.equal((await f.get('/api/chat?project=other')).data.count, 0, 'one thread per project');
+    const st = await status(); assert.equal(st.running, true); assert.equal(st.segment, 1);
+    // a reconnect from a cursor replays only what came after it
+    const again = sse(f.url + '/api/chat?project=kestrel&live=1&from=' + (evs.length - 1), got => got.length >= 1);
+    assert.deepEqual((await again).map(g => g.id), [evs.length - 1]);
+    assert.equal(readThread(f.pb.state).items.length, 0, 'one thread per project');
     await f.app.close();
     assert.deepEqual(readThread(f.pa.state).items.filter(l => l.kind === 'stop').map(l => [l.why, l.code]), [['shutdown', 0]], 'dashboard close stops the chat by stdin');
   } finally { await f.done(); }

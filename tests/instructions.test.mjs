@@ -240,7 +240,7 @@ test('Context: in Health next to Usage (UX review 2), a one-project tab; rows wi
   assert.equal(d.file, undefined);
 });
 
-test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; /api/instructions/<id> opens only a listed file', async () => {
+test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; the Docs reader opens only a listed file', async () => {
   const f = fx();
   const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {} });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
@@ -250,9 +250,9 @@ test('the dashboard API: /api/instructions (the summary) + ?part=files lists the
     for (let i = 0; l.pending && i < 600; i++) { await new Promise(r => setTimeout(r, 100)); l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json(); }
     const row = byName((await (await fetch(`${url}/api/instructions?project=kestrel&part=files`)).json()).rows, 'repo/CLAUDE.md');
     assert.ok(row && l.method === TOKEN_METHOD);
-    const one = await fetch(`${url}/api/instructions/${row.id}?project=kestrel`);
-    assert.equal(one.status, 200); assert.match((await one.json()).text, /Repo rules/);
-    assert.equal((await fetch(`${url}/api/instructions/nope?project=kestrel`)).status, 404);
+    const one = await fetch(`${url}/api/docs?project=kestrel&part=file&file=${row.id}`);
+    assert.equal(one.status, 200); assert.match((await one.json()).doc.text, /Repo rules/);
+    assert.equal((await fetch(`${url}/api/docs?project=kestrel&part=file&file=nope`)).status, 404);
   } finally { await app.close(); }
 });
 
