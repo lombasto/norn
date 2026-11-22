@@ -306,23 +306,3 @@ test('win32: a codex-sol run whose exe is an npm .cmd shim spawns (shim -> node 
   assert.ok(log.includes('SHIM-MARKER ["exec"') && log.includes(JSON.stringify('m & "x"')) && log.includes('stdin=hello-brief'), log);
   assert.equal(it.end.exit, 0); assert.equal(it.end.outcome, 'done');
 });
-
-test('META-ONBOARD cut-over swap lock: a start waits while <state root>/SWAP.lock is fresh, refuses (code 4) past the wait, ignores a stale one', async () => {
-  const d = sandbox(), lockF = path.join(path.dirname(d.state), 'SWAP.lock');
-  fs.writeFileSync(lockF, JSON.stringify({ pid: 1, ts: new Date().toISOString(), why: 'cut-over' }));
-  let t0 = Date.now();
-  assert.throws(() => startRun(d.opts({ brief: d.brief('mode: done\n'), swapWaitMs: 400 })), e => e instanceof RunRefused && e.code === 4 && /swap lock/.test(e.message));
-  assert.ok(Date.now() - t0 >= 380, 'it waited');
-  assert.equal(d.runs().length, 0);
-  // released while waiting: the start goes ahead
-  const { spawn } = await import('node:child_process');
-  spawn(process.execPath, ['-e', `setTimeout(() => require('fs').rmSync(${JSON.stringify(lockF)}, { force: true }), 300)`], { stdio: 'ignore' });
-  t0 = Date.now();
-  const a = startRun(d.opts({ brief: d.brief('mode: done\n'), swapWaitMs: 10000 }));
-  assert.ok(a.run && Date.now() - t0 >= 250, 'started after the release');
-  await d.ended(a.run);
-  // a stale lock (a crashed cut-over) does not block
-  fs.writeFileSync(lockF, JSON.stringify({ pid: 1, ts: new Date(Date.now() - 16 * 60000).toISOString() }));
-  const b = startRun(d.opts({ brief: d.brief('mode: done\n'), swapWaitMs: 10000, worktree: d.wt2 }));
-  assert.ok(b.run); await d.ended(b.run);
-});

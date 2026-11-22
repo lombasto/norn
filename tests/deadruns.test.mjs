@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { sweepLost, relaunchLost, lostNotice, hbPath, pidGone } from '../engine/lib/runs.mjs';
-import { record, loadState } from '../engine/lib/records.mjs';
+import { record, loadState, RecordError } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 function sandbox() {
@@ -85,6 +85,16 @@ test('relaunch: a certain death goes through the auto-resume policy once (relaun
   assert.equal(d.item(off).resume.refused, 'auto-resume off');
   assert.deepEqual(relaunchLost(d.state, { start }), [], 'once per run');
   assert.equal(calls.length, 1);
+});
+
+// slop C10: only a state race (RecordError code 2) is the sweep's to skip; a log that does not read (torn line, lock busy: code 1)
+// throws - a swallowed resume left the relaunched run relaunchable, and the next sweep started it again
+test('relaunch: a resume record that fails on a torn log throws (code 1), never read as done', () => {
+  const d = sandbox(), a = d.start();
+  d.spec(a); d.hb(a, { supervisor_pid: deadPid() });
+  sweepLost(d.state, { load: () => 0 });
+  const start = o => { const next = d.start({ resume_of: o.resumeOf }); fs.appendFileSync(path.join(d.state, 'runs.jsonl'), '{"torn"'); return { run: next }; };
+  assert.throws(() => relaunchLost(d.state, { start }), e => e instanceof RecordError && e.code === 1 && /torn last line/.test(e.message));
 });
 
 test('relaunch: the one owner notice per sweep names the boot, n lost and m relaunched', () => {
@@ -248,16 +258,13 @@ test('endLost: a lost run whose supervisor left its end data is ended with that 
   assert.equal(d.item(a).end.outcome, 'done'); assert.match(d.item(a).end.swept, /end\.json/);
 });
 
-// MAIL-28 (1): the supervisor's end path never gives up on a run that reads lost: alive, then its end
-test('recordEnd: an end refused because the run reads lost (an older event table) records alive and then the end; a killed run stays refused', async () => {
+// the supervisor's end lands on a run that reads lost (a stall it lived through); a killed run stays refused
+test('recordEnd: a run that reads lost takes its end directly; a killed run stays refused', async () => {
   const { recordEnd } = await import('../engine/lib/runs.mjs');
-  const { RecordError } = await import('../engine/lib/records.mjs');
   const d = sandbox(), a = d.start(), k = d.start();
   record(d.state, { kind: 'run', ev: 'lost', id: a, by: 'status', data: { why: 'heartbeat 300 s old', cause: 'stale' } });
-  // the older table: end only from running
-  const older = (st, e, o) => { if (e.ev === 'end' && loadState(st).items[e.id].state !== 'running') throw new RecordError(`${e.id} is ${loadState(st).items[e.id].state}; end needs running`); return record(st, e, o); };
-  recordEnd(d.state, a, { exit: 0, outcome: 'done' }, { rec: older });
-  assert.deepEqual(d.item(a).history.map(h => h.ev), ['start', 'lost', 'alive', 'end']);
+  recordEnd(d.state, a, { exit: 0, outcome: 'done' });
+  assert.deepEqual(d.item(a).history.map(h => h.ev), ['start', 'lost', 'end']);
   assert.equal(d.item(a).state, 'exited'); assert.equal(d.item(a).end.outcome, 'done');
   record(d.state, { kind: 'run', ev: 'kill', id: k, by: 'owner', data: {} });
   assert.throws(() => recordEnd(d.state, k, { exit: 0, outcome: 'done' }), /is killed/);

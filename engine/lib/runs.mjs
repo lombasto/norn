@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runSteps, runStepsAsync } from './steps.mjs';
-import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId, homeOf } from './records.mjs';
+import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId, homeOf, loadShared } from './records.mjs';
 import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
@@ -269,6 +269,10 @@ export function hbWriter(file, { log = () => {}, rename = fs.renameSync, write =
   };
 }
 const runsOf = state => Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
+// a state race (RecordError code 2: the run moved on meanwhile) is the sweep's / fill's to skip; a log that does not read or a busy
+// lock (code 1) throws - skipping it would leave the run to be handled again on the next pass
+const raced = e => e instanceof RecordError && e.code === 2;
+const tryRecord = (state, ev) => { try { record(state, ev); return true; } catch (e) { if (!raced(e)) throw e; return false; } };
 const hbAge = (state, it, now) => {
   const f = hbPath(state, it.id);
   const t = fs.existsSync(f) ? fs.statSync(f).mtimeMs : Date.parse(it.created);
@@ -310,25 +314,12 @@ function endEvidence(state, it) {
 }
 // the end a sweep records from a finished run's evidence (and its heartbeat goes) -> true when recorded
 function endFromEvidence(state, it, ev) {
-  try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { ...ev.data, swept: `end not recorded by its supervisor: recorded by the sweep from ${ev.from}` } }); }
-  catch (e) { if (!(e instanceof RecordError)) throw e; return false; }
+  if (!tryRecord(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { ...ev.data, swept: `end not recorded by its supervisor: recorded by the sweep from ${ev.from}` } })) return false;
   try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
   return true;
 }
-/**
- * MAIL-28 (1): the supervisor's end record. An end refused while the run reads lost (a supervisor whose event table takes end from
- * running only: RUN-80 "end not recorded: RUN-80 is lost; end needs running") does not give up: alive, then its end. Any other refusal
- * (killed, already ended) throws as before. rec: a test's record.
- */
-export function recordEnd(state, run, data, { rec = record } = {}) {
-  const end = () => rec(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data });
-  try { return end(); }
-  catch (e) {
-    if (!(e instanceof RecordError) || runsOf(state).find(r => r.id === run)?.state !== 'lost') throw e;
-    rec(state, { kind: 'run', ev: 'alive', id: run, by: 'launcher', data: { why: `its supervisor ended it (end refused: ${e.message})` } });
-    return end();
-  }
-}
+// the supervisor's end record: end is taken from running and lost (a stall swept lost still ends); a killed / ended run refuses it
+export const recordEnd = (state, run, data) => record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data });
 // The second signal (owner report 2026-11-19): a stale .hb alone is never a death. The run's own output (its log, its transcript, the
 // newest mtime) -> ms, or null when there is none. Spec fields fill in what the start record lacks (projectsDir is the spec's only).
 export function runActivityMs(state, it) {
@@ -363,15 +354,12 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     return cpu;
   };
   for (const it of runsOf(state)) {
-    // a stall swept as lost (cause stale) whose heartbeat is fresh again and whose supervisor lives: alive, so its own end is accepted
-    // (2026-11-18: a machine busy starting processes let heartbeats fall 210-297 s behind; five live runs read lost and would have
-    // lost their end records). Certain deaths (DEAD_CAUSES) are never revived here.
+    // a stall swept lost (cause stale) whose beat is fresh again and whose supervisor lives is running after all: the board shows it running and the sweep watches its beat again
     if (it.state === 'lost' && it.lost?.cause === 'stale' && it.data.kind !== 'interactive') {
       const { age, has } = hbAge(state, it, t), hb = has ? readJson(hbPath(state, it.id)) : null;
       const lostAt = Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts);
       if (has && age <= staleMs && t - age > lostAt && hb && !gone(hb.supervisor_pid)) {
-        try { record(state, { kind: 'run', ev: 'alive', id: it.id, by, data: { why: `heartbeat ${Math.round(age / 1000)} s old again (lost for a stale heartbeat at ${new Date(lostAt).toISOString().slice(11, 19)}Z); supervisor pid ${hb.supervisor_pid} alive` } }); }
-        catch (e) { if (!(e instanceof RecordError)) throw e; }
+        tryRecord(state, { kind: 'run', ev: 'alive', id: it.id, by, data: { why: `heartbeat ${Math.round(age / 1000)} s old again (lost for a stale heartbeat at ${new Date(lostAt).toISOString().slice(11, 19)}Z); supervisor pid ${hb.supervisor_pid} alive` } });
       }
       continue;
     }
@@ -382,12 +370,12 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     if (Date.parse(it.created) < bt - BOOT_SLACK_MS) { cause = 'boot'; why = `machine rebooted at ${new Date(bt).toISOString().slice(0, 19)}Z after the run started`; }
     else if (hb && gone(hb.supervisor_pid)) { cause = 'gone'; why = `supervisor pid ${hb.supervisor_pid} gone without an end record`; }
     else if (age <= staleMs || (has && hbLate(state, it, { now: t, staleMs, gone, age, cpu: sample }))) continue;   // late, not lost (hbLate: output advanced, or a busy CPU)
-    // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
+    // a stall (not a death) also goes stale - the supervisor may live on; the record names the cause
     else if (has) { cause = 'stale'; why = `heartbeat ${Math.round(age / 1000)} s old`; }
     else { cause = 'no-start'; why = `no heartbeat for ${Math.round(age / 1000)} s: the run never started`; }
-    const ev = DEAD_CAUSES.includes(cause) ? endEvidence(state, it) : null;   // MAIL-28 (2): a finished run is ended, never lost
+    const ev = DEAD_CAUSES.includes(cause) ? endEvidence(state, it) : null;   // a finished run is ended, never lost
     if (ev && endFromEvidence(state, it, ev)) continue;
-    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    if (tryRecord(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, cause, ...(cause === 'boot' ? { boot: new Date(bt).toISOString() } : {}), supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) })) lost.push(it.id);
   }
   return lost;
 }
@@ -400,12 +388,8 @@ export function autoResumeRefusal(spec, state) {
   return { refused: refused || null, count, max };
 }
 export const LOST_RESUME_MAX_AGE_MS = 24 * 3600e3;   // an older dead run is the check-in's (its worktree has moved on)
-/**
- * META-CATCH S1: a work run the sweep recorded lost for a CERTAIN death (DEAD_CAUSES) goes through the auto-resume policy as a HANDOFF does:
- * relaunched from its spec (a fresh agent, same brief; the resume prompt re-checks HEAD + git status) and reviewed by the launcher as
- * routine, or its `resume` record says why not (the check-in rules it). Level-triggered from the records: whoever swept it. Once per run.
- * Returns [{ id, cause, boot?, next?, refused? }].
- */
+// a work run lost for a certain death (DEAD_CAUSES) is relaunched once from its spec under the auto-resume policy, or its resume record
+// says why not (the check-in rules it) -> [{ id, cause, boot?, next?, refused? }]
 // a lost run relaunchLost still has to judge (a check-in is the tick's own; a helper belongs to its parent)
 const relaunchable = (it, now) => it.state === 'lost' && !it.review && DEAD_CAUSES.includes(it.lost?.cause) && !it.history.some(h => h.ev === 'resume')
   && it.data.kind !== 'checkin' && it.data.role !== 'helper' && now - Date.parse(it.history.findLast(h => h.ev === 'lost')?.ts) <= LOST_RESUME_MAX_AGE_MS;
@@ -425,32 +409,25 @@ export function relaunchLost(state, { now = Date.now(), start = startRun } = {})
       } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
     }
     const why = `${it.lost.cause}: ${it.lost.why}`;
-    try {
-      record(state, { kind: 'run', ev: 'resume', id: it.id, by: 'launcher', data: next ? { next, count: count + 1, max, why } : { refused, count, max, why } });
-      if (next) record(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
-    } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    if (tryRecord(state, { kind: 'run', ev: 'resume', id: it.id, by: 'launcher', data: next ? { next, count: count + 1, max, why } : { refused, count, max, why } }) && next)
+      tryRecord(state, { kind: 'run', ev: 'review', id: it.id, by: 'launcher', data: { refs: [next], routine: 'lost_resume', why: `lost (${why}) -> auto-resumed ${next}` } });
     out.push(drop({ id: it.id, cause: it.lost.cause, boot: it.lost.boot, next, refused }));
   }
   return out;
 }
-/**
- * A lost run is not an ended one: `lost` only says the beat stopped (a stale one may be a stall whose supervisor still ends it), so
- * nothing wrote its `end` and it looked live for hours (norn RUN-33: stale-lost, reviewed, never relaunched). Once its supervisor and
- * executor pids are both gone - and the auto-resume policy has had its say (relaunchable) - the sweep writes the one `end` (outcome
- * crash, the lost why) and drops its heartbeat file. A pid alive again (a stall, or a reused pid) leaves it alone. -> [ids ended]
- */
+// lost only says the beat stopped: once its supervisor and executor pids are gone and relaunchLost had its say, the sweep writes the
+// one end (crash, the lost why) and drops its heartbeat -> [ids ended]
 export function endLost(state, { now = Date.now(), gone = pidGone } = {}) {
   const out = [];
   for (const it of runsOf(state)) {
     if (it.state !== 'lost' || it.data.kind === 'interactive' || relaunchable(it, now)) continue;
-    if (beatSinceLost(state, it)) continue;   // MAIL-22: it beat after the lost record - never ended (a live stall is revived above)
+    if (beatSinceLost(state, it)) continue;   // it beat after the lost record - never ended (a live stall is revived above)
     const hb = readJson(hbPath(state, it.id)), pids = [hb?.supervisor_pid, hb?.pid, it.lost?.supervisor_pid].filter(p => Number.isInteger(p) && p > 0);
     if (!pids.every(gone)) continue;
-    const ev = endEvidence(state, it);   // MAIL-28: the end its supervisor could not record, else a crash
+    const ev = endEvidence(state, it);   // the end its supervisor could not record, else a crash
     if (ev) { if (endFromEvidence(state, it, ev)) out.push(it.id); continue; }
     const why = `lost: ${it.lost?.why ?? 'no heartbeat'}; supervisor and executor gone, no end record`;
-    try { record(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } }); }
-    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    if (!tryRecord(state, { kind: 'run', ev: 'end', id: it.id, by: 'launcher', data: { exit: null, ...drop({ outcome: 'crash', outcome_source: 'sweep', why, cause: it.lost?.cause }) } })) continue;
     try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
     out.push(it.id);
   }
@@ -698,27 +675,10 @@ export function landingPriority(o) {
   return { ...o, priority: higher(o.priority ?? (o.state ? workPriority(runsOf(o.state), o.lane) : DEFAULT_PRIORITY), LANDING_FLOOR) };
 }
 
-// META-ONBOARD cut-over: <state root>/SWAP.lock (written by onboard-cutover.mjs --apply for its swap steps, < 2 min) holds NEW starts:
-// a start waits while it is fresh (swapWaitMs, default 5 min), then refuses with code 4 (a --queue start queues). A lock older than
-// SWAP_STALE_MS (a crashed cut-over) is ignored. Live runs are never touched.
-export const SWAP_STALE_MS = 15 * 60000;
-export function swapLockFile(state) { return path.join(path.dirname(path.resolve(state)), 'SWAP.lock'); }
-function swapWait(o) {
-  const f = swapLockFile(o.state), end = Date.now() + (o.swapWaitMs ?? 5 * 60000);
-  for (;;) {
-    let ts;
-    try { ts = Date.parse(JSON.parse(fs.readFileSync(f, 'utf8')).ts); } catch { return; }   // no lock (or unreadable = being removed)
-    if (!(Date.now() - ts < SWAP_STALE_MS)) return;
-    if (Date.now() >= end) throw new RunRefused(`swap lock held (${fwd(f)}: a cut-over is swapping the install) - retry in a minute`, 4);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-  }
-}
-
-// META-CONTROLLER C4 (SPEC sec. 2): a check-in's new run on a lane the controller holds is refused (exit 5); a fill of a run queued
-// before the hold is the launcher's, not the check-in's, and goes on
+// a check-in's new run on a held lane (held from any home) is refused (exit 5); a fill of a run queued before the hold is the launcher's
 export function heldRefusal(state, lane, caller, now = Date.now()) {
   if (caller !== 'checkin' || !lane) return;
-  const h = holdOf(fold(readEvents(recordsFile(state, 'lane'))).items[laneId(lane, state)], now);
+  const h = holdOf(loadShared(state, 'lane').items[laneId(lane, state)], now);
   if (h) throw new RunRefused(holdMessage(h), HELD_EXIT);
 }
 // META-CHECKIN-GUARDS R1 guard A (checkinguards.busyRefusal, the replay grader's too): a check-in's new run (start or --queue) on a
@@ -733,10 +693,8 @@ export function busyDoor(o) {
   noteRefusal(o.state, why, { guard: 'busy', lane: o.lane ?? null, stage: o.stage ?? null });
   throw new RunRefused(why, BUSY_EXIT);
 }
-// fair-slots item 4 (11-19 14:53Z: norn run --queue --priority P1 started RUN-251 at once while the older P1 runs RUN-244 / RUN-247 stayed
-// queued, held for CPU > fill.max_cpu_pct): a run that would start now first reads every project's queue (their dry walks, fair: false).
-// A queued run on a cap it uses, of the same or a higher priority, that is ready or waits only for capacity (a cap, resources) goes
-// first: the new run joins the queue in fill order (--queue) or is refused like a full cap (exit 4). Returns those runs, oldest first.
+// a direct start never passes a queued run on a cap it uses, of the same or a higher priority, ready or waiting for capacity only: it
+// joins the queue in fill order (--queue) or is refused like a full cap (exit 4) -> those runs, oldest first
 export function queuedAhead(o) {
   const caps = infoOf(o)?.caps || [], mine = PRIORITIES.indexOf(PRIORITIES.includes(o.priority) ? o.priority : DEFAULT_PRIORITY);
   if (!caps.length || o.kind === 'checkin' || o.role === 'helper') return [];
@@ -746,8 +704,9 @@ export function queuedAhead(o) {
     let rows;
     try { if (!runsOf(s).some(r => r.kind === 'run' && r.state === 'queued')) continue; rows = walkQueue(s, { now: o.now ?? Date.now(), act: null, fair: false, resources: o.resources || sampleResources }); } catch { continue; }
     for (const r of rows) {
-      const rc = EXECUTORS[r.executor]?.caps ?? [];
-      if (!rc.some(k => caps.includes(k)) || PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
+      if (PRIORITIES.indexOf(r.priority ?? DEFAULT_PRIORITY) > mine) continue;
+      const rc = infoOf(readJson(queueSpecPath(s, r.id)) ?? {})?.caps ?? [];   // a typed executor's caps come with its entry (the queue spec's provider)
+      if (!rc.some(k => caps.includes(k))) continue;
       if (r.ready || (r.terms.length && r.terms.every(x => CAPACITY_TERM.test(x)))) out.push({ id: r.id, project: path.basename(s), priority: r.priority ?? DEFAULT_PRIORITY, position: r.position });
     }
   }
@@ -757,20 +716,17 @@ const aheadWords = a => `${a.length} queued run(s) of the same or a higher prior
 // the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
 const noCaller = ({ caller: _c, ...o }) => o;
 
-// ---------- RM-46 S2b (multi-home SPEC 4.4): the work claim at dispatch ----------
-// Every dispatch path (norn run, the fill, check-in stage runs, relaunchLost, resumes) passes startRun, so claimDoor is the one hook:
-// after the cheap local refusals, before the worktree lock. Only a synced project (home.json) with a ledger remote claims, and only a
-// lane run that writes. Exempt: check-ins, helpers (the parent's claim covers them), audits, talks, plan reviews, read-only runs, and
-// MERGE stages (leaderDoor: the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
-// and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
+// ---------- the work claim at dispatch ----------
+// claimDoor (every dispatch path passes startRun): a synced project's writing lane run claims its work - an overlap refuses (exit 3)
+// or holds it queued (ClaimHeld); a MERGE stage is the merge leader's (leaderDoor), never claimed
 export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
-const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
+const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || isMergeStage(o.stage) || !writeTrees(o).length;
 /** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
 export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
-/** RM-46 S6a (SPEC 4.8): a MERGE stage of a synced project starts only on its merge leader (local: no network) - else the why, null = it may */
+/** a MERGE stage of a synced project starts only on its merge leader (local: no network) - else the why, null = it may */
 export const LEADER_ONLY_PRS = 'this home only opens PRs';
 export function leaderRefusal(o) {
-  if (o.stage !== 'MERGE') return null;
+  if (!isMergeStage(o.stage)) return null;
   const f = homeOf(o.state) ? fedOf(o.git_ledger) : null;
   if (!f) return null;
   const why = leaderWhy(o.state, f, { project: path.basename(path.resolve(o.state)), now: o.now ?? Date.now(), pol: syncPolicy(specPolicy({ ctx_from: policySource(o) })) });
@@ -944,7 +900,6 @@ export function startRun(o) {
     const a = authGate(o);
     if (a) return { ...queueRun(o), queued: true, why: a };
   }
-  swapWait(o);
   const info = launchable(o);
   const staleMs = o.staleMs ?? STALE_MS, hbMs = o.hbMs ?? HB_MS;
   sweepLost(o.state, { staleMs, by: 'launcher' });
@@ -1198,14 +1153,14 @@ function atFill(spec) {
 }
 function fillPass(state, now, resources, authProbe) {
   const started = [];
-  const withdraw = (id, why) => { try { record(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; } };
+  const withdraw = (id, why) => tryRecord(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } });
   fedPass(state, now);
-  // META-AUTONOMY R1: a hold is recorded once per why (and cleared once) - the walk runs on every fill, the log grows only on a change
+  // a hold is recorded once per why (and cleared once): the walk runs on every fill, the log grows only on a change
   const holds = new Map(runsOf(state).filter(r => r.state === 'queued' && r.hold).map(r => [r.id, r.hold]));
   const hold = (id, why) => {
     const cur = holds.get(id), held = cur && !cur.cleared;
     if (why ? held && cur.why === why : !held) return;
-    try { record(state, { kind: 'run', ev: 'hold', id, by: 'launcher', data: why ? { why } : { cleared: true } }); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    tryRecord(state, { kind: 'run', ev: 'hold', id, by: 'launcher', data: why ? { why } : { cleared: true } });
   };
   walkQueue(state, { now, resources, authProbe, act: {
     withdraw,
@@ -1263,7 +1218,7 @@ function fedPass(state, now) {
   let claims;
   try { claims = fetchClaims(f); } catch (e) { fedLog(state, `claims not read: ${e.message}`); return; }
   try { writeForeign(state, importForeign(f, project)); } catch (e) { fedLog(state, `node runs not imported: ${e.message}`); }
-  const rec = (id, ev, data) => { try { record(state, { kind: 'run', ev, id, by: 'launcher', data: drop(data) }); return true; } catch (e) { if (!(e instanceof RecordError)) throw e; return false; } };
+  const rec = (id, ev, data) => tryRecord(state, { kind: 'run', ev, id, by: 'launcher', data: drop(data) });
   for (const r of watch) {
     const key = claimKey(f.host, project, r.id), c = claims[key];
     let st = r.state;
@@ -1380,7 +1335,7 @@ const claudeLive = (state, staleMs, pending, me, budget) => {
 function waitingLanding(state, queue, now, ev = () => makeEval(state)) {
   let E = null;
   return queue.filter(q => isLandingStage(q.stage) && !(q.not_before && Date.parse(q.not_before) > now) && !(q.after.length && !evalAll(q.after, (E ??= ev())).conds.every(c => c.met))
-    && !(q.stage === 'MERGE' && leaderRefusal({ ...(readJson(queueSpecPath(state, q.id)) || {}), now })));
+    && !(isMergeStage(q.stage) && leaderRefusal({ ...(readJson(queueSpecPath(state, q.id)) || {}), now })));
 }
 function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth, fair = true } = {}) {
   const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
@@ -1594,9 +1549,7 @@ export function requeueRun({ state, run, after, by, why, notBefore, priority }) 
   return { run, next, rewired, priority: runsOf(state).find(r => r.id === next)?.data.priority ?? null };
 }
 
-// Children are stopped with the parent (metadelegate sec. 2): a running helper whose parent run is no longer running is
-// recorded lost (role launcher; the helper's supervisor then fails its `end` and exits) and its process tree is killed.
-// DEC-1088: only the pids the helper's own heartbeat registered (never a match by name / command line), each receipted first.
+// a running helper whose parent no longer runs is recorded lost and killed: only the pids its own heartbeat registered, each receipted
 export const stopOrphans = (state, o) => runSteps(orphanSteps(state, o), SYNC_IO);
 function* orphanSteps(state, { by = 'launcher' } = {}) {
   const runs = runsOf(state), byId = Object.fromEntries(runs.map(r => [r.id, r])), stopped = [];
@@ -1607,7 +1560,7 @@ function* orphanSteps(state, { by = 'launcher' } = {}) {
     if (p?.state === 'running') continue;
     const hb = readJson(hbPath(state, it.id)) || {}, why = `parent ${it.data.parent} ${p?.state ?? 'missing'}`;
     try { yield ['record', state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why } }]; }
-    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    catch (e) { if (!raced(e)) throw e; continue; }
     const rc = { state, killer: `stopOrphans by ${by} (pid ${process.pid}${process.env.META_RUN_ID ? `, ${process.env.META_RUN_ID}` : ''})`, reason: `orphaned helper ${it.id}: ${why}` };
     yield ['kill', hb.supervisor_pid, rc];
     yield ['kill', hb.pid, rc];

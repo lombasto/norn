@@ -121,6 +121,16 @@ test('scan + view: ancestor and rebased branches read merged, a deliverable on a
   assert.equal(v2.rows.find(r => r.name === 'norn/open').state, 'lost', 'RUN-1 says running with no heartbeat: lost');
 });
 
+// slop C2: on home b a lane is L:b/rm7 and its runs say lane rm7, RUN-b-n - the row finds its LANE record and its newest run by number
+test('home b: a lane L:b/rm7 owns norn/rm7 (never "no LANE record"); its newest run is RUN-b-12, not RUN-b-3', () => {
+  const tip = { sha: 'a'.repeat(40), last: NOW - DAY, author: 'ann', subject: 'feat: rm7' };
+  const facts = { at: new Date(NOW).toISOString(), main: 'main', refs: [{ name: 'norn/rm7', local: tip, remote: null, merged: false, how: null, ahead: 1, behind: 0 }], worktrees: [], prs: [] };
+  const run = (n, state, end) => ({ id: `RUN-b-${n}`, kind: 'run', state, data: { lane: 'rm7', executor: 'claude' }, history: [], ...(end ? { end } : {}) });
+  const items = { 'L:b/rm7': { id: 'L:b/rm7', kind: 'lane', state: 'active', data: { name: 'rm7' }, history: [] }, 'RUN-b-3': run(3, 'lost'), 'RUN-b-12': run(12, 'exited', { outcome: 'done' }) };
+  const row = branchesView({ facts, items, home: 'b', project: 'p', now: NOW }).rows[0];
+  assert.deepEqual([row.lane, row.run.id, row.state], [{ name: 'rm7', state: 'active' }, 'RUN-b-12', 'awaiting merge'], row.why);
+});
+
 test('row actions: delete a merged branch (Undo restores it), refuse an unmerged one; remove a clean worktree (Undo adds it back); adopt', async () => {
   const f = setup();
   await refreshBranches(f.project, { gh: null });

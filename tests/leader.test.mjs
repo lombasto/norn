@@ -12,7 +12,7 @@ import { claimsPass } from '../engine/lib/tick.mjs';
 import { tickMergeq } from '../engine/lib/mergeq.mjs';
 import { followerPrs } from '../engine/lib/mergeland.mjs';
 import { claimDoor, RunRefused, hbPath, queueRun, readiness, fillQueue } from '../engine/lib/runs.mjs';
-import { readSync, leaderKey } from '../engine/lib/claims.mjs';
+import { readSync, leaderKey, workKey } from '../engine/lib/claims.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -156,4 +156,16 @@ test('a non-leader home refuses to queue a MERGE; a MERGE queued there before is
   assert.ok(!row.terms.some(t => /^(cap|resources)/.test(t)), row.terms.join('; '));
   fillQueue(g.b.state, { now: T0 + S, resources: () => ({ free_gb: 64, cpu_pct: 99 }) });
   assert.equal(g.b.item(id).state, 'withdrawn');
+});
+
+// slop C16: the stage is case-insensitive everywhere (usageguard isMergeStage) - `--stage merge` is a MERGE for the leader gate and
+// the claim exemption too, not only for its merge worktree
+test('--stage merge (lower case): the non-leader refuses it like MERGE; on the leader it takes no work claim', () => {
+  const g = rig();
+  g.a.pass(T0); g.b.pass(T0);
+  const wt = path.join(g.t, 'wt-x'); fs.mkdirSync(wt, { recursive: true });
+  const door = (h, now) => claimDoor({ state: h.state, stage: 'merge', kind: 'worker', lane: 'x', worktree: wt, git_ledger: h.ledger, now, policy: { sync: POL } });
+  assert.throws(() => door(g.b, T0 + S), e => e instanceof RunRefused && e.code === 3 && /MERGE: merge leader is a/.test(e.message));
+  assert.equal(door(g.a, T0 + S), null);
+  assert.equal(g.at(workKey('demo', 'a', 'x')), null, 'a MERGE stage is exempt from the work claim');
 });

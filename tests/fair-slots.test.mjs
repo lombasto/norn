@@ -9,6 +9,7 @@ import { startRun, queueRun, readiness, fillAll, hbPath, capacityView, RunRefuse
 import { slotVerdict, sharesProblem, shareOf } from '../engine/lib/share.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { settled } from './helpers/settled.mjs';
+import { GROK } from './helpers/command-matrix.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -125,4 +126,17 @@ test('a direct start never passes an older queued run of the same or a higher pr
   const hi = startRun(norn.opts({ priority: 'P0', queue: true, resources: busy, policy: { auto_resume_max: 0, fill } }));
   assert.equal(hi.queued, true);
   assert.match(hi.why, /^resources: CPU busy/, 'a P0 run passes the P1 runs, but the same resource gate holds it');
+});
+
+// slop C15: a typed executor's caps come from its entry (infoOf), not the built-in table - its queued runs count as ahead too
+test('a typed executor: a direct start never passes an older queued run on the same max_<name> cap held for resources', () => {
+  const m = machine({ max_claude_workers: 3, max_grok: 2 });
+  const norn = m.project('norn');
+  const busy = () => ({ free_gb: 64, cpu_pct: 95 }), fill = { max_cpu_pct: 90 };
+  const grok = { executor: 'grok', provider: { ...GROK, runner: 'fake' }, exe: process.execPath, model: 'fake', effort: 'high', priority: 'P1', policy: { auto_resume_max: 0, fill } };
+  const old = norn.queue(grok);
+  assert.match(readiness(norn.state, { resources: busy })[0].terms.join(), /^resources: CPU busy 95 %/);
+  const r = startRun(norn.opts({ ...grok, queue: true, resources: busy }));
+  assert.equal(r.queued, true);
+  assert.match(r.why, new RegExp(`^1 queued run\\(s\\) of the same or a higher priority go first: norn ${old} P1 #1`));
 });

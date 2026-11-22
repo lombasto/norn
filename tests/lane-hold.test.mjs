@@ -16,6 +16,7 @@ import { createChat, readThread, rolePack } from '../engine/lib/chat.mjs';
 import { sendMail, loadMail } from '../engine/lib/mail.mjs';
 import { main } from '../engine/bin/norn.mjs';
 import { tickContext, scoreTick } from '../engine/lib/eval/checkin.mjs';
+import { heldRefusal, RunRefused } from '../engine/lib/runs.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const T0 = Date.parse('2026-11-13T12:00:00Z'), at = ms => () => new Date(ms), MIN = 60000;
@@ -245,4 +246,17 @@ test('C4 norn eval replay: a lane held at the tick is in the context; a candidat
   assert.equal(sc.worst, 'harmful');
   assert.equal(scoreTick([], [], ctx).agree, true, 'skipping the held lane agrees');
   assert.equal(scoreTick([], [{ ...disp, lane: 'relief' }], ctx).worst, 'recoverable', 'an unheld lane scores as before');
+});
+
+// slop C3: lanes are a shared kind - on a synced home the hold another home placed on its lane reaches the check-in's run door
+// (the fold of the own log + the copies, records.loadShared; the fixture as in foldhomes.test)
+test('C4 hold across homes: a check-in on home b starting a run on home a\'s held lane a/water is refused (exit 5)', () => {
+  const home = id => { const d = mkTmp(`meta-c4-${id}-`, 'p'); fs.writeFileSync(path.join(d, 'home.json'), JSON.stringify({ id, bare_home: 'a', cut_at: '2026-11-13T09:00:00Z' }) + '\n'); return d; };
+  const a = home('a'), b = home('b');
+  rec(a, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'water' } });
+  claim(a, { lane: 'a/water' });
+  fs.mkdirSync(path.join(b, 'homes', 'a'), { recursive: true });
+  fs.copyFileSync(path.join(a, 'records.jsonl'), path.join(b, 'homes', 'a', 'records.jsonl'));   // the fetch
+  assert.throws(() => heldRefusal(b, 'a/water', 'checkin', T0 + 5 * MIN), e => e instanceof RunRefused && e.code === HELD_EXIT && /L:a\/water is held/.test(e.message));
+  assert.doesNotThrow(() => heldRefusal(b, 'a/water', 'checkin', T0 + 31 * MIN), 'the hold expired');
 });

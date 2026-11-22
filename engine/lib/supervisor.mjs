@@ -90,9 +90,17 @@ function siblingSweep() {
 }
 // hbWriter: a blocked rename is retried, then written in place; the first failure of a streak and the recovery go to the run log
 const writeHb = hbWriter(hbPath(state, run), { log: logLine });
+// a lock that names another run now (taken over, or broken as stale) or does not refresh: the run log says so once per streak
+const lockLost = new Set();
+const refresh = lf => {
+  let why = null;
+  try { if (!refreshLock(lf, run, { pid: process.pid })) { let cur = null; try { cur = JSON.parse(read(lf)); } catch { cur = { run: 'no run (the lock file went or does not parse)' }; } why = `names ${cur?.run ?? 'no run'} now, not ${run}: not refreshed`; } }
+  catch (e) { why = `refresh failed (${e.code ?? e.message})`; }
+  if (!why) lockLost.delete(lf); else if (!lockLost.has(lf)) { lockLost.add(lf); logLine(`lock ${lf} ${why}`); }
+};
 const beat = () => {
   writeHb({ run, pid: childPid, supervisor_pid: process.pid, ...(supStarted !== null ? { supervisor_started: supStarted } : {}), ts: iso() });
-  for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
+  for (const lf of lockFiles) refresh(lf);
   siblingSweep();
 };
 beat();
@@ -284,8 +292,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   }
   // META-DOD 3: a plan review's end names its findings file and count (critique.mjs: 0 = clean, the build it holds goes)
   if (spec.critique) data.critique = { ...spec.critique, file: String(spec.notes).replace(/\\/g, '/'), findings: findingsCount(read(spec.notes)) };
-  // MAIL-28: the end data goes to END_FILE first - an end that does not land (refused, or this process dies) is recorded from it by
-  // the sweep (sweepLost / endLost), never read as a run that never started; recordEnd revives a run that reads lost before its end
+  // the end data goes to END_FILE first: an end that does not land (refused, or this process dies) is recorded from it by the sweep
   const endFile = endFilePath(state, run);
   try { fs.mkdirSync(path.dirname(endFile), { recursive: true }); fs.writeFileSync(endFile, JSON.stringify({ run, data })); } catch (e) { logLine(`end data not kept: ${e.message}`); }
   try { recordEnd(state, run, data); try { fs.unlinkSync(endFile); } catch { /* not written */ } }

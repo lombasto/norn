@@ -88,6 +88,15 @@ test('chains: a 4-step chain done -> running -> waiting -> waiting, one line, sh
   assert.equal(p.upnext.find(u => u.id === 'RUN-4').start.at, T(70), 'start estimate = the upstream ETA');
 });
 
+// slop C2: a home's runs are RUN-b-n - the newest run of a step is picked by its number there too, never by the order of the log
+test('chains on home b: a step\'s newest RUN-b-n wins (RUN-b-12 over RUN-b-3), as on a solo dir', () => {
+  const runs = [run('b-3', 'exited', { lane: 'adopt', stage: 'A1' }, { end: { outcome: 'stopped' } }),
+    run('b-12', 'exited', { lane: 'adopt', stage: 'A1' }, { end: { outcome: 'done' } }),
+    run('b-13', 'queued', { lane: 'adopt', stage: 'A2', after: [after('RUN-b-12')] })];
+  const c = buildPlan({ runs, ready: [{ id: 'RUN-b-13', ready: false, terms: ['after run:RUN-b-12:done unmet'] }], now: NOW }).chains[0];
+  assert.deepEqual(c.steps.map(s => [s.id, s.status]), [['RUN-b-12', 'done'], ['RUN-b-13', 'waiting']]);
+});
+
 test('chains: a withdrawn chain is broken for 24 h - "chain broken: X stopped, Y..Z withdrawn" - then drops out', () => {
   const runs = (wTs) => [
     run(1, 'exited', { lane: 'adopt', stage: 'A1' }, { end: { outcome: 'stopped' } }),

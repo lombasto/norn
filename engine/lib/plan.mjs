@@ -7,7 +7,7 @@
 // one day-aware clock ("today 21:41", "Fri 02:13") with the zone named once, plain names (lane title, else the lane humanized).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, fold, recordsFile, laneNameIn, homeOf, PRIORITIES } from './records.mjs';
+import { readEvents, fold, recordsFile, loadShared, laneNameIn, homeOf, idNum, PRIORITIES } from './records.mjs';
 import { queueOf, readiness } from './runs.mjs';
 import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
@@ -38,7 +38,6 @@ const evTs = (r, ev) => { const h = [...(r.history || [])].reverse().find(x => x
 const endTs = r => evTs(r, 'end');
 export const median = xs => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 const onClaude = d => !d?.executor || ['claude', 'fake'].includes(d.executor);
-const idn = id => Number(String(id).slice(4)) || 0;
 
 // ---------- names: the lane's title, else the lane in plain words; never a raw sha ----------
 const SHA = /-[0-9a-f]{7,40}$/i;
@@ -107,7 +106,7 @@ export function families(runs) {
   const by = new Map();
   for (const r of runs) { const k = rootOf(r.id); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
   return [...by.entries()].map(([root, ms]) => {
-    ms.sort((a, b) => idn(a.id) - idn(b.id));
+    ms.sort((a, b) => idNum(a.id) - idNum(b.id));
     const ran = ms.filter(m => m.state !== 'filled' && m.state !== 'queued' && m.state !== 'withdrawn');
     let min = 0, cache = null;
     for (const m of ran) {
@@ -247,10 +246,10 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
   // fair-slots item 2: a lane's finished work on its way to main, in the Lanes table's words (lanes.mjs landState); its open PR = the
   // merge queue row's (the deliverable merge-land recorded it on, its branch not on main yet)
   const prOf = lane => (lane && (merges?.rows || []).find(d => d.lane === lane && d.pr)?.pr) || null;
-  const laneLand = lane => { if (!lane) return null; const ls = runs.filter(r => r.data.lane === lane).sort((a, b) => idn(b.id) - idn(a.id));
+  const laneLand = lane => { if (!lane) return null; const ls = runs.filter(r => r.data.lane === lane).sort((a, b) => idNum(b.id) - idNum(a.id));
     return landState(ls[0], ls.find(r => !isMergeStage(r.data.stage)), prOf(lane)); };
   // the run that will merge a lane's work: its queued / running MERGE-stage run
-  const mergeRunOf =lane => runs.filter(r => LIVE.includes(r.state) && r.data.lane === lane && isMergeStage(r.data.stage)).sort((a, b) => idn(b.id) - idn(a.id))[0] ?? null;
+  const mergeRunOf =lane => runs.filter(r => LIVE.includes(r.state) && r.data.lane === lane && isMergeStage(r.data.stage)).sort((a, b) => idNum(b.id) - idNum(a.id))[0] ?? null;
   // start / finish estimates (ms | null) with the reason in words when null; memoised; a cycle = no estimate
   const fin = new Map(), sta = new Map(), why = new Map();
   const no = (m, id, w) => { if (!why.has(`${m}${id}`)) why.set(`${m}${id}`, w); return null; };
@@ -339,7 +338,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
   for (const [k, ms] of groups) {
     const cand = ms.filter(m => !(m.state === 'filled' && m.fill?.next && map[m.fill.next]));
     const live = cand.filter(m => LIVE.includes(m.state));
-    repOf.set(k, (live.length ? live : cand.length ? cand : ms).reduce((a, b) => (idn(b.id) > idn(a.id) ? b : a)));
+    repOf.set(k, (live.length ? live : cand.length ? cand : ms).reduce((a, b) => (idNum(b.id) > idNum(a.id) ? b : a)));
   }
   const rep = k => repOf.get(k);
   const recentW = r => r.state === 'withdrawn' && evTs(r, 'withdraw') >= now - DAY;
@@ -384,7 +383,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
       lv.set(k, v);
       return v;
     };
-    return [...keys].sort((x, y) => level(x) - level(y) || idn(rep(x).id) - idn(rep(y).id));
+    return [...keys].sort((x, y) => level(x) - level(y) || idNum(rep(x).id) - idNum(rep(y).id));
   };
   const unmetMerge = id => ready.some(row => row.terms.includes(`after run:${id}:merged unmet`));
   const stepOf = k => {
@@ -430,7 +429,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     }
     const first = Math.min(...keys.map(posOf));
     return { steps, broken, finished: !!finished, shape: finished ? 'check' : broken || steps.some(s => s.status === 'ruling') ? '!' : steps.some(s => s.status === 'held') ? 'pause' : 'ring', rm: rmOf(steps), finish,
-      first: finished ? Infinity : broken && first === Infinity ? Infinity - 1 : first, firstId: Math.min(...keys.map(k => idn(rep(k).id))) };
+      first: finished ? Infinity : broken && first === Infinity ? Infinity - 1 : first, firstId: Math.min(...keys.map(k => idNum(rep(k).id))) };
   };
   const chains = [...components(liveG).filter(ks => ks.length > 1).map(ks => chainOf(ks, false)),
     ...components(finG).filter(ks => ks.length > 1 && ks.every(k => { const f = follow(map, rep(k)); return f.state === 'exited' && f.end?.outcome === 'done'; })).map(ks => chainOf(ks, true))]
@@ -472,8 +471,8 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
 /** gather the inputs from a state dir and build the plan. o: { state, project (loaded project.json), budget, now, git } */
 export function loadPlan({ state, project = null, budget = {}, now = Date.now(), git } = {}) {
   const runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
-  let lanes = [];
-  try { const home = homeOf(state)?.id; lanes = Object.values(fold(readEvents(recordsFile(state, 'lane'))).items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null })); } catch { /* none */ }
+  // a lane log that does not read is an integrity error (as in deliverables.mjs): it throws, never an empty lane list
+  const home = homeOf(state)?.id, lanes = Object.values(loadShared(state, 'lane').items).filter(l => l.kind === 'lane').map(l => ({ name: laneNameIn(l.id, home), title: l.data?.title ?? null }));
   const ready = readiness(state, { now });
   let status = '';
   try { status = fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'); } catch { /* not written yet */ }
