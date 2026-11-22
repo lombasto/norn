@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp } from './helpers/tmp.mjs';
-import { priceOf, usageUsd, liveRunCost, resetLiveCost } from '../engine/lib/livecost.mjs';
+import { priceOf, usageUsd, liveRunCost } from '../engine/lib/livecost.mjs';
 import { spendDay, billingLine, spendBreakdown } from '../engine/lib/billing.mjs';
 import { usageRefusal } from '../engine/lib/usageguard.mjs';
 import { forecastOf } from '../engine/lib/plan.mjs';
@@ -62,7 +62,6 @@ test('prices: longest prefix, aliases, a [1m] suffix, the default; a usage objec
 });
 
 test('live cost from a fake transcript: one count per message, nothing before the run started, subagents in, read on from the offset', () => {
-  resetLiveCost();
   const r = root(), run = { session_id: SID, started: r.started, model: 'opus' };
   const c = liveRunCost(run, { projectsDir: r.pd });
   assert.ok(c.estimate);
@@ -74,7 +73,6 @@ test('live cost from a fake transcript: one count per message, nothing before th
 });
 
 test('spend with a running run: ended + running (estimate) + chats; the running part goes once the run ends; STATUS line + forecast read the total', () => {
-  resetLiveCost();
   const r = root();
   let s = spendDay(r.stateRoot, r.now, { projectsDir: r.pd });
   assert.equal(s.ended_usd, 2); assert.equal(s.runs, 1);
@@ -95,7 +93,6 @@ test('spend with a running run: ended + running (estimate) + chats; the running 
 });
 
 test('the daily cap refuses on live spend: a long run past the cap holds new Claude work before it ends', () => {
-  resetLiveCost();
   const r = root({ chat: false }), spec = cap => ({ budget: { billing: 'api', api_usd_per_day: cap }, projectsDir: r.pd });
   assert.equal(usageRefusal(spec(20), r.state), null, '$12.14 < $20');
   assert.equal(usageRefusal(spec(5), r.state), 'api spend $12.14 in 24 h >= cap $5.00', 'only $2 has ended: the running $10.14 trips it');
@@ -119,7 +116,6 @@ async function apiFixture() {
 }
 
 test('the dash in API mode: the strip carries the 24 h spend (running runs as an estimate), Spend shows it, Lanes each lane\'s $ to date, Spend the $ per lane today / 7 days + chats', async () => {
-  resetLiveCost();
   const { f, id, now } = await apiFixture();
   try {
     const ui = async r => (await f.get(r)).data;
@@ -158,7 +154,6 @@ test('the dash in plan mode keeps the burn (the run document\'s facts, tokens / 
 });
 
 test('phone width unchanged: Lanes and Spend (page and drawer) in API mode at 390 px have no sideways scroll', { skip: skipWhy, timeout: 420000 }, async () => {
-  resetLiveCost();
   const { f } = await apiFixture(); let pg;
   try {
     pg = await openPage([390, 844]);
