@@ -135,7 +135,7 @@ export function buildStatus(o) {
     ...dirs.map(i => `- ${i.id} active: ${String(i.data.text).split('\n')[0].slice(0, 160)}`),
     ...items.filter(i => i.kind === 'lane' && i.state === 'parked').map(i => `- ${i.id} parked: ${i.history.at(-1).data.why ?? ''}`),
     ...items.filter(i => i.kind === 'run' && ['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive' && i.data.role !== 'helper')
-      .map(i => `- ${i.id} ${i.state} unreviewed ${i.data.lane ?? '-'} ${i.history.find(h => h.ev === 'end')?.data.outcome ?? i.state}`),
+      .map(i => `- ${i.id} ${i.state} unreviewed ${i.data.lane ?? '-'} ${i.end?.outcome ?? i.state}`),
   ];
   L.push(...(recs.length ? recs : ['- (nothing open)']), '');
   // the level-triggered resume digest (digest.mjs) when the caller computed one, or the error that stopped it

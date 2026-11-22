@@ -695,7 +695,7 @@ function allNodes(state, m, flags, out) {
   else { let c = null; try { c = JSON.parse(fs.readFileSync(path.join(state, 'fed-cache.json'), 'utf8')); } catch { /* none */ } nodes = Object.entries(c?.nodes || {}).map(([node, runs]) => ({ node, runs })); }
   const keep = i => i.kind === 'run' && (!flags.lane || i.data?.lane === flags.lane);
   const rows = [...Object.values(loadState(state).items).filter(keep).map(it => ({ node: own, it })), ...nodes.flatMap(n => n.runs.filter(keep).map(it => ({ node: n.node, it })))];
-  const outcome = it => it.history?.find(h => h.ev === 'end')?.data?.outcome ?? it.fill?.outcome ?? null;
+  const outcome = it => it.end?.outcome ?? it.fill?.outcome ?? null;
   if (flags.json) { out(JSON.stringify(rows.map(({ node, it: { history, ...i } }) => ({ node, ...i, outcome: outcome({ history, ...i }) })), null, 1)); return 0; }
   for (const { node, it } of rows) {
     const via = it.fill?.node ? `-> ${it.fill.next} on ${it.fill.node}` : it.claim?.node && it.state === 'claimed' ? `claimed by ${it.claim.node}` : it.data?.claim_of ? `claim of ${it.data.claim_of.home}/${it.data.claim_of.run}` : '';
@@ -848,9 +848,9 @@ function s5Cmd(argv, env, out, err) {
       && (!flags.unreviewed || (['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive')));
     // RM-46 S3: --homes adds the other homes' runs from their copies (read-only: never queued here, never reviewed here); lane = this home's form (b/x)
     if (flags.homes) items.push(...copyItems(state, 'run').filter(i => !flags.lane || i.data.lane === flags.lane));
-    if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => ({ ...i, outcome: history.find(h => h.ev === 'end')?.data.outcome ?? null })), null, 1));
+    if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => ({ ...i, outcome: i.end?.outcome ?? null })), null, 1));
     const pos1 = Object.fromEntries(queueOf(items.filter(i => !i.home)).map(q => [q.id, q]));
-    const col3 = i => pos1[i.id] ? `#${pos1[i.id].position} not_before ${pos1[i.id].not_before ?? '-'}` : i.history.find(h => h.ev === 'end')?.data.outcome ?? '-';
+    const col3 = i => pos1[i.id] ? `#${pos1[i.id].position} not_before ${pos1[i.id].not_before ?? '-'}` : i.end?.outcome ?? '-';
     if (!flags.json) for (const i of items) out(`${i.id}  ${i.state}  ${col3(i)}  ${i.data.lane ?? '-'}  ${i.data.executor ?? i.data.kind}  ${i.data.notes ?? i.data.final ?? ''}${i.home ? `  on ${i.home}` : ''}`);
     return 0;
   } catch (e) {
