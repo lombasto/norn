@@ -323,18 +323,13 @@ export function createDashboard(o) {
   // ---------- budget (machine) + policy (project) ----------
   function budgetRaw() { return read(o.budgetFile, '{}'); }
   function projectRaw(p) { return read(p.file); }
-  // the effective settings read from the files (once per snapshot and text), never the project loaded at start: every reader follows a save
-  const pols = new WeakMap();
-  function policyOf(p) {
-    const sn = snap.getStore() ?? {}, braw = budgetRaw(), praw = projectRaw(p), m = pols.get(sn) ?? pols.set(sn, new Map()).get(sn), hit = m.get(p.file);
-    if (hit?.braw === braw && hit.praw === praw) return hit.v;
-    const v = withDefaults(merged(JSON.parse(braw || '{}'), JSON.parse(praw).policy)); m.set(p.file, { braw, praw, v }); return v;
-  }
   function settingsState(p) {
     const braw = budgetRaw(), praw = projectRaw(p);
     const budget = JSON.parse(braw || '{}'), proj = JSON.parse(praw);
     return { budget, proj, view: merged(budget, proj.policy), version: hash(braw + '\n\u0000\n' + praw) };
   }
+  // the effective settings from the files (the request's snapshot), never the project loaded at start: every reader follows a save
+  const policyOf = p => withDefaults(settingsState(p).view);
   // configured typed executors: names, cap defaults, enabled (META-EXEC-S1, META-AGNOSTIC-EXEC); fair-slots item 8: projects = every
   // registered project (they share this machine's Claude pool): Settings > Capacity has a reserve + a ceiling row for each, on one
   // screen, whichever project's Settings is open
