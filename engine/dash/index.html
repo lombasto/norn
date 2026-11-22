@@ -313,6 +313,7 @@ function paintMain(d) {
   const a = document.activeElement, keep = draftsKeep(), fxSel = ['[data-rmf="q"]', '[data-runs-lane]'].find(k => a?.matches?.(k)), fx = fxSel ? [a.selectionStart, a.selectionEnd] : null;
   const home = S.tab === 'talk' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
+  const whys = S.tab === 'lanes' ? [...document.querySelectorAll('#main details.lane-why[open]')].map(x => x.closest('[id^="lane-"]')?.id).filter(Boolean) : [];   // ... and a tapped-open objective
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
   const rs = S.tab === 'runs' ? ['#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run drawer keeps its scroll (the same run's document only), a focused row its focus
   (S.tab === 'settings' ? $('#setview-body') : $('#main')).innerHTML = renderTab(S.tab, d, { theme: S.theme, run: S.run, strip: S.ov ?? null, project: S.project, setCat: S.setCat, setLevel: S.setLevel, syncOut: S.syncOut, sanitize, look: look(), art: assetImg, rm: S.rm, adoptAsk: S.adoptAsk, edits: S.adoptEdits, homeFilter: S.homeFilter, homeOpen: S.homeOpen, pickOpen: S.pickOpen, laneShow: S.laneShow, laneOpen: S.laneOpen, laneType: S.laneType, runsView: S.runsView, testsRt: S.testsRt, archiving: S.archiving, laneRefused: S.laneRefused, laneUndo: S.laneUndo, laneDetail: S.laneDetail, laneDet: S.laneDet, laneFile: S.laneFile, br: S.br, brUndo: S.brUndo });
@@ -320,6 +321,7 @@ function paintMain(d) {
   mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
   if (lcard) document.getElementById(lcard)?.querySelector('.lhov > :first-child')?.focus();
+  for (const id of whys) { const w = document.getElementById(id)?.querySelector('details.lane-why'); if (w) w.open = true; }
   if (form) {
     for (const x of document.querySelectorAll('#main [data-answer], #main [data-adopt]')) { const k = x.dataset.answer ? 'a:' + x.dataset.answer : 'p:' + x.dataset.adopt; if (form[k] !== undefined && form[k] !== '') x.value = form[k]; }
     for (const x of document.querySelectorAll('#main .adp-part input[data-line]')) { const k = `l:${x.closest('[data-part]').dataset.sha}:${x.dataset.line}`; if (form[k] !== undefined && !x.disabled) x.checked = form[k]; }
