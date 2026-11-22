@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDashboard, parseStatus, TABS } from '../engine/dash/server.mjs';
+import { createDashboard, parseStatus } from '../engine/dash/server.mjs';
 import { parseReset } from '../engine/lib/cost.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
@@ -119,7 +119,6 @@ test('GET / serves the UI shell and injects the token (tab / panel ids: tests/ui
   const f = await fixture();
   try {
     const r = await fetch(f.url + '/'), html = await r.text(); assert.equal(r.status, 200);
-    assert.deepEqual(TABS, ['talk', 'lanes', 'runs', 'inbox', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings']);
     for (const id of ['tabs', 'main', 'project', 'ckbox', 'pool', 'tab-settings', 'setview']) assert.ok(html.includes(`id="${id}"`), id);
     assert.ok(html.includes(f.app.token)); assert.ok(!/api\/phone|qrSvg/.test(html));
   } finally { await f.done(); }

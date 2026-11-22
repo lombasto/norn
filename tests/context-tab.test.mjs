@@ -9,7 +9,6 @@ import { CONTEXT_SUBS, contextNumbers, standingRows, INS_PARTS, measuredRows, fi
 import { ctxView, filesOf } from '../engine/dash/pages/context.mjs';
 import { TABS, ONE_PROJECT, renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
-import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -33,7 +32,6 @@ const ROWS = Array.from({ length: 45 }, (_, i) => row(`f${i}`, `file-${i}.md`, i
 
 test('the tab is Context (label + URL id); the API route stays /api/instructions', () => {
   assert.ok(TABS.some(t => t[0] === 'context' && t[1] === 'Context')); assert.ok(!TABS.some(t => t[0] === 'instructions'));
-  assert.ok(SERVER_TABS.includes('context') && !SERVER_TABS.includes('instructions'));
   assert.ok(MORE.find(g => g[0] === 'Health')[1].includes('context')); assert.ok(ONE_PROJECT.includes('context'));
   assert.deepEqual(CONTEXT_SUBS.map(x => x[0]), ['role', 'file', 'growing', 'checkins']);
   assert.deepEqual(CONTEXT_SUBS.map(x => x[1]), ['Per role', 'Per file', 'Is it growing?', 'Check-ins per day']);
