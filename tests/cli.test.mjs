@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { record } from '../engine/lib/records.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const tmp = () => mkTmp('meta-cli-');
@@ -16,6 +17,33 @@ const run = (state, role, ...args) => {
   const r = spawnSync(process.execPath, [META, ...args], { env, encoding: 'utf8' });
   return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() };
 };
+
+test('norn slop with a project that does not exist: exit 2 and one error line, no stack trace (cli-C11)', () => {
+  const r = run(tmp(), 'owner', 'slop', 'check', '--project', 'nosuch');
+  assert.equal(r.code, 2, r.err); assert.match(r.err, /^error: nosuch: not found/); assert.doesNotMatch(r.err, /at main|ConfigError/);
+});
+
+test('norn size takes the run of a home (RUN-b-3) as a run id: an unknown one is "no run", not "unexpected" (L-02)', () => {
+  const r = run(tmp(), 'owner', 'size', 'RUN-b-3');
+  assert.equal(r.code, 2); assert.match(r.err, /^error: no run RUN-b-3$/m);
+});
+
+test('norn collide plan reads the project policy as the tick does: collide.kinds.stale off lists no stale caveat (C14)', () => {
+  const t = tmp(), repo = path.join(t, 'repo'), state = path.join(t, 'state'), pf = path.join(t, 'project.json');
+  const env = { ...process.env, META_ROOT: t, META_STATE: '', META_PROJECT: '', META_NO_TICK: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  fs.mkdirSync(repo); fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  for (const a of [['init', '-q', '-b', 'main'], ['add', '-A'], ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'base']]) spawnSync('git', a, { cwd: repo, env });
+  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'k', title: 'k', root: repo.split(path.sep).join('/'), ledger: '${root}/L.md', briefs_dir: '${root}',
+    policy: { slop: { enabled: false }, collide: { kinds: { stale: 'off' } } } }));
+  const gone = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'banks', stage: 'S2' } }).id;
+  record(state, { kind: 'run', ev: 'end', id: gone, by: 'launcher', data: { outcome: 'stopped', exit: 0 } });
+  const theme = record(state, { kind: 'item', ev: 'create', by: 'owner', data: { kind: 'theme', title: 'Theme' } }).id;
+  const rm = record(state, { kind: 'item', ev: 'create', by: 'owner', data: { kind: 'item', title: 'Banks hold', parent: theme, links: ['lane:banks'] } }).id;
+  record(state, { kind: 'item', ev: 'edit', id: rm, by: 'owner', data: { caveat: `${gone} running the edge pass` } });
+  const r = spawnSync(process.execPath, [META, 'collide', 'plan', '--project', pf, '--state', state, '--json'], { env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).stale, []);
+});
 
 test('add question -> Q-1 on stdout, envelope written, questions view generated', () => {
   const s = tmp();

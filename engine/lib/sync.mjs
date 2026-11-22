@@ -13,7 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync, spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore } from './records.mjs';
+import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore, HOME_RE } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger, ledgerConfig } from './ledger.mjs';
 import { rgit, fetchRefs, claimsLock, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { fedOf } from './fed.mjs';
@@ -33,7 +33,7 @@ const logsOf = ks => [...new Set(ks.map(k => KINDS[k].file + '.jsonl'))];
 export const HOME_FILES = [{ from: 'home.json', to: 'home.json' }, ...logsOf(SHARED_KINDS).map(f => ({ from: f, to: f })), { from: 'relay.jsonl', to: 'relay.jsonl' },
   ...logsOf(COPIED).map(f => ({ from: f, to: `copy/${f}` }))];
 const HOME_SPEC = '+refs/heads/home/*:refs/sync/home/*';
-const SEG = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, HOME_ID = /^[a-z][a-z0-9]{0,7}$/;
+const SEG = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 const ls = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch { return []; } };
 const writeAtomic = (f, b) => { fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, b); fs.renameSync(tmp, f); };
@@ -163,7 +163,7 @@ export function fetchHomes(cfg0, o = {}) {
   }
   try {
     const tips = Object.fromEntries(rgit(f, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/sync/home/']).out.split('\n').filter(Boolean)
-      .map(l => l.split(' ')).map(([r, sha]) => [r.slice('refs/sync/home/'.length), sha]).filter(([h]) => HOME_ID.test(h) && h !== cfg.home_id));
+      .map(l => l.split(' ')).map(([r, sha]) => [r.slice('refs/sync/home/'.length), sha]).filter(([h]) => HOME_RE.test(h) && h !== cfg.home_id));
     const homes = Object.keys(tips).sort(), mine = projects(cfg), written = [];
     const noted = Object.fromEntries(mine.map(p => [p, readJsonS(notesOf(cfg, p)) || []])), noted0 = JSON.stringify(noted);
     for (const h of homes) {
@@ -293,7 +293,7 @@ export function ringOf(line) {
   try { e = JSON.parse(line); } catch { return null; }
   if (e?.event !== 'message') return null;
   try { m = JSON.parse(e.message); } catch { return null; }
-  return HOME_ID.test(m?.h || '') && SHA40.test(m?.sha || '') ? { h: m.h, sha: m.sha } : null;
+  return HOME_RE.test(m?.h || '') && SHA40.test(m?.sha || '') ? { h: m.h, sha: m.sha } : null;
 }
 
 /** watchDoorbell({ open(signal) -> async iterable of lines, home(), onRing({h, sha}), timers, backoff_s, log }): hold the stream; a drop or a
@@ -431,7 +431,7 @@ const ghCli = args => { const r = spawnSync('gh', args, { encoding: 'utf8', wind
 export function syncJoin(o) {
   const { home, remote, topic = null, machineFile, metaRoot, projects: mine = [], gh = ghCli, now = Date.now(), bare = false, dry = false, by = 'owner' } = o;
   const lines = [], done = r => ({ refused: [], lines, noop: false, dry, ...r });
-  if (!HOME_ID.test(home || '')) return done({ refused: [`home id ${JSON.stringify(home)}: want [a-z][a-z0-9]{0,7}`] });
+  if (!HOME_RE.test(home || '')) return done({ refused: [`home id ${JSON.stringify(home)}: want [a-z][a-z0-9]{0,7}`] });
   // 1. access
   const ls = spawnSync('git', ['ls-remote', remote], { encoding: 'utf8', windowsHide: true, timeout: 60000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
   if (ls.status !== 0) return done({ refused: [`no access to the ledger remote ${remote}: ${(ls.stderr || '').trim().split('\n').pop()}`] });

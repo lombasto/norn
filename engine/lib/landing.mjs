@@ -6,7 +6,7 @@
 // failure attached. One check per pass; <state>/mq/land/<DLV>.json remembers the tip tried, so a failed tip is never retried, a new tip is.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fold, readEvents, recordsFile, record } from './records.mjs';
+import { fold, readEvents, recordsFile, record, NID } from './records.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { acquireLock, laneWriter, isLandingStage, LEADER_ONLY_PRS } from './runs.mjs';
 import { mergeWtPath, slotKey, mergeParallel, ensureMergeWorktree, removeMergeWorktree } from './mergewt.mjs';
@@ -152,7 +152,7 @@ async function landOne({ stateDir, project, locksDir, cfg, row: r, gate, base, q
     // merge-slot: a home that is not the merge leader never queues a MERGE (it could never start) - its conflicting branch gets the resolve
     // run (merge main into the lane branch, fix, push; the tick then opens its PR); a red check or a slop block there has none
     if (q?.code === 3 && String(q.out).includes(LEADER_ONLY_PRS)) { stage = 'resolve'; q = cli(['deliverables', 'resolve', r.id, '--project', fwd(project.file), '--as', 'launcher']); }
-    const queued = q?.code === 0 ? (q.out.match(/\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/) || [])[0] ?? null : null;   // a home's id too (RUN-b-12)
+    const queued = q?.code === 0 ? (q.out.match(new RegExp(`\\b${NID('RUN')}\\b`)) || [])[0] ?? null : null;
     saveLand(stateDir, r.id, { ...st, brief, queued });
     return { gated, skip: skip(queued), fallback: { id: r.id, kind: f.kind, queued, stage }, why: `${r.id} ${f.kind}: ${f.why}; ${queued ? `${stage} ${queued} queued` : `${stage === 'MERGE' ? 'norn run --queue' : 'norn deliverables resolve'} failed: ${String(q?.out || '').slice(0, 160)}`}` };
   }

@@ -146,6 +146,7 @@ test('the pin is hard: the pinned dwarf takes its lane\'s run, waits when busy, 
   assert.deepEqual(pickDwarf(st, { project: 'p', lane: 'a' }, { dun: 'RUN-7' }), { wait: 'dwarf: Dun Testbeard is busy on RUN-7' });
   assert.deepEqual(pickDwarf(st, { project: 'p', lane: 'b' }, { brak: 'RUN-8' }), { hire: true }, 'a pinned dwarf is never free for another lane');
   assert.equal(holdWords('dwarf: Dun Testbeard is busy on RUN-7', { runs: [] }), 'waits for Dun Testbeard, its pinned dwarf (busy on RUN-7)');
+  assert.equal(holdWords('dwarf: Dun Testbeard is busy on RUN-b-7', { runs: [] }), 'waits for Dun Testbeard, its pinned dwarf (busy on RUN-b-7)', 'the id of a home run too');
 });
 
 test('no pin: the dwarf who last worked the lane, then the most runs in the project, then the longest idle', () => {

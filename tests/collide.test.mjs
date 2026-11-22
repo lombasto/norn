@@ -92,6 +92,13 @@ test('incident 4 (two lanes on one area): readable Scopes that share tracked fil
   assert.match(hitLines(h, me)[1], /SloppaChoppa: narrow leave out of this Scope the files lane web-nav holds: web\/\*\* \(both run now\)/);
 });
 
+test('the pick reads the project commons too: one item in files apart but for a project common -> part, not fold (C14)', () => {
+  const brook = I('brook', { items: ['RM-7'], touched: ['shared/util.py'] });
+  const me = I('brook-shape', { state: 'new', items: ['RM-7'], scope: ['shared/**', 'game/shape/**'] });
+  assert.deepEqual(kinds(collisions(me, [brook])), ['item:warn:fold', 'territory/covers:warn:narrow'], 'shared/** is no common by default');
+  assert.deepEqual(kinds(collisions(me, [brook], { policy: { commons: ['shared/**'] } })), ['item:warn:part']);
+});
+
 test('territory near-misses: tests/** only, Scope: none, a prose Scope, a helper, wide Scopes that only touch', () => {
   const tracked = Array.from({ length: 40 }, (_, i) => `src/m${i}.mjs`).concat(['tests/a.test.mjs', 'docs/x.md']);
   const a = I('a', { scope: ['src/m1.mjs', 'tests/**', 'docs/**'], touched: ['src/m1.mjs', 'tests/a.test.mjs'] });

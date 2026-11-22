@@ -84,6 +84,11 @@ function repoWithBranch(d) {
   return { repo, wt, head: git(wt, 'rev-parse', 'HEAD') };
 }
 
+test('parseAfter takes the ids of a home (run:RUN-b-12, q:Q-b2-3, dir:DIR-b-4) as records writes them (L-02)', () => {
+  assert.deepEqual(parseAfter('run:RUN-b-12,q:Q-b2-3,dir:DIR-b-4'), [{ kind: 'run', id: 'RUN-b-12', state: 'done' }, { kind: 'q', id: 'Q-b2-3', state: 'answered' }, { kind: 'dir', id: 'DIR-b-4', state: 'done' }]);
+  assert.throws(() => parseAfter('run:RUN-B-1'), /run needs a RUN-n id/);
+});
+
 test('after run:RUN-n:merged: waits while the DONE run\'s end head is not on main, starts once merged; not DONE = held for a ruling (META-AUTONOMY R1: never a silent withdraw)', async () => {
   const d = sandbox();
   assert.deepEqual(parseAfter('run:RUN-7:merged'), [{ kind: 'run', id: 'RUN-7', state: 'merged' }]);

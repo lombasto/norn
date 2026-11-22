@@ -8,7 +8,7 @@
 // with primeProposals, never a sync read on a GET), except tickProposals, which acts through the CLI. Node built-ins.
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA } from './fsnap.mjs';
-import { laneId } from './records.mjs';
+import { laneId, NID } from './records.mjs';
 
 export const PICKS = ['queue', 'later', 'drop'];
 export const PICK_WORDS = { queue: 'Queue now', later: 'Later', drop: 'Drop' };
@@ -111,7 +111,7 @@ export function tickProposals(state, items, R, { cli = null, loc = ['--state', s
     const s = p.stages.find(x => x.state === 'open');
     if (!s || !p.lane || items[laneId(p.lane, state)]?.state !== 'active' || busy(p.lane) || xs.some(i => i.kind === 'run' && i.state === 'withdrawn' && i.data?.brief && same(i.data.brief, s.brief))) continue;
     if (dry || !cli) { out.push({ lane: p.lane, run: p.run, stage: s.key, act: 'queued', note: `would queue ${s.key} (dry)` }); continue; }
-    const r = cli([...queueArgv(p, s), ...loc]), m = r.out.match(/\b(?:QUEUED|STARTED) (RUN-\d+)/);
+    const r = cli([...queueArgv(p, s), ...loc]), m = r.out.match(new RegExp(`\\b(?:QUEUED|STARTED) (${NID('RUN')})`));
     out.push(r.code === 0 && m ? { lane: p.lane, run: p.run, stage: s.key, act: 'queued', note: `${m[1]} launches ${path.basename(s.brief)} (plan of ${p.run})` }
       : { lane: p.lane, run: p.run, stage: s.key, act: 'refused', note: `norn run --queue exit ${r.code}: ${r.out.split('\n')[0].slice(0, 160)}` });
   }

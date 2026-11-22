@@ -29,6 +29,9 @@ test('wholeHold: every queued (Claude) run on the same machine-level term, else 
   assert.equal(wholeHold([row('RUN-1', ['PAUSED all (C:/s/PAUSED)', W]), row('RUN-2', ['PAUSED all (C:/s/PAUSED)'], { account: false })]).term, 'PAUSED all (C:/s/PAUSED)');
 });
 
+test('holdWords: a pinned dwarf busy on a home run (RUN-b-7) gets its reason, not the raw term', () => {
+  assert.equal(holdWords('dwarf: Dun Testbeard is busy on RUN-b-7').reason, 'the lane is pinned to Dun Testbeard, who is busy on RUN-b-7');
+});
 test('holdWords: the reason and the exact fix, in the billing mode in force', () => {
   assert.match(holdWords(W).fix, /set Billing \(Settings\): on API billing choose api.*norn calib --pct N/);
   assert.equal(holdWords(W).setting, 'billing');

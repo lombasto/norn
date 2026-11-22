@@ -63,6 +63,13 @@ test('a stage a run was already launched from (the check-in did it by hand) is "
   assert.deepEqual(queueArgv(p, p.stages[1]).slice(0, 9), ['run', '--queue', '--executor', 'fake', '--lane', 'sizing', '--stage', 'S2', '--brief']);
 });
 
+test('norn proposal rule queue in a home: the queued RUN-b-n is read, the decision written (L-02)', () => {
+  const { root, state } = fixture();
+  fs.writeFileSync(path.join(state, 'home.json'), JSON.stringify({ id: 'b', bare_home: 'a' }) + '\n');
+  const r = norn(['proposal', 'rule', 'RUN-1', 'S1', 'queue', '--state', state, '--as', 'dashboard'], root);
+  assert.equal(r.status, 0, r.stderr + r.stdout); assert.match(r.stdout, /RUN-1 S1: queue -> RUN-b-\d+/);
+});
+
 test('norn proposal rule: queue = a queued run of the brief (--item) + a decision; later = a child item horizon next; drop = a decision', () => {
   const { root, state, notesDir } = fixture();
   let r = norn(['proposal', 'rule', 'RUN-1', 'S1', 'queue', '--state', state, '--as', 'dashboard'], root);
@@ -107,6 +114,13 @@ test('norn proposal rule refuses: later with no roadmap item, a launch the launc
   assert.equal(r.status, 2); assert.match(r.stderr, /queue\|later\|drop/);
   r = norn(['proposal', 'list', '--state', state, '--json'], root);
   assert.equal(JSON.parse(r.stdout)[0].open, 3);
+});
+
+test('tickProposals: the queued run of a home (QUEUED RUN-b-2) reads as queued, not refused (L-02)', () => {
+  const { state } = fixture();
+  if (!loadState(state).items['L:sizing']) record(state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'sizing' } });
+  const [x] = tickProposals(state, loadState(state).items, loadRoadmap(state), { cli: () => ({ code: 0, out: 'QUEUED RUN-b-2 lane sizing' }) });
+  assert.equal(x.act, 'queued'); assert.match(x.note, /^RUN-b-2 launches brief-S1\.md/);
 });
 
 test('tickProposals: an active idle lane gets its first open stage queued (no card); then one at a time; a parked lane or a dry tick queues nothing', () => {

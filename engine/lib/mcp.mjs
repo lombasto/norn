@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, loadState, kindOfId, kindNamed, RecordError, KINDS, holdOf, laneId, laneName } from './records.mjs';
+import { record, loadState, kindOfId, kindNamed, RecordError, KINDS, holdOf, laneId, laneName, idNum, NID } from './records.mjs';
 import { ConfigError, metaRoot, fwd, loadMachine, loadProject, expandVars } from './config.mjs';
 import { genAfterPolicy, projectNew, SetupError } from './setup.mjs';
 import { scan, interviewOf, proposalOf, adoptDecide, adoptApply, renderProposal, AdoptError, PARTS } from './adopt.mjs';
@@ -79,7 +79,8 @@ const tail = (file, n) => { if (!n || !file) return ''; try { return fs.readFile
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 const lastSeq = i => i.history.at(-1)?.seq ?? 0;
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
-const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : Number(a.id.replace(/\D/g, '')) - Number(b.id.replace(/\D/g, '')));
+// the one record order (norn rec list too): by kind, then lanes by name and the rest by number
+export const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : idNum(a.id) - idNum(b.id));
 
 // The needs-you set (HARNESS-DESIGN sec. 4 norn_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs. LANE-TRUTH:
 // with a project's lane hooks (h = laneHooks(state), stateDir = its state dir) a parked lane whose work shipped or that has no branch left,
@@ -286,7 +287,7 @@ function startRunTool(a, ctx) {
   for (const [k, f] of [['model', 'model'], ['effort', 'effort'], ['budget_min', 'budget-min'], ['parent', 'parent'], ['worktree', 'worktree'], ['notes', 'notes']]) if (a[k] !== undefined) args.push('--' + f, String(a[k]));
   const r = ctx.cliRun(args);
   if (r.code) throw new ToolError(r.code === 4 ? `cap: do it later (${r.out || r.err})` : (r.err || r.out), r.code);
-  const m = r.out.match(/^STARTED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) lane \S+ (\S+) (\S+) (\S+)/m) || [];
+  const m = r.out.match(new RegExp(`^STARTED (${NID('RUN')}) lane \\S+ (\\S+) (\\S+) (\\S+)`, 'm')) || [];
   return { text: r.out, data: { run: m[1], executor: m[2], model: m[3], effort: m[4] } };
 }
 function stop(a, ctx) {
@@ -300,14 +301,14 @@ function askTool(a, ctx) {
   const args = ['ask', a.run, '--q', a.ask, ...(a.executor ? ['--executor', a.executor] : []), ...(a.max_s !== undefined ? ['--max-s', String(a.max_s)] : [])];
   const r = ctx.cliRun(args);
   if (![0, 5].includes(r.code)) throw new ToolError(r.code === 4 ? `cap: ${r.out || r.err}` : (r.err || r.out), r.code);
-  const m = r.out.match(/^(RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) asks \S+: (fork|cold)/m) || [];
+  const m = r.out.match(new RegExp(`^(${NID('RUN')}) asks \\S+: (fork|cold)`, 'm')) || [];
   return { text: r.out, data: { run: a.run, ask_run: m[1] ?? null, mode: m[2] ?? null, code: r.code } };
 }
 function runShow(a, ctx) {
   if (a.ask !== undefined) return askTool(a, ctx);
   const it = st(ctx).items[a.run];
   if (!it || it.kind !== 'run') bad(`${a.run} does not exist`);
-  const end = it.history.find(h => h.ev === 'end')?.data || {};
+  const end = it.end || {};
   const data = { run: it.id, state: it.state, outcome: end.outcome ?? null, reviewed: !!it.review, lane: it.data.lane ?? null, executor: it.data.executor ?? it.data.kind,
     model: it.data.model ?? null, usage: end.usage ?? null, notes: it.data.notes ?? null, log: it.data.log ?? null,
     log_tail: tail(it.data.log, a.log_tail ?? 20), notes_tail: tail(it.data.notes, a.notes_tail ?? 20) };
@@ -586,7 +587,7 @@ function doneCard(t, a, r, ctx) {
   if (t.name === 'norn_directive') return emit(ctx.state, { kind: 'done', title: `${r.data.id} saved in your words`, lines: [a.text], undo: { verb: 'revoke', id: r.data.id } });
   if (t.name === 'norn_answer') return emit(ctx.state, { kind: 'done', title: `${a.q} answered in your words`, lines: [a.text] });
   if (t.name !== 'norn_cli') return undefined;
-  const out = r.data.out ?? '', q = out.match(/^QUEUED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/m), rq = out.match(/^REQUEUED (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) -> (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/m), d = out.match(/^directive (DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+).*$/m);
+  const out = r.data.out ?? '', q = out.match(new RegExp(`^QUEUED (${NID('RUN')})`, 'm')), rq = out.match(new RegExp(`^REQUEUED (${NID('RUN')}) -> (${NID('RUN')})`, 'm')), d = out.match(new RegExp(`^directive (${NID('DIR')}).*$`, 'm'));
   if (q) emit(ctx.state, { kind: 'done', title: `${q[1]} queued`, lines: [q.input.split('\n').find(l => l.startsWith('QUEUED'))], undo: { verb: 'stop', run: q[1] } });
   if (rq) emit(ctx.state, { kind: 'done', title: `${rq[1]} re-queued as ${rq[2]}`, lines: [rq[0]], undo: { verb: 'requeue', run: rq[2], from: rq[1] } });
   if (d) emit(ctx.state, { kind: 'done', title: `${d[1]} saved in your words`, lines: [d[0]], undo: { verb: 'revoke', id: d[1] } });

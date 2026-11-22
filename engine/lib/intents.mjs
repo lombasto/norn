@@ -6,7 +6,7 @@
 // git-perf S1: every git fact comes from gitfacts.mjs (HEAD and refs from the files, sha-keyed answers memoized, bounded children).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, fold, idNum, record } from './records.mjs';
+import { readEvents, recordsFile, fold, idNum, record, NID } from './records.mjs';
 import { parseReady } from './ready.mjs';
 import { readScope, ahead, caseKey, pairKey } from './collide.mjs';
 import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines, memo } from './gitfacts.mjs';
@@ -55,7 +55,7 @@ export function briefFacts(file) {
   if (text == null) return { scope: null, why: 'no brief file', exclusive: [], tests: null, done: null, items: [], names: {} };
   const r = parseReady(text), s = readScope(r.scope);
   return { scope: s.scope, why: s.why ?? null, exclusive: r.exclusive, tests: r.tests, done: r.done, items: ids(heading(text), /\bRM-\d+\b/g),
-    names: { runs: ids(text, /\bRUN-(?:[a-z][a-z0-9]{0,7}-)?\d+\b/g), dlvs: ids(text, /\bDLV-\d+\b/g), lanes: [...String(text).matchAll(/\blane `?([A-Za-z0-9][A-Za-z0-9_.-]*)`?/g)].map(m => m[1]) } };
+    names: { runs: ids(text, new RegExp(`\\b${NID('RUN')}\\b`, 'g')), dlvs: ids(text, new RegExp(`\\b${NID('DLV')}\\b`, 'g')), lanes: [...String(text).matchAll(/\blane `?([A-Za-z0-9][A-Za-z0-9_.-]*)`?/g)].map(m => m[1]) } };
 }
 
 // ---------- git facts ----------
