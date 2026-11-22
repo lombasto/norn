@@ -14,7 +14,6 @@ export function matchText(text, q, modified) {
   const words = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   return words.every(w => w === '@modified' ? !!modified : text.includes(w));
 }
-export const settingsMatch = (s, q) => matchText(searchText(s), q, s.modified);
 function input(s) {
   const id = esc(s.key), dis = s.readonly || s.scope === 'file' ? ' disabled' : '', orig = esc(JSON.stringify(s.value ?? null));
   const attrs = `id="in-${id}" data-key="${id}" data-type="${esc(s.type)}" data-orig="${orig}"${dis}`;

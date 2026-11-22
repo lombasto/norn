@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { SECTIONS, sectionOf, settingsFor, settingsView, applySettings, withDefaults, getPath, split } from '../engine/lib/policy.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
-import { settingsMatch } from '../engine/dash/pages/settings.mjs';
+import { matchText, searchText } from '../engine/dash/pages/settings.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 
 const PV = ['glm', 'kimi'], PROJECTS = ['norn', 'solve-shack'];   // the registered projects: one Capacity row pair each (fair-slots item 8)
@@ -46,7 +46,7 @@ test('settingsView rows carry their section and the machinery default (modified-
 
 test('search filters rows by label, key, help, value and @modified; empty query matches all', () => {
   const rows = settingsView({ max_codex: 3, policy: { critical_effort: 'medium' } }, { providers: PV });
-  const hits = q => rows.filter(s => settingsMatch(s, q)).map(s => s.key);
+  const hits = q => rows.filter(s => matchText(searchText(s), q, s.modified)).map(s => s.key);   // as the browser filters: data-search + data-mod
   assert.equal(hits('').length, rows.length);
   assert.deepEqual(hits('max_codex'), ['max_codex']);
   assert.ok(hits('hand-off').every(k => /^policy\.(context|sizing)\./.test(k)) && hits('hand-off').length >= 4);   // sizing: measured against the hand-off mark (WORK-SIZING S1)
