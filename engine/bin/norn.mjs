@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems, HOME_RE } from '../lib/records.mjs';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems, HOME_RE, NID, RUN_ID_RE, idNum } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -224,7 +224,7 @@ function eventData(ev, f, by) {
 const isOpen = i => (i.kind === 'question' && ['open', 'answered'].includes(i.state)) || (i.kind === 'directive' && i.state === 'active')
   || (i.kind === 'lane' && i.state === 'parked') || (i.kind === 'run' && (i.state === 'queued' || (['exited', 'lost', 'killed'].includes(i.state) && !i.review)));
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
-const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : Number(a.id.replace(/\D/g, '')) - Number(b.id.replace(/\D/g, '')));
+const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : idNum(a.id) - idNum(b.id));
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 
 function warnViews(v, err) {
@@ -237,7 +237,7 @@ function answerEach(state, f, pos, by, vpaths, out, err) {
   if (pos.length) throw new Usage('--each replaces the Q-n argument', 'answer');
   if (f.choice !== undefined) throw new Usage('--each carries the choices (Q-n=key); drop --choice', 'answer');
   const pairs = f.each.split(',').map(x => x.trim()).filter(Boolean).map(x => {
-    const m = /^(Q-(?:[a-z][a-z0-9]{0,15}-)?\d+)=(\S+)$/.exec(x);
+    const m = new RegExp(`^(${NID('Q')})=(\\S+)$`).exec(x);
     if (!m) throw new Usage(`--each wants "Q-n=key,..." (got ${JSON.stringify(x)})`, 'answer');
     return [m[1], m[2]];
   });
@@ -1586,8 +1586,11 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'cv') return cvCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'size') return sizeCmd(argv.slice(1), env, out, err);
-  if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
-  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, env, where: f => runWhere(f, env) ?? where(f, env) });
+  // slop and tests call back into where(): its ConfigError (a bad --project) is exit 2 and one error line here, never a stack trace
+  const configExit = e => { if (!(e instanceof ConfigError)) throw e; err('error: ' + e.message); return 2; };
+  const delegate = run => { try { const c = run(); return c instanceof Promise ? c.catch(configExit) : c; } catch (e) { return configExit(e); } };
+  if (argv[0] === 'slop') return delegate(() => slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) }));
+  if (argv[0] === 'tests') return delegate(() => testsCmd(argv.slice(1), { out, err, env, where: f => runWhere(f, env) ?? where(f, env) }));
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {
@@ -2497,7 +2500,7 @@ function proposalCmd(argv, env, out, err) {
     if (pick === 'queue') {   // the normal launcher: Ready lines, --item, the queue's caps and slots; its refusal is the answer
       const lines = [], loc = [...(flags.project ? ['--project', flags.project] : []), ...(flags.state ? ['--state', flags.state] : [])];
       const code = runCmd([...queueArgv(p, s), ...loc], env, l => lines.push(l), l => lines.push(l));
-      const m = lines.join('\n').match(/\b(?:QUEUED|STARTED) (RUN-\d+)/);
+      const m = lines.join('\n').match(new RegExp(`\\b(?:QUEUED|STARTED) (${NID('RUN')})`));
       if (code !== 0 || !m) { for (const l of lines) err(l); throw new RunError(`${run} ${s.key}: the launch was refused (exit ${code}); nothing recorded`); }
       ref = m[1];
       for (const l of lines) out(l);
@@ -2973,7 +2976,7 @@ function guardCmd(argv, env, out, err) {
     if (extra || (!verb || verb === 'watch') && arg) throw new RunError(`unexpected ${extra || arg}`);
     const { project, state } = where(flags, env), p = project || {}, m = machineOf(flags, env), o = { projectsDir: projectsDirOf(m.machine, env) };
     if (verb === 'rule') {
-      if (!/^GRD-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(arg || '')) throw new RunError('rule needs GRD-n');
+      if (!new RegExp(`^${NID('GRD')}$`).test(arg || '')) throw new RunError('rule needs GRD-n');
       if (!GUARD_ACTIONS.includes(flags.action)) throw new RunError(`--action must be ${GUARD_ACTIONS.join(' | ')}`);
       if (!flags.why) throw new RunError('rule needs --why');
       record(state, { kind: 'guard', ev: 'rule', id: arg, by: flags.as || env.META_ROLE || 'controller', data: { action: flags.action, why: flags.why } });
@@ -3024,7 +3027,7 @@ function sizeCmd(argv, env, out, err) {
       flags[a.slice(2)] = argv[++i];
     }
     if (pos.length > 1 || (pos.length && flags.lane) || (!pos.length && !flags.lane)) throw new RunError('name one run (RUN-n) or one --lane');
-    if (pos.length && !/^RUN-\d+$/.test(pos[0])) throw new RunError(`unexpected ${pos[0]}`);
+    if (pos.length && !RUN_ID_RE.test(pos[0])) throw new RunError(`unexpected ${pos[0]}`);
     const { project, state } = where(flags, env), m = machineOf(flags, env);
     let at = { lane: flags.lane, stage: flags.stage };
     if (pos.length) {
@@ -3092,7 +3095,7 @@ function scopeCmd(argv, env, out, err) {
   for (let i = 1; i < argv.length; i += 2) { const k = { '--run': 'run', '--state': 'state' }[argv[i]]; if (!k || argv[i + 1] === undefined) { err('error: unexpected ' + argv[i]); err('usage: ' + SCOPE_USAGE); return 2; } f[k] = argv[i + 1]; }
   if (argv[0] !== 'check' || !f.state) { err('error: ' + (argv[0] !== 'check' ? 'scope needs: check' : 'check needs --state')); err('usage: ' + SCOPE_USAGE); return 2; }
   // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
-  const run = f.run && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(f.run) ? f.run : env.META_RUN_ID;
+  const run = f.run && RUN_ID_RE.test(f.run) ? f.run : env.META_RUN_ID;
   let payload = null;
   try { payload = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (e) { payload = { tool_name: '?', tool_input: {}, unreadable: e.message }; }
   const r = scopeCheck({ state: path.resolve(f.state), run: run || '-', payload, env });
@@ -3136,7 +3139,7 @@ function mailCmd(argv, env, out, err) {
     }
     if (sub === 'check') {
       // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
-      const reader = flags.run !== undefined && !/^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(flags.run) && run ? run : flags.run;
+      const reader = flags.run !== undefined && !RUN_ID_RE.test(flags.run) && run ? run : flags.run;
       if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
       if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
