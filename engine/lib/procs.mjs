@@ -1,10 +1,8 @@
 // Process identity: is a pid running, and when did it start (Windows reuses pids, so a pid plus its start time names one process).
 // The supervisor, the gate lock and `norn run --wait` use it to tell their own process from a later one that took the same pid.
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFile } from 'node:child_process';
-
-const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+import { readText } from './harness/common.mjs';
 
 /** Process start time (ms since epoch) of a live pid, or null when it does not run. */
 const startProbe = (pid, platform) => platform === 'win32'
@@ -20,7 +18,7 @@ const probeable = pid => {
  * for every run on Linux (CI ubuntu: four OOTB tests at 121 s each, 2.5 s on Windows). /proc/<pid>/stat state Z = gone. */
 export function running(pid, { proc = '/proc' } = {}) {
   if (!probeable(pid)) return false;
-  const st = read(path.join(proc, String(pid), 'stat'));
+  const st = readText(path.join(proc, String(pid), 'stat'));
   return !(st && /^Z/.test(st.slice(st.lastIndexOf(')') + 2)));
 }
 const startOf = (status, stdout, platform) => { const t = Date.parse((stdout || '').trim() + (platform === 'win32' ? '' : ' UTC')); return status === 0 && Number.isFinite(t) ? t : null; };
@@ -29,7 +27,7 @@ const startOf = (status, stdout, platform) => { const t = Date.parse((stdout || 
 let clkTck = null;
 const userHz = () => clkTck ??= (n => Number.isInteger(n) && n > 0 ? n : 100)(Number(spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).stdout));
 function linuxStart(pid, { proc = '/proc', hz } = {}) {
-  const stat = read(path.join(proc, String(pid), 'stat')), bt = /^btime (\d+)$/m.exec(read(path.join(proc, 'stat')) || '');
+  const stat = readText(path.join(proc, String(pid), 'stat')), bt = /^btime (\d+)$/m.exec(readText(path.join(proc, 'stat')) || '');
   if (!stat || !bt) return null;
   const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);   // fields after "(comm)" start at field 3 (state)
   return Number.isFinite(ticks) ? Number(bt[1]) * 1000 + Math.round(ticks * 1000 / (hz ?? userHz())) : null;
