@@ -145,7 +145,7 @@ class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; 
 // META-UX-BUILD S7: `rec show` without --full - a long id list (a Fix all directive holds hundreds) = its first ids + a count, a long
 // text = its head + a count; a check-in reads what the record is, never the whole list
 const SHOW_IDS = 5, SHOW_CHARS = 400;
-export function shortData(d) {
+function shortData(d) {
   const one = v => (Array.isArray(v) && v.length > SHOW_IDS * 2 ? [...v.slice(0, SHOW_IDS).map(one), `+${v.length - SHOW_IDS} more (--full prints all)`]
     : typeof v === 'string' && v.length > SHOW_CHARS ? `${v.slice(0, SHOW_CHARS)}... (+${v.length - SHOW_CHARS} chars, --full prints all)`
       : v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, one(x)])) : v);
@@ -860,8 +860,6 @@ function s5Cmd(argv, env, out, err) {
 
 // ---------- S8: norn dash / norn smoke (long-running: they return undefined and set process.exitCode themselves) ----------
 const DASH_USAGE = 'usage: norn dash [--port N (0 = random)] [--project <project.json>]... [--open | --no-open]    (default: machine.json dash.port + registered projects; a browser opens only on a terminal or with --open)  |  norn dash --background    (the live dashboard of this install, started detached with no window unless it already answers; the way to start it from a shell)  |  norn dash restart    (the live dashboard of this install: stops ONLY its recorded pid, starts it detached on the configured port; a taken port = an error naming the holder)';
-// OOTB F-15: a browser tab only for a human at a terminal, or when asked; a script / agent gets the URL alone. --no-open always wins.
-export const dashOpens = (open, tty) => (open === null ? !!tty : open);
 function dashCmd(argv, env, out, err) {
   if (argv[0] === 'restart') return dashRestartCmd(argv.slice(1), env, out, err);
   if (argv[0] === '--background') return dashRestartCmd(argv.slice(1), env, out, err, { keep: true });
@@ -900,7 +898,8 @@ function dashCmd(argv, env, out, err) {
         } catch (e) { err('warn: dashboard record not written: ' + e.message); }
       }
       out(`DASH ${url} - ${projects.length ? 'projects ' + projects.map(p => p.name).join(', ') : 'no project yet: add one on the page (or norn project new --root <repo>)'} (Ctrl+C stops)`);
-      if (!dashOpens(o.open, process.stdout.isTTY)) { if (o.open === null) out('browser: not opened (not a terminal) - pass --open to open it'); return; }
+      // a browser tab only for a human at a terminal, or when asked; a script / agent gets the URL alone. --no-open always wins
+      if (!(o.open === null ? process.stdout.isTTY : o.open)) { if (o.open === null) out('browser: not opened (not a terminal) - pass --open to open it'); return; }
       const [c, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
       try { spawn(c, args, { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref(); } catch { /* no browser: the URL is printed */ }
     });
@@ -2522,7 +2521,7 @@ const ROAD_USAGE = 'norn road show [RM-n] [--json] | list [--json] | audit [--js
   + '[--horizon now|next|later] [--note N] [--links kind:id,..] [--stages "S1 a;S2 b"] | edit RM-n [--title T] [--note N] [--horizon now|next|later|none] [--stages "a;b"] [--caveat C|none] [--proof look|none] [--views "a,b"] '
   + '| verdict RM-n pass|fail --image <sheet> (a look item: the picture verdict the merge queue waits for) | move RM-n [--theme RM-n] [--after RM-n | --first] [--ref DEC-n|DIR-n] | link RM-n kind:id.. | unlink RM-n kind:id.. | drop RM-n --why W --ref DEC-n|DIR-n | reopen RM-n --why W '
   + '| apply plan.json | import --legacy FILE [--sections 1,2,..|title,..] [--out plan.json] [--json] (a dry run: the plan of a hand-kept catalogue for review; exit 1 = no row placed)    [--project F | --state D] [--as role]    (links: dir: dec: q: lane: run: dlv: ep: branch: sha: doc:)';
-const ROAD_FLAGS = ['project', 'state', 'as', 'title', 'kind', 'theme', 'parent', 'from', 'after', 'first!', 'horizon', 'note', 'links', 'stages', 'caveat', 'ref', 'why', 'json!', 'legacy', 'sections', 'out', 'proof', 'views', 'image'];
+const ROAD_FLAGS = ['project', 'state', 'as', 'title', 'kind', 'theme', 'from', 'after', 'first!', 'horizon', 'note', 'links', 'stages', 'caveat', 'ref', 'why', 'json!', 'legacy', 'sections', 'out', 'proof', 'views', 'image'];
 
 function roadCmd(argv, env, out, err) {
   try {
@@ -2603,7 +2602,7 @@ function roadCmd(argv, env, out, err) {
         title ||= String(d.data.text).replace(/\s+/g, ' ').trim().slice(0, 120);
         if (!links.includes('dir:' + flags.from)) links.unshift('dir:' + flags.from);
       }
-      const parent = flags.theme || flags.parent;
+      const parent = flags.theme;
       const data = { title, kind: flags.kind || 'item', ...(parent ? { parent } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}),
         ...(flags.horizon ? { horizon: none(flags.horizon) } : {}), ...(flags.note ? { note: flags.note } : {}), links, ...(flags.stages ? { stages: stages(flags.stages) } : {}) };
       checkLinks(state, links, { project: P });
@@ -2637,7 +2636,7 @@ function roadCmd(argv, env, out, err) {
         put('edit', id, data);
       }
       if (sub === 'move') {
-        const parent = flags.theme || flags.parent;
+        const parent = flags.theme;
         put('move', id, { ...(parent ? { parent } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}), ...(flags.ref ? { ref: flags.ref } : {}) });
       }
       if (sub === 'drop') { if (flags.ref) checkLinks(state, refTerm(flags.ref), { project: P }); put('drop', id, { why: flags.why, ...(flags.ref ? { ref: flags.ref } : {}) }); }
