@@ -160,9 +160,11 @@ export function refreshOverlap({ root, main = 'main', lanes = [], cacheFile, now
   save(cacheFile, c);
   return c;
 }
-function save(f, c) { try { fs.mkdirSync(path.dirname(f), { recursive: true }); const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(c)); fs.renameSync(t, f); } catch { /* still answers */ } }
+// a failed write throws: a cache that silently stops updating shows stale overlaps with no word in the tick log
+function save(f, c) { fs.mkdirSync(path.dirname(f), { recursive: true }); const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(c)); fs.renameSync(t, f); }
 
-/** refresh for a loaded project (its repo + main as the deliverables see them, p.state, p.policy); null when off or no repo. Never throws. */
+/** refresh for a loaded project (its repo + main as the deliverables see them, p.state, p.policy); null when off or no repo. Never throws:
+ * tick.mjs calls it outside a logged step, so a throw would end the whole pass. */
 export function projectOverlap(p, { now = Date.now(), force = false, git, gh } = {}) {
   if (!p?.state || !overlapOn(p.policy)) return null;
   try {
@@ -178,9 +180,9 @@ export function projectOverlap(p, { now = Date.now(), force = false, git, gh } =
   } catch { return null; }
 }
 
-/** lane-collide S1c (SPEC 2, territory / conflict): merge-tree of two lanes of ONE home, for the tip pairs the tick found sharing changed
- *  files -> { 'tipA tipB' (sorted): { conflict, files } }. Cached in overlap.json `lane_merges` per tip pair (a pair not asked this pass
- *  leaves it); never throws. */
+/** merge-tree of two lanes of ONE home, for the tip pairs the tick found sharing changed files -> { 'tipA tipB' (sorted): { conflict,
+ *  files } }. Cached in overlap.json `lane_merges` per tip pair (a pair not asked this pass leaves it); a git failure grades nothing
+ *  this pass, a failed cache write throws (the tick's collide step logs it). */
 export function laneConflicts(state, root, pairs, { now = Date.now(), mergeTree = mergeTreeCli } = {}) {
   const c = readOverlap(state), old = c.lane_merges || {}, out = {};
   for (const [a, b] of pairs) {

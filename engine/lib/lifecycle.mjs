@@ -102,10 +102,10 @@ export function laneHooks(state) {
     return !xs.length ? 'gone' : xs.every(r => r.merged) ? 'merged' : 'open'; };
   return { home, landed: has('landed'), merged: has('merged'), shipped, branchOf, path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
 }
-// LANE-TRUTH: shipped (lane, ...runs) -> why | null over a state dir's deliverable records (superseded ones included) and its lane paths:
-// dlvmerge.mjs laneShipped, the one rule. .dlvs(lane) = the lane's deliverable records.
-export function laneShippedIn(state, ps = readJsonS(lanePathsFile(state))?.paths || {}) {
-  const dl = (() => { try { return Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable'); } catch { return []; } })();
+// shipped (lane, ...runs) -> why | null by dlvmerge.mjs laneShipped over the deliverable records (superseded included) and lane paths;
+// .dlvs(lane) = the lane's records. A broken log throws: "not shipped" from a log that cannot be read would be a guess.
+const deliverables = state => Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable');
+export function laneShippedIn(state, ps = readJsonS(lanePathsFile(state))?.paths || {}, dl = deliverables(state)) {
   const dlvs = l => dl.filter(d => d.data?.lane === l);
   return Object.assign((l, ...runs) => laneShipped({ dlvs: dlvs(l), path: ps[l] ?? null, runs }), { dlvs });
 }
@@ -142,17 +142,18 @@ export const lanesProbe = (policy, home = null) => ({ at, items, runs }) => {
  */
 export function tickLanes(state, { project = {}, now = Date.now(), git = makeGit(), dry = false } = {}) {
   const st = loadState(state), ev = makeEval(state, { git }), main = project.deliverables?.main || 'main';
-  const dlvs = Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable');
+  const dlvs = deliverables(state);
   const laneDlvs = lane => dlvs.filter(d => d.data.lane === lane && d.state !== 'superseded');
   const dlvMerged = d => ev({ kind: 'dlv', id: d.id }).met;
-  // LANE-TRUTH: work the records say is on main (laneShipped) is landed and merged here too - the answer the Lanes page shows
-  const shipped = laneShippedIn(state);
+  // work the records say is on main is landed and merged here too, so the tick and the Lanes page give one answer
+  const shipped = laneShippedIn(state, undefined, dlvs);
   const landed = (lane, r) => !!r.landed || !!shipped(lane, r) || (laneDlvs(lane).length > 0 && laneDlvs(lane).every(dlvMerged));
   const merged = (lane, r) => !!shipped(lane, r) || (ev({ kind: 'run', id: r.id, state: 'merged' }).met && laneDlvs(lane).every(dlvMerged));
   const out = [], seen = { landed: [], merged: [] };
   const rules = laneRules(st, { now, ...lanePolicy(project.policy), home: homeOf(state)?.id ?? null, shipped,
     landed: (l, r) => landed(l, r) && !!seen.landed.push(l), merged: (l, r) => merged(l, r) && !!seen.merged.push(l) });
-  if (!dry) try { fs.writeFileSync(laneRulesFile(state), JSON.stringify({ at: new Date(now).toISOString(), ...seen }) + '\n'); } catch { /* no cache: the Lanes page shows the rulings alone */ }
+  // a failed cache write throws (the tick logs it): a silent one leaves the Lanes page on stale landed / merged
+  if (!dry) fs.writeFileSync(laneRulesFile(state), JSON.stringify({ at: new Date(now).toISOString(), ...seen }) + '\n');
   for (const x of rules) {
     if (x.act !== 'tick' || (x.at && Date.parse(x.at) > now)) continue;
     const wt = x.run ? st.items[x.run]?.data?.worktree : null, w = x.rule === 'orphan' || dry ? { worktree: 'none' } : worktreeVerdict(wt, { main, git });

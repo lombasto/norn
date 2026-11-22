@@ -10,6 +10,7 @@ import path from 'node:path';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { which } from './paths.mjs';
+import { updateMachine } from './config.mjs';
 
 export class RemoteError extends Error { constructor(msg, status = 403) { super(msg); this.status = status; } }
 const deny = msg => new RemoteError(msg, 403);
@@ -26,12 +27,13 @@ const COOKIE_AGE_S = 365 * 24 * 3600;
 const PROXY_MARKERS = ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded', 'x-real-ip', 'tailscale-user-login', 'tailscale-user-name',
   'tailscale-funnel-request', 'cf-access-authenticated-user-email', 'cf-access-jwt-assertion', 'cf-connecting-ip'];
 
-/** machine -> { trust, header, label, hosts, logins, url } when dash.remote.enabled is true, else null (remote off). */
+/** machine -> { trust, header, label, hosts, logins, url } when dash.remote.enabled is true, else null (remote off). An unknown trust
+ * source throws: remote silently off would read as "enabled is false" in doctor. */
 export function remoteOf(machine) {
   const r = machine?.dash?.remote;
   if (!r || r.enabled !== true) return null;
   const trust = r.trust ?? 'tailscale', t = TRUST[trust];
-  if (!t) return null;
+  if (!t) throw new Error(`dash.remote.trust ${trust}: not one of ${Object.keys(TRUST).join(', ')}`);
   const hosts = (r.hosts || []).map(h => String(h).toLowerCase().replace(/:443$/, ''));
   return { trust, header: t.header, label: t.label, hosts, logins: (r.logins || []).map(l => String(l).toLowerCase()), url: hosts.length ? `https://${hosts[0]}/` : null };
 }
@@ -154,9 +156,6 @@ export function tailscaleFacts(exe, env) {
 export const serveCmd = port => ['serve', '--bg', `http://127.0.0.1:${port}`];
 export const serveOffCmd = () => ['serve', '--https=443', 'off'];
 
-const readRaw = f => JSON.parse(fs.readFileSync(f, 'utf8'));
-const writeRaw = (f, o) => { const tmp = f + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(o, null, 1) + '\n'); fs.renameSync(tmp, f); };
-
 /**
  * norn remote setup [--apply] [--host H] [--login L]: check for tailscale, print the plan (each command + what it does); with --apply
  * run `tailscale serve --bg http://127.0.0.1:<port>` and write dash.remote. -> exit code (0 ok, 1 not ready, 2 usage).
@@ -192,7 +191,7 @@ export function remoteSetup({ machineFile, machine, apply = false, host = null, 
   const r = runTailscale(exe, serveCmd(port), env);
   if (r.status !== 0) { out(`not applied: ${ts(serveCmd(port))} failed (exit ${r.status}): ${(r.err || r.out).trim().split(/\r?\n/)[0] ?? ''}`); return 1; }
   out(`ran: ${ts(serveCmd(port))}`);
-  const raw = readRaw(machineFile); raw.dash = { ...(raw.dash ?? { port, bind: '127.0.0.1' }), remote }; writeRaw(machineFile, raw);
+  updateMachine(machineFile, raw => ({ dash: { ...(raw.dash ?? { port, bind: '127.0.0.1' }), remote } }));
   out(`wrote ${machineFile.replace(/\\/g, '/')} (dash.remote) - now run: norn dash restart`);
   return 0;
 }
@@ -206,8 +205,7 @@ export function remoteOff({ machineFile, machine, apply = false, env = process.e
   if (!apply) return 0;
   if (exe) { const r = runTailscale(exe, serveOffCmd(), env); out(r.status === 0 ? `ran: ${ts(serveOffCmd())}` : `note ${ts(serveOffCmd())} failed (exit ${r.status}) - run it yourself`); }
   else out('note tailscale not found - nothing to stop there');
-  const raw = readRaw(machineFile);
-  if (raw.dash?.remote) { raw.dash.remote.enabled = false; writeRaw(machineFile, raw); out(`wrote ${machineFile.replace(/\\/g, '/')} (dash.remote.enabled = false) - now run: norn dash restart`); }
+  if (machine.dash?.remote) { updateMachine(machineFile, raw => ({ dash: { ...raw.dash, remote: { ...raw.dash.remote, enabled: false } } })); out(`wrote ${machineFile.replace(/\\/g, '/')} (dash.remote.enabled = false) - now run: norn dash restart`); }
   return 0;
 }
 

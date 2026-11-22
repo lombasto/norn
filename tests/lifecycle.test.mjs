@@ -252,3 +252,13 @@ test('a home id (L:<home>/<name>): the rules, the Lanes page, the probe, the dig
   fs.writeFileSync(path.join(state, 'lane-paths.json'), JSON.stringify({ paths: { 'stuck-one': { state: 'at_risk', run: r, branch: 'norn/a/stuck-one', tip: 'abcdef1234' } } }) + '\n');
   assert.throws(() => rec(state, { kind: 'lane', ev: 'archive', id: l, by: 'tick', data: { why: 'x' } }), /L:a\/stuck-one cannot be archived: its work is not on main/);
 });
+
+test('F-09: a broken deliverables log or an unwritable lane-rules cache fails loudly (the tick logs it), never "not shipped" in silence', () => {
+  const state = mkTmp('lc-loud-');
+  lane(state, 'rm30', T0); const r = start(state, 'rm30', T0 + H); end(state, r, T0 + 2 * H, 'stopped', 'x');
+  fs.writeFileSync(path.join(state, 'deliverables.jsonl'), '{"torn":');
+  assert.throws(() => laneHooks(state), /integrity error/);
+  fs.rmSync(path.join(state, 'deliverables.jsonl'));
+  fs.mkdirSync(path.join(state, 'lane-rules.json'));   // a directory: the cache write fails
+  assert.throws(() => tickLanes(state, { now: T0 + 3 * H, git: noGit }), /EISDIR|EPERM/);
+});
