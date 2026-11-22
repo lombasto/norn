@@ -17,6 +17,16 @@ const run = (state, role, ...args) => {
   return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() };
 };
 
+test('norn slop with a project that does not exist: exit 2 and one error line, no stack trace (cli-C11)', () => {
+  const r = run(tmp(), 'owner', 'slop', 'check', '--project', 'nosuch');
+  assert.equal(r.code, 2, r.err); assert.match(r.err, /^error: nosuch: not found/); assert.doesNotMatch(r.err, /at main|ConfigError/);
+});
+
+test('norn size takes the run of a home (RUN-b-3) as a run id: an unknown one is "no run", not "unexpected" (L-02)', () => {
+  const r = run(tmp(), 'owner', 'size', 'RUN-b-3');
+  assert.equal(r.code, 2); assert.match(r.err, /^error: no run RUN-b-3$/m);
+});
+
 test('add question -> Q-1 on stdout, envelope written, questions view generated', () => {
   const s = tmp();
   fs.writeFileSync(path.join(s, 'body.md'), 'Seed 7: 3 sinks.\n');
