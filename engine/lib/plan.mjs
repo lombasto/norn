@@ -155,8 +155,7 @@ const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
 export function holdWords(term, { runs = [], now = Date.now(), label = labelOf } = {}) {
   const t = String(term), byId = id => runs.find(r => r.id === id);
   const name = id => { const r = byId(id); return r ? label({ ...r.data, id }) : id; };
-  let m;
-  const after = (k, P) => t.match(new RegExp(`^after ${k}:(${NID(P)}):(\\w+) unmet$`));
+  let m; const after = (k, P) => t.match(new RegExp(`^after ${k}:(${NID(P)}):(\\w+) unmet$`));
   if ((m = after('run', 'RUN'))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
   if ((m = after('q', 'Q'))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
   if ((m = after('dlv', 'DLV'))) return `waits for finished work ${m[1]} to reach main`;
@@ -174,7 +173,7 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
-  if ((m = t.match(new RegExp(`^dwarf: (.+) is busy on (${NID('RUN')})$`)))) return `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`;   // DWARVES 1.3 rule 1
+  if ((m = t.match(new RegExp(`^dwarf: (.+) is busy on (${NID('RUN')})$`)))) return `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`;   // a pinned dwarf works its lane only, one run at a time
   if (t.startsWith('crew store ')) return 'held: the crew store is unreadable';
   if (t.startsWith('resources:')) return 'held: CPU / memory gate';
   if (t.startsWith('withdraw:')) return 'withdrawn: a condition can no longer be met';

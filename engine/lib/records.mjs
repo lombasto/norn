@@ -198,11 +198,10 @@ export const KINDS = {
 // lane-collide S1b: the kinds a case names (SPEC 2; any = a ruling on a whole pair) and the actions S1b records (SPEC 4A.1 hold, after, told; allow)
 export const COLLIDE_KINDS = ['item', 'lead', 'goal', 'territory', 'resource', 'order', 'stale', 'any'];
 export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow', 'caveat', 'claim-release'];   // S1c: the tick's stale corrections
-// the one id rule per kind: <P>-n or <P>-<home>-n (a home id is HOME_RE; the id part allows 16 characters for node ids). Every module
-// builds its id regexes from NID rather than copying one, so a home's ids (RUN-b-12) parse everywhere.
+// the one id rule (<P>-n, <P>-<home>-n): every module builds its id regexes from NID, so a home's ids (RUN-b-12) parse everywhere
 export const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
 export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
-// RM-46 S1a: a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
+// a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
 const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
 export const ITEM_LINK_RE = new RegExp(`^(?:dir:${NID('DIR')}|dec:${NID('DEC')}|q:${NID('Q')}|run:${NID('RUN')}|dlv:${NID('DLV')}|ep:${NID('EP')}`
   + `|lane:${LANE_REF}|branch:[A-Za-z0-9][A-Za-z0-9._/-]*|sha:[0-9a-f]{7,40}|doc:\\S.*)$`);
@@ -225,7 +224,7 @@ const itemLook = it => {
 };
 const itemProof = it => itemLook(it).proof, itemViews = it => itemLook(it).views;
 export const MAIL_BODY_MAX = 2048;   // bytes (UTF-8); a longer message goes in a body_file
-// RM-46 S1a: RUN-n / RUN-<home>-n, lane:<lane> (lane:<home>/<name>), role:<r> / role:<r>@<home>
+// a mail goes to a run, lane:<lane> (lane:<home>/<name>) or role:<r> (role:<r>@<home>)
 export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
 export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat

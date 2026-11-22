@@ -586,8 +586,7 @@ function doneCard(t, a, r, ctx) {
   if (t.name === 'norn_directive') return emit(ctx.state, { kind: 'done', title: `${r.data.id} saved in your words`, lines: [a.text], undo: { verb: 'revoke', id: r.data.id } });
   if (t.name === 'norn_answer') return emit(ctx.state, { kind: 'done', title: `${a.q} answered in your words`, lines: [a.text] });
   if (t.name !== 'norn_cli') return undefined;
-  const out = r.data.out ?? '', q = out.match(new RegExp(`^QUEUED (${NID('RUN')})`, 'm')), rq = out.match(new RegExp(`^REQUEUED (${NID('RUN')}) -> (${NID('RUN')})`, 'm')),
-    d = out.match(new RegExp(`^directive (${NID('DIR')}).*$`, 'm'));
+  const out = r.data.out ?? '', q = out.match(new RegExp(`^QUEUED (${NID('RUN')})`, 'm')), rq = out.match(new RegExp(`^REQUEUED (${NID('RUN')}) -> (${NID('RUN')})`, 'm')), d = out.match(new RegExp(`^directive (${NID('DIR')}).*$`, 'm'));
   if (q) emit(ctx.state, { kind: 'done', title: `${q[1]} queued`, lines: [q.input.split('\n').find(l => l.startsWith('QUEUED'))], undo: { verb: 'stop', run: q[1] } });
   if (rq) emit(ctx.state, { kind: 'done', title: `${rq[1]} re-queued as ${rq[2]}`, lines: [rq[0]], undo: { verb: 'requeue', run: rq[2], from: rq[1] } });
   if (d) emit(ctx.state, { kind: 'done', title: `${d[1]} saved in your words`, lines: [d[0]], undo: { verb: 'revoke', id: d[1] } });
