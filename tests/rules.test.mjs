@@ -170,3 +170,12 @@ test('the ladder: rules as columns by state, each card home / enforcement / last
   assert.match(b, /<h4>A <b>1<\/b><\/h4>/);
   assert.match(b, /none/);
 });
+
+test('L-19: a corrupt rules.json throws and is not written back (the retired list is kept); a missing one is the first scan', () => {
+  const f = fx(), file = path.join(f.state, 'instructions', 'rules.json');
+  view(f, { remember: true });
+  assert.ok(fs.existsSync(file), 'a remembered scan keeps its rules');
+  fs.writeFileSync(file, '{ torn');
+  assert.throws(() => view(f, { remember: true }), SyntaxError);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{ torn', 'never overwritten after a failed read');
+});

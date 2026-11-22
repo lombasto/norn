@@ -312,8 +312,7 @@ export function measureRun(r, o = {}) {
 /** every measured session of project p in the last `days` days: the runs (claude + codex + providers) and the chat's segments */
 export function standingRuns(state, p, o = {}) {
   const now = o.now ?? Date.now(), since = now - (o.days ?? 7) * DAY, out = [];
-  let items = {};
-  try { items = loadState(state).items; } catch { items = {}; }
+  const items = loadState(state).items;
   for (const it of Object.values(items)) {
     if (it.kind !== 'run' || it.history?.[0]?.ev !== 'start') continue;
     const t = Date.parse(it.created);

@@ -6,7 +6,7 @@
 // overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
 // lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk),
 // homes (RM-46 S1d: a synced dir's refused cross-home writes and copies that did not fold).
-import { loadState, loadShared, readEvents, recordsFile, fold, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS } from './records.mjs';
+import { loadState, loadShared, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS } from './records.mjs';
 import { deliverablesView, deliverableConfig, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { fwd } from './dlvmerge.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
@@ -157,9 +157,7 @@ function queued(runs, { evalAfter, ready }) {
 
 // META-CIWATCH: the cached gh read of ciwatch.mjs (one gh call at most; gh absent = no row); the cache lives in the digest's state dir.
 function ciRed(project, { now, st }) {
-  let c = null;
-  try { c = projectCi(project, new Date(now)); } catch { c = null; }
-  const r = c?.red;
+  const r = projectCi(project, new Date(now))?.red;
   return r ? [{ id: `CI-${r.databaseId}`, repo: project.ci.repo, run: r.databaseId, sha: r.headSha ?? null, conclusion: r.conclusion, created: r.createdAt,
     hours: age(now, r.createdAt), failing: r.failing, fix: ciFixPlan(st, { run: r.databaseId }) }] : [];   // lifecycle.mjs: the ONE ci-fix lane
 }
@@ -173,7 +171,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const items = Object.values(st.items);
   const runs = items.filter(i => i.kind === 'run' && isWork(i.data));
   let dlvRows = dlv;
-  if (!dlvRows) { try { dlvRows = deliverablesView({ stateDir, project, now, git }).rows; } catch { dlvRows = fallbackDlv(stateDir); } }
+  if (!dlvRows) dlvRows = deliverablesView({ stateDir, project, now, git }).rows;   // a git failure is an unknown row there, never a throw
   const main = deliverableConfig(project).main;
   const sections = {
     finished: [...finished(runs, dlvRows, { now, git, main, cited: actedOn(items) }), ...nodeFinished(stateDir, st.items, { now, git, main, cited: actedOn(items) })],
@@ -198,9 +196,8 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // MERGE-FIRST (4): over policy.merge.backlog_max finished-but-unlanded deliverables - ONE row; the check-in lands work before it starts lanes
   const bl = mergeBacklog(dlvRows || [], { now, max: backlogMax(project?.policy) });
   if (bl.over) sections.backlog = [{ id: 'MERGE-BACKLOG', n: bl.n, oldest_h: bl.oldest_h, max: bl.max, ids: bl.ids }];
-  // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0
-  let rm = null;
-  try { rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows }); } catch { rm = null; }
+  // the audit's Unplaced list stays in the digest until it is 0 (a check-in duty)
+  const rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows });
   if (rm) sections.roadmap = rm.map(u => ({ id: u.id, kind: u.kind, why: u.why }));
   // META-GUARD R1: the open usage alarms (runaway / over the hand-off line / tool spam) - the check-in rules each; only while any is open
   const g = [...guardRows(stateDir), ...driftRows(runs, { now, git, main })];   // + item 3: the brief drift of an ended, unreviewed run
@@ -277,21 +274,12 @@ function homeRows(stateDir) {
   });
 }
 
-// git unreadable: every open deliverable record counts as done (listing too much beats dropping work)
-function fallbackDlv(stateDir) {
-  try {
-    return Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state !== 'superseded')
-      .map(i => ({ id: i.id, state: 'done', record_state: i.state, park: i.state === 'parked' ? { expired: false } : null, lane: i.data.lane ?? null,
-        branch: i.data.branch, run: i.data.run ?? null, delivers: i.data.delivers ?? '', days: null }));
-  } catch { return []; }
-}
-
-/** the digest, or null when it cannot be built (a status / boot surface never fails because of it) */
+/** the digest, or { error } when it cannot be built: a status / boot surface shows the error and never fails because of it */
 export function tryDigest(stateDir, project = {}, opts = {}) {
-  try { return digest(stateDir, project || {}, opts); } catch { return null; }
+  try { return digest(stateDir, project || {}, opts); } catch (e) { return { error: e.message }; }
 }
 /** { section: [ids] } - the compact form for norn_boot's state digest */
-export const digestIds = d => (d ? Object.fromEntries(Object.entries(d.sections).map(([k, v]) => [k, v.map(r => r.id)])) : null);
+export const digestIds = d => Object.fromEntries(Object.entries(d.sections).map(([k, v]) => [k, v.map(r => r.id)]));
 
 // META-GUARD R1 item 3: the brief drift of each run that ended (exited) in the window and has no review yet - a hint row for the
 // check-in (digest row 8), only when an item is not mentioned or a file lies outside the brief's areas. Read-only (git diff).
@@ -300,8 +288,7 @@ function driftRows(runs, { now, git, main }) {
   for (const r of runs) {
     const e = endOf(r);
     if (r.state !== 'exited' || !e || now - Date.parse(e.ts) > WINDOW_H * H || r.history.some(h => h.ev === 'review')) continue;
-    let d = null;
-    try { d = runDrift(r, { git, main }); } catch { d = null; }
+    const d = runDrift(r, { git, main });
     if (d?.hint) rows.push({ id: r.id, run: r.id, kind: 'drift', cls: 'drift', lane: r.data.lane ?? null, why: d.hint });
   }
   return rows;

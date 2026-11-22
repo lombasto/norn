@@ -203,8 +203,7 @@ export function discover(p, { home, machine = null, git = true } = {}) {
     if (isFile(path.join(pr, n))) add(path.join(pr, n), { kind: 'prompt' }, [spec]);
   // 5. norn gen targets (with their drift state) and their sources
   if (machine?.claude) {
-    let items = [];
-    try { items = genStates(p, machine); } catch { items = []; }
+    const items = genStates(p, machine);
     const cfg = vars.claude_config;
     for (const it of items) {
       if (!/\.(md|json|txt)$/i.test(it.target)) continue;
@@ -260,8 +259,7 @@ const idOf = p => createHash('sha1').update(key(p)).digest('hex').slice(0, 10);
  * [{ run?, kind: worker | checkin | chat, family, executor, agent, tick }] */
 export function sessionsOn(state, p, day = new Date().toISOString().slice(0, 10)) {
   const out = [];
-  let items = {};
-  try { items = loadState(state).items; } catch { items = {}; }
+  const items = loadState(state).items;
   const cliFam = ADAPTERS.cli.instructions || {};
   for (const it of Object.values(items)) {
     if (it.kind !== 'run' || it.history?.[0]?.ev !== 'start' || String(it.created).slice(0, 10) !== day) continue;
@@ -359,8 +357,7 @@ export function lint(rows, { project: p = {}, commands = knownCommands(), home }
   home = fwd(home || process.env.USERPROFILE || process.env.HOME || '');
   const vars = { home, root: p.root, meta: p.meta, project_dir: p.project_dir, state: p.state, dev: p.dev, name: p.name };
   const bases = [p.root, p.project_dir, p.meta, p.dev, home].filter(Boolean);
-  let items = {};
-  try { if (p.state) items = loadState(p.state).items; } catch { items = {}; }
+  const items = p.state ? loadState(p.state).items : {};
   const directives = Object.values(items).filter(i => i.kind === 'directive' && i.state === 'active');
   const paras = new Map();
   for (const r of files) {
@@ -448,8 +445,7 @@ export function instructionsView(p, { home, machine = null, now = Date.now(), da
   const staleDays = p.policy?.instructions?.stale_days ?? 30, paras = new Map(), perDay = loadsPerDay(rows, p, now);
   let sug = [];
   if (ages) {
-    let items = {};
-    try { if (p.state) items = loadState(p.state).items; } catch { items = {}; }
+    const items = p.state ? loadState(p.state).items : {};
     const dated = rows.filter(r => r.exists && !r.generated && r.chars <= 2_000_000), confirms = confirmations(p.state);
     const dates = lineDates(dated, { state: p.state, now, git });
     for (const r of dated) paras.set(r.id, paragraphs(readText(r.path) || '', dates.get(r.id), { items, now, staleDays, confirms, file: r.path }));
@@ -460,9 +456,8 @@ export function instructionsView(p, { home, machine = null, now = Date.now(), da
     rows: c.rows.map(r => { const ps = paras.get(r.id); return { ...r, hints: count.get(r.id) || 0, loads_day: perDay.get(r.id)?.loads ?? 0, ...(ps ? { stale: ps.filter(x => x.stale).length, oldest_days: Math.max(0, ...ps.map(x => x.age_days ?? 0)) } : {}) }; }),
     standing: c.standing, hints, measured, suggest: sug, stale_days: staleDays,
     checkins: p.state ? checkinDays(p.state, { now }) : [] };   // META-CHECKIN-DIET R1: per day check-ins: n (m mechanical, k minor, j full)
-  // META-PRACTICE-P1: the static checks (free, no model call) + the one-line "managed" summary; remember = keep the last scan's keys
-  let items = {};
-  try { if (p.state) items = loadState(p.state).items; } catch { items = {}; }
+  // the static checks (free, no model call) and the one-line "managed" summary; remember = keep the last scan's keys
+  const items = p.state ? loadState(p.state).items : {};
   v.findings = staticChecks(rows, { project: p, home: fwd(home || machine?.home || process.env.USERPROFILE || process.env.HOME || ''), items, harness: harnessRows(), versions: { claude: machine?.claude?.version } });
   const fc = new Map();
   for (const f of v.findings) if (f.row) fc.set(f.row, (fc.get(f.row) || 0) + 1);

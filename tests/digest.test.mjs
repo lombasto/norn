@@ -7,8 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record } from '../engine/lib/records.mjs';
-import { digest } from '../engine/lib/digest.mjs';
+import { record, recordsFile } from '../engine/lib/records.mjs';
+import { digest, tryDigest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -199,4 +199,23 @@ test('S5 digest sec 1: the branch + head recorded at the end are preferred; the 
   assert.deepEqual(d.sections.finished.map(r => [r.id, r.branch]), [[w.id, 'feat/a'], [old.id, 'feat/o']]);
   d = dg(state, { git: fakeGit({ branches, merged: new Set(['a1b2c3d']) }) });
   assert.deepEqual(ids(d.sections.finished), [old.id], 'the recorded head on main = merged, whatever the branch name is now');
+});
+
+test('L-21: a digest that cannot be built is an {error} STATUS prints; a corrupt deliverables or roadmap log is never "nothing to do"', () => {
+  const state = path.join(tmp('meta-dge-'), 'state', 'demo'), m = nowMin();
+  const w = start(state, m, { lane: 'meta-e', stage: 'S1' });
+  end(state, w.id, m + 5, { outcome: 'crash', exit: 143 });
+  for (const kind of ['deliverable', 'item']) {
+    const f = recordsFile(state, kind);
+    fs.writeFileSync(f, '{ torn\n');
+    const re = new RegExp(path.basename(f).replace('.', '\.'));
+    assert.throws(() => digest(state, {}, { git: fakeGit() }), re, `${kind}: a records error, not an empty section`);
+    assert.match(tryDigest(state, {}).error, re);
+    fs.rmSync(f);
+  }
+  fs.writeFileSync(recordsFile(state, 'deliverable'), '{ torn\n');
+  const env = { ...process.env, META_ROLE: '', META_PROJECT: '' };
+  const r = spawnSync(process.execPath, [META, 'status', '--state', state, '--budget', path.join(HERE, 'fixtures', 'status', 'BUDGET.json'), '--machine', path.join(state, 'none.json')], { encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'), /## Digest\n- could not be built: .*deliverables\.jsonl/);
 });

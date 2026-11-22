@@ -56,8 +56,7 @@ const peerKey = r => [roleOfRun(r), r.data?.agent || '-', r.data?.effort || '-']
  */
 export function guardScan(state, p = {}, o = {}) {
   const G = guardPolicy(p.policy), now = o.now ?? Date.now(), cache = o.cache || new Map(), memo = o.memo || new Map();
-  let items = {};
-  try { items = loadState(state).items; } catch { items = {}; }
+  const items = loadState(state).items;
   const runs = Object.values(items).filter(i => i.kind === 'run' && familyOf(i.data || {}, p) === 'claude');
   const peers = new Map();
   for (const r of runs) {
@@ -98,7 +97,8 @@ export function guardScan(state, p = {}, o = {}) {
   return { at: new Date(now).toISOString(), policy: G, runs: out };
 }
 
-const guards = state => { try { return Object.values(fold(readEvents(recordsFile(state, 'guard'))).items); } catch { return []; } };
+// a records error throws (the tick logs it): read as none, the watch would close every alarm as "run gone" or raise each one again
+const guards = state => Object.values(fold(readEvents(recordsFile(state, 'guard'))).items);
 /** open GRD records (the digest rows) */
 export const openGuards = state => guards(state).filter(g => g.state === 'open');
 
@@ -115,8 +115,7 @@ export function guardWatch(state, p = {}, o = {}) {
       cache_read: r.cache_read, turns: r.turns, ctx: r.ctx, ratio: r.ratio === null ? undefined : Number(r.ratio.toFixed(2)) } });
     raised.push({ id: ev.id, run: r.id, cls: f.cls, why: f.why, lane: r.lane });
   }
-  let items = {};
-  try { items = loadState(state).items; } catch { items = {}; }
+  const items = loadState(state).items;
   for (const g of guards(state)) {
     if (g.state !== 'open' && g.state !== 'ruled') continue;
     const run = items[g.data?.run];

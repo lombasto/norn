@@ -9,6 +9,11 @@ import { renderTab, loadTab, loadParts, partsKey } from '../engine/dash/ui.mjs';
 import { goAttrs } from '../engine/dash/cells.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { mkTmp } from './helpers/tmp.mjs';
+import { crossings, crossingsAsync } from '../engine/lib/advisory.mjs';
+import { slopHist, histFile } from '../engine/lib/slophist.mjs';
 
 const n = k => Array.from({ length: k }, (_, i) => i);
 /** a Guard view as guardOf builds it: 100 rows, 12 of them rules rows */
@@ -199,4 +204,22 @@ test('the chosen sub-view lives in the URL: a shared link lands on it, a tap pus
     assert.ok(await painted('rules'), 'reload keeps it');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on a phone');
   } finally { await pg?.close(); await f.done(); }
+});
+
+test('L-19: a corrupt seen.json or closed.json throws and is not written back; a missing one starts empty', async () => {
+  const state = mkTmp('meta-l19-'), seen = path.join(state, 'advisory', 'seen.json'), closed = histFile(state);
+  const list = [{ id: 'A-1', type: 'rules' }];
+  assert.equal(crossings(state, list)[0].new, true, 'no store: the first sighting is new');
+  assert.equal((await crossingsAsync(state, list))[0].new, true);
+  fs.writeFileSync(seen, '{ torn');
+  assert.throws(() => crossings(state, list), SyntaxError);
+  await assert.rejects(crossingsAsync(state, list), SyntaxError);
+  assert.equal(fs.readFileSync(seen, 'utf8'), '{ torn', 'the history is not overwritten');
+  const rows = [{ id: 'A-1', type: 'rules' }];
+  assert.ok(await slopHist(state, rows, { types: ['rules'] }), 'no store: it starts one');
+  for (const bad of ['{ torn', '{"open":3}']) {
+    fs.writeFileSync(closed, bad);
+    await assert.rejects(slopHist(state, rows, { types: ['rules'] }), new RegExp('closed\.json|JSON'), bad);
+    assert.equal(fs.readFileSync(closed, 'utf8'), bad, 'the closed history is not overwritten');
+  }
 });

@@ -39,20 +39,13 @@ const HB_FRESH_MS = 10 * 60 * 1000;
 export class ToolError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 const bad = msg => { throw new ToolError(msg, 2); };
 
-// Who is asking, from the environment: a check-in run sets META_ROLE=checkin; every other supervised run has META_RUN_ID (worker),
-// even when it inherited META_ROLE=controller from the session that started it.
-export function envRole(env) {
-  if (env.META_ROLE === 'checkin') return 'checkin';
-  if (env.META_RUN_ID) return 'worker';
-  return env.META_ROLE || null;
-}
-export function refusal(profile, env) {
+// Who may start a profile: the role is mail.mjs mailRole's (a run's RUN record, never META_ROLE, which a worker inherits from the
+// check-in that dispatched it). Setup has no state to read; any supervised run is refused it anyway.
+export function refusal(profile, env, state) {
   if (!PROFILES.includes(profile)) return `--profile must be ${PROFILES.join(' | ')} (got ${JSON.stringify(profile)})`;
-  const r = envRole(env);
-  if ((profile === 'controller' || profile === 'chat') && (r === 'worker' || r === 'checkin')) return `refused: profile ${profile} from a ${r} environment (META_ROLE=${env.META_ROLE || '-'}, META_RUN_ID=${env.META_RUN_ID || '-'})`;
-  if (profile === 'setup' && (r === 'worker' || r === 'checkin')) return `refused: profile setup from a ${r} environment (META_ROLE=${env.META_ROLE || '-'}, META_RUN_ID=${env.META_RUN_ID || '-'})`;
-  if (profile === 'checkin' && r === 'worker') return `refused: profile checkin from a worker environment (META_RUN_ID=${env.META_RUN_ID})`;
-  return null;
+  const r = env.META_RUN_ID && !state ? 'supervised run' : mailRole(state, env);
+  if (r === 'controller' || profile === 'worker' || (profile === 'checkin' && r === 'checkin')) return null;
+  return `refused: profile ${profile} from a ${r} environment (META_ROLE=${env.META_ROLE || '-'}, META_RUN_ID=${env.META_RUN_ID || '-'})`;
 }
 
 // ---------- minimal JSON-schema check (the shapes the tools use) ----------
@@ -208,12 +201,12 @@ function boot({ role }, ctx) {
   const items = Object.values(st(ctx).items);
   const runs = items.filter(i => i.kind === 'run');
   const lastCk = runs.filter(i => i.data.kind === 'checkin').at(-1);
-  const resume = tryDigest(ctx.state, ctx.project || {});   // NORN-WATCH S1: the level-triggered resume digest
-  const lh = laneHooks(ctx.state), digest = { project: ctx.project?.name ?? null, needs_you: items.filter(i => needsYou(i, lh, ctx.state)).length, digest: digestIds(resume),
+  const resume = tryDigest(ctx.state, ctx.project || {});   // the level-triggered resume digest, or the error that stopped it
+  const lh = laneHooks(ctx.state), digest = { project: ctx.project?.name ?? null, needs_you: items.filter(i => needsYou(i, lh, ctx.state)).length, digest: resume.error ? { error: resume.error } : digestIds(resume),
     running: runs.filter(i => i.state === 'running').map(i => ({ run: i.id, lane: i.data.lane ?? null, executor: i.data.executor ?? i.data.kind })),
     last_checkin: lastCk ? { run: lastCk.id, state: lastCk.state, ts: lastCk.history[0].ts } : null,
     other_controllers: otherControllers(ctx).map(h => ({ pid: h.pid, via: h.via, ts: h.ts })), pause: readPause(pauseFiles(ctx.state)) };   // RM-37: the mode in force (null = none)
-  return { text: pack(ctx, role) + '\n\n## State digest\n' + JSON.stringify(digest, null, 1) + (resume ? '\n\n' + renderDigest(resume, { level: 2 }) : ''), data: { role, digest } };
+  return { text: pack(ctx, role) + '\n\n## State digest\n' + JSON.stringify(digest, null, 1) + '\n\n' + (resume.error ? `## Digest\n- could not be built: ${resume.error}` : renderDigest(resume, { level: 2 })), data: { role, digest } };
 }
 function status(a, ctx) {
   if (a.project && a.project !== ctx.project?.name) bad(`this server serves ${ctx.project?.name ?? 'no named project'}, not ${a.project}`);

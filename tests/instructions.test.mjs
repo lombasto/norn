@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { mark, slowStep, loopReport } from './helpers/loopwatch.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
-import { record } from '../engine/lib/records.mjs';
+import { record, recordsFile } from '../engine/lib/records.mjs';
+import { standingRuns } from '../engine/lib/standing.mjs';
 import { estTokens, TOKEN_METHOD, discover, sessionsOn, dailyCost, lint, instructionsView, formatInstructions, knownCommands } from '../engine/lib/instructions.mjs';
 import { renderTab, loadTab, TABS } from '../engine/dash/ui.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
@@ -164,6 +165,16 @@ test('lint: a ${root} / ~/ path on a POSIX root is an absolute path, still check
   assert.deepEqual(q.cands, ['/srv/kestrel-posix/.superpowers/QUIET'], 'checked as itself, not joined to a base');
   assert.deepEqual(hints.find(h => /plan\.md/.test(h.text))?.cands, [HOME + '/notes/plan.md']);
   assert.ok(!hints.some(h => /never\.conf/.test(h.text)), 'a literal /path token stays no candidate');
+});
+
+test('L-17: a broken input is an error, never an empty view - a corrupt gen manifest drops no target, corrupt records read as no runs', () => {
+  const f = fx(), manifest = w(path.join(f.p.meta, 'local', 'install-manifest.json'), '{ not json');
+  assert.throws(() => discover(f.p, { home: f.home, machine: f.machine }), SyntaxError, 'the gen targets and their drift are what the page is for');
+  fs.rmSync(manifest);
+  fs.appendFileSync(recordsFile(f.state, 'run'), '{ not json\n');
+  const rows = discover(f.p, { home: f.home, machine: f.machine });
+  for (const [what, fn] of [['sessionsOn', () => sessionsOn(f.state, f.p)], ['lint', () => lint(rows, { project: f.p, home: f.home })], ['standingRuns', () => standingRuns(f.state, f.p)],
+    ['instructionsView', () => instructionsView(f.p, { home: f.home, machine: f.machine })]]) assert.throws(fn, /runs\.jsonl/, `${what}: a records error is shown, not an empty view`);
 });
 
 test('the view + text: rows with hints, totals, the method; `norn instructions --json` and text in a sandbox home', () => {

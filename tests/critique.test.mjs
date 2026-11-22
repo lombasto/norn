@@ -6,9 +6,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { findingsCount, critiqueFiles, critiqueOn, classExecutor } from '../engine/lib/critique.mjs';
+import { findingsCount, critiqueFiles, critiqueOn, classExecutor, critiqueHolds } from '../engine/lib/critique.mjs';
 import { SETTINGS, withDefaults } from '../engine/lib/policy.mjs';
-import { loadState, record } from '../engine/lib/records.mjs';
+import { loadState, record, recordsFile } from '../engine/lib/records.mjs';
 import { makeEval, parseAfter } from '../engine/lib/after.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
@@ -138,4 +138,13 @@ test('Runs: the plan run\'s drawer shows its review (review running / reviewed �
   assert.match(doc('RUN-1'), /reviewed ✓ \(2 findings\)/);
   assert.match(doc('RUN-3'), /review running/);
   assert.match(doc('RUN-5'), /reviewed ✓ \(1 finding\)</,'a review run on its own lane still lands on its plan run');
+});
+
+test('L-20: critiqueHolds - a brief that is gone holds nothing; a records error throws (never a build started without its plan review)', () => {
+  const state = mkTmp('meta-crit-l20-'), brief = path.join(state, 'brief.md');
+  assert.deepEqual(critiqueHolds(state, brief), [], 'no brief: no plan named');
+  fs.writeFileSync(brief, 'build what plan.md says\n');
+  assert.deepEqual(critiqueHolds(state, brief), []);
+  fs.writeFileSync(recordsFile(state, 'run'), '{ torn\n');
+  assert.throws(() => critiqueHolds(state, brief), /runs\.jsonl/);
 });

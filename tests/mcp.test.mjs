@@ -113,7 +113,13 @@ test('role refusal: a checkin or worker environment cannot start the controller 
   assert.equal(go('controller', { META_RUN_ID: 'RUN-9' }).status, 2);
   assert.equal(go('controller', { META_ROLE: 'controller', META_RUN_ID: 'RUN-9' }).status, 2);   // a worker inherits the controller's env
   assert.equal(go('checkin', { META_RUN_ID: 'RUN-9' }).status, 2);
-  assert.equal(go('checkin', { META_ROLE: 'checkin', META_RUN_ID: 'RUN-9' }).status, 0);
+  // L-03: the role is the RUN record's, not META_ROLE, which a worker inherits from the check-in that dispatched it
+  const ck = record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'fake', lane: 'checkin' } }).id;
+  const wk = record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'a' } }).id;
+  assert.equal(go('checkin', { META_ROLE: 'checkin', META_RUN_ID: ck }).status, 0);
+  const w = go('checkin', { META_ROLE: 'checkin', META_RUN_ID: wk });
+  assert.equal(w.status, 2, 'a worker with an inherited META_ROLE=checkin is refused'); assert.match(w.stderr, /refused.*checkin.*worker/i);
+  assert.equal(go('checkin', { META_ROLE: 'checkin', META_RUN_ID: 'RUN-9' }).status, 2, 'a run with no record is no check-in');
   assert.equal(go('worker', { META_RUN_ID: 'RUN-9' }).status, 0);
   assert.equal(go('boss', {}).status, 2);
 });

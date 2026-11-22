@@ -48,7 +48,8 @@ export function advisory({ phase = 'P1', check, key, severity, surface, path: fi
  * new crossing warns. Without a state nothing is stored and nothing is new.
  */
 const seenFile = state => path.join(state, 'advisory', 'seen.json');
-const parseSeen = t => { try { return JSON.parse(t) || {}; } catch { return {}; } };
+// a missing store is empty; a corrupt one throws: read as {} it would make every finding new and be written over its history
+const missing = e => { if (e.code === 'ENOENT') return '{}'; throw e; };
 /** the pure core: first_seen / new for each of list, seen updated in place; dirty = a new id was stored */
 function markSeen(seen, list, now) {
   let dirty = false;
@@ -59,7 +60,8 @@ function markSeen(seen, list, now) {
 export function crossings(state, list, now = Date.now()) {
   if (!state) return list.map(a => ({ ...a, first_seen: null, new: false }));
   const f = seenFile(state);
-  let seen; try { seen = parseSeen(fs.readFileSync(f, 'utf8')); } catch { seen = {}; }
+  let t; try { t = fs.readFileSync(f, 'utf8'); } catch (e) { t = missing(e); }
+  const seen = JSON.parse(t);
   const { out, dirty } = markSeen(seen, list, now);
   if (dirty) { fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(seen)); fs.renameSync(tmp, f); }
   return out;
@@ -68,7 +70,7 @@ export function crossings(state, list, now = Date.now()) {
 export async function crossingsAsync(state, list, now = Date.now()) {
   if (!state) return list.map(a => ({ ...a, first_seen: null, new: false }));
   const f = seenFile(state);
-  const seen = parseSeen(await fs.promises.readFile(f, 'utf8').catch(() => '{}'));
+  const seen = JSON.parse(await fs.promises.readFile(f, 'utf8').catch(missing));
   const { out, dirty } = markSeen(seen, list, now);
   if (dirty) {
     await fs.promises.mkdir(path.dirname(f), { recursive: true });

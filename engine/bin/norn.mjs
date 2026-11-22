@@ -1129,10 +1129,10 @@ function mcpCmd(argv, env, out, err) {
     if (f.profile !== 'setup' && !f.project && !f.state) throw new Usage('--project or --state is required (never taken from the environment)', null);
     const client = f.client || 'mcp';
     if (!/^[a-z0-9][a-z0-9._-]{0,30}$/.test(client)) throw new Usage(`--client must match [a-z0-9._-] (got ${JSON.stringify(client)})`, null);
-    const why = refusal(f.profile, env);
+    const project = f.project ? loadProject(f.project, { meta: metaRoot(env) }) : null, state = project ? project.state : f.state;
+    const why = refusal(f.profile, env, state);
     if (why) throw new Usage(why, null);
-    const project = f.project ? loadProject(f.project, { meta: metaRoot(env) }) : null;
-    serve({ state: project ? project.state : f.state, project, profile: f.profile, client, env, cli: main }).then(c => { process.exitCode = c; });
+    serve({ state, project, profile: f.profile, client, env, cli: main }).then(c => { process.exitCode = c; });
     return undefined;
   } catch (e) {
     if (e instanceof Usage || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + H1_USAGE.mcp); return 2; }

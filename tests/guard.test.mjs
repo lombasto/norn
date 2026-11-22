@@ -143,3 +143,13 @@ test('notice class "usage": batched into the FYI digest by default (off for the 
   const p = await notify({ title: 'RUN-7 runaway', body: 'GRD-1', cls: 'usage', push: true, machine: { notify: { backend: 'none' } }, state: st });
   assert.notEqual(p.batched, true);
 });
+
+test('L-20: a records error is an error - the scan and the watch throw; no alarm is closed as "run gone" or raised again', () => {
+  const { st, o } = fixture(), p = { name: 'x', policy: {} };
+  const open = guardWatch(st, p, o).raised.length, guards = () => Object.values(fold(readEvents(recordsFile(st, 'guard'))).items).filter(g => g.state === 'open').length;
+  assert.ok(open > 0);
+  fs.appendFileSync(recordsFile(st, 'run'), '{ torn\n');
+  assert.throws(() => guardScan(st, p, o), /runs\.jsonl/, 'no runs is not what the records say');
+  assert.throws(() => guardWatch(st, p, o), /runs\.jsonl/);
+  assert.equal(guards(), open, 'every alarm stays open');
+});

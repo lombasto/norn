@@ -37,12 +37,14 @@ export function histTypes(h, now = Date.now()) {
   return { since: h.since, types: out };
 }
 
-const valid = h => h && typeof h === 'object' && h.open && typeof h.open === 'object' && Array.isArray(h.closed) ? h : null;
+// a missing store starts one; a corrupt one throws: read as none it would be written over, the closed history lost
+const valid = (h, f) => { if (h && typeof h === 'object' && h.open && typeof h.open === 'object' && Array.isArray(h.closed)) return h; throw new Error(`${f}: not a closed-findings store (open + closed)`); };
 /** read the store, step it with the view (step = false: read only), write it back when it changed -> histTypes (null: no store yet) */
 export async function slopHist(state, rows, { types, now = Date.now(), step = true } = {}) {
   if (!state) return null;
   const f = histFile(state);
-  let h0 = null; try { h0 = valid(JSON.parse(await fs.promises.readFile(f, 'utf8'))); } catch { h0 = null; }
+  const t = await fs.promises.readFile(f, 'utf8').catch(e => { if (e.code === 'ENOENT') return null; throw e; });
+  const h0 = t === null ? null : valid(JSON.parse(t), f);
   if (!step) return histTypes(h0, now);
   const { h, dirty } = stepHist(h0, rows, { types, now });
   if (dirty) {

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withDefaults } from './policy.mjs';
 import { loadState } from './records.mjs';
+import { readText } from './fsnap.mjs';
 import { makeEval } from './after.mjs';
 
 export const CRITIQUE_MODES = ['off', 'on'];
@@ -64,12 +65,12 @@ export function critiquePrompt({ plan, brief, filter, findings }) {
     .replaceAll('{{dirs}}', dirs.length ? dirs.join(', ') : 'none named').replaceAll('{{filter}}', rule).replaceAll('{{findings}}', fwd(findings));
 }
 
-/** the after conditions a new run with brief `brief` waits on: each plan review its brief names that is not settled now */
+/** the after conditions a new run with brief `brief` waits on: each plan review its brief names that is not settled now. A brief that is
+ * gone names no plan; a records error throws (read as no runs, the build would start without the review the policy requires) */
 export function critiqueHolds(stateDir, brief) {
-  let text;
-  try { text = fwd(fs.readFileSync(brief, 'utf8')).toLowerCase(); } catch { return []; }
-  let items;
-  try { items = loadState(stateDir).items; } catch { return []; }
+  const t = readText(brief);
+  if (t === null) return [];
+  const text = fwd(t).toLowerCase(), items = loadState(stateDir).items;
   const named = Object.values(items).filter(i => i.kind === 'run' && i.data?.critique?.plan && text.includes(fwd(i.data.critique.plan).toLowerCase()));
   const newest = new Map();
   for (const r of named) if (critiqueOf(items, r.data.critique.of)?.id === r.id) newest.set(r.id, r);
