@@ -64,13 +64,6 @@ a{color:inherit}
 .orc-bubble p{margin:0 0 8px}.orc-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .orc-stage.busy .orc-bubble{visibility:hidden}
 .orc-fig{width:192px;height:192px;image-rendering:pixelated;background-repeat:no-repeat}
-/* UX review 5: the Slop header is one row - a compact portrait (the 32 bust at 2x), his line, the chip, Fix all, a "More" menu */
-.orc-section{display:flex;gap:12px;align-items:center}.orc-head{flex:1;min-width:0}
-.orc-portrait{flex:none;width:64px;height:64px;image-rendering:pixelated;background:url(/norn/art/orc-32.png) 0 0 / 100% 100% no-repeat}
-.orc-line{font-size:14px;margin:0 0 6px;overflow-wrap:anywhere}
-.kmenu{position:relative;display:inline-block}.kmenu>summary{list-style:none;cursor:pointer;display:inline-block;border:1px solid var(--line);border-radius:6px;padding:4px 10px}.kmenu>summary::-webkit-details-marker{display:none}
-.kpop{position:absolute;right:0;z-index:5;margin-top:4px;width:min(320px,calc(100vw - 40px));background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px var(--shadow);padding:8px;display:flex;flex-wrap:wrap;gap:6px}
-.kpop>div{flex-basis:100%;margin-top:4px}
 .glist{margin:0;padding:0 0 0 18px}
 .sexplain{margin-top:3px;overflow-wrap:anywhere}.sexplain summary{cursor:pointer}.sexplain dl{margin:4px 0 0}.sexplain dt{font-weight:600;margin-top:4px}.sexplain dd{margin:0}.sexplain code{white-space:normal;word-break:break-all}
 /* the sub-view pattern (subviews.mjs): a summary row of at most 4 numbers, the sub-view row, the chosen part */
@@ -80,12 +73,12 @@ a{color:inherit}
 .subnav{display:inline-flex;flex-wrap:wrap;gap:6px}.subnav button[aria-pressed=true]{background:var(--ink);color:var(--bg)}.subnav button[aria-pressed=true] .mute{color:inherit}
 /* META-UX-BUILD S5: Slop's batches - the three kinds of fix apart (a coloured edge + heading each), the rows that only count folded */
 .sblist{list-style:none;margin:0;padding:0}.sbatch{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.sbatch:last-child{border-bottom:0}.sbpaths{margin:2px 0}.sbways{margin-top:4px}.sbrows summary{cursor:pointer}
-/* META-UX-BUILD S6: the Fix all sheet */
+/* the Fix all sheet */
 .fixall{max-width:860px;margin:0 auto;overflow-wrap:anywhere}.fxhead{margin:14px 0 4px}.fxlist{list-style:none;margin:0;padding:0}.fxitem{padding:8px 0;border-bottom:1px solid var(--line)}
 .fxitem label{display:block;cursor:pointer}.fxitem input{margin-right:6px}.fxcall{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:flex-start}.fxcall .fxbody{flex:1 1 280px;min-width:0}
 .fxq{display:inline-block;width:1.2em;text-align:center;border:1px solid var(--line);border-radius:3px}.fxways{display:flex;flex-wrap:wrap;gap:6px}.fxways button[aria-pressed=true]{outline:2px solid var(--accent,currentColor)}
 .fxfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}.fxbtns{display:flex;gap:6px;flex-wrap:wrap}
-.ins-hot>td{background:var(--warn-bg)}.ins-hot>td:first-child{box-shadow:inset 4px 0 0 var(--warn)}.ins-advice{color:var(--warn);margin-top:2px}
+.ins-hot>td{background:var(--warn-bg)}.ins-hot>td:first-child{box-shadow:inset 4px 0 0 var(--warn)}
 .insworstlist{list-style:none;margin:0;padding:0 12px 8px}.insworst{padding:8px 0;border-bottom:1px solid var(--line)}.insworsthead{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
 .insrank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--warn-bg);color:var(--warn);font-weight:700;font-size:12px}
 .insadv{list-style:none;margin:4px 0 0 28px;padding:0}.insadv li{margin:2px 0;overflow-wrap:anywhere}
@@ -93,11 +86,9 @@ a{color:inherit}
 @media (max-width:700px){.subsum{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.subnum{padding:6px 10px}.subnum b{font-size:18px}}.glist .grow{padding:5px 0;border-bottom:1px solid var(--line)}
 .insseg.seg-rl-prose,.insdot.seg-rl-prose{background:var(--warn)}.insseg.seg-rl-repeated,.insdot.seg-rl-repeated{background:var(--accent)}
 .insseg.seg-rl-enforced,.insdot.seg-rl-enforced{background:var(--ok)}.insseg.seg-rl-retired,.insdot.seg-rl-retired{background:var(--bar)}
-@media (max-width:700px){#orc .o32{display:none}#orc .o16{display:block}#orc{min-width:44px;min-height:44px;justify-content:center}
- .orc-portrait{width:32px;height:32px}}
+@media (max-width:700px){#orc .o32{display:none}#orc .o16{display:block}#orc{min-width:44px;min-height:44px;justify-content:center}}
 .pagebar .count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:11px;font-weight:700;text-align:center}
 main{padding:18px 20px;max-width:1500px;margin:0 auto}
-.glance{display:grid;grid-template-columns:1.15fr 1.4fr 1fr;gap:14px;margin-bottom:16px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .card h2{margin:0 0 10px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);display:flex;gap:8px;align-items:baseline}
 .card h2 b{font-size:20px;letter-spacing:0;text-transform:none;color:var(--ink)}
@@ -121,9 +112,8 @@ main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .ho{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:1px 8px;margin:2px 0 0 4px;border-radius:10px;font-size:12px;font-weight:600;white-space:normal;vertical-align:middle}
 td .ho{min-width:13em}.ho.pending{background:var(--warn-bg);color:var(--warn)}.ho.resumed{background:var(--run-bg);color:var(--run)}.ho .id{color:inherit}
 .pulse{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:currentColor}
-circle.pulse.ho-pending{fill:var(--warn)}circle.pulse.ho-resumed{fill:var(--run)}.mn .ns.ho-w{fill:var(--ink);font-weight:600}
-.node .horow{grid-column:1/-1;padding-left:28px}.node .horow .ho{margin-left:0}.fh-ho{margin-top:6px}.fh-ho .ho{margin-left:0;font-size:13px}.hrow.ho-row{border-bottom:0;padding:0 0 6px}
-.chip.refused{background:var(--soft);color:var(--accent);outline:1px solid var(--accent)}.refusedrow{padding-left:44px}
+.fh-ho{margin-top:6px}.fh-ho .ho{margin-left:0;font-size:13px}.hrow.ho-row{border-bottom:0;padding:0 0 6px}
+.chip.refused{background:var(--soft);color:var(--accent);outline:1px solid var(--accent)}
 .seg-v-agree{background:var(--ok)}.seg-v-harmless{background:var(--mute)}.seg-v-refused{background:var(--codex)}.seg-v-recoverable{background:var(--warn)}.seg-v-harmful,.seg-v-errors{background:var(--bad)}
 .id{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--mute)}
 .aname{font-weight:600;color:var(--ink);font-size:12.5px}
@@ -137,7 +127,7 @@ td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:0}
 .tablecard{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:16px}
 .inswrap{overflow-x:auto}.insbar{display:flex;height:12px;border-radius:3px;overflow:hidden;margin:3px 0;background:var(--line)}.insseg{display:block;height:100%;min-width:2px}.inslegend{display:flex;flex-wrap:wrap;gap:2px 10px;overflow-wrap:anywhere}.insdot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
-/* META-TEND P1-VISUAL: the stack widget's part colours (widgets.mjs seg-<key>) on one series --k1..--k9 (the Norn look: palette.hex, norn.css) +
+/* the stack widget's part colours (widgets.mjs seg-<key>) on one series --k1..--k9 (the Norn look: palette.hex, norn.css) +
    the file map's states; the blocks wrap at 390 px (no sideways scroll) */
 :root{--k1:var(--mute);--k2:var(--codex);--k3:var(--accent);--k4:var(--run);--k5:var(--ok);--k6:var(--warn);--k7:var(--bad);--k8:var(--ink);--k9:var(--bar);--kgen:var(--codex)}
 .seg-base{background:var(--k1)}.seg-plugins{background:var(--k2)}.seg-memory{background:var(--k3)}.seg-skills{background:var(--k4)}.seg-claude_md{background:var(--k5)}.seg-hooks{background:var(--k6)}.seg-agent{background:var(--k7)}.seg-mcp{background:var(--k8)}.seg-norn,.seg-agents,.seg-prompt{background:var(--k9)}
@@ -145,7 +135,7 @@ tr:last-child td{border-bottom:0}
 .insloads{list-style:none;margin:0;padding:4px 12px}.insload{margin:6px 0 10px}.stklegend{display:flex;flex-wrap:wrap;gap:2px 12px;overflow-wrap:anywhere}.stkdot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
 .fmgroup{margin:4px 0 10px}.fmblocks{display:flex;flex-wrap:wrap;gap:2px}.fmblk{flex-grow:0;flex-shrink:1;min-width:16px;max-width:100%;height:30px;padding:0 4px;border:0;border-radius:2px;
   color:var(--bg);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-align:left}
-.inssug{margin:6px 0;overflow-wrap:anywhere}.inspara{border-left:3px solid transparent;padding-left:6px;margin:4px 0}.inspara.stale{border-left-color:var(--warn)}.agebadge{font-size:11px}.instab td{vertical-align:top}.instab .inspath{overflow-wrap:anywhere;word-break:break-all;font-size:12px}.instab button.lnk{background:none;border:0;padding:0;color:var(--ink);font-weight:600;cursor:pointer;text-align:left}.inshint{overflow-wrap:anywhere}
+.inspara{border-left:3px solid transparent;padding-left:6px;margin:4px 0}.inspara.stale{border-left-color:var(--warn)}.instab td{vertical-align:top}.instab .inspath{overflow-wrap:anywhere;word-break:break-all;font-size:12px}.instab button.lnk{background:none;border:0;padding:0;color:var(--ink);font-weight:600;cursor:pointer;text-align:left}
 /* META-TEND P4: on a phone the advice card's Apply / Keep go below its text (beside it they squeezed the text to one word a line) */
 @media (max-width:700px){.item.advice{flex-wrap:wrap}.item.advice>.spacer{display:none}.item.advice>div:last-child{flex-basis:100%}}
 @media (max-width:700px){.instab .insopt{display:none}.instab{width:100%;table-layout:fixed}.instab th:first-child{width:38%}.instab td,.instab th{padding-left:6px;padding-right:6px}.instab .chip{white-space:normal}}
@@ -171,7 +161,6 @@ tr:last-child td{border-bottom:0}
 .tablecard>h3{margin:0;padding:10px 14px;font-size:13px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
 .big{font-size:26px;font-weight:650;line-height:1.1}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center}
-.sg{grid-column:1;margin-top:10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);font-weight:600}
 /* RM-30 S1: a question's options = small cards (key, text, cost; the recommended one marked, with its why) */
 .opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:8px;margin-top:8px}
 .opt{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--soft);font-size:13px;min-width:0}
@@ -201,8 +190,6 @@ tr:last-child td{border-bottom:0}
 .dupcmp{display:grid;gap:6px;margin:6px 0}.dupcmp>div{display:flex;gap:6px;align-items:baseline;min-width:0}.dupbtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .q{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
 .q.openq{box-shadow:inset 3px 0 0 var(--accent)}
-.lvl1{padding-left:34px}.lvl2{padding-left:58px}
-.caret{width:14px;color:var(--mute);cursor:pointer;user-select:none}
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 12px}
 .filters{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
 input[type=search]{background:var(--panel);width:260px}
@@ -266,14 +253,14 @@ button.reset{padding:2px 8px}
 .doctoc a{text-decoration:none;color:var(--mute);font-size:12.5px;padding:2px 6px;border-radius:5px}.doctoc a:hover{background:var(--soft);color:var(--ink)}
 .doctoc .toc1{color:var(--ink);font-weight:600}.doctoc .toc3{padding-left:18px;font-size:12px}
 .md{padding:18px 26px;line-height:1.6;max-width:1100px;overflow-wrap:break-word}
-/* META-UX-BUILD S3: Docs = the one reader - the file list beside the reader (a phone: the list, a tap -> the reader with Back) */
+/* Docs = the one reader - the file list beside the reader (a phone: the list, a tap -> the reader with Back) */
 .dochead{margin:0 0 8px}.dochead b{font-size:18px;margin-right:6px}.docsplit{display:grid;grid-template-columns:290px minmax(0,1fr);gap:16px;align-items:start}
 .doclist{position:sticky;top:58px;max-height:calc(100vh - 80px);overflow:auto;padding:8px}.docgrp{margin:0 0 8px}.docgrp h4{display:flex;justify-content:space-between;margin:6px 6px 2px;color:var(--mute);font-weight:600}
 .docgrp ul{list-style:none;margin:0;padding:0}.docfile{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;width:100%;text-align:left;background:none;border:0;border-radius:6px;padding:4px 6px;color:var(--ink);cursor:pointer;min-height:30px}
 .docfile:hover{background:var(--soft)}.docfile.sel{background:var(--soft);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}.docfile .dfname{flex:1 1 150px;min-width:0;overflow-wrap:anywhere}.docfile .dftk{white-space:nowrap}.docfile .chip{white-space:nowrap}
 .docmem{margin:2px 6px 6px;padding:6px;border:1px solid var(--line);border-radius:8px}.docback{display:none}.dochd{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;margin:0 0 6px}.dochd .dfname{font-size:17px}.dochd .inspath{overflow-wrap:anywhere}
 .docpara{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}.docpara.hasfind{grid-template-columns:minmax(0,1fr) minmax(200px,300px);background:var(--soft);border-radius:6px;padding:4px 6px}
-.docfind{border-left:3px solid var(--warn);padding:2px 8px;font-size:13px;overflow-wrap:anywhere}.docfind .insfind{margin:0 0 6px}#doc-file-findings{padding:8px 12px;margin:0 0 8px}#doc-file-findings .insfind{margin:4px 0}
+#doc-file-findings{padding:8px 12px;margin:0 0 8px}#doc-file-findings .insfind{margin:4px 0}
 .docsrc{padding:6px 0;overflow-x:auto}.docsrc table{border-collapse:collapse;width:100%}.docsrc td{vertical-align:top;padding:0 8px;border:0}.docsrc .ln{text-align:right;user-select:none;width:1%;font-size:12px}.docsrc .lt code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;background:none}.docsrc tr.focus{outline:2px solid var(--accent)}.docsrc td:last-child{width:30%}
 @media (max-width:700px){.docsplit{grid-template-columns:minmax(0,1fr)}.doclist{position:static;max-height:none}.docsplit:not(.picked) .docread{display:none}.docsplit.picked .doclist{display:none}.docback{display:inline-block}
 .docfile{min-height:40px}.docpara.hasfind{grid-template-columns:minmax(0,1fr)}.docsrc td:last-child{width:auto}.docsrc tr{display:grid;grid-template-columns:auto minmax(0,1fr)}}
@@ -337,11 +324,11 @@ mark.dv-w{color:var(--on-accent);border-radius:2px}.dv-del mark.dv-w{background:
 .dvpip-tools{display:flex;gap:4px;flex-wrap:wrap;align-items:center;cursor:default}.dvpip-tools button{padding:2px 8px}.dvpip-tools button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
 .dvpip-body{flex:1;overflow:auto;min-height:0}
 @media (max-width:600px){.dvpip{inset:0;width:auto;height:auto;min-width:0;min-height:0;max-width:none;max-height:none;border-radius:0;resize:none}.dvpip-bar{cursor:default}.dvpip [data-dv-mode]{display:none}}
-@media (max-width:1100px){.glance,.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}}
+@media (max-width:1100px){.grid2,.settings,.docwrap{grid-template-columns:1fr}.doctoc{position:static}.snav{position:static;max-height:none}}
 /* phone width (PHONE-HEADER, both looks): the header wraps and the project select shrinks; the tab bar and wide tables scroll inside
    themselves, setting rows stack - the page itself never scrolls sideways */
 @media (max-width:700px){header{flex-wrap:wrap;gap:8px;padding:8px 10px}header select{min-width:0;max-width:100%}
- main{padding:10px 8px}.glance,.grid2{grid-template-columns:minmax(0,1fr)}.card,.tablecard{min-width:0;overflow-x:auto}
+ main{padding:10px 8px}.grid2{grid-template-columns:minmax(0,1fr)}.card,.tablecard{min-width:0;overflow-x:auto}
  .srow,.srow.inline{grid-template-columns:minmax(0,1fr)}.srow .sc{justify-content:flex-start}}
 /* the Home tab: the thread between the side columns, full bleed under the bar; the composer
    under the thread. Phone: one column, the page scrolls, the composer sticks over the bottom bar (Home / Inbox / Runs / Plan / More) */
