@@ -20,7 +20,7 @@ import { profileChoices, profileChanges, profileBudget, getProfile, loadProfiles
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy, REQUIRED_CAPS } from '../lib/policy.mjs';
-import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneNameIn, laneIdIn, homeOfId, copyItemsAsync, crewFile } from '../lib/records.mjs';
+import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneNameIn, laneIdIn, homeOfId, copyItemsAsync, crewFile, RUN_ID_RE } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
 import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
@@ -1423,11 +1423,11 @@ export function createDashboard(o) {
     if (items.some(x => x.kind === 'undone' && x.line === line)) throw fail(409, 'Undone already');
     const why = `undo from the chat (thread line ${line})`, runOf = id => runsOf(st(p)).find(r => r.id === id);
     if (u.verb === 'revoke' && /^DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.id)) await rec(p, { kind: 'directive', ev: 'revoke', id: u.id, by: 'dashboard', data: {} });
-    else if (u.verb === 'stop' && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.run)) {
+    else if (u.verb === 'stop' && RUN_ID_RE.test(u.run)) {
       const r = runOf(u.run);
       if (r?.state !== 'queued') throw fail(409, `${u.run} is ${r?.state ?? 'gone'}: Undo withdraws only a queued run`);
       await stopRunAsync({ state: p.state, locksDir: o.locksDir ?? path.join(path.dirname(path.resolve(p.state)), 'locks'), run: u.run, by: 'dashboard', why });
-    } else if (u.verb === 'requeue' && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.run) && /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(u.from)) {
+    } else if (u.verb === 'requeue' && RUN_ID_RE.test(u.run) && RUN_ID_RE.test(u.from)) {
       try { requeueRun({ state: p.state, run: u.run, after: runOf(u.from)?.data.after ?? [], by: 'dashboard', why }); } catch (e) { throw fail(e.code === 3 ? 409 : 400, e.message); }
     } else throw fail(400, `no undo verb ${u.verb}`);
     await viewsA(p);
@@ -1852,12 +1852,12 @@ data: ${JSON.stringify(l)}
       } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
     }
     if (route === '/api/pause') {
-      // RM-37: every pause is the CLI's (`norn pause` / `norn resume`, pause.mjs) run as a child: no sync write here. Exactly one of
-      // { mode, why? } | { runs: [RUN-n], why? } (a safe pause of each) | { resume: RUN-n | 'all' }
+      // every pause is `norn pause` / `norn resume` run as a child, so the dashboard and the CLI pause the same way. Exactly one of
+      // { mode, why? } | { runs: [run id], why? } (a safe pause of each) | { resume: run id | 'all' }
       const runs = Array.isArray(data.runs) ? data.runs.map(String) : null, asks = ['mode', 'runs', 'resume'].filter(k => data[k] !== undefined);
       if (asks.length !== 1) throw fail(400, 'give exactly one of mode | runs | resume');
-      if (runs && (!runs.length || !runs.every(r => /^RUN-\d+$/.test(r)))) throw fail(400, 'runs must be RUN-n ids');
-      if (data.resume !== undefined && !(data.resume === 'all' || /^RUN-\d+$/.test(String(data.resume)))) throw fail(400, 'resume must be RUN-n or all');
+      if (runs && (!runs.length || !runs.every(r => RUN_ID_RE.test(r)))) throw fail(400, 'runs must be run ids');
+      if (data.resume !== undefined && !(data.resume === 'all' || RUN_ID_RE.test(String(data.resume)))) throw fail(400, 'resume must be a run id or all');
       const args = data.mode !== undefined ? ['pause', '--mode', String(data.mode)] : runs ? ['pause', ...runs] : data.resume === 'all' ? ['resume', '--all'] : ['resume', String(data.resume)];
       const r = await metaCli([...args, ...(data.why && data.resume === undefined ? ['--why', line(data.why)] : []), '--state', p.state, '--as', 'dashboard']);
       if (r.code) throw cliFail(r);
