@@ -160,7 +160,7 @@ function run(exe, args, { input, timeout = 25000, ...o } = {}) {
   });
 }
 // The real side effects; tests inject their own. tick = detached `norn tick --project <file>` (the scheduler's own entry).
-function nativePlatform(machine) {
+function nativePlatform() {
   return {
     tick: async p => { const c = spawn(process.execPath, [META_CLI, 'tick', '--reason', 'dashboard', '--project', p.file], { detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); return { pid: c.pid }; },
     setInterval: async m => ({ ok: false, error: `scheduler not changed: run "norn sched install" for ${m} min` }),
@@ -184,7 +184,7 @@ export function createDashboard(o) {
   const projectsDir = o.projectsDir ?? machine.claude?.projects_dir ?? path.join(home, '.claude', 'projects');
   const codexDir = o.codexDir ?? path.join(home, '.codex', 'sessions');
   const ART = o.artDir ?? path.join(DASH, 'norn', 'art');   // the Norn art drop-in folder (tests point it at a temp dir)
-  const platform = o.platform ?? nativePlatform(machine), token = randomBytes(24).toString('hex');
+  const platform = o.platform ?? nativePlatform(), token = randomBytes(24).toString('hex');
   // META-CONTROLLER C6 (SPEC sec. 5): dash.remote on = a host allow-list + the proxy's identity header + paired devices; off (null) = as before
   const remote = metaRootDir ? remoteOf(machine) : null, pairing = remote ? createPairing({ file: devicesFile(metaRootDir) }) : null;
   const postsPerMin = o.remotePostsPerMin ?? POSTS_PER_MIN, writes = new Map();

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDashboard, parseStatus } from '../engine/dash/server.mjs';
+import { parseStatus } from '../engine/dash/server.mjs';
 import { parseReset } from '../engine/lib/cost.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
