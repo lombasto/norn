@@ -114,6 +114,11 @@ test('the browser at 390 px: Lanes (objective + links, type + output, the type f
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll with the row open');
     await pg.ev(`document.querySelector('#lane-seabed .lane-why summary').click()`);
     assert.equal(await pg.ev(`document.querySelector('#lane-seabed .lane-why').open`), true, 'a tap opens it in full');
+    // CI-44965808552: a stream repaint (the hello render, a record appended) keeps the open objective open, as S.laneOpen keeps the row
+    await pg.ev(`document.querySelector('#lane-seabed').dataset.was = '1'`);
+    record(f.pa.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'a record that repaints Lanes', scope: ['render'], via: 'cli' } });
+    assert.ok(await pg.until(`!!document.querySelector('#lane-seabed') && !document.querySelector('#lane-seabed').dataset.was`, 30000), 'the record repaints Lanes');
+    assert.equal(await pg.ev(`document.querySelector('#lane-seabed .lane-why').open`), true, 'a repaint keeps the objective open');
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'still no sideways scroll with the objective open');
     // MAIL-29: the type filter - a tap keeps one type and writes it to the URL; still no sideways scroll
     assert.ok(await pg.until(`!!document.querySelector('[data-act="lane-type"][data-type="build"]')`, 30000), 'the type chips show');

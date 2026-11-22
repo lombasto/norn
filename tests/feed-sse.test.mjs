@@ -7,6 +7,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { record } from '../engine/lib/records.mjs';
+import { createFeeds } from '../engine/dash/feed.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -129,4 +130,20 @@ test('feed head: context from the latest usage event, last commit of the run wor
     await c.wait(x => x.events.filter(e => e.event === 'head').at(-1).json.marker === 'HANDOFF');
     c.close();
   } finally { await f.done(); }
+});
+
+// CI-44965808552: the shared tailer still ticks after the run ended (until the linger stops it); a client joining an ended run while
+// a tick runs was finished by that tick before join sent its head - the stream was ev, end (no head). Deterministic: join's catch-up
+// poll (cursor null) is slow, the tick's (the tailer's cursor) is fast, so a tick always lands inside the second join.
+test('feed: a client joining an ended run while the shared tailer ticks gets its tail, then head, then end (a tick never ends a joining client)', async () => {
+  const feeds = createFeeds({ pollMs: 5, lingerMs: 1000 });
+  const source = { ended: () => true, head: () => ({ state: 'exited' }), poll: async cur => { await settle(cur ? 1 : 60); return { events: [{ at: { log: 1 }, kind: 'text', summary: 'last' }], cursor: { log: 1 } }; } };
+  const res = () => { const r = { seen: [], done: false, on() {}, writeHead() {}, write(s) { if (!r.done) for (const m of s.matchAll(/^event: (\w+)$/gm)) r.seen.push(m[1]); }, end() { r.done = true; } }; return r; };
+  const a = res(), b = res();
+  try {
+    await feeds.join('RUN-x', () => source, a);
+    await feeds.join('RUN-x', () => source, b);
+    assert.deepEqual(a.seen, ['ev', 'head', 'end']);
+    assert.deepEqual(b.seen, ['ev', 'head', 'end'], 'the second client: its tail, the head, then end - not ended by a tick mid-join');
+  } finally { feeds.close(); }
 });

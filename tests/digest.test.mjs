@@ -217,5 +217,5 @@ test('L-21: a digest that cannot be built is an {error} STATUS prints; a corrupt
   const env = { ...process.env, META_ROLE: '', META_PROJECT: '' };
   const r = spawnSync(process.execPath, [META, 'status', '--state', state, '--budget', path.join(HERE, 'fixtures', 'status', 'BUDGET.json'), '--machine', path.join(state, 'none.json')], { encoding: 'utf8', env });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'), /## Digest\n- could not be built: .*deliverables\.jsonl/);
+  assert.match(fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'), /## Digest\r\n- could not be built: .*deliverables\.jsonl/);
 });

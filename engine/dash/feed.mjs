@@ -59,7 +59,8 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
       t.cursor = r.cursor; noteCtx(t, r.events);
       for (const c of t.clients) deliver(t, c, r.events);
       await sendHead(t);
-      if (ended) { for (const c of [...t.clients]) finish(t, c); }
+      // a client still in join is left to join: it ends it after its catch-up + head (the tailer ticks on past the end until the linger)
+      if (ended) { for (const c of [...t.clients]) if (!c.joining) finish(t, c); }
     } finally { t.busy = false; }
   }
   function leave(t, c) {
@@ -77,7 +78,7 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
       tailers.set(key, t);
     }
     clearTimeout(t.linger);
-    const c = { res, cursor: cursor || null };
+    const c = { res, cursor: cursor || null, joining: true };
     t.clients.add(c); clients++;   // the seat is taken before the first await (the cap holds for clients joining at once)
     res.on('close', () => leave(t, c));
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' });
@@ -95,6 +96,7 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
     }
     if (!t.timer && tailers.get(key) === t) { t.cursor = r.cursor; t.timer = setInterval(() => tick(t), pollMs); t.timer.unref?.(); }
     await sendHead(t, c);
+    c.joining = false;
     if (ended) finish(t, c);
     return true;
   }
