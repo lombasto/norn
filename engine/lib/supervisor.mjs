@@ -27,7 +27,7 @@ import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
 import { endCheck, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
-import { procStartAsync, running } from './legacy.mjs';
+import { procStartAsync, running } from './procs.mjs';
 import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { cacheDirOf } from './testcache.mjs';

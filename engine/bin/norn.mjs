@@ -45,7 +45,7 @@ import { runProbe } from '../lib/probe.mjs';
 import { writeStatus, weeklyEstimate, accountCacheR, crTotal } from '../lib/status.mjs';
 import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
-import { running } from '../lib/legacy.mjs';
+import { running } from '../lib/procs.mjs';
 import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
 import { refreshBranches, projectBranches, branchLines, deleteBranch, restoreBranch, removeWorktree, restoreWorktree, adoptBranch, BranchActError } from '../lib/branches.mjs';
 import { renderDigest } from '../lib/views.mjs';
