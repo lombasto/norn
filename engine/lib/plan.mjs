@@ -7,7 +7,7 @@
 // one day-aware clock ("today 21:41", "Fri 02:13") with the zone named once, plain names (lane title, else the lane humanized).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, fold, recordsFile, loadShared, laneNameIn, homeOf, idNum, PRIORITIES } from './records.mjs';
+import { readEvents, fold, recordsFile, loadShared, laneNameIn, homeOf, idNum, PRIORITIES, NID, RUN_ID_RE } from './records.mjs';
 import { queueOf, readiness } from './runs.mjs';
 import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
@@ -156,10 +156,11 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   const t = String(term), byId = id => runs.find(r => r.id === id);
   const name = id => { const r = byId(id); return r ? label({ ...r.data, id }) : id; };
   let m;
-  if ((m = t.match(/^after run:(RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
-  if ((m = t.match(/^after q:(Q-(?:[a-z][a-z0-9]{0,15}-)?\d+):(\w+) unmet$/))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
-  if ((m = t.match(/^after dlv:(DLV-(?:[a-z][a-z0-9]{0,15}-)?\d+):\w+ unmet$/))) return `waits for finished work ${m[1]} to reach main`;
-  if ((m = t.match(/^after dir:(DIR-(?:[a-z][a-z0-9]{0,15}-)?\d+):\w+ unmet$/))) return `waits for instruction ${m[1]} to be done`;
+  const after = (k, P) => t.match(new RegExp(`^after ${k}:(${NID(P)}):(\\w+) unmet$`));
+  if ((m = after('run', 'RUN'))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
+  if ((m = after('q', 'Q'))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
+  if ((m = after('dlv', 'DLV'))) return `waits for finished work ${m[1]} to reach main`;
+  if ((m = after('dir', 'DIR'))) return `waits for instruction ${m[1]} to be done`;
   if ((m = t.match(/^not_before (\S+)$/))) return `not before ${dayClock(Date.parse(m[1]), now)}`;
   if (t.startsWith('PAUSED')) return 'held: paused';
   if (t === 'usage: RATE_OK=0') return 'held: usage over the hourly cap';
@@ -168,12 +169,12 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return `held: API spend $${m[1]} in 24 h reached the $${m[2]} daily cap`;
   if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`;
   if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
-  if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${/^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${/^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
+  if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
+  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
   if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
-  if ((m = t.match(/^dwarf: (.+) is busy on (RUN-\d+)$/))) return `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`;   // DWARVES 1.3 rule 1
+  if ((m = t.match(new RegExp(`^dwarf: (.+) is busy on (${NID('RUN')})$`)))) return `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`;   // DWARVES 1.3 rule 1
   if (t.startsWith('crew store ')) return 'held: the crew store is unreadable';
   if (t.startsWith('resources:')) return 'held: CPU / memory gate';
   if (t.startsWith('withdraw:')) return 'withdrawn: a condition can no longer be met';
@@ -269,7 +270,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     return mergeMin === null ? no('c', c.id, `${name} waits for a merge and no merge has been timed yet`) : v + mergeMin * MIN;
   };
   // a walk term that waits for another run to END: its folder held by a live run, a MERGE held while its lane has a live writer
-  const writerOf = t => String(t).match(/^worktree held by (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/)?.[1] ?? String(t).match(/^MERGE .*\blive run (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+)/)?.[1] ?? null;
+  const writerOf = t => String(t).match(new RegExp(`^worktree held by (${NID('RUN')})`))?.[1] ?? String(t).match(new RegExp(`^MERGE .*\\blive run (${NID('RUN')})`))?.[1] ?? null;
   const startOf = id => {
     if (sta.has(id)) return sta.get(id);
     sta.set(id, null);

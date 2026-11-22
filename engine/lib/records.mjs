@@ -198,7 +198,10 @@ export const KINDS = {
 // lane-collide S1b: the kinds a case names (SPEC 2; any = a ruling on a whole pair) and the actions S1b records (SPEC 4A.1 hold, after, told; allow)
 export const COLLIDE_KINDS = ['item', 'lead', 'goal', 'territory', 'resource', 'order', 'stale', 'any'];
 export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow', 'caveat', 'claim-release'];   // S1c: the tick's stale corrections
-const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
+// the one id rule per kind: <P>-n or <P>-<home>-n (a home id is HOME_RE; the id part allows 16 characters for node ids). Every module
+// builds its id regexes from NID rather than copying one, so a home's ids (RUN-b-12) parse everywhere.
+export const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
+export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
 // RM-46 S1a: a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
 const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
 export const ITEM_LINK_RE = new RegExp(`^(?:dir:${NID('DIR')}|dec:${NID('DEC')}|q:${NID('Q')}|run:${NID('RUN')}|dlv:${NID('DLV')}|ep:${NID('EP')}`
@@ -238,7 +241,7 @@ export const kindOfId = id => {
   if (typeof id !== 'string') return null;
   if (id.startsWith('L:')) return 'lane';
   // META-GTP-FED piece 3: a node state dir names its records <PREFIX><node id>-n (RUN-wsl-3)
-  for (const [k, d] of Object.entries(KINDS)) if (k !== 'lane' && new RegExp('^' + d.prefix + '(?:[a-z][a-z0-9]{0,15}-)?\\d+$').test(id)) return k;
+  for (const [k, d] of Object.entries(KINDS)) if (k !== 'lane' && new RegExp(`^${NID(d.prefix.slice(0, -1))}$`).test(id)) return k;
   return null;
 };
 export const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // F8: the trailing number (a home id may hold digits: Q-b2-12)
@@ -265,7 +268,7 @@ const idFile = (stateDir, file, re) => {
 // RM-46 S1a: <state>/home.json { id, bare_home } = a synced project's state dir (the cut writes it): new ids <P><id>-n, lanes
 // L:<id>/<name>, branches norn/<id>/... No home.json = a solo dir: everything as before (a setting, not a fallback).
 export function homeOf(stateDir) {
-  const j = idFile(stateDir, 'home.json', /^[a-z][a-z0-9]{0,7}$/);
+  const j = idFile(stateDir, 'home.json', HOME_RE);
   return j ? { id: j.id, bare_home: typeof j.bare_home === 'string' ? j.bare_home : null } : null;
 }
 // The prefix of a state dir's new ids: its home id, else (META-GTP-FED piece 3) the id of <state>/node.json { id }, a fed node's
@@ -349,7 +352,6 @@ function applyEv({ items, next }, e, kinds = KINDS) {
 // ---------- the merged fold of the homes (RM-46 S1d, multi-home SPEC 3.7) ----------
 // SPEC 3.3 as data: the kinds every home sees (its log is published on home/<id>); the others stay on their machine
 export const SHARED_KINDS = ['question', 'decision', 'directive', 'lane', 'item', 'mail', 'waiver'];
-const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
 const homePart = s => String(s).match(/^([a-z][a-z0-9]{0,15})\//)?.[1] ?? null;
 /** the home an id names: <P><h>-n, L:<h>/x; a bare legacy id belongs to bare_home */
 export const homeOfId = (id, bare) => (String(id).startsWith('L:') ? homePart(String(id).slice(2)) : idHome(id)) ?? bare;
