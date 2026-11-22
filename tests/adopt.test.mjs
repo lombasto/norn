@@ -1,4 +1,4 @@
-// META-ADOPT A1 (SPEC meta-adopt sec. 2-7): the scan, the ONE importer (roadmap S4a), the record kind `proposal` (ADP-n, adopt.jsonl),
+// META-ADOPT A1 (SPEC meta-adopt sec. 2-7): the scan, the planning-file importer, the record kind `proposal` (ADP-n, adopt.jsonl),
 // the facts-only draft, decide (the sha rule), apply for the six parts, and `norn adopt`. Synthetic repos in temp dirs only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { record, loadState, readEvents, recordsFile, RecordError } from '../engine/lib/records.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
-import { scan, importPlan, AdoptError, draftFacts, proposalOf, adoptStart, adoptDecide, adoptApply, renderProposal, laneNameOf } from '../engine/lib/adopt.mjs';
+import { scan, importPlan, catalogueOf, AdoptError, draftFacts, proposalOf, adoptStart, adoptDecide, adoptApply, renderProposal, laneNameOf } from '../engine/lib/adopt.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -80,7 +80,7 @@ test('scan: python, rust, a monorepo with no root manifest, an empty repo; untra
   assert.throws(() => scan(path.join(b, 'plain')), AdoptError);
 });
 
-// ---------- the ONE importer (roadmap S4a): goldens on three shapes ----------
+// ---------- the planning-file importer: goldens on three shapes ----------
 for (const shape of ['checklist', 'ladder', 'todo']) {
   test(`importPlan golden: ${shape}.md`, () => {
     const text = fs.readFileSync(path.join(FIX, shape + '.md'), 'utf8');
@@ -94,9 +94,9 @@ for (const shape of ['checklist', 'ladder', 'todo']) {
 // ---------- the legacy catalogue mode (META-ROADMAP S4, SPEC sec. 5): `norn road import --legacy` on a fixture copy ----------
 const KNOWN = { ids: ['DIR-3', 'DEC-12', 'RUN-4', 'Q-2', 'DLV-1'], branches: ['feat/tide-cache', 'feat/storm-alerts', 'feat/offline-sync'],
   shas: ['abc1234f0'], docs: { 'docs/map.md': 'docs/map.md', 'spec-STORM.md': 'plans/spec-STORM.md' }, lanes: { 'feat/storm-alerts': 'storm-alerts' } };
-test('importPlan legacy golden: catalogue.md (numbered sections, Status-column tables only, links resolved, archive skipped)', () => {
+test('catalogueOf golden: catalogue.md (numbered sections, Status-column tables only, links resolved, archive skipped)', () => {
   const text = fs.readFileSync(path.join(FIX, 'catalogue.md'), 'utf8');
-  const got = importPlan(text, { file: 'ROADMAP.md', legacy: true, ...KNOWN });
+  const got = catalogueOf(text, { file: 'ROADMAP.md', ...KNOWN });
   const want = JSON.parse(fs.readFileSync(path.join(GOLD, 'catalogue.json'), 'utf8'));
   assert.deepEqual(got, want);
   assert.deepEqual(got.themes.map(t => [t.title, t.items.length]), [['Now', 2], ['Maps and look', 4], ['Platform', 1]],
@@ -112,9 +112,9 @@ test('importPlan legacy golden: catalogue.md (numbered sections, Status-column t
   assert.deepEqual(got.misses, [{ line: 30, theme: 'Maps and look', why: 'no item text' }]);
   assert.equal(got.count, 7);
   for (const t of got.themes) for (const it of t.items) { assert.ok(!('status' in it), 'never a typed status'); assert.ok(!it.horizon, 'a catalogue row carries no horizon'); }
-  const only = importPlan(text, { file: 'ROADMAP.md', legacy: true, sections: ['3', 'maps and look'], ...KNOWN });
+  const only = catalogueOf(text, { file: 'ROADMAP.md', sections: ['3', 'maps and look'], ...KNOWN });
   assert.deepEqual(only.themes.map(t => t.title), ['Maps and look', 'Platform'], '--sections picks by number or title');
-  const one = importPlan('## 1. T\n| Item | Status |\n|---|---|\n| APP: offline maps (owner) | REQUESTED |\n| LAYERS = one per source - ruled | SPEC\'D |\n', { legacy: true });
+  const one = catalogueOf('## 1. T\n| Item | Status |\n|---|---|\n| APP: offline maps (owner) | REQUESTED |\n| LAYERS = one per source - ruled | SPEC\'D |\n', {});
   assert.deepEqual(one.themes[0].items.map(i => i.title), ['APP: offline maps', 'LAYERS = one per source'], 'a one-word head keeps its next clause');
 });
 

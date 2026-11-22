@@ -1,6 +1,7 @@
 // META-ADOPT A1 (meta-adopt SPEC sec. 2-6): starting a project, or adopting an existing repo.
 //   scan(root)              -> FACTS: what the engine knows about a repo for free (git + tracked files only, read-only, no model)
-//   importPlan(text, o)     -> a `norn road apply` plan from a hand-kept planning file (the ONE importer: roadmap S4a; adopt and S4b share it)
+//   importPlan(text, o)     -> a `norn road apply` plan from a hand-kept planning file (adopt's scan reads one with it)
+//   catalogueOf(text, o)    -> the plan from a hand-kept catalogue: the rows of its Status-column tables (importLegacy: `norn road import --legacy`)
 // Only tracked files are read (git ls-tree / git show <branch>:path): an untracked or ignored file (.env, node_modules) is never opened.
 // The engine names no project: every project fact comes from the repo or project.json.
 import path from 'node:path';
@@ -115,7 +116,7 @@ export function scan(root, o = {}) {
   const agent_files = AGENT_FILES.filter(f => files.includes(f)).concat(files.filter(f => /^\.cursor\/rules\//.test(f)))
     .map(f => ({ file: f, lines: (read(f) || '').split('\n').length }));
   const design = files.filter(f => /^docs?\/.*\.md$/i.test(f));
-  // each planning file through the ONE importer, its links checked against what exists (branch names, tracked docs)
+  // each planning file through importPlan, its links checked against what exists (branch names, tracked docs)
   const docFiles = files.filter(f => /.md$/i.test(f)), names = branches.map(b => b.name);
   const imported = files.filter(f => PLAN_RE.test(f)).map(f => ({ file: f, ...importPlan(read(f) || '', { file: f, branches: names, docs: docFiles }) }));
   const plans = imported.map(p => ({ file: p.file, items: p.count, themes: p.themes.length }));
@@ -145,7 +146,7 @@ export function scan(root, o = {}) {
     scan_ms: Date.now() - t0 };
 }
 
-// ---------- the ONE importer (roadmap S4a) ----------
+// ---------- the planning-file importer ----------
 const HORIZON = [[/^(now|current|in progress|doing|this (week|month|quarter))\b/i, 'now'], [/^(next|soon|up next|planned)\b/i, 'next'],
   [/^(later|future|someday|ideas?|backlog|maybe)\b/i, 'later']];
 const DONE_HEAD = /^(done|shipped|released|completed|changelog)\b/i;
@@ -165,7 +166,6 @@ const unnumber = t => t.replace(/^(?:sec(?:tion)?\.?\s*)?\d+[a-z]?[.)]?\s+/i, ''
  * o.branches (exact names) and o.docs (tracked paths). A trailing "(branch ..)" / "(docs/..)" / "(#n)" is cut from the title; #n goes in the note.
  */
 export function importPlan(text, o = {}) {
-  if (o.legacy) return catalogueOf(text, o);
   const { file = 'ROADMAP.md', branches = [], docs = [] } = o;
   const themes = [], lines = String(text).replace(/\r\n/g, '\n').split('\n');
   let theme = null, horizon = null, done = false, count = 0;
@@ -238,7 +238,7 @@ const shortTitle = cell => {
 };
 const sectionKey = h => { const m = /^(\d+[a-z]?)[.)]?\s+(.*)$/i.exec(h); return m ? { num: m[1].toLowerCase(), title: m[2] } : { num: null, title: h }; };
 
-function catalogueOf(text, o) {
+export function catalogueOf(text, o) {
   const file = o.file || 'ROADMAP.md';
   const ids = resolver(o.ids), branch = resolver(o.branches), sha = resolver(o.shas), doc = resolver(o.docs), lane = resolver(o.lanes);
   const known = Array.isArray(o.branches) ? o.branches : o.knownBranches || [];
@@ -330,7 +330,7 @@ export function importLegacy(stateDir, { project = {}, file, sections = [], git 
     if (ok('lane:' + s)) return s;
     return (W.dlvByBranch[b] || []).map(d => d.lane).find(Boolean) || null;
   };
-  const plan = importPlan(text, { file: path.basename(file), legacy: true, sections, ids: id => ok(`${LINK_OF[id.split('-')[0]]}:${id}`),
+  const plan = catalogueOf(text, { file: path.basename(file), sections, ids: id => ok(`${LINK_OF[id.split('-')[0]]}:${id}`),
     branches: b => ok('branch:' + b), shas: x => ok('sha:' + x), docs: docOf, lanes: laneOf, knownBranches: refs });
   const R = loadRoadmap(stateDir), WORK = /^(lane|branch|run|dlv|ep):/;
   const open = Object.values(R.items).filter(i => i.state === 'open' && i.kind === 'item');
