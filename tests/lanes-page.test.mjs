@@ -52,6 +52,17 @@ test('Needs you = the lanes the Inbox\'s isNeed rows name; its count is never ab
   } finally { await f.done(); }
 });
 
+test('a corrupt roadmap is an error on the Lanes page and a lane\'s page, never "no roadmap"', { timeout: 120000 }, async () => {
+  const f = await fixture();
+  try {
+    fs.appendFileSync(path.join(f.pa.state, 'roadmap.jsonl'), '{not json\n');
+    for (const r of ['/api/lanes?project=kestrel', '/api/lane?project=kestrel&lane=gen']) {
+      const x = await f.get(r);
+      assert.equal(x.status, 500, `${r}: ${JSON.stringify(x.data)}`); assert.match(x.data.error, /roadmap\.jsonl: line 1 is not JSON/, r);
+    }
+  } finally { await f.done(); }
+});
+
 test('the run strip: oldest left, a hand-off bead joined, a fresh start apart, helpers on the running bead, "!" for an open question, "+n" older; no legend footer (owner 2026-11-20): the words are in the bead titles and the ? popover', () => {
   const l = { name: 'reef', ask: 'Q-9', runs_total: 5, runs: [{ id: 'RUN-1', cls: 'stopped', word: 'STOPPED', min: 3, cont: false, helpers: 0 },
     { id: 'RUN-2', cls: 'handoff', word: 'HANDOFF', min: 40, cont: false, helpers: 0 }, { id: 'RUN-3', cls: 'running', word: 'running', min: 12, cont: true, helpers: 2 }] };
