@@ -784,7 +784,7 @@ export function createDashboard(o) {
   // never blocks a poll), cached on the records files' mtime + size. A changed roadmap file (an item append) = a new build that the
   // request AWAITS, so the fetch a `rec` event triggers already shows the append. A change to the other record files only (runs,
   // records: they churn while workers run) serves the last tree at once and rebuilds behind it (dash-latency: the child takes 3 s
-  // idle, 4-13 s with workers running, and every Roadmap render waited on it). Git-derived facts refresh after o.roadmapTtlMs (60 s,
+  // idle, 4-13 s with workers running, and every Roadmap render waited on it). Git-derived facts refresh after o.deliverablesTtlMs (60 s,
   // served stale while the child runs); a changed tree reaches the page as the stream's `derived` event (its hash is in the stream sig).
   const rm = new Map();
   const rmSig = p => RECORD_FILES.map(f => { const s = statS(path.join(p.state, f + '.jsonl')); return s ? s.mtimeMs + ':' + s.size : '-'; }).join('|');
@@ -801,7 +801,7 @@ export function createDashboard(o) {
         .then(v => { c.val = { ...v, project: p.name }; c.sig = s; c.at = Date.now(); c.hash = hash(JSON.stringify({ ...v, generated: null })); if (c.want === s) c.busy = null; return c.val; });
       return c.busy;
     };
-    if (c.val && c.sig === sig) { if (!c.busy && Date.now() - c.at > (o.roadmapTtlMs ?? o.deliverablesTtlMs ?? 60000)) build(); return c.val; }
+    if (c.val && c.sig === sig) { if (!c.busy && Date.now() - c.at > (o.deliverablesTtlMs ?? 60000)) build(); return c.val; }
     if (c.val && rmOwn(c.sig) === rmOwn(sig)) { if (!c.busy) build(); return c.val; }   // no item append: the last tree now, one rebuild behind it
     if (c.busy && c.want === sig) return c.busy;
     return kick ? (build(), null) : build();
@@ -936,7 +936,7 @@ export function createDashboard(o) {
   // state-dir cache file and hands back its window entries; a view only sums those (never scans or parses the cache inline) and
   // starts a refresh when they are older than ACCOUNT_REFRESH_MS. The first scan reads the whole root (minutes); later ones
   // only the changed files' appended bytes. Until the first refresh of this dash process lands: account n/a (refreshing).
-  const accountCacheFile = o.accountCacheFile ?? (firstP() ? path.join(firstP().state, 'account-usage.json') : path.join(metaRootDir, 'local', 'account-usage.json')), ACCOUNT_REFRESH_MS = o.accountRefreshMs ?? 60000;
+  const accountCacheFile = firstP() ? path.join(firstP().state, 'account-usage.json') : path.join(metaRootDir, 'local', 'account-usage.json'), ACCOUNT_REFRESH_MS = 60000;
   const acct = { running: null, last: null, started: null, data: null, worker: null };
   function accountRefresh() {
     if (acct.running) return acct.running;
@@ -966,7 +966,7 @@ export function createDashboard(o) {
   // META-TEND P4: the open advice of a project = advise() over its class table and its effective settings; a decided card (a decision
   // with data.advice = its key) is hidden. Cached per project for the Inbox (ADVICE_TTL_MS); the last count goes to <state>/advice.json
   // for the digest line. Never writes a policy: POST /api/advice does, on a tap.
-  const adviceMemo = new Map(), ADVICE_TTL_MS = o.adviceTtlMs ?? 300000;
+  const adviceMemo = new Map(), ADVICE_TTL_MS = 300000;
   function adviceFor(p, classes, now = Date.now()) {
     const a = advise(classes, policyOf(p), { project: p.name, now, data: adviceData ?? undefined, decided: decidedKeys(Object.values(st(p).items)) });
     writeAdviceCache(p.state, a);
@@ -1241,7 +1241,7 @@ export function createDashboard(o) {
   function lockFresh(p) { const x = statS(path.join(p.state, 'tick.lock')); return !!x && Date.now() - x.mtimeMs < LOCK_STALE_MIN * 60000; }
 
   // ---------- live feed (LANE-MAP-DESIGN 2-3): SSE per run through the run's harness adapter feed() ----------
-  const feeds = createFeeds({ pollMs: o.feedPollMs ?? 2000, lingerMs: o.feedLingerMs ?? 10000, max: o.feedMax ?? 4 });
+  const FEED_MAX = 4, feeds = createFeeds({ pollMs: o.feedPollMs ?? 2000, lingerMs: o.feedLingerMs ?? 10000, max: FEED_MAX });
   const commits = new Map();   // worktree -> git log -1 (read-only, cached 30 s, async: never blocks a poll)
   function lastCommit(wt) {
     if (!wt) return null;
@@ -1296,11 +1296,11 @@ export function createDashboard(o) {
     const fam = harnessOf(r.data.executor, (p.executors || {})[r.data.executor]), adapter = fam ? ADAPTERS[fam] : null;
     if (!adapter?.feed) throw fail(404, `No live feed for executor ${r.data.executor}`);
     const from = decodeCursor(req.headers['last-event-id'] ?? url.searchParams.get('from') ?? '');
-    if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from, { full: url.searchParams.get('full') === '1' }))) throw fail(429, `Too many live feeds: close one first (max ${o.feedMax ?? 4})`);
+    if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from, { full: url.searchParams.get('full') === '1' }))) throw fail(429, `Too many live feeds: close one first (max ${FEED_MAX})`);
   }
 
   // ---------- state stream (META-VISUAL-B S1, the #4 push channel): record appends + flags, replaces the 15 s refetch ----------
-  const streams = createStreams({ pollMs: o.streamPollMs ?? 1000, pulseMs: o.streamPulseMs ?? 15000, deriveMs: o.deliverablesTtlMs ?? 60000, lingerMs: o.streamLingerMs ?? 10000, max: o.streamMax ?? 16 });
+  const STREAM_MAX = 16, streams = createStreams({ pollMs: o.streamPollMs ?? 1000, pulseMs: o.streamPulseMs ?? 15000, deriveMs: o.deliverablesTtlMs ?? 60000, lingerMs: o.streamLingerMs ?? 10000, max: STREAM_MAX });
   const RECORD_FILES = [...new Set(Object.values(KINDS).map(k => k.file || 'records'))];
   // META-DASH-ASYNC R1: the hub polls on its own timers, which inherit the opening request's snapshot (AsyncLocalStorage) - each call
   // runs in a fresh one (a stale snapshot would hide every flip); the kick primes its project first (its derivations then read memory)
@@ -1319,7 +1319,7 @@ export function createDashboard(o) {
     kick: () => fresh(async () => { await primeFor([p]); deliverablesOf(p); accountKick(); roadmapOf(p, { kick: true }); if (plans.has(p.name)) planOf(p); if (ins.has(p.name)) insCache(p); }).catch(() => { /* the next kick retries */ }) });   // the roadmap / plan only once a page asked
   async function openStream(req, res, url) {
     const ps = pick(url, { all: true }), from = decodeCursor(req.headers['last-event-id'] ?? '');
-    if (!(await streams.join(ps.map(p => p.name).join('|'), ps.map(streamSource), res, from))) throw fail(429, `Too many dashboard tabs open (max ${o.streamMax ?? 16})`);
+    if (!(await streams.join(ps.map(p => p.name).join('|'), ps.map(streamSource), res, from))) throw fail(429, `Too many dashboard tabs open (max ${STREAM_MAX})`);
   }
 
   // ---------- chat ----------
@@ -1337,7 +1337,7 @@ export function createDashboard(o) {
   function chatConfig(p) {
     const b = chatModel(p), model = b.chat_model || b.checkin_model, effort = b.chat_effort || b.checkin_effort;
     if (!MODELS.includes(model) || !EFFORTS.includes(effort)) throw fail(400, 'Invalid chat model or effort in the machine budget');
-    return { executor: b.chat_executor, exe: o.claudeExe ?? machine.claude?.exe ?? 'claude', model, effort,
+    return { executor: b.chat_executor, exe: machine.claude?.exe ?? 'claude', model, effort,
       idleMs: o.chatIdleMs ?? (Number.isInteger(b.chat_idle_min) && b.chat_idle_min > 0 ? b.chat_idle_min * 60000 : undefined),
       rawShell: ['off', 'ask', 'on'].includes(b.chat_raw_shell) ? b.chat_raw_shell : 'off', context: { ...CONTEXT_DEFAULT, ...(b.policy?.context?.controller || {}) },
       // META-CHAT-CONTROLS R1: what the picker / /model / /effort may choose (the Settings rows' own lists), the usage estimate for /cost
@@ -1444,7 +1444,7 @@ export function createDashboard(o) {
   // META-DASH-ASYNC R1: the thread is read on fs.promises, so the replay and the subscription are no longer one tick - it subscribes
   // first (lines appended meanwhile wait), reads, replays, then sends the waiting lines past the replay (by line number: no repeat, no gap)
   async function openChat(p, res, from) {
-    if (chatStreams.size >= (o.streamMax ?? 16)) throw fail(429, `Too many chat streams open (max ${o.streamMax ?? 16})`);
+    if (chatStreams.size >= STREAM_MAX) throw fail(429, `Too many chat streams open (max ${STREAM_MAX})`);
     const c = chatOf(p), early = [];
     let send = (l, i) => early.push([l, i]);
     const off = c.subscribe((l, i) => send(l, i));
