@@ -49,6 +49,8 @@ test('remoteOf: off unless dash.remote.enabled is true; the trust source names i
   assert.equal(r.header, 'tailscale-user-login'); assert.deepEqual(r.hosts, [HOST]); assert.equal(remoteUrl({ dash: { remote: REMOTE } }), `https://${HOST}/`);
   assert.equal(remoteOf({ dash: { remote: { ...REMOTE, trust: 'cloudflare-access' } } }).header, 'cf-access-authenticated-user-email');
   assert.equal(remoteUrl({ dash: { remote: { ...REMOTE, enabled: false } } }), null);
+  // F-18: an unknown trust source is an error, never remote silently off
+  assert.throws(() => remoteOf({ dash: { remote: { ...REMOTE, trust: 'funnel' } } }), /dash.remote.trust funnel/);
   const m = { schema: 1, home: '/h', claude: { exe: 'c', config_dir: 'd', projects_dir: 'p' }, node: 'n', scheduler: { kind: 'cron', name: 'x', interval_min: 15 }, projects: [] };
   assert.deepEqual(validate(MACHINE_SCHEMA, { ...m, dash: { port: 8737, bind: '127.0.0.1', remote: REMOTE } }), []);
   assert.ok(validate(MACHINE_SCHEMA, { ...m, dash: { port: 8737, bind: '127.0.0.1', remote: { ...REMOTE, trust: 'funnel' } } }).length, 'no public trust source exists');
@@ -311,6 +313,15 @@ test('norn remote setup --apply: runs tailscale serve (the one change command) a
   const o2 = await sb.run(['remote', 'off', '--apply']);
   assert.equal(o2.code, 0, o2.err); assert.equal(sb.machine().dash.remote.enabled, false);
   assert.deepEqual(sb.calls().filter(a => a[0] === 'serve').at(-1), ['serve', '--https=443', 'off']);
+});
+
+test('F-17: norn remote setup --apply and off --apply write a machine.json saved with a BOM (the one machine.json writer)', async () => {
+  const sb = sandbox(); fs.writeFileSync(sb.mf, '﻿' + sb.text());
+  const r = await sb.run(['remote', 'setup', '--apply']);
+  assert.equal(r.code, 0, r.err + r.out); assert.equal(sb.machine().dash.remote.enabled, true);
+  fs.writeFileSync(sb.mf, '﻿' + sb.text());
+  const o = await sb.run(['remote', 'off', '--apply']);
+  assert.equal(o.code, 0, o.err + o.out); assert.equal(sb.machine().dash.remote.enabled, false);
 });
 
 test('doctor: remote off = a note; on = ok rows (trust, hosts, paired devices, tailscale); on without tailscale = PROBLEM', async () => {
