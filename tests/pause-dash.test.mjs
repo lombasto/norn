@@ -3,6 +3,8 @@
 // a Runs / Lanes row offers Pause (running), says pausing (asked) and Resume (a paused hand-off); the menu fits a phone (390 px).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { pauseMenu, renderTab } from '../engine/dash/ui.mjs';
@@ -66,6 +68,36 @@ test('a row pause action: Pause a running work run, pausing once asked, Resume a
   assert.match(pauseAct('handoff', 'p', 'RUN-3'), /data-act="run-resume"[^>]*>Resume<\/button>/);
   assert.equal(pauseAct(undefined, 'p', 'RUN-3'), '');
   assert.match(pauseMenu({ pause: null, modes: [], waiting: { held: 0, asked: [], handoffs: [] } }), /Now: nothing paused[\s\S]*data-act="pause-resume-all" disabled/, 'nothing to resume');
+});
+
+// a synced project's runs are RUN-<home>-n: Pause and Resume of one reach the CLI, not a 400 on the id's shape
+test('pause and resume of a home-prefixed run (RUN-b-n)', async () => {
+  const f = await fixture();
+  try {
+    const S = f.pa.state;
+    fs.writeFileSync(path.join(S, 'home.json'), JSON.stringify({ id: 'b', bare_home: 'a' }) + '\n');
+    const id = record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'gen' } }).id;
+    assert.match(id, /^RUN-b-\d+$/);
+    const p = await f.post('/api/pause', { project: 'kestrel', runs: [id], why: 'hot' });
+    assert.equal(p.status, 200, JSON.stringify(p.data));
+    record(S, { kind: 'run', ev: 'end', id, by: 'launcher', data: { exit: 0, outcome: 'handoff', handoff: 'H.md', paused: { mail: 'MAIL-1' } } });
+    // no spec file here: the CLI's own answer about the run comes back, never the route's refusal of the id
+    const r = await f.post('/api/pause', { project: 'kestrel', resume: id });
+    assert.match(r.data.error, new RegExp(`${id}: its spec file is gone`), JSON.stringify(r.data));
+  } finally { await f.done(); }
+});
+
+// Pause half reads the policy in force: a Settings save of near_end_min reaches its next pick without a dashboard restart
+test('pause half follows a Settings save of policy.pause.near_end_min', async () => {
+  const f = await fixture();
+  try {
+    const half = async () => (await f.post('/api/pause/half', { project: 'kestrel' })).data.pick.map(p => p.id);
+    assert.deepEqual(await half(), ['RUN-2'], 'RUN-2 (90 min budget) is far from its end');
+    const version = (await f.get('/api/settings?project=kestrel')).data.version;
+    const r = await f.post('/api/settings', { project: 'kestrel', version, changes: { 'policy.pause.near_end_min': 120 } });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(await half(), [], 'within 120 min of its end now: left alone');
+  } finally { await f.done(); }
 });
 
 // the menu in a real browser at phone width: More, then the pause control opens the menu; no sideways scroll, every part on screen;

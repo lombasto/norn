@@ -127,3 +127,15 @@ test('the Settings tab renders categories from the schema: left nav, search box,
     assert.ok(!html.includes('class="primary"'), 'one accent colour = needs you');
   } finally { await f.done(); }
 });
+
+// one policy source: a save reaches every reader at once (here the Lanes backlog max), never only the Settings page
+test('a Settings save of a project policy key reaches the pages that read it, without a restart', async () => {
+  const f = await fixture();
+  try {
+    const max = async () => (await f.get('/api/lanes?project=kestrel')).data.backlog.max;
+    const was = await max(), version = (await f.get('/api/settings?project=kestrel')).data.version;
+    const r = await f.post('/api/settings', { project: 'kestrel', version, changes: { 'policy.merge.backlog_max': was + 7 } });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(await max(), was + 7);
+  } finally { await f.done(); }
+});

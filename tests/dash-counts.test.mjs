@@ -2,6 +2,8 @@
 // title, the Talk filter and the project picker come from ONE function (engine/dash/terms.mjs needsYou) and agree on the fixture state.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { renderTab, needsCount, pageTitle } from '../engine/dash/ui.mjs';
 import { renderBar } from '../engine/dash/shell.mjs';
@@ -36,5 +38,15 @@ test('the needs-you count: status strip = Inbox page = Inbox badge = page title 
       const picker = (await f.get('/api/projects')).data.projects.find(p => p.name === project);
       assert.equal(picker.needs, n, 'the project picker');
     }
+  } finally { await f.done(); }
+});
+
+test('a failing Inbox is an error in the project picker, never "nothing needs you"', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(path.join(f.pa.state, 'adopt.jsonl'), '{not json\n');
+    const r = await f.get('/api/projects');
+    assert.equal(r.status, 500, JSON.stringify(r.data));
+    assert.match(r.data.error, /adopt\.jsonl/);
   } finally { await f.done(); }
 });

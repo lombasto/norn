@@ -219,3 +219,18 @@ test('stream: a resume that lands while a poll is reading the records file gets 
     assert.deepEqual(a.out.filter(x => x.e === 'rec').flatMap(x => x.d.records.map(r => r.id)), ['DIR-2'], 'the first tab too, once');
   } finally { fs.promises.stat = stat; s.close(); }
 });
+
+// a failed flags read (the PAUSED / QUIET files) is no news: the tabs keep the last flags, never a state that drops paused
+test('stream: a flags read that fails sends no state; the paused flag holds until a read succeeds', async () => {
+  const { createStreams } = await import('../engine/dash/stream.mjs');
+  const dir = mkTmp('norn-flags-'), s = createStreams({ pollMs: 10, pulseMs: 60000, lingerMs: 50 }), out = [];
+  const res = { destroyed: false, writeHead() {}, on() {}, end() {}, write(t) { const e = /event: (\w+)/.exec(t)?.[1], d = /data: (.*)/.exec(t)?.[1]; if (e === 'state') out.push(JSON.parse(d)); return true; } };
+  let broken = false;
+  const flags = () => { if (broken) throw new Error('EBUSY: PAUSED'); return { paused: true }; };
+  try {
+    assert.equal(await s.join('k', [{ project: 'p', files: {}, flags, hbDir: path.join(dir, 'hb') }], res), true);
+    assert.deepEqual(out, [{ project: 'p', paused: true }]);
+    broken = true; await settle(100);
+    assert.deepEqual(out, [{ project: 'p', paused: true }], 'no state without paused while the read fails');
+  } finally { s.close(); }
+});
