@@ -1,5 +1,4 @@
-// META-CHECKIN-DIET R1 (owner 11-13: "the check ins running should be configurable and optimizable / dynamic per task"): a check-in
-// thinks only when there is something to decide, sized to the wake.
+// The check-in diet: a check-in thinks only when there is something to decide, sized to the wake (the owner wants it tunable per task).
 //   routine ends   - a run end the policy calls routine (policy.checkin.routine) is handled by code in the tick, never by a model:
 //                    merge_done = a MERGE run ended DONE (its norn done result) -> reviewed; worker_done_stage = a worker DONE with a
 //                    pushed head on an auto-stage lane -> reviewed: mergeq lands its deliverable (a fast gate's batch, else by code:
@@ -8,22 +7,18 @@
 //   debounce       - run ends within policy.checkin.debounce_min wake ONE tick (at the oldest new end + the window).
 //   lane levels    - full (today) | on-end (its running / stall / idle facts never wake: a long design run is not re-reviewed
 //                    while it runs) | none (merge-line-only lanes: none of its run facts wake; forced ticks still read STATUS).
-//   measure        - per check-in: wake class, the facts that woke it, tokens (the standing-context measure, standing.mjs), what it did.
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { boundedSync } from './bounded.mjs';
 import { readEvents, recordsFile, fold, record, homeOf, roleAddrIn } from './records.mjs';
-import { measureRun } from './standing.mjs';
-import { actionsOf, endOf, bookkeepingIds, isWork } from './gate.mjs';
+import { endOf, isWork } from './gate.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { POLICY_DEFAULTS, laneMatch } from './policy.mjs';
 
 export const ROUTINE_KINDS = ['merge_done', 'worker_done_stage'];   // = the policy.checkin.routine row's options
 export const LEVELS = ['none', 'on-end', 'full'];
-// the safe set for every project: merge_done only reviews; worker_done_stage acts only on lanes listed in auto_stage (none by default)
-export const CHECKIN_DEFAULTS = POLICY_DEFAULTS.checkin;   // one home: policy.mjs (the Settings rows)
-export const checkinPolicy = policy => ({ ...CHECKIN_DEFAULTS, ...(policy?.checkin || {}) });
+// the defaults live in policy.mjs (the Settings rows): merge_done only reviews; worker_done_stage acts only on auto_stage lanes (none by default)
+export const checkinPolicy = policy => ({ ...POLICY_DEFAULTS.checkin, ...(policy?.checkin || {}) });
 
 /** the check-in level of a lane: none | on-end | full (a lane in both lists = none, the narrower promise) */
 export const laneLevel = (cp, lane) => (laneMatch(cp.none_lanes, lane) ? 'none' : laneMatch(cp.on_end_lanes, lane) ? 'on-end' : 'full');
@@ -106,55 +101,7 @@ export function debounceOf(gate, { runEvs, minutes, now = Date.now(), minor = []
   return now < until ? { until: new Date(until).toISOString(), ends: ends.length } : null;
 }
 
-// ---------- measure ----------
-const TICK_RE = /check-in (RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+) \S+ (\S+) (\S+) supervisor pid \d+ \(gate: (?:(minor|major) )?(.*)\)\s*$/;
-/** tick.log -> Map run -> { model, effort, cls, why } */
-export function tickWakes(state) {
-  const m = new Map();
-  let txt = '';
-  try { txt = fs.readFileSync(path.join(state, 'tick.log'), 'utf8'); } catch { return m; }
-  for (const l of txt.split(/\r?\n/)) { const x = l.match(TICK_RE); if (x) m.set(x[1], { model: x[2], effort: x[3], cls: x[4] || null, why: x[5] }); }
-  return m;
-}
-const LEAD = ['escalated', 'follow-up', 'forced', 'q', 'mail', 'dir', 'dec', 'end', 'dlv', 'stall', 'idle', 'ci', 'mq', 'watch', 'lane', 'cap', 'rate_ok', 'rate_near', 'quiet', 'pause', 'band', 'run', 'owner'];
-/** the fact kinds that woke a check-in (from its gate why) and the lead one */
-export function wokeBy(why = '') {
-  if (/^escalated/.test(why)) return { lead: 'escalated', kinds: ['escalated'], facts: [] };
-  if (/^follow-up/.test(why)) return { lead: 'follow-up', kinds: ['follow-up'], facts: [] };
-  if (/^forced/.test(why)) return { lead: 'forced', kinds: ['forced'], facts: [] };
-  const facts = (why.match(/^changed: (.*?)(?: \(\+\d+ more\))?$/)?.[1] || '').split(', ').filter(Boolean);
-  const kinds = [...new Set(facts.filter(x => x.startsWith('+')).map(x => x.slice(1).split(':')[0]))];
-  if (!kinds.length && facts.length) kinds.push(facts[0].slice(1).split(':')[0]);
-  const lead = kinds.slice().sort((a, b) => (LEAD.indexOf(a) + 1 || 99) - (LEAD.indexOf(b) + 1 || 99))[0] || 'other';
-  return { lead, kinds, facts };
-}
-/** what a check-in's actions amount to: nothing | review only (a mechanical step) | acted */
-export const didOf = acts => (!acts.length ? 'nothing' : acts.every(a => a === 'run.review') ? 'review only' : 'acted');
-
-/**
- * per check-in of the last `days` days: { id, day, cls, model, lead, kinds, routine_only, cache_read, turn1, acts, did }.
- * routine_only = every end that woke it is a MERGE DONE (what merge_done would have handled with no tick). o: { now, days, projectsDir, memo }
- */
-export function checkinRows(state, p = {}, o = {}) {
-  const now = o.now ?? Date.now(), since = now - (o.days ?? 7) * 86400e3;
-  const runEvs = readEvents(recordsFile(state, 'run')), recEvs = readEvents(recordsFile(state, 'question'));
-  const items = fold(runEvs).items, all = [...recEvs, ...runEvs], book = bookkeepingIds(runEvs), wakes = tickWakes(state);
-  const rows = [];
-  for (const r of Object.values(items)) {
-    if (r.kind !== 'run' || r.data?.kind !== 'checkin') continue;
-    const t = Date.parse(r.created);
-    if (!(t >= since && t <= now)) continue;
-    const w = wakes.get(r.id) || {}, by = wokeBy(w.why);
-    const endIds = by.facts.filter(x => x.startsWith('+end:')).map(x => x.split(':')[1]);
-    const majors = by.kinds.filter(k => !['run', 'owner', 'band', 'dlv'].includes(k));
-    const routine_only = endIds.length > 0 && majors.every(k => k === 'end') && endIds.every(id => items[id] && isMergeRun(items[id].data) && items[id].end?.outcome === 'done');
-    const m = measureRun(r, { projectsDir: o.projectsDir, memo: o.memo, project: p });
-    const acts = r.state === 'running' ? [] : actionsOf(all, r.id, endOf(runEvs, r.id), book);
-    rows.push({ id: r.id, day: r.created.slice(0, 10), cls: r.data.tick_class || 'major', model: r.data.model, lead: by.lead, kinds: by.kinds, routine_only,
-      cache_read: m.cache_read, turn1: m.turn1, acts, did: r.state === 'running' ? 'running' : didOf(acts) });
-  }
-  return rows.sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
-}
+// ---------- the dashboard line ----------
 /** routine reviews by the launcher per day: { day: n } */
 export function mechanicalByDay(state, { since = 0 } = {}) {
   const out = {};
@@ -184,4 +131,3 @@ export function checkinDoctorLines(p) {
   if (c.auto_stage.length && !c.routine.includes('worker_done_stage')) out.push({ level: 'warn', text: `${p.name}: policy.checkin.auto_stage lists lanes but routine has no worker_done_stage: no lane is staged by code` });
   return out;
 }
-export const checkinDayText = x => `check-ins: ${x.n} (${x.mechanical} mechanical, ${x.minor} minor, ${x.full} full)`;
