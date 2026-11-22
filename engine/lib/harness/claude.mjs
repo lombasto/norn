@@ -69,14 +69,6 @@ function probe(o) {
   return c;
 }
 
-// the pre-H2 parser: the fields the run `end` record has always carried
-export function parseClaudeFinal(text) {
-  try {
-    const j = JSON.parse(text);
-    return { session_id: j.session_id ?? null, cost_usd: j.total_cost_usd ?? null, is_error: j.is_error ?? null, usage: j.usage ?? null };
-  } catch { return { session_id: null, cost_usd: null, is_error: null, usage: null }; }
-}
-
 const num = v => (Number.isFinite(v) ? v : null);
 /** normalized: { session_id, model, is_error, usage { input, cache_read, cache_write, output }, cost_usd } */
 function parse(text) {
@@ -89,10 +81,10 @@ function parse(text) {
     cost_usd: j.total_cost_usd ?? null };
 }
 
-/** the run `end` record fields (records schema unchanged): usage (raw claude usage) + cost_usd when known */
+/** the run `end` record fields: the raw claude usage (not parse's normalised one: the records keep what claude wrote) + cost_usd when known */
 function endData({ final }) {
-  const f = parseClaudeFinal(readText(final));
-  return { usage: f.usage, ...(f.cost_usd !== null ? { cost_usd: f.cost_usd } : {}) };
+  const j = jsonObject(readText(final));
+  return { usage: j?.usage ?? null, ...(j?.total_cost_usd != null ? { cost_usd: j.total_cost_usd } : {}) };
 }
 
 /** projects_dir/<any>/<sid>.jsonl (D8) or null. */
