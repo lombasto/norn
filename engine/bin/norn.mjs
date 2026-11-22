@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems, HOME_RE, NID, RUN_ID_RE, idNum } from '../lib/records.mjs';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems, HOME_RE, NID, RUN_ID_RE } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -53,7 +53,7 @@ import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn, syncPolicy } from '../lib/policy.mjs';
 import { CLASS_LABELS } from '../lib/workclass.mjs';
 import { adapterFor, schedState, liveName, schedApply } from '../lib/sched/index.mjs';
-import { serve, refusal } from '../lib/mcp.mjs';
+import { serve, refusal, order } from '../lib/mcp.mjs';
 import { installPlan, applyPlan, FAMILIES } from '../lib/harness.mjs';
 import { writeDash, clearDash, dashRestart, DashError } from '../lib/dashlive.mjs';
 import { remoteSetup, remoteOff } from '../lib/remote.mjs';
@@ -223,8 +223,6 @@ function eventData(ev, f, by) {
 
 const isOpen = i => (i.kind === 'question' && ['open', 'answered'].includes(i.state)) || (i.kind === 'directive' && i.state === 'active')
   || (i.kind === 'lane' && i.state === 'parked') || (i.kind === 'run' && (i.state === 'queued' || (['exited', 'lost', 'killed'].includes(i.state) && !i.review)));
-const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
-const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : idNum(a.id) - idNum(b.id));
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 
 function warnViews(v, err) {

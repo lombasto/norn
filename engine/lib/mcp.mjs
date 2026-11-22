@@ -79,7 +79,8 @@ const tail = (file, n) => { if (!n || !file) return ''; try { return fs.readFile
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 const lastSeq = i => i.history.at(-1)?.seq ?? 0;
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
-const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : idNum(a.id) - idNum(b.id));
+// the one record order (norn rec list too): by kind, then lanes by name and the rest by number
+export const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : idNum(a.id) - idNum(b.id));
 
 // The needs-you set (HARNESS-DESIGN sec. 4 norn_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs. LANE-TRUTH:
 // with a project's lane hooks (h = laneHooks(state), stateDir = its state dir) a parked lane whose work shipped or that has no branch left,
