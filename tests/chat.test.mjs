@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { ADAPTERS, adapterFor, capsMatrix, formatCapsMatrix } from '../engine/lib/harness/index.mjs';
 import { CHATS } from '../engine/lib/harness/common.mjs';
 import { spawn } from 'node:child_process';
-import { createChat, readThread, threadState, rolePack, chatEnv, threadFlushed } from '../engine/lib/chat.mjs';
+import { createChat, readThread, threadState, rolePack, chatEnv, threadFlushed, newsBlock } from '../engine/lib/chat.mjs';
+import { sendMail } from '../engine/lib/mail.mjs';
 import { threadFile } from '../engine/lib/chatact.mjs';
 import { snap, newSnap, readTextA } from '../engine/lib/fsnap.mjs';
 import { FAKE_CHAT } from '../engine/lib/harness/fake.mjs';
@@ -228,4 +229,13 @@ test('endpoints: POST /api/chat/send starts the chat lazily (token-guarded); GET
     await f.app.close();
     assert.deepEqual(readThread(f.pa.state).items.filter(l => l.kind === 'stop').map(l => [l.why, l.code]), [['shutdown', 0]], 'dashboard close stops the chat by stdin');
   } finally { await f.done(); }
+});
+
+test('B-17: a news cursor that cannot be written loses no mail to role:controller: the mail stays queued for the next turn', () => {
+  const state = mkTmp('chat-news-');
+  sendMail(state, { by: 'checkin', run: 'RUN-1', to: 'role:controller', subject: 'kept', body: 'shown once the cursor writes' });
+  fs.mkdirSync(path.join(state, 'chat', 'news-cursor.json'), { recursive: true });   // a directory: the cursor write fails
+  assert.throws(() => newsBlock(state), /EISDIR|EPERM/);
+  fs.rmSync(path.join(state, 'chat', 'news-cursor.json'), { recursive: true });
+  assert.match(newsBlock(state), /MAIL-\d+ from role:checkin: kept/);
 });
