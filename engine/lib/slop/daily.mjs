@@ -62,7 +62,7 @@ export const slopResumes = (state, now = Date.now()) => readEvents(recordsFile(s
  * tool: the landed-unchecked list (landed.mjs), from the main the last report saw to main now */
 export function dailyReport({ repo, state, now = Date.now(), own = null, main = 'main', remote = 'origin', projectDir = null, rules = null, tool }) {
   const home = own ? inDir(repo, own.subdir) : repo;
-  const day = today(now), loc = locReport(home, { until: day }), sw = sweep(repo, { state, now, own });
+  const day = today(now), loc = locReport(home, { since: today(now - 7 * 864e5), until: day }), sw = sweep(repo, { state, now, own });
   const holds = Object.entries(slopHolds(state)).map(([branch]) => ({ branch, blocks: openBlocks(state, branch, { now }) })).filter(h => h.blocks.length)
     .map(h => ({ branch: h.branch, open: h.blocks.length, rules: [...new Set(h.blocks.map(b => b.rule))].join(' ') }));
   const tip = mainTip(repo, { main, remote });
@@ -86,7 +86,7 @@ const writeMissed = (state, m) => fs.writeFileSync(missedFile(state), JSON.strin
 
 /** the tick's hook: start `norn slop daily` detached once a day (not while one started in the last 30 min). -> the tick-log words | null */
 export function tickSlop(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
-  if (!p?.file || !slopOn(p.policy) || p.policy?.slop?.daily === false) return null;   // META-BETA-PREP: the one switch off = no report
+  if (!p?.file || !slopOn(p.policy)) return null;   // the one switch (policy.slop.enabled) off = no report
   if (slopReport(state)?.day === today(now)) return null;
   const mark = path.join(slopDir(state), 'daily.started');
   const last = Number(readText(mark));
