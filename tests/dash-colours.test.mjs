@@ -79,18 +79,13 @@ test('chips: warn / bad / ok / needs chip classes use their own token pair; the 
   assert.ok(!/\.chip\.prov\{[^}]*--warn/.test(html), 'prov is a kind of executor, not a warning');
 });
 
-// D-28: CSS that silently does nothing - a var() no sheet or page sets, a bare rule a later page re-declares for the whole dashboard,
-// a phone rule another sheet always resets. Every sheet index.html links, read here; page code sets some variables inline.
-const SHEETS_ALL = [...fs.readdirSync(path.join(D, 'css')).map(f => path.join(D, 'css', f)), path.join(D, 'norn', 'norn.css')].map(f => fs.readFileSync(f, 'utf8'));
+// D-28: CSS that silently does nothing - a var() nothing sets (page code sets some inline), a bare rule a later page re-declares for
+// the whole dashboard, a phone rule a later sheet always resets
+const classic = fs.readdirSync(path.join(D, 'css')).map(f => fs.readFileSync(path.join(D, 'css', f), 'utf8')).join('\n'), all = `${classic}\n${norn}`.replace(/\/\*[\s\S]*?\*\//g, '');
 const pageCode = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.name === 'vendor' ? [] : e.isDirectory() ? pageCode(path.join(dir, e.name)) : /\.(mjs|html)$/.test(e.name) ? [fs.readFileSync(path.join(dir, e.name), 'utf8')] : []);
-test('D-28: every var() a classic sheet reads without a fallback is set by a sheet or by the page code', () => {
-  const set = new Set([...[...SHEETS_ALL, ...pageCode(D)].join('\n').matchAll(/(--[\w-]+)\s*:|setProperty\('(--[\w-]+)'/g)].map(m => m[1] ?? m[2]));
-  const classicOnly = fs.readdirSync(path.join(D, 'css')).map(f => fs.readFileSync(path.join(D, 'css', f), 'utf8')).join('\n');
-  assert.deepEqual([...new Set([...classicOnly.matchAll(/var\((--[\w-]+)\)/g)].map(m => m[1]))].filter(v => !set.has(v)), [], 'undefined custom properties');
-});
-test('D-28: one bare .tag rule on the dashboard (the Talk page styles its own under .home); no phone rule reset by a later sheet', () => {
-  const all = SHEETS_ALL.join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.equal([...all.matchAll(/(?:^|[}\n])\s*\.tag\s*\{/g)].length, 1, 'a second bare .tag re-styles every tag');
-  assert.match(all, /\.home \.tag\s*\{/, 'the Talk tag is scoped');
+test('D-28: every var() a classic sheet reads without a fallback is set somewhere; one bare .tag; no phone rule reset by a later sheet', () => {
+  const set = new Set([...[all, ...pageCode(D)].join('\n').matchAll(/(--[\w-]+)\s*:|setProperty\('(--[\w-]+)'/g)].map(m => m[1] ?? m[2]));
+  assert.deepEqual([...new Set([...classic.matchAll(/var\((--[\w-]+)\)/g)].map(m => m[1]))].filter(v => !set.has(v)), [], 'undefined custom properties');
+  assert.equal([...all.matchAll(/(?:^|[}\n])\s*\.tag\s*\{/g)].length, 1, 'a second bare .tag re-styles every tag'); assert.match(all, /\.home \.tag\s*\{/, 'the Talk tag is scoped');
   assert.doesNotMatch(all, /\.docsrc tr td:last-child\{grid-column/, 'set in base.css only to be reset in context.css');
 });
