@@ -48,12 +48,11 @@ export function coveragePct(measure) {
   return { covered, total, pct: total ? Math.round(1000 * covered / total) / 10 : 0 };
 }
 
-/** the leaf tests of the test files `files` as the mutation trial names them ('<basename> :: <name>'); node:test reports subtests before
- *  their parent, so a test right after one a level deeper is a parent */
+/** the leaf tests of the test files `files` as the mutation trial names them ('<basename> :: <name>'); a parent is the one measureFile
+ *  marked (guessing from the order mistook a test after a describe() block for one) */
 export function leafNames(measure, files = null) {
   const want = files && new Set(files.map(fwd));
-  return measure.files.filter(f => !want || want.has(f.file)).flatMap(f => f.tests.filter((t, i) => !(i > 0 && f.tests[i - 1].nesting === t.nesting + 1))
-    .map(t => `${path.basename(f.file)} :: ${t.name}`));
+  return measure.files.filter(f => !want || want.has(f.file)).flatMap(f => f.tests.filter(t => !t.parent).map(t => `${path.basename(f.file)} :: ${t.name}`));
 }
 
 /** a summary row of a measure: the numbers the history and the view keep */
