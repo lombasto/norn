@@ -87,6 +87,19 @@ test('pause and resume of a home-prefixed run (RUN-b-n)', async () => {
   } finally { await f.done(); }
 });
 
+// Pause half reads the policy in force: a Settings save of near_end_min reaches its next pick without a dashboard restart
+test('pause half follows a Settings save of policy.pause.near_end_min', async () => {
+  const f = await fixture();
+  try {
+    const half = async () => (await f.post('/api/pause/half', { project: 'kestrel' })).data.pick.map(p => p.id);
+    assert.deepEqual(await half(), ['RUN-2'], 'RUN-2 (90 min budget) is far from its end');
+    const version = (await f.get('/api/settings?project=kestrel')).data.version;
+    const r = await f.post('/api/settings', { project: 'kestrel', version, changes: { 'policy.pause.near_end_min': 120 } });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(await half(), [], 'within 120 min of its end now: left alone');
+  } finally { await f.done(); }
+});
+
 // the menu in a real browser at phone width: More, then the pause control opens the menu; no sideways scroll, every part on screen;
 // Pause half shows its pick line; a mode tap names the mode in the header
 test('the pause menu fits a phone and a mode tap sets the mode', async t => {
