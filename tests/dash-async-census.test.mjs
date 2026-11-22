@@ -29,10 +29,10 @@ function census() {
   return { seen, undo: () => { for (const k of SYNC) fs[k] = orig[k]; for (const k of CP_SYNC) cp[k] = orig[k]; syncBuiltinESMExports(); } };
 }
 
-const ROUTES = ['/', '/ui.mjs', '/norn/assets.json', '/api/projects', '/api/overview', '/api/inbox', '/api/lanes', '/api/agents',
+const ROUTES = ['/', '/ui.mjs', '/norn/assets.json', '/api/projects', '/api/inbox', '/api/lanes', '/api/agents',
   '/api/map?project=kestrel', '/api/branches?project=kestrel', '/api/deliverables?project=kestrel', '/api/records?project=kestrel', '/api/roadmap?project=kestrel',
   '/api/usage', '/api/plan', '/api/docs?project=kestrel', '/api/instructions?project=kestrel', '/api/guard?project=kestrel',
-  '/api/tests?project=kestrel', '/api/ledger?project=kestrel', '/api/settings?project=kestrel', '/api/sessions',
+  '/api/tests?project=kestrel', '/api/ledger?project=kestrel', '/api/settings?project=kestrel',
   '/api/home?project=kestrel', '/api/adopt?project=kestrel', '/api/adopt/repos', '/api/timing'];
 
 test('no warmed GET route makes a sync fs call', async () => {
@@ -50,14 +50,13 @@ test('no warmed GET route makes a sync fs call', async () => {
   assert.equal(out.length, 0, out.join('\n'));
 });
 
-// the stream / chat / file / log / session routes (HANDOFF step 1): an SSE route is held open for a window of its own polls (the
+// the stream / chat / file routes: an SSE route is held open for a window of its own polls (the
 // feed / stream hubs' timers, the stream's kick of the derived caches) and then aborted - every sync call in the window counts
 const SSE = ['/api/feed?project=kestrel&run=RUN-1', '/api/feed?project=kestrel&run=RUN-2', '/api/stream?project=kestrel', '/api/chat?project=kestrel&live=1'];
-test('no stream / chat / file / log / session route makes a sync fs call', async () => {
+test('no stream / chat / file route makes a sync fs call', async () => {
   const f = await fixture({ dash: { feedPollMs: 50, feedLingerMs: 100, streamPollMs: 50, streamPulseMs: 100, streamLingerMs: 100, deliverablesTtlMs: 100 } });
   fs.writeFileSync(path.join(f.pa.root, 'shot.png'), Buffer.from([137, 80, 78, 71]));
-  const plain = ['/api/chat?project=kestrel', `/api/file?project=kestrel&path=${encodeURIComponent(path.join(f.pa.root, 'shot.png'))}`,
-    '/log?project=kestrel&run=RUN-1', '/api/sessions/nobody'];
+  const plain = [`/api/file?project=kestrel&path=${encodeURIComponent(path.join(f.pa.root, 'shot.png'))}`];
   const hold = async r => {   // read the stream for 600 ms (its first events + a dozen polls), then abort
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), 600);   // a stream with nothing to replay sends no header until its first line
     let st = 'open';

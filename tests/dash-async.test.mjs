@@ -29,7 +29,7 @@ function stallReads(hit) {
 const CASES = [
   // [the stalled route, the file whose read stalls (under the kestrel state), the concurrent route]
   ['/api/projects', s => path.join(s, 'instructions', 'rules.json'), '/ui.mjs'],
-  ['/api/inbox?project=kestrel', s => path.join(s, 'records.jsonl'), '/api/sessions'],
+  ['/api/inbox?project=kestrel', s => path.join(s, 'records.jsonl'), '/api/timing'],
   ['/api/inbox?project=kestrel', s => path.join(s, 'records.jsonl'), '/ui.mjs'],
 ];
 

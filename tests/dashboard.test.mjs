@@ -4,18 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createDashboard, parseStatus, TABS } from '../engine/dash/server.mjs';
-import { createSessions } from '../engine/dash/sessions.mjs';
 import { parseReset } from '../engine/lib/cost.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 
 import { HERE, ENGINE, FIX, SID, CSID, budget0, walkFiles, projectFile, fixture } from './helpers/dash-fixture.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
-import { mkTmp } from './helpers/tmp.mjs';
 
 
 test('status and reset use file values and local calendar time', () => {
@@ -48,10 +44,6 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     const log = await fetch(f.url + '/log?run=RUN-1'); assert.equal(log.status, 200);
     const lines = (await log.text()).trim().split('\n'); assert.equal(lines.length, 200); assert.equal(lines[0], 'line 31');
     assert.equal((await fetch(f.url + '/log?run=../budget')).status, 404);
-    const a = await f.post('/api/ask', { text: 'Please wait.' });
-    assert.equal(a.status, 200); assert.equal(a.data.saved.length, 1);
-    const dir = loadState(f.pa.state).items[a.data.saved[0]];
-    assert.equal(dir.data.text, 'Wait for the owner.'); assert.equal(dir.data.via, 'chat'); assert.equal(dir.by, 'dashboard');
     assert.equal((await f.post('/api/directive', { text: 'hold gen' })).status, 200);
     assert.equal((await f.post('/api/directive/revoke', { id: 'DIR-1' })).status, 200);
     assert.equal((await f.post('/api/directive/revoke', { id: 'DIR-1' })).status, 409);
@@ -64,7 +56,6 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { origin: 'https://evil.example' })).status, 403);
     assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'x-dash-token': 'wrong' })).status, 403);
     assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'sec-fetch-site': 'cross-site' })).status, 403);
-    assert.equal(f.counts.asks, 1);
   } finally { await f.done(); }
 });
 
@@ -125,63 +116,6 @@ test('project switcher: two projects, ?project= scopes every tab, all sums the o
     assert.equal(loadState(f.pb.state).items['Q-1'].history.at(-1).ev, 'say', 'typed words on a Q with no options: a message in its thread (INBOX-REPLIES)');
     assert.equal(loadState(f.pa.state).items['Q-1'].history.at(-1).ev, 'create', 'the other project is untouched');
   } finally { await f.done(); }
-});
-
-function fakeClaude() {
-  const calls = [];
-  const spawnFn = (exe, args) => {
-    const child = new EventEmitter(); child.pid = 4242; child.stdout = new PassThrough(); child.stderr = new PassThrough();
-    const stdin = new PassThrough(); child.stdin = stdin; calls.push({ args, child });
-    stdin.on('data', b => { for (const row of b.toString().split('\n').filter(Boolean)) {
-      const said = JSON.parse(row).message.content[0].text.slice(-20);
-      child.stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'heard ' + said + '\nDIRECTIVE: hold gen' }, { type: 'tool_use', name: 'Read', input: { file_path: 'x' } }], usage: { input_tokens: 5, cache_read_input_tokens: 95000, cache_creation_input_tokens: 0 } } }) + '\n');
-      child.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0.1 }) + '\n'); } });
-    stdin.on('finish', () => setTimeout(() => child.emit('close', 0), 5));
-    return child;
-  };
-  return { spawnFn, calls };
-}
-
-test('talk sessions: controller spawns stream-json, keeps stdin open, records DIRECTIVE lines (via talk), shows in agents, stops', async () => {
-  const fake = fakeClaude(), f = await fixture({ spawnFn: fake.spawnFn });
-  const pause = () => new Promise(r => setTimeout(r, 80));
-  try {
-    assert.equal((await f.post('/api/sessions', { kind: 'worker', text: 'x' })).status, 400);
-    assert.equal((await f.post('/api/sessions', { kind: 'controller', text: 'status please' })).status, 200);
-    assert.equal((await f.post('/api/sessions', { kind: 'controller', text: 'again' })).status, 409);
-    for (const a of ['--input-format', '--output-format', 'stream-json', '--tools']) assert.ok(fake.calls[0].args.includes(a), a);
-    await pause();
-    assert.equal((await f.post('/api/sessions/controller/send', { text: 'second message' })).status, 200);
-    await pause();
-    const list = (await f.get('/api/sessions')).data.sessions;
-    assert.equal(list[0].name, 'controller'); assert.equal(list[0].alive, true); assert.equal(list[0].context, 95005); assert.equal(list[0].project, 'kestrel');
-    const t = (await f.get('/api/sessions/controller')).data, kinds = t.items.map(i => i.kind);
-    for (const k of ['owner', 'text', 'tool', 'notice']) assert.ok(kinds.includes(k), k);
-    const dirs = Object.values(loadState(f.pa.state).items).filter(i => i.kind === 'directive' && i.data.via === 'talk');
-    assert.ok(dirs.length >= 1 && dirs.every(d => d.data.text === 'hold gen' && d.by === 'dashboard'));
-    const talk = (await f.get('/api/agents')).data.tree.find(n => n.kind === 'talk');
-    assert.equal(talk.id, 'talk:controller'); assert.equal(talk.ctx, 95005); assert.equal(talk.state, 'alive');
-    assert.equal((await f.post('/api/sessions/controller/stop', {})).status, 400);
-    assert.equal((await f.post('/api/sessions/controller/stop', { confirm: true })).status, 200);
-    await pause();
-    const after = (await f.get('/api/sessions')).data.sessions[0]; assert.equal(after.alive, false); assert.equal(after.exit, 0);
-    assert.equal((await f.get('/api/sessions/..%2Fx')).status, 404);
-  } finally { await f.done(); }
-});
-
-// CI 43207062452 (Windows): list() read exit from the registry file while the close handler's save still sat in the async
-// write queue - alive (memory) false, exit (file) null. Red-first toy: the list taken in the same turn as the close.
-test('talk sessions: list() right after the process closes shows alive false AND its exit code (no torn read behind the write queue)', async () => {
-  const dir = mkTmp('meta-sess-');
-  let child;
-  const spawnFn = () => { child = new EventEmitter(); child.pid = 1; child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); return child; };
-  const s = createSessions({ dir, exe: 'claude', spawnFn });
-  await s.start({ name: 'controller', kind: 'controller', model: 'm', effort: 'e', cwd: dir });
-  child.emit('close', 0);
-  const [row] = await s.list();
-  assert.equal(row.alive, false);
-  assert.equal(row.exit, 0);
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 test('GET / serves the UI shell and injects the token (tab / panel ids: tests/ui.test.mjs)', async () => {

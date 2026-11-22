@@ -242,7 +242,7 @@ test('Context: in Health next to Usage (UX review 2), a one-project tab; rows wi
 
 test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; /api/instructions/<id> opens only a listed file', async () => {
   const f = fx();
-  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
+  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {} });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
@@ -279,7 +279,7 @@ test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, 
   const { launchBrowser, killTree, killProfileProcs, removeProfile } = shotLib;
   const f = fx();
   w(path.join(f.repo, 'deep', 'a-very-long-folder-name-for-the-phone-width-test', 'another-long-folder-name-that-does-not-break', 'CLAUDE.md'), '# deep\n');
-  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
+  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {} });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   // the instruction-file scan runs in a worker (META-UX-BUILD S1): until it lands, Slop has no H- / T- rows and Per file no rows,

@@ -90,14 +90,13 @@ export async function fixture(extra = {}) {
   const target = path.join(root, 'kestrel-implementer.md'), rules = path.join(root, 'DECISION-RULES.md');
   fs.writeFileSync(target, 'a\nHANDOFF: old <!-- policy:context.implementer -->\nb\n'); fs.writeFileSync(rules, 'D. old <!-- policy:iteration -->\n');
   pa.policy_targets = [target, rules, path.join(root, 'missing.md')];
-  const counts = { ticks: 0, asks: 0, intervals: [] };
-  const platform = { tick: async () => ({ pid: ++counts.ticks }), setInterval: async m => { counts.intervals.push(m); return { ok: true, interval: 'PT' + m + 'M' }; },
-    ask: async () => { counts.asks++; return { result: 'DIRECTIVE: Wait for the owner.\nIt was saved.', usage: {} }; } };
+  const counts = { ticks: 0, intervals: [] };
+  const platform = { tick: async () => ({ pid: ++counts.ticks }), setInterval: async m => { counts.intervals.push(m); return { ok: true, interval: 'PT' + m + 'M' }; } };
   const quietFile = path.join(root, 'common-rules.txt'); fs.writeFileSync(quietFile, 'QUIET: no GPU while the owner plays\n');
   const ledgerDir = path.join(root, 'ledger.git');   // RM-46 S3: a synced fixture's ledger (the test builds the repo; nothing is pushed)
   const machine = { home: root, ...(extra.synced ? { ledger: { dir: ledgerDir, state_root: path.dirname(S), remote: 'file:///nowhere-synthetic' } } : {}) };
   const app = createDashboard({ projects: [pa, pb], machine, budgetFile, platform, projectsDir, codexDir: path.join(root, 'codex-sessions'),
-    liveUsage, quietFile, sessionsDir: path.join(root, 'sessions'), spawnFn: extra.spawnFn, ...(extra.dash || {}) });
+    liveUsage, quietFile, ...(extra.dash || {}) });
   watchServer(app.server);   // META-CI-WORKCLASS R3: a page timeout names when this server received / answered each request
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;

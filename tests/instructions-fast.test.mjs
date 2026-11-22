@@ -102,7 +102,7 @@ test('GET /api/instructions never scans in the handler: pending at once, the wor
     const disk = JSON.parse(fs.readFileSync(path.join(f.pa.state, VIEW_FILE), 'utf8'));
     assert.equal(disk.at, s.at); assert.ok(disk.v.rows.some(r => r.id === row.id));
     // a restart on the same state: content at once from disk, no pending
-    const app2 = createDashboard({ projects: [f.pa, f.pb], machine: { home: f.root }, budgetFile: f.budgetFile, platform: {}, sessionsDir: path.join(f.root, 'sessions2'), insTtlMs: 60000 });
+    const app2 = createDashboard({ projects: [f.pa, f.pb], machine: { home: f.root }, budgetFile: f.budgetFile, platform: {}, insTtlMs: 60000 });
     await new Promise(r => app2.server.listen(0, '127.0.0.1', r));
     try {
       const u2 = `http://127.0.0.1:${app2.server.address().port}`;

@@ -59,9 +59,9 @@ function repo(sb, name = 'tide', files = FILES) {
 }
 async function dash(sb, projects = []) {
   const machine = loadMachine(sb.machineFile, { meta: sb.root });
-  const platform = { tick: async () => ({ pid: 1 }), setInterval: async () => ({ ok: true }), ask: async () => ({ result: '', usage: {} }) };
+  const platform = { tick: async () => ({ pid: 1 }), setInterval: async () => ({ ok: true }) };
   const app = createDashboard({ projects, machine, metaRoot: sb.root, env: sb.env, budgetFile: sb.budgetFile, platform, projectsDir: path.join(sb.t, 'cp'),
-    codexDir: path.join(sb.t, 'cx'), sessionsDir: path.join(sb.t, 'sessions'), artDir: path.join(sb.t, 'art') });
+    codexDir: path.join(sb.t, 'cx'), artDir: path.join(sb.t, 'art') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   const get = async r => { const x = await fetch(url + r); const data = await x.json(); if (!x.ok) throw new Error(`${x.status} ${data.error}`); return data; };
