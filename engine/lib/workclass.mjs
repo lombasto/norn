@@ -13,7 +13,6 @@ import { isMergeStage } from './usageguard.mjs';
 
 export const COORD_CLASSES = { checkin_major: 'Check-in (major)', checkin_minor: 'Check-in (minor)', merge: 'Merge', audit: 'Audit (adopt read)', chat: 'Chat' };
 export const CLASS_LABELS = { ...WORK_CLASSES, ...COORD_CLASSES };
-export const CLASS_BASES = ['given', 'role', 'stage', 'agent', 'policy', 'default'];
 const STAGE_WORDS = [[/^(PLAN|SPEC)/i, 'planning'], [/^DIAG/i, 'diagnosis'], [/REVIEW/i, 'review'], [/^(DOCS?|PUBLISH)/i, 'docs']];
 
 /** Fable = the cost class (owner Q4): a Fable model or the fable executor. */

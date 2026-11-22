@@ -20,7 +20,6 @@ export const approvalsDir = state => path.join(chatDir(state), 'approvals');
 export class ActError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 
 // ---------- tiers ----------
-export const TIER_NAMES = ['read', 'act', 'tap', 'off'];
 const READ = new Set(['norn_boot', 'norn_status', 'norn_inbox', 'norn_records', 'norn_ledger', 'norn_show', 'norn_approve']);
 const ACT = new Set(['norn_answer', 'norn_directive', 'norn_question_add', 'norn_decision_add', 'norn_record_event', 'norn_run', 'norn_stop', 'norn_tick']);
 /** The tier of a Norn tool call (norn_cli by its subcommand; a refused subcommand throws). Unknown = 3 (off). */

@@ -8,7 +8,6 @@
 //   - the check-in prompt (tick.mjs policyLine) and the generated policy lines name it
 // Check-ins and the controller chat are not workers: their own model settings stand. Only Claude models are compared; a run on another
 // family (codex, a typed executor's own model, fake) is left as it is.
-export const FLOOR_KEYS = ['worker_min_model', 'worker_min_effort'];
 export const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh'];
 const FAMILY = ['haiku', 'sonnet', 'opus', 'fable'];
 // the Claude models a floor may name (lowest first); the model id the floor raises to is the floor's own value

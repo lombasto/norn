@@ -11,7 +11,6 @@ import { readText, readTextA, readdirS, readdirA } from './fsnap.mjs';
 import { laneId, NID } from './records.mjs';
 
 export const PICKS = ['queue', 'later', 'drop'];
-export const PICK_WORDS = { queue: 'Queue now', later: 'Later', drop: 'Drop' };
 const BRIEF_RE = /^brief-(S\d+)\.md$/i;
 const fwd = p => String(p ?? '').replace(/\\/g, '/');
 const same = (a, b) => fwd(a).toLowerCase() === fwd(b).toLowerCase();

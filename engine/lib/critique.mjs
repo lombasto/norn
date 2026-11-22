@@ -12,7 +12,6 @@ import { loadState } from './records.mjs';
 import { readText } from './fsnap.mjs';
 import { makeEval } from './after.mjs';
 
-export const CRITIQUE_MODES = ['off', 'on'];
 export const critiqueOn = policy => policy?.dod?.critique === 'on';
 const fwd = p => String(p).replace(/\\/g, '/');
 const TEMPLATE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'CRITIQUE.md');

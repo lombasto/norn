@@ -11,8 +11,6 @@ import { linksOf } from './roadmap.mjs';
 const fwd = p => String(p ?? '').replace(/\\/g, '/');
 const ms = s => Date.parse(s ?? '') || null;
 const mtimeOf = (f, stat) => { try { return stat(f).mtimeMs; } catch { return null; } };
-export const PROOF_FORMS = ['look'];
-export const VERDICTS = ['pass', 'fail'];
 
 /** policy.look over the defaults: { stages (first words of the gated stages, any case), min_round } */
 export const lookPolicy = policy => ({ ...POLICY_DEFAULTS.look, ...(policy?.look || {}) });

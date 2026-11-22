@@ -25,7 +25,6 @@ export function checkFixKind(f, where) {
   if (!FIX_KINDS.includes(f?.kind)) throw new Error(`${where}: no kind of fix (${FIX_KINDS.join(' | ')}) - the check declares it`);
   if (f.kind === 'call' && !(Array.isArray(f.ways) && f.ways.length === 2 && f.ways.every(w => typeof w === 'string' && w))) throw new Error(`${where}: your call names its two ways`);
 }
-export const TIER_LABEL = { tap: 'one tap, exact patch', card: 'card with a hunk to read', flag: 'flag only' };
 const NEW_MS = 24 * 3600000;
 
 /** one advisory record (validated; throws on a bad shape - a check bug, never data) */
