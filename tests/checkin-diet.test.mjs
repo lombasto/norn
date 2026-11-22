@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { checkinGate, noteCheckin, wakeClass, routineIds } from '../engine/lib/gate.mjs';
-import { routineOf, handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, checkinDays, checkinDayText, wokeBy, checkinDoctorLines } from '../engine/lib/checkins.mjs';
+import { routineOf, handleRoutineEnds, checkinPolicy, laneLevel, debounceOf, checkinDays, checkinDoctorLines } from '../engine/lib/checkins.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { tick } from '../engine/lib/tick.mjs';
 import { applySettings, withDefaults, settingsFor, sectionOf } from '../engine/lib/policy.mjs';
@@ -181,12 +181,10 @@ test('settings: the policy.checkin rows (checkins/schedule) save, lane globs are
   handleRoutineEnds(state, { name: 'demo', state, policy: {} }, { now: at(3) });
   const d = checkinDays(state, { now: T0 + 3600e3 });
   assert.deepEqual(d, [{ day: '2026-11-08', n: 4, mechanical: 1, minor: 1, full: 2 }]);
-  assert.equal(checkinDayText(d[0]), 'check-ins: 4 (1 mechanical, 1 minor, 2 full)');
   assert.match(renderTab('context', { sub: 'checkins', rows: [], standing: [], hints: [], suggest: [], checkins: d }, { project: 'demo' }), /2026-11-08<\/td><td>check-ins: <b>4<\/b> \(1 mechanical, 1 minor, 2 full\)/);
   // doctor: the diet in force, and a knob that does nothing
   assert.deepEqual(checkinDoctorLines({ name: 'demo', policy: {} }), [{ level: 'ok', text: 'demo: check-ins: run ends within 5 min share one check-in; done by code, no model turn: a finished merge is reviewed, a finished worker on an auto-merge lane is reviewed (mergeq lands its work); auto-merge lanes: none; lanes that never wake a check-in: none; lanes checked only when a run ends: none' }]);
   // SHIP-READY R1: a stranger reads this line in doctor - plain words, no policy keys
   assert.match(checkinDoctorLines({ name: 'demo', policy: { checkin: { auto_stage: ['docs'], none_lanes: ['ci-*'], routine: ['merge_done'] } } })[0].text, /: a finished merge is reviewed; auto-merge lanes: docs; lanes that never wake a check-in: ci-\*;/);
   assert.match(checkinDoctorLines({ name: 'demo', policy: { checkin: { routine: ['merge_done'], auto_stage: ['a'] } } })[1].text, /auto_stage lists lanes but routine has no worker_done_stage/);
-  assert.deepEqual(wokeBy('changed: +end:RUN-1:exited, -run:RUN-1, +owner:3'), { lead: 'end', kinds: ['end', 'owner'], facts: ['+end:RUN-1:exited', '-run:RUN-1', '+owner:3'] });
 });

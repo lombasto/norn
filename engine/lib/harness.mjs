@@ -1,7 +1,6 @@
-// H1 `norn harness install`: register the norn MCP server with one harness family. Names and paths only, never keys
-// (the server reads no secrets; META-EXEC-S1 rule). claude is registered through its own `mcp add` CLI, a configured cli executor
-// through the `mcp_add` template of its project.json entry (META-AGNOSTIC-EXEC: --family <cli name>);
-// codex (config.toml) and opencode (opencode.json) are config files this module edits in place, keeping everything else.
+// `norn harness install`: register the norn MCP server with one harness family. Names and paths only, never keys: the server reads
+// no secrets. claude is registered through its own `mcp add` CLI, a configured cli executor through the `mcp_add` template of its
+// project.json entry (--family <cli name>); codex (config.toml) and opencode (opencode.json) are config files edited in place.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -15,7 +14,6 @@ const SERVER_NAME = 'norn';
 const SETUP_NAME = 'norn-setup';
 
 export const FAMILIES = ['claude', 'codex', 'opencode'];
-const NO_MCP = { pi: 'pi has no MCP (by design): use the CLI door (norn ...)' };
 
 export function serverArgs({ node, meta, project, state, profile, family }) {
   return [node, meta, 'mcp', ...(profile === 'setup' ? [] : project ? ['--project', project] : ['--state', state]), '--profile', profile, '--client', family];
@@ -40,7 +38,6 @@ export function upsertToml(text, name, block) {
 
 /** The plan for one family: { family, commands: [[exe, ...args]], files: [{ path, content }] }. o: { family, node, meta, project | state, profile, scope, codexConfig, opencodeConfig, home, executors? (the project's) } */
 export function installPlan(o) {
-  if (NO_MCP[o.family]) throw new Error(NO_MCP[o.family]);
   const cli = Object.entries(o.executors || {}).find(([n, x]) => n === o.family && isCli(x) && x.mcp_add)?.[1];
   if (!FAMILIES.includes(o.family) && !cli) throw new Error(`--family must be ${FAMILIES.join(' | ')} | a configured cli executor with mcp_add (got ${JSON.stringify(o.family)})`);
   if (!PROFILES.includes(o.profile)) throw new Error(`--profile must be ${PROFILES.join(' | ')} (got ${JSON.stringify(o.profile)})`);

@@ -35,7 +35,7 @@ export function schedState(a, o, io = realIo) {
 const readOwner = f => (o, io = realIo) => ownerOf(io.read ? io.read(f(o)) : null);   // file-based adapters (systemd / launchd)
 export { readOwner };
 // the scheduled command: one tick over every project in machine.json
-export const tickArgv = o => o.command || [o.node, `${o.meta}/engine/bin/norn.mjs`, 'tick', '--reason', 'schedule'];
+export const tickArgv = o => [o.node, `${o.meta}/engine/bin/norn.mjs`, 'tick', '--reason', 'schedule'];
 export function steps(list, io) {
   for (const c of list) {
     if (c[0] === 'rm') { io.rm(c[1]); continue; }

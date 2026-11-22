@@ -28,9 +28,11 @@ test('coverage: the union over test files (one left out on request), the suite %
   assert.equal(coveragePct(M([], false)), null);
 });
 
-test('leafNames: subtests count, their parent (reported right after them, one level up) does not', () => {
-  const m = M([F('tests/a.test.mjs', 1, [['in', 1], ['out', 0], ['solo', 0]])]);
-  assert.deepEqual(leafNames(m), ['a.test.mjs :: in', 'a.test.mjs :: solo']);
+test('leafNames: subtests count, their parent (measureFile marks it parent) does not; a top-level test after a describe() is a leaf', () => {
+  const lines = [['test', 'in', 1], ['test', 'out', 0], ['test', 'solo', 0], ['test', 'a', 1], ['suite', 'S', 0], ['test', 'b', 0]];
+  const text = lines.map(([t, name, nesting]) => JSON.stringify({ t, name, nesting, ms: 1, ok: true })).join('\n');
+  const m = M([measureFile('tests/a.test.mjs', 1, text, '/r')]);
+  assert.deepEqual(leafNames(m), ['a.test.mjs :: in', 'a.test.mjs :: solo', 'a.test.mjs :: a', 'a.test.mjs :: b']);
 });
 
 test('slowest: top-level tests by ms with the cause markers found in each test body', () => {

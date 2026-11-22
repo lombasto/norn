@@ -62,7 +62,7 @@ const infoOf = o => executorInfo(o.executor, o.provider);
 const unknownExecutor = ex => new RunError(`unknown executor ${JSON.stringify(ex)} (${Object.keys(EXECUTORS).join(' | ')} | a configured typed executor name)`);
 
 // ---------- usage parsers + executor command lines: the harness adapters (engine/lib/harness/<family>.mjs, H2) ----------
-export { parseClaudeFinal, CLAUDE_RO_NOPE } from './harness/claude.mjs';
+export { CLAUDE_RO_NOPE } from './harness/claude.mjs';
 export { parseCodexLog } from './harness/codex.mjs';
 export { prompt } from './harness/common.mjs';
 // a provider runs the claude CLI path minus --remote-control (that would bind the session to the owner's claude.ai account)

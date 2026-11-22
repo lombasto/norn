@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { record, loadState } from '../engine/lib/records.mjs';
-import { checkinGate, noteCheckin, notePaused, gateFile, replayGate, rateBand, wakeClass, GATE_DEFAULTS } from '../engine/lib/gate.mjs';
+import { record, loadState, readEvents, recordsFile } from '../engine/lib/records.mjs';
+import { checkinGate, noteCheckin, notePaused, gateFile, actionsOf, bookkeepingIds, endOf, rateBand, wakeClass, GATE_DEFAULTS } from '../engine/lib/gate.mjs';
 import { tick } from '../engine/lib/tick.mjs';
 import { settingsFor, withDefaults, sectionOf } from '../engine/lib/policy.mjs';
 import { settled } from './helpers/settled.mjs';
@@ -200,29 +200,6 @@ test('tick: second tick after the check-in exits skips (code 0, tick.log line, c
   done('RUN-3');
 });
 
-test('replay: per check-in, would-skip vs acted (events with run = its id), false skips named', () => {
-  const state = path.join(tmp('meta-grep-'), 'state', 'demo');
-  const c1 = ck(state, 0); end(state, c1.id, 5);
-  const c2 = ck(state, 15);                                                  // nothing changed; only reviews the previous CHECK-IN
-  record(state, { kind: 'run', ev: 'review', id: c1.id, by: 'checkin', data: { refs: [] } }, { now: at(16), run: c2.id });
-  end(state, c2.id, 18);
-  const w = worker(state, 20);                                               // controller start
-  const c3 = ck(state, 30);
-  record(state, { kind: 'decision', ev: 'create', by: 'checkin', data: { lane: 'a', question: 'q', choice: 'x', why: 'y' } }, { now: at(31), run: c3.id });
-  end(state, c3.id, 33);
-  const c4 = ck(state, 45);                                                  // nothing new, but acted -> false skip
-  record(state, { kind: 'decision', ev: 'create', by: 'checkin', data: { lane: 'a', question: 'q2', choice: 'x', why: 'y' } }, { now: at(46), run: c4.id });
-  end(state, c4.id, 47);
-  const rep = replayGate(state, { sinceMs: T0 - 60000, untilMs: T0 + 3600000 });
-  assert.equal(rep.total, 3);
-  const row = id => rep.rows.find(x => x.run === id);
-  assert.equal(row(c2.id).skip, true); assert.equal(row(c2.id).acted.length, 0);
-  assert.equal(row(c3.id).skip, false); assert.match(row(c3.id).why, new RegExp(`run:${w.id}`));
-  assert.equal(row(c3.id).cls, 'minor', 'a start by another'); assert.deepEqual(row(c3.id).changes, [`+run:${w.id}`]);
-  assert.equal(row(c4.id).skip, true); assert.deepEqual(row(c4.id).acted, ['decision.create']);
-  assert.equal(rep.wouldSkip, 2); assert.equal(rep.acted, 2); assert.deepEqual(rep.falseSkips.map(x => x.run), [c4.id]);
-});
-
 test('gate (NORN-WATCH S1): a deliverable newly done wakes the check-in once (dlv:<id>:done); one that stays done does not re-wake', () => {
   const { state } = base();
   record(state, { kind: 'deliverable', ev: 'create', by: 'launcher', data: { repo: 'C:/r', branch: 'feat/x', lane: 'a' } }, { now: at(10), run: null });
@@ -364,10 +341,9 @@ test('tick: the gate\'s forced / quiet_n reach the next baseline (gate.json)', a
   assert.equal(G().forced, true); assert.equal(G().quiet_n, 2, 'carried (a cap of 0 leaves no room to double)');
 });
 
-// CHECKIN-V2 measure (kill criterion, replay 11-08/09 RUN-1658): a review of a HELPER run is bookkeeping like a review of a
-// check-in - a helper's end belongs to its parent (metadelegate: the parent reads its answer) and is no gate fact (isWork), so
-// a tick that only reviews one acted on nothing; a review of a WORK run stays an action
-test('replay: reviewing a helper run (role helper, under its parent) is not an action; reviewing a work run is', () => {
+// a helper's end belongs to its parent (the parent reads its answer), so a check-in that only reviews one acted on nothing and the
+// forced backoff still doubles; a review of a WORK run stays an action
+test('actionsOf: reviewing a helper run (role helper, under its parent) is not an action; reviewing a work run is', () => {
   const state = path.join(tmp('meta-grep2-'), 'state', 'demo');
   const c1 = ck(state, 0); end(state, c1.id, 5);
   const w = worker(state, -30);
@@ -380,9 +356,7 @@ test('replay: reviewing a helper run (role helper, under its parent) is not an a
   const c3 = ck(state, 30);
   record(state, { kind: 'run', ev: 'review', id: w.id, by: 'checkin', data: { refs: [] } }, { now: at(31), run: c3.id });
   end(state, c3.id, 32);
-  const rep = replayGate(state, { sinceMs: T0 - 60000, untilMs: T0 + 3600000 });
-  const row = id => rep.rows.find(x => x.run === id);
-  assert.equal(row(c2.id).skip, true); assert.deepEqual(row(c2.id).acted, [], 'helper review = bookkeeping');
-  assert.deepEqual(rep.falseSkips, []);
-  assert.equal(row(c3.id).skip, false, 'the work run end wakes'); assert.deepEqual(row(c3.id).acted, ['run.review']);
+  const runEvs = readEvents(recordsFile(state, 'run')), evs = [...readEvents(recordsFile(state, 'question')), ...runEvs], book = bookkeepingIds(runEvs);
+  assert.deepEqual(actionsOf(evs, c2.id, endOf(runEvs, c2.id), book), [], 'helper review = bookkeeping');
+  assert.deepEqual(actionsOf(evs, c3.id, endOf(runEvs, c3.id), book), ['run.review']);
 });

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseCodexLog, parseClaudeFinal, buildCommand, acquireLock, lockPath, sweepLost, startRun, queueRun, stopRun, RunRefused, hbPath, fillQueue } from '../engine/lib/runs.mjs';
+import { parseCodexLog, buildCommand, acquireLock, lockPath, sweepLost, startRun, queueRun, stopRun, RunRefused, hbPath, fillQueue } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { resolveShim } from '../engine/lib/paths.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
@@ -43,12 +43,6 @@ test('codex exit banner: model, effort, session id and tokens used parse from th
   const r = parseCodexLog(fs.readFileSync(path.join(HERE, 'fixtures', 'runs', 'codex-banner.log'), 'utf8'));
   assert.deepEqual(r, { model: 'gpt-6-astra', effort: 'xhigh', session_id: '01a18e15-b95e-7293-b130-0cf69a414641', tokens: 119286 });
   assert.deepEqual(parseCodexLog('OpenAI Codex\nerror: boom\n'), { model: null, effort: null, session_id: null, tokens: null });
-});
-
-test('claude --output-format json final: usage + session id + cost; junk -> nulls', () => {
-  const j = { type: 'result', is_error: false, session_id: 'abc', total_cost_usd: 1.5, usage: { input_tokens: 3, cache_read_input_tokens: 400, cache_creation_input_tokens: 50, output_tokens: 7 } };
-  assert.deepEqual(parseClaudeFinal(JSON.stringify(j)), { session_id: 'abc', cost_usd: 1.5, is_error: false, usage: j.usage });
-  assert.deepEqual(parseClaudeFinal('not json'), { session_id: null, cost_usd: null, is_error: null, usage: null });
 });
 
 test('command lines: claude gets --session-id + agent / model / effort; codex reads the brief on stdin with -o final; grok prompt file', () => {

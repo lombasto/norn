@@ -24,7 +24,6 @@ export const API_TYPES = [PROVIDER_TYPE, OPENAI_TYPE];
 export const TYPES = [...API_TYPES, CLI_TYPE];
 export const PROVIDER_KIND = 'provider';                  // RUN kind of an API-typed executor
 export const CLI_KIND = 'cli';                            // RUN kind of a cli-typed executor
-export const TYPED_KINDS = [PROVIDER_KIND, CLI_KIND];
 export const PROVIDER_CLASSES = ['chores', 'passfail'];   // default rank of every typed executor
 export const PROVIDER_CAP_DEFAULT = 1;                    // max_<name> when the machine budget and the entry have none
 export const ACCESS = ['write', 'read-only', 'no-tools'];
