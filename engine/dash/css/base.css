@@ -73,8 +73,8 @@ a{color:inherit}
 .kpop>div{flex-basis:100%;margin-top:4px}
 .glist{margin:0;padding:0 0 0 18px}
 .sexplain{margin-top:3px;overflow-wrap:anywhere}.sexplain summary{cursor:pointer}.sexplain dl{margin:4px 0 0}.sexplain dt{font-weight:600;margin-top:4px}.sexplain dd{margin:0}.sexplain code{white-space:normal;word-break:break-all}
-/* META-UX-BUILD S2: the sub-view pattern (subviews.mjs) - a summary row of at most 4 numbers, the sub-view row, the chosen part */
-.subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
+/* the sub-view pattern (subviews.mjs): a summary row of at most 4 numbers, the sub-view row, the chosen part */
+.subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
 /* a page with views: the title and its view switch on one line (subviews.mjs), never a row under the nav */
 .phead.pagehead{align-items:center;margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid var(--line)}.ptitle{margin:0;font-size:20px}
 .subnav{display:inline-flex;flex-wrap:wrap;gap:6px}.subnav button[aria-pressed=true]{background:var(--ink);color:var(--bg)}.subnav button[aria-pressed=true] .mute{color:inherit}
@@ -276,7 +276,7 @@ button.reset{padding:2px 8px}
 .docfind{border-left:3px solid var(--warn);padding:2px 8px;font-size:13px;overflow-wrap:anywhere}.docfind .insfind{margin:0 0 6px}#doc-file-findings{padding:8px 12px;margin:0 0 8px}#doc-file-findings .insfind{margin:4px 0}
 .docsrc{padding:6px 0;overflow-x:auto}.docsrc table{border-collapse:collapse;width:100%}.docsrc td{vertical-align:top;padding:0 8px;border:0}.docsrc .ln{text-align:right;user-select:none;width:1%;font-size:12px}.docsrc .lt code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;background:none}.docsrc tr.focus{outline:2px solid var(--accent)}.docsrc td:last-child{width:30%}
 @media (max-width:700px){.docsplit{grid-template-columns:minmax(0,1fr)}.doclist{position:static;max-height:none}.docsplit:not(.picked) .docread{display:none}.docsplit.picked .doclist{display:none}.docback{display:inline-block}
-.docfile{min-height:40px}.docpara.hasfind{grid-template-columns:minmax(0,1fr)}.docsrc td:last-child{width:auto}.docsrc tr{display:grid;grid-template-columns:auto minmax(0,1fr)}.docsrc tr td:last-child{grid-column:1 / -1}}
+.docfile{min-height:40px}.docpara.hasfind{grid-template-columns:minmax(0,1fr)}.docsrc td:last-child{width:auto}.docsrc tr{display:grid;grid-template-columns:auto minmax(0,1fr)}}
 .md h1,.md h2,.md h3,.md h4{line-height:1.25;margin:1.3em 0 .5em;scroll-margin-top:64px}.md>:first-child{margin-top:0}
 .md h1{font-size:24px}.md h2{font-size:19px;padding-bottom:4px;border-bottom:1px solid var(--line);display:block;text-transform:none;letter-spacing:0;color:var(--ink)}.md h3{font-size:16px}.md h4{font-size:14px}
 .md h2.mk,.md h3.mk{padding:4px 10px;border-radius:6px;border:0}.md .mk-done{background:var(--ok-bg);color:var(--ok)}.md .mk-stopped{background:var(--bad-bg);color:var(--bad)}.md .mk-handoff{background:var(--warn-bg);color:var(--warn)}
@@ -343,7 +343,7 @@ mark.dv-w{color:var(--on-accent);border-radius:2px}.dv-del mark.dv-w{background:
 @media (max-width:700px){header{flex-wrap:wrap;gap:8px;padding:8px 10px}header select{min-width:0;max-width:100%}
  main{padding:10px 8px}.glance,.grid2{grid-template-columns:minmax(0,1fr)}.card,.tablecard{min-width:0;overflow-x:auto}
  .srow,.srow.inline{grid-template-columns:minmax(0,1fr)}.srow .sc{justify-content:flex-start}}
-/* META-CONTROLLER C2: the Home tab (Look 3, owner Q-25) - the thread between the side columns, full bleed under the bar; the composer
+/* the Home tab: the thread between the side columns, full bleed under the bar; the composer
    under the thread. Phone: one column, the page scrolls, the composer sticks over the bottom bar (Home / Inbox / Runs / Plan / More) */
 body[data-tab=talk] main{padding:0;max-width:none}
 .home{display:grid;grid-template-columns:minmax(220px,290px) minmax(0,1fr) minmax(220px,290px);height:calc(100vh - var(--home-top,110px));min-height:420px}
@@ -374,7 +374,7 @@ body[data-tab=talk] main{padding:0;max-width:none}
 .pm-mode{display:flex;gap:10px;align-items:baseline}.pm-mode button{flex:none;min-width:9.5em}.ppop .acts{display:flex;gap:8px;flex-wrap:wrap}
 .hpick-row{display:flex;gap:12px;flex-wrap:wrap}.hpick-row select{margin-left:4px;font:inherit}.hpop .acts{display:flex;gap:8px;flex-wrap:wrap}
 button.hnote{cursor:pointer;background:none;font:inherit;font-size:12px}
-.composer{position:relative}.slashmenu{position:absolute;left:14px;right:14px;bottom:100%;z-index:4}
+.slashmenu{position:absolute;left:14px;right:14px;bottom:100%;z-index:4}
 .slash{list-style:none;margin:0 0 4px;padding:4px;max-height:280px;overflow:auto;background:var(--panel);border:1px solid var(--line);box-shadow:0 -4px 14px var(--shadow)}
 .slash button{display:block;width:100%;text-align:left;border:0;background:none;padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.slash button:hover,.slash button:focus{background:var(--run-bg)}
 .txt.pre{white-space:pre-wrap}.ev-norn .who{color:var(--accent)}
@@ -398,8 +398,9 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 .ev-card[data-cat=run]{border-left-color:var(--run)}.ev-card[data-cat=merge]{border-left-color:var(--codex)}.ev-card[data-cat=needs]{border-left-color:var(--bad)}
 .ev-card.ev-done{border-left-color:var(--ok)}.ev-card.ev-approval{border-left-color:var(--run);background:var(--accent-bg)}
 .ev .head{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;min-width:0}
-.tag{font-size:10.5px;letter-spacing:.14em;padding:2px 6px;font-weight:700;background:var(--soft);color:var(--mute)}
-.tag-ok{background:var(--ok-bg);color:var(--ok)}.tag-bad,.tag-needs{background:var(--bad-bg);color:var(--bad)}.tag-run{background:var(--run-bg);color:var(--run)}.tag-merge{background:var(--codex-bg);color:var(--codex)}
+/* the thread's event tags (home.mjs tag): scoped to Home, so the other pages' plain .tag keeps its own look */
+.home .tag{font-size:10.5px;letter-spacing:.14em;padding:2px 6px;font-weight:700;background:var(--soft);color:var(--mute)}
+.home .tag-ok{background:var(--ok-bg);color:var(--ok)}.home .tag-bad,.home .tag-needs{background:var(--bad-bg);color:var(--bad)}.home .tag-run{background:var(--run-bg);color:var(--run)}.home .tag-merge{background:var(--codex-bg);color:var(--codex)}
 .ev .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center}.ev .acts button{min-width:0;white-space:normal;text-align:left;padding:6px 10px}
 .ev .acts .rec small{font-size:11px}.ev .hold{border:1px solid var(--run);color:var(--run);padding:2px 8px;overflow-wrap:anywhere}
 .ev .approve{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}.ev .deny{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
@@ -407,7 +408,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 .shots{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.shot{margin:0;border:1px solid var(--line);background:var(--bg);min-width:0;max-width:100%}
 .shot img{display:block;width:230px;max-width:100%;height:138px;object-fit:cover;object-position:top left}.shot figcaption{font-size:11px;color:var(--mute);padding:3px 6px;overflow-wrap:anywhere}
 .thread-empty{color:var(--mute);padding:30px 0;text-align:center}
-.composer{display:flex;gap:8px;align-items:flex-end;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+.composer{position:relative;display:flex;gap:8px;align-items:flex-end;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
 .composer textarea{flex:1;min-width:0;resize:vertical;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);padding:9px 12px;min-height:40px;max-height:40vh}
 .composer .send{font-weight:700;padding:9px 18px}
 .hfoot{padding:0 14px 8px;background:var(--panel);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
