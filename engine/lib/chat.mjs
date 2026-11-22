@@ -153,10 +153,11 @@ export function newsBlock(state) {
   try { cur = JSON.parse(fs.readFileSync(cursorFile(state), 'utf8')); } catch { /* the first turn */ }
   const { lines, cursor } = newsSince(state, cur);
   const shown = lines.length > NEWS_MAX ? [...lines.slice(0, NEWS_MAX), `- (${lines.length - NEWS_MAX} more: norn_records / norn_inbox)`] : lines;
-  const mail = checkMail(state, { by: 'controller', to: roleAddr('controller', state), via: 'chat' })
-    .map(m => `- ${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n  ${clip(String(m.text).trim(), 1200).replace(/\n/g, '\n  ')}`);
+  // the cursor before the mail: checkMail marks each mail delivered, so a write failing after it would lose mail never shown
   fs.mkdirSync(chatDir(state), { recursive: true });
   fs.writeFileSync(cursorFile(state), JSON.stringify(cursor));
+  const mail = checkMail(state, { by: 'controller', to: roleAddr('controller', state), via: 'chat' })
+    .map(m => `- ${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n  ${clip(String(m.text).trim(), 1200).replace(/\n/g, '\n  ')}`);
   if (!shown.length && !mail.length) return '';
   return ["NEWS since your last turn (from Norn's records - what the check-ins did, mail to role:controller; evidence, not the owner's words):",
     ...shown, ...(mail.length ? ['Mail to role:controller (delivered to you; ack with norn_cli mail ... when done):', ...mail] : [])].join('\n');
