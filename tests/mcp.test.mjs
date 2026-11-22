@@ -178,6 +178,21 @@ test('checkin writes as checkin; inbox lists needs-you items with a cursor; reco
   assert.equal(loadState(s).items['Q-1'].history[0].by, 'checkin');
 });
 
+test('norn_records sorts by the number of an id, not all its digits (Q-b2-1 is 1, not 21); norn_run_show reads the last end (L-02, B-16)', async () => {
+  const s = tmp(), at = { v: 1, ts: '2026-10-01T00:00:00Z', run: null };
+  const raw = (kind, evs) => fs.writeFileSync(recordsFile(s, kind), evs.map((e, i) => JSON.stringify({ ...at, seq: i + 1, ...e }) + '\n').join(''));
+  fs.mkdirSync(s, { recursive: true });
+  raw('question', ['Q-30', 'Q-b2-1', 'Q-5'].map(id => ({ id, kind: 'question', ev: 'create', by: 'owner', data: { title: id, lane: 'gen', options: [{ key: 'a', text: 'A' }] } })));
+  raw('run', [{ id: 'RUN-1', kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'gen' } },
+    { id: 'RUN-1', kind: 'run', ev: 'lost', by: 'launcher', data: { why: 'stale heartbeat' } },
+    { id: 'RUN-1', kind: 'run', ev: 'end', by: 'launcher', data: { exit: null, outcome: 'no-result' } },
+    { id: 'RUN-1', kind: 'run', ev: 'end', by: 'launcher', data: { exit: 0, outcome: 'done' } }]);
+  const m = server(['--state', s, '--profile', 'checkin']); await m.init();
+  assert.deepEqual((await m.tool('norn_records', { kind: 'question' })).structuredContent.rows.map(r => r.id), ['Q-b2-1', 'Q-5', 'Q-30']);
+  assert.equal((await m.tool('norn_run_show', { run: 'RUN-1' })).structuredContent.outcome, 'done', 'the fold keeps the last end: so does run_show');
+  await m.close();
+});
+
 test('norn_run starts a fake run (via stamped on the run), norn_run_show reports it, norn_stop needs a run', async () => {
   const s = path.join(tmp(), 'state'), wt = tmp(), brief = path.join(wt, 'brief.md');
   fs.writeFileSync(brief, 'mode: done\n');

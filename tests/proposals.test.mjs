@@ -109,6 +109,13 @@ test('norn proposal rule refuses: later with no roadmap item, a launch the launc
   assert.equal(JSON.parse(r.stdout)[0].open, 3);
 });
 
+test('tickProposals: the queued run of a home (QUEUED RUN-b-2) reads as queued, not refused (L-02)', () => {
+  const { state } = fixture();
+  if (!loadState(state).items['L:sizing']) record(state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'sizing' } });
+  const [x] = tickProposals(state, loadState(state).items, loadRoadmap(state), { cli: () => ({ code: 0, out: 'QUEUED RUN-b-2 lane sizing' }) });
+  assert.equal(x.act, 'queued'); assert.match(x.note, /^RUN-b-2 launches brief-S1\.md/);
+});
+
 test('tickProposals: an active idle lane gets its first open stage queued (no card); then one at a time; a parked lane or a dry tick queues nothing', () => {
   const { state, notesDir, wt } = fixture();
   if (!loadState(state).items['L:sizing']) record(state, { kind: 'lane', ev: 'create', by: 'owner', data: { name: 'sizing' } });
