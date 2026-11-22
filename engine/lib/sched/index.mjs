@@ -1,4 +1,4 @@
-// Scheduler adapters (META-GENERAL-DESIGN D13): each turns { name, interval_min, node, meta, home, user? } into a plan
+// Scheduler adapters, one per OS scheduler so the tick runs the same everywhere: each turns { name, interval_min, node, meta, home, user? } into a plan
 // { files [{path, content, encoding?}], install [argv], remove [argv] } and runs it through an injectable io { run, write, rm }
 // (tests / WSL proofs inject; the default io touches the real machine). `rm <file>` steps go to io.rm, not a process.
 import { realIo, TICK_NAME, schedName, liveName, schedState, normDir } from './common.mjs';

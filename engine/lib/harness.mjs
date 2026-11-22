@@ -1,7 +1,6 @@
-// H1 `norn harness install`: register the norn MCP server with one harness family. Names and paths only, never keys
-// (the server reads no secrets; META-EXEC-S1 rule). claude is registered through its own `mcp add` CLI, a configured cli executor
-// through the `mcp_add` template of its project.json entry (META-AGNOSTIC-EXEC: --family <cli name>);
-// codex (config.toml) and opencode (opencode.json) are config files this module edits in place, keeping everything else.
+// `norn harness install`: register the norn MCP server with one harness family. Names and paths only, never keys: the server reads
+// no secrets. claude is registered through its own `mcp add` CLI, a configured cli executor through the `mcp_add` template of its
+// project.json entry (--family <cli name>); codex (config.toml) and opencode (opencode.json) are config files edited in place.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
