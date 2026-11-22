@@ -19,7 +19,7 @@ import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, profileBudget, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
 import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, syncPolicy, REQUIRED_CAPS } from '../lib/policy.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, checkinBelowFloor, retiredExecutors, capOfExecutor, getPath, REQUIRED_CAPS } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin, homeOf as homeIdOf, laneId, laneNameIn, laneIdIn, homeOfId, copyItemsAsync, crewFile, RUN_ID_RE } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
@@ -323,6 +323,13 @@ export function createDashboard(o) {
   // ---------- budget (machine) + policy (project) ----------
   function budgetRaw() { return read(o.budgetFile, '{}'); }
   function projectRaw(p) { return read(p.file); }
+  // the effective settings read from the files (once per snapshot and text), never the project loaded at start: every reader follows a save
+  const pols = new WeakMap();
+  function policyOf(p) {
+    const sn = snap.getStore() ?? {}, braw = budgetRaw(), praw = projectRaw(p), m = pols.get(sn) ?? pols.set(sn, new Map()).get(sn), hit = m.get(p.file);
+    if (hit?.braw === braw && hit.praw === praw) return hit.v;
+    const v = withDefaults(merged(JSON.parse(braw || '{}'), JSON.parse(praw).policy)); m.set(p.file, { braw, praw, v }); return v;
+  }
   function settingsState(p) {
     const braw = budgetRaw(), praw = projectRaw(p);
     const budget = JSON.parse(braw || '{}'), proj = JSON.parse(praw);
@@ -446,9 +453,8 @@ export function createDashboard(o) {
       if (P?.state === 'open' && P.draft && P.undecided.length)
         out.push({ type: 'setup', id: P.id, project: p.name, title: `Review the draft setup (${P.undecided.length} part${P.undecided.length === 1 ? '' : 's'})`, created: P.created });
     }
-    // GAP-1 (holds.mjs): ONE needs-you row while ALL queued work has waited on one machine-level hold past policy.holds.notice_min
-    // (the tick keeps hold.json; it is gone - and the row with it - once the hold clears)
-    { const h = holdItem(await readHoldAsync(p.state), { min: noticeMin(withDefaults(settingsState(p).view).policy), status: await readA(path.join(p.state, 'STATUS.md')), project: p.name });
+    // one row while all queued work has waited on one machine-level hold past policy.holds.notice_min (gone with the tick's hold.json)
+    { const h = holdItem(await readHoldAsync(p.state), { min: noticeMin(policyOf(p).policy), status: await readA(path.join(p.state, 'STATUS.md')), project: p.name });
       if (h) out.push(h); }
     // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
     for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited, generated: e.generated,
@@ -467,8 +473,8 @@ export function createDashboard(o) {
     for (const c of await enforceCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, asked: c.asked, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
-    // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
-    for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
+    // the fixer's result: one card per run (every file, every hunk; Apply all / Skip this file / Discard)
+    for (const c of fixCards(s.items, { batch: fixBatch(policyOf(p).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     // INBOX-REPLIES: the Resolved view - answered / applied Qs, newest first, each with its thread kept (for information: never a need)
     for (const q of items.filter(i => i.kind === 'question' && ['answered', 'applied'].includes(i.state)).sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, RESOLVED_MAX))
       out.push({ type: 'resolved', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, state: q.state, options: q.data.options ?? [], origin: q.data.origin ?? null, answer: q.answer, thread: threadOf(q), updated: q.updated });
@@ -493,16 +499,14 @@ export function createDashboard(o) {
     }
     return { lanes, repo: await repoSlug(p), docs };
   }
-  // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here;
-  // NORN-UI-SYNC (S6b follow-up #2): a lane's predicted cross-home conflicts (running or an open deliverable) ride along for its chip
+  // the overlap cache (the tick / a lane start refresh it; never a fetch here) and the predicted cross-home conflicts ride along for the chips
   function lanes(p, all) {
-    const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
+    const pol = policyOf(p).policy, ov = overlapOn(pol) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};   // pol: lifecycle.mjs's row rule (idle / stopped / archives in n days)
     const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
     return lanesView(s, { all, hbAge: hbAge(p), hbLate: hbLateOf(p), cpu: sweptCpu(p.state, { read: readJsonS }), ...hoHooks(p), prs: openPrs(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...foreign(p, s, l.id), ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(ov[l.name]?.conflicts?.length ? { conflicts: ov[l.name].conflicts } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
-  const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
+  const apiOn = ps => billingOf(policyOf(ps[0]))?.type === 'api';
   const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
   // RM-34: each Lanes row's driver (purpose.mjs: the objective + where it is written); the briefs it reads are primed by primeBriefs
   const briefsDirOf = p => path.resolve(p.briefs_dir || path.join(p.state, 'briefs'));
@@ -629,7 +633,7 @@ export function createDashboard(o) {
     return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
   }
   async function agents(p, win, { homes = false, part = null } = {}) {   // homes: + the other homes' runs (the Runs page; the map keeps its own); part: RUN_PARTS
-    const s = settingsState(p), m = withDefaults(s.view);
+    const m = policyOf(p);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
     const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
@@ -691,7 +695,7 @@ export function createDashboard(o) {
       .filter(e => e.key.startsWith(`work/${p.name}/`) || e.key === leaderKey(p.name));
     const bodies = ls.length ? batchBodies(await gitA(L, ['cat-file', '--batch'], ls.map(e => e.sha).join('\n') + '\n') || Buffer.alloc(0)) : [];
     let seen = {}; try { seen = JSON.parse(await readA(path.join(p.state, 'sync', 'claims-seen.json'), '{}')) || {}; } catch { /* a torn file: nothing seen yet */ }
-    const pol = syncPolicy(p.policy), work = [];
+    const pol = policyOf(p).policy.sync, work = [];
     let leader = null;
     ls.forEach((e, i) => { let c; try { c = JSON.parse(bodies[i]); } catch { return; }
       if (e.key === leaderKey(p.name)) { leader = c; return; }
@@ -780,12 +784,11 @@ export function createDashboard(o) {
     }
     return c.val ? { ...c.val, pending: false } : { rows: [], pending: true };
   }
-  // MERGE-FIRST (4): the merge backlog of the projects shown, from the cached deliverables (pending until the first answer); over = any
-  // project past its own policy.merge.backlog_max
+  // the merge backlog of the projects shown (pending until the first deliverables answer); over = any project past its own backlog_max
   function backlogOf(ps) {
     const parts = ps.map(p => ({ p, d: deliverablesOf(p) }));
-    const all = mergeBacklog(parts.flatMap(x => x.d.rows), { max: Math.min(...ps.map(p => backlogMax(p.policy))) });
-    return { ...all, over: parts.some(x => mergeBacklog(x.d.rows, { max: backlogMax(x.p.policy) }).over), pending: parts.some(x => x.d.pending) };
+    const all = mergeBacklog(parts.flatMap(x => x.d.rows), { max: Math.min(...ps.map(p => backlogMax(policyOf(p).policy))) });
+    return { ...all, over: parts.some(x => mergeBacklog(x.d.rows, { max: backlogMax(policyOf(x.p).policy) }).over), pending: parts.some(x => x.d.pending) };
   }
   // META-PLAN R1: the plan = `norn plan --json` in a child process (the fill walk samples the CPU for 1 s and asks git: never on a
   // poll), per project, cached o.planTtlMs (30 s; then stale while it refreshes); before the first answer { pending: true }. R2: with
@@ -884,7 +887,7 @@ export function createDashboard(o) {
   const claudePool = (stages, m) => { const merge = Math.min(stages.filter(isLandingStage).length, mergeWorkers(m));
     return { claude: { n: stages.length - merge, cap: m.max_claude_workers ?? null }, merge: { n: merge, cap: mergeWorkers(m) } }; };
   async function statusStrip(ps) {
-    const m = withDefaults(settingsState(ps[0]).view), live = ps.flatMap(p => runsOf(st(p)).filter(r => r.state === 'running').map(r => ({ ...r, project: p.name })));
+    const m = policyOf(ps[0]), live = ps.flatMap(p => runsOf(st(p)).filter(r => r.state === 'running').map(r => ({ ...r, project: p.name })));
     const codexR = r => String(r.data.executor).startsWith('codex'), claudeR = r => !codexR(r) && (r.data.kind === 'worker' || r.data.kind === 'fake');
     let needs = 0; for (const p of ps) needs += needsYou(await inbox(p));
     const meterP = ps.length === 1 && m.policy?.slop?.enabled ? ps[0] : null;
@@ -906,7 +909,7 @@ export function createDashboard(o) {
     return { claude: { using: c.rows.reduce((a, r) => a + r.using, 0), cap: c.cap }, sessions: agentsSample() };
   }
   async function overview(ps) {
-    const m = withDefaults(settingsState(ps[0]).view);
+    const m = policyOf(ps[0]);
     let needs = [], running = [], tree = [];
     for (const p of ps) { needs.push(...(await inbox(p)).filter(isNeed)); running.push(...lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running'))); tree.push(...await agents(p)); }
     const live = tree.filter(n => n.state === 'running');
@@ -980,7 +983,7 @@ export function createDashboard(o) {
   }
   const dlvFacts = p => (deliverablesOf(p).rows || []).map(r => ({ id: r.id, runs: [r.run, ...(r.runs || [])].filter(Boolean), merged_at: ['merged', 'installed'].includes(r.state) ? 'merged' : null }));
   function classesFor(p, now, since) {
-    const pol = withDefaults(merged({}, p.policy)).policy;
+    const pol = policyOf(p).policy;
     return classCost([{ project: p.name, items: runsOf(stCached(p)), dlvs: dlvFacts(p), policy: { executors: pol.executors, critical_lanes: pol.critical_lanes } }],
       { now, since: since ?? now - 7 * 86400000, projectsDir, codexDir, cache: costTail, memo: costMemo });
   }
@@ -989,7 +992,7 @@ export function createDashboard(o) {
   // for the digest line. Never writes a policy: POST /api/advice does, on a tap.
   const adviceMemo = new Map(), ADVICE_TTL_MS = o.adviceTtlMs ?? 300000;
   function adviceFor(p, classes, now = Date.now()) {
-    const a = advise(classes, withDefaults(settingsState(p).view), { project: p.name, now, data: adviceData ?? undefined, decided: decidedKeys(Object.values(st(p).items)) });
+    const a = advise(classes, policyOf(p), { project: p.name, now, data: adviceData ?? undefined, decided: decidedKeys(Object.values(st(p).items)) });
     writeAdviceCache(p.state, a);
     adviceMemo.set(p.name, { at: Date.now(), a });
     return a;
@@ -999,7 +1002,7 @@ export function createDashboard(o) {
     if (!fresh && hit && Date.now() - hit.at < ADVICE_TTL_MS) return hit.a;
     await Promise.all([stAsync(p), readA(p.file), o.budgetFile ? readA(o.budgetFile, '{}') : null]);
     adviceData ??= await loadAdviceDataAsync();
-    const now = Date.now(), resetMs = Date.parse(parseReset(withDefaults(settingsState(p).view).reset) ?? '');
+    const now = Date.now(), resetMs = Date.parse(parseReset(policyOf(p).reset) ?? '');
     return adviceFor(p, classesFor(p, now, Number.isFinite(resetMs) ? weekStart(resetMs, now) : null), now);
   }
   let adviceData = null;   // the shipped advice table (presets/advice/models.json): read once, on fs.promises
@@ -1008,7 +1011,7 @@ export function createDashboard(o) {
     const key = ps.map(p => p.name).join(',') + '|' + days, hit = costViews.get(key);
     if (hit && Date.now() - hit.at < USAGE_TICK_MS) return { ...hit.v, cached: true };
     // the headline window is the current weekly window: the budget's one reset key (local/budget.json reset) -> now (META-OPS-R2)
-    const t0 = process.hrtime.bigint(), B = withDefaults(settingsState(ps[0]).view), perPct = B.cacheR_per_pct ?? null, resetAt = parseReset(B.reset);
+    const t0 = process.hrtime.bigint(), B = policyOf(ps[0]), perPct = B.cacheR_per_pct ?? null, resetAt = parseReset(B.reset);
     const now = Date.now(), resetMs = Date.parse(resetAt ?? ''), since = Number.isFinite(resetMs) ? weekStart(resetMs, now) : null;
     const account = since === null || !acct.data ? null : accountUsage('claude', { ...acct.data, since, now });   // provider of the runs headline: Claude
     accountKick();
@@ -1145,8 +1148,8 @@ export function createDashboard(o) {
     await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
     const ig = insForGuard(p), ins = ig.v?.error ? (errors.push(ig.v.error), null) : ig.v, tests = part('tests', () => testsView(p.state), null), advice = await adviceOf(p).catch(e => { errors.push(`models: ${String(e.message).slice(0, 200)}`); return null; });
-    // META-BETA-PREP (DIR-52): the project's one SloppaChoppa switch (Settings) - off = no slop rows; his recorded holds stay on disk
-    const pol = withDefaults(settingsState(p).view).policy, slop = pol.slop.enabled;
+    // the project's one SloppaChoppa switch: off = no slop rows (his recorded holds stay on disk)
+    const pol = policyOf(p).policy, slop = pol.slop.enabled;
     const holds = !slop ? [] : part('code', () => Object.entries(slopHolds(p.state)).map(([branch, h]) => ({ branch, run: h.run, lane: h.lane, blocks: openBlocks(p.state, branch) })), []);
     // RM-43: the second voice's unrated findings (thumbs) and each model rule's precision (the Rules view)
     const voiceRows = !slop ? [] : part('voice', () => voiceFindings(p.state), []);
@@ -1175,7 +1178,7 @@ export function createDashboard(o) {
     const live = Object.values(st(p).items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall && Array.isArray(i.data.findings));
     if (!live.length) return { rows, sent: [], cards: [] };
     try { keepFindings(p.state, st(p).items, rows); } catch { /* read-only state: the fixer waits for the next draw */ }   // S7: the rows `norn fix start` briefs
-    const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), cards = fixCards(items, { batch, root: p.root });
+    const items = st(p).items, batch = fixBatch(policyOf(p).policy), cards = fixCards(items, { batch, root: p.root });
     const by = new Map();
     for (const d of live) for (const id of d.data.findings) if (!by.has(id)) by.set(id, d.data.fixall);
     const out = rows.map(r => (by.has(r.id) ? { ...r, sent: by.get(r.id) } : r));
@@ -1235,7 +1238,7 @@ export function createDashboard(o) {
     const ws = runsOf(await stAsync(p)).filter(r => isWorker(r) && (r.state === 'running' || Date.parse(ended(r)) >= since));
     const runs = await Promise.all(ws.map(async r => { const s = await runSpeedA(r, { projectsDir, cache, now }).catch(() => null);
       return { id: r.id, lane: r.data.lane ?? null, state: r.state, started: r.created, ended: ended(r), speed: s ? { wall_ms: s.wall_ms, test_ms: s.test_ms } : null }; }));
-    return runtimePart({ runs, cache: cacheLog(cacheDirOf(p.state), { since }), policy: withDefaults(settingsState(p).view).policy, now });
+    return runtimePart({ runs, cache: cacheLog(cacheDirOf(p.state), { since }), policy: policyOf(p).policy, now });
   }
   // TESTS-RUNTIME: a test's file for the code viewer - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
   // no .. or link out, nothing under .git), text only, at most 2 MB
@@ -1249,14 +1252,13 @@ export function createDashboard(o) {
     if (text.includes('\0')) throw fail(415, 'Not a text file');
     return { file: rel.split('\\').join('/'), text, lines: text.split(/\r?\n/).length };
   }
-  // META-UX-BUILD S6 (REPORT s.3 step 2): the usage a Send approves - one run of the docs class as Settings routes it today, with the
-  // measured median cache reads of that class's runs (classCost, the Spend page's table; 7 days)
+  // the usage a Send approves: one docs-class run as Settings routes it today, at the class's measured median cache reads (7 days)
   function fixUsage(p) {
-    const e = withDefaults(settingsState(p).view).policy.executors?.docs ?? {}, who = [e.executor, [e.model, e.effort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    const e = policyOf(p).policy.executors?.docs ?? {}, who = [e.executor, [e.model, e.effort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     const c = classesFor(p, Date.now()).byClass.filter(x => x.project === p.name && x.class === 'docs').sort((a, b) => b.measured - a.measured)[0];
     const med = c?.measured ? c.cache_read.median : null;
     const run = `(docs work: ${who || 'the docs class'})${med !== null ? ` · the median docs run is ~${(med / 1e6).toFixed(1)} M cache reads (${c.measured} runs, 7 days)` : ' · no measured docs run in 7 days'}`;
-    const batch = fixBatch(withDefaults(settingsState(p).view).policy);   // S7: one run takes at most batch findings; the sheet counts the runs
+    const batch = fixBatch(policyOf(p).policy);   // one run takes at most batch findings; the sheet counts the runs
     return { executor: e.executor ?? null, model: e.model ?? null, effort: e.effort ?? null, median_cache_read: med, runs: c?.measured ?? 0, run, batch, line: `One fixer run ${run}` };
   }
   const lockFreshA = p => fs.promises.stat(path.join(p.state, 'tick.lock')).then(s => Date.now() - s.mtimeMs < LOCK_STALE_MIN * 60000, () => false);
@@ -1292,7 +1294,7 @@ export function createDashboard(o) {
   function feedSource(p, id, adapter) {
     const env = { projectsDir, codexDir, memo: new Map() }, now = async () => (await stAsync(p)).items[id];
     const inSnap = fn => snap.run(newSnap(), fn);
-    const policy = () => withDefaults(settingsState(p).view).policy;   // META-CTX-ENFORCE R1: the run role's lines, read live
+    const policy = () => policyOf(p).policy;   // read per head: the run role's context lines follow a save
     return {
       // META-DOD 2: + the run's scope refusals; RM-36: full = a drawer's first poll reads the whole run (the activity view: every file it touched)
       poll: (cur, full) => inSnap(async () => withRefusals(adapter.feed(await now(), cur, full ? { ...env, backlog: Infinity } : env), p.state, id, cur)),
@@ -1353,7 +1355,7 @@ export function createDashboard(o) {
       context.map(([n, v]) => `--- ${n} ---\n${v}`).join('\n\n') + '\n\nOWNER MESSAGE:\n' + text;
   }
   function chatModel(p) {
-    const b = withDefaults(settingsState(p).view);
+    const b = policyOf(p);
     if (!MODELS.includes(b.checkin_model) || !EFFORTS.includes(b.checkin_effort)) throw fail(400, 'Invalid check-in model or effort in the machine budget');
     if (b.chat_executor !== 'claude') throw fail(400, `chat_executor ${b.chat_executor} is not wired yet (only claude; H5) - set it back to claude`);
     return b;
@@ -1442,7 +1444,7 @@ export function createDashboard(o) {
     // a card with no created time sits in the thread at its record's last event
     const needs = (await inbox(p)).filter(isNeed).map(n => (n.created ? n : { ...n, created: s.items[n.id]?.updated ?? null }));
     const events = homeEvents({ thread: lines, runs, dwarf: dwarfOf, items: Object.values(s.items), ledger: p.ledger ? (await tail(p.ledger, 400)).map(parseLedgerLine) : [], needs });
-    const m = withDefaults(settingsState(p).view), usageLine = [...lines].reverse().find(l => l.kind === 'usage' && (!seg || l.seg === seg.n));
+    const m = policyOf(p), usageLine = [...lines].reverse().find(l => l.kind === 'usage' && (!seg || l.seg === seg.n));
     // C5: model / effort / raw shell as the NEXT start will use them (Settings, live); the context meter amber past no_new_step_k; the cost line
     const live = (() => { try { return chatConfig(p); } catch { return null; } })(), cc = m.policy?.context?.controller ?? {}, day = new Date(); day.setHours(0, 0, 0, 0);
     // META-CHAT-CONTROLS R1: the chat's pick (picker, /model, /effort) over the Settings rows; both shown; the session's own commands for the "/" menu
@@ -1614,7 +1616,7 @@ data: ${JSON.stringify(l)}
   }
   /** the setup gaps of one project: rules, caps chosen, the merge gate, the roadmap (a corrupt one throws: it is no "empty roadmap") */
   function setupOf(p) {
-    const items = Object.values(st(p).items), facts = factsKnown(p), s = settingsState(p), view = withDefaults(s.view);
+    const items = Object.values(st(p).items), facts = factsKnown(p), s = settingsState(p), view = policyOf(p);
     const roadmap = Object.values(loadRoadmap(p.state).items).filter(i => i.state === 'open').length;
     const agentFiles = agentFilesIn(p), rulesFrom = [...((p.rules_read_whole || []).length || existsS(rulesFile(p)) ? [RULES_FILE] : []), ...agentFiles];
     const caps = capsChosen(p, s, items);
@@ -1858,8 +1860,8 @@ data: ${JSON.stringify(l)}
       if (r.code) throw cliFail(r);
       return { ok: true, out: r.out.trim() };
     }
-    // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
-    if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
+    // pause half only picks (reads): its confirm posts the runs to /api/pause { runs }
+    if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(policyOf(p).policy) });
     if (route === '/api/requeue') {   // MERGE-FIRST: the priority control of a queued run (Runs, Lanes) - re-queued at that priority, its after: kept
       const r = st(p).items[String(data.run)];
       if (!r || r.kind !== 'run' || r.state !== 'queued') throw fail(409, 'Run is not queued any more. Refresh.');
@@ -1899,7 +1901,7 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/fixresult') {   // S7 (REPORT s.3 step 4): the result card's tap - Apply all (minus skipped files) or Discard = ONE decision (+ ONE directive: the audit accept path)
       if (!['apply', 'discard'].includes(data.choice)) throw fail(400, 'choice must be apply or discard');
-      const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), c = fixCards(items, { batch, root: p.root }).find(x => x.run === String(data.run));
+      const items = st(p).items, batch = fixBatch(policyOf(p).policy), c = fixCards(items, { batch, root: p.root }).find(x => x.run === String(data.run));
       if (!c) throw fail(409, 'That result is decided already. Reload.');
       if (data.choice === 'apply' && c.state !== 'ready') throw fail(409, c.state === 'declined' ? 'The fixer declined every finding: there is nothing to apply.' : 'This run drafted no hunk: there is nothing to apply.');
       const skip = (Array.isArray(data.skip) ? data.skip.map(String) : []).filter(x => c.files.some(f => f.file === x));
