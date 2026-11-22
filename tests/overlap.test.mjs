@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { record } from '../engine/lib/records.mjs';
-import { refreshOverlap, projectOverlap, readOverlap, githubRepo, overlapText, overlapFile, overlapOn } from '../engine/lib/overlap.mjs';
+import { refreshOverlap, projectOverlap, readOverlap, githubRepo, overlapText, overlapFile, overlapOn, laneConflicts } from '../engine/lib/overlap.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 
@@ -159,4 +159,10 @@ test('norn overlap --project: refreshes and prints each running lane\'s overlaps
   const off = spawnSync(process.execPath, [NORN, 'overlap', '--project', pf, '--state', f.state], { encoding: 'utf8', env });
   assert.equal(off.status, 0, off.stderr);
   assert.match(off.stdout, /overlap check is off/);
+});
+
+test('E-16: a failed overlap.json write throws (the tick\'s collide step logs it), never a silent "still answers"', () => {
+  const state = mkTmp('ovl-save-');
+  fs.mkdirSync(overlapFile(state));   // a directory: the read is tolerated ({}), the write fails
+  assert.throws(() => laneConflicts(state, state, [['a', 'b']], { mergeTree: () => ({ conflict: false, files: [] }) }), /EISDIR|EPERM|EEXIST/);
 });
