@@ -33,7 +33,8 @@ export function createStreams({ pollMs = 1000, pulseMs = 15000, deriveMs = 60000
   // META-DASH-ASYNC R1: every poll's stat / read / flag / sig is on fs.promises - a stalled syscall delays this hub's tick only
   const size = async f => { try { return (await fs.promises.stat(f)).size; } catch { return 0; } };
   const mtime = async d => { try { return (await fs.promises.stat(d)).mtimeMs; } catch { return 0; } };
-  const flagsOf = async s => { try { return { project: s.project, ...(await s.flags()) }; } catch { return { project: s.project }; } };
+  // a failed flags read throws (the poll retries): a { project } without paused would tell every tab the project runs again
+  const flagsOf = async s => ({ project: s.project, ...(await s.flags()) });
 
   // complete lines in [from, to) of f -> { records, end } (end = the byte after the last newline; a partial line waits)
   async function readLines(f, from, to) {

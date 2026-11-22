@@ -435,11 +435,9 @@ export function createDashboard(o) {
   }
 
   // ---------- tab data ----------
-  // UI redesign 2026-11-20: the Inbox holds only what the owner must answer - open questions and the owner cards (a resolved Q is for information);
-  // parked lanes and unreviewed runs show in Lanes, model advice on Spend, a lane's plan goes ahead inside its lane (no proposal card).
-  // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
-  const RESOLVED_MAX = 20;   // INBOX-REPLIES: the Resolved view's newest answered / applied Qs per project
-  const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
+  // The Inbox holds only what the owner must answer (a resolved Q is for information); its one count is terms.mjs needsYou, so Overview,
+  // Inbox, Home and the project picker agree. A failing Inbox fails the route: "nothing needs you" would hide the very thing broken.
+  const RESOLVED_MAX = 20;   // the Resolved view's newest answered / applied Qs per project
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
     // META-ADOPT A3: ONE needs-you row while a drafted setup has parts to review (not one per missing thing)
@@ -591,15 +589,13 @@ export function createDashboard(o) {
     return rows.map(l => { const g = pg.get(l.run), steps = laneSteps(l.name, items);
       return { ...l, ...(g ? { progress: g } : {}), card: cardOf({ ...l, stage: items[l.run]?.data?.stage, steps }, g) }; });
   }
-  // lane-outputs items 4, 8, 10c: what happens next on a lane whose last run ended, in words (laneout.mjs laneNow: needs your input /
+  // what happens next on a lane whose last run ended, in words (laneout.mjs laneNow: needs your input /
   // PR awaiting approval / shipped / stages on the roadmap / not queued / ended without a result), the run's own last summary line and
   // the background work its CLI cut off. Read on fs.promises first (the last runs' NOTES, the planner folders; a no-result lane's folder)
-  const R0 = { items: {} };
   async function withNow(p, rows) {
     const items = st(p).items, last = new Map(rows.map(l => [l.name, lastRun(l.name, items)]));
     await Promise.all([primeProposals(items), prime({ files: [...last.values()].filter(r => r && outcomeOf(r) && r.data.notes).map(r => r.data.notes) })]);
-    let R = R0; try { R = loadRoadmap(p.state); } catch { R = R0; }
-    const props = proposalsOf(items, R, { all: true }), dl = deliverablesOf(p).rows || [];
+    const R = loadRoadmap(p.state), props = proposalsOf(items, R, { all: true }), dl = deliverablesOf(p).rows || [];
     return Promise.all(rows.map(async l => {
       const r = last.get(l.name), o = outcomeOf(r);
       if (!o || l.shipped) return l;   // LANE-TRUTH: a shipped row says shipped once (its now line); no second 'shipped' chip or stale next step
@@ -619,8 +615,7 @@ export function createDashboard(o) {
     const dir = notesDirOf(p.state, lane, items), runs = laneRuns(lane, items), r = lastRun(lane, items);
     const notesFile = [path.join(dir, 'NOTES.md'), r?.data.notes].filter(Boolean);
     await Promise.all([primeProposals(items), prime({ files: notesFile })]);
-    let R = R0; try { R = loadRoadmap(p.state); } catch { R = R0; }
-    const files = await walkOutputs(dir), dl = deliverablesOf(p).rows || [], prop = proposalsOf(items, R, { all: true }).find(x => x.lane === lane) ?? null;
+    const R = loadRoadmap(p.state), files = await walkOutputs(dir), dl = deliverablesOf(p).rows || [], prop = proposalsOf(items, R, { all: true }).find(x => x.lane === lane) ?? null;
     const notes = notesFile.map(readText).find(t => t !== null) ?? null;
     const written = r && ['no-result', 'crash', 'lost', 'killed'].includes(outcomeOf(r)) ? files.filter(f => Date.parse(f.mtime) >= Date.parse(r.created) - 60e3) : [];
     return { project: p.name, lane, dir: dir.split(path.sep).join('/'), findings: ownerSummary(notes), outputs: groupOutputs(files, runs), plan: lanePlan(prop, { items, R, rows: dl }),
@@ -1617,10 +1612,10 @@ data: ${JSON.stringify(l)}
     const prof = loadProfiles().profiles.find(x => x.default), starter = prof ? profileBudget(prof, { found: profileFor(p, s).found }) : {};
     return REQUIRED_CAPS.some(k => Number.isFinite(s.budget[k]) && s.budget[k] !== starter[k]) ? 'budget' : null;
   }
-  /** the setup gaps of one project (SPEC sec. 5 empty states): rules, caps chosen, the merge gate, the roadmap */
+  /** the setup gaps of one project: rules, caps chosen, the merge gate, the roadmap (a corrupt one throws: it is no "empty roadmap") */
   function setupOf(p) {
     const items = Object.values(st(p).items), facts = factsKnown(p), s = settingsState(p), view = withDefaults(s.view);
-    let roadmap = 0; try { roadmap = Object.values(loadRoadmap(p.state).items).filter(i => i.state === 'open').length; } catch { /* no roadmap */ }
+    const roadmap = Object.values(loadRoadmap(p.state).items).filter(i => i.state === 'open').length;
     const agentFiles = agentFilesIn(p), rulesFrom = [...((p.rules_read_whole || []).length || existsS(rulesFile(p)) ? [RULES_FILE] : []), ...agentFiles];
     const caps = capsChosen(p, s, items);
     return { project: p.name, rules: rulesFrom.length > 0, rules_from: rulesFrom, caps_chosen: !!caps, caps_from: caps, gate: p.merge?.gate?.cmd ?? null,
@@ -2092,7 +2087,7 @@ data: ${JSON.stringify(l)}
         if (route === '/norn/assets.json') { const has = await Promise.all(ART_FILES.map(f => existsA(path.join(ART, f)))); return send(200, { present: ART_FILES.filter((f, i) => has[i]).map(f => f.replace(/\.png$/, '')) }); }
         const am = route.match(/^\/norn\/art\/([a-z0-9-]+\.png)$/);   // the owner's art pick, by the asset map's file names only
         if (am && ART_FILES.includes(am[1]) && await existsA(path.join(ART, am[1]))) return send(200, await fs.promises.readFile(path.join(ART, am[1])), 'image/png');
-        if (route === '/api/projects') { await reloadProjectsA(); const needs = await Promise.all(projects.map(needsOf)); return send(200, { projects: projects.map((p, i) => ({ name: p.name, title: p.title ?? p.name, needs: needs[i] })) }); }   // needs: the Home's pick order
+        if (route === '/api/projects') { await reloadProjectsA(); const needs = await Promise.all(projects.map(async p => needsYou(await inbox(p)))); return send(200, { projects: projects.map((p, i) => ({ name: p.name, title: p.title ?? p.name, needs: needs[i] })) }); }   // needs: the Home's pick order
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
