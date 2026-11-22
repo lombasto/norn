@@ -2602,8 +2602,7 @@ function roadCmd(argv, env, out, err) {
         title ||= String(d.data.text).replace(/\s+/g, ' ').trim().slice(0, 120);
         if (!links.includes('dir:' + flags.from)) links.unshift('dir:' + flags.from);
       }
-      const parent = flags.theme;
-      const data = { title, kind: flags.kind || 'item', ...(parent ? { parent } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}),
+      const data = { title, kind: flags.kind || 'item', ...(flags.theme ? { parent: flags.theme } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}),
         ...(flags.horizon ? { horizon: none(flags.horizon) } : {}), ...(flags.note ? { note: flags.note } : {}), links, ...(flags.stages ? { stages: stages(flags.stages) } : {}) };
       checkLinks(state, links, { project: P });
       out(put('create', undefined, data).id);
@@ -2636,8 +2635,7 @@ function roadCmd(argv, env, out, err) {
         put('edit', id, data);
       }
       if (sub === 'move') {
-        const parent = flags.theme;
-        put('move', id, { ...(parent ? { parent } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}), ...(flags.ref ? { ref: flags.ref } : {}) });
+        put('move', id, { ...(flags.theme ? { parent: flags.theme } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}), ...(flags.ref ? { ref: flags.ref } : {}) });
       }
       if (sub === 'drop') { if (flags.ref) checkLinks(state, refTerm(flags.ref), { project: P }); put('drop', id, { why: flags.why, ...(flags.ref ? { ref: flags.ref } : {}) }); }
       if (sub === 'reopen') put('reopen', id, { why: flags.why });
