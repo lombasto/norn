@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "pattern",
   "title": "a new compatibility shim, by its words",
-  "how": "phrases (not single words) that describe keeping an old form alive, in comments and strings: old name, keeps resolving, still accepted, for old links, folds into, falls back to. CLAUDE.md: change every caller and delete the old form",
   "explain": {
     "what": "A comment or a string uses words that describe keeping an old form alive: old name, still accepted, falls back to, for old links.",
     "why": "A compatibility shim keeps old behaviour working after a rename. It is tech debt: two ways stay alive, and nobody knows when the old one may go (CLAUDE.md, No compatibility shims).",

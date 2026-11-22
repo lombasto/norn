@@ -5,7 +5,6 @@
   "kind": "model",
   "title": "a header comment, usage string or doc that still describes the old behaviour",
   "question": "Does a changed function's header comment, usage string or doc paragraph still describe the old behaviour?",
-  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
   "explain": {
     "what": "A model read the diff and found a header comment, usage string or doc that still describes the old behaviour.",
     "why": "A stale description misleads the next reader, human or agent, who trusts it over the code.",

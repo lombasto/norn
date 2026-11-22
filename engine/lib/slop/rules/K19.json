@@ -4,7 +4,6 @@
   "kind": "ast",
   "tool": "eslint",
   "title": "a new catch that drops the error and returns a default",
-  "how": "a catch whose body is one return, one continue or one assignment and does not read the error; passes when its comment says what failed and what happens next (K2's reason test and deny list)",
   "explain": {
     "what": "A new catch block drops the error and only returns a default, continues or sets a value.",
     "why": "The caller cannot tell a real result from a failure. The fault shows up later, far from its cause.",

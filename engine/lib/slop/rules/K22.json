@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "pattern",
   "title": "a new deferral with no open record id",
-  "how": "a deferral phrase (for now, stop-gap, interim, temporarily, remove once / when / after, in a later stage, comes later, not yet built, until then, slice / stage B-Z) in a comment or a string must cite a record id (RM- DEC- DIR- Q-) that resolves to an open item; quoted text is not read",
   "explain": {
     "what": "A comment or a string defers work (for now, interim, stop-gap, remove once, in a later stage) and cites no open record.",
     "why": "A deferral with no record is forgotten. The temporary code becomes permanent.",

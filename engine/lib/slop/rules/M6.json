@@ -5,7 +5,6 @@
   "kind": "model",
   "title": "a new number the owner would tune, or one idea under two names",
   "question": "Is a new number a limit or timeout the owner would tune (a setting), or one idea written twice under two names?",
-  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
   "explain": {
     "what": "A model read the diff and found a new number the owner would tune, or one idea written under two names.",
     "why": "A buried limit cannot be tuned without a code change; two names for one idea drift apart.",

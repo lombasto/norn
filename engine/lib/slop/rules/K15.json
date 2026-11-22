@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "junk",
   "title": "new junk in the tree: merge leftovers, stray logs, a binary over 1 MB",
-  "how": "paths the diff adds (git diff --name-status -M): a name matching patterns, or a binary blob over max_bytes; allow = the legitimate ones (test fixtures)",
   "explain": {
     "what": "The branch adds junk: a merge left-over (.orig, .rej), a backup (.bak, ~), a log file, or a binary over 1 MB.",
     "why": "Junk files are noise in every checkout and clone, and a big binary stays in the git history for good, even after it is deleted.",

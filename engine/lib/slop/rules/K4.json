@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "exports",
   "title": "a new export nobody uses",
-  "how": "each new exported declaration of a touched file under roots that its own file does not use: referenced by whole word nowhere else under search -> BLOCK; only by tests -> tests_level. A name loaded by path (a CLI entry, an HTML page) goes in entry",
   "explain": {
     "what": "The branch adds an export that no other file uses.",
     "why": "An export promises that other code needs this name. An unused one is dead code that every reader must still check, and it often means a change was left half done.",

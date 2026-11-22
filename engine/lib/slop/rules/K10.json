@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "imports",
   "title": "a layer rule broken, or a new import cycle",
-  "how": "static import / export-from specifiers of the JS files under roots, resolved relative to the file: a forbidden edge, or a cycle (a strongly connected group) the base did not have",
   "explain": {
     "what": "An import crosses a layer boundary (engine/lib may not import engine/dash or engine/bin), or the branch adds a new import cycle.",
     "why": "The layers keep the core library usable without the dashboard or the CLI. A cycle makes the load order fragile and the modules impossible to change one at a time.",

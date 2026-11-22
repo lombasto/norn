@@ -5,7 +5,6 @@
   "kind": "model",
   "title": "a compatibility shim kept alive",
   "question": "Is a compatibility shim kept alive: an alias or redirect map, a fallback to an old format, a label that no longer matches its id, a deprecated option still accepted, code kept for old links?",
-  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
   "explain": {
     "what": "A model read the diff and found a compatibility shim kept alive: an alias, a fallback to an old format, a stale label or a deprecated option.",
     "why": "A shim keeps two ways to do one thing; every later change must keep both working, and the old way never goes away.",
