@@ -164,7 +164,7 @@ function nativePlatform(machine) {
   return {
     tick: async p => { const c = spawn(process.execPath, [META_CLI, 'tick', '--reason', 'dashboard', '--project', p.file], { detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); return { pid: c.pid }; },
     setInterval: async m => ({ ok: false, error: `scheduler not changed: run "norn sched install" for ${m} min` }),
-    // META-ADOPT A3: Rehearse first (free) = the lane's brief on the fake executor, detached (its run shows on Agents / Lanes)
+    // Rehearse first (free): the lane's brief on the fake executor, detached (its run shows on Runs / Lanes)
     rehearse: async (p, lane, brief) => { const c = spawn(process.execPath, [META_CLI, 'run', '--executor', 'fake', '--lane', lane, '--brief', brief, '--project', p.file, '--state', p.state], { detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); return { pid: c.pid }; },
   };
 }
@@ -172,7 +172,7 @@ function nativePlatform(machine) {
 /**
  * o: { projects [loadProject objects], machine (loadMachine object), budgetFile (machine local/budget.json), platform?, quietFile?,
  *      projectsDir?, codexDir?, liveUsage?, metaRoot?, env?, registered? }
- * META-ADOPT A3: with metaRoot the dashboard may start with ZERO projects (Add a project is the first screen) and, unless registered
+ * With metaRoot the dashboard may start with ZERO projects (Add a project is the first screen) and, unless registered
  * is false (explicit --project files), re-reads the registered list from machine.json when it changes.
  */
 export function createDashboard(o) {
@@ -780,7 +780,7 @@ export function createDashboard(o) {
     }
     return c.val ? { ...c.val, pending: false } : { project: p.name, pending: true };
   }
-  // META-ROADMAP S2 (SPEC sec. 3 "Live"): the roadmap tree = `norn road show --json` in a child process (its derive asks git; git
+  // The roadmap tree = `norn road show --json` in a child process (its derive asks git; git
   // never blocks a poll), cached on the records files' mtime + size. A changed roadmap file (an item append) = a new build that the
   // request AWAITS, so the fetch a `rec` event triggers already shows the append. A change to the other record files only (runs,
   // records: they churn while workers run) serves the last tree at once and rebuilds behind it (dash-latency: the child takes 3 s
@@ -932,7 +932,7 @@ export function createDashboard(o) {
   // cost per lane (META-OPS-R1 #7): the roll-up of engine/lib/cost.mjs, cached one UI tick; ended runs memoized (never re-read),
   // running transcripts / rollouts tailed from their last byte offset; the fold is the cached one (re-read on a records change)
   const costTail = new Map(), costMemo = new Map(), costViews = new Map(), weekMemo = new Map(), USAGE_TICK_MS = 15000;
-  // account usage (META-OPS-R3): the Claude transcripts root scanned by a background worker (account-refresh.mjs) into a
+  // account usage: the Claude transcripts root scanned by a background worker (account-refresh.mjs) into a
   // state-dir cache file and hands back its window entries; a view only sums those (never scans or parses the cache inline) and
   // starts a refresh when they are older than ACCOUNT_REFRESH_MS. The first scan reads the whole root (minutes); later ones
   // only the changed files' appended bytes. Until the first refresh of this dash process lands: account n/a (refreshing).
@@ -963,7 +963,7 @@ export function createDashboard(o) {
     return classCost([{ project: p.name, items: runsOf(stCached(p)), dlvs: dlvFacts(p), policy: { executors: pol.executors, critical_lanes: pol.critical_lanes } }],
       { now, since: since ?? now - 7 * 86400000, projectsDir, codexDir, cache: costTail, memo: costMemo });
   }
-  // META-TEND P4: the open advice of a project = advise() over its class table and its effective settings; a decided card (a decision
+  // the open advice of a project = advise() over its class table and its effective settings; a decided card (a decision
   // with data.advice = its key) is hidden. Cached per project for the Inbox (ADVICE_TTL_MS); the last count goes to <state>/advice.json
   // for the digest line. Never writes a policy: POST /api/advice does, on a tap.
   const adviceMemo = new Map(), ADVICE_TTL_MS = 300000;
@@ -1240,7 +1240,7 @@ export function createDashboard(o) {
   const lockFreshA = p => fs.promises.stat(path.join(p.state, 'tick.lock')).then(s => Date.now() - s.mtimeMs < LOCK_STALE_MIN * 60000, () => false);
   function lockFresh(p) { const x = statS(path.join(p.state, 'tick.lock')); return !!x && Date.now() - x.mtimeMs < LOCK_STALE_MIN * 60000; }
 
-  // ---------- live feed (LANE-MAP-DESIGN 2-3): SSE per run through the run's harness adapter feed() ----------
+  // ---------- live feed: SSE per run through the run's harness adapter feed() ----------
   const FEED_MAX = 4, feeds = createFeeds({ pollMs: o.feedPollMs ?? 2000, lingerMs: o.feedLingerMs ?? 10000, max: FEED_MAX });
   const commits = new Map();   // worktree -> git log -1 (read-only, cached 30 s, async: never blocks a poll)
   function lastCommit(wt) {
@@ -1299,7 +1299,7 @@ export function createDashboard(o) {
     if (!(await feeds.join(`${p.name}/${id}`, () => feedSource(p, id, adapter), res, from, { full: url.searchParams.get('full') === '1' }))) throw fail(429, `Too many live feeds: close one first (max ${FEED_MAX})`);
   }
 
-  // ---------- state stream (META-VISUAL-B S1, the #4 push channel): record appends + flags, replaces the 15 s refetch ----------
+  // ---------- state stream: record appends + flags pushed to the page, so it never polls ----------
   const STREAM_MAX = 16, streams = createStreams({ pollMs: o.streamPollMs ?? 1000, pulseMs: o.streamPulseMs ?? 15000, deriveMs: o.deliverablesTtlMs ?? 60000, lingerMs: o.streamLingerMs ?? 10000, max: STREAM_MAX });
   const RECORD_FILES = [...new Set(Object.values(KINDS).map(k => k.file || 'records'))];
   // META-DASH-ASYNC R1: the hub polls on its own timers, which inherit the opening request's snapshot (AsyncLocalStorage) - each call
@@ -1322,17 +1322,15 @@ export function createDashboard(o) {
     if (!(await streams.join(ps.map(p => p.name).join('|'), ps.map(streamSource), res, from))) throw fail(429, `Too many dashboard tabs open (max ${STREAM_MAX})`);
   }
 
-  // ---------- chat ----------
+  // ---------- the controller chat: one thread per project (engine/lib/chat.mjs); the process is started by the first message and
+  // stopped when idle. Harness, model, effort, idle minutes, raw shell and the hand-off thresholds (policy.context.controller) are
+  // the Settings rows, read LIVE by the chat (chatConfig): a Settings save needs no dashboard restart.
   function chatModel(p) {
     const b = policyOf(p);
     if (!MODELS.includes(b.checkin_model) || !EFFORTS.includes(b.checkin_effort)) throw fail(400, 'Invalid check-in model or effort in the machine budget');
     if (b.chat_executor !== 'claude') throw fail(400, `chat_executor ${b.chat_executor} is not wired yet (only claude; H5) - set it back to claude`);
     return b;
   }
-
-  // ---------- META-CONTROLLER C1: the controller chat - one thread per project (engine/lib/chat.mjs); the process is started by the
-  // first message and stopped when idle. C5: harness, model, effort, idle minutes, raw shell and the hand-off thresholds
-  // (policy.context.controller) are the Settings rows, read LIVE by the chat (chatConfig) - a Settings save needs no dashboard restart.
   const chats = new Map(), chatStreams = new Set();
   function chatConfig(p) {
     const b = chatModel(p), model = b.chat_model || b.checkin_model, effort = b.chat_effort || b.checkin_effort;
@@ -1340,7 +1338,7 @@ export function createDashboard(o) {
     return { executor: b.chat_executor, exe: machine.claude?.exe ?? 'claude', model, effort,
       idleMs: o.chatIdleMs ?? (Number.isInteger(b.chat_idle_min) && b.chat_idle_min > 0 ? b.chat_idle_min * 60000 : undefined),
       rawShell: ['off', 'ask', 'on'].includes(b.chat_raw_shell) ? b.chat_raw_shell : 'off', context: { ...CONTEXT_DEFAULT, ...(b.policy?.context?.controller || {}) },
-      // META-CHAT-CONTROLS R1: what the picker / /model / /effort may choose (the Settings rows' own lists), the usage estimate for /cost
+      // what the picker / /model / /effort may choose (the Settings rows' own lists), the usage estimate for /cost
       choices: { models: MODELS, efforts: EFFORTS, alias: { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5' } }, perPct: b.cacheR_per_pct || null };
   }
   function chatOf(p) {
