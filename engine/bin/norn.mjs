@@ -2342,7 +2342,7 @@ function collideCmd(argv, env, out, err) {
     if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
     if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
     const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
-    const g = gatherIntents({ state, repo: P.root, main: cfg.main, remote: cfg.remote, now, home }), ctx = { tracked: g.tracked, items: loadRoadmap(state).items };
+    const g = gatherIntents({ state, repo: P.root, main: cfg.main, remote: cfg.remote, now, home }), ctx = { policy: P.policy?.collide, tracked: g.tracked, items: loadRoadmap(state).items };
     const note = x => (x.role === 'work' && x.scope === null ? [`note: ${UNREADABLE.replace(':', ` (${x.scope_why}):`)}`] : []);
     if (flags.lane) {
       const me = briefIntent({ lane: flags.lane, brief: flags.brief, item: flags.item, stage: flags.stage, role: flags.role, now, home }, g, { repo: P.root });
@@ -2358,7 +2358,7 @@ function collideCmd(argv, env, out, err) {
     const pairs = g.intents.flatMap(x => collisions(x, g.intents, ctx).filter(h => { const o = g.intents.find(y => y.lane === h.other); return ahead(o, x) || (!ahead(x, o) && x.lane > o.lane); }).map(h => ({ lane: x.lane, ...h, me: x })));
     const openDlvRuns = new Set(Object.values(g.dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state)).flatMap(x => (x.history || []).map(e => e.data?.run).filter(Boolean)));
     const hbAge = id => { try { return now - fs.statSync(hbPath(state, id)).mtimeMs; } catch { return null; } };
-    const stale = staleCaveats(ctx.items, { runs: g.runs, hbAge, openDlvRuns, staleMs: STALE_MS });
+    const stale = staleCaveats(ctx.items, { runs: g.runs, hbAge, openDlvRuns, staleMs: STALE_MS }, ctx.policy);
     const held = new Set(g.intents.flatMap(x => x.items)), free = itemsOf(buildTree({ stateDir: state, project: P, now })).filter(n => n.phase !== 'past' && !n.live?.length && !n.queued?.length && !held.has(n.id));
     if (flags.json) { out(JSON.stringify({ intents: g.intents, hits: pairs.map(({ me: _m, ...h }) => h), stale, free: free.map(n => ({ id: n.id, title: n.title })) }, null, 1)); return 0; }
     const by = s => g.intents.filter(x => x.state === s).length, counts = ['running', 'queued', 'unlanded'].map(s => by(s) && `${by(s)} ${s}`).filter(Boolean);

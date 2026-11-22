@@ -125,7 +125,7 @@ export function collisions(me, others, ctx = {}) {
   const loud = (key, o) => { const v = P.kinds[key] ?? 'warn'; return (v === 'hold' || v === 'refuse') && !ahead(o, me) ? 'warn' : v; };
   for (const o of others) {
     if (!o || o.lane === me.lane) continue;
-    const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, other: o.lane, pick: recommend(h, me, o) }); };
+    const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, other: o.lane, pick: recommend(h, me, o, ctx.policy) }); };
     const items = exempt.item(me) || exempt.item(o) || me.part_of === o.lane || o.part_of === me.lane ? [] : (me.items || []).filter(i => (o.items || []).includes(i));
     if (items.length) add({ kind: 'item', grade: null, verdict: loud('item', o), items, why: `${items.join(' ')}: lane ${o.lane} holds it (${held(o)}); this run is not a declared part` });
     const t = territory(me, o, P, ctx.tracked, ctx.conflicts);
