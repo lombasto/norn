@@ -101,25 +101,22 @@ function readJson(file) {
   return { label, obj };
 }
 
-/** The project with its preset-based executors expanded (presets.mjs); an unknown preset is a ConfigError. */
-export function withPresets(obj, label = 'project.json') {
-  try { return expandPresets(obj); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
-}
-
-export function checkProject(obj, label = 'project.json') {
-  obj = withPresets(obj, label);
+/** The project checked, with its preset-based executors expanded (presets.mjs) -> the expanded project; any problem is a ConfigError. */
+export function checkProject(raw, label = 'project.json') {
+  let obj;
+  try { obj = expandPresets(raw); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
   const errs = validate(PROJECT_SCHEMA, obj);
   if (errs.length) throw new ConfigError(`${label}: ${errs.join('; ')}`);
   for (const k of Object.keys(obj.vars || {})) if (BUILTINS.includes(k)) throw new ConfigError(`${label}: vars.${k} shadows a builtin`);
   const pe = providerProblems(obj);
   if (pe.length) throw new ConfigError(`${label}: ${pe.join('; ')}`);
   try { normSubdir(obj.subdir); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
+  return obj;
 }
 
 export function loadProject(file, { home = homeDir(), meta = metaRoot() } = {}) {
   const { label, obj: raw } = readJson(file);
-  const obj = withPresets(raw, label);
-  checkProject(obj, label);
+  const obj = checkProject(raw, label);
   const vars = { ...obj.vars, home: fwd(home), norn: fwd(meta), name: obj.name, root: obj.root, state: '${norn}/state/${name}', project_dir: fwd(path.dirname(path.resolve(file))) };
   if (!Object.hasOwn(vars, 'dev')) vars.dev = get => get('root').replace(/\/+$/, '').replace(/\/[^/]*$/, '');
   const exp = resolver(vars, LATE);
