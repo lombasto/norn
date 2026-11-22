@@ -8,10 +8,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { suiteEnv } from '../engine/lib/cisuite.mjs';
-import { procsNaming, leakText, orphanHolds } from '../engine/lib/testprocs.mjs';
+import { procsNaming, leakText } from '../engine/lib/testprocs.mjs';
 import { killTree } from '../engine/lib/runs.mjs';
 import { listProcs } from '../engine/lib/strays.mjs';
-import { mkTmp } from './helpers/tmp.mjs';
+import { mkTmp, orphanHolds } from './helpers/tmp.mjs';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempEnv = dir => ({ ...suiteEnv(process.env), TEMP: dir, TMP: dir, TMPDIR: dir });
