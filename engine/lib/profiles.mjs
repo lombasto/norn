@@ -6,8 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WORK_CLASSES, BASIC_KEYS } from './policy.mjs';
-export { BASIC_KEYS };
+import { WORK_CLASSES } from './policy.mjs';
 import { raiseToFloor } from './floor.mjs';
 
 export const PROFILES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets', 'profiles');

@@ -199,8 +199,6 @@ export const CONTEXT_DEFAULT = { ...POLICY_DEFAULTS.context.controller };   // 9
 const SETTLE_MS = 15000;   // quiet time after a turn's result before a still-owed message count is dropped (it was folded into that turn)
 const HANDOFF_MS = 10 * 60000;   // a hand-off turn that has not ended by then is cut: the forced hand-off takes over
 const TURNS_CARRIED = 10, TURN_CLIP = 2000;
-// the fixed hand-off turn ({ctx} / {limit} filled in): ONE copy with the run orders (ctxlimit.mjs, META-CTX-ENFORCE R1)
-export { HANDOFF_PROMPT };
 /** the "- x" lines under "## Open threads" ("- none" is none) */
 export function openThreads(md) {
   const out = [];
