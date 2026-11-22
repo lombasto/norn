@@ -241,18 +241,13 @@ export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {})
 }
 
 // ---------- the Tests tab (TESTS-RUNTIME, test-diet S1): a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
-// The governance machinery (the test-governance lane, DIR-23 a-g) writes these beside the measure; until a file exists its view says
-// "not measured yet", never a number. Ids are timesTable's (file::group::name).
-//   costs.json    { at, cpu_pct (the machine's CPU % while measured), tests: { id: { cpu_s, peak_mb, children: { browser, server, git, other }, alone_ms, load_ms } } }
-//   health.json   { at, days, tests: { id: { fails, reruns, load_only, hangs } }, quarantine: { id: { by, until, why, q } } }
-//   tiers.json    { at, tests: { id: { tier: worker | pr | post-batch | nightly, verdict: keep | move | merge | delete | rewrite, evidence, q } } }
-//   history.jsonl rows may carry cpu_min (the suite's CPU-minutes for that measure)
+// A source that does not exist yet says "not measured yet", never a number. history.jsonl rows may carry cpu_min (the suite's
+// CPU-minutes for that measure).
 // An alert the machinery raises is an open Inbox question with data.area 'tests' (the server lists them: the tab links, never copies).
-const GOV = ['costs.json', 'health.json', 'tiers.json'];
 const read = (state, f) => readJson(path.join(state, 'tests', f));
 /** META-DASH-ASYNC R1: the files the summary + a part read, for the dash to prime on fs.promises */
 export const testsFiles = (state, sub = null) => [...['history.jsonl', 'git-history.json', TIMES_FILE, 'advisories.json'],
-  ...(sub === 'costs' ? [...GOV, 'candidates.json', 'mutation.json'] : sub === 'impact' ? [IMPACT_FILE] : sub === 'suite' ? ['waves.jsonl'] : sub === 'runtime' ? [] : ['mutation.json', 'candidates.json', 'waves.jsonl'])]
+  ...(sub === 'costs' ? ['candidates.json', 'mutation.json'] : sub === 'impact' ? [IMPACT_FILE] : sub === 'suite' ? ['waves.jsonl'] : sub === 'runtime' ? [] : ['mutation.json', 'candidates.json', 'waves.jsonl'])]
   .map(f => path.join(state, 'tests', f));
 /** which suite the project folder holds ('node:test' | 'pytest' | false = neither; null = no project folder), off the sync path */
 export const suiteOf = project => (project?.root ? fs.promises.access(path.join(projectHome(project), 'tests')).then(() => suiteKind(projectHome(project)) ?? false, () => false) : Promise.resolve(null));
@@ -270,20 +265,11 @@ const cap = (list, limit) => ({ rows: list.slice(0, limit), n: list.length });
  * files), merges: the merge queue's batches (costs: per merge gate time + what it ran) }. Run time is the server's (runtimePart: run records + transcripts)
  */
 export function testsPart(state, name, { limit = 40, picked = null, merges = [] } = {}) {
-  const t = read(state, TIMES_FILE);
   if (name === 'suite') {   // + the charts over time (suite CPU-minutes per full run, the last lean-tests wave)
-    const over = { cpu: readLines(path.join(state, 'tests', 'history.jsonl')).filter(r => typeof r.cpu_min === 'number').map(r => ({ at: r.at, cpu_min: r.cpu_min })), wave: readLines(path.join(state, 'tests', 'waves.jsonl')).at(-1) ?? null };
+    const t = read(state, TIMES_FILE), over = { cpu: readLines(path.join(state, 'tests', 'history.jsonl')).filter(r => typeof r.cpu_min === 'number').map(r => ({ at: r.at, cpu_min: r.cpu_min })), wave: readLines(path.join(state, 'tests', 'waves.jsonl')).at(-1) ?? null };
     return t ? { breakdown: breakdown(t), tests: cap(slowestTests(t), limit), ...over } : { breakdown: null, tests: { rows: [], n: 0 }, ...over };
   }
-  if (name === 'costs') {
-    const [costs, health, tiers] = GOV.map(f => read(state, f));
-    const cost = id => costs?.tests?.[id] ?? null, hl = id => health?.tests?.[id] ?? null, q = id => health?.quarantine?.[id] ?? null, tr = id => tiers?.tests?.[id] ?? null;
-    const rows = (t?.tests ?? []).map(x => ({ id: x.id, file: x.file, name: x.name, line: x.line, ms: x.ms, cost: cost(x.id), health: hl(x.id), quarantine: q(x.id), tier: tr(x.id) }))
-      .sort((a, b) => (b.cost?.cpu_s ?? 0) - (a.cost?.cpu_s ?? 0) || (b.health?.fails ?? 0) - (a.health?.fails ?? 0) || b.ms - a.ms);
-    const mx = read(state, 'mutation.json');
-    return { sources: { costs: costs ? { at: costs.at, cpu_pct: costs.cpu_pct ?? null } : null, health: health ? { at: health.at, days: health.days ?? 7 } : null, tiers: tiers ? { at: tiers.at } : null },
-      rows: cap(rows, limit), merges, lean: read(state, 'candidates.json'), mutation: mx ? { files: mx.files, trials: mx.trials } : null };
-  }
+  if (name === 'costs') { const mx = read(state, 'mutation.json'); return { merges, lean: read(state, 'candidates.json'), mutation: mx ? { files: mx.files, trials: mx.trials } : null }; }
   if (name === 'impact') {
     const im = read(state, IMPACT_FILE);
     return { impact: im ? { at: im.at, sha: im.sha, suite: im.suite, sources: Object.keys(im.sources).sort() } : null, lanes: picked?.lanes ?? [],

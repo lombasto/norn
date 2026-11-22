@@ -150,7 +150,7 @@ export function renderTab(tab, d, ctx = {}) {
 //   Suite            - the runtime of every test from the last `norn tests measure` (node:test or pytest): when and by which run, where the
 //                      time goes per file and group (share of the suite total), every test slowest first with its one-line description;
 //                      a test's file opens in the code viewer drawer (index.html #srcview) at its line
-//   Costs and health - cost, health and tier per test, gate time per merge, the merge check, lean tests
+//   Costs and health - gate time per merge, the merge check, lean tests
 //   Impact           - which test files cover a source file, or a lane's changed files (`norn tests for`)
 //                      then over time: test cases / lines and suite time, suite CPU-minutes per full run, the last lean-tests wave
 //   Run time         - test-diet S1: per worker run of the last 24 h / 3 days its wall time, test time and share (norn speed), the
@@ -207,22 +207,6 @@ function testsSuite(d, ctx) {
   return now + testsOver(h, g, h.at(-1), g.at(-1)) + cpu + testsWave(d.wave, ctx);
 }
 // ---- Costs and health ----
-const kids = c => Object.entries(c?.children || {}).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(', ') || 'none';
-function testsPerTest(d) {
-  const s = d.sources || {}, have = ['costs', 'health', 'tiers'].filter(k => s[k]);
-  const head = `<h3>Per test: cost, health, tier <span class="mute small">${have.length ? `measured: ${have.join(', ')}` : ''}</span></h3>`;
-  if (!have.length) return `<div class="tablecard" id="tests-pertest">${head}${notYet('cost (CPU s, peak MB, child processes, alone vs under load), health (failures and reruns in 7 days, passes alone but fails under load, hangs, quarantine) and tier (worker / PR check / post-batch / nightly, with the hygiene verdict)', 'costs.json, health.json, tiers.json: the test-governance machinery writes them')}</div>`;
-  const li = r => {
-    const c = r.cost, h = r.health, q = r.quarantine, tr = r.tier;
-    return `<li data-test="${esc(r.id)}"><div><b>${esc(r.name)}</b> <span class="small mute">${sec(r.ms)}</span>${q ? ` ${chip('warn', 'quarantined')}` : ''}${tr?.tier ? ` ${chip('idle', tr.tier)}` : ''}${tr?.verdict ? ` ${chip(tr.verdict === 'keep' ? 'ok' : 'warn', tr.verdict)}` : ''}</div>
-      <div class="small">${s.costs ? (c ? `CPU ${fin(c.cpu_s) ? `${c.cpu_s.toFixed(1)} s` : '-'} · peak ${fin(c.peak_mb) ? `${int(c.peak_mb)} MB` : '-'} · children: ${esc(kids(c))} · alone ${sec(c.alone_ms)} / under load ${sec(c.load_ms)}` : '<span class="mute">cost: not in the last cost measure</span>') : ''}</div>
-      <div class="small">${s.health ? (h ? `${int(h.fails)} failures, ${int(h.reruns)} reruns in ${int(s.health.days)} days · ${int(h.load_only)} passed alone but failed under load · ${int(h.hangs)} hangs` : `<span class="mute">no failure in ${int(s.health.days)} days</span>`) : ''}${q ? ` · quarantined by ${esc(q.by)}${q.until ? ` until ${esc(String(q.until).slice(0, 10))}` : ''}${q.why ? `: ${esc(q.why)}` : ''}` : ''}</div>
-      ${tr?.evidence ? `<div class="small mute">${esc(tr.evidence)}</div>` : ''}<div class="small mute">${srcBtn(r.file, r.line)}${tr?.q || q?.q ? ` · <button class="lnk" data-tab="inbox">open the ruling ${esc(tr?.q || q.q)} in Inbox</button>` : ''}</div></li>`;
-  };
-  const miss = ['costs', 'health', 'tiers'].filter(k => !s[k]);
-  return `<div class="tablecard" id="tests-pertest">${head}${s.costs?.cpu_pct !== undefined && s.costs?.cpu_pct !== null ? `<p class="small mute" style="padding:0 12px">cost measured ${esc(String(s.costs.at ?? '').slice(0, 16))} with the machine at ${pct(s.costs.cpu_pct, 0)} CPU</p>` : ''}
-    ${miss.length ? notYet(miss.join(', '), `${miss.map(k => `${k}.json`).join(', ')}: the test-governance machinery writes them`) : ''}<ul class="tlist">${d.rows.rows.map(li).join('')}</ul>${subMore(d.rows.rows.length, d.rows.n)}</div>`;
-}
 const MQ = { merged: 'ok', green: 'ok', landed: 'ok', red: 'bad', 'main-red': 'bad', pinned: 'bad', flaky: 'warn', slop: 'warn', gating: 'running' };
 function testsMerges(d, ctx) {
   const head = '<h3>Per merge <span class="mute small">the merge queue\'s batches: gate time and what the gate ran</span></h3>', xs = d.merges || [];
@@ -250,7 +234,7 @@ function testsLean(d) {
     <p class="small mute" style="padding:0 12px">The evidence covers the trial's files only: a listed test may still guard other code - the wave gate re-measures coverage and mutants before a cut stands.</p></div>`;
   return `<div class="tablecard" id="tests-lean">${head}${mut}${lean ? nv + dp : ''}</div>`;
 }
-const testsCosts = (d, ctx) => testsPerTest(d) + testsMerges(d, ctx) + testsAdv(d) + testsLean(d);
+const testsCosts = (d, ctx) => testsMerges(d, ctx) + testsAdv(d) + testsLean(d);
 // ---- Impact ----
 function testsImpact(d) {
   const im = d.impact, p = d.picked;
