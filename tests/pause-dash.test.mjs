@@ -12,10 +12,10 @@ import { pauseAct } from '../engine/dash/cells.mjs';
 import { PAUSE_MODES } from '../engine/lib/pausemode.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
-test('pause routes: a named mode, a safe pause of one run, the pick of pause half, resume all; the overview and the rows say each', async () => {
+test('pause routes: a named mode, a safe pause of one run, the pick of pause half, resume all; the strip and the rows say each', async () => {
   const f = await fixture();
   try {
-    const S = f.pa.state, ov = async () => (await f.get('/api/overview?project=kestrel')).data;
+    const S = f.pa.state, ov = async () => (await f.get('/api/strip?project=kestrel')).data;
     const lane = async n => (await f.get('/api/lanes?project=kestrel')).data.lanes.find(l => l.name === n);
     assert.equal((await ov()).pause, null);
     assert.equal((await f.post('/api/pause', { project: 'kestrel', mode: 'nap' })).status >= 400, true, 'an unknown mode is refused');

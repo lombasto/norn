@@ -100,10 +100,10 @@ test('dashboard: ONE needs-you Inbox item with the fix; it leaves when hold.json
     assert.match(h[0].fix, /set Billing \(Settings\)/);
     const html = renderTab('inbox', { items }, { project: 'kestrel', now: Date.now() });
     assert.match(html, /all held/); assert.match(html, /Open Settings/); assert.match(html, /norn calib --pct N/);
-    const ov = (await f.get('/api/overview?project=kestrel')).data;
-    assert.ok(ov.needs.some(i => i.type === 'hold'), 'it counts as needs-you');
+    const needs = async () => (await f.get('/api/strip?project=kestrel')).data.needs_you, n0 = await needs();
     fs.unlinkSync(path.join(f.pa.state, 'hold.json'));
     assert.equal((await f.get('/api/inbox?project=kestrel')).data.items.filter(i => i.type === 'hold').length, 0);
+    assert.equal(await needs(), n0 - 1, 'it counted as needs-you');
   } finally { await f.done(); }
 });
 

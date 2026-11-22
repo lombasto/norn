@@ -81,7 +81,7 @@ test('zero projects: the dashboard starts, serves the page and lists none; scan 
   try {
     assert.deepEqual((await d.get('/api/projects')).projects, []);
     const page = await d.raw('/'); assert.equal(page.status, 200); assert.match(page.data, /<title>/);
-    const ov = await d.raw('/api/overview'); assert.equal(ov.status, 409, 'no project yet'); assert.match(ov.data.error, /Add a project/);
+    const sp = await d.raw('/api/strip'); assert.equal(sp.status, 409, 'no project yet'); assert.match(sp.data.error, /Add a project/);
     // the git repos found: with no project registered, the usual code folders of the home; none of them registered
     const repos = (await d.get('/api/adopt/repos')).repos;
     assert.ok(Array.isArray(repos));
@@ -136,7 +136,7 @@ test('draft, review and apply through the routes: role dashboard, a stale part s
     const ev = fs.readFileSync(path.join(stateOf(sb), 'adopt.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
     assert.ok(ev.every(e => e.by === 'dashboard'), 'every proposal event by dashboard');
     // ONE needs-you row while parts are undecided
-    const needs = (await d.get('/api/overview?project=tide')).needs.filter(n => n.type === 'setup');
+    const needs = (await d.get('/api/inbox?project=tide')).items.filter(n => n.type === 'setup');
     assert.equal(needs.length, 1); assert.equal(needs[0].id, 'ADP-1'); assert.match(needs[0].title, /^Review the draft setup \(6 parts\)$/);
     assert.equal((await d.get('/api/inbox?project=tide')).items.filter(n => n.type === 'setup').length, 1);
     const P = id => a.proposal.parts.find(p => p.id === id);
@@ -160,7 +160,7 @@ test('draft, review and apply through the routes: role dashboard, a stale part s
     const firstLine = P('first').lines[0];
     const after = await ok('first', { verdict: 'approve', pick: firstLine.id });
     assert.equal(after.proposal.undecided.length, 0, 'the reply carries the proposal');
-    assert.equal((await d.get('/api/overview?project=tide')).needs.filter(n => n.type === 'setup').length, 0, 'decided: no row (Apply is on the review page)');
+    assert.equal((await d.get('/api/inbox?project=tide')).items.filter(n => n.type === 'setup').length, 0, 'decided: no row (Apply is on the review page)');
     // apply
     const ap = await d.post('/api/adopt/apply', { project: 'tide' });
     assert.equal(ap.status, 200, JSON.stringify(ap.data)); assert.equal(ap.data.complete, true);
