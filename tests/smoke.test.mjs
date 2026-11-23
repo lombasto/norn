@@ -63,6 +63,17 @@ test('smoke sandboxEnv keeps the real RUSTUP_HOME / CARGO_HOME (env value, else 
   assert.deepEqual([set.RUSTUP_HOME, set.CARGO_HOME], ['R', 'C']);
 });
 
+// CI-45087248853 R2 (DEC-a-516): the smoke's auto-resume RUN-2 stayed queued behind the fill's resource gate on a busy runner ("CPU busy
+// 96 % > fill.max_cpu_pct 90", macOS "free RAM 3.9 GB < fill.min_free_gb 4"); the gate is not under the smoke's test, so the sandbox pins
+// an idle sample (the MAIL-98 pattern) over whatever the machine (or the caller's env) reports.
+test('smoke sandboxEnv pins an idle fill sample, so a busy machine never holds the smoke run queued', async () => {
+  const { sandboxEnv } = await import('../engine/lib/smoke.mjs');
+  const busy = sandboxEnv({ home: 'h', bin: 'b', cfg: 'c', root: 'm' }, { PATH: 'p', META_FILL_SAMPLE: '{"free_gb":1,"cpu_pct":99}' });
+  assert.deepEqual(JSON.parse(busy.META_FILL_SAMPLE), { free_gb: 64, cpu_pct: 0 });
+  const unset = sandboxEnv({ home: 'h', bin: 'b', cfg: 'c', root: 'm' }, { PATH: 'p' });
+  assert.deepEqual(JSON.parse(unset.META_FILL_SAMPLE || 'null'), { free_gb: 64, cpu_pct: 0 });
+});
+
 // META-SMOKE-CLONE R1: the clone takes only what smoke needs - a shallow pack transfer over file:// (only HEAD's objects, never
 // hardlinks, so B-1 still holds) instead of --no-hardlinks copying the whole, ever-growing object store.
 test('smoke cloneCommitted: shallow file:// clone (--depth 1, no --local / hardlinks) holding exactly one commit', async () => {
