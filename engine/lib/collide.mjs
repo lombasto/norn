@@ -12,6 +12,19 @@ import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { NID } from './records.mjs';
 
+// records.mjs validates a collision action's why at max 600 (`str(d.why, 'why', { max: 600 })`, no exported constant): a longer why
+// threw a RecordError and aborted the whole tick, so every why built here stays at or under this
+export const WHY_MAX = 600;
+/** a list as a reader needs it: the first items (at most n, at least one, within `room` chars), then "+N more" - two lists and the words
+ *  of a why fit under WHY_MAX */
+const few = (xs, n = 8, room = 200) => {
+  let k = 0, len = 0;
+  while (k < Math.min(n, xs.length) && (k === 0 || len + 1 + String(xs[k]).length <= room)) len += (k ? 1 : 0) + String(xs[k++]).length;
+  return k < xs.length ? `${xs.slice(0, k).join(' ')} +${xs.length - k} more` : xs.join(' ');
+};
+/** the last guard: a why longer than the record limit is cut (long single items) */
+const bound = s => (s.length > WHY_MAX ? `${s.slice(0, WHY_MAX - 3)}...` : s);
+
 // ---------- the claim overlap of two homes (moved from claims.mjs; its results are unchanged) ----------
 // no Scope: line = the whole repo (multi-home SPEC 5, DECIDED: the safe reading)
 export const scopeOf = c => [...(c.scope?.length ? c.scope : ['**']), ...(c.touched || [])];
@@ -25,7 +38,7 @@ export function overlapOf(a, b) {
   const sa = scopeOf(a), sb = scopeOf(b);
   return globsIntersect(sa, sb) ? { kind: 'scope', what: sb.filter(g => globsIntersect(sa, [g])) } : null;
 }
-export const whyOf = h => `${h.kind} overlaps ${h.home}/${h.lane}: ${h.what.join(' ')}${h.kind === 'scope' && h.noScope ? ' (brief has no Scope: line)' : ''}`;
+export const whyOf = h => bound(`${h.kind} overlaps ${h.home}/${h.lane}: ${few(h.what)}${h.kind === 'scope' && h.noScope ? ' (brief has no Scope: line)' : ''}`);
 export const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true, hit: h, why: whyOf(h) });
 
 // ---------- policy (S1b: policy.collide, POLICY_DEFAULTS in policy.mjs) ----------
@@ -72,20 +85,20 @@ function territory(me, o, P, tracked, conflicts) {
     const ex = uncommon(x.exclusive, P);
     if (!ex.length) continue;
     const met = files(y.touched, P).filter(f => inScope(f, ex)), scope = uncommon(y.scope, P).filter(g => globsIntersect(ex, [g]));
-    if (met.length || scope.length) return { grade: 'exclusive', files: met, by: x === me ? 'me' : 'other', why: `Exclusive: ${ex.join(' ')} of ${x === me ? 'this run' : `lane ${x.lane}`} meets ${x === me ? `lane ${y.lane}'s` : "this run's"} ${met.length ? `changed files ${met.slice(0, 8).join(' ')}` : `Scope ${scope.join(' ')}`}` };
+    if (met.length || scope.length) return { grade: 'exclusive', files: met, by: x === me ? 'me' : 'other', why: `Exclusive: ${few(ex, 4)} of ${x === me ? 'this run' : `lane ${x.lane}`} meets ${x === me ? `lane ${y.lane}'s` : "this run's"} ${met.length ? `changed files ${few(met)}` : `Scope ${few(scope, 4)}`}` };
   }
   const m = me.tip && o.tip ? conflicts?.[[me.tip, o.tip].sort().join(' ')] : null;
-  if (m?.conflict) return { grade: 'conflict', files: m.files, why: `merging lane ${o.lane}'s branch${o.branch ? ` ${o.branch}` : ''} with this one conflicts (git merge-tree): ${m.files.slice(0, 8).join(' ')}` };
+  if (m?.conflict) return { grade: 'conflict', files: m.files, why: `merging lane ${o.lane}'s branch${o.branch ? ` ${o.branch}` : ''} with this one conflicts (git merge-tree): ${few(m.files)}` };
   const mineT = new Set(files(me.touched, P)), same = files(o.touched, P).filter(f => mineT.has(f));
-  if (same.length) return { grade: 'same-files', files: same, why: `both change ${says(same.length, 'file')} (lane ${o.lane}: ${held(o)}): ${same.slice(0, 8).join(' ')}` };
+  if (same.length) return { grade: 'same-files', files: same, why: `both change ${says(same.length, 'file')} (lane ${o.lane}: ${held(o)}): ${few(same)}` };
   const cov = (x, y) => (x.scope?.length ? files(y.touched, P).filter(f => inScope(f, x.scope)) : []);
   const mine = cov(me, o), theirs = cov(o, me);
-  if (mine.length) return { grade: 'covers', files: mine, why: `Scope ${me.scope.join(' ')} covers ${says(mine.length, 'file')} lane ${o.lane} changes (${held(o)}): ${mine.slice(0, 8).join(' ')}` };
-  if (theirs.length) return { grade: 'covers', files: theirs, why: `lane ${o.lane}'s Scope ${o.scope.join(' ')} covers ${says(theirs.length, 'file')} this lane changes: ${theirs.slice(0, 8).join(' ')}` };
+  if (mine.length) return { grade: 'covers', files: mine, why: `Scope ${few(me.scope, 4)} covers ${says(mine.length, 'file')} lane ${o.lane} changes (${held(o)}): ${few(mine)}` };
+  if (theirs.length) return { grade: 'covers', files: theirs, why: `lane ${o.lane}'s Scope ${few(o.scope, 4)} covers ${says(theirs.length, 'file')} this lane changes: ${few(theirs)}` };
   if (!me.scope?.length || !o.scope?.length || !tracked) return null;
   const A = files(tracked, P).filter(f => inScope(f, me.scope)), B = new Set(files(tracked, P).filter(f => inScope(f, o.scope))), shared = A.filter(f => B.has(f));
   if (!shared.length || !(shared.length <= P.narrow_files || shared.length === A.length || shared.length === B.size)) return null;
-  return { grade: 'scopes', files: shared, why: `Scope ${me.scope.join(' ')} and lane ${o.lane}'s Scope ${o.scope.join(' ')} share ${says(shared.length, 'tracked file')}${shared.length === A.length || shared.length === B.size ? ' (one lies inside the other)' : ''}` };
+  return { grade: 'scopes', files: shared, why: `Scope ${few(me.scope, 4)} and lane ${o.lane}'s Scope ${few(o.scope, 4)} share ${says(shared.length, 'tracked file')}${shared.length === A.length || shared.length === B.size ? ' (one lies inside the other)' : ''}` };
 }
 
 /** the order grades of me against o: [{ grade, why, after }] */
@@ -125,9 +138,9 @@ export function collisions(me, others, ctx = {}) {
   const loud = (key, o) => { const v = P.kinds[key] ?? 'warn'; return (v === 'hold' || v === 'refuse') && !ahead(o, me) ? 'warn' : v; };
   for (const o of others) {
     if (!o || o.lane === me.lane) continue;
-    const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, other: o.lane, pick: recommend(h, me, o, ctx.policy) }); };
+    const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, why: bound(h.why), other: o.lane, pick: recommend(h, me, o, ctx.policy) }); };
     const items = exempt.item(me) || exempt.item(o) || me.part_of === o.lane || o.part_of === me.lane ? [] : (me.items || []).filter(i => (o.items || []).includes(i));
-    if (items.length) add({ kind: 'item', grade: null, verdict: loud('item', o), items, why: `${items.join(' ')}: lane ${o.lane} holds it (${held(o)}); this run is not a declared part` });
+    if (items.length) add({ kind: 'item', grade: null, verdict: loud('item', o), items, why: `${few(items)}: lane ${o.lane} holds it (${held(o)}); this run is not a declared part` });
     const t = territory(me, o, P, ctx.tracked, ctx.conflicts);
     if (t) { const h = { kind: 'territory', ...t, verdict: loud(t.grade === 'exclusive' ? 'exclusive' : 'territory', o) }, land = landWait(h, me, o, P, ctx.now ?? Date.now());
       add(land ? { ...h, verdict: 'hold', land } : h); }
