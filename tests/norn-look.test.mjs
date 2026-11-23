@@ -10,7 +10,7 @@ import { inflateSync } from 'node:zlib';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
 import { PALETTE } from '../engine/dash/norn/palette.mjs';
 import { HEX, artScale, glyphPixels, GLYPHS, RAMP } from '../engine/dash/norn/pixel.mjs';
-import { ASSETS, ART_FILES, TOKENS, EMPTIES, CHIP_TOKEN, PLACEHOLDER } from '../engine/dash/norn/assets.mjs';
+import { ASSETS, PLACEHOLDER } from '../engine/dash/norn/assets.mjs';
 import { createScheduler, motionAllowed } from '../engine/dash/norn/motion.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { dashCss } from './helpers/dash-css.mjs';
