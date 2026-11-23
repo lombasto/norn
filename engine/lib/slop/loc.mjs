@@ -2,7 +2,8 @@
 // (git grep -I -c), no new tool. Classes code / tests / docs / config; generated, vendored and fixtures are counted apart and
 // never in the totals. Per area (folder depth 2) and per language; one point per day along main's first-parent line; churn per
 // landing (git diff --numstat from its first parent) and the "big landing" flag (over BIG_LANDING changed code lines).
-import { gitRun, matchAny } from './check.mjs';
+import { gitRun, matchAny, blobs } from './check.mjs';
+import { testRegions } from './lang/rs.mjs';
 
 export const BIG_LANDING = 1500;
 export const CLASSES = ['code', 'tests', 'docs', 'config'];
@@ -28,15 +29,27 @@ export function countAt(repo, rev) {
   const out = gitRun(repo, ['grep', '-I', '-c', '-v', '-e', '^[[:space:]]*$', rev, '--'], { ok: [0, 1] });
   return out.split('\n').filter(Boolean).map(l => { const m = /^[^:]+:(.+):(\d+)$/.exec(l); return [m[1], Number(m[2])]; });
 }
+/** S3: the non-blank #[cfg(test)] lines of each Rust file at a revision -> Map(path -> n; Infinity: a `#[cfg(test)] mod x;` file, all tests) */
+function rustTests(repo, rev) {
+  const files = gitRun(repo, ['grep', '-l', '-F', '-e', '#[cfg(test)]', rev, '--', '*.rs'], { ok: [0, 1] }).split('\n').filter(Boolean).map(l => l.slice(rev.length + 1)), out = new Map();
+  if (!files.length) return out;
+  const tree = new Set(gitRun(repo, ['ls-tree', '-r', '--name-only', rev]).split('\n')), at = { has: f => tree.has(f) };
+  blobs(repo, files.map(f => `${rev}:./${f}`)).forEach((text, k) => {
+    const { lines, mods } = testRegions(files[k], text || '', at), all = (text || '').split('\n');
+    out.set(files[k], [...lines].filter(l => /\S/.test(all[l - 1] || '')).length);
+    for (const m of mods) out.set(m, Infinity);
+  });
+  return out;
+}
 /** one snapshot: { totals, apart, areas: { area: { class: n } }, languages: { lang: { class: n } } } */
 export function snapshot(repo, rev) {
-  const s = { totals: Object.fromEntries(CLASSES.map(c => [c, 0])), apart: Object.fromEntries(APART.map(c => [c, 0])), areas: {}, languages: {} };
+  const s = { totals: Object.fromEntries(CLASSES.map(c => [c, 0])), apart: Object.fromEntries(APART.map(c => [c, 0])), areas: {}, languages: {} }, rt = rustTests(repo, rev);
+  const put = (f, c, n) => { s.totals[c] += n; add(s.areas[areaOf(f)] ||= {}, c, n); add(s.languages[langOf(f)] ||= {}, c, n); };
   for (const [f, n] of countAt(repo, rev)) {
-    const c = classOf(f);
+    const c = classOf(f), t = c === 'code' ? Math.min(n, rt.get(f) || 0) : 0;
     if (APART.includes(c)) { s.apart[c] += n; continue; }
-    s.totals[c] += n;
-    add(s.areas[areaOf(f)] ||= {}, c, n);
-    add(s.languages[langOf(f)] ||= {}, c, n);
+    if (n - t) put(f, c, n - t);
+    if (t) put(f, 'tests', t);
   }
   return s;
 }

@@ -63,6 +63,13 @@ export function masked(text, want, file = '') {
   return out;
 }
 
+/** the TOML tables whose name passes keep (`tool.ruff`, `lints`), headers and bodies, joined; null = none */
+export function tomlTables(text, keep) {
+  let on = false; const out = [];
+  for (const l of text.split(/\r?\n/)) { const h = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(l); if (h) on = keep(h[1]); if (on) out.push(l); }
+  return out.length ? out.join('\n') : null;
+}
+
 /** K2's reason test: a comment explains when it has two words or more and does not start with a deny-list word */
 export function isReason(comment, deny) {
   const why = norm(comment).toLowerCase().replace(/^[\s*:.-]+|[\s.!]+$/g, '');
