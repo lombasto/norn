@@ -1,0 +1,17 @@
+/* The Tests page (pages/tests.mjs, SPEC dash-owner-1123 s.1): the case list, the file tables (testparts fileTable), the test detail drawer.
+   At 390 px a table row is a card (each cell says its label) and nothing scrolls sideways. */
+.tfold>summary{cursor:pointer;padding:8px 12px;list-style-position:inside}.tfold[open]>summary{border-bottom:1px solid var(--line)}
+.tbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 12px 8px}.tbar input{flex:1;min-width:0;max-width:360px}
+.ftable{width:100%;border-collapse:collapse;table-layout:auto}.ftable th,.ftable td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.ftable th{font-weight:600;font-size:12px;white-space:nowrap}.ftable .num{text-align:right;white-space:nowrap}.ftable tr[data-act]{cursor:pointer}.ftable tr[data-act]:hover,.ftable tr[data-act]:focus{background:var(--hover,rgba(127,127,127,.08));outline:none}
+.ftable th[aria-sort] button{font-weight:700;text-decoration:underline}.tname{overflow-wrap:anywhere}.tsole>summary{cursor:pointer}.tsole div{margin:2px 0}
+.tuncov{padding:4px 12px 10px}.tuncov>summary{cursor:pointer}.tsrcs{overflow-wrap:anywhere;line-height:1.8}
+.tcase.drawer{display:block;overflow:auto;overscroll-behavior:contain;min-width:0}.tcase .dh{display:flex;gap:8px;align-items:flex-start}.tcase .spacer{flex:1}.tcase h4{margin:12px 0 4px}
+.tclose{font-size:20px;line-height:1;padding:2px 8px}.tspark{letter-spacing:1px}
+@media (max-width:700px){
+  .ftable,.ftable tbody,.ftable tr,.ftable td{display:block;width:auto}.ftable thead{display:none}
+  .ftable tr{border:1px solid var(--line);border-radius:8px;margin:0 12px 8px;padding:6px 10px}
+  .ftable td{border:0;padding:2px 0;text-align:left}.ftable td.num{text-align:left;white-space:normal}
+  .ftable td:not(:first-child)::before{content:attr(data-label) " ";color:var(--mute,#888);font-size:12px}
+  .tcase.drawer{width:100vw;left:0;border-left:0}
+}

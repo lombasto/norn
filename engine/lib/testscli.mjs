@@ -1,6 +1,7 @@
-// `norn tests` - history | check | for | run. Code only, no model. Writes <state>/tests/ only: git-history.json (tests vs code per day
-//   over git: `history`, which the tick starts once a day) and advisories.json (`check`: the merge-time copy-paste advisory of the changed
-//   test files). `for` answers from impact.json. testsView + testsPart read them for the dash's Tests tab.
+// `norn tests` - history | check | for | index | run. Code only, no model. Writes <state>/tests/ only: git-history.json (tests vs code per day
+//   over git: `history`, which the tick starts once a day), advisories.json (`check`: the merge-time copy-paste advisory of the changed
+//   test files) and cases.json + impact.json + times.json (`index`, testindex.mjs: the tick starts it when impact.json is not at HEAD).
+//   `for` answers from impact.json. testsView + testsPart read them (and the machine's per-case log) for the dash's Tests tab.
 // `run`: a run's node tests, through the machine's result cache (testcache.mjs) under policy.tests (testpolicy.mjs).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,13 +10,15 @@ import { spawn, execFileSync } from 'node:child_process';
 import { advisory, crossings } from './advisory.mjs';
 import { subdirOf, inDir, projectHome } from './monorepo.mjs';
 import { suiteKind, testsFor, IMPACT_FILE } from './testtimes.mjs';
-import { repoIndex, runCached, cacheDir, prune } from './testcache.mjs';
+import { repoIndex, runCached, cacheDir, cacheDirOf, cacheLog, caseLog, casesFile, prune } from './testcache.mjs';
+import { buildIndex, writeIndex, median, CASES_FILE } from './testindex.mjs';
 import { testsPolicy, pickInRepo, policyWords, BROWSER_SKIP_ENV } from './testpolicy.mjs';
 
-export const TESTS_USAGE = 'usage: norn tests history [--points N] | check --base REF | for FILE... | run [FILE...] [--changed [--base REF]] [-- node flags]    '
+export const TESTS_USAGE = 'usage: norn tests history [--points N] | check --base REF | for FILE... | index | run [FILE...] [--changed [--base REF]] [-- node flags]    '
   + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time copy-paste advisory of the changed test files, exit 0; for = the test files that cover each FILE, from impact.json; '
+  + 'index = cases.json, impact.json and times.json: every test case, what each test file reaches, the median time per file; '
   + 'run = node test files through the machine\'s result cache under policy.tests, --changed adds the files policy.tests.mode picks for the change; exit 1 = a red)';
-const FLAGS = { history: ['points'], check: ['base'], for: [], run: ['changed!', 'base'] };
+const FLAGS = { history: ['points'], check: ['base'], for: [], index: [], run: ['changed!', 'base'] };
 const POSITIONAL = new Set(['for', 'run']);   // for: the files to look up; run: the test files
 const fwd = s => s.split('\\').join('/');
 const TEST_GLOB = /^tests\/[^/]+\.test\.mjs$/;
@@ -138,6 +141,15 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
       `${a.tests.length} test file(s) to run (the impact map at ${im.sha ?? '?'}, ${im.at})`]);
     return 0;
   }
+  if (verb === 'index') {
+    if (kind !== 'node:test') { err(`error: tests index: indexes node:test suites (tests/*.test.mjs); this project's suite is ${kind ?? 'neither node:test nor pytest'} (${repo})`); return 2; }
+    const tests = fs.readdirSync(path.join(repo, 'tests')).filter(x => x.endsWith('.test.mjs')).map(x => `tests/${x}`), code = git(repo, ['ls-files']).split('\n').map(fwd).filter(x => classify(x) === 'code');
+    const idx = buildIndex({ ix: repoIndex(repo), tests, code, log: cacheLog(cacheDirOf(w.state)), sha: sha() });
+    writeIndex(dir, idx);
+    print({ cases: idx.cases.cases.length, files: tests.length, covered: Object.keys(idx.impact.sources).length, uncovered: idx.impact.uncovered.length, timed: idx.times.files.length, sha: idx.cases.sha },
+      [`tests index: ${idx.cases.cases.length} test cases in ${tests.length} files; ${Object.keys(idx.impact.sources).length} source files covered, ${idx.impact.uncovered.length} not; ${idx.times.files.length} files timed (at ${idx.cases.sha})`]);
+    return 0;
+  }
   if (verb === 'history') {
     const h = gitHistory(repo, { points: Number(f.points) || 24 });
     writeJson(path.join(dir, 'git-history.json'), { at: new Date().toISOString(), repo, points: h });
@@ -199,19 +211,26 @@ async function testsRun(f, { repo, state, project, rest, out, err, env, print })
   return bad.length ? 1 : 0;
 }
 
-/** the tick's hook: `norn tests history` (git only, cheap) detached once a day, so the Tests tab's charts fill without anyone running it
- * (not while one started in the last 30 min). -> the tick-log words | null */
+/** the tick's hook, each verb detached so the Tests tab fills without anyone running it: `norn tests history` (git only, cheap) once a day
+ * (not while one started in the last 30 min); `norn tests index` (node:test suites) when impact.json is not at the repo's HEAD (not while one
+ * started in the last 10 min; the mark is the start time: the stamp tells a fresh map). -> the tick-log words | null */
 export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
   if (!p?.file) return null;
-  const at = readJson(path.join(state, 'tests', 'git-history.json'))?.at, day = d => new Date(d).toISOString().slice(0, 10);
-  if (at && day(at) === day(now)) return null;
-  const mark = path.join(state, 'tests', 'history.started');
-  try { if (now - fs.statSync(mark).mtimeMs < 30 * 60e3) return null; } catch { /* never started: start it now */ }
-  fs.mkdirSync(path.dirname(mark), { recursive: true }); fs.writeFileSync(mark, String(now));
-  const args = [metaCmd, 'tests', 'history', '--project', p.file, '--state', state];
-  let r = spawnFn ? spawnFn(process.execPath, args) : null;
-  if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
-  return `tests history: started pid ${r?.pid ?? '?'}`;
+  const start = (verb, gapMs) => {
+    const mark = path.join(state, 'tests', `${verb}.started`);
+    try { if (now - Number(fs.readFileSync(mark, 'utf8')) < gapMs) return null; } catch { /* never started: start it now */ }
+    fs.mkdirSync(path.dirname(mark), { recursive: true }); fs.writeFileSync(mark, String(now));
+    const args = [metaCmd, 'tests', verb, '--project', p.file, '--state', state];
+    let r = spawnFn ? spawnFn(process.execPath, args) : null;
+    if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
+    return `tests ${verb}: started pid ${r?.pid ?? '?'}`;
+  };
+  const at = readJson(path.join(state, 'tests', 'git-history.json'))?.at, day = d => new Date(d).toISOString().slice(0, 10), said = [];
+  if (!at || day(at) !== day(now)) said.push(start('history', 30 * 60e3));
+  const home = p.root ? projectHome(p) : null, have = readJson(path.join(state, 'tests', IMPACT_FILE))?.sha;
+  const head = () => { try { return git(home, ['rev-parse', '--short=12', 'HEAD']); } catch { return null; /* no git repo: no map to index */ } };
+  if (home && suiteKind(home) === 'node:test') { const h = head(); if (h && h !== have) said.push(start('index', 10 * 60e3)); }
+  return said.filter(Boolean).join('; ') || null;
 }
 
 // ---------- the Tests tab: a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
@@ -219,7 +238,8 @@ export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {})
 // 'tests' (the server lists them: the tab links, never copies).
 const read = (state, f) => readJson(path.join(state, 'tests', f));
 /** the files the summary + a part read, for the dash to prime on fs.promises (off the sync path) */
-export const testsFiles = (state, sub = null) => ['git-history.json', 'advisories.json', ...(sub === 'impact' ? [IMPACT_FILE] : [])].map(f => path.join(state, 'tests', f));
+export const testsFiles = (state, sub = null) => [...['git-history.json', 'advisories.json', ...(['suite', 'case'].includes(sub) ? [CASES_FILE] : []), ...(['impact', 'case'].includes(sub) ? [IMPACT_FILE] : [])].map(f => path.join(state, 'tests', f)),
+  ...(['suite', 'case', 'runtime'].includes(sub) ? [casesFile(cacheDirOf(state))] : [])];
 /** which suite the project folder holds ('node:test' | 'pytest' | false = neither; null = no project folder), off the sync path */
 export const suiteOf = project => (project?.root ? fs.promises.access(path.join(projectHome(project), 'tests')).then(() => suiteKind(projectHome(project)) ?? false, () => false) : Promise.resolve(null));
 /** the Tests tab's summary: small files only; a missing file = null (not there yet). suite = suiteOf's answer.
@@ -227,17 +247,53 @@ export const suiteOf = project => (project?.root ? fs.promises.access(path.join(
 export function testsView(state, suite = null) {
   return { suite, git: read(state, 'git-history.json'), advisories: read(state, 'advisories.json'), commands: { history: 'norn tests history', for: 'norn tests for' } };
 }
+// SPEC dash-owner-1123 s.1: per-case times come from the machine's case log (testcache cases.jsonl), this project's rows only (a run's
+// state folder is the project's; a hand run has none) and only the ids its cases.json knows
+export const CASE_DAYS = 7, SUITE_SORTS = ['slowest', 'longest', 'file', 'newest'];
+const caseRows = (state, ids, since = 0) => { const me = path.basename(path.resolve(state)); return caseLog(cacheDirOf(state), { since }).filter(r => (!r.state || r.state === me) && ids.has(r.id)); };
+const byId = rows => { const m = new Map(); for (const r of rows) m.set(r.id, [...(m.get(r.id) ?? []), r]); return m; };
+/** a test file's static reach (impact.json sources) and the sources it alone covers */
+const guardOf = (im, file) => { const xs = Object.entries(im?.sources ?? {}).filter(([, ts]) => ts.includes(file)); return { reaches: xs.map(([s]) => s), sole: xs.filter(([, ts]) => ts.length === 1).map(([s]) => s) }; };
+const areaOf = f => { const d = f.split('/').slice(0, -1); return d.slice(0, 2).join('/') || '.'; };
+const SORT = { slowest: (a, b) => (b.median ?? -1) - (a.median ?? -1), longest: (a, b) => b.lines - a.lines, file: (a, b) => a.file.localeCompare(b.file) || a.line - b.line,
+  newest: (a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')) };
 /**
  * one sub-view's part of the Tests tab -> its data. o: { picked: { files, lane, lanes } (impact: the server resolves a lane's changed
- * files), merges: the merge queue's batches (costs: per merge gate time + what it ran) }. Suite draws the summary's git charts; Run time is
- * the server's (runtimePart: run records + transcripts)
+ * files), merges: the merge queue's batches (costs: per merge gate time + what it ran), limit / sort / q (suite: the cap, SUITE_SORTS, a
+ * name or file filter), case (the case part's id), alerts (case: the open test alerts; one whose title starts with the id is its own) }.
+ * Suite = the case list (the summary's git charts at its head); case = one case's detail; runtime = per-case medians for the outlier chart
+ * (the per-run list is the server's runtimePart: run records + transcripts)
  */
-export function testsPart(state, name, { picked = null, merges = [] } = {}) {
-  if (name === 'suite') return {};
+export function testsPart(state, name, { picked = null, merges = [], limit = 40, sort = 'slowest', q = '', case: id = null, alerts = [], now = Date.now() } = {}) {
   if (name === 'costs') return { merges };
+  if (name === 'suite') {
+    const cs = read(state, CASES_FILE);
+    if (!cs) return { list: null };
+    const st = byId(caseRows(state, new Set(cs.cases.map(c => c.id)))), s = SORT[sort] ? sort : 'slowest', needle = String(q ?? '').trim().toLowerCase();
+    const all = cs.cases.map(c => { const rs = st.get(c.id) ?? []; return { ...c, last: rs.at(-1)?.ms ?? null, at: rs.at(-1)?.at ?? null, median: median(rs.map(r => r.ms)), runs: rs.length }; });
+    const hit = all.filter(c => !needle || c.name.toLowerCase().includes(needle) || c.file.toLowerCase().includes(needle)).sort((a, b) => SORT[s](a, b) || a.file.localeCompare(b.file) || a.line - b.line);
+    const rows = hit.slice(0, Math.max(1, Number(limit) || 40));
+    return { list: { at: cs.at, sha: cs.sha, total: all.length, files: Object.keys(cs.files ?? {}).length, sort: s, q: needle, limit: rows.length, matched: hit.length, shown: rows.length, rows } };
+  }
+  if (name === 'case') {
+    const c = read(state, CASES_FILE)?.cases.find(x => x.id === id);
+    if (!c) return { case: null };
+    const rs = caseRows(state, new Set([c.id])).reverse(), ms = rs.map(r => r.ms).filter(Number.isFinite);
+    return { case: { ...c, runs: rs.slice(0, 20).map(({ at, run, state: s, ms: m, ok }) => ({ at, run, state: s, ms: m, ok })), median: median(ms), max: ms.length ? Math.max(...ms) : null, fails: rs.filter(r => !r.ok).length,
+      ...guardOf(read(state, IMPACT_FILE), c.file), alerts: alerts.filter(a => String(a.title ?? '').startsWith(c.id)) } };
+  }
+  if (name === 'runtime') {
+    const cs = read(state, CASES_FILE), label = new Map((cs?.cases ?? []).map(c => [c.id, c.name]));
+    const st = byId(caseRows(state, new Set(label.keys()), now - CASE_DAYS * 86400e3));
+    return { medians: [...st].map(([cid, rs]) => { const ms = rs.map(r => r.ms).filter(Number.isFinite); return { id: cid, label: label.get(cid), file: rs[0].file, value: median(ms), max: ms.length ? Math.max(...ms) : null, runs: rs.length }; })
+      .filter(c => Number.isFinite(c.value)).sort((a, b) => b.value - a.value || a.id.localeCompare(b.id)), case_days: CASE_DAYS };
+  }
   if (name === 'impact') {
-    const im = read(state, IMPACT_FILE);
-    return { impact: im ? { at: im.at, sha: im.sha, suite: im.suite, sources: Object.keys(im.sources).sort() } : null, lanes: picked?.lanes ?? [],
+    const im = read(state, IMPACT_FILE), tests = [...new Set(Object.values(im?.sources ?? {}).flat())];
+    const files = tests.map(t => { const g = guardOf(im, t), areas = new Map(); for (const s of g.reaches) areas.set(areaOf(s), (areas.get(areaOf(s)) ?? 0) + 1);
+      return { file: t, reaches: g.reaches.length, sole: g.sole, areas: [...areas].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])) }; })
+      .sort((a, b) => b.reaches - a.reaches || b.sole.length - a.sole.length || a.file.localeCompare(b.file));
+    return { impact: im ? { at: im.at, sha: im.sha, suite: im.suite, sources: Object.keys(im.sources).sort() } : null, lanes: picked?.lanes ?? [], files, uncovered: im?.uncovered ?? [],
       picked: picked && (picked.files?.length || picked.lane) ? { lane: picked.lane ?? null, error: picked.error ?? null, files: picked.files ?? [], ...(im ? testsFor(im, picked.files ?? []) : { rows: [], tests: [] }) } : null };
   }
   throw new Error(`unknown tests part ${name}`);
