@@ -195,9 +195,8 @@ export function forecastOf({ status = '', budget = {}, now = Date.now(), queuedC
   const f = { rate, cap, over: rate !== null && cap !== null ? rate > cap : null, rateOk: ok ? ok[1] === '1' : null, weekly, stop, headroom, reset, stopAt: null, line: '', costLine: null,
     lineAt: null, linePre: '', linePost: '' };
   const at = (pre, ms, post = '') => { f.lineAt = new Date(ms).toISOString(); f.linePre = pre; f.linePost = post; f.line = `${pre}${dayClock(ms, now)}${post}`; };
-  // API billing (billing.mjs): STATUS says the last 24 h of spend and the daily cap; no weekly limit to forecast
-  // the total the cap counts: "= $T" after the parts (ended + running + chats, gap #9), else the one figure of an older STATUS
-  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h [^;]*?= \$([\d.,]+)/) ?? api?.[0].match(/api spend last 24 h \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
+  // API billing (billing.mjs billingLine): STATUS says the last 24 h of spend as parts "= $T" and the daily cap; no weekly limit to forecast
+  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h [^;]*?= \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
   if (api) { f.api = { usd: usd ? n(usd[1]) : null, cap: capM ? n(capM[1]) : null }; f.over = null; f.weekly = null; f.stop = null; f.headroom = null;
     const $ = v => `$${(v ?? 0).toFixed(2)}`;
     f.line = f.api.cap === null ? `API billing: ${$(f.api.usd)} in the last 24 h, no daily cap` : f.api.usd >= f.api.cap ? `API daily cap reached: ${$(f.api.usd)} of ${$(f.api.cap)} in 24 h - new Claude work waits` : `API billing: ${$(f.api.usd)} of the ${$(f.api.cap)} daily cap in the last 24 h`;
