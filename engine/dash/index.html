@@ -629,7 +629,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('click', e => {
   const ab = e.target.closest('[data-act]'), af = ab && ACTS[ab.dataset.act]; if (af) { af(ab, C); return; }
   const fd = e.target.closest('[data-feed]');
-  if (fd && !e.target.closest('button,a,input,.caret,.lcard')) { feedGo(fd.dataset.project, fd.dataset.feed); return; }
+  if (fd && !e.target.closest('button,a,input,.lcard')) { feedGo(fd.dataset.project, fd.dataset.feed); return; }
   const rid = e.target.closest('a[data-rid]');   // record-id chips in Docs: open the item where it lives
   if (rid) { e.preventDefault(); const id = rid.dataset.rid, k = id.split(/[-:]/)[0];
     if (k === 'RM') { S.tab = 'roadmap'; S.rm = { item: id, view: S.rm.view }; S.rmJump = true; history.replaceState(null, '', rmUrl()); render(); return; }   // META-ROADMAP S2
@@ -659,8 +659,6 @@ document.addEventListener('click', e => {
   if (b.id === 'orc' || d.act === 'orc-call') { callUp(); return; }
   if (d.go) { goTo({ tab: d.go, sub: d.gosub, ins: d.goins, line: d.goline, doc: d.godoc, jump: d.gojump, finding: d.gofinding }); return; }
   if (b.id === 'needs-btn') { S.tab = 'inbox'; history.pushState(null, '', `?project=${encodeURIComponent(S.project)}&tab=inbox`); render(); return; }
-  if (b.matches('.caret[data-t]')) { const kids = document.querySelectorAll(`[data-p="${d.t}"]`), hide = kids[0] && kids[0].style.display !== 'none';
-    kids.forEach(k => { k.style.display = hide ? 'none' : ''; }); b.innerHTML = hide ? '&#9656;' : '&#9662;'; return; }
   if (d.act === 'sub') { S.sub = d.sub; S.subLimit = null; S.batch = null; S.fixall = null; history.pushState(null, '', tabUrl()); render(); return; }   // META-UX-BUILD S2
   // META-UX-BUILD S6: the Fix all sheet - open / close, a picked way (one per batch; a second tap un-picks), Send the fixer (one POST)
   if (d.act === 'fixall-open') { S.fixall = { keys: null, picks: {} }; window.scrollTo(0, 0); render(); return; }

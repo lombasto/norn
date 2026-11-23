@@ -147,8 +147,8 @@ test('the Norn page bar (stage NAV): one row of 4 links + More, the open one fil
   n(':root.norn .pagebar>a:hover', /background\s*:\s*var\(--soft\)/); assert.ok(!/accent/.test(body(':root.norn .pagebar>a:hover')), 'hover is not the active fill');
   n(':root.norn .pagebar>button', /border\s*:\s*0/);   // More reads as one of the bar's items, not a framed button (the norn button rule)
   n(':root.norn .pagebar>a:focus-visible', /outline\s*:[^;]*solid var\(--ink\)/); n(`${act}:focus-visible`, /outline-color\s*:\s*var\(--ninv\)/);
-  // RM-18 S1: the tones stay the three time colours and the Health states (the status strip's parts, the More dot)
-  for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['ok', 'ok'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));
+  // the tones stay the three time colours (the status strip's parts) and the More dot's two Health states
+  for (const [k, v] of [['urd', 'rm-past'], ['verd', 'rm-now'], ['skuld', 'rm-fut'], ['warn', 'warn'], ['bad', 'bad']]) n(`.tone-${k}`, new RegExp(`--t\\s*:\\s*var\\(--${v}\\)`));
 });
 
 // META-TEND P6: SloppaChoppa's vendored art (norn-art-orc/out, ORC-1 round 5 + 6) under the asset map's names: each file its exact

@@ -32,9 +32,9 @@
 :root.norn .brand { display: inline-block; width: calc(32 * var(--d1)); height: calc(32 * var(--d1)); background-size: 100% 100%; flex: none; }
 :root:not(.norn) .brand { display: none; }
 
-/* 9-slice pixel panels: 24 x 24 art, slice 8 -> border 8 art px; carved for cards, woven for the dense tables (CONCEPTS rec.) */
-:root.norn .card, :root.norn .q, :root.norn .tree, :root.norn .ssub, :root.norn .snav, :root.norn .doctoc, :root.norn .mapwrap,
-:root.norn .savebar, :root.norn .banner, :root.norn .drawer {
+/* 9-slice pixel panels: 24 x 24 art, slice 8 -> border 8 art px; carved for cards, woven for the dense tables */
+:root.norn .card, :root.norn .q, :root.norn .ssub, :root.norn .snav, :root.norn .doctoc, :root.norn .savebar, :root.norn .banner,
+:root.norn .drawer {
   border: calc(8 * var(--px)) solid transparent; border-radius: 0; border-image: var(--pn) 8 fill / calc(8 * var(--px)) repeat; box-shadow: none; }
 :root.norn .tablecard { border: calc(8 * var(--px)) solid transparent; border-radius: 0; border-image: var(--pn-woven) 8 fill / calc(8 * var(--px)) repeat; }
 :root.norn .card.needs, :root.norn .q.openq { border-image-source: var(--pn-acc); box-shadow: none; }
@@ -64,8 +64,6 @@
 :root.norn .chip.open::before, :root.norn .chip.needs::before { background-image: var(--tk-needs); }
 :root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before, :root.norn .chip.withdrawn::before,
 :root.norn .chip.idle::before { background-image: var(--tk-idle); }
-/* the Plan tab's step chips (META-PLAN R2): one shape per step - the token above, never the classic look's text glyph beside it */
-:root.norn .pl-g { display: none; }
 
 /* bars on the pixel grid: square, whole art px, solid palette fills */
 :root.norn .bar { border-radius: 0; height: calc(4 * var(--px)); border: var(--d1) solid var(--line); background: var(--bg); }
@@ -74,11 +72,6 @@
 
 /* classic fades (opacity < 1) redrawn as solid palette colours */
 :root.norn button:disabled { opacity: 1; color: var(--dim); }
-:root.norn svg.map .band { opacity: 1; fill: var(--soft); }
-:root.norn svg.map .band.alt { opacity: 1; fill: var(--bg); }
-:root.norn .mn.faded { opacity: 1; }
-:root.norn .mn.faded .box { stroke: var(--line); } :root.norn .mn.faded text { fill: var(--mute); }
-:root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
 :root.norn .fxfile.fxoff .fxdiff, :root.norn .fxmisfit+.fxdiff { opacity: 1; color: var(--dim); }
 :root.norn tr.old { opacity: 1; color: var(--dim); }
 :root.norn .chip.prio.dflt { opacity: 1; color: var(--dim); }
@@ -88,25 +81,6 @@
 /* the woven rule under section headings */
 :root.norn .card h2 { padding-bottom: calc(4 * var(--px)); background: var(--rule) repeat-x left bottom / calc(96 * var(--px)) calc(3 * var(--px)); }
 
-/* the Map (META-VISUAL-B S2): the Well / the Tapestry - a pixel stage (one texel = k device px, image-rendering pixelated)
-   with DOM labels on whole texels; solid palette grounds only */
-:root.norn .norn-map { position: relative; height: calc(100vh - 260px); min-height: 360px; overflow: hidden; background: var(--bg);
-  border: calc(2 * var(--px)) solid var(--line); margin-bottom: 8px; }
-:root.norn .map-host, :root.norn .map-stage { position: absolute; inset: 0; overflow: hidden; }
-:root.norn .stage-canvas { position: absolute; left: 0; top: 0; image-rendering: pixelated; cursor: grab; touch-action: none; }
-:root.norn .map-labels { position: absolute; inset: 0; pointer-events: none; }
-:root.norn .lbl { position: absolute; left: 0; top: 0; text-wrap: nowrap; font: 600 12px/1.25 system-ui, "Segoe UI", sans-serif; color: var(--ink);
-  pointer-events: auto; cursor: pointer; padding: 1px 5px; background: var(--panel); border-left: calc(2 * var(--px)) solid var(--line); }
-:root.norn .lbl small { font-weight: 400; margin-left: 4px; color: var(--mute); }
-:root.norn .lbl.live { border-left-color: var(--run); }
-:root.norn .lbl.sel { outline: var(--d1) solid var(--gold); }
-:root.norn .lbl.lane { font-weight: 400; color: var(--mute); border-left: 0; background: var(--bg); }
-:root.norn .lbl.lane.live { color: var(--gold); font-weight: 600; background: var(--panel); }
-:root.norn .lbl .nd { color: var(--accent); font-weight: 600; }
-:root.norn .lbl.norn { font: 400 calc(8 * var(--px))/1.2 var(--pix); background: var(--bg); border: 0; color: var(--gold); -webkit-font-smoothing: none; }
-:root.norn .map-hud { position: absolute; right: 8px; bottom: 8px; padding: 2px 8px; background: var(--panel); color: var(--mute); border: var(--d1) solid var(--line); pointer-events: none; }
-:root.norn .views button[aria-pressed=true] { color: var(--gold); }
-@media (max-width: 640px) { :root.norn .norn-map { height: 70vh; min-height: 300px; } :root.norn .map-hud { display: none; } }
 /* Norn vocabulary (META-VISUAL-B S3): the tab bar grouped under the three Norns (display labels; ids unchanged), the wordmark
    header, the empty-state art (the Overview strip of the three Norns: RM-18 S2, below). Classic keeps its flat bar + h1. */
 :root.classic header .h1-norn, :root.norn header .h1-classic { display: none; }
@@ -130,7 +104,7 @@
 :root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
 /* the Norn colours as meaning (Urd / Verdandi / Skuld = the three time colours; a Health state): the status strip's parts, the More dot */
 .tone-urd { --t: var(--rm-past); } .tone-verd { --t: var(--rm-now); } .tone-skuld { --t: var(--rm-fut); }
-.tone-ok { --t: var(--ok); } .tone-warn { --t: var(--warn); } .tone-bad { --t: var(--bad); }
+.tone-warn { --t: var(--warn); } .tone-bad { --t: var(--bad); }
 .rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rmtop .chip { border: 0; cursor: pointer; }
 /* the scope switch: three toggle buttons, the pressed one filled in its time colour */
@@ -283,7 +257,6 @@
    redraws it; no .motion = a still bar at the elapsed width */
 :root.motion .ebar i { animation: ebar var(--dur) linear forwards; }
 @keyframes ebar { to { width: 100%; } }
-:root.norn .lbl .ho { margin: 0 0 0 4px; padding: 0 4px; font-size: 11px; }
 /* RM-35: the diff viewer (diffview.mjs; index.html .dv / #dvpip) - the panel in the drawer's 9-slice chrome, its title in the pixel font,
    square marks and rows; the inline box ruled on the pixel grid. Colours are the tokens above (palette-locked); a still panel, no motion */
 :root.norn .dvpip { border: calc(8 * var(--px)) solid transparent; border-radius: 0; border-image: var(--pn) 8 fill / calc(8 * var(--px)) repeat; box-shadow: none; }
