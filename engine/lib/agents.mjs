@@ -5,8 +5,7 @@ import path from 'node:path';
 import { parseCodexLog } from './runs.mjs';
 import { doerOf } from './crew.mjs';
 import { handoffOf } from './lanes.mjs';
-import { findTranscriptA, usageCtx } from './harness/claude.mjs';
-import { runTranscript } from './standing.mjs';
+import { findTranscript, findTranscriptA, usageCtx } from './harness/claude.mjs';
 import { ctxView } from './ctxlimit.mjs';
 import { critiqueOfNode } from './critique.mjs';
 import { findRollout, findRolloutA } from './harness/codex.mjs';
@@ -146,7 +145,7 @@ export function runTalked(r, o = {}) {
   const d = r?.data || {}, end = r?.end || {}, exe = d.executor || '', cache = o.cache || new Map();
   if (exe.startsWith('codex')) { const b = d.log ? parseCodexLog(readText(d.log)) : {}, f = findRollout(o.codexDir, end.codex_session ?? b.session_id); return !!(f && codexInfo(f, cache)?.ts); }
   if (d.kind === 'cli') return true;
-  const f = runTranscript(r, o);
+  const f = end.transcript || d.transcript || findTranscript(o.projectsDir, d.session_id);
   return !!(f && transcriptInfo(f, cache)?.said);
 }
 const ended = r => r.state !== 'running';
@@ -218,7 +217,7 @@ export function agentsTree(runs, o = {}) {
     } else if (d.kind === 'cli') {   // a cli executor's plain output carries no usage
       node.tokens = '-';
     } else {   // a check-in too: its end usage SUMS its requests (RUN-869: "1176k" for a 64k session) - the transcript has the truth
-      const file = runTranscript(r, o);
+      const file = end.transcript || d.transcript || findTranscript(o.projectsDir, d.session_id);
       const t = file ? transcriptInfo(file, cache, { now }) : null;
       if (t) {
         Object.assign(node, { ctx: t.ctx, ctx_peak: t.peak, cacheR: t.cacheR, burn30: t.burn30, acts: t.acts, model: t.model ?? node.model, effort: t.effort ?? node.effort });

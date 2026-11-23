@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transcriptInfo, subagents, codexInfo, agentsTree } from '../engine/lib/agents.mjs';
-import { findTranscript } from '../engine/lib/harness/claude.mjs';
 import { findRollout } from '../engine/lib/harness/codex.mjs';
 import { lanesView } from '../engine/lib/lanes.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
