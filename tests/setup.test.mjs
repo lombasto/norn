@@ -1,29 +1,35 @@
-// S3 `norn setup` / `norn doctor` / `norn project add` (META-GENERAL-DESIGN 4.2 / 8): temp meta root, temp home, fake PATH,
-// temp CLAUDE_CONFIG_DIR - nothing touches the live ~/.claude.
+// `norn setup` / `norn doctor` / `norn project add`, and what a new machine gets out of the box: the budget a settings profile writes,
+// the profiles themselves, and no empty cap anywhere before the owner sets one. Temp meta root, temp home, fake PATH, temp
+// CLAUDE_CONFIG_DIR - nothing touches the live ~/.claude.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { hookReady } from './helpers/hook.mjs';
+import { buildStatus } from '../engine/lib/status.mjs';
+import { policyLine } from '../engine/lib/tick.mjs';
+import { generatedLines, REQUIRED_CAPS, WORK_CLASSES, BASIC_KEYS, STARTER_CAPS, ROLE_AGENTS, settingsView } from '../engine/lib/policy.mjs';
+import { loadProfiles, getProfile, profileBudget, profilePolicy, profileChanges, COSTS } from '../engine/lib/profiles.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';
 const fwd = p => p.replace(/\\/g, '/');
 
 function sandbox({ claude = true, git = true } = {}) {
+  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
   const t = mkTmp('meta-setup-');
   const dirs = { root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
   const exe = n => path.join(dirs.bin, WIN ? n + '.exe' : n);
   if (git) fs.writeFileSync(exe('git'), ''); if (claude) fs.writeFileSync(exe('claude'), '');
   const env = { ...process.env, PATH: dirs.bin, HOME: dirs.home, USERPROFILE: dirs.home, CLAUDE_CONFIG_DIR: dirs.cfg,
-    LOCALAPPDATA: path.join(dirs.home, 'AppData', 'Local'), APPDATA: path.join(dirs.home, 'AppData', 'Roaming'), META_ROOT: dirs.root };
-  delete env.NPM_CONFIG_PREFIX; delete env.npm_config_prefix;
+    LOCALAPPDATA: path.join(dirs.home, 'AppData', 'Local'), APPDATA: path.join(dirs.home, 'AppData', 'Roaming'), META_ROOT: dirs.root, META_NO_TICK: '1' };
+  for (const k of ['NPM_CONFIG_PREFIX', 'npm_config_prefix', 'META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID']) delete env[k];
   const run = (...args) => { const r = spawnSync(process.execPath, [META, ...args], { env, encoding: 'utf8' }); return { code: r.status, out: r.stdout, err: r.stderr }; };
-  return { ...dirs, run, machine: () => JSON.parse(fs.readFileSync(path.join(dirs.root, 'local', 'machine.json'), 'utf8')) };
+  return { ...dirs, run, budgetFile: path.join(dirs.root, 'local', 'budget.json'), machine: () => JSON.parse(fs.readFileSync(path.join(dirs.root, 'local', 'machine.json'), 'utf8')) };
 }
 
 function project(sb, name = 'demo') {
@@ -79,14 +85,133 @@ test('setup --project registers the project as ${norn}-relative and installs age
   assert.deepEqual(sb.machine().notify, { backend: 'ntfy', topic: 't' });
 });
 
-test('gA-09: a budget.json that does not parse stops norn gen with its name - never read as "no caps", which routes to a capped executor', () => {
+// a budget that does not parse is never read as "no caps": that would route to an executor the owner capped
+test('a budget.json that does not parse stops norn gen with its name', () => {
   const sb = sandbox(); const f = project(sb);
   assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
-  const bf = path.join(sb.root, 'local', 'budget.json');
-  fs.writeFileSync(bf, '{"max_codex": 0,');
+  fs.writeFileSync(sb.budgetFile, '{"max_codex": 0,');
   const r = sb.run('gen');
   assert.equal(r.code, 1, r.out + r.err); assert.match(r.err, /budget\.json/);
-  assert.equal(fs.readFileSync(bf, 'utf8'), '{"max_codex": 0,', 'left for the owner to fix');
+  assert.equal(fs.readFileSync(sb.budgetFile, 'utf8'), '{"max_codex": 0,', 'left for the owner to fix');
+});
+
+// ---------- the budget and the settings profiles ----------
+// caps exist before anything can start a worker: setup writes the chosen profile's budget, and the profile says whether to schedule
+test('setup writes the profile budget when none exists (none named = try-it, the starter caps) and says whether to schedule check-ins', () => {
+  const a = sandbox(), r = a.run('setup', '--non-interactive', '--no-scheduler');   // --no-scheduler: the OS scheduler is never queried in a test
+  assert.equal(r.code, 0, r.err + r.out);
+  const b = JSON.parse(fs.readFileSync(a.budgetFile, 'utf8'));
+  assert.deepEqual(b, profileBudget(getProfile('try-it'), { found: ['claude'] }));
+  for (const [k, v] of Object.entries(STARTER_CAPS)) assert.equal(b[k], v, `the starter caps are try-it's: ${k}`);
+  assert.match(r.out, /wrote .*budget\.json \(starter caps: 1 Claude worker, 0 Codex, weekly stop 50 %, rate cap 0\.3 %\/h/);
+  assert.match(r.out, /profile try-it: no scheduled check-ins - run `norn tick` by hand/);
+  assert.equal(a.machine().scheduler.interval_min, 15, 'no profile named: the discovered interval');
+  const s = sandbox(), x = s.run('setup', '--non-interactive', '--no-scheduler', '--profile', 'solo', '--cost', 'cheap');
+  assert.equal(x.code, 0, x.err + x.out);
+  assert.deepEqual(JSON.parse(fs.readFileSync(s.budgetFile, 'utf8')), profileBudget(getProfile('solo'), { found: ['claude'], cost: 'cheap' }));
+  assert.match(x.out, /profile solo, cost cheap/);
+  assert.match(x.out, /profile solo: check-ins every 15 min - install the scheduler with: norn sched install/);
+  assert.equal(s.machine().scheduler.interval_min, 15);
+  const t = sandbox();   // a named profile sets a new machine's interval
+  assert.equal(t.run('setup', '--non-interactive', '--no-scheduler', '--profile', 'try-it').code, 0);
+  assert.equal(t.machine().scheduler.interval_min, 30);
+});
+
+test('setup with an existing budget: no --profile = byte-identical ("kept"); an explicit --profile merges only the profile keys and keeps a backup', () => {
+  const sb = sandbox();
+  fs.mkdirSync(path.dirname(sb.budgetFile), { recursive: true });
+  const mine = '{\n "max_claude_workers": 7,\n "reset": "2026-11-16T09:00 local",\n "cacheR_per_pct": 41000000\n}\n';
+  fs.writeFileSync(sb.budgetFile, mine);
+  const k = sb.run('setup', '--non-interactive', '--no-scheduler');
+  assert.equal(k.code, 0, k.err + k.out); assert.match(k.out, /budget\.json: kept/);
+  assert.equal(fs.readFileSync(sb.budgetFile, 'utf8'), mine, 'untouched without a chosen profile');
+  const r = sb.run('setup', '--non-interactive', '--no-scheduler', '--profile', 'solo');
+  assert.equal(r.code, 0, r.err + r.out);
+  const b = JSON.parse(fs.readFileSync(sb.budgetFile, 'utf8'));
+  assert.equal(b.max_claude_workers, 2); assert.equal(b.reset, '2026-11-16T09:00 local'); assert.equal(b.cacheR_per_pct, 41000000);
+  assert.equal(fs.readFileSync(sb.budgetFile + '.pre-profile', 'utf8'), mine);
+  assert.match(r.out, /max_claude_workers 7 -> 2/);
+});
+
+test('setup: an unknown profile / cost is refused before anything is written', () => {
+  const sb = sandbox();
+  const r = sb.run('setup', '--non-interactive', '--no-scheduler', '--profile', 'nope');
+  assert.equal(r.code, 2); assert.match(r.err, /unknown profile nope \(known: try-it, solo, heavy\)/);
+  assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--cost', 'lavish').code, 2);
+  assert.ok(!fs.existsSync(path.join(sb.root, 'local')), 'nothing written');
+});
+
+test('STATUS, the check-in policy line and the generated check-in line never print an empty cap', () => {
+  const t = mkTmp('meta-setup-status-'), state = path.join(t, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  const s = buildStatus({ state, budget: {}, projectsDir: path.join(t, 'none'), now: new Date('2026-11-12T10:00:00Z') });
+  for (const l of s.text.split(/\r?\n/).filter(l => /cap/.test(l))) assert.doesNotMatch(l, /=\s*(;|$)|\bcap\s*(;|->)|\/ cap\s*$/, `empty cap in: ${l}`);
+  assert.match(s.text, /max_claude_workers=unset \(no limit\)/);
+  assert.doesNotMatch(policyLine({}), / - Claude| - Codex|\(- /);
+  assert.match(policyLine({}), /caps unset \(no limit\) Claude/);
+  assert.doesNotMatch(generatedLines({}).checkin, /undefined/);
+});
+
+const ROLES = ['auto', 'wait', 'opus-xhigh', ...ROLE_AGENTS], CODEX = ['codex-sol', 'codex-astra'];
+const routes = pol => [...Object.values(pol.executors).map(e => e.executor), ...Object.values(pol.fallbacks)];
+
+test('profiles are data: try-it (the default), solo, heavy; each sets every required cap, the check-in model / effort and the scheduler', () => {
+  const { profiles, cost } = loadProfiles();
+  assert.deepEqual(profiles.map(p => p.name), ['try-it', 'solo', 'heavy']);
+  assert.deepEqual(profiles.filter(p => p.default).map(p => p.name), ['try-it']);
+  for (const p of profiles) {
+    for (const k of [...REQUIRED_CAPS, 'checkin_model', 'checkin_effort']) assert.ok({ ...p.budget, ...p.codex }[k] !== undefined, `${p.name} sets ${k}`);
+    assert.equal(typeof p.scheduler.on, 'boolean'); assert.ok(Number.isInteger(p.scheduler.interval_min));
+    assert.ok(p.label && p.summary, `${p.name} has a label + summary`);
+    for (const c of Object.keys(p.routing)) assert.ok(Object.hasOwn(WORK_CLASSES, c), `${p.name} routes a known class ${c}`);
+  }
+  assert.deepEqual(Object.keys(cost).sort(), [...COSTS].sort(), 'every cost has its model / effort table');
+  assert.throws(() => getProfile('nope'), /unknown profile nope \(known: try-it, solo, heavy\)/);
+});
+
+test('every profile x cost routes only to the generic roles + the executors setup found', () => {
+  for (const p of loadProfiles().profiles) for (const cost of COSTS) for (const found of [['claude'], ['claude', ...CODEX]]) {
+    const pol = profilePolicy(p, { found, cost });
+    assert.deepEqual(Object.keys(pol.executors).sort(), Object.keys(WORK_CLASSES).sort(), `${p.name}: every class routed`);
+    for (const n of routes(pol)) assert.ok([...ROLES, ...found].includes(n), `${p.name}/${cost}/${found}: ${n}`);
+  }
+  assert.equal(profilePolicy(getProfile('solo'), { found: ['claude', ...CODEX] }).executors.review.executor, 'codex-sol', 'solo: review on Codex when found');
+  assert.equal(profilePolicy(getProfile('solo'), { found: ['claude'] }).executors.review.executor, 'planner', 'solo: a Claude stand-in without Codex');
+  assert.equal(profilePolicy(getProfile('heavy'), { found: ['claude'] }).fallbacks.claude_over_guard, 'wait');
+  // a project with its own role agents: the generic role maps to the project's agent of that role
+  const own = profilePolicy(getProfile('heavy'), { found: ['claude'], agents: ['app-implementer', 'app-planner', 'app-runner'] });
+  assert.equal(own.executors.planning.executor, 'app-planner'); assert.equal(own.fallbacks.codex_down, 'app-implementer');
+});
+
+test('--cost changes model / effort only: cheap never Opus and never more effort than balanced, quality never less', () => {
+  const rank = e => ['', 'low', 'medium', 'high', 'xhigh'].indexOf(e);
+  for (const p of loadProfiles().profiles) {
+    const at = cost => ({ pol: profilePolicy(p, { found: ['claude', ...CODEX], cost }), b: profileBudget(p, { found: ['claude', ...CODEX], cost }) });
+    const bal = at('balanced'), cheap = at('cheap'), q = at('quality');
+    for (const c of Object.keys(WORK_CLASSES)) {
+      for (const x of [cheap, q]) assert.equal(x.pol.executors[c].executor, bal.pol.executors[c].executor, `${p.name} ${c}: same executor`);
+      assert.doesNotMatch(cheap.pol.executors[c].model, /opus/, `${p.name} ${c} cheap`);
+      assert.ok(rank(cheap.pol.executors[c].effort) <= rank(bal.pol.executors[c].effort)); assert.ok(rank(q.pol.executors[c].effort) >= rank(bal.pol.executors[c].effort));
+    }
+    for (const k of REQUIRED_CAPS) { assert.equal(cheap.b[k], bal.b[k], `${p.name} ${k}`); assert.equal(q.b[k], bal.b[k], `${p.name} ${k}`); }
+    assert.equal(cheap.b.checkin_model, 'claude-sonnet-5-5');
+    assert.deepEqual(cheap.pol.fallbacks, bal.pol.fallbacks);
+  }
+  assert.throws(() => profilePolicy(getProfile('solo'), { cost: 'lavish' }), /unknown cost lavish \(known: cheap, balanced, quality\)/);
+});
+
+test('profileChanges = Settings keys only (every key a real Settings row) and valid values for them', () => {
+  const rows = Object.fromEntries(settingsView({}).map(s => [s.key, s]));
+  for (const p of loadProfiles().profiles) {
+    const ch = profileChanges(p, { found: ['claude'] });
+    for (const [k, v] of Object.entries(ch)) {
+      assert.ok(rows[k], `${p.name}: ${k} is a Settings row`);
+      if (rows[k].type === 'enum') assert.ok(rows[k].options.includes(v), `${p.name}: ${k}=${v} in ${rows[k].options}`);
+    }
+    assert.equal(ch['policy.cadence.checkin_interval_min'], p.scheduler.interval_min);
+  }
+  for (const k of BASIC_KEYS) assert.ok(rows[k], `basic ${k} is a Settings row`);
+  for (const k of [...REQUIRED_CAPS, 'checkin_model', 'checkin_effort', 'policy.cadence.checkin_interval_min']) assert.ok(BASIC_KEYS.includes(k), `basic has ${k}`);
 });
 
 test('install never overwrites an unmanaged file that differs', () => {
