@@ -76,12 +76,9 @@ export const capDefault = entry => (Number.isInteger(entry?.cap) ? entry.cap : P
 // project using another project's agents, e.g. norn on a product project's). Sorted; never a built-in, typed executor or fallback keyword.
 const NOT_AGENTS = ['auto', 'fable', 'opus-xhigh', 'wait', 'claude', 'fake'];
 /** the agent names of an agents folder (its *.md files; none / no folder = []): roleAgents and launchpolicy knownAgents both scan with it */
-export function agentFiles(dir) {
-  try { return dir ? fs.readdirSync(dir).filter(f => f.endsWith('.md') && fs.statSync(path.join(dir, f)).isFile()).map(f => f.slice(0, -3)) : []; } catch { return []; }
-}
+export const agentFiles = dir => { try { return dir ? fs.readdirSync(dir).filter(f => f.endsWith('.md') && fs.statSync(path.join(dir, f)).isFile()).map(f => f.slice(0, -3)) : []; } catch { return []; } };
 export function roleAgents(project) {
-  const names = new Set(agentFiles(project?.install?.agents)), pv = providersOf(project);
-  const pol = project?.policy || {};
+  const names = new Set(agentFiles(project?.install?.agents)), pv = providersOf(project), pol = project?.policy || {};
   for (const n of [...Object.values(pol.executors || {}).map(e => e?.executor), ...Object.values(pol.fallbacks || {})])
     if (typeof n === 'string' && n && !NOT_AGENTS.includes(n) && !Object.hasOwn(BUILTIN, n) && !Object.hasOwn(pv, n)) names.add(n);
   return [...names].sort();

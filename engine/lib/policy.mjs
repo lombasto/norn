@@ -13,8 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 const EFFORTS=['low','medium','high','xhigh'];
-const OPUS=BUILTIN.claude.model,SOL=BUILTIN['codex-sol'].model,ASTRA=BUILTIN['codex-astra'].model;   // the default ids: executors.mjs BUILTIN
-const MODELS=[OPUS,'claude-sonnet-5-5'];
+const OPUS=BUILTIN.claude.model,SOL=BUILTIN['codex-sol'].model,ASTRA=BUILTIN['codex-astra'].model,MODELS=[OPUS,'claude-sonnet-5-5'];   // the default ids: executors.mjs BUILTIN
 // CHECKIN-V2 piece 4: the check-in executors = the built-ins whose harness adapter attaches the meta MCP server (caps.mcp); a
 // non-claude one runs only under checkin_executor_trial (auto-fallback to claude). The chat on adapters is H5: claude only.
 export const HARNESS_EXECUTORS=Object.keys(BUILTIN).filter(n=>n!=='fake'&&(ADAPTERS[BUILTIN[n].harness]?.caps?.mcp??'none')!=='none');

@@ -30,6 +30,7 @@ import { limitLines } from './limitgate.mjs';
 import { splitRepo, normSubdir } from './monorepo.mjs';
 import { ensureHook, hookProblem, HOOK_BIN, HOOK_BUILD } from './hookbin.mjs';
 import { frontOf } from './instrchecks.mjs';
+import { repoFacts } from './adopt.mjs';
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export class SetupError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
@@ -261,13 +262,6 @@ export function projectAdd(file, { env = process.env, out, err }) {
 }
 
 // ---------- META-ONBOARD S3: `norn project new` (SPEC 3.3) ----------
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true, timeout: 120000 }); return r.status === 0 ? (r.stdout || '').trim() : null; };
-/** a GitHub remote URL (https or ssh, .git stripped) -> "owner/repo", else null */
-export function githubRepo(url) {
-  const m = /^(?:https?:\/\/(?:[^@/]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(url || '').trim());
-  return m ? `${m[1]}/${m[2]}` : null;
-}
-export const slug = s => String(s).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z0-9]+/, '').replace(/-+$/, '');
 const CODEX_EXECUTORS = ['codex-sol', 'codex-astra'];
 const choose = o => { try { checkChoice(o); return getProfile(o.profile); } catch (e) { throw new SetupError(e.message); } };
 const under = (p, dir) => { const a = key(p), d = key(dir).replace(/\/+$/, ''); return a === d || a.startsWith(d + '/'); };
@@ -294,21 +288,15 @@ export function projectNew(o) {
   if (!exists(machineFile(meta))) throw new SetupError('no machine.json: run norn setup first');
   const machine = loadMachine(machineFile(meta), { meta });
   const given = path.resolve(o.root || process.cwd());
-  if (git(given, 'rev-parse', '--is-inside-work-tree') !== 'true') throw new SetupError(`${fwd(given)} is not a git repo (git rev-parse --is-inside-work-tree)`);
   // a monorepo: a folder below the repo's top level (or --subdir) = a project of that folder (project.subdir); root = the top level
   const split = splitRepo(given);
-  if (!split) throw new SetupError(`${fwd(given)}: git rev-parse --show-toplevel failed`);
+  if (!split) throw new SetupError(`${fwd(given)} is not a git repo (git rev-parse --show-prefix)`);
   let subdir;
   try { subdir = o.subdir !== undefined ? normSubdir(o.subdir) : split.subdir; } catch (e) { throw new SetupError(e.message); }
   if (o.subdir !== undefined && split.subdir && subdir !== split.subdir) throw new SetupError(`--root ${fwd(given)} is the folder ${split.subdir} of its repo, --subdir says ${subdir}: give one of them`);
   const root = path.resolve(split.root);
   if (subdir && !exists(path.join(root, subdir))) throw new SetupError(`subdir ${subdir}: no such folder in ${fwd(root)}`);
-  const originHead = git(root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD');
-  const detected = {
-    name: slug(path.basename(subdir || root)),
-    branch: originHead ? originHead.replace(/^origin\//, '') : git(root, 'symbolic-ref', '--short', 'HEAD') || 'main',
-    ci: githubRepo(git(root, 'remote', 'get-url', 'origin')) || 'none',
-  };
+  const facts = repoFacts(root, subdir), detected = { name: facts.name, branch: facts.default_branch, ci: facts.github || 'none' };   // adopt owns them
   const hasCodex = !!machine.codex?.exe, have = ['claude', ...(hasCodex ? CODEX_EXECUTORS : [])];
   detected.executors = have.join(',');
   const interactive = !o.nonInteractive && (process.stdin.isTTY || env.META_INTERACTIVE === '1');

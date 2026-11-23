@@ -16,6 +16,7 @@ import { runSteps, runStepsAsync } from './steps.mjs';
 import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 import { normSubdir, subdirOf } from './monorepo.mjs';
+import { githubRepo } from './overlap.mjs';
 import { profileCaps } from './setup.mjs';
 import { loadProfiles, getProfile } from './profiles.mjs';
 import { lineAt } from './slop/scan.mjs';
@@ -64,6 +65,13 @@ function commandsOf(files, read) {
   return out;
 }
 
+/** the repo facts scan and setup's `project new` share (one slug, one GitHub parser): { name, default_branch, origin, github ('o/r' | null) } */
+export function repoFacts(root, sub = '') {
+  const origin = sh(root, ['remote', 'get-url', 'origin']);
+  return { name: slugOf(path.basename(sub || root)), origin, github: githubRepo(origin),
+    default_branch: sh(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') || sh(root, ['symbolic-ref', '--short', 'HEAD']) || 'main' };
+}
+
 /**
  * FACTS about a repo (read-only; writes nothing anywhere). o.now = the clock for branch ages; o.forge = parsed forge answers (A6).
  * o.subdir = a monorepo project's folder (project.subdir): only the files, commits and TODO markers under it count, matched as if it
@@ -76,15 +84,13 @@ export function scan(root, o = {}) {
   let sub;
   try { sub = normSubdir(o.subdir); } catch (e) { throw new AdoptError(e.message); }
   const pre = sub ? sub + '/' : '', only = sub ? ['--', sub] : [];
-  const head = sh(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') || sh(root, ['symbolic-ref', '--short', 'HEAD']) || 'main';
+  const { name: slug, default_branch: head, origin, github } = repoFacts(root, sub);
   const files = (sh(root, ['ls-tree', '-r', '--name-only', head, ...only]) || '').split('\n').filter(Boolean)
     .filter(f => f.startsWith(pre)).map(f => f.slice(pre.length));
   if (sub && !files.length) throw new AdoptError(`subdir ${sub}: no tracked file under it on ${head}`);
   const read = f => sh(root, ['show', `${head}:${pre}${f}`]);
   const ext = {};
   for (const f of files) { const e = path.extname(f).toLowerCase() || '(none)'; ext[e] = (ext[e] || 0) + 1; }
-  const origin = sh(root, ['remote', 'get-url', 'origin']);
-  const gh = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(origin || '');
   const commits = Number(sh(root, ['rev-list', '--count', head, ...only]) || 0);
   const dates = (sh(root, ['log', '--format=%cI', head, ...only]) || '').split('\n').filter(Boolean);
   const authors = new Set((sh(root, ['log', '--format=%ae', head, ...only]) || '').split('\n').filter(Boolean)).size;
@@ -122,7 +128,7 @@ export function scan(root, o = {}) {
   const plans = imported.map(p => ({ file: p.file, items: p.count, themes: p.themes.length }));
   const todo = (hasHead ? sh(root, ['grep', '-c', '-I', '-E', 'TODO|FIXME', head, '--', sub || '.', ':!*.md']) || '' : '').split('\n').filter(Boolean)
     .reduce((s, l) => s + Number(l.split(':').pop()), 0);
-  const forge = gh ? { kind: 'github', repo: `${gh[1]}/${gh[2]}`, ...(o.forge ? { linked: true, issues: o.forge.issues || [], prs: o.forge.prs || [] } : { linked: false }) } : null;
+  const forge = github ? { kind: 'github', repo: github, ...(o.forge ? { linked: true, issues: o.forge.issues || [], prs: o.forge.prs || [] } : { linked: false }) } : null;
   const tests = files.filter(f => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|_test\.(go|py)$/.test(f)).length;
   const planItems = plans.reduce((s, p) => s + p.items, 0), issues = forge?.issues?.length || 0, live = branches.filter(b => !b.merged).length;
   // NEW = nothing to read yet: the interview fills the draft. ADOPT = the repo answers most of it (SPEC sec. 2)
@@ -131,7 +137,7 @@ export function scan(root, o = {}) {
   const P = f => (f && pre ? pre + f : f), Psrc = s => (pre && s ? pre + s : s);
   const docs = { readme: files.find(f => /^README(\.md|\.rst|\.txt)?$/i.test(f)) || null, contributing: files.find(f => /^(\.github\/)?CONTRIBUTING\.md$/i.test(f)) || null,
     changelog: files.find(f => /^(CHANGELOG|CHANGES|HISTORY)(\.md)?$/i.test(f)) || null, license: files.find(f => /^LICEN[SC]E/i.test(f)) || null, design };
-  return { schema: 1, root: fwd(root), ...(sub ? { subdir: sub } : {}), name: slugOf(path.basename(sub || root)), default_branch: head, origin, forge,
+  return { schema: 1, root: fwd(root), ...(sub ? { subdir: sub } : {}), name: slug, default_branch: head, origin, forge,
     history: { commits, first: dates.at(-1) || null, last: dates[0] || null, authors, tags: (sh(root, ['tag']) || '').split('\n').filter(Boolean).length },
     size: { files: files.length, by_ext: Object.fromEntries(Object.entries(ext).sort((a, b) => b[1] - a[1]).slice(0, 8)), tests, todo_markers: todo },
     docs: pre ? { readme: P(docs.readme), contributing: P(docs.contributing), changelog: P(docs.changelog), license: P(docs.license), design: design.map(P) } : docs,
