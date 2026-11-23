@@ -100,6 +100,7 @@ import { slopHist } from '../lib/slophist.mjs';
 import { slopHolds, openBlocks, slopFiles, slopDir, meterSeries, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
 import { meterDelta, loadMeter } from '../lib/slop/meter.mjs';
 import { effectiveRules, explainOf, primeRules } from '../lib/slop/check.mjs';
+import { lintersFiles } from '../lib/slop/linters.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
 import { recordWeights } from '../lib/recordweight.mjs';
 import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
@@ -1121,7 +1122,7 @@ export function createDashboard(o) {
       top: (last.top || []).map(o => ({ ...o, abs: path.join(home, o.file).replace(/\\/g, '/') })) };
   }
   async function guardOf(p) {
-    await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state)] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
+    await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), ...lintersFiles(), refusalsFile(p.state)] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
     const ig = insForGuard(p), ins = ig.v?.error ? (errors.push(ig.v.error), null) : ig.v, tests = part('tests', () => testsView(p.state), null), advice = await adviceOf(p).catch(e => { errors.push(`models: ${String(e.message).slice(0, 200)}`); return null; });
     // the project's one SloppaChoppa switch: off = no slop rows (his recorded holds stay on disk)

@@ -10,6 +10,8 @@ import { loadRules } from './check.mjs';
 import { readText } from '../fsnap.mjs';
 
 const TOOL_SETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools');
+// the files lintersView reads, for a route to prime on fs.promises (META-DASH-ASYNC)
+export const lintersFiles = () => Object.values(TOOLS).flatMap(t => ['package.json', 'package-lock.json'].map(f => path.join(TOOL_SETS, t.set, f)));
 const CNR = 'could not run: ';
 const LEVELS = ['BLOCK', 'WARN', 'shadow'];
 const json = f => { try { return JSON.parse(readText(f) ?? 'null'); } catch { return null; } };
