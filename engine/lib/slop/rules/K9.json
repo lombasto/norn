@@ -20,7 +20,6 @@
       "engine/dash/norn/make-palette.mjs",
       "engine/lib/**",
       "engine/bin/**",
-      "engine/flows/**",
       "engine/agents/**",
       "engine/presets/**"
     ],
