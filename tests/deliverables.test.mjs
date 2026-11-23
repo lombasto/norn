@@ -126,6 +126,35 @@ test('lane-outputs item 6: every PR of a deliverable, newest first, with the Git
   assert.deepEqual(prs(), [[7, 'merged', at(-0.5).toISOString()], [4, 'closed', null]]);
 });
 
+test('land-reuse (DEC-b-56): a PR merged or closed before a newer DONE is history, not the row\'s PR: the row is landable and why_not claims no open PR', () => {
+  const { repo } = fixture();
+  const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
+  const id = mkDlv(state, { repo, branch: 'fix/b', delivers: 'docs b', done_utc: at(-48).toISOString(), lane: 'b' }).id;
+  const url = n => `https://github.com/o/r/pull/${n}`, prEv = (n, h) => record(state, { kind: 'deliverable', ev: 'pr', id, by: 'launcher', data: { url: url(n), number: n } }, { now: () => at(h), views: false });
+  const ans = { [url(60)]: { state: 'MERGED', mergedAt: at(-39).toISOString() } }, gh = args => ({ code: 0, out: JSON.stringify(ans[args[2]]) });
+  prEv(60, -40);
+  latchMerged(state, { project: p, gh, nowMs: NOW - 38 * 3600e3 });
+  const row = () => deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
+  assert.equal(row().state, 'merged');
+  // the lane reuses the deliverable: a new round ends DONE at a new head, not on main
+  g(repo, 'checkout', '-q', 'fix/b'); const tip = commit(repo, 'docs/b2.md', 'b2\n', 'fix(b): round 2'); g(repo, 'checkout', '-q', 'main');
+  g(repo, 'update-ref', 'refs/remotes/origin/fix/b', tip);
+  record(state, { kind: 'deliverable', ev: 'done', id, by: 'launcher', data: { run: 'RUN-9', tip, done_utc: at(-2).toISOString() } }, { now: () => at(-2), views: false });
+  const r = row();
+  assert.equal(r.state, 'done'); assert.equal(r.tip, tip);
+  assert.equal(r.pr, null, 'PR #60 merged before this DONE: not the row\'s PR');
+  assert.deepEqual(r.prs.map(x => [x.number, x.state]), [[60, 'merged']], 'kept in the history');
+  assert.deepEqual(r.merges, [at(-39).toISOString()], 'the earlier round\'s merge stays on the row (the stuck clock counts it)');
+  assert.notEqual(r.why_not?.kind, 'pr'); assert.doesNotMatch(r.why_not?.text ?? '', /PR #60|open, awaiting approval/);
+  assert.doesNotMatch(formatDeliverable(r), /PR #60/);
+  // a PR closed (unmerged) before the DONE is history too; one opened after it is the row's PR
+  prEv(61, -30); fs.writeFileSync(path.join(state, 'deliverables-pr.json'), JSON.stringify({ [url(61)]: { at: at(-1).toISOString(), state: 'CLOSED', closed_at: at(-29).toISOString() } }));
+  assert.equal(row().pr, null);
+  prEv(62, -1);
+  assert.deepEqual(row().pr, { url: url(62), number: 62 });
+  assert.equal(row().why_not.kind, 'pr');
+});
+
 test('a deliverable whose branch is gone falls back to its recorded tip (not on main: cannot tell, never plain done)', () => {
   const { repo, a } = fixture();
   const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
