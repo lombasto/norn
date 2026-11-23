@@ -26,7 +26,7 @@ const PREFIXES = Object.values(KINDS).map(k => k.prefix).filter(p => p.endsWith(
 export const ID_RE = new RegExp(`\\b(${PREFIXES.join('|')})-(\\d+)\\b`);
 const FILE_ID = new RegExp(`^(${PREFIXES.join('|')})-(\\d+)(?!\\w)`);   // a file / dir keyed by id: RUN-12.spec.json, RUN-12-dod-gate.log, RUN-12/
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-const LIVE = ['running', 'queued', 'claimed'];   // a run that may still write (claimed = a fed node took the queued run)
+const LIVE = ['running', 'queued'];   // a run that may still write
 // state subdirs whose entries are never renamed: other homes' copies (S1c), the claims bookkeeping, generated views
 const NO_RENAME = new Set(['homes', 'sync', 'views', '.git', 'node_modules']);
 const LOG_FILES = [...new Set(Object.values(KINDS).map(k => k.file))].map(f => f + '.jsonl');
