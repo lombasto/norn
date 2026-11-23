@@ -36,7 +36,7 @@ function sandbox(extra = {}) {
   for (const k of Object.keys(env)) if (k.toUpperCase() === 'PATH' && k !== 'PATH') delete env[k];
   for (const k of ['NPM_CONFIG_PREFIX', 'npm_config_prefix', 'META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'FAKE_MS', 'META_INTERACTIVE']) delete env[k];
   const run = (args, o = {}) => {
-    const r = spawnSync(process.execPath, [META, ...args], { env: { ...env, ...(o.env || {}) }, encoding: 'utf8', input: o.input ?? '', timeout: 180000 });
+    const r = spawnSync(process.execPath, [META, ...args], { env: { ...env, ...(o.env || {}) }, cwd: o.cwd, encoding: 'utf8', input: o.input ?? '', timeout: 180000 });
     return { code: r.status, out: r.stdout || '', err: r.stderr || '', all: (r.stdout || '') + (r.stderr || '') };
   };
   const ok = (args, o) => { const r = run(args, o); assert.equal(r.code, 0, `meta ${args.join(' ')}\n${r.all}`); return r; };
@@ -81,7 +81,7 @@ function assertAdopted(sb, name, { rules = false } = {}) {
 }
 
 // ---------- the CLI: norn init (NEW), the adopt verbs (ADOPT) ----------
-test('NEW via norn init: setup + project new + the facts-only draft from 2 answers; approve all, apply -> the roadmap, the first lane, a fake run DONE', { timeout: 240000 }, () => {
+test('NEW via norn init: setup + project new + the facts-only draft from 2 answers; approve all, apply -> the roadmap, the first lane, the free rehearsal (a fake run, DONE)', { timeout: 240000 }, () => {
   const sb = sandbox(), repo = young(sb), head = git(repo, 'rev-parse', 'HEAD');
   const r = sb.ok(['init', repo, '--non-interactive', '--answer', 'goal=A tide clock for the harbour', '--answer', 'first=Parse one station file', '--profile', 'try-it', '--no-read']);
   assert.match(r.out, /wrote .*machine\.json/, 'no machine.json yet: init runs setup');
@@ -106,8 +106,15 @@ test('NEW via norn init: setup + project new + the facts-only draft from 2 answe
   assert.ok(fs.existsSync(path.join(pr.state, 'wt', lane, '.git')), 'the first lane\'s worktree exists');
   const brief = path.join(pr.state, 'briefs', lane + '.md');
   assert.ok(fs.existsSync(brief));
-  const run = sb.ok(['run', '--executor', 'fake', '--lane', lane, '--brief', brief, '--project', pf, '--wait'], { env: { FAKE_RESULT: '' } });
+  // the free rehearsal both init and apply print: its relative --brief resolves against the caller's folder, and the run does not
+  // mark the first roadmap item shipped
+  assert.match(r.out, /rehearse it for free: norn run --executor fake --lane parse-one-station-file --brief \S+ --project \S+ --wait/, 'init names the rehearsal (after apply)');
+  assert.match(a.out, /rehearse it for free: norn run --executor fake .* --wait/, 'adopt apply prints the rehearsal');
+  const cwd = path.dirname(pr.state), rel = path.relative(cwd, brief);
+  assert.ok(!path.isAbsolute(rel));
+  const run = sb.ok(['run', '--executor', 'fake', '--lane', lane, '--brief', rel, '--project', pf, '--wait'], { env: { FAKE_RESULT: '' }, cwd });
   assert.match(run.out, /^RUN-\d+ exited: DONE$/m);
+  assert.doesNotMatch(sb.ok(['road', 'show', '--project', pf]).out, /shipped|stage DONE/);
   repoClean(repo, head);
 });
 
