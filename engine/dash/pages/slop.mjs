@@ -121,6 +121,19 @@ function voicePrecisionCard(rows = []) {
   const row = p => `<tr id="slop-voice-${esc(p.rule)}"><td><b>${esc(p.rule)}</b> ${esc(p.title)}</td><td>${esc(p.level)}${p.shadow ? ' · shadow' : ''}</td><td>${p.precision === null ? '<span class="mute">none rated</span>' : `${int(Math.round(p.precision * 100))} % <span class="mute small">(${int(p.up)} of ${int(p.rated)})</span>`}</td><td>${p.suggest ? chip(...VOICE_SUGGEST[p.suggest]) : ''}</td></tr>`;
   return `<h3>The second voice ${VOICE_HELP}</h3><div class="tablecard"><table id="slop-voice"><tbody>${rows.map(row).join('')}</tbody></table></div>`;
 }
+// NORN-DASH-1123 item 8: the Linters section of the Rules view (lib/slop/linters.mjs) - per tool its pinned version, lock and lint rules,
+// its ESLint rules by level ('*' = every other rule), the open findings per rule and the could-not-run findings with their why
+const LINT_LV = { BLOCK: 'bad', WARN: 'warn', shadow: 'idle' };
+const lintNames = xs => xs.map(x => (x === '*' ? '<i>every other rule (*)</i>' : `<span class="mono">${esc(x)}</span>`)).join(' ');
+function lintersCard(L) {
+  if (!L?.tools?.length) return '';
+  const tool = t => `<li class="lint-tool" id="slop-lint-${esc(t.tool)}"><div><b>${esc(t.tool)} ${esc(t.version ?? 'not pinned')}</b> <span class="small mute">(tools/${esc(t.set)}${t.lock ? `, lock ${esc(t.lock.slice(0, 8))}` : ''} · rule ${esc(t.rules.join(', ') || 'none')})</span>
+    <span class="small">${chip(t.open.n ? 'warn' : 'ok', `${int(t.open.n)} open`)} ${chip(t.could_not_run.length ? 'bad' : 'ok', `could not run: ${int(t.could_not_run.length)}`)}</span></div>
+    <dl class="lint-levels small">${Object.entries(t.levels).filter(([, xs]) => xs.length).map(([lv, xs]) => `<dt>${chip(LINT_LV[lv], lv)}</dt><dd>${lintNames(xs)} <span class="mute">(${int(xs.length)})</span></dd>`).join('')}</dl>
+    ${t.open.n ? `<div class="small">${Object.entries(t.open.by).map(([r, n]) => `<span class="mono">${esc(r)}</span> × ${int(n)}`).join(' · ')}</div>` : ''}
+    ${t.could_not_run.length ? `<ul class="small lint-cnr">${t.could_not_run.map(c => `<li>${chip('bad', 'could not run')} <span class="mono">${esc(c.rule)}</span>${c.branch ? ` on ${esc(c.branch)}` : ''}: ${esc(c.why)}</li>`).join('')}</ul>` : ''}</li>`;
+  return `<section class="card" id="slop-linters"><h2>Linters <span class="mute small">the pinned tools the lint rules run, their rules by level</span></h2><ul class="lint-tools">${L.tools.map(tool).join('')}</ul></section>`;
+}
 // slop-meter S1: the gauge above the views (m = the server's meterView: the last daily report's meter) - the bands as segments, the
 // needle at the score, the number, the band word, the 7-day change; it opens the drawer: the group bars worst first, 30 days of the
 // total, the 10 worst offenders (each opens its file at the line in Docs). No sub-view of its own, no counter row.
@@ -150,7 +163,7 @@ export function slopPage(d) {
     : d.sub === 'types' ? slopTypes(P, total, fresh)
     : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
     <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}
-    ${voicePrecisionCard(P.precision)}<h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
+    ${voicePrecisionCard(P.precision)}<h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>${lintersCard(P.linters)}`
     : `<section class="card" id="slop-trend-card"><h2>Open findings by age <span class="mute small">the findings open now, per type, counted from the day each was first seen · last ${int(P.trend?.days?.length ?? 30)} days</span> ${AGE_HELP}</h2>
     ${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'findings open now, by the day first seen', unit: 'findings' }) : '<p class="small mute">No open finding.</p>'}</section>`;
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
