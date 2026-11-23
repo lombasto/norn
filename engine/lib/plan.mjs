@@ -16,6 +16,7 @@ import { deliverablesView, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { lanePins } from './crew.mjs';
 import { landState, LAND_WORDS } from './lanes.mjs';
+import { holdReason } from './holds.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -151,7 +152,8 @@ export function estimator(runs, { per = null } = {}) {
 
 // ---------- hold-ups: the fill walk's terms in plain words ----------
 const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
-/** one readiness term -> plain words. ctx: { runs (array), now, label (run data -> name) } */
+/** one readiness term -> plain words; the machine-level terms (usage, PAUSED, a pinned dwarf, the crew store) are holds.mjs holdReason's
+ * short form, so one parser reads them. ctx: { runs (array), now, label (run data -> name) } */
 export function holdWords(term, { runs = [], now = Date.now(), label = labelOf } = {}) {
   const t = String(term), byId = id => runs.find(r => r.id === id);
   const name = id => { const r = byId(id); return r ? label({ ...r.data, id }) : id; };
@@ -161,24 +163,16 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if ((m = after('dlv', 'DLV'))) return `waits for finished work ${m[1]} to reach main`;
   if ((m = after('dir', 'DIR'))) return `waits for instruction ${m[1]} to be done`;
   if ((m = t.match(/^not_before (\S+)$/))) return `not before ${dayClock(Date.parse(m[1]), now)}`;
-  if (t.startsWith('PAUSED')) return 'held: paused';
-  if (t === 'usage: RATE_OK=0') return 'held: usage over the hourly cap';
-  if (t === 'usage: RATE_OK unknown') return 'held: hourly usage not measured yet';
-  if (t === 'usage: weekly unknown') return 'held: weekly usage not measured yet (on API billing, set Billing to api)';
-  if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return `held: API spend $${m[1]} in 24 h reached the $${m[2]} daily cap`;
-  if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`;
   if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
   if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
   if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
+  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
-  if ((m = t.match(new RegExp(`^dwarf: (.+) is busy on (${NID('RUN')})$`)))) return `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`;   // a pinned dwarf works its lane only, one run at a time
-  if (t.startsWith('crew store ')) return 'held: the crew store is unreadable';
   if (t.startsWith('resources:')) return 'held: CPU / memory gate';
   if (t.startsWith('withdraw:')) return 'withdrawn: a condition can no longer be met';
-  if (t.startsWith('needs a ruling: ')) return `needs a ruling (the check-in repairs it): ${t.slice(16)}`;   // META-AUTONOMY R1
-  return t;
+  if (t.startsWith('needs a ruling: ')) return `needs a ruling (the check-in repairs it): ${t.slice(16)}`;   // the check-in repairs a term it can rule on
+  return holdReason(t, { name }).short;
 }
 const isHeld = t => /^(usage:|resources:|PAUSED|MERGE )/.test(t);
 
@@ -195,9 +189,8 @@ export function forecastOf({ status = '', budget = {}, now = Date.now(), queuedC
   const f = { rate, cap, over: rate !== null && cap !== null ? rate > cap : null, rateOk: ok ? ok[1] === '1' : null, weekly, stop, headroom, reset, stopAt: null, line: '', costLine: null,
     lineAt: null, linePre: '', linePost: '' };
   const at = (pre, ms, post = '') => { f.lineAt = new Date(ms).toISOString(); f.linePre = pre; f.linePost = post; f.line = `${pre}${dayClock(ms, now)}${post}`; };
-  // API billing (billing.mjs): STATUS says the last 24 h of spend and the daily cap; no weekly limit to forecast
-  // the total the cap counts: "= $T" after the parts (ended + running + chats, gap #9), else the one figure of an older STATUS
-  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h [^;]*?= \$([\d.,]+)/) ?? api?.[0].match(/api spend last 24 h \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
+  // API billing (billing.mjs billingLine): STATUS says the last 24 h of spend as parts "= $T" and the daily cap; no weekly limit to forecast
+  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h [^;]*?= \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
   if (api) { f.api = { usd: usd ? n(usd[1]) : null, cap: capM ? n(capM[1]) : null }; f.over = null; f.weekly = null; f.stop = null; f.headroom = null;
     const $ = v => `$${(v ?? 0).toFixed(2)}`;
     f.line = f.api.cap === null ? `API billing: ${$(f.api.usd)} in the last 24 h, no daily cap` : f.api.usd >= f.api.cap ? `API daily cap reached: ${$(f.api.usd)} of ${$(f.api.cap)} in 24 h - new Claude work waits` : `API billing: ${$(f.api.usd)} of the ${$(f.api.cap)} daily cap in the last 24 h`;

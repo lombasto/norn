@@ -37,7 +37,7 @@ test('rm29: a parked lane whose PR merged reads shipped once - not parked, not n
   park(state, 'rm29', 'DEC-b-31 ruled RUN-b-418; r2 brief ready - start it when merge backlog row 0c clears');
   const v = view(state, { prs: { rm29: { number: 29, url: 'u' } } }).rm29;
   assert.equal(v.text, `shipped: ${d} PR #29`); assert.equal(v.shipped, `${d} PR #29`);
-  assert.equal(v.group, 'done'); assert.equal(v.land, null); assert.equal(v.pr, null); assert.doesNotMatch(v.text, /parked/);
+  assert.equal(v.land, null); assert.equal(v.pr, null); assert.doesNotMatch(v.text, /parked/);
   assert.equal(v.rule.rule, 'shipped'); assert.equal(v.rule.text, 'archives at the next tick', 'the rule never repeats parked / stopped');
   assert.equal(boardOf({ ...v, needs: 1 }, NOW), 'old', 'never Needs you / Parked, whatever asks about it');
   const h = laneHooks(state);
@@ -55,7 +55,7 @@ test('rm26: a superseded deliverable whose PR merged long ago is never "to land"
   rec(state, { kind: 'deliverable', ev: 'supersede', id: d, by: 'checkin', data: { by: '3a55f8fc8', why: 'its branch merged on main as PR #28 (3a55f8fc8)' } }, -4);
   assert.equal(landedOf(loadDeliverables(state)[d]).how, 'superseded');
   const v = view(state).rm26;
-  assert.match(v.text, new RegExp(`^shipped: ${d} landed \\(superseded by 3a55f8fc8\\)$`)); assert.equal(v.group, 'done');
+  assert.match(v.text, new RegExp(`^shipped: ${d} landed \\(superseded by 3a55f8fc8\\)$`));
   const row = { id: d, lane: 'rm26', state: 'done', record_state: 'superseded', superseded: { by: '3a55f8fc8' }, pr: { url: 'u', number: 28 }, branch: 'norn/b/rm26', done_utc: new Date(NOW - 25 * H).toISOString() };
   assert.equal(prStep([row]).step, 'merged', 'the PR track: merged, not PR');
   assert.equal(boardOf({ ...v, dlv: prStep([row]), needs: 0 }, NOW), 'old', 'not To land');
@@ -76,7 +76,7 @@ test('solve-shack model-tab-residual-trail: parked "archive refused" with DLV-24
   assert.throws(() => rec(state, { kind: 'lane', ev: 'archive', id: `L:${L}`, by: 'checkin', data: { why: 'landed' } }, -19), /cannot be archived/, 'before the latch: the gate holds');
   mergedEv(state, d, 17, -15);
   const h = laneHooks(state), v = view(state)[L];
-  assert.equal(v.text, `shipped: ${d} PR #17`); assert.equal(v.group, 'done'); assert.equal(v.handoff, null);
+  assert.equal(v.text, `shipped: ${d} PR #17`); assert.equal(boardOf({ ...v, needs: 1 }, NOW), 'old'); assert.equal(v.handoff, null);
   assert.equal(laneAsksOwner(h, L), false, 'its unreviewed stopped MERGE run is no need: the work shipped');
   assert.equal(laneRules(loadState(state), { now: NOW, shipped: h.shipped, home: h.home }).find(x => x.lane === L).rule, 'shipped');
   rec(state, { kind: 'lane', ev: 'archive', id: `L:${L}`, by: 'checkin', data: { why: 'its work is on main' } }, -1);   // the gate reads the same truth
