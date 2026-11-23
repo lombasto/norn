@@ -115,6 +115,6 @@ export function casClaims(f, tip, edits, msg, { beforePush } = {}) {
 // one claims operation at a time per machine repo (two projects' fills share the ledger repo; refs/sync/claims would race)
 /** fn under the claims lock of f's repo (the repo created first) */
 export const under = (f, fn) => { initRepo(f); return withLock(path.join(f.dir, 'claims.lock'), fn, { staleMs: 120000, timeoutMs: 60000 }); };
-const hostName = () => (os.hostname() || 'machine').toLowerCase().replace(/[^a-z0-9._-]/g, '-');
-/** a ledger config (ledger.mjs ledgerConfig / spec.git_ledger) -> the claims endpoint f, or null (no remote = no claims) */
-export const fedOf = led => (led?.remote && led?.dir ? { dir: led.dir, remote: led.remote, host: String(led.branch || '').replace(/^machine\//, '') || hostName() } : null);
+/** a ledger config (ledger.mjs ledgerConfig / spec.git_ledger: its branch is always machine/<host>) -> the claims endpoint f, or null
+ * (no remote = no claims) */
+export const fedOf = led => (led?.remote && led?.dir ? { dir: led.dir, remote: led.remote, host: String(led.branch).replace(/^machine\//, '') } : null);
