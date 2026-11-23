@@ -4,7 +4,6 @@
   "kind": "command",
   "machine": true,
   "title": "generated files out of date",
-  "how": "norn gen --check (the machine's generated harness files): a PROBLEM line is a finding only when the source it names is a file the diff touches - drift in a file whose source no branch changed (a home-folder agent file edited by hand) never holds one",
   "explain": {
     "what": "A generated file (an agent file, AGENTS.md and the like) no longer matches what `norn gen` writes from its sources.",
     "why": "Workers read the generated files. A stale one gives them old instructions, and a hand edit is lost at the next generation.",

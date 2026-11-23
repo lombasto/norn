@@ -5,7 +5,6 @@
   "kind": "model",
   "title": "a weakened test",
   "question": "Was a test weakened: an assertion removed or loosened with no behaviour change, a test that passes if the feature is deleted, a test of its own fixture?",
-  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
   "explain": {
     "what": "A model read the diff and found a test that was weakened: an assertion removed or loosened, or a test that passes without the feature.",
     "why": "A weakened test stays green while the behaviour it guarded breaks.",

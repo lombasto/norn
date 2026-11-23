@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "refs",
   "title": "a reference that does not resolve: a norn command or a repo path",
-  "how": "a `norn <verb> [<sub-verb>]` in a doc's code span or a JS string whose verb is no quoted word of the CLI file, or whose sub-verb is not on that verb's usage line; a repo path in a doc's code span or relative link that is not in the tree. Checked against the same side's tree, new only",
   "explain": {
     "what": "A doc or a string names a `norn` command or a repo path that does not exist.",
     "why": "A broken reference sends the reader to a command that fails or a file that is not there. Docs go stale quietly this way.",

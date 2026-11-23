@@ -4,7 +4,7 @@
 // supervisor's own fill held queue.lock). `settled(item)` = the run has ended AND its supervisor process (end.supervisor_pid) is gone:
 // every side effect of the run's end has happened. A killed run has no end record: its supervisor has nothing left to do.
 import fs from 'node:fs';
-import { procStart } from '../../engine/lib/legacy.mjs';
+import { procStart } from '../../engine/lib/procs.mjs';
 
 // alive = the process still runs. POSIX: an exited child the test process has not reaped yet (a zombie: its event loop was blocked,
 // e.g. an Atomics.wait poll) still answers kill(pid, 0), so /proc/<pid>/stat state Z counts as gone. Windows: kill(pid, 0) checks

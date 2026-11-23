@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "diff-check",
   "title": "a conflict marker or a whitespace error in an added line",
-  "how": "git diff --check <base> <head>: git reports only the lines the diff adds",
   "explain": {
     "what": "An added line holds a merge conflict marker (<<<<<<<, =======, >>>>>>>) or a whitespace error such as trailing spaces.",
     "why": "A conflict marker means a merge was left half done: the file often no longer parses, and one of the two sides is lost. Whitespace errors make every later diff of the line noisy.",

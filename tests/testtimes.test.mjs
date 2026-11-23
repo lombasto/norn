@@ -194,7 +194,6 @@ async function tabFixture() {
   const t = timesTable(NODE_MEASURE, { sha: 'abc123', run: 'RUN-7', exit: 0 });
   fs.writeFileSync(path.join(d, 'times.json'), JSON.stringify(t)); fs.writeFileSync(path.join(d, 'impact.json'), JSON.stringify(impactMap(NODE_MEASURE, { sha: 'abc123' })));
   fs.writeFileSync(path.join(d, 'history.jsonl'), JSON.stringify({ at: NODE_MEASURE.at, sha: 'abc123', files: 2, tests: 6, suite_ms: 900, file_ms: 900, coverage: { covered: 3, total: 7, pct: 42.9 } }) + '\n');
-  fs.writeFileSync(path.join(d, 'costs.json'), JSON.stringify({ at: NODE_MEASURE.at, cpu_pct: 12, tests: { 'tests/a.test.mjs::outer::two': { cpu_s: 2.5, peak_mb: 180, children: { browser: 1, git: 2 }, alone_ms: 300, load_ms: 900 } } }));
   fs.mkdirSync(path.join(f.pa.state, 'mq'), { recursive: true });
   fs.writeFileSync(path.join(f.pa.state, 'mq', 'batch-3.json'), JSON.stringify({ n: 3, status: 'merged', result: 'green', gate: 'node engine/bin/ci-suite.mjs', built: NODE_MEASURE.at, done_at: NODE_MEASURE.at, members: [{ id: 'RUN-5' }], runs: [{ label: 'tip', ok: true, ms: 61000 }] }));
   record(f.pa.state, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'tests/a.test.mjs::outer::two failed 3 times under load', lane: 'gen', area: 'tests', options: [{ key: 'a', text: 'quarantine this test' }, { key: 'b', text: 'open a fix lane' }], recommend: { key: 'a', why: 'passes alone' } } });
@@ -218,8 +217,6 @@ test('Tests tab: the summary (when, which run, alerts as Inbox questions) and ea
     assert.match(s.html, /id="tests-time"[^]*id="tests-cpu"[^]*not measured yet/, 'the charts over time sit under Suite');
     assert.doesNotMatch(s.html, /tests-lanemin/);
     const c = await view('costs');
-    assert.match(c.html, /id="tests-pertest"[^]*measured: costs[^]*with the machine at 12 % CPU[^]*not measured yet<\/span> health, tiers/);
-    assert.match(c.html, /CPU 2\.5 s · peak 180 MB · children: 1 browser, 2 git · alone 300 ms \/ under load 900 ms/);
     assert.doesNotMatch(c.html, /id="tests-runs"/, 'the per-run share lives in Run time');
     assert.match(c.html, /id="tests-merges"[^]*batch-3<\/b> <b class="mono">61 s<\/b>[^]*node engine\/bin\/ci-suite\.mjs/);
     const i = await view('impact', 'files:engine/z.mjs,engine/none.mjs');

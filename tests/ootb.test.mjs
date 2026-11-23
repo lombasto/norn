@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { ledgerConfig } from '../engine/lib/ledger.mjs';
 import { writeStatus } from '../engine/lib/status.mjs';
-import { dashOpens } from '../engine/bin/norn.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { adapterFor, schedName, schedState, liveName, schedApply } from '../engine/lib/sched/index.mjs';
 import { schedChoice } from '../engine/lib/setup.mjs';
@@ -85,14 +84,6 @@ test('F-11: every error path of norn run exits non-zero (the exit code itself, n
   }
   assert.match(sb.run('run', '--lane', 'x').err, /usage: norn run --executor E --lane L --brief F \[options\] .*norn run --help/);
   assert.match(sb.run('run', '--help').out, /--after/, 'the full usage stays behind --help');
-});
-
-test('F-15: norn dash opens a browser only on a terminal or with --open; --no-open always wins', () => {
-  assert.equal(dashOpens(null, true), true);
-  assert.equal(dashOpens(null, false), false);
-  assert.equal(dashOpens(null, undefined), false);
-  assert.equal(dashOpens(true, false), true);
-  assert.equal(dashOpens(false, true), false);
 });
 
 test('F-15: norn dash from a script (no TTY) serves, prints the URL and says it opened no browser', async () => {

@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "imports",
   "title": "a new dependency: a bare import, a manifest or dependency line, an unpinned vendored file",
-  "how": "a static or dynamic import / require of a bare specifier outside bare (Node built-ins only); a manifest or lock file the diff touches (the file itself and each dependency entry); a file under a vendor dir with no row in the nearest table. New entries only: the waiver is the owner's approval",
   "explain": {
     "what": "The branch adds a dependency: an import of an outside package, a change to a manifest or lock file, or a vendored file with no row in VENDOR.md.",
     "why": "Each dependency is code we did not write and must trust, update and ship. Norn keeps to Node built-ins unless the owner approves an addition.",

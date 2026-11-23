@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { waitFor, waitForSync, runEnded, stateBusy } from './helpers/wait.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { alive, settled } from './helpers/settled.mjs';
-import { procStart } from '../engine/lib/legacy.mjs';
+import { procStart } from '../engine/lib/procs.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');

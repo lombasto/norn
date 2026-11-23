@@ -4,7 +4,6 @@
   "kind": "lint",
   "tool": "eslint",
   "title": "a new ESLint finding on a JS file the branch touches",
-  "how": "ESLint (the locked tool set in tools/lint) on the JS files the diff touches, at base and at head, under the merge base's eslint.config.mjs; LJ's rules first, levels per sub-rule, the rest in shadow",
   "explain": {
     "what": "ESLint found something new in a JS file the branch touches; the finding names the ESLint rule (LJ/<rule>).",
     "why": "A linter knows the language better than a regex. Only what the branch adds counts, and the levels below say what holds a merge.",

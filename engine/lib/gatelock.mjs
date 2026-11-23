@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { metaRoot } from './config.mjs';
-import { running, procStart } from './legacy.mjs';
+import { running, procStart } from './procs.mjs';
 import { testOwner, SAME_START_MS, TEST_OWNER } from './derelict.mjs';
 import { readJsonS as readJson } from './fsnap.mjs';   // never inside a dash request snapshot: a plain sync read of the lock
 

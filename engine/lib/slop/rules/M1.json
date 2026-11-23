@@ -5,7 +5,6 @@
   "kind": "model",
   "title": "a new catch, default or ?? that hides a failure the caller must see",
   "question": "Does a new catch, default or `??` hide a failure the caller must see?",
-  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
   "explain": {
     "what": "A model read the diff and found a new catch, default value or ?? that hides a failure the caller must see.",
     "why": "A hidden failure lets the code go on as if the step worked; the real fault shows up later, far from its cause.",

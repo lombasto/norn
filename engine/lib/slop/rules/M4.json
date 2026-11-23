@@ -5,7 +5,6 @@
   "kind": "model",
   "title": "a hunk the brief does not ask for",
   "question": "Which added hunks does the brief not ask for (its Scope lines and numbered items)? Name the first added line of each.",
-  "how": "the second voice (stage F): one no-tools model call per run end for all model rules, on the project's routing (another model family than the author's when it has one); a finding must quote an added line verbatim or it is dropped",
   "explain": {
     "what": "A model read the diff and found an added hunk the brief does not ask for.",
     "why": "Work outside the brief is unreviewed scope: it grows the change and hides what the change is for.",

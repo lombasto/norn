@@ -3,7 +3,6 @@
   "level": "BLOCK",
   "kind": "shim",
   "title": "a compatibility shim: an old name, alias, redirect or fallback kept alive (CLAUDE.md: No compatibility shims)",
-  "how": "code files the diff touches (tests and vendored code apart): a declared alias / redirect / old-name map, a comment or string that says an old form still works or is fallen back to, a deprecated option, or a page whose label does not name its id (an { id, label } object, or an [id, label] pair in a *TABS / *NAV / *_SUBS / *_VIEWS / *_PAGES list); one finding per line, its message names the fix",
   "explain": {
     "what": "The code keeps an old form alive: an alias or redirect map, an old name, a fallback to an old format, a deprecated option, or a page whose label does not name its id.",
     "why": "A compatibility shim keeps two ways alive after a rename. It is tech debt, and nobody knows when the old one may go (CLAUDE.md, No compatibility shims).",
