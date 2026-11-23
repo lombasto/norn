@@ -10,6 +10,7 @@ import { buildCommand, startRun, stopOrphans, RunError, RunRefused } from '../en
 import { POLICY_DEFAULTS, SETTINGS } from '../engine/lib/policy.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { askPlan, askStart, askWait, coldBrief, forkPrompt, transcriptTail, checkIsolation, hashFile, noforkFile, TAIL_LINES } from '../engine/lib/ask.mjs';
+import { helperBrief } from '../engine/lib/delegate.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -65,6 +66,12 @@ test('askPlan: an ended claude run forks; fake / no fork caps / a nofork record 
   assert.match(askPlan({ it: item({ data: { worktree: path.join(WT, 'gone-' + Date.now()) } }) }).why, /worktree is gone/);
   for (const bad of [item({ state: 'running' }), item({ state: 'queued' }), item({ data: { session_id: null } }), undefined])
     assert.throws(() => askPlan({ it: bad }), e => e instanceof RunError && e.code === 2);
+});
+
+test('the fork prompt and the cold brief carry norn delegate\'s answer contract (one limit for every helper)', () => {
+  const contract = helperBrief({ q: 'Q?', out: '/s/out.md', worktree: WT, cls: 'chores' }).split('## Answer contract')[1];
+  for (const b of [forkPrompt({ q: 'Q?', asked: 'RUN-7', out: '/s/out.md' }), coldBrief({ q: 'Q?', it: item(), out: '/s/out.md' })])
+    assert.equal(b.split('## Answer contract')[1], contract);
 });
 
 // ---------- piece 2: the recorded helper run, the wait, the kill criterion, the CLI ----------

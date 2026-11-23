@@ -9,7 +9,7 @@
 // Reads only. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
-import { tail } from './agents.mjs';
+import { tail, subFiles } from './agents.mjs';
 import { findTranscript, usageCtx } from './harness/claude.mjs';
 import { findRollout, parseCodexLog } from './harness/codex.mjs';
 import { HEADLESS_CORE } from './harness/common.mjs';
@@ -248,9 +248,7 @@ export function scan(file, t0, cache) {
   if (!e) return null;
   const mine = e.filter(([t]) => !Number.isFinite(t0) || !Number.isFinite(t) || t >= t0);
   let cr = mine.reduce((n, x) => n + x[1], 0), out = mine.reduce((n, x) => n + x[4], 0);
-  const dir = path.join(file.replace(/\.jsonl$/, ''), 'subagents');
-  let names = []; try { names = fs.readdirSync(dir).filter(n => /^agent-.+\.jsonl$/.test(n)); } catch { /* none */ }
-  for (const n of names) for (const [t, x, , , o] of entries(path.join(dir, n), cache) || []) if (!Number.isFinite(t0) || t >= t0) { cr += x; out += o; }
+  for (const f of subFiles(file)) for (const [t, x, , , o] of entries(f, cache) || []) if (!Number.isFinite(t0) || t >= t0) { cr += x; out += o; }
   return { cache_read: cr, output: out, turns: mine.length };
 }
 /** the Claude transcript of a run (its end / start record, else found by its session id) or null */

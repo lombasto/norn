@@ -1,21 +1,20 @@
-// `norn ask RUN-n --q "..."` (GT-PARITY-PLAN sec. 2.6, GT-6 "seance"): ask a FINISHED run a question. Gas Town (cited, not
-// ported): internal/cmd/seance.go:37-57, 194-205, 245 (`claude --fork-session --resume <id>`).
+// `norn ask RUN-n --q "..."`: ask a FINISHED run a question, so its work can be checked without re-reading it all.
 // An executor whose caps.fork is true and whose family can fork here (claude: --resume <sid> --fork-session) answers from a FORK
-// of the asked session, read-only (CLAUDE_RO_NOPE); any other executor - or one whose fork once changed the asked transcript (the
-// kill criterion, state/ask/nofork.json) - gets a COLD read-only helper whose brief carries the run's NOTES + its transcript tail.
-// The original session is never written to. Each ask is a recorded helper RUN (role helper, via ask, parent = the asked run).
-// Node built-ins only.
+// of the asked session, read-only; any other executor - or one whose fork once changed the asked transcript (the kill criterion,
+// state/ask/nofork.json) - gets a COLD read-only helper whose brief carries the run's NOTES + its transcript tail, started the
+// norn delegate way (its ranking, start loop and answer contract). The original session is never written to. Each ask is a
+// recorded helper RUN (role helper, via ask, parent = the asked run). Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readEvents, fold, recordsFile } from './records.mjs';
 import { startRun, sweepLost, RunRefused, RunError, STALE_MS } from './runs.mjs';
 import { providersOf, isProvider, typedExe } from './executors.mjs';
 import { harnessOf, capsOf } from './harness/index.mjs';
-import { findTranscript, transcriptEvents } from './harness/claude.mjs';
-import { pickExecutors, helperMode, delegateWait, ASK_MAX_S, HELPER_BUDGET_MIN, MAX_LINES } from './delegate.mjs';
+import { transcriptEvents } from './harness/claude.mjs';
+import { runTranscript } from './standing.mjs';
+import { pickExecutors, helperMode, delegateWait, startRanked, helperBrief, answerContract, runsOf, fileLines, ASK_MAX_S, HELPER_BUDGET_MIN, MAX_LINES } from './delegate.mjs';
 import { withDefaults } from './policy.mjs';
-import { presetExe } from './presets.mjs';
+import { readJsonS } from './fsnap.mjs';
 
 export const ENDED = ['exited', 'lost', 'killed'];
 export const MAX_PER_DAY_DEFAULT = 10;
@@ -25,18 +24,8 @@ export const NOTES_LINES = 150;
 export const FORK_FAMILIES = ['claude'];
 const Q_CHARS = 120;
 
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-const runsOf = state => fold(readEvents(recordsFile(state, 'run'))).items;
-const endOf = it => it?.history?.find(h => h.ev === 'end')?.data || {};
-const lines = f => { try { return fs.readFileSync(f, 'utf8').replace(/\s+$/, '').split(/\r?\n/); } catch { return []; } };
 export const noforkFile = state => path.join(state, 'ask', 'nofork.json');
 export const hashFile = f => { try { return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch { return null; } };
-
-/** The asked run's transcript file (end record, start record, or <projects_dir>/<any>/<sid>.jsonl), or null. */
-export function transcriptOf(it, projectsDir) {
-  const t = endOf(it).transcript || it.data.transcript || findTranscript(projectsDir, it.data.session_id);
-  return t && fs.existsSync(t) ? t : null;
-}
 
 /**
  * How to ask run item `it`: { mode: 'fork' | 'cold', why, sid }. Throws RunError (2) when the run is still running / queued or
@@ -45,7 +34,7 @@ export function transcriptOf(it, projectsDir) {
 export function askPlan({ it, project = null, nofork = {} }) {
   if (!it || it.kind !== 'run') throw new RunError('norn ask needs an existing RUN-n');
   if (!ENDED.includes(it.state)) throw new RunError(`${it.id} is ${it.state}: only an ended run (${ENDED.join(' | ')}) can be asked`);
-  const sid = it.data.session_id || endOf(it).session_id;
+  const sid = it.data.session_id || it.end?.session_id;
   if (!sid) throw new RunError(`${it.id} has no session_id: nothing to ask`);
   const ex = it.data.executor, entry = providersOf(project)[ex];
   const fam = harnessOf(ex, entry), caps = capsOf(ex, entry);
@@ -57,20 +46,16 @@ export function askPlan({ it, project = null, nofork = {} }) {
   return { mode: 'fork', why: `fork of ${sid} (${ex}, caps.fork)`, sid };
 }
 
-const contract = out => ['## Answer contract',
-  `- At most ${MAX_LINES} lines. Cite file:line (or NOTES / transcript) for every claim; "UNKNOWN" beats a guess.`,
-  `- Your final message IS the answer (saved to ${out}).`];
-
 /** The prompt a FORK of the asked session gets: it already remembers the run, so only the question and the rules. */
 export function forkPrompt({ q, asked, out }) {
   return [`# Question about your finished run ${asked} (norn ask)`, '',
     'Your run has ENDED. You are a READ-ONLY fork of its session: change no file, run no command, commit nothing; answer from what',
-    'you did in this session (you may read files to check).', '', '## Question', q, '', ...contract(out), ''].join('\n');
+    'you did in this session (you may read files to check).', '', '## Question', q, '', ...answerContract(out), ''].join('\n');
 }
 
 /** Transcript tail as text lines: a claude transcript as one line per event, else the raw lines (each cut to 300 chars). */
 export function transcriptTail(file, n = TAIL_LINES) {
-  const raw = lines(file);
+  const raw = fileLines(file);
   if (!raw.length) return [];
   if (!file.endsWith('.jsonl')) return raw.slice(-n).map(l => l.slice(0, 300));
   const out = [];
@@ -82,17 +67,13 @@ export function transcriptTail(file, n = TAIL_LINES) {
   return out.slice(-n);
 }
 
-/** The cold helper's brief: the question, the run's NOTES (tail) and its transcript (or log) tail, the answer contract. */
-export function coldBrief({ q, it, notes = [], tail = [], tailOf = 'transcript', out, access = 'read-only' }) {
+/** The cold helper's brief: norn delegate's helper brief whose context is the asked run, its NOTES (tail) and its transcript (or log) tail. */
+export function coldBrief({ q, it, notes = [], tail = [], tailOf = 'transcript', out, access = 'read-only', worktree = it.data.worktree ?? '-' }) {
   const d = it.data;
-  return [`# Question about the finished run ${it.id} (norn ask, cold helper)`, '',
-    access === 'no-tools' ? 'You are a helper with NO tools: answer from the text below only.'
-      : `You are a READ-ONLY helper: no shell, no edit tools. You may read files of the run's worktree: ${d.worktree ?? '-'}`,
-    `The run: ${it.id} ${it.state}${endOf(it).outcome ? ' ' + endOf(it).outcome : ''}, lane ${d.lane ?? '-'}, executor ${d.executor ?? '-'} ${d.model ?? ''}, brief ${d.brief ?? '-'}.`,
-    '', '## Question', q, '',
+  return helperBrief({ q, out, worktree, parent: it.id, cls: 'chores', access, via: 'norn ask, cold helper', context: [
+    `## The run: ${it.id} ${it.state}${it.end?.outcome ? ' ' + it.end.outcome : ''}, lane ${d.lane ?? '-'}, executor ${d.executor ?? '-'} ${d.model ?? ''}, brief ${d.brief ?? '-'}`, '',
     `## The run's NOTES (${d.notes ?? 'none'}; last ${notes.length} lines)`, ...(notes.length ? notes : ['(none)']), '',
-    `## The run's ${tailOf} tail (last ${tail.length} lines)`, ...(tail.length ? tail : ['(none)']), '',
-    ...contract(out), ''].join('\n');
+    `## The run's ${tailOf} tail (last ${tail.length} lines)`, ...(tail.length ? tail : ['(none)']), ''] });
 }
 
 /** Asks started today (UTC) in `state` (runs with via ask). */
@@ -117,13 +98,13 @@ export function askStart(o) {
   const cap = Number.isInteger(policy.ask?.max_per_day) ? policy.ask.max_per_day : MAX_PER_DAY_DEFAULT;
   const used = asksToday(o.state, o.now);
   if (used >= cap) throw new RunRefused(`${used} asks today, policy.ask.max_per_day=${cap} - read its NOTES yourself`, 4);
-  const plan0 = askPlan({ it, project: o.project, nofork: readJson(noforkFile(o.state)) || {} });
+  const plan0 = askPlan({ it, project: o.project, nofork: readJsonS(noforkFile(o.state)) || {} });
   const plan = o.cold && plan0.mode === 'fork' ? { ...plan0, mode: 'cold', why: 'cold helper asked for (--cold)' } : plan0;
 
   const dir = path.join(o.state, 'ask', `${it.id}-${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`);
   fs.mkdirSync(dir, { recursive: true });
   const brief = path.join(dir, 'brief.md'), out = path.join(dir, 'out.md');
-  const transcript = transcriptOf(it, o.machine?.claude?.projects_dir);
+  const t0 = runTranscript(it, { projectsDir: o.machine?.claude?.projects_dir }), transcript = t0 && fs.existsSync(t0) ? t0 : null;
   const d = it.data, budget = o.budget || {};
   const common = { state: o.state, locksDir: o.locksDir, lane: 'helper', project: o.project?.name ?? d.project, notes: out, parent: it.id, role: 'helper',
     cls: 'chores', q: o.q.slice(0, Q_CHARS), via: 'ask', readonly: true, lock: false, budgetMin: o.budgetMin ?? HELPER_BUDGET_MIN, budget,
@@ -144,31 +125,21 @@ export function askStart(o) {
 
   // cold: a read-only helper on a helper executor (norn delegate's ranking; fake by name)
   const providers = providersOf(o.project);
-  const candidates = o.executor ? [o.executor] : pickExecutors({ policy, cls: 'chores', providers, env });
-  if (o.executor && o.executor !== 'fake' && !Object.hasOwn(providers, o.executor)) throw new RunError(`executor ${o.executor} is not a helper executor (fake | a configured typed executor name)`);
+  const candidates = pickExecutors({ policy, cls: 'chores', providers, env, executor: o.executor });
   if (!candidates.length) throw new RunRefused(`no helper executor for a cold ask (${plan.why}) - read its NOTES yourself`, 4);
   const tailFile = transcript || d.log;
-  const notesTail = lines(d.notes).slice(-NOTES_LINES);
+  const notesTail = fileLines(d.notes).slice(-NOTES_LINES);
   const tail = tailFile ? transcriptTail(tailFile) : [];
   const worktree = d.worktree && fs.existsSync(d.worktree) ? d.worktree : dir;
-  let last = null;
-  for (const ex of candidates) {
-    const prov = providers[ex];
-    const [mode, access] = helperMode(ex, prov, null);
-    const text = coldBrief({ q: o.q, it, notes: notesTail, tail, tailOf: transcript ? 'transcript' : 'log', out, access });
+  return startRanked({ candidates, providers, env, machine: o.machine, pinned: !!o.executor, yourself: 'read its NOTES yourself' }, (ex, exe) => {
+    const prov = providers[ex], [mode, access] = helperMode(ex, prov, null);
+    const text = coldBrief({ q: o.q, it, notes: notesTail, tail, tailOf: transcript ? 'transcript' : 'log', out, access, worktree });
     fs.writeFileSync(brief, text);
-    const exe = prov?.preset ? presetExe(prov, env) : prov ? typedExe(prov, o.machine) : undefined;
-    try {
-      const r = startRun({ ...common, executor: ex, provider: prov, brief, worktree, model: prov ? prov.model : 'fake', effort: prov ? prov.effort || 'medium' : '-',
-        exe, ...(mode ? { mode } : {}), promptText: isProvider(prov) ? text : undefined, env: { ...(prov?.env || {}), META_PARENT_RUN: it.id, META_ROLE: null } });
-      fs.writeFileSync(path.join(dir, 'ask.json'), JSON.stringify({ ...meta, run: r.run, executor: ex }, null, 1));
-      return { run: r.run, asked: it.id, mode: 'cold', why: plan.why, executor: ex, dir, brief, out };
-    } catch (e) {
-      if (!(e instanceof RunRefused && e.code === 4) || o.executor) throw e;
-      last = e;
-    }
-  }
-  throw new RunRefused(`${last.message} - read its NOTES yourself`, 4);
+    const r = startRun({ ...common, executor: ex, provider: prov, brief, worktree, model: prov ? prov.model : 'fake', effort: prov ? prov.effort || 'medium' : '-',
+      exe, ...(mode ? { mode } : {}), promptText: isProvider(prov) ? text : undefined, env: { ...(prov?.env || {}), META_PARENT_RUN: it.id, META_ROLE: null } });
+    fs.writeFileSync(path.join(dir, 'ask.json'), JSON.stringify({ ...meta, run: r.run, executor: ex }, null, 1));
+    return { run: r.run, asked: it.id, mode: 'cold', why: plan.why, executor: ex, dir, brief, out };
+  });
 }
 
 /**
@@ -176,11 +147,11 @@ export function askStart(o) {
  * state/ask/nofork.json (later asks of it go cold). Returns null (isolated / not a fork) or the recorded entry.
  */
 export function checkIsolation(state, dir, now = new Date()) {
-  const a = readJson(path.join(dir, 'ask.json'));
+  const a = readJsonS(path.join(dir, 'ask.json'));
   if (!a || a.mode !== 'fork' || !a.transcript || !a.hash_before) return null;
   const after = hashFile(a.transcript);
   if (after === a.hash_before) return null;
-  const f = noforkFile(state), cur = readJson(f) || {};
+  const f = noforkFile(state), cur = readJsonS(f) || {};
   const entry = { run: a.asked, ask: a.run, ts: now.toISOString(), hash_before: a.hash_before, hash_after: after };
   cur[a.executor] = entry;
   fs.mkdirSync(path.dirname(f), { recursive: true });
