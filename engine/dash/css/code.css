@@ -1,0 +1,9 @@
+/* The Code page (pages/code.mjs, SPEC dash-owner-1123 s.7): the file table is testparts fileTable (its .ftable cards live in tests.css),
+   the growth sparkline, the file drawer with the code viewer. At 390 px the drawer is the full width and nothing scrolls sideways. */
+.cspark{letter-spacing:0;white-space:nowrap}#code-folder{max-width:100%;min-width:0}
+.cfile.drawer{display:block;overflow:auto;overscroll-behavior:contain;min-width:0}.cfile .dh{display:flex;gap:8px;align-items:flex-start}.cfile .spacer{flex:1}
+.cfhead{display:flex;flex-direction:column;min-width:0}.cfile h4{margin:12px 0 4px}.cclose{font-size:20px;line-height:1;padding:2px 8px}
+.cfile .codeview{max-width:100%;overflow-x:auto}#code-file-commits li{overflow-wrap:anywhere}
+@media (max-width:700px){
+  .cfile.drawer{width:100vw;left:0;border-left:0}
+}
