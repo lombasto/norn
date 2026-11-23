@@ -8,7 +8,6 @@ import { createDashboard } from '../../engine/dash/server.mjs';
 import { loadProject } from '../../engine/lib/config.mjs';
 import { record } from '../../engine/lib/records.mjs';
 import { mkTmp } from './tmp.mjs';
-import { watchServer } from './loopwatch.mjs';
 export const HERE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const ENGINE = path.join(HERE, '..', 'engine');
 export const FIX = path.join(HERE, 'fixtures', 'agents');
@@ -97,7 +96,6 @@ export async function fixture(extra = {}) {
   const machine = { home: root, ...(extra.synced ? { ledger: { dir: ledgerDir, state_root: path.dirname(S), remote: 'file:///nowhere-synthetic' } } : {}) };
   const app = createDashboard({ projects: [pa, pb], machine, budgetFile, platform, projectsDir, codexDir: path.join(root, 'codex-sessions'),
     liveUsage, quietFile, ...(extra.dash || {}) });
-  watchServer(app.server);   // META-CI-WORKCLASS R3: a page timeout names when this server received / answered each request
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   // CI-44593815866: one connection per request (agent: false), never a pooled one - this server shares the test's event loop, so a
