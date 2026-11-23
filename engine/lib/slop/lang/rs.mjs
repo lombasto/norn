@@ -1,0 +1,98 @@
+// SloppaChoppa 2 S3 (SPEC 3.3, 4.5, 7 S3): the Rust pack - module and crate edges (the kind `imports`), `#[allow]` / `#[expect]`
+// suppressions, the `#[cfg(test)]` regions loc.mjs counts as tests, and clippy as the lint tool LR. Choppa never runs clippy
+// (a build takes minutes; a project's quiet and time-budget rules): LR reads the log the head's own gate wrote, `{git}/norn/clippy/<head>*.log`.
+import fs from 'node:fs';
+import path from 'node:path';
+import { lineAt, norm, tomlTables } from '../scan.mjs';
+
+const P = path.posix;
+/** the folder a module's children live in: lib.rs / main.rs / mod.rs own their folder, a.rs owns a/ */
+const modDir = f => (/^(?:lib|main|mod)\.rs$/.test(P.basename(f)) ? P.dirname(f) : f.slice(0, -3));
+const modFile = (dir, segs, at) => { for (let k = segs.length; k > 0; k--) { const b = `${dir}/${segs.slice(0, k).join('/')}`; const hit = [`${b}.rs`, `${b}/mod.rs`].find(x => at.has(x)); if (hit) return hit; } return null; };
+const MOD_RE = /^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;/gm;
+const USE_RE = /^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?use[ \t]+((?:crate|self|super)(?:::\w+)*)/gm;
+const DEP_TABLE = t => /(?:^|\.)(?:dev-|build-)?dependencies(?:\.|$)/.test(t);
+/**
+ * the edges of a Rust file or a Cargo.toml to files of the tree: [{ to, line, text, order? }]. `mod x;` and a Cargo path dependency
+ * are real edges; a `use crate::` / `super::` path is a layer edge only (order: false): modules of one crate may name each other.
+ */
+export function imports(file, text, at) {
+  const out = [];
+  if (P.basename(file) === 'Cargo.toml') {
+    let on = false;
+    for (const [i, l] of text.split(/\r?\n/).entries()) {
+      const h = /^\s*\[([^\]]+)\]/.exec(l); if (h) on = DEP_TABLE(h[1].trim());
+      const p = on && /\bpath\s*=\s*"([^"]+)"/.exec(l), to = p && P.normalize(`${P.dirname(file)}/${p[1]}/Cargo.toml`);
+      if (to && at.has(to)) out.push({ to, line: i + 1, text: norm(l) });
+    }
+    return out;
+  }
+  for (const m of text.matchAll(MOD_RE)) { const to = modFile(modDir(file), [m[1]], at); if (to) out.push({ to, line: lineAt(text, m.index), text: norm(m[0]) }); }
+  const src = file.includes('/src/') ? file.slice(0, file.lastIndexOf('/src/') + 4) : P.dirname(file);
+  for (const m of text.matchAll(USE_RE)) {
+    const segs = m[1].split('::'), first = segs.shift(); let dir = first === 'crate' ? src : first === 'super' ? P.dirname(modDir(file)) : modDir(file);
+    while (segs[0] === 'super') { dir = P.dirname(dir); segs.shift(); }
+    const to = segs.length ? modFile(dir, segs, at) : null;
+    if (to && to !== file) out.push({ to, line: lineAt(text, m.index), text: norm(m[0]), order: false });
+  }
+  return out;
+}
+
+// `#[allow(x)] // reason` or Rust's own `#[allow(x, reason = "...")]`
+const SUPPRESS_RE = /#!?\[(?:allow|expect)\((?:[^\]\n]*?\breason\s*=\s*"([^"\n]*)")?[^\]\n]*\)\][ \t]*(?:\/\/+)?(.*)$/gm;
+export const suppressions = text => [...text.matchAll(SUPPRESS_RE)].map(m => ({ line: lineAt(text, m.index), reason: m[1] || m[2] }));
+
+/** the index past the item that starts at i: its `;`, or its `{ ... }` (comments, strings, raw strings and char literals skipped) */
+function itemEnd(t, i) {
+  for (let depth = 0; i < t.length; i++) {
+    const c = t[i], n = t[i + 1];
+    if (c === '/' && n === '/') { i = t.indexOf('\n', i); if (i < 0) return t.length; continue; }
+    if (c === '/' && n === '*') { let d = 1; for (i += 2; i < t.length && d; i++) { if (t[i] === '/' && t[i + 1] === '*') { d++; i++; } else if (t[i] === '*' && t[i + 1] === '/') { d--; i++; } } i--; continue; }
+    const raw = (c === 'r' || c === 'b') && !/\w/.test(t[i - 1] || '') && /^b?r(#*)"/.exec(t.slice(i, i + 12));
+    if (raw) { const end = t.indexOf('"' + raw[1], i + raw[0].length); i = end < 0 ? t.length : end + raw[1].length; continue; }
+    if (c === '"') { for (i++; i < t.length && t[i] !== '"'; i++) if (t[i] === '\\') i++; continue; }
+    if (c === "'") { const ch = /^'(?:\\(?:u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^\\'])'/.exec(t.slice(i, i + 12)); if (ch) i += ch[0].length - 1; continue; }   // else a lifetime
+    if (c === ';' && depth === 0) return i + 1;
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return i + 1;
+  }
+  return t.length;
+}
+const CFG_TEST = /#\[cfg\(test\)\]/g;
+/** the `#[cfg(test)]` items of a Rust text: { lines: Set(1-based line numbers inside them), mods: [files of `#[cfg(test)] mod x;`] } */
+export function testRegions(file, text, at) {
+  const lines = new Set(), mods = [];
+  for (const m of text.matchAll(CFG_TEST)) {
+    const end = itemEnd(text, m.index + m[0].length), item = text.slice(m.index, end), a = lineAt(text, m.index), b = lineAt(text, end);
+    for (let l = a; l <= b; l++) lines.add(l);
+    const out = /^#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;$/.exec(item.trim()), to = out && modFile(modDir(file), [out[1]], at);
+    if (to) mods.push(to);
+  }
+  return { lines, mods };
+}
+
+// ---------- clippy (LR): read from the head's gate log, never run ----------
+/** the head's clippy logs (rule.log: path templates, `{git}` the repo's common git folder, `{head}` the head sha, `*` in the name) -> text | null */
+function run(rule, side) {
+  if (side !== 'head') return null;   // main is clean by construction (-D warnings in CI): a diagnostic on a touched file is new
+  const texts = (rule.log || []).flatMap(t => {
+    const p = t.replace('{git}', rule.git).replace('{head}', rule.head), dir = path.dirname(p), re = new RegExp(`^${path.basename(p).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+    let names = []; try { names = fs.readdirSync(dir).filter(n => re.test(n)).sort(); } catch { names = []; }   // no folder: no log for this head
+    return names.map(n => fs.readFileSync(path.join(dir, n), 'utf8'));
+  });
+  return texts.length ? texts.join('\n') : null;
+}
+/** clippy's human output -> [{ file (a touched file the path names: equal, or its tail), rule (clippy::x, or the rustc lint), line, msg }] */
+function parse(raw, touched = []) {
+  const out = [], blocks = raw.replace(/\r/g, '').split(/\n(?=(?:warning|error)(?:\[\w+\])?: )/);
+  for (const b of blocks) {
+    const head = /^(?:warning|error)(?:\[(\w+)\])?: (.+)/.exec(b), at = /^\s*--> ([^\n]+?):(\d+):\d+\s*$/m.exec(b);
+    if (!head || !at) continue;   // the summary lines ("generated 3 warnings", "could not compile") name no file
+    const name = /#\[(?:warn|deny|forbid)\(([\w:]+)\)\]/.exec(b)?.[1] || /-[DW] ([\w:-]+)` implied/.exec(b)?.[1]?.replace(/-/g, '_') || (/index\.html#(\w+)/.exec(b) && `clippy::${/index\.html#(\w+)/.exec(b)[1]}`) || head[1] || 'rustc';
+    const named = at[1].replace(/\\/g, '/');
+    for (const f of touched.filter(x => x === named || x.endsWith('/' + named) || named.endsWith('/' + x))) out.push({ file: f, rule: name, line: Number(at[2]), msg: head[2] });
+  }
+  return out;
+}
+const clippyOf = (f, read) => (/^\.?clippy\.toml$/.test(P.basename(f)) ? read() : P.basename(f) === 'Cargo.toml' ? tomlTables(read() ?? '', t => /^(?:workspace\.)?lints(\.|$)/.test(t)) : null);
+export const CLIPPY = { run, parse, doc: s => `clippy: https://rust-lang.github.io/rust-clippy/master/index.html#${s.replace(/^clippy::/, '')}`, configOf: (rule, f, read) => clippyOf(f, read) };

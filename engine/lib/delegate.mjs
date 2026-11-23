@@ -1,4 +1,4 @@
-// `norn delegate ask / start / wait` (metadelegate DESIGN sec. 2-5, stage S1; META-AGNOSTIC-EXEC): helper runs, each a normal
+// `norn delegate ask / start / wait`: helper runs, so a worker can hand a side question to a cheaper executor; each a normal
 // supervised RUN (role "helper", class, q) on an executor outside the Claude pool - a configured typed executor (a cli entry in
 // any of its NAMED modes, `--mode`, default its first read-only mode; an API entry read-only only) or `fake` for tests.
 // Under a parent run (META_RUN_ID / --parent): depth 1, per-parent cap, no worktree lock (the parent holds it; startRun verifies).
@@ -13,6 +13,7 @@ import { startRun, sweepLost, lockPath, RunRefused, RunError, STALE_MS } from '.
 import { isApi, isCli, isProvider, keySet, providersOf, cliMode, typedExe } from './executors.mjs';
 import { presetExe } from './presets.mjs';
 import { sleepMs } from './views.mjs';
+import { readJsonS } from './fsnap.mjs';
 import { executorsFor, withDefaults } from './policy.mjs';
 
 export const MAX_PER_PARENT_DEFAULT = 4;
@@ -21,14 +22,24 @@ export const HELPER_BUDGET_MIN = 10;
 export const MAX_LINES = 60;
 const Q_CHARS = 120;
 // helper executors: the configured typed executors; fake only by name (tests / smoke). Claude-pool executors (claude, <project>-*,
-// fable) never (Owner Q2); the built-in Codex executors are a later choice (not wired).
+// fable) never, so a helper never spends the plan it is meant to save; the built-in Codex executors are not wired.
 
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-const runsOf = state => fold(readEvents(recordsFile(state, 'run'))).items;
+// the run fold and a file's lines, shared with norn ask
+export const runsOf = state => fold(readEvents(recordsFile(state, 'run'))).items;
+export const fileLines = f => { try { return fs.readFileSync(f, 'utf8').replace(/\s+$/, '').split(/\r?\n/); } catch { return []; } };
 
-/** Ranked helper executors for class `cls`: allowed by policy, enabled, key set (API types). */
-export function pickExecutors({ policy, cls, providers = {}, env = process.env }) {
+/**
+ * Ranked helper executors for class `cls`: allowed by policy, enabled, key set (API types). A pinned `executor` (--executor) is the
+ * only one, checked the same way (fake by name); RunError (2) when it may not help.
+ */
+export function pickExecutors({ policy, cls, providers = {}, env = process.env, executor }) {
   const names = Object.keys(providers);
+  if (executor) {
+    if (executor !== 'fake' && !Object.hasOwn(providers, executor)) throw new RunError(`executor ${executor} is not a helper executor (fake | a configured typed executor name; Claude-pool executors are never helpers)`);
+    if (executor !== 'fake' && !executorsFor(policy, cls, names).includes(executor)) throw new RunError(`executor ${executor} is not allowed to do ${cls} work (policy.allowed_classes)`);
+    if (providers[executor]?.enabled === false) throw new RunError(`executor ${executor} is disabled in project.json`);
+    return [executor];
+  }
   return executorsFor(policy, cls, names).filter(n => {
     const p = providers[n];
     return !!p && p.enabled !== false && (!isApi(p) || keySet(p, env)) && (!p.preset || !!presetExe(p, env));   // a preset: inert until its exe is detected
@@ -44,12 +55,15 @@ export function helperMode(executor, entry, mode) {
   return [null, 'read-only'];
 }
 
-/** The generated helper brief (design sec. 2 answer contract). access: read-only (default) | no-tools | write (mode = its name). */
-export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, access = 'read-only', mode }) {
+/**
+ * The generated helper brief (with the answer contract). access: read-only (default) | no-tools | write (mode = its name). via: the
+ * command that asks (norn ask's cold helper too); context: lines after the question (norn ask: the run, its NOTES and its tail).
+ */
+export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, access = 'read-only', mode, via = 'norn delegate', context = [] }) {
   const write = access === 'write';
   const who = parent ? `parent ${parent}` : 'no parent run';
   return [
-    `# Helper ${write ? 'task' : 'question'} (norn delegate; ${who}; class ${cls}${mode ? `; mode ${mode}` : ''})`,
+    `# Helper ${write ? 'task' : 'question'} (${via}; ${who}; class ${cls}${mode ? `; mode ${mode}` : ''})`,
     '',
     ...(write ? [`You are a helper with the tools of mode ${mode}: change files only inside the worktree, never commit or push (your caller reviews every change), and name the exact commands you ran.`,
       `Worktree: ${worktree}`, ...(rules ? [`House rules (obey them): ${rules}`] : [])]
@@ -60,13 +74,31 @@ export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, a
     `## ${write ? 'Task' : 'Question'}`,
     q,
     '',
+    ...context,
     ...(read.length ? ['## Read first', ...read.map(r => `- ${r}`), ''] : []),
-    '## Answer contract',
-    '- At most 40 lines. Every claim cites file:line (or log:line).',
-    '- "UNKNOWN" is allowed and preferred to a guess.',
-    `- Your final message IS the answer (saved to ${out}).`,
+    ...answerContract(out),
     '',
   ].join('\n');
+}
+/** The answer contract of every helper brief (delegate's and ask's): the answer is the final message, saved to `out`. */
+export const answerContract = out => ['## Answer contract', '- At most 40 lines. Every claim cites file:line (or log / NOTES / transcript line).',
+  '- "UNKNOWN" is allowed and preferred to a guess.', `- Your final message IS the answer (saved to ${out}).`];
+
+/**
+ * Start a helper on each ranked executor in turn: start(ex, exe) -> a result, or null to skip ex. A full machine cap (RunRefused 4)
+ * tries the next one, never queues; a pinned executor (--executor) throws it. None started: RunRefused 4 "<why> - <yourself>".
+ */
+export function startRanked({ candidates, providers, env, machine, pinned, none, yourself }, start) {
+  let last = null;
+  for (const ex of candidates) {
+    const prov = providers[ex], exe = prov?.preset ? presetExe(prov, env) : prov ? typedExe(prov, machine) : undefined;
+    if (prov?.preset && !exe) throw new RunError(`executor ${ex}: preset ${prov.preset}: exe ${prov.exe} is not detected (not on PATH)`);
+    try { const r = start(ex, exe); if (r) return r; } catch (e) {
+      if (!(e instanceof RunRefused && e.code === 4) || pinned) throw e;
+      last = e;
+    }
+  }
+  throw new RunRefused(`${last ? last.message : none} - ${yourself}`, 4);
 }
 
 /**
@@ -91,7 +123,7 @@ export function delegateStart(o) {
     if (parent.state !== 'running') throw new RunRefused(`parent ${parentId} is not running (${parent.state}) - do it yourself`, 4);
     worktree = parent.data.worktree;
     if (!worktree) throw new RunRefused(`parent ${parentId} has no worktree`, 3);
-    const lock = readJson(lockPath(o.locksDir, worktree));
+    const lock = readJsonS(lockPath(o.locksDir, worktree));
     if (lock?.run !== parentId) throw new RunRefused(`parent ${parentId} does not hold the worktree lock of ${worktree} (lock: ${lock?.run ?? 'none'})`, 3);
   } else if (!fs.existsSync(worktree)) throw new RunError(`worktree not found: ${worktree}`);
 
@@ -103,17 +135,8 @@ export function delegateStart(o) {
   }
 
   const providers = providersOf(o.project);
-  let candidates;
-  if (o.executor) {
-    const ok = o.executor === 'fake' || Object.hasOwn(providers, o.executor);
-    if (!ok) throw new RunError(`executor ${o.executor} is not a helper executor (fake | a configured typed executor name; Claude-pool executors are never helpers)`);
-    if (o.executor !== 'fake' && !executorsFor(policy, cls, Object.keys(providers)).includes(o.executor)) throw new RunError(`executor ${o.executor} is not allowed to do ${cls} work (policy.allowed_classes)`);
-    if (providers[o.executor]?.enabled === false) throw new RunError(`executor ${o.executor} is disabled in project.json`);
-    candidates = [o.executor];
-  } else {
-    candidates = pickExecutors({ policy, cls, providers, env });
-    if (!candidates.length) throw new RunRefused(`no helper executor for class ${cls} (allowed, enabled, key set) - do it yourself`, 4);
-  }
+  const candidates = pickExecutors({ policy, cls, providers, env, executor: o.executor });
+  if (!candidates.length) throw new RunRefused(`no helper executor for class ${cls} (allowed, enabled, key set) - do it yourself`, 4);
   // the mode decides the brief: with --executor it is that entry's; ranked candidates must agree on the access (default read-only)
   const modes = Object.fromEntries(candidates.map(ex => [ex, helperMode(ex, providers[ex], o.mode)]));
   const access = modes[candidates[0]][1];
@@ -127,34 +150,23 @@ export function delegateStart(o) {
   const text = helperBrief({ q: o.q, read: o.read || [], out, worktree, parent: parentId, cls, rules, access, mode: modes[candidates[0]][0] });
   fs.writeFileSync(brief, text);
   const budget = o.budget || {};
-  let last = null;
-  for (const ex of candidates) {
-    const prov = providers[ex];
-    const [mode, acc] = modes[ex];
-    if (acc !== access) continue;   // a ranked fallback with another access would not match the written brief
+  const pick = { candidates, providers, env: o.env || process.env, machine: o.machine, pinned: !!o.executor, none: `no ranked executor with ${access} access`, yourself: 'do it yourself' };
+  return startRanked(pick, (ex, exe) => {
+    const prov = providers[ex], [mode, acc] = modes[ex];
+    if (acc !== access) return null;   // a ranked fallback with another access would not match the written brief
     const [model, effort] = prov ? [prov.model, prov.effort || 'medium'] : ['fake', '-'];
-    const exe = prov?.preset ? presetExe(prov, o.env || process.env) : prov ? typedExe(prov, o.machine) : undefined;
-    if (prov?.preset && !exe) throw new RunError(`executor ${ex}: preset ${prov.preset}: exe ${prov.exe} is not detected (not on PATH)`);
-    try {
-      const r = startRun({
-        state: o.state, locksDir: o.locksDir, executor: ex, provider: prov, lane: 'helper', project: o.project?.name ?? parent?.data.project,
-        brief, notes: out, worktree, parent: parentId, role: 'helper', cls, q: o.q.slice(0, Q_CHARS), readonly: acc !== 'write',
-        ...(mode ? { mode } : {}), lock: parentId || acc !== 'write' ? false : undefined,
-        budgetMin: o.budgetMin ?? HELPER_BUDGET_MIN, model, effort, exe, promptText: isProvider(prov) ? text : undefined,
-        env: { ...(prov?.env || {}), META_PARENT_RUN: parentId || 'none', META_ROLE: null }, budget, via: 'delegate',
-        policy: { auto_resume_handoff: false, trigger_on_exit: false }, tick: null, projectsDir: o.machine?.claude?.projects_dir, ctx_from: o.project?.file, ...(o.gitLedger ? { git_ledger: o.gitLedger } : {}),
-        ...(o.hbMs ? { hbMs: o.hbMs } : {}), staleMs,
-      });
-      return { run: r.run, executor: ex, mode, dir, brief, out };
-    } catch (e) {
-      if (!(e instanceof RunRefused && e.code === 4) || o.executor) throw e;
-      last = e;   // a full machine cap: try the next ranked executor; never queue
-    }
-  }
-  throw new RunRefused(`${last ? last.message : `no ranked executor with ${access} access`} - do it yourself`, 4);
+    const r = startRun({
+      state: o.state, locksDir: o.locksDir, executor: ex, provider: prov, lane: 'helper', project: o.project?.name ?? parent?.data.project,
+      brief, notes: out, worktree, parent: parentId, role: 'helper', cls, q: o.q.slice(0, Q_CHARS), readonly: acc !== 'write',
+      ...(mode ? { mode } : {}), lock: parentId || acc !== 'write' ? false : undefined,
+      budgetMin: o.budgetMin ?? HELPER_BUDGET_MIN, model, effort, exe, promptText: isProvider(prov) ? text : undefined,
+      env: { ...(prov?.env || {}), META_PARENT_RUN: parentId || 'none', META_ROLE: null }, budget, via: 'delegate',
+      policy: { auto_resume_handoff: false, trigger_on_exit: false }, tick: null, projectsDir: o.machine?.claude?.projects_dir, ctx_from: o.project?.file, ...(o.gitLedger ? { git_ledger: o.gitLedger } : {}),
+      ...(o.hbMs ? { hbMs: o.hbMs } : {}), staleMs,
+    });
+    return { run: r.run, executor: ex, mode, dir, brief, out };
+  });
 }
-
-const answerLines = f => { try { return fs.readFileSync(f, 'utf8').replace(/\s+$/, '').split(/\r?\n/); } catch { return []; } };
 
 /**
  * Block until every run in `runs` has ended or maxS passes. Returns { code: 0 all ended | 5 some running, lines (<= 60) }:
@@ -181,7 +193,7 @@ export function delegateWait({ state, runs, maxS = ASK_MAX_S, pollMs = 250, stal
     const why = it.state === 'lost' || it.state === 'killed' ? ` (${it.history.at(-1)?.data?.why ?? ''})` : '';
     lines.push(`${id} ${it.state}${outcome ? ' ' + outcome : ''}${why} ${d.executor ?? '-'} class ${d.class ?? '-'}: ${(d.q ?? '').replace(/\s+/g, ' ')}`.slice(0, 200));
     if (it.state !== 'running') {
-      const a = answerLines(d.notes);
+      const a = fileLines(d.notes);
       lines.push(...a.slice(0, per));
       if (a.length > per) lines.push(`[... ${a.length - per} more lines in the out file]`);
     }

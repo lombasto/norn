@@ -7,7 +7,6 @@ import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prim
 import { writeViews, writeViewsAsync } from './views.mjs';
 import { dlvMerged, laneShipped } from './dlvmerge.mjs';
 import { isAncestor } from './dlvgit.mjs';
-import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
 import { checkinBelow } from './floor.mjs';
@@ -83,11 +82,7 @@ export const KINDS = {
     review: { from: ['exited', 'lost', 'killed'], to: null, roles: ['checkin', 'controller', 'launcher'] },
     // META-GT12 queue: a run waiting for a cap slot (all start fields + not_before); filled by the launcher ({ next: RUN-m }) or withdrawn
     queue: { from: null, to: 'queued', roles: ['launcher'] },
-    fill: { from: ['queued', 'claimed'], to: 'filled', roles: ['launcher'] },
-    // META-GTP-FED piece 2: a node's claim on the ledger repo's claims branch, seen by the home fill ({ node }); an expired lease returns
-    // the run to the queue ({ why }); the node's done claim fills it ({ next: the node run, node, outcome, head })
-    claim: { from: ['queued'], to: 'claimed', roles: ['launcher'] },
-    release: { from: ['claimed'], to: 'queued', roles: ['launcher'] },
+    fill: { from: ['queued'], to: 'filled', roles: ['launcher'] },
     // META-AUTONOMY R1: the check-in withdraws a QUEUED run itself (a kill stays owner / controller); { why, next? } - next = its re-queue (norn requeue)
     withdraw: { from: ['queued'], to: 'withdrawn', roles: [...OWNER, ...CK, 'launcher'] },
     // META-AUTONOMY R1: a queued run's after: list swapped (norn requeue rewires a dependant onto the re-queued run): { after, why, from, to }
@@ -260,8 +255,8 @@ export function homeOf(stateDir) {
   const j = idFile(stateDir, 'home.json', HOME_RE);
   return j ? { id: j.id, bare_home: typeof j.bare_home === 'string' ? j.bare_home : null } : null;
 }
-// The prefix of a state dir's new ids: its home id, else (META-GTP-FED piece 3) the id of <state>/node.json { id }, a fed node's
-// own state dir (norn node run writes it), else none
+// The prefix of a state dir's new ids: its home id, else the id of <state>/node.json { id }, else none. Nothing writes node.json since
+// `norn node run` went; it stays until tests/homeids.test.mjs (outside the d-fed lane's Scope) drops its node case
 export const idPrefix = stateDir => homeOf(stateDir)?.id ?? idFile(stateDir, 'node.json', /^[a-z][a-z0-9]{0,15}$/)?.id ?? null;
 // A lane as typed (x = this home's lane, b/x = home b's) -> its id / mail address; In = the home id given (saves the read in a loop)
 const laneRef = (name, h) => (h && !String(name).includes('/') ? `${h}/${name}` : String(name));
@@ -690,13 +685,10 @@ function validateData(kind, ev, d, target, st, by, home = null) {
     if ((ev === 'start' || ev === 'queue') && d.after !== undefined && !(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string'))))
       fail('after must be a list of {kind, id, state}');
     if ((ev === 'start' || ev === 'queue') && d.inputs !== undefined) list(d.inputs, 'inputs');
-    if ((ev === 'start' || ev === 'queue') && d.labels !== undefined && !validLabels(d.labels)) fail('labels must be a list of [a-z0-9._-] labels');   // META-GTP-FED
     if (ev === 'end') { oneOf(d.outcome, 'outcome', ['done', 'stopped', 'handoff', 'no-result', 'crash', 'limit', 'auth', 'nudged', ...(target?.data?.kind === 'interactive' ? ['ended'] : []),...(by === 'migration' ? ['legacy'] : [])]); if (d.exit !== null && !Number.isInteger(d.exit)) fail('exit must be an integer or null'); }
     if (ev === 'review') list(d.refs, 'refs');
     if (ev === 'resume' && !d.next === !d.refused) fail('resume needs exactly one of next / refused');
     if (ev === 'fill') str(d.next, 'next');
-    if (ev === 'claim') str(d.node, 'node');
-    if (ev === 'release') str(d.why, 'why');
     // META-AUTONOMY R1 + OVERVIEW-TRUTH (6a): every withdraw names its reason (21 queue entries were dropped with none recorded)
     if (ev === 'withdraw') str(d.why, 'why');
     if (ev === 'rewire') { str(d.why, 'why'); if (!(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string')))) fail('after must be a list of {kind, id, state}'); }

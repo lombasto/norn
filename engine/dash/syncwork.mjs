@@ -8,7 +8,7 @@ import { syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { localClaims } from '../lib/claims.mjs';
 import { ledgerConfig } from '../lib/ledger.mjs';
-import { fedOf } from '../lib/fed.mjs';
+import { fedOf } from '../lib/claimsref.mjs';
 import { homeOf } from '../lib/records.mjs';
 
 /** op 'join': o = syncJoin's o. op 'reconcile': o = { state, machine, metaRoot, machineFile, by, dry } -> reconcile's result + { off } */

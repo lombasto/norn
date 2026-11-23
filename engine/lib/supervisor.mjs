@@ -21,8 +21,7 @@ import { loadProject } from './config.mjs';
 import { ingestRead } from './adopt.mjs';
 import { holdJob, reapJob, reapGroup, spawnOutside, holdGone } from './jobguard.mjs';
 import { killNames } from './kills.mjs';
-import { usageRefusal, onAccount } from './usageguard.mjs';
-import { nodeUsage } from './fed.mjs';
+import { usageRefusal } from './usageguard.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
@@ -264,8 +263,6 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (data.reap_skipped) logLine(`reap skipped ${killNames(data.reap_skipped)}: no longer in the run's job (a reused pid)`);
   // usage fields of the end record, by the adapter that parses this output (claude json final / codex log; cli plain: none)
   if (cmd && ADAPTERS[cmd.parse]) Object.assign(data, ADAPTERS[cmd.parse].endData({ final: spec.final, log: spec.log }));
-  // META-GTP-FED-2 piece 2: a node run (claim_of) carries its usage for the home guard (fed.mjs nodeUsage; 0 for non-Claude)
-  if (spec.claim_of) { try { data.node_usage = nodeUsage(data, onAccount(executorInfo(spec.executor, spec.provider))); } catch (e) { logLine(`node usage: ${e.message}`); data.node_usage = { tokens: 0, cache_read: 0 }; } }
   if (spec.session_id && spec.projectsDir) {
     try {
       for (const d of fs.readdirSync(spec.projectsDir)) {

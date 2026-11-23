@@ -90,7 +90,7 @@ const stem = f => (/\.m?js$/.test(f) && !f.startsWith('tests/') ? f.split('/').p
 /**
  * mode light: the test files that DIRECTLY cover the changed files - every changed test file, then per changed source module `per` (1)
  * of: its own test (<stem>.test.mjs), the tests named after it (<stem>-*.test.mjs), the tests that import it directly (when an impact
- * map from `norn tests measure` exists, only those its coverage confirms); fastest first by `ms` (file -> ms of the last measure). A
+ * map from `norn tests index` exists, only those its coverage confirms); fastest first by `ms` (file -> its median ms, times.json). A
  * module none of them reaches is named in `none` (left to CI). mode changed: ci-suite's pick (cisuite.mjs pickTests, importers capped
  * at 20). -> { run: [test files], none: [changed modules no test covers directly], left: [importers past the cap] }
  */
@@ -112,7 +112,7 @@ export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, pe
   return { run: [...run].sort(), none, left: [] };
 }
 /** pickRun over a repo's own tests/*.test.mjs (none when it has no tests/ folder: a project that is not node-tested), with the last
- * `norn tests measure` of project state dir `state` (its times.json for fastest-first, impact.json) when there (state null: none) */
+ * `norn tests index` of project state dir `state` (its times.json for fastest-first, impact.json) when there (state null: none) */
 export function pickInRepo(repo, state, mode, changed) {
   let tests = [];
   try { tests = fs.readdirSync(path.join(repo, 'tests')).filter(x => x.endsWith('.test.mjs')).map(x => `tests/${x}`); } catch { /* no tests folder */ }

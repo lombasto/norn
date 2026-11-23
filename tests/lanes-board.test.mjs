@@ -44,20 +44,22 @@ test('waits for: a queued run\'s after-runs are the row\'s waits', () => {
 
 test('boardOf: needs you (Inbox rows only), running, stopped, waiting, to land, parked, done today, old, archived', () => {
   const now = Date.parse('2026-11-20T12:00:00Z'), h = n => new Date(now - n * 3600e3).toISOString();
-  const B = (l, n = now) => boardOf({ state: 'active', needs: 0, group: 'needs', run_state: 'exited', outcome: null, ended: h(1), ...l }, n);
+  const B = (l, n = now) => boardOf({ state: 'active', needs: 0, run_state: 'exited', outcome: null, ended: h(1), ...l }, n);
   assert.equal(B({ needs: 2, run_state: 'running' }), 'needs', 'an Inbox row names it: needs you, whatever runs');
   assert.equal(B({ state: 'archived', needs: 1 }), 'archived');
-  assert.equal(B({ run_state: 'running', group: 'running' }), 'running');
+  assert.equal(B({ run_state: 'running' }), 'running');
   assert.equal(B({ outcome: 'stopped' }), 'stopped', 'stopped in the last 7 days, no Inbox row');
   assert.equal(B({ run_state: 'lost' }), 'stopped');
   assert.equal(B({ outcome: 'killed', ended: h(8 * 24) }), 'old', 'ended over 7 days ago, not done: Old (Q6)');
-  assert.equal(B({ run_state: 'queued', group: 'queued' }), 'waiting');
-  assert.equal(B({ run_state: null, group: 'queued' }), 'waiting', 'a lane with no run yet waits for its launch');
+  assert.equal(B({ run_state: 'queued' }), 'waiting');
+  assert.equal(B({ run_state: null }), 'waiting', 'a lane with no run yet waits for its launch');
+  assert.equal(B({ run_state: null, ended: null, rule: { rule: 'idle' } }), 'old', 'idle by its rule, never run: not Waiting');
   assert.equal(B({ state: 'parked' }), 'parked', 'parked and no Inbox row: Parked');
-  assert.equal(B({ group: 'queued', ruled: true }), 'parked', 'its question answered, waiting for the check-in: Parked');
-  assert.equal(B({ group: 'done', outcome: 'done', dlv: { step: 'pr', pr: 7 } }), 'land', 'done, not on main: To land');
-  assert.equal(B({ group: 'done', outcome: 'done', dlv: { step: 'merged' } }), 'today');
-  assert.equal(B({ group: 'done', outcome: 'done', ended: h(30) }), 'old');
+  assert.equal(B({ ruled: true }), 'parked', 'its question answered, waiting for the check-in: Parked');
+  assert.equal(B({ outcome: 'done', dlv: { step: 'pr', pr: 7 } }), 'land', 'done, not on main: To land');
+  assert.equal(B({ outcome: 'done', dlv: { step: 'merged' } }), 'today');
+  assert.equal(B({ outcome: 'done', ended: h(30) }), 'old');
+  assert.equal(B({ state: 'done', outcome: 'stopped' }), 'today', 'a done lane record is done, whatever its last run said');
   assert.deepEqual(LANE_SHOW.map(g => g[0]), ['needs', 'running', 'stopped', 'waiting', 'land', 'parked', 'today', 'old', 'archived']);
 });
 

@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findTranscript } from './harness/claude.mjs';
 
 const PRICES_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets', 'prices', 'claude.json');
 export const PRICES = JSON.parse(fs.readFileSync(PRICES_FILE, 'utf8').replace(/^﻿/, ''));
@@ -61,26 +62,13 @@ function tailUsd(file, fromMs, fallback, now) {
 }
 function sweep(now) { for (const [k, c] of tails) if (now - (c.used ?? 0) > IDLE_DROP_MS) tails.delete(k); }
 
-// <projects_dir>/<any>/<sid>.jsonl, remembered once found (a miss is re-looked for at most every 30 s: the CLI writes it after a turn)
-const found = new Map(), missed = new Map();
-export function transcriptFor(projectsDir, sid, now = Date.now()) {
-  if (!projectsDir || !sid) return null;
-  const k = projectsDir + '|' + sid, f = found.get(k);
-  if (f && fs.existsSync(f)) return f;
-  if (now - (missed.get(k) ?? -Infinity) < 30000) return null;
-  let dirs = []; try { dirs = fs.readdirSync(projectsDir, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { /* none */ }
-  for (const d of dirs) { const t = path.join(projectsDir, d.name, sid + '.jsonl'); if (fs.existsSync(t)) { found.set(k, t); missed.delete(k); return t; } }
-  missed.set(k, now);
-  return null;
-}
-
 /**
  * The live $ of one running Claude run. run: { session_id, started (ms), model?, transcript? } o: { projectsDir, now }
  * -> { usd, estimate: true, mtime (latest transcript write, ms), files } or null (no transcript yet: nothing spent that can be seen).
  */
 export function liveRunCost(run, { projectsDir, now = Date.now() } = {}) {
   sweep(now);
-  const file = run.transcript || transcriptFor(projectsDir, run.session_id, now);
+  const file = run.transcript || findTranscript(projectsDir, run.session_id);
   if (!file) return null;
   const main = tailUsd(file, run.started, run.model, now);
   if (!main) return null;

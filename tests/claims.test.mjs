@@ -6,9 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { claimWork, workKey, registerHome, registerProject, allowPair, releaseWork, listClaims, overlapOf, localClaims, readSync, writeSync, SYNC_FILES } from '../engine/lib/claims.mjs';
+import { claimWork, registerHome, registerProject, allowPair, releaseWork, overlapOf, localClaims, readSync, writeSync, SYNC_FILES } from '../engine/lib/claims.mjs';
 import { ClaimsError } from '../engine/lib/claimsref.mjs';
-import { claimRun } from '../engine/lib/fed.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
 
@@ -136,16 +135,6 @@ test('offline: the pre-check holds on the last fetched claims without the networ
   const won = claimWork(fa, me('a', 'x', { scope: ['src/**'] }));   // a's own unchanged claim, fetched view: no network needed
   assert.equal(claimWork({ ...fa, remote: path.join(g.t, 'gone.git') }, me('a', 'x', { scope: ['src/**'] })).won, true);
   assert.equal(won.again, true);
-});
-
-test('fed run claims and work claims share the branch under their own folders; list reads both', () => {
-  const g = rig();
-  assert.equal(claimRun(g.ep('n1'), { home: 'a', project: 'demo', run: 'RUN-1', labels: ['linux'] }).won, true);
-  assert.equal(claimWork(g.ep('a'), me('a', 'x')).won, true);
-  assert.deepEqual(g.files().sort(), ['runs/a/demo/RUN-1.json', 'work/demo/a/x.json']);
-  const l = listClaims(g.ep('b'));
-  assert.deepEqual(Object.keys(l).sort(), ['runs/a/demo/RUN-1.json', 'work/demo/a/x.json']);
-  assert.equal(workKey('demo', 'a', 'x'), 'work/demo/a/x.json');
 });
 
 test('cli: norn claim list | allow | release on the ledger remote; release takes the home id from the project home.json', async () => {

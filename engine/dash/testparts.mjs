@@ -31,3 +31,13 @@ export function codeView({ file, text, line = null }) {
 }
 /** the viewer's head: the file, the line, read-only */
 export const codeHead = ({ file, lines, line = null }) => `<b class="small mono" style="overflow-wrap:anywhere">${esc(file)}</b><span class="small mute">${line ? `line ${esc(line)} · ` : ''}${esc(lines)} lines · read-only</span>`;
+/**
+ * SPEC dash-owner-1123 s.1.2: a file / case table that is a list of cards at 390 px (css/tests.css .ftable: each cell says its label).
+ * rows: objects; cols: [{ key, label, num (right-aligned), html (row -> HTML; else the escaped row[key]) }]; o.sort = { key (the sorted
+ * column), act (each header a button: data-act + data-sort) } | null; o.act = a row's action (data-act, data-id = row.id ?? row.file) -> HTML
+ */
+export function fileTable(rows, cols, { sort = null, act = '', id = '' } = {}) {
+  const th = c => `<th${c.num ? ' class="num"' : ''}${sort?.key === c.key ? ' aria-sort="descending"' : ''}>${sort?.act ? `<button class="lnk" data-act="${esc(sort.act)}" data-sort="${esc(c.key)}">${esc(c.label)}</button>` : esc(c.label)}</th>`;
+  const tr = r => `<tr${act ? ` data-act="${esc(act)}" data-id="${esc(r.id ?? r.file)}" tabindex="0"` : ''}>${cols.map(c => `<td data-label="${esc(c.label)}"${c.num ? ' class="num"' : ''}>${c.html ? c.html(r) : esc(r[c.key] ?? '')}</td>`).join('')}</tr>`;
+  return `<table class="ftable"${id ? ` id="${esc(id)}"` : ''}><thead><tr>${cols.map(th).join('')}</tr></thead><tbody>${rows.map(tr).join('')}</tbody></table>`;
+}

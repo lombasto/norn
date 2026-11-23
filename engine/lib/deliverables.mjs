@@ -94,6 +94,9 @@ function prsOf(it, merged, prs) {
   }
   return out;
 }
+// a PR that ended before t: GitHub's merged / closed answer (deliverables-pr.json), or the `merged` event the tick latched for it
+const prEnded = (it, url, prs, t) => { const c = prs[url], end = c?.state === 'MERGED' ? c.merged_at : c?.state === 'CLOSED' ? c.closed_at : null;
+  return Date.parse(end) < t || it.history.some(h => h.ev === 'merged' && h.data?.url === url && Date.parse(h.data.merged_at || h.ts) < t); };
 
 /**
  * One row per deliverable. opts: { stateDir, project, now (ms), git (makeGit()), questions (records items, default loaded) }
@@ -101,9 +104,12 @@ function prsOf(it, merged, prs) {
  * merge_commit, merged_at, merge_pr, merge_latched, unknown_why, ruling (the open Q-n asking the owner), target, at_target, repo, branch, lane, run, delivers, tip,
  * done_utc, days, behind, ahead, native, native_files, park {why, days, expired} | null, asked (Q-n since the last park) | null, due,
  * why_not (OVERVIEW-TRUTH 2, dlvwhy.mjs whyNotMerged: a DONE row's reason it is not merged, { kind, text, warn, run?, url? }) | null,
- * pr (the last PR) | null, prs (every PR, newest first: url, number, run, opened, state, merged_at, closed_at; prsOf).
+ * pr (the last PR) | null, prs (every PR, newest first: url, number, run, opened, state, merged_at, closed_at; prsOf),
+ * merges (every latched merge's time, every round's: mergeTimes - the stuck clock counts a reused deliverable's past merges after a newer DONE).
  * refresh (git-perf S1; `norn branches --refresh`): ask the slow landing rules again for the tips whose answer predates main's last move.
  */
+/** land-reuse (DEC-b-56): the times of a deliverable's latched `merged` events, every round's (a newer DONE ends the latch, not the merge) */
+export const mergeTimes = it => it.history.filter(h => h.ev === 'merged').map(h => h.data?.merged_at || h.ts);
 export function deliverablesView({ stateDir, project = {}, now = Date.now(), git = makeGit(), questions = null, refresh = false } = {}) {
   const t0 = Date.now();
   const cfg = deliverableConfig(project);
@@ -127,7 +133,9 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const parkEv = it.state === 'parked' ? lastEv(it, ['park']) : null;
     // META-GTP-MERGEQ piece 0: superseded = terminal (the work landed another way): at its target, never due / resolved / rehearsed
     const supEv = it.state === 'superseded' ? lastEv(it, ['supersede']) : null;
-    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;   // the PR norn merge-land opened
+    // the PR norn merge-land opened; land-reuse (DEC-b-56): one that merged or closed before the last DONE was an earlier round's (a
+    // reused deliverable, ci-fix): in prs, not the row's pr, so the queue lands the new round and why_not claims no open PR
+    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url && !prEnded(it, prEv.data.url, prCache, Date.parse(doneUtc)) ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;
     const superseded = supEv ? { by: supEv.data.by, why: supEv.data.why, at: supEv.ts } : null;
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
@@ -145,7 +153,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
     return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
       delivers: d.delivers ?? g.subject ?? '', subject: g.subject ?? null, tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
-      native: g.native, native_files: g.native_files, pr, prs: prsOf(it, state === 'merged' || state === 'installed' || !!superseded, prCache), park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}),
+      native: g.native, native_files: g.native_files, pr, prs: prsOf(it, state === 'merged' || state === 'installed' || !!superseded, prCache), merges: mergeTimes(it), park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}),
       merged_how: m?.how ?? null, merge_commit: m?.merge_commit ?? null, merged_at: m?.merged_at ?? null, merge_pr: m?.pr ?? null, merge_latched: !!m?.latched,
       unknown_why: j.unknown, ruling: rulingOf(it.id) };
     };

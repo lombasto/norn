@@ -13,3 +13,10 @@
 .smbar u{position:absolute;top:-4px;bottom:-4px;width:3px;margin-left:-1px;background:var(--ink);border-radius:2px}
 .smdrawer{margin-top:10px;display:grid;gap:12px;min-width:0}
 .smtop{margin:0;padding-left:22px}.smtop li{margin:3px 0;overflow-wrap:anywhere}
+/* NORN-DASH-1123 item 8: Slop > Rules' Linters section - a level chip beside its rule names, which wrap (long ESLint names break
+   anywhere on a phone, so nothing scrolls sideways at 390 px). */
+.lint-tools{list-style:none;margin:0;padding:0;display:grid;gap:10px;min-width:0}
+.lint-tool{min-width:0;overflow-wrap:anywhere}
+.lint-levels{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 8px;margin:6px 0;align-items:baseline}
+.lint-levels dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.lint-cnr{margin:4px 0;padding-left:18px}

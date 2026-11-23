@@ -11,7 +11,7 @@ import { claimsPass } from '../engine/lib/tick.mjs';
 import { claimWork, releaseWork, renewWork, takeWork, listClaims, readSync, writeSync } from '../engine/lib/claims.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { tryDigest } from '../engine/lib/digest.mjs';
-import { fedOf } from '../engine/lib/fed.mjs';
+import { fedOf } from '../engine/lib/claimsref.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const S = 1000, POL = { lease_s: 3600, renew_s: 600, fence_s: 3000, stale_grace_s: 300 };

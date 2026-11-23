@@ -49,7 +49,7 @@ import { tickPaths } from './lanepaths.mjs';
 import { tickProposals } from './proposals.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
 import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
-import { fedOf } from './fed.mjs';
+import { fedOf } from './claimsref.mjs';
 import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync, claimLeader, leaderKey } from './claims.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -103,11 +103,10 @@ export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.jo
 // built-in AND checkin_executor_trial is on: then that executor runs it with the meta MCP server (checkin profile) attached and
 // write access to the state root / ledger / briefs, and `fallback` = the claude check-in the supervisor re-runs on a non-DONE tick.
 // minor = the reduced tick (piece 2). Returns { error } | { executor, exe, model, effort[, trial, mcp, writable_roots, fallback] }.
-const TRIAL_MODELS = { 'codex-astra': 'gpt-6-astra', 'codex-sol': 'gpt-6.1-sol' };
 export function checkinExecutor({ B = {}, machine = {}, p = {}, minor = false, dry = false } = {}) {
   const want = B.checkin_executor || 'claude';
   const claude = { executor: dry ? 'fake' : 'claude', exe: machine.claude?.exe,
-    model: minor ? B.checkin_minor_model ?? MACHINE_DEFAULTS.checkin_minor_model : B.checkin_model || 'claude-opus-5-5',
+    model: minor ? B.checkin_minor_model ?? MACHINE_DEFAULTS.checkin_minor_model : B.checkin_model || BUILTIN.claude.model,
     effort: minor ? B.checkin_minor_effort || MACHINE_DEFAULTS.checkin_minor_effort : B.checkin_effort || 'medium' };
   if (!dry && !claude.exe) return { error: 'no claude executable (machine.json; run norn setup)' };
   if (want === 'claude') return claude;
@@ -116,7 +115,7 @@ export function checkinExecutor({ B = {}, machine = {}, p = {}, minor = false, d
   const family = BUILTIN[want].harness, exe = machine[family]?.exe;
   if (!dry && !exe) return { error: `no ${family} executable for checkin_executor ${want} (machine.json)` };
   const roots = [path.dirname(path.resolve(p.state || '.')), p.ledger && path.dirname(p.ledger), p.briefs_dir].filter(Boolean).map(fwd);
-  return { executor: dry ? 'fake' : want, trial: want, exe: dry ? undefined : exe, model: TRIAL_MODELS[want] || claude.model, effort: claude.effort,
+  return { executor: dry ? 'fake' : want, trial: want, exe: dry ? undefined : exe, model: BUILTIN[want].model, effort: claude.effort,
     ...(dry || !p.file ? {} : { mcp: { name: 'norn', command: process.execPath, args: [fwd(META_CMD), 'mcp', '--project', fwd(p.file), '--profile', 'checkin'] } }),
     writable_roots: roots, fallback: claude };
 }
@@ -236,7 +235,7 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
   const freeWhy = c => {
     if (['done', 'archived'].includes(items[laneId(c.lane, state)]?.state)) return runOf(c.lane) ? null : '';
     const rs = runsOf(c.lane);
-    if (!rs.length || rs.some(r => ['running', 'queued', 'claimed'].includes(r.state))) return null;   // a claim before its first run record: not judged
+    if (!rs.length || rs.some(r => ['running', 'queued'].includes(r.state))) return null;   // a claim before its first run record: not judged
     const s = shipped(c.lane, ...rs);
     if (s) return `landed (${s})`;
     const last = Math.max(...rs.map(r => Date.parse(r.history.at(-1)?.ts ?? '') || 0));
@@ -370,7 +369,7 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
       if (!rs.length) continue;   // a claim before its first run record: not judged
       const tipAt = Math.max(there ? Number(gitOut(wt, ['log', '-1', '--format=%ct'])) * 1000 || 0 : 0, Date.parse(rs[0].history?.at(-1)?.ts ?? '') || 0) || null;
       const dirty = there ? (gitOut(wt, ['status', '--porcelain']) ?? 'unreadable').trim() !== '' : null;
-      if (laneAlive({ live: rs.some(r => ['running', 'queued', 'claimed'].includes(r.state)), open: open.has(c.lane), dirty, tipAt }, now, p.policy?.collide)) continue;
+      if (laneAlive({ live: rs.some(r => ['running', 'queued'].includes(r.state)), open: open.has(c.lane), dirty, tipAt }, now, p.policy?.collide)) continue;
       let r = null;
       try { r = releaseWork(f, c); } catch { /* offline: the next pass */ }
       if (!(r?.ok || r?.gone)) continue;

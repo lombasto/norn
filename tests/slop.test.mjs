@@ -66,7 +66,7 @@ for (const rule of [...loadRules(), ...projectRules]) {
 }
 
 // S1a (SPEC 1.3 F5 / F6, 3.4): the check fails closed - a rule that could not run and a file the linter cannot parse are BLOCK findings
-const LINT = loadRules().filter(r => r.kind === 'lint' || r.kind === 'ast');
+const LINT = loadRules().filter(r => (r.kind === 'lint' || r.kind === 'ast') && r.tool === 'eslint');   // the rules that read a.mjs (LP / LR: slop-lint.test.mjs)
 test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could not run: <why>", fingerprint rule + could-not-run); the result has no skipped list', () => {
   const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n' } });
   const down = () => { throw new Error('npm not found on PATH'); };

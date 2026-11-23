@@ -37,10 +37,10 @@ export function insPart(v, name) {
 }
 
 // META-UX-BUILD S4 (REPORT s.2, owner DIR-65 "3) A"): the Context tab = the Instructions view's cost half, in the sub-view pattern
-// (subviews.mjs). The summary answer carries what Per role, Is it growing? and Check-ins per day show; Per file loads the files
+// (subviews.mjs). The summary answer carries what Per role, Growth and Check-ins per day show; Per file loads the files
 // part; the checks are one link away and load their lists.
 /** [id, label]: the 4 sub-views of Context (the stop rule: never a fifth) */
-export const CONTEXT_SUBS = [['role', 'Per role'], ['file', 'Per file'], ['growing', 'Is it growing?'], ['checkins', 'Check-ins per day']];
+export const CONTEXT_SUBS = [['role', 'Per role'], ['file', 'Per file'], ['growth', 'Growth'], ['checkins', 'Check-ins per day']];
 /** the parts each Context view loads beyond the summary (checks = the page one link away, not a sub-view) */
 // META-UX-BUILD S5: hints and suggest (Tighten) are Slop rows now - the checks page no longer loads them
 export const contextParts = sub => (sub === 'file' ? ['files'] : sub === 'checks' ? INS_PARTS.filter(k => k !== 'hints' && k !== 'suggest') : []);

@@ -10,11 +10,15 @@
 //            result instead of starting a second copy (a dead or reused pid = stale, gatelock.mjs holderGone; waiting is bounded).
 //   log      <dir>/log.jsonl, one row per file a run asked for { at, run, file, key, how: ran | reused | waited, ok, ms (this run's
 //            wall time on it), saved_ms (what a reuse or wait spared it), by (the run whose result it took) }: the Tests tab's Run time.
+//   cases    <dir>/cases.jsonl, one row per test case of a file that ran here { at, run, state (the run's state folder name | null), file,
+//            id (<file>::<title path>), ms, ok }: the Tests tab's per-test times (SPEC dash-owner-1123 s.1.1). The child's second
+//            reporter (casereport.mjs) writes them; its arguments live in runNode, outside the key. A reused or waited file adds none.
 // <dir> is machine-wide: <the state root>/testcache, beside the gate lock (every project and run of the machine shares it).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { importsOf, suiteEnv } from './cisuite.mjs';
@@ -27,7 +31,8 @@ export const RESULT_TTL_MS = 24 * 3600e3, LOG_DAYS = 7, WAIT_POLL_MS = 1000, FIL
 /** the cache folder of a project state dir (<state root>/testcache), and of the calling process (its run's state, else META_ROOT's) */
 export const cacheDirOf = state => path.join(path.dirname(path.resolve(state)), 'testcache');
 export const cacheDir = (env = process.env) => (env.META_RUN_STATE ? cacheDirOf(env.META_RUN_STATE) : path.join(metaRoot(env), 'state', 'testcache'));
-export const logFile = dir => path.join(dir, 'log.jsonl');
+export const logFile = dir => path.join(dir, 'log.jsonl'), casesFile = dir => path.join(dir, 'cases.jsonl');
+const CASE_REPORTER = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'casereport.mjs')).href;
 
 // ---------- the key ----------
 const SKIP = new Set(['node_modules', 'vendor', 'target', '.git']);
@@ -87,22 +92,37 @@ function takeLock(dir, key, me, { alive, start } = {}) {
   return { held: false, holder: readJson(f) };
 }
 function logRow(dir, row) { fs.appendFileSync(logFile(dir), JSON.stringify(row) + '\n'); }
+const jsonLines = t => String(t ?? '').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 /** the log rows (oldest first); since = ms */
-export function cacheLog(dir, { since = 0 } = {}) {
-  return (readText(logFile(dir)) ?? '').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(r => r && Date.parse(r.at) >= since);
+export const cacheLog = (dir, { since = 0 } = {}) => jsonLines(readText(logFile(dir))).filter(r => Date.parse(r.at) >= since);
+/** the per-case rows (oldest first); since = ms */
+export const caseLog = (dir, { since = 0 } = {}) => jsonLines(readText(casesFile(dir))).filter(r => Date.parse(r.at) >= since);
+/** the reporter's lines of one file (a subtest ends before its parent) -> [{ id: <file>::<title path>, name (the path), line, ms, ok }] */
+export function caseIds(file, rows) {
+  const out = [], open = [];   // open: ended rows whose parent has not ended yet: { nesting, all (the row and its descendants) }
+  for (const r of rows) {
+    const me = { ...r, path: [r.name] }, kids = [];
+    while (open.length && open.at(-1).nesting > r.nesting) kids.unshift(open.pop());
+    for (const x of kids.flatMap(k => k.all)) x.path.unshift(r.name);
+    out.push(me); open.push({ nesting: r.nesting, all: [me, ...kids.flatMap(k => k.all)] });
+  }
+  return out.map(x => ({ id: `${file}::${x.path.join('::')}`, name: x.path.join('::'), line: x.line ?? null, ms: x.ms ?? null, ok: x.ok === true }));
 }
-/** drop results past RESULT_TTL_MS and log rows past LOG_DAYS (once the log passes 256 KB) */
+/** drop results past RESULT_TTL_MS, log rows past LOG_DAYS (once the log passes 256 KB) and case rows past LOG_DAYS (once they pass 4 MB) */
 export function prune(dir, now = Date.now()) {
   let names = []; try { names = fs.readdirSync(dir); } catch { return; /* no cache folder yet: nothing to prune, the first run makes it */ }
   for (const n of names.filter(n => /^[0-9a-f]{40}\.json$/.test(n))) { const r = readJson(path.join(dir, n)); if (!r || now - Date.parse(r.at) > RESULT_TTL_MS) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* another run removed it first: the next file goes on */ } } }
   try { if (fs.statSync(logFile(dir)).size > 256 * 1024) fs.writeFileSync(logFile(dir), cacheLog(dir, { since: now - LOG_DAYS * 86400e3 }).map(r => JSON.stringify(r) + '\n').join('')); } catch { /* no log yet */ }
+  try { if (fs.statSync(casesFile(dir)).size > 4 * 1024 * 1024) fs.writeFileSync(casesFile(dir), caseLog(dir, { since: now - LOG_DAYS * 86400e3 }).map(r => JSON.stringify(r) + '\n').join('')); } catch { /* no case rows yet */ }
 }
 
 // ---------- one file ----------
-/** node --test on one file: its output kept (the last 2 MB) for its counts and a red's tail; past capMs its tree is killed */
-function runNode(file, { cwd, env, nodeArgs, capMs }) {
+/** node --test on one file: its output kept (the last 2 MB) for its counts and a red's tail; past capMs its tree is killed. The spec reporter
+ *  stays on stdout (testCounts reads it), casereport.mjs writes the per-case lines to caseOut: both live here, outside nodeArgs and the key */
+function runNode(file, { cwd, env, nodeArgs, capMs, caseOut }) {
   return new Promise(resolve => {
-    const t0 = Date.now(), child = spawn(process.execPath, ['--test', ...nodeArgs, file], { cwd, env, windowsHide: true });
+    const rep = ['--test-reporter=spec', '--test-reporter-destination=stdout', `--test-reporter=${CASE_REPORTER}`, `--test-reporter-destination=${caseOut}`];
+    const t0 = Date.now(), child = spawn(process.execPath, ['--test', ...rep, ...nodeArgs, file], { cwd, env, windowsHide: true });
     let text = '', timedOut = false;
     const take = d => { text = (text + String(d)).slice(-2e6); };
     child.stdout.on('data', take); child.stderr.on('data', take);
@@ -131,9 +151,12 @@ export async function runCached(file, o) {
     if (l.held || !l.holder) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'norn-tests-root-'));
       try {
-        const r = await runNode(f, { cwd: ix.root, env: { ...suiteEnv(env), META_ROOT: root, ...childEnv }, nodeArgs, capMs });
-        const res = { ok: r.code === 0 && !r.timedOut, ms: r.ms, at: new Date().toISOString(), run, file: f, counts: testCounts(r.text), ...(r.timedOut ? { timed_out: true } : {}) };
+        const caseOut = path.join(root, 'cases.jsonl'), r = await runNode(f, { cwd: ix.root, env: { ...suiteEnv(env), META_ROOT: root, ...childEnv }, nodeArgs, capMs, caseOut });
+        const cases = caseIds(f, jsonLines(readText(caseOut)));
+        const res = { ok: r.code === 0 && !r.timedOut, ms: r.ms, at: new Date().toISOString(), run, file: f, counts: testCounts(r.text), cases, ...(r.timedOut ? { timed_out: true } : {}) };
         writeResult(dir, key, res);
+        const state = env.META_RUN_STATE ? path.basename(path.resolve(env.META_RUN_STATE)) : null;
+        if (cases.length) fs.appendFileSync(casesFile(dir), cases.map(c => JSON.stringify({ at: res.at, run, state, file: f, id: c.id, ms: c.ms, ok: c.ok }) + '\n').join(''));
         return done({ how: 'ran', ok: res.ok, ms: r.ms, saved_ms: 0, by: run, counts: res.counts, at: res.at, ...(r.timedOut ? { timed_out: true } : {}), ...(res.ok ? {} : { tail: r.text.slice(-8000) }) });
       } finally { l.release(); fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
     }

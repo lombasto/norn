@@ -8,6 +8,8 @@
 .fmblk.st-measured{background:var(--mute);cursor:default;display:inline-flex;align-items:center}
 .stkdot.st-measured{background:var(--mute)}
 .ctxmeas td:first-child{color:var(--mute)}
+/* Growth (owner list 2026-11-23 item 2): the <norn-chart> at the card's width; on a wide screen its height stays readable */
+#ins-trend norn-chart{margin:2px 0 4px}#ins-trend .tcplot{max-height:340px}
 .ctxfhead{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 12px 0}
 /* Docs: line numbers in a left gutter (Rendered: each paragraph's first line, its left edge coloured by age), a line's findings one
    marker there; its popover floats over the text, so a paragraph keeps its normal height and spacing */

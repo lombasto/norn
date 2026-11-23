@@ -15,11 +15,10 @@ import { spawnSync, spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore, HOME_RE } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger, ledgerConfig } from './ledger.mjs';
-import { rgit, fetchRefs, claimsLock, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
-import { fedOf } from './fed.mjs';
+import { rgit, fetchRefs, under, fedOf, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { updateMachine } from './config.mjs';
-import { localClaims, observeClaims, updateSync, listClaims, registerHome, homeKey, projectKey } from './claims.mjs';
+import { localClaims, observeClaims, updateSync, listClaims, registerHome, homeKey, projectKey, setHomeName, homeNames } from './claims.mjs';
 import { syncCut, cutLines } from './synccut.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
@@ -39,8 +38,9 @@ const ls = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } cat
 const writeAtomic = (f, b) => { fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, b); fs.renameSync(tmp, f); };
 const logTo = (cfg, s) => { try { fs.appendFileSync(path.join(cfg.dir, 'sync.log'), `${new Date().toISOString()} ${s}\n`); } catch { /* no dir */ } };
 // <ledger>/home-manifest.json { head, pushed, files: { rel: "size:mtime" } } (a no-op pass spawns no git); home-stopped.txt = why
-// publishing stopped (remove it once the id is unique); sync-fetch.json { fetched_at, fetch_error, failed_at, gone } (the fetch's own file)
-const F = { manifest: 'home-manifest.json', stopped: 'home-stopped.txt', fetch: 'sync-fetch.json' };
+// publishing stopped (remove it once the id is unique); sync-fetch.json { fetched_at, fetch_error, failed_at, gone } (the fetch's own file);
+// home-names.json { id: name } (the claims ref's home names after each fetch and rename: a page read never spawns git)
+const F = { manifest: 'home-manifest.json', stopped: 'home-stopped.txt', fetch: 'sync-fetch.json', names: 'home-names.json' };
 const at = (cfg, k) => path.join(cfg.dir, F[k]);
 const projects = (cfg, id) => ls(cfg.state_root).filter(e => e.isDirectory() && SEG.test(e.name) && (id === undefined ? homeOf(path.join(cfg.state_root, e.name)) : homeOf(path.join(cfg.state_root, e.name))?.id === id)).map(e => e.name).sort();
 
@@ -153,8 +153,7 @@ export function fetchHomes(cfg0, o = {}) {
   const f = fedOf(cfg), now = new Date(o.now ?? Date.now()).toISOString(), st = readJsonS(at(cfg, 'fetch')) || {};
   try {
     ensureLedger(cfg);
-    const lk = claimsLock(f);
-    withLock(lk.file, () => fetchRefs(f, [HOME_SPEC]), lk.opts);
+    under(f, () => fetchRefs(f, [HOME_SPEC]));
   } catch (e) {
     const why = e.message.split('\n').pop();
     logTo(cfg, `fetch failed (the last copies stay): ${why}`);
@@ -199,8 +198,25 @@ export function fetchHomes(cfg0, o = {}) {
     }
     const gone = mine.flatMap(p => ls(path.join(cfg.state_root, p, 'homes')).filter(d => d.isDirectory() && !tips[d.name]).map(d => `${p}/${d.name}`)).sort();
     writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone }));
+    writeAtomic(at(cfg, 'names'), JSON.stringify(homeNames(f)));
     return { homes, written, gone, relayed, refused };
   } catch (e) { logTo(cfg, `copies failed: ${e.message}`); return { error: e.message }; }
+}
+
+/** NORN-DASH-1123 item 6: name a home (POST /api/sync/name): setHomeName on the claims ref, then the names cache ->
+ *  { ok, names } | { refused: [why] } | { off } | { error }. Never throws. */
+export function renameHome(cfg0, { home, name, by = 'dashboard', now = Date.now() }) {
+  let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
+  if (!cfg) return { off: true };
+  const f = fedOf(cfg);
+  try {
+    ensureLedger(cfg);
+    const r = setHomeName(f, { id: home, name, by, now });
+    if (r.unknown || r.busy) return { refused: [r.why] };
+    const names = homeNames(f);
+    writeAtomic(at(cfg, 'names'), JSON.stringify(names));
+    return { ok: true, names };
+  } catch (e) { return /^home name |: not a valid home$/.test(e.message) ? { refused: [e.message] } : { error: e.message.split('\n').pop() }; }   // the name rule refuses; git fails
 }
 
 // a relayed / refused pending event: "<home>:<seq> <file> <id> <ev>"

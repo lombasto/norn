@@ -30,8 +30,9 @@ those of the rule file.
 | `pattern` | `patterns` (regexes), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked), `unless`, `cite` | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
 | `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
-| `lint` | `tool`, `config` (the repo config, read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (core rules), `levels` (per sub-rule, `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
+| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy is read from the head's log, never run; none is `<id>/no-evidence`), `levels` (per sub-rule, `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
+| `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
 | `ast` | `selectors`: `{ selector, message, text? }`, ESLint `no-restricted-syntax` through the pinned ESLint; `reason` | yes |
 | `model` | `question` (plain words), `files`, `on` (`code` / `tests`: which branch it reads), `hits` (rule ids whose findings it is sent), `context` (quality files) | no |
 | `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
@@ -39,6 +40,8 @@ those of the rule file.
 A rule file never loads code: the engine writes the ESLint config from the rule's data and the merge base's `eslint.config.mjs`
 (plain data, core rules only), with inline config comments off. ESLint is the locked tool set in `tools/lint`, installed by
 `npm ci --ignore-scripts` into `<meta root>/state/tools/lint/<lock hash>`; a tool that cannot install or run is a BLOCK "could not run".
+ruff and clippy are the project's own tools, never pinned here: ruff runs as `uv run --no-sync --project <the config's folder in the
+main checkout> ruff` (VIRTUAL_ENV unset, never `uv sync`) on the touched files in a temp folder; clippy is never started (a build).
 
 ## The second voice (`model`)
 

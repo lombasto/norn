@@ -77,11 +77,9 @@ import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRol
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
-import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
-import { ClaimsError } from '../lib/claimsref.mjs';
+import { ClaimsError, fedOf } from '../lib/claimsref.mjs';
 import { syncCut, cutLines } from '../lib/synccut.mjs';
 import { localClaims, listClaims, allowPair, releaseWork, takeWork, observeClaims, readSync, updateSync, writeSync } from '../lib/claims.mjs';
-import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { stageSizes, verdict, sizingThresholds } from '../lib/sizing.mjs';
@@ -371,14 +369,14 @@ function setupCmd(argv, env, out, err) {
 
 // ---------- S4: norn run / norn stop / norn hook session ----------
 const RUN_USAGE = {
-  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--priority P0|P1|P2|P3 (default P2)] [--item RM-n [--why W] (links the run to its roadmap item; a lane the item does not link warns, and is refused without --why when the item links other lanes)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
+  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--priority P0|P1|P2|P3 (default P2)] [--item RM-n [--why W] (links the run to its roadmap item; a lane the item does not link warns, and is refused without --why when the item links other lanes)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
   requeue: 'norn requeue RUN-n [--after "<conditions as norn run --after> | none"] [--priority P0-P4] [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions or priority: same launch args, a flag left out keeps the old value (a MERGE / resolve stays at P1 or above); the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
 // SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
 const RUN_SHORT = 'norn run --executor E --lane L --brief F [options]    (every option: norn run --help)';
-const RUN_FLAGS = ['executor', 'labels', 'after', 'inputs', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item', 'not-before'];
+const RUN_FLAGS = ['executor', 'after', 'inputs', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item', 'not-before'];
 function runFlags(cmd, argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -430,7 +428,6 @@ function where(flags, env) {
   return { project, state, locks: flags.locks || path.join(path.dirname(path.resolve(state)), 'locks') };
 }
 // NORN-WATCH S4: --after / --inputs parse errors are usage errors (exit 2)
-const labelsOf = s => { try { return parseLabels(s); } catch (e) { if (e instanceof FedError) throw new RunError(e.message); throw e; } };
 const afterOf = (s, parse = parseAfter) => { try { return parse(s); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; } };
 // OOTB-R2 N-2: a relative --brief / --notes is the caller's (cwd), not the lane worktree's the worker runs in ('-' = no brief file)
 const callerPath = f => (f && f !== '-' ? path.resolve(f) : f);
@@ -480,7 +477,6 @@ function runSpec(flags, env, { project, state, locks }) {
     ...(project && subdirOf(project) ? { subdir: subdirOf(project) } : {}),   // a monorepo project: the scope guard keeps a run without Scope: inside it
     worktree: flags.worktree || late(project?.lane_defaults?.worktree) || briefMergeWt(flags, callerPath(flags.brief)), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
     after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), priority: flags.priority,
-    labels: labelsOf(flags.labels), node_labels: servedLabels(machine),   // META-GTP-FED piece 1
     caller: flags.as || env.META_ROLE,   // META-CONTROLLER C4: a check-in's run on a held lane is refused (runs.heldRefusal)
     parent: flags.parent, via: flags.via, stage: flags.stage, round: flags.round === undefined ? undefined : Number(flags.round), budgetMin: flags['budget-min'] === undefined ? undefined : Number(flags['budget-min']),
     profile: parts.profile, cls: parts.cls, workPolicy: parts.workPolicy, agent: parts.agent, model: parts.model, effort: parts.effort,
@@ -571,7 +567,7 @@ function runCmd(argv, env, out, err) {
       out(`QUEUED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} position ${r.position} (${r.why})`);
       for (const l of r.collide || []) out(l);   // lane-collide S1b: the hold's evidence and SloppaChoppa's pick (SPEC 5.2)
       for (const c of holds) out(`WAITS ${r.run} for the plan review ${c.id} (after run:${c.id}:reviewed: a clean review releases it, findings wait for the check-in's review)`);
-      if (o.after?.length || o.labels?.length) for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // S4: met now = starts now; FED: served here = starts now
+      if (o.after?.length) for (const q of fillAll(state)) out(fillWords(q, path.basename(state)));   // S4: met now = starts now
       return 0;
     }
     out(`STARTED ${r.run} lane ${o.lane} ${ex}${o.model === ex ? '' : ' ' + o.model} ${o.effort} supervisor pid ${r.pid} log ${r.log}`);
@@ -580,7 +576,7 @@ function runCmd(argv, env, out, err) {
     if (flags.wait) {   // META-OOTB F-1: block until the run ends and say how (the first-task walk-through; exit 1 unless DONE)
       delegateWait({ state, runs: [r.run], maxS: 24 * 3600 });
       // CIRED-ba33455: the `end` record comes BEFORE the supervisor's exit work (auth gate + re-queue, queue fill): the run has
-      // ended when its supervisor is gone (as fednode.mjs waits; 120 s = only a hung supervisor's net)
+      // ended when its supervisor is gone (120 s = only a hung supervisor's net)
       const sup = loadState(state).items[r.run]?.end?.supervisor_pid;
       for (let t0 = Date.now(); sup && Date.now() - t0 < 120000;) {
         if (!running(sup)) break;   // a zombie supervisor (our own unreaped child: this loop blocks the loop) has exited
@@ -653,13 +649,13 @@ function hookCmd(argv, env, err) {
 const S5_USAGE = {
   status: 'norn status [--project <name | project.json> | --state D] [--machine F] [--budget F] [--out F]',
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
-  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--homes (+ the runs of the other homes of a synced project, read-only: their fetched copies, each "on <home>")] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
+  runs: 'norn runs [--unreviewed] [--lane L] [--json] [--homes (+ the runs of the other homes of a synced project, read-only: their fetched copies, each "on <home>")] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
   overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
   branches: 'norn branches [--project P] [--state D] [--refresh] [--json] | delete <branch> | rmwt <path> | adopt <branch> [--lane L] | undo --undo <json>    (every worktree, local and origin branch of the repo: its lane, state, ahead / behind main, PR, deliverable; --refresh = scan git now (the tick does every 10 min); the verbs are the dashboard row actions: only a merged branch / a clean worktree, never by itself)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'homes!', 'why', 'sha', 'at', 'refresh!', 'undo'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'homes!', 'why', 'sha', 'at', 'refresh!', 'undo'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -681,24 +677,6 @@ function machineOf(flags, env) {
     budget: fs.existsSync(bf) ? JSON.parse(fs.readFileSync(bf, 'utf8').replace(/^﻿/, '')) : {} };
 }
 const projectsDirOf = (machine, env) => machine?.claude?.projects_dir || path.join(env.CLAUDE_CONFIG_DIR || path.join(env.USERPROFILE || env.HOME || '', '.claude'), 'projects');
-// META-GTP-FED piece 3: this state's runs + the runs of the same project on every other machine branch of the ledger remote (read-only:
-// fetched into the machine's ledger repo, never written into runs.jsonl); no remote = the home fill's import (<state>/fed-cache.json)
-function allNodes(state, m, flags, out) {
-  const cfg = m.machine ? ledgerConfig(m.machine, { metaRoot: m.root, machineFile: m.mf }) : null, fe = fedOf(cfg);
-  const own = fe?.host || (cfg ? cfg.branch.replace(/^machine\//, '') : hostName()), project = path.basename(path.resolve(state));
-  let nodes;
-  if (fe) nodes = fetchForeign(fe, project);
-  else { let c = null; try { c = JSON.parse(fs.readFileSync(path.join(state, 'fed-cache.json'), 'utf8')); } catch { /* none */ } nodes = Object.entries(c?.nodes || {}).map(([node, runs]) => ({ node, runs })); }
-  const keep = i => i.kind === 'run' && (!flags.lane || i.data?.lane === flags.lane);
-  const rows = [...Object.values(loadState(state).items).filter(keep).map(it => ({ node: own, it })), ...nodes.flatMap(n => n.runs.filter(keep).map(it => ({ node: n.node, it })))];
-  const outcome = it => it.end?.outcome ?? it.fill?.outcome ?? null;
-  if (flags.json) { out(JSON.stringify(rows.map(({ node, it: { history, ...i } }) => ({ node, ...i, outcome: outcome({ history, ...i }) })), null, 1)); return 0; }
-  for (const { node, it } of rows) {
-    const via = it.fill?.node ? `-> ${it.fill.next} on ${it.fill.node}` : it.claim?.node && it.state === 'claimed' ? `claimed by ${it.claim.node}` : it.data?.claim_of ? `claim of ${it.data.claim_of.home}/${it.data.claim_of.run}` : '';
-    out(`${node}  ${it.id}  ${it.state}  ${outcome(it) ?? '-'}  ${it.data?.lane ?? '-'}  ${it.data?.executor ?? it.data?.kind ?? '-'}  ${via}`.trimEnd());
-  }
-  return 0;
-}
 function s5Cmd(argv, env, out, err) {
   const [cmd, ...rest] = argv;
   try {
@@ -839,7 +817,6 @@ function s5Cmd(argv, env, out, err) {
       return 0;
     }
     if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
-    if (flags['all-nodes']) return allNodes(state, m, flags, out);
     const items = Object.values(loadState(state).items).filter(i => i.kind === 'run' && (!flags.lane || i.data.lane === flags.lane)
       && (!flags.unreviewed || (['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive')));
     // RM-46 S3: --homes adds the other homes' runs from their copies (read-only: never queued here, never reviewed here); lane = this home's form (b/x)
@@ -1487,7 +1464,6 @@ Plumbing:
   norn calib                       record a weekly usage reading
   norn harness                     install the Norn tools into an agent CLI
   norn mcp                         the stdio MCP server
-  norn node                        one federation pull-agent job
   norn claim                       the multi-home work claims (list, allow a pair, release, take over a stale one)
   norn sync                        the multi-home sync (status, publish home/<id>, fetch the other homes' copies)
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
@@ -1498,7 +1474,7 @@ function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, collide: COLLIDE_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
+    claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
@@ -1551,7 +1527,6 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'merge-brief') return mergeBriefCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'merge-land') return mergeLandCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
-  if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'sync') return syncCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'crew') return crewCmd(argv.slice(1), env, out, err);
@@ -3019,24 +2994,6 @@ function mailCmd(argv, env, out, err) {
     if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
     throw e;
   }
-}
-
-// ---------- META-GTP-FED piece 3: norn node run --home <ledger remote> [--labels a,b] [--machine F] ----------
-const NODE_USAGE = 'norn node run --home <ledger remote> [--labels a,b] [--machine F]    (one pull-agent job: claim the first offered run this node serves, run it in its own state dir (home paths through fed.path_map; no map covering its worktree = its own checkout under <state>/ws/<lane>, the brief from the offer, NOTES in its reviews dir), push machine/<host>, mark the claim done; machine.json fed { host, id, labels, heartbeat_s, lease_s, path_map } + ledger { dir, state_root, reviews })';
-function nodeCmd(argv, env, out, err) {
-  const [sub, ...rest] = argv, f = {};
-  const usage = msg => { err('error: ' + msg); err('usage: ' + NODE_USAGE); return 2; };
-  if (sub !== 'run') return usage(sub ? `unknown node subcommand ${sub}` : 'missing subcommand');
-  for (let i = 0; i < rest.length; i++) {
-    const k = { '--home': 'home', '--labels': 'labels', '--machine': 'machine' }[rest[i]];
-    if (!k || rest[i + 1] === undefined) return usage(`unexpected ${rest[i]}`);
-    f[k] = rest[++i];
-  }
-  let labels, machine;
-  const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
-  try { labels = parseLabels(f.labels); machine = loadMachine(mf, { meta: root }); } catch (e) { return usage(e.message); }
-  return nodeRun({ machine, machineFile: mf, metaRoot: root, home: f.home, labels, out })
-    .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof FedError || e instanceof ClaimsError ? 2 : 1; });
 }
 
 // ---------- RM-46 S2a / S2b: norn claim list | allow | release | take (the claims branch of the ledger remote) ----------

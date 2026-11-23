@@ -95,12 +95,12 @@ test('the header: the cog links Settings, the check-ins status line, the worker 
     assert.equal(st.replace(/<[^>]+>/g, ''), `status ${fmtTime('2026-11-20T22:34:00Z')} · check-ins on · tick running · live`);
     assert.match(checkinStatus({ now: '2026-11-20T22:34:00Z', pause: { label: 'Hold the queue' } }, { live: false, remote: 'phone' }), /<b>Hold the queue<\/b> · reconnecting \.\.\. · remote: phone$/);
   } finally { if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev; }
-  const txt = h => h.replace(/<[^>]+>/g, '');
+  const txt = h => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   assert.match(poolLine(null), /id="pool"[^]*…/, 'not come yet');
   const p = poolLine({ claude: { using: 1, cap: 2 }, sessions: { claude: { norn: 1, other: 3 }, codex: { norn: 1, other: 1 } } });
-  assert.equal(txt(p), 'Claude workers 1 of 2other Claude 3Codex 2'); assert.match(p, /role="group" aria-label="Agent sessions on this computer"/);
+  assert.equal(txt(p), 'Claude 1 / 2 · Codex 1 · other Claude 3'); assert.match(p, /role="group" aria-label="Agent sessions on this computer"/);
   assert.match(p, /title="Codex sessions on this computer: 1 started by Norn, 1 others"/);
-  assert.equal(txt(poolLine({ claude: { using: 0, cap: null }, sessions: null })), 'Claude workers 0 of no capother Claude …Codex …', 'no cap; sessions not counted yet');
+  assert.equal(txt(poolLine({ claude: { using: 0, cap: null }, sessions: null })), 'Claude 0 / no cap · Codex not counted · other Claude not counted', 'no cap; a null field reads not counted, never a bare …');
 });
 
 test("agentSessions: the Claude Code and Codex CLI sessions on the machine, Norn's apart from the others; one per process tree; the desktop app is not a session", () => {
