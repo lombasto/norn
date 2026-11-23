@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { record, readEvents, recordsFile, loadState, loadShared, homeOf, laneIdIn, laneNameIn, homeOfId, copyItems } from './records.mjs';
-import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
+import { deliverablesView, deliverableConfig, lastInstall, mergeTimes } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { landedOf } from './dlvmerge.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
@@ -133,13 +133,13 @@ export function reach(node, W) {
     const sup = !!d.superseded || d.record_state === 'superseded', onMain = sup || d.state === 'merged' || d.state === 'installed';   // unknown = cannot tell: not on main
     const tgtInstall = W.hasInstall && d.target !== 'main';
     br.set(d.branch, { name: d.branch, dlv: d.id, state: sup ? 'superseded' : d.state, on_main: onMain, at_target: sup || (tgtInstall ? d.state === 'installed' : onMain),
-      days: d.days ?? null, ts: Date.parse(d.done_utc || '') || null });
+      days: d.days ?? null, ts: Date.parse(d.done_utc || '') || null, merges: d.merges.map(Date.parse) });
   }
   for (const b of L.branch) if (!br.has(b)) {
     const g = W.branch(b);
     const state = !g ? 'gone' : g.merged ? (g.installed ? 'installed' : 'merged') : g.exists ? 'unmerged' : 'gone';
     const onMain = state === 'merged' || state === 'installed';
-    br.set(b, { name: b, dlv: null, state, on_main: onMain, at_target: W.hasInstall ? state === 'installed' : onMain, days: null, ts: g?.ref_date ?? null });
+    br.set(b, { name: b, dlv: null, state, on_main: onMain, at_target: W.hasInstall ? state === 'installed' : onMain, days: null, ts: g?.ref_date ?? null, merges: [] });
   }
   return { L, runs, branches: [...br.values()] };
 }
@@ -280,7 +280,7 @@ export const hasInstallTarget = project => deliverableConfig(project || {}).targ
 export const dlvCopyRow = it => { const l = landedOf(it); return { id: it.id, home: it.home, readonly: true, record_state: it.state,
   state: l && l.how !== 'superseded' ? 'merged' : 'done', target: 'main', at_target: !!l, ...(l && l.how !== 'superseded' ? { merged_how: l.how, merge_pr: l.pr } : {}),
   ...(it.state === 'superseded' ? { superseded: true } : {}), repo: it.data.repo ?? null, branch: it.data.branch ?? null, lane: it.data.lane ?? null, run: it.data.run ?? null,
-  delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created }; };
+  delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created, merges: mergeTimes(it) }; };
 /** worldOf() filled from the state dir, the deliverables view and git (the engine's scanRepo; branch / sha facts asked lazily) */
 export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle } = {}) {
   project = project || {};

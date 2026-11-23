@@ -1,4 +1,4 @@
-// RM-19 S1: the Lanes page shows what is live first - group order, done ages, the Old fade, the filter chips (URL), one-tap
+// The Lanes page: the board groups of the rows, newest first in a group, the filter chips (URL), one-tap
 // Archive with Undo, and the owner's archive that "did not take effect" (a guard refusal wiped by the next live re-render).
 // Sandbox only: the shared dash fixture (temp dirs), fixture git repos and a private headless browser.
 import test from 'node:test';
@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
-import { lanesView, sortLanes } from '../engine/lib/lanes.mjs';
+import { lanesView, sortLanes, boardOf } from '../engine/lib/lanes.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
@@ -77,7 +77,7 @@ test('the browser: a lane row\'s Feed opens its run\'s document and live feed at
   } finally { await pg.close(); await f.done(); }
 });
 
-test('lanesView: running, needs you, queued, done, archived; ended and Old from oldDays; sortLanes is newest first in a group', () => {
+test('lanesView + boardOf: running, stopped, waiting, done today, archived, parked; ended and at; sortLanes is newest first', () => {
   const s = mkTmp('rm19-lanes-');
   for (const n of ['run', 'stop', 'idle', 'fin', 'gone', 'parkd']) record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: n } });
   record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'stop' } });
@@ -87,18 +87,15 @@ test('lanesView: running, needs you, queued, done, archived; ended and Old from 
   record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'run' } });
   record(s, { kind: 'lane', ev: 'archive', id: 'L:gone', by: 'controller', data: {} });
   record(s, { kind: 'lane', ev: 'park', id: 'L:parkd', by: 'controller', data: { why: 'owner call' } });
-  const st = loadState(s), v = lanesView(st, { all: true, oldDays: 2 });
-  // records written in the same second tie on `at`, so the needs pair is checked as a set; sortLanes' newest-first is checked below
-  assert.deepEqual(v.map(l => l.group), ['running', 'needs', 'needs', 'queued', 'done', 'archived']);
-  assert.deepEqual(v.map(l => l.name).filter(n => n !== 'stop' && n !== 'parkd'), ['run', 'idle', 'fin', 'gone']);
-  assert.deepEqual(v.filter(l => l.group === 'needs').map(l => l.name).sort(), ['parkd', 'stop']);
-  const fin = v.find(l => l.name === 'fin');
-  assert.equal(fin.ended, st.items['RUN-2'].history.findLast(h => h.ev === 'end').ts); assert.equal(fin.at, fin.ended); assert.equal(fin.old, false);
-  assert.equal(lanesView(st, { now: Date.now() + 3 * 864e5, oldDays: 2 }).find(l => l.name === 'fin').old, true, 'ended 3 d ago, threshold 2 d: Old');
-  assert.equal(lanesView(st, { now: Date.now() + 3 * 864e5, oldDays: 5 }).find(l => l.name === 'fin').old, false, 'threshold 5 d: not Old');
-  assert.deepEqual(lanesView(st).map(l => l.group).filter(g => g === 'archived' || g === 'done'), ['done'], 'without all: no archived lane; an active lane whose run exited DONE is done');
-  const rows = [{ name: 'd1', group: 'done', at: '2026-01-01' }, { name: 'a', group: 'archived', at: '2026-12-01' }, { name: 'd2', group: 'done', at: '2026-02-01' }, { name: 'r', group: 'running', at: '2025-01-01' }];
-  assert.deepEqual(sortLanes(rows).map(r => r.name), ['r', 'd2', 'd1', 'a']);
+  const st = loadState(s), v = lanesView(st, { all: true }), by = n => v.find(l => l.name === n);
+  assert.deepEqual(Object.fromEntries(v.map(l => [l.name, boardOf({ ...l, needs: 0 })])), { run: 'running', stop: 'stopped', idle: 'waiting', fin: 'today', gone: 'archived', parkd: 'parked' });
+  const fin = by('fin');
+  assert.equal(fin.ended, st.items['RUN-2'].history.findLast(h => h.ev === 'end').ts); assert.equal(fin.at, fin.ended, 'an ended lane sorts by its end');
+  assert.equal(by('run').at, st.items['RUN-3'].created, 'a live lane sorts by the start of its run');
+  assert.equal(boardOf({ ...fin, needs: 0 }, Date.now() + 3 * 864e5), 'old', 'done before today: Old');
+  assert.deepEqual(lanesView(st).map(l => l.name).sort(), ['fin', 'idle', 'parkd', 'run', 'stop'], 'without all: no archived lane');
+  const rows = [{ name: 'd1', at: '2026-01-01' }, { name: 'a', at: '2026-12-01' }, { name: 'd2', at: '2026-02-01' }, { name: 'r', at: '2025-01-01' }];
+  assert.deepEqual(sortLanes(rows).map(r => r.name), ['a', 'd2', 'd1', 'r']);
 });
 
 // fair-slots items 2 + 3 (owner 2026-11-19): a lane whose build is DONE and whose MERGE waits read only 'queued'; once merge-land
@@ -116,9 +113,9 @@ test('lanesView: done - awaiting merge, awaiting PR approval; the run priority (
   run('live', { priority: 'P0' });                                  // running at P0
   run('red', {}, 'stopped'); queue('red', { stage: 'MERGE' });      // the build did not finish: its queued MERGE is plain queued
   const v = lanesView(loadState(s), { prs: { prd: { url: 'https://github.com/o/r/pull/7', number: 7 } } }), by = n => v.find(l => l.name === n);
-  assert.equal(by('mrg').land, 'awaiting-merge'); assert.equal(by('mrg').text, 'done - awaiting merge'); assert.equal(by('mrg').group, 'queued');
+  assert.equal(by('mrg').land, 'awaiting-merge'); assert.equal(by('mrg').text, 'done - awaiting merge'); assert.equal(boardOf({ ...by('mrg'), needs: 0 }), 'waiting');
   assert.equal(by('prd').land, 'awaiting-pr'); assert.equal(by('prd').text, 'awaiting PR approval: PR #7'); assert.equal(by('prd').pr.number, 7);
-  assert.equal(by('prd').group, 'needs', 'a PR to approve waits on the owner');
+  assert.equal(boardOf({ ...by('prd'), needs: 0, dlv: { step: 'pr', pr: 7 } }), 'land', 'a PR to approve: To land');
   assert.equal(by('red').land, null); assert.equal(by('red').text, 'queued');
   assert.deepEqual(by('mrg').priority, { p: 'P2', dflt: true }, 'no priority: the default P2, marked as the default');
   assert.deepEqual(by('fast').priority, { p: 'P1', dflt: false }); assert.deepEqual(by('live').priority, { p: 'P0', dflt: false });

@@ -13,7 +13,7 @@ import { syncJoin, publishHome } from '../engine/lib/sync.mjs';
 import { ledgerConfig } from '../engine/lib/ledger.mjs';
 import { homeOf } from '../engine/lib/records.mjs';
 import { listClaims } from '../engine/lib/claims.mjs';
-import { fedOf } from '../engine/lib/fed.mjs';
+import { fedOf } from '../engine/lib/claimsref.mjs';
 import { main } from '../engine/bin/norn.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
