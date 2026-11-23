@@ -233,7 +233,7 @@ test('dash: queued runs are not agentsTree roots; Runs shows them as queued rows
   assert.match(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo', now: Date.now() }), /<tr class="rrow queued" id="node-RUN-1"[^]*?qlane[^]*?waited \d+ min/);
   const now = Date.parse('2026-11-09T12:00:00Z');
   const plan = { parts: [buildPlan({ project: 'demo', runs, ready: readiness(d.state, { now, resources: () => ({ free_gb: 64, cpu_pct: 0 }) }), now })] };
-  const lanes = [{ project: 'demo', name: 'qlane', board: 'waiting', run: 'RUN-1', run_state: 'queued', text: 'queued', priority: { p: 'P2', dflt: true }, position: 1, runs: [] }];
+  const lanes = [{ project: 'demo', name: 'qlane', board: 'waiting', run: 'RUN-1', run_state: 'queued', text: 'queued', priority: { p: 'P2', dflt: true, live: true }, position: 1, runs: [] }];
   const html = renderTab('lanes', { lanes, plan, sub: 'lanes' }, { project: 'demo', now, laneShow: ['waiting'] });
   assert.match(html, /<select class="pl-prio" data-act="prio" data-project="demo" data-run="RUN-1"/, 'the priority control on the queued lane');
   assert.match(html, /#1</, 'its place in the fill order'); assert.match(html, /class="lane-up small mute">[^<]*not before/, 'what it waits for');

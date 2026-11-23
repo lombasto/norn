@@ -202,7 +202,7 @@ test('ui: the Plan page is gone (owner 2026-11-20: Up next folds into Lanes); Ru
   const p = buildPlan({ project: 'demo', runs, ready: [{ id: 'RUN-2', ready: false, terms: ['after run:RUN-1:merged unmet'] }], status: STATUS('0.62'), budget: { weekly_stop_pct: 95 }, now: NOW });
   assert.ok(forecastCard(p.forecast, NOW).includes('at this rate the weekly stop is reached'));
   // Up next on Lanes: the queued lane in the Waiting group carries its priority control and what it waits for, in words
-  const lanes = [{ project: 'demo', name: 'adopt', board: 'waiting', run: 'RUN-2', run_state: 'queued', text: 'queued', priority: { p: 'P2', dflt: true }, position: 1, runs: [] }];
+  const lanes = [{ project: 'demo', name: 'adopt', board: 'waiting', run: 'RUN-2', run_state: 'queued', text: 'queued', priority: { p: 'P2', dflt: true, live: true }, position: 1, runs: [] }];
   const lh = renderTab('lanes', { lanes, plan: { parts: [p] }, sub: 'lanes' }, { project: 'demo', now: NOW, laneShow: ['waiting'] });
   assert.match(lh, /<select class="pl-prio" data-act="prio" data-project="demo" data-run="RUN-2"/);
   assert.match(lh, /class="lane-up small mute">[^<]*waits for Adopt A1 to merge/);
