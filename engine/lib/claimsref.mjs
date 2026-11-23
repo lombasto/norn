@@ -36,7 +36,7 @@ export function initRepo(f) {
   const r = boundedSync('git', ['init', '-q', '--bare', f.dir], { timeout: 120000 });
   if (r.status !== 0) throw new ClaimsError(`git init failed: ${(r.stderr || '').trim()}`);
 }
-/** the remote's claims branch into refs/sync/claims, plus `extra` refspecs in the same fetch (sync: the machine branches) */
+/** the remote's claims branch into refs/sync/claims, plus `extra` refspecs in the same fetch (sync: the home branches) */
 export function fetchRefs(f, extra = []) {
   initRepo(f);
   rgit(f, ['fetch', '-q', '--prune', '--no-tags', f.remote, CLAIMS_SPEC, ...extra]);
@@ -44,7 +44,7 @@ export function fetchRefs(f, extra = []) {
 const tipOf = f => rgit(f, ['rev-parse', '-q', '--verify', `${SYNC_CLAIMS}^{commit}`], { ok: [0, 1] }).out.trim() || null;
 // "<sha> <type> <size>\n<content>\n" records of one `git cat-file --batch` (sizes are bytes: parse the Buffer). heads: { sha, body }
 // per object (an input line may name a revision; the header carries the sha it resolved to)
-export function catBatch(f, shas, { heads = false } = {}) {
+function catBatch(f, shas, { heads = false } = {}) {
   if (!shas.length) return [];
   const env = { ...process.env, GIT_DIR: f.dir };
   const r = boundedSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', encoding: null, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
@@ -113,10 +113,8 @@ export function casClaims(f, tip, edits, msg, { beforePush } = {}) {
   } finally { try { fs.unlinkSync(index); } catch { /* never written: nothing to remove */ } }
 }
 // one claims operation at a time per machine repo (two projects' fills share the ledger repo; refs/sync/claims would race)
-/** the claims lock of f's repo (created first): withLock(file, fn, opts) */
-export const claimsLock = f => { initRepo(f); return { file: path.join(f.dir, 'claims.lock'), opts: { staleMs: 120000, timeoutMs: 60000 } }; };
-/** fn under the claims lock of f's repo */
-export const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
-export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+/** fn under the claims lock of f's repo (the repo created first) */
+export const under = (f, fn) => { initRepo(f); return withLock(path.join(f.dir, 'claims.lock'), fn, { staleMs: 120000, timeoutMs: 60000 }); };
+const hostName = () => (os.hostname() || 'machine').toLowerCase().replace(/[^a-z0-9._-]/g, '-');
 /** a ledger config (ledger.mjs ledgerConfig / spec.git_ledger) -> the claims endpoint f, or null (no remote = no claims) */
 export const fedOf = led => (led?.remote && led?.dir ? { dir: led.dir, remote: led.remote, host: String(led.branch || '').replace(/^machine\//, '') || hostName() } : null);

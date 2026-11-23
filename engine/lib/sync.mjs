@@ -15,7 +15,7 @@ import { spawnSync, spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore, HOME_RE } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger, ledgerConfig } from './ledger.mjs';
-import { rgit, fetchRefs, claimsLock, fedOf, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
+import { rgit, fetchRefs, under, fedOf, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { updateMachine } from './config.mjs';
 import { localClaims, observeClaims, updateSync, listClaims, registerHome, homeKey, projectKey } from './claims.mjs';
@@ -152,8 +152,7 @@ export function fetchHomes(cfg0, o = {}) {
   const f = fedOf(cfg), now = new Date(o.now ?? Date.now()).toISOString(), st = readJsonS(at(cfg, 'fetch')) || {};
   try {
     ensureLedger(cfg);
-    const lk = claimsLock(f);
-    withLock(lk.file, () => fetchRefs(f, [HOME_SPEC]), lk.opts);
+    under(f, () => fetchRefs(f, [HOME_SPEC]));
   } catch (e) {
     const why = e.message.split('\n').pop();
     logTo(cfg, `fetch failed (the last copies stay): ${why}`);
