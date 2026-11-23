@@ -29,6 +29,7 @@ import { checkinDoctorLines } from './checkins.mjs';
 import { limitLines } from './limitgate.mjs';
 import { splitRepo, normSubdir } from './monorepo.mjs';
 import { ensureHook, hookProblem, HOOK_BIN, HOOK_BUILD } from './hookbin.mjs';
+import { frontOf } from './instrchecks.mjs';
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export class SetupError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
@@ -106,7 +107,7 @@ export function plan(p, machine, { out = () => {} } = {}) {
   if (dirOk('skills', p.install?.skills)) {
     for (const f of filesUnder(p.install.skills)) {
       const rel = fwd(path.relative(p.install.skills, f)), name = rel.split('/')[0];
-      const sk = path.join(p.install.skills, name, 'SKILL.md'), fm = exists(sk) ? frontmatter(fs.readFileSync(sk, 'utf8')).meta : {};
+      const sk = path.join(p.install.skills, name, 'SKILL.md'), fm = exists(sk) ? frontOf(fs.readFileSync(sk, 'utf8')).meta : {};
       const fams = Array.isArray(fm.harnesses) ? fm.harnesses : ['claude'];
       if (rel === `${name}/SKILL.md`) skills.push({ name, description: fm.description || '', fams });
       for (const fam of fams) { const d = skillDir(fam, machine, home); if (d) add('skill', f, `${d}/${rel}`, rendered(f, p, home)); }
@@ -117,7 +118,7 @@ export function plan(p, machine, { out = () => {} } = {}) {
   const roles = [...agents, ...(dirOk('roles', p.install?.roles) ? mdFiles(p.install.roles).map(f => path.join(p.install.roles, f)) : [])];
   let hook = null;
   for (const f of roles) {
-    const { meta: fm, body } = frontmatter(fs.readFileSync(f, 'utf8')), name = fm.name || path.basename(f, '.md');
+    const { meta: fm, body } = frontOf(fs.readFileSync(f, 'utf8')), name = fm.name || path.basename(f, '.md');
     if (fm.resume && p.install?.resume_hook) {
       if (hook) problems.push(`${p.name}: roles ${hook} and ${port(f)} both set resume: (one hook)`);
       else {
@@ -132,7 +133,7 @@ export function plan(p, machine, { out = () => {} } = {}) {
     for (const inc of fm.include || []) {
       const abs = renderText(inc, p, home);
       if (!exists(abs)) { problems.push(`${p.name}: ${port(f)} includes ${inc}, which does not exist`); bad = true; continue; }
-      incs.push(`\n<!-- include ${inc} -->\n${renderText(frontmatter(fs.readFileSync(abs, 'utf8')).body, p, home).trimEnd()}\n`);
+      incs.push(`\n<!-- include ${inc} -->\n${renderText(frontOf(fs.readFileSync(abs, 'utf8')).body, p, home).trimEnd()}\n`);
     }
     if (bad) continue;
     for (const [fam, ad] of packTargets(p, machine)) {

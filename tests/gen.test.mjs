@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { installProject, genCheck, frontmatter } from '../engine/lib/setup.mjs';
+import { installProject, genCheck } from '../engine/lib/setup.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { ADAPTERS } from '../engine/lib/harness/index.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
