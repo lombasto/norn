@@ -134,13 +134,11 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
   const pos = Object.fromEntries(queueOf(items).map(q => [q.id, q.position]));
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
     const name = laneNameIn(l.id, home), w = newest[name], r = latest[name] ?? (w?.state === 'withdrawn' ? w : null), ship = l.state !== 'archived' ? shipped(name, r, w) : null;
-    // LANE-TRUTH: a shipped lane with no live run has ONE state - shipped - whatever its record (parked) or its PR (awaiting approval)
-    // said: never parked, needs you, to land or awaiting approval (a live run still shows: new work on it)
     const live = ['running', 'queued', 'claimed'].includes(r?.state), done = ship && !live ? ship : null;
     const pr = prs[name] ?? null, land = l.state === 'parked' || done ? null : landState(r, build[name], pr);
     const tail = w && w !== r && w.state === 'withdrawn' ? ` · then ${w.id} ${runText(w, { now })}` : '';
     const park = l.state === 'parked' && !done ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
-    // item 8 (MAIL-9): parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling
+    // parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling
     const ruled = park?.q && st.items[park.q]?.state === 'answered' ? st.items[park.q] : null;
     // ... and once a check-in applied it (the lane unparked by that apply), the lane says who applied it and what it did until its next run
     const unpark = !park && l.state === 'active' ? l.history.findLast(h => h.ev === 'unpark' && h.data?.q) : null, aq = unpark ? st.items[unpark.data.q] : null;
@@ -161,7 +159,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
   }));
 }
 
-// ---------- Stage LANES (SPEC 4.2): the attention board - the Map's lane band folded into each row, and the board groups ----------
+// ---------- the attention board: the Map's lane band folded into each row, and the board groups ----------
 // The run strip: a lane's runs oldest first (the way mapGraph folds lanesOf + resume_of + helpersOf), bookkeeping runs left out; a bead
 // joins its predecessor (cont) when it is that run's hand-off resume - a gap is a fresh start; by = the run (a check-in) that started
 // or queued it. The row keeps the last STRIP.
@@ -185,7 +183,7 @@ export function prStep(rows) {
 }
 // The board groups (ids; labels and page order: pages/lanes.mjs LANE_SHOW). Needs you = an Inbox row names the lane (the server's `needs`, terms.mjs isNeed: never
 // counted here); Stopped = the last run ended without DONE in the last STOPPED_DAYS and nothing asks the owner; Old = that, longer ago
-// (SPEC Q6), or done before today; To land = done with its deliverable not on main yet; Waiting = a run queued, or an active lane with
+// or done before today; To land = done with its deliverable not on main yet; Waiting = a run queued, or an active lane with
 // no run yet that is not idle by its rule. A shipped row (lanesView `shipped`) is Done today / Old by its end, whatever asks about it.
 export const STOPPED_DAYS = 7;
 /** a lanesView row + its needs count -> its board group id */

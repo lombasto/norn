@@ -166,7 +166,7 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
   if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
   if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
+  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
   if (t.startsWith('resources:')) return 'held: CPU / memory gate';

@@ -46,7 +46,7 @@ export async function readHoldAsync(state) { try { return JSON.parse(await fs.pr
 const write = (state, rec) => { const f = file(state), tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(rec) + '\n'); fs.renameSync(tmp, f); };
 
 /** the tick's step after the fill: (re)write hold.json from the walk (same term = same episode, its since kept); null = no hold, file gone.
- * billing (for the words) = the budget billing key the guard saw: the live budget file of the first held run's queue spec (GAP-2: no copy). */
+ * billing (for the words) = the budget billing key the guard saw: the live budget file of the first held run's queue spec, never a copy. */
 export function trackHold(state, rows, { now = Date.now() } = {}) {
   const h = wholeHold(rows), prev = readHold(state);
   if (!h) { if (prev) { try { fs.unlinkSync(file(state)); } catch { /* gone */ } } return null; }
