@@ -1,5 +1,5 @@
-// META-GTP-MERGEQ (GT-PARITY-PLAN sec. 2.4; Gas Town refinery batch.go / score.go / engineer.go, done_rebase.go - cited, not
-// ported): staged merges (--sha), the supersede event, the MR score queue, auto-update, batch + bisect, integration branches.
+// The merge queue (after Gas Town's refinery: batch.go / score.go / engineer.go, done_rebase.go - cited, not ported): staged merges
+// (--sha), the supersede event, the MR score queue, auto-update, batch + bisect.
 // Every git case runs on temp repos; no live state.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -190,11 +190,10 @@ function buildQRepo(repo) {
   g(repo, 'update-ref', 'refs/remotes/origin/main', 'main');
   return { repo, tips };
 }
-function qState(f, extra = {}) {
+function qState(f) {
   const state = tmp('qstate');
   const mk = (branch, lane, h) => record(state, { kind: 'deliverable', ev: 'create', by: 'controller', data: { repo: f.repo, branch, tip: f.tips[branch], lane, delivers: lane + ' work', done_utc: at(-h).toISOString() } }, { now: () => at(-h), views: false });
   mk('feat/a', 'a', 48); mk('feat/b', 'b', 24); mk('feat/c', 'c', 72); mk('feat/n', 'n', 30);
-  if (extra.epic !== false) record(state, { kind: 'epic', ev: 'create', by: 'controller', data: { title: 'b first', priority: 'P0', members: ['DLV-2'] } }, { now: () => at(-10), views: false });
   const run = data => record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', worktree: '/x', ...data } }, { now: () => at(-1), views: false });
   run({ lane: 'c', brief: fwd(path.join(state, 'resolve', 'DLV-3-aaaaaaa-bbbbbbb.md')), stage: 'resolve' });
   run({ lane: 'c', brief: fwd(path.join(state, 'resolve', 'DLV-3-ccccccc-ddddddd.md')), stage: 'resolve' });
@@ -204,8 +203,7 @@ function qState(f, extra = {}) {
 }
 const qProject = (repo, merge) => ({ name: 't', root: repo, deliverables: { native: ['**/*.rs'], receipts: [] }, ...(merge ? { merge } : {}) });
 
-// ENGINE-GIT (DEC-88): a branch tip lookup (remote ref first, then the local one) is ONE git spawn wherever the branch lives, and the
-// mergeq view asks each target branch once per call
+// a branch tip lookup (remote ref first, then the local one) is ONE git spawn wherever the branch lives: the merge pass makes many
 test('git cost: intoSha / mainShaOf are one git call (remote, local or missing); the answer is the remote tip first, exact names only', () => {
   const f = qRepo();
   g(f.repo, 'branch', 'int/x', 'main~1');                              // local only
@@ -223,21 +221,21 @@ test('git cost: intoSha / mainShaOf are one git call (remote, local or missing);
   assert.deepEqual(one(git => mainShaOf(f.repo, { main: 'nope', git })), [null, 1]);
 });
 
-test('MR score = Gas Town score.go: 1000 + epic_h*10 + (4-P)*100 - min(retries*50, 300) + dlv_h; the queue sorts by it', () => {
-  assert.equal(mrScore({}), 1200, 'no epic = P2');
-  assert.equal(mrScore({ epicHours: 10, priority: 'P0', dlvHours: 24 }), 1524);
+test('MR score = Gas Town score.go at the default P2: 1200 - min(retries*50, 300) + dlv_h; the queue sorts by it', () => {
+  assert.equal(mrScore({}), 1200);
+  assert.equal(mrScore({ dlvHours: 24 }), 1224);
   assert.equal(mrScore({ retries: 9 }), 900, 'the retry penalty caps at 300');
   const f = qRepo(), state = qState(f);
   const { rows } = mergeQueue({ stateDir: state, project: qProject(f.repo, { gate: { cmd: 'node -e 0', timeout_min: 5, fast: true } }), now: NOW });
-  assert.deepEqual(rows.map(r => [r.id, r.score, r.priority, r.epic, r.retries, r.gate, r.word]), [
-    ['DLV-2', 1524, 'P0', 'EP-1', 0, 'batch', 'clean'],
-    ['DLV-1', 1248, 'P2', null, 0, 'batch', 'clean'],
-    ['DLV-4', 1230, 'P2', null, 0, 'door', 'clean'],
-    ['DLV-3', 1122, 'P2', null, 3, 'batch', 'clean'],
+  assert.deepEqual(rows.map(r => [r.id, r.score, r.retries, r.gate, r.word]), [
+    ['DLV-1', 1248, 0, 'batch', 'clean'],
+    ['DLV-4', 1230, 0, 'door', 'clean'],
+    ['DLV-2', 1224, 0, 'batch', 'clean'],
+    ['DLV-3', 1122, 3, 'batch', 'clean'],
   ]);
-  assert.match(formatMq(rows[0]), /^DLV-2 +1524 +P0 EP-1 +batch +clean +-1 +SLOP \? +feat\/b/);   // SLOP ?: no stored check of its tip yet
+  assert.match(formatMq(rows[0]), /^DLV-1 +1248 +batch +clean +-1 +SLOP \? +feat\/a/);   // SLOP ?: no stored check of its tip yet
   // no fast gate declared (kestrel): every non-native row is its own MERGE stage
-  assert.deepEqual(mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW }).rows.map(r => r.gate), ['stage', 'stage', 'door', 'stage']);
+  assert.deepEqual(mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW }).rows.map(r => r.gate), ['stage', 'door', 'stage', 'stage']);
   // parked / superseded / merged rows are not queued
   record(state, { kind: 'deliverable', ev: 'park', id: 'DLV-1', by: 'controller', data: { why: 'owner: later' } }, { views: false });
   record(state, { kind: 'deliverable', ev: 'supersede', id: 'DLV-4', by: 'controller', data: { by: 'DLV-2', why: 'same work' } }, { views: false });
@@ -250,7 +248,7 @@ test('MR score = Gas Town score.go: 1000 + epic_h*10 + (4-P)*100 - min(retries*5
 test('MR score waiters: the held runs of collide-holds.json lift the holder lane\'s deliverable to the head of the queue', () => {
   assert.equal(mrScore({ waiters: 2 }), 1400);
   assert.equal(mrScore({ waiters: 9 }), 1500, 'the waiters term caps at 300');
-  const f = qRepo(), state = qState(f, { epic: false });
+  const f = qRepo(), state = qState(f);
   const q = () => record(state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'w', worktree: '/w' } }, { now: () => at(-1), views: false }).id;
   const w1 = q(), w2 = q(), gone = q();
   record(state, { kind: 'run', ev: 'withdraw', id: gone, by: 'controller', data: { why: 'not needed' } }, { views: false });
@@ -299,13 +297,13 @@ test('norn mergeq [--json] lists the queue in score order with the rehearsal wor
   const j = cli(['mergeq', '--project', pj, '--state', state, '--json']);
   assert.equal(j.code, 0, j.err);
   const rows = JSON.parse(j.out).rows;
-  assert.deepEqual(rows.map(r => r.id), ['DLV-2', 'DLV-1', 'DLV-4', 'DLV-3']);
+  assert.deepEqual(rows.map(r => r.id), ['DLV-1', 'DLV-4', 'DLV-2', 'DLV-3']);
   assert.ok(rows.every(r => Number.isInteger(r.score) && r.word === 'clean'));
   const t = cli(['mergeq', '--project', pj, '--state', state]);
   assert.equal(t.code, 0, t.err);
   assert.match(t.out, /^batching on \(unpinned in a row: 0\)$/m, 'a fast-gated project names its batching state first');
-  assert.match(t.out.split('\n').find(l => l.startsWith('DLV-')), /^DLV-2 +\d+ +P0 EP-1 +batch +clean/);
-  assert.match(t.out, /DLV-4 +\d+ +P2 +door +clean/);
+  assert.match(t.out.split('\n').find(l => l.startsWith('DLV-')), /^DLV-1 +\d+ +batch +clean/);
+  assert.match(t.out, /DLV-4 +\d+ +door +clean/);
   assert.equal(cli(['mergeq', '--project', pj, '--bogus']).code, 2);
 });
 

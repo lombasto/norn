@@ -1,5 +1,4 @@
-// META-GTP-DAG (GT-PARITY-PLAN sec. 2.3): the work DAG - the --queue usage guard (piece 0), run:RUN-n:merged (1), epics (2),
-// `norn ready` (3), priority fill order (4), the resource gate (5). Temp dirs only; the fake executor stands in for claude.
+// The work DAG: the --queue usage guard, run:RUN-n:merged, --priority, `norn ready`, the priority fill order and the resource gate. Temp dirs only; the fake executor stands in for claude.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +11,6 @@ import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { parseAfter, makeEval } from '../engine/lib/after.mjs';
 import { loadState, record } from '../engine/lib/records.mjs';
-import { loadEpics, epicMembers, epicStatus } from '../engine/lib/epics.mjs';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
 import { waitFor, runEnded, stateBusy } from './helpers/wait.mjs';
@@ -130,79 +128,17 @@ test('run:RUN-n:merged follows a HANDOFF successor to the run that ended DONE an
   assert.ok(asked.some(a => a.startsWith('merge-base --is-ancestor bbbb222')), 'the DONE successor\'s head, not the HANDOFF one');
 });
 
-// ---------- piece 2: epics (EP-n, epics.jsonl) ----------
-test('epic records: own file, create / add / remove / close, P0-P4, members are RUN-n / DLV-n; loadState unchanged', () => {
+test('norn run --priority Pn: the queued run carries it; a priority outside P0-P4 is refused', () => {
   const d = sandbox();
-  const rec = (ev, data, id, by = 'controller') => record(d.state, { kind: 'epic', ev, id, by, data }, { views: false });
-  const ep = rec('create', { title: 'water picture', priority: 'P1', members: [], integration_branch: 'int/water' }).id;
-  assert.equal(ep, 'EP-1');
-  assert.ok(fs.existsSync(path.join(d.state, 'epics.jsonl')), 'its own file');
-  assert.equal(loadState(d.state).items[ep], undefined, 'loadState stays as is');
-  assert.throws(() => rec('create', { title: 'x', priority: 'P5' }), /priority/);
-  assert.throws(() => rec('create', { priority: 'P1' }), /title/);
-  assert.throws(() => rec('add', { members: ['Q-1'] }, ep), /members/);
-  rec('add', { members: ['RUN-3', 'DLV-2'] }, ep, 'launcher');
-  rec('remove', { members: ['DLV-2'] }, ep);
-  assert.deepEqual(epicMembers(loadEpics(d.state)[ep]), ['RUN-3']);
-  rec('close', { why: 'shipped' }, ep);
-  assert.equal(loadEpics(d.state)[ep].state, 'closed');
-  assert.throws(() => rec('add', { members: ['RUN-4'] }, ep), /closed/);
-});
-
-test('epic done is derived: every member run done (via its successors) and every member DLV merged; empty = not done', async () => {
-  const d = sandbox();
-  const a = startRun(d.opts({ lane: 'a', worktree: d.wt(1) }));
-  const b = startRun(d.opts({ lane: 'b', worktree: d.wt(2), brief: d.brief('mode: sleep\nms: 60000\n', 'sleep.md') }));
-  await d.ended(a.run);
-  const ep = record(d.state, { kind: 'epic', ev: 'create', by: 'controller', data: { title: 't', priority: 'P2', members: [a.run, b.run] } }, { views: false }).id;
-  let s = epicStatus(d.state, loadEpics(d.state)[ep]);
-  assert.equal(s.done, false);
-  assert.deepEqual(s.members.map(m => [m.id, m.done]), [[a.run, true], [b.run, false]]);
-  record(d.state, { kind: 'epic', ev: 'remove', id: ep, by: 'controller', data: { members: [b.run] } }, { views: false });
-  s = epicStatus(d.state, loadEpics(d.state)[ep]);
-  assert.equal(s.done, true, 'every member done');
-  record(d.state, { kind: 'epic', ev: 'remove', id: ep, by: 'controller', data: { members: [a.run] } }, { views: false });
-  assert.equal(epicStatus(d.state, loadEpics(d.state)[ep]).done, false, 'an empty epic is not done');
-  meta(['stop', b.run, '--as', 'controller', '--state', d.state, '--locks', d.locks]);
-  await d.ended(b.run);
-});
-
-test('norn epic add | member | show | list | close; norn run --epic EP-n --priority Pn: the queued run carries both and joins the epic', () => {
-  const d = sandbox();
-  const S = ['--state', d.state];
-  const run = (lane, n, ...more) => meta(['run', '--executor', 'fake', '--lane', lane, '--brief', d.brief('mode: done\n'), '--worktree', d.wt(n), '--locks', d.locks, ...more, ...S]);
-  const add = meta(['epic', 'add', '--title', 'water picture', '--priority', 'P1', '--integration-branch', 'int/w', '--as', 'controller', ...S]);
-  assert.equal(add.code, 0, add.err);
-  assert.equal(add.out, 'EP-1');
-  assert.equal(meta(['epic', 'add', '--title', 'x', '--priority', 'P9', '--as', 'controller', ...S]).code, 2);
-  assert.equal(meta(['epic', 'add', '--title', 'x', '--priority', 'P1', ...S]).code, 2, 'no role');
+  const run = (lane, n, ...more) => meta(['run', '--executor', 'fake', '--lane', lane, '--brief', d.brief('mode: done\n'), '--worktree', d.wt(n), '--locks', d.locks, ...more, '--state', d.state]);
   const dir = record(d.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'go', via: 'chat' } }, { views: false }).id;
-  const q = run('w', 1, '--epic', 'EP-1', '--priority', 'P0', '--after', `dir:${dir}`);
+  const q = run('w', 1, '--priority', 'P0', '--after', `dir:${dir}`);
   assert.equal(q.code, 0, q.err);
-  const id = q.out.match(/QUEUED (RUN-\d+)/)[1];
-  assert.equal(d.item(id).data.epic, 'EP-1');
-  assert.equal(d.item(id).data.priority, 'P0');
-  const id2 = run('w2', 2, '--epic', 'EP-1', '--after', `dir:${dir}`).out.match(/QUEUED (RUN-\d+)/)[1];
-  assert.equal(d.item(id2).data.priority, 'P1', 'no --priority: the epic\'s');
-  assert.equal(run('w3', 3, '--epic', 'EP-9').code, 2, 'unknown epic');
+  assert.equal(d.item(q.out.match(/QUEUED (RUN-\d+)/)[1]).data.priority, 'P0');
   assert.equal(run('w3', 3, '--priority', 'high').code, 2, 'bad priority');
-  const show = meta(['epic', 'show', 'EP-1', '--json', ...S]);
-  assert.equal(show.code, 0, show.err);
-  const j = JSON.parse(show.out);
-  assert.deepEqual(j.members.map(m => m.id), [id, id2]);
-  assert.equal(j.done, false);
-  assert.equal(j.priority, 'P1');
-  assert.equal(j.integration_branch, 'int/w');
-  assert.match(meta(['epic', 'show', 'EP-1', ...S]).out, /EP-1 open P1 water picture/);
-  assert.equal(meta(['epic', 'member', 'EP-1', '--remove', id2, '--as', 'controller', ...S]).code, 0);
-  assert.equal(meta(['epic', 'member', 'EP-1', '--add', 'RUN-99', '--as', 'controller', ...S]).code, 2, 'RUN-99 does not exist');
-  assert.match(meta(['epic', 'list', ...S]).out, /EP-1\s+open\s+P1\s+0\/1\s+water picture/);
-  assert.equal(meta(['epic', 'close', 'EP-1', '--why', 'dropped', '--as', 'controller', ...S]).code, 0);
-  assert.equal(meta(['epic', 'list', '--open', ...S]).out, '');
-  assert.equal(run('w4', 4, '--epic', 'EP-1').code, 2, 'a closed epic takes no new run');
 });
 
-// ---------- piece 3: norn ready = the fill's own walk, dry (bd ready semantics: ready = no unmet blocker; each unmet term named) ----------
+// ---------- norn ready is the fill's own walk, dry, so what it calls ready is what the fill starts (each unmet term named) ----------
 test('readiness: one walk names every unmet term; the fill starts exactly the rows it calls ready (cap accounting included)', async () => {
   const d = sandbox();
   const q = record(d.state, { kind: 'question', ev: 'create', by: 'checkin', data: { title: 'pick', lane: 'demo', options: [{ key: 'a', text: 'A' }], blocks: [] } }, { views: false }).id;
@@ -242,17 +178,14 @@ test('readiness: one walk names every unmet term; the fill starts exactly the ro
   await waitFor(() => !stateBusy(d.state)(), { what: 'every run the fills started settled' });
 });
 
-test('readiness: a gone trigger reads "needs a ruling: ..." in the dry walk and the fill holds it (META-AUTONOMY R1); norn ready --epic filters', () => {
+test('readiness: a gone trigger reads "needs a ruling: ..." in the dry walk and the fill holds it (META-AUTONOMY R1)', () => {
   const d = sandbox();
   const q = record(d.state, { kind: 'question', ev: 'create', by: 'checkin', data: { title: 'pick', lane: 'demo', options: [{ key: 'a', text: 'A' }], blocks: [] } }, { views: false }).id;
-  const ep = record(d.state, { kind: 'epic', ev: 'create', by: 'controller', data: { title: 'e', priority: 'P2', members: [] } }, { views: false }).id;
-  const a = queueRun(d.opts({ lane: 'a', worktree: d.wt(1), after: parseAfter(`q:${q}`), epic: ep })).run;
+  const a = queueRun(d.opts({ lane: 'a', worktree: d.wt(1), after: parseAfter(`q:${q}`) })).run;
   const b = queueRun(d.opts({ lane: 'b', worktree: d.wt(2), after: parseAfter(`q:${q}`) })).run;
   record(d.state, { kind: 'question', ev: 'withdraw', id: q, by: 'checkin', data: {} }, { views: false });
   const rows = readiness(d.state);
   assert.deepEqual(rows.map(r => [r.id, r.ready, r.hold]), [[a, false, `after: q:${q}:answered: ${q} withdrawn`], [b, false, `after: q:${q}:answered: ${q} withdrawn`]]);
-  const only = JSON.parse(meta(['ready', '--json', '--epic', ep, '--state', d.state]).out);
-  assert.deepEqual(only.map(r => r.id), [a]);
   assert.equal(d.item(a).state, 'queued', 'the dry walk writes nothing');
   fillQueue(d.state);
   assert.equal(d.item(a).state, 'queued');

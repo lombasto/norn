@@ -109,7 +109,7 @@ test('F-15: norn dash from a script (no TTY) serves, prints the URL and says it 
 
 // every command main() dispatches (engine/bin/norn.mjs): the help screen names each one
 const COMMANDS = ['setup', 'project', 'doctor', 'smoke', 'dash', 'status', 'runs', 'tick', 'run', 'stop', 'rec', 'digest', 'deliverables', 'mergeq', 'merge-brief', 'merge-land',
-  'ready', 'flow', 'epic', 'cv', 'delegate', 'ask', 'mail', 'notify', 'gen', 'sched', 'migrate', 'calib', 'executors', 'harness', 'mcp', 'ledger', 'node', 'hook', 'eval', 'lane', 'init', 'done'];
+  'ready', 'cv', 'delegate', 'ask', 'mail', 'notify', 'gen', 'sched', 'migrate', 'calib', 'executors', 'harness', 'mcp', 'ledger', 'node', 'hook', 'eval', 'lane', 'init', 'done'];
 
 // META-RENAME R1 (DIR-22): `norn help` = the commands a person types; the plumbing and the in-run trio move under `norn help --all`
 const ALL_ONLY = ['hook', 'mcp', 'node', 'merge-brief', 'merge-land', 'eval', 'migrate', 'gen', 'harness', 'ready', 'calib', 'delegate', 'ask', 'mail', 'done'];

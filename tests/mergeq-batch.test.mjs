@@ -1,4 +1,4 @@
-// META-GTP-MERGEQ batch + bisect + integration branches (split out of mergeq.test.mjs so the two git-heavy halves run in parallel).
+// The merge queue's batch + bisect (split out of mergeq.test.mjs so the two git-heavy halves run in parallel).
 // Gas Town refinery batch.go / engineer.go - cited, not ported. Every git case runs on temp repos; no live state.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { startRun, lockPath, readiness } from '../engine/lib/runs.mjs';
 import { deliverablesView, askDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
 import { main } from '../engine/bin/norn.mjs';
-import { mergeQueue, mergeqRun, loadBatch, loadMq, setBatching, mqProbe, pickBatch, queueSkips } from '../engine/lib/mergeq.mjs';
+import { mergeqRun, loadBatch, loadMq, setBatching, mqProbe, pickBatch, queueSkips } from '../engine/lib/mergeq.mjs';
 import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { tick, gateProbes } from '../engine/lib/tick.mjs';
@@ -248,37 +248,6 @@ test('no fast gate (kestrel): auto-update only, no batch', async () => {
   assert.ok(!fs.existsSync(path.join(f.state, 'mq', 'run.lock')), 'the pass lock is released');
 });
 
-// ---------- piece 4: an epic's integration branch ----------
-test('integration branch: an epic with integration_branch batches into it (a fast-forward push, no MERGE stage); main stays; the rest batch into main', async () => {
-  const f = batchFixture([['feat/a', 'docs/a.md'], ['feat/b', 'docs/b.md'], ['feat/c', 'docs/c.md']]);
-  record(f.state, { kind: 'epic', ev: 'create', by: 'controller', data: { title: 'ep', priority: 'P0', members: ['DLV-1', 'DLV-3'], integration_branch: 'int/ep1' } }, { now: () => at(-5), views: false });
-  const q = mergeQueue({ stateDir: f.state, project: f.project, now: NOW }).rows;
-  assert.deepEqual(q.map(r => [r.id, r.into]), [['DLV-1', 'int/ep1'], ['DLV-3', 'int/ep1'], ['DLV-2', 'main']]);
-  const mainBefore = g(f.origin, 'rev-parse', 'main');
-  const r = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
-  assert.deepEqual(r.batch.members.map(m => m.id), ['DLV-1', 'DLV-3'], 'one target per batch: the top row\'s');
-  assert.equal(r.batch.into, 'int/ep1');
-  assert.equal(r.batch.base, mainBefore, 'a new integration branch starts at main');
-  assert.equal(r.batch.status, 'merged'); assert.equal(r.batch.brief, undefined, 'no MERGE stage for an integration branch');
-  assert.match(r.why, /GREEN .*pushed origin\/int\/ep1 = [0-9a-f]{40}/);
-  assert.equal(g(f.origin, 'rev-parse', 'int/ep1'), r.batch.merge_tip);
-  assert.equal(g(f.origin, 'rev-parse', 'main'), mainBefore, 'main untouched');
-  // the integrated rows left the queue; the next batch is main's
-  assert.deepEqual(mergeQueue({ stateDir: f.state, project: f.project, now: NOW }).rows.map(r2 => r2.id), ['DLV-2']);
-  const r2 = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
-  assert.equal(r2.batch.into, 'main'); assert.equal(r2.batch.status, 'green'); assert.ok(r2.batch.brief);
-  // a second epic member later batches onto the existing integration branch (a fast-forward on top of it)
-  const wt = path.join(path.dirname(f.repo), 'wt-e');
-  g(f.repo, 'worktree', 'add', '-q', '-b', 'feat/e', wt, 'main');
-  const te = commit(wt, 'docs/e.md', 'e\n', 'e work'); g(wt, 'push', '-q', '-u', 'origin', 'feat/e');
-  record(f.state, { kind: 'deliverable', ev: 'create', by: 'controller', data: { repo: fwd(f.repo), branch: 'feat/e', tip: te, lane: 'e', delivers: 'e', done_utc: at(-1).toISOString() } }, { now: () => at(-1), views: false });
-  record(f.state, { kind: 'epic', ev: 'add', id: 'EP-1', by: 'controller', data: { members: ['DLV-4'] } }, { views: false });
-  mergeBatch(f, r2.batch);
-  const r3 = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
-  assert.equal(r3.batch.into, 'int/ep1'); assert.equal(r3.batch.base, r.batch.merge_tip);
-  assert.equal(g(f.origin, 'rev-parse', 'int/ep1^1'), r.batch.merge_tip);
-});
-
 test('the check-in gate probe: a green batch / a fix ask / batching OFF wake the check-in once the pass wrote them', async () => {
   const f = batchFixture([['feat/a', 'docs/a.md'], ['feat/c', 'bad-c.txt']]);
   const before = Date.now() - 1000;
@@ -292,15 +261,15 @@ test('the check-in gate probe: a green batch / a fix ask / batching OFF wake the
   assert.ok(!gateProbes({ ...f.project, merge: undefined, state: f.state }, {}).some(p => p({ at: Date.now() + 1000, running: [], runs: [], items: [] }).some(x => x.startsWith('mq:'))));
 });
 
-test('C18: every row the batch pick leaves out says why (a failed slop check, an unchecked BLOCK, no tip, another target, a full batch), never null', () => {
-  const row = (n, more = {}) => ({ id: `DLV-${n}`, branch: `feat/${n}`, lane: `l${n}`, gate: 'batch', word: 'clean', tip: `${n}`.repeat(7), into: 'main', slop: 0, ...more });
-  const rows = [row(1), row(2), row(3, { tip: null }), row(4, { into: 'int/x' }), row(5), row(6), row(7)];
+test('C18: every row the batch pick leaves out says why (a failed slop check, an unchecked BLOCK, no tip, a full batch), never null', () => {
+  const row = (n, more = {}) => ({ id: `DLV-${n}`, branch: `feat/${n}`, lane: `l${n}`, gate: 'batch', word: 'clean', tip: `${n}`.repeat(7), slop: 0, ...more });
+  const rows = [row(1), row(2), row(3, { tip: null }), row(5), row(6), row(7)];
   const door = r => { if (r.id === 'DLV-2') throw new Error('no main'); return r.id === 'DLV-5' ? 2 : 0; };
   const skips = {};
   const pick = pickBatch(rows, { cfg: { batch_max: 2 }, mq: { red: {} }, writer: () => null, door, skips });
   assert.deepEqual(pick.map(p => p.id), ['DLV-1', 'DLV-6']);
   const why = queueSkips({ rows }, { picked: pick.map(p => p.id), skips });
   assert.equal(why['feat/1'], null); assert.equal(why['feat/6'], null);
-  assert.deepEqual(Object.fromEntries(Object.entries(why).filter(([, w]) => w).map(([b, w]) => [b, w.kind])), { 'feat/2': 'slop', 'feat/3': 'unpushed', 'feat/4': 'target', 'feat/5': 'slop', 'feat/7': 'busy' });
+  assert.deepEqual(Object.fromEntries(Object.entries(why).filter(([, w]) => w).map(([b, w]) => [b, w.kind])), { 'feat/2': 'slop', 'feat/3': 'unpushed', 'feat/5': 'slop', 'feat/7': 'busy' });
   assert.match(why['feat/2'].why, /no main/); assert.match(why['feat/5'].why, /2 slop BLOCK/); assert.match(why['feat/7'].why, /batch_max 2/);
 });
