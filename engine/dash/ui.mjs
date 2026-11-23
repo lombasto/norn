@@ -145,13 +145,13 @@ export function renderTab(tab, d, ctx = {}) {
   return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: slopPage, spend })[tab](d, { ...ctx, now }));
 }
 
-// META-TEND TESTS (owner DIR-19 + DIR-47) + TESTS-RUNTIME (owner ask 2026-11-19): the Tests tab = a summary of numbers, the open alerts
-// the test machinery raised (linked to their Inbox question), and four sub-views (testparts.mjs TESTS_SUBS), each its own part:
+// The Tests tab = a summary of numbers, the open alerts the test machinery raised (linked to their Inbox question), and four sub-views
+// (testparts.mjs TESTS_SUBS), each its own part:
 //   Suite            - over time: test cases and lines per day from git (`norn tests history`, the tick runs it once a day)
 //   Costs and health - gate time per merge and the last merge check (copy-paste in the changed test files)
 //   Impact           - which test files cover a source file, or a lane's changed files (`norn tests for`); a test's file opens in the
 //                      code viewer drawer (index.html #srcview)
-//   Run time         - test-diet S1: per worker run of the last 24 h / 3 days its wall time, test time and share (norn speed), the
+//   Run time         - per worker run of the last 24 h / 3 days its wall time, test time and share (norn speed), the
 //                      duplicate test files the machine's test cache spared it, and the policy.tests in force with its Settings rows
 // A part whose source does not exist yet says so and what writes it - never a number.
 const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`) : '-');

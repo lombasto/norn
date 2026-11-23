@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// META-GTP-CI 1: run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt (GT-PARITY-PLAN 2.11).
+// Run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt.
 // usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--gate-wait MIN] [--cpu-prof DIR]
 //   [--changed BASE [--max N]] [glob ...]   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, GATE_WAIT_MIN, "tests/*.test.mjs", --max 20).
-//   META-PR-FAST (RM-29): --changed BASE runs only the matched files the change BASE...HEAD touches (lib/cisuite.mjs pickTests: the
+//   --changed BASE runs only the matched files the change BASE...HEAD touches (lib/cisuite.mjs pickTests: the
 //   fast PR job; the full suite runs after the merge and nightly); --max N caps the files picked only for importing a changed file.
 // The suite is one `node --test` per matched file, N at a time, plus a reporter that writes the reds; smoke.test.mjs
 // then runs alone (DEC-78). CI and the merge lanes call this script: it is the one home of the suite command.

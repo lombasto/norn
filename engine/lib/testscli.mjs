@@ -214,11 +214,11 @@ export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {})
   return `tests history: started pid ${r?.pid ?? '?'}`;
 }
 
-// ---------- the Tests tab (TESTS-RUNTIME, test-diet S1): a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
+// ---------- the Tests tab: a summary + four sub-views, each its own part (dash/testparts.mjs TESTS_SUBS) ----------
 // A source that does not exist yet says so, never a number. An alert the machinery raises is an open Inbox question with data.area
 // 'tests' (the server lists them: the tab links, never copies).
 const read = (state, f) => readJson(path.join(state, 'tests', f));
-/** META-DASH-ASYNC R1: the files the summary + a part read, for the dash to prime on fs.promises */
+/** the files the summary + a part read, for the dash to prime on fs.promises (off the sync path) */
 export const testsFiles = (state, sub = null) => ['git-history.json', 'advisories.json', ...(sub === 'impact' ? [IMPACT_FILE] : [])].map(f => path.join(state, 'tests', f));
 /** which suite the project folder holds ('node:test' | 'pytest' | false = neither; null = no project folder), off the sync path */
 export const suiteOf = project => (project?.root ? fs.promises.access(path.join(projectHome(project), 'tests')).then(() => suiteKind(projectHome(project)) ?? false, () => false) : Promise.resolve(null));
