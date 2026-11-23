@@ -103,6 +103,7 @@ const S = { tab: routeTab(qs.get('tab')), run: qs.get('run') || null, homeFilter
 S.rm.view = S.rm.view || (() => { try { return localStorage.getItem('meta-rmview'); } catch { return null; } })() || null;
 const get = async p => { const r = await fetch(p); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
 const post = async (p, body) => { const r = await fetch(p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': TOKEN }, body: JSON.stringify(body) });
+  S.stripEv = (S.stripEv || 0) + 1;   // a write answered: a strip request already out may predate it (header)
   const d = await r.json(); if (!r.ok) throw Object.assign(new Error(d.error || r.status), { status: r.status, body: d }); return d; };   // body: a refusal's data (a 409's dup)
 // META-UX-BUILD S6: the sheet's ticks live in S.fixall (a re-render keeps them); the count = ticked + picked findings
 const fxKeys = () => { if (S.fixall) S.fixall.keys = new Set([...document.querySelectorAll('#fixall input[data-fx-key]:checked')].map(x => x.dataset.fxKey)); };
@@ -137,7 +138,12 @@ async function header(g = get) {
     S.needs = 0; S.usage = null; document.title = pageTitle(0, 'no project yet', look());
     $('#status').textContent = 'no project yet'; $('#pause').disabled = $('#tick').disabled = true; return null;
   }
-  const want = S.project, ov = await g(`/api/strip?project=${encodeURIComponent(want)}`);
+  // one strip request in flight per project and state: a stream poke's strip-only render that lands while a tab render's strip is
+  // out (CI 45087248853: 3 ms apart) shares it, unless a stream event or a write came after it went out (S.stripEv moved)
+  const want = S.project, ev = S.stripEv || 0, out = S.stripOut;
+  const f = out && out.project === want && out.ev === ev ? out : (S.stripOut = { project: want, ev, p: g(`/api/strip?project=${encodeURIComponent(want)}`) });
+  const done = () => { if (S.stripOut === f) S.stripOut = null; }; f.p.then(done, done);
+  const ov = await f.p;
   if (want !== S.project) return null;
   S.needs = needsCount(ov); S.usage = ov.usage ?? null; S.pause = ov.pause; S.ov = ov; S.at = Date.now(); pausePaint(); paintStrip(); paintNav(); paintStripCards();
   document.title = pageTitle(S.needs, S.project, look());
@@ -486,10 +492,12 @@ function openStream() {
   if (stream) stream.close();
   S.quietBy = {}; S.live = false;
   const es = stream = new EventSource(`/api/stream?project=${encodeURIComponent(S.project)}`);
-  es.addEventListener('hello', () => { S.live = true; sched.poke('all'); });
-  for (const k of ['rec', 'pulse', 'derived', 'reset']) es.addEventListener(k, m => { let d = {}; try { d = JSON.parse(m.data); } catch {} for (const x of keysOf(k, d)) sched.poke(x); });
+  // every event refreshes the strip: S.stripEv moves, so header() never reuses a strip request sent before it
+  const bump = () => { S.stripEv = (S.stripEv || 0) + 1; };
+  es.addEventListener('hello', () => { bump(); S.live = true; sched.poke('all'); });
+  for (const k of ['rec', 'pulse', 'derived', 'reset']) es.addEventListener(k, m => { bump(); let d = {}; try { d = JSON.parse(m.data); } catch {} for (const x of keysOf(k, d)) sched.poke(x); });
   // the Map's live events: a record appended = an event at its ts; a heartbeat = the running beads breathe
-  es.addEventListener('state', m => { const d = JSON.parse(m.data); S.quietBy[d.project] = !!d.quiet; S.quiet = Object.values(S.quietBy).some(Boolean); setQuiet(S.quiet); for (const x of keysOf('state')) sched.poke(x); });
+  es.addEventListener('state', m => { bump(); const d = JSON.parse(m.data); S.quietBy[d.project] = !!d.quiet; S.quiet = Object.values(S.quietBy).some(Boolean); setQuiet(S.quiet); for (const x of keysOf('state')) sched.poke(x); });
   es.onerror = () => { if (stream !== es) return; S.live = false; const st = $('#status'); if (st) st.innerHTML = st.innerHTML.replace(/live$/, 'reconnecting ...'); };
 }
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
