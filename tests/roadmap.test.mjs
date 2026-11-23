@@ -115,7 +115,7 @@ const runRec = (id, lane, { state = 'exited', outcome = 'done', start = 2, end =
 const recd = (id, kind, state, data = {}) => ({ id, kind, state, created: iso(NOW - 5 * DAY), data, history: [] });
 const byId = xs => Object.fromEntries(xs.map(x => [x.id, x]));
 const dlvRow = (id, branch, state, { lane = null, days = 2, superseded = false } = {}) => ({ id, branch, lane, state, target: 'install', record_state: superseded ? 'superseded' : 'open',
-  days, done_utc: iso(NOW - days * DAY), ...(superseded ? { superseded: { by: 'abc1234' } } : {}) });
+  days, done_utc: iso(NOW - days * DAY), merges: [], ...(superseded ? { superseded: { by: 'abc1234' } } : {}) });
 const W = (o = {}) => worldOf({ now: NOW, items: byId(o.items || []), dlv: o.dlv || [], branches: o.branches || {}, shas: o.shas || {}, docs: o.docs || [],
   hasInstall: !!o.install, epics: o.epics || {} });
 const node = (links = [], extra = {}) => ({ id: 'RM-2', kind: 'item', title: 'x', note: '', links, stages: [], horizon: null, caveat: null, legacy: null,

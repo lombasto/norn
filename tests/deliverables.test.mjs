@@ -144,6 +144,7 @@ test('land-reuse (DEC-b-56): a PR merged or closed before a newer DONE is histor
   assert.equal(r.state, 'done'); assert.equal(r.tip, tip);
   assert.equal(r.pr, null, 'PR #60 merged before this DONE: not the row\'s PR');
   assert.deepEqual(r.prs.map(x => [x.number, x.state]), [[60, 'merged']], 'kept in the history');
+  assert.deepEqual(r.merges, [at(-39).toISOString()], 'the earlier round\'s merge stays on the row (the stuck clock counts it)');
   assert.notEqual(r.why_not?.kind, 'pr'); assert.doesNotMatch(r.why_not?.text ?? '', /PR #60|open, awaiting approval/);
   assert.doesNotMatch(formatDeliverable(r), /PR #60/);
   // a PR closed (unmerged) before the DONE is history too; one opened after it is the row's PR
