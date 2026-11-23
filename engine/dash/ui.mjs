@@ -7,7 +7,7 @@ import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
 import { columns, stack } from './widgets.mjs';
 import { CONTEXT_SUBS, contextParts } from './insparts.mjs';
-import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
+import { SUB_CAP, pickSub, subviewPage } from './subviews.mjs';
 import { TESTS_SUBS } from './testparts.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc } from './docparts.mjs';
