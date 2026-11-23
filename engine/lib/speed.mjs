@@ -8,8 +8,8 @@
 //   load       workersDuring = the worker runs running at once (this one included) over a window, from the run records; cpuDuring = the
 //              CPU samples runs.mjs keeps (<norn>/local/cpu.jsonl: the fill gate's and the dash's, no sampler of its own).
 //   report     speedReport: one row per worker run that ended in the last N hours, then the hours grouped by workers running.
-import { tail, tailA, endedAt, findTranscript } from './agents.mjs';
-import { findTranscriptA } from './harness/claude.mjs';
+import { tail, tailA, endedAt } from './agents.mjs';
+import { findTranscript, findTranscriptA } from './harness/claude.mjs';
 import { workInit, onWork } from './progress.mjs';
 import { isTest } from './testcmd.mjs';
 import { median } from './plan.mjs';

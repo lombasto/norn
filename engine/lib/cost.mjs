@@ -2,8 +2,10 @@
 // executor, weighted to a %-of-week through the budget's calibration (cacheR_per_pct). Claude: an ended run counts its CLI final
 // usage (claude -p json, = its transcript sum), a running / killed / lost one its transcript (+ subagents), tailed incrementally.
 // Codex: totals only (rollout token_count live, end.tokens at the end) - its own plan, no Claude %. Providers bill their own
-// account. Node built-ins only; the transcript tail and the finders are the Runs page's (agents.mjs).
-import { tail, codexInfo, findTranscript, findRollout } from './agents.mjs';
+// account. Node built-ins only; the transcript tail is the Runs page's (agents.mjs), the file finders the harness adapters'.
+import { tail, codexInfo } from './agents.mjs';
+import { findTranscript } from './harness/claude.mjs';
+import { findRollout } from './harness/codex.mjs';
 import { parseCodexLog } from './runs.mjs';
 import fs from 'node:fs';
 import path from 'node:path';

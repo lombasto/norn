@@ -9,7 +9,7 @@ import { findTranscript, findTranscriptA, usageCtx } from './harness/claude.mjs'
 import { ctxView } from './ctxlimit.mjs';
 import { critiqueOfNode } from './critique.mjs';
 import { findRollout, findRolloutA } from './harness/codex.mjs';
-import { statS, statA, readdirS, readdirA, readJsonS, readText as readTextS, readTextA } from './fsnap.mjs';
+import { statS, statA, readdirS, readdirA, readJsonS, readText, readTextA } from './fsnap.mjs';
 
 // the Runs page's window (owner 2026-11-19): ended runs stay in the tree for 2 h by default; the page widens it to 12 h, 24 h or
 // since local midnight so last night's runs can be checked. windowMs(key, now) = the window in ms (null: not a window key)
@@ -134,11 +134,6 @@ export function codexInfo(file, cache = new Map()) {
   return r ? { total: r.c.total, last: r.c.last, window: r.c.window, ts: r.c.ts } : null;
 }
 
-// the file locations are the adapters' (harness-agnostic feed, LANE-MAP-DESIGN 2); re-exported for the Runs page and its tests
-export { findTranscript } from './harness/claude.mjs';
-export { findRollout } from './harness/codex.mjs';
-
-const readText = f => { try { return readTextS(f); } catch { return null; } };
 /**
  * handoffOf's talked(id) (lanes.mjs): has run r's session produced its first model event? Claude: an assistant call with usage in
  * its transcript (the prompt line alone is not the session talking); Codex: a token_count event in its rollout; an executor with
