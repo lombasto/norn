@@ -12,7 +12,8 @@ import { readEvents, fold, recordsFile } from './records.mjs';
 import { startRun, sweepLost, RunRefused, RunError, STALE_MS } from './runs.mjs';
 import { providersOf, isProvider, typedExe } from './executors.mjs';
 import { harnessOf, capsOf } from './harness/index.mjs';
-import { findTranscript, transcriptEvents } from './harness/claude.mjs';
+import { transcriptEvents } from './harness/claude.mjs';
+import { runTranscript } from './standing.mjs';
 import { pickExecutors, helperMode, delegateWait, ASK_MAX_S, HELPER_BUDGET_MIN, MAX_LINES } from './delegate.mjs';
 import { withDefaults } from './policy.mjs';
 import { presetExe } from './presets.mjs';
@@ -31,12 +32,6 @@ const endOf = it => it?.history?.find(h => h.ev === 'end')?.data || {};
 const lines = f => { try { return fs.readFileSync(f, 'utf8').replace(/\s+$/, '').split(/\r?\n/); } catch { return []; } };
 export const noforkFile = state => path.join(state, 'ask', 'nofork.json');
 export const hashFile = f => { try { return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch { return null; } };
-
-/** The asked run's transcript file (end record, start record, or <projects_dir>/<any>/<sid>.jsonl), or null. */
-export function transcriptOf(it, projectsDir) {
-  const t = endOf(it).transcript || it.data.transcript || findTranscript(projectsDir, it.data.session_id);
-  return t && fs.existsSync(t) ? t : null;
-}
 
 /**
  * How to ask run item `it`: { mode: 'fork' | 'cold', why, sid }. Throws RunError (2) when the run is still running / queued or
@@ -123,7 +118,7 @@ export function askStart(o) {
   const dir = path.join(o.state, 'ask', `${it.id}-${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`);
   fs.mkdirSync(dir, { recursive: true });
   const brief = path.join(dir, 'brief.md'), out = path.join(dir, 'out.md');
-  const transcript = transcriptOf(it, o.machine?.claude?.projects_dir);
+  const t0 = runTranscript(it, { projectsDir: o.machine?.claude?.projects_dir }), transcript = t0 && fs.existsSync(t0) ? t0 : null;
   const d = it.data, budget = o.budget || {};
   const common = { state: o.state, locksDir: o.locksDir, lane: 'helper', project: o.project?.name ?? d.project, notes: out, parent: it.id, role: 'helper',
     cls: 'chores', q: o.q.slice(0, Q_CHARS), via: 'ask', readonly: true, lock: false, budgetMin: o.budgetMin ?? HELPER_BUDGET_MIN, budget,

@@ -4,7 +4,7 @@
 // Codex: totals only (rollout token_count live, end.tokens at the end) - its own plan, no Claude %. Providers bill their own
 // account. Node built-ins only; the transcript tail is the Runs page's (agents.mjs), the file finders the harness adapters'.
 import { tail, codexInfo } from './agents.mjs';
-import { findTranscript } from './harness/claude.mjs';
+import { runTranscript } from './standing.mjs';
 import { findRollout } from './harness/codex.mjs';
 import { parseCodexLog } from './runs.mjs';
 import fs from 'node:fs';
@@ -83,7 +83,7 @@ function measure(r, o, live) {
   if (exe === 'grok') return NONE('grok');
   const family = d.kind === 'provider' ? 'provider' : 'claude';
   if (!live && end.usage && 'cache_read_input_tokens' in end.usage) { const t = fromUsage(end.usage); return { family, src: 'end', tokens: t, total: sum4(t) }; }
-  const file = end.transcript || d.transcript || findTranscript(o.projectsDir, d.session_id);
+  const file = runTranscript(r, o);
   const tu = file ? transcriptUsage(file, cache) : null;
   if (!tu) return NONE(family);
   st.bytesRead = (st.bytesRead || 0) + tu.bytesRead;

@@ -9,7 +9,8 @@
 //              CPU samples runs.mjs keeps (<norn>/local/cpu.jsonl: the fill gate's and the dash's, no sampler of its own).
 //   report     speedReport: one row per worker run that ended in the last N hours, then the hours grouped by workers running.
 import { tail, tailA, endedAt } from './agents.mjs';
-import { findTranscript, findTranscriptA } from './harness/claude.mjs';
+import { findTranscriptA } from './harness/claude.mjs';
+import { runTranscript } from './standing.mjs';
 import { workInit, onWork } from './progress.mjs';
 import { isTest } from './testcmd.mjs';
 import { median } from './plan.mjs';
@@ -67,7 +68,6 @@ export function speedOf(c, { from, to }) {
 // ---------- reading a run (the tail cache is shared with the Runs page: own key, as cost.mjs) ----------
 const KEY = '\u0000speed:';
 const view = (cache, f) => ({ get: () => cache.get(KEY + f), set: (_f, v) => cache.set(KEY + f, v) });
-const fileOf = (r, projectsDir) => r.end?.transcript || r.data?.transcript || findTranscript(projectsDir, r.data?.session_id);
 const windowOf = (r, now) => ({ from: ms(r.created), to: r.state === 'running' ? now : ms(endedAt(r)) || now });
 // a run's speed from its tailed fold: the whole run, and for a live one the last ROLL_MS too
 function measure(r, c, now) {
@@ -76,7 +76,7 @@ function measure(r, c, now) {
 }
 /** run r's speed: o { projectsDir, cache (Map), now } -> speedOf + (live) last10 | null (no Claude transcript) */
 export function runSpeed(r, { projectsDir, cache = new Map(), now = Date.now() } = {}) {
-  const f = fileOf(r, projectsDir), t = f ? tail(f, view(cache, f), speedInit, onSpeed) : null;
+  const f = runTranscript(r, { projectsDir }), t = f ? tail(f, view(cache, f), speedInit, onSpeed) : null;
   return t ? measure(r, t.c, now) : null;
 }
 /** runSpeed on fs.promises (the dash) */
