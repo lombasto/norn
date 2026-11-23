@@ -64,10 +64,9 @@ export async function landPass(o) {
   git(cfg.repo, ['fetch', '--quiet', cfg.remote], { allowFail: true });
   for (const r of rows) {
     if (r.pr || r.branch_exists === false || !r.lane || !r.tip) continue;
-    if (r.gate === 'door') { out.skips[r.branch] = { tip: r.tip, kind: 'door', why: `native-touching (${(r.native_files || []).join(', ')}): it lands through the door flow` }; continue; }
+    if (r.gate === 'door') { out.skips[r.branch] = { tip: r.tip, kind: 'door', why: `native-touching (${(r.native_files || []).join(', ')}): the controller lands it (door work)` }; continue; }
     if (r.gate !== 'stage') continue;
     if (r.red) { out.skips[r.branch] = { tip: r.tip, kind: 'red', why: `red in the merge queue at ${s7(r.red)}: its fix stage merges main itself` }; continue; }
-    if (r.into !== cfg.main) { out.skips[r.branch] = { tip: r.tip, kind: 'target', why: `goes to its epic's branch ${r.into} first` }; continue; }
     const last = loadLand(stateDir, r.id);
     if (last?.tip === r.tip) {   // tried at this tip: its fallback MERGE (or a no-gate note) is the answer until the tip moves
       if (last.status !== 'landed') out.skips[r.branch] = { tip: r.tip, kind: LAND_KIND[last.status] ?? last.status, why: `${LAND_WORDS[last.status] ?? last.status} at ${s7(r.tip)}: ${last.why}${last.queued ? `; ${[runs.find(x => x.id === last.queued)?.data?.stage, last.queued].filter(Boolean).join(' ')} is queued` : '; none queued'}` };

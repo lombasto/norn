@@ -1,15 +1,13 @@
 // META-GTP-MERGEQ (GT-PARITY-PLAN sec. 2.4; Bors / the GitHub merge queue; Gas Town refinery - cited, not ported): the merge
 // queue of DONE-not-merged deliverables. Code only, no LLM: the tick runs it after the fill.
-//  1. MR score (Gas Town internal/refinery/score.go:43-51, 81-87): 1000 + epic_hours*10 + (4 - priority)*100
-//     - min(retries*50, 300) + dlv_hours; our inputs: the DLV's epic (age, P0-P4; none = P2, the DAG default), retries = its
-//     resolve / fix rounds, the DLV's age since DONE. lane-collide S1b (SPEC 4A.1, landing the holder early): + min(waiters*100, 300),
+//  1. MR score (Gas Town internal/refinery/score.go:43-51, 81-87, with every row at the default priority P2): 1200
+//     - min(retries*50, 300) + dlv_hours; retries = its resolve / fix rounds, dlv_hours = the DLV's age since DONE. lane-collide S1b (SPEC 4A.1, landing the holder early): + min(waiters*100, 300),
 //     waiters = the queued runs a collision holds on the DLV's lane (<state>/collide-holds.json; derived each pass, so it ends with the wait).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fold, readEvents, recordsFile } from './records.mjs';
 import { deliverablesView, rehearsalWord } from './deliverables.mjs';
 import { fwd } from './dlvmerge.mjs';
-import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
@@ -32,22 +30,14 @@ import { noteMqWhy } from './mqwhy.mjs';
 
 const H = 3600e3;
 const pad = (s, n) => String(s ?? '').padEnd(n);
-export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
-/** the gate kind of a queue row: door (native: the install path, the door flow), batch (a FAST gate is declared: batched + bisected),
+/** the gate kind of a queue row: door (native: the install path, landed by the controller), batch (a FAST gate is declared: batched + bisected),
  *  stage (one MERGE stage per branch) */
 export const gateKind = (row, cfg) => (row.native ? 'door' : cfg.gate?.fast ? 'batch' : 'stage');
 
 /** Gas Town's MR score with our inputs (score.go:43-51); higher merges first */
-export function mrScore({ epicHours = 0, priority = 'P2', retries = 0, dlvHours = 0, waiters = 0 } = {}) {
-  const p = PRIO_RANK[priority] ?? PRIO_RANK.P2;
-  return Math.round(1000 + epicHours * 10 + (4 - p) * 100 - Math.min(retries * 50, 300) + Math.min(waiters * 100, 300) + dlvHours);
-}
-
-// the open epic a deliverable belongs to: by its DLV id, else by its DONE run; the oldest open one wins (stable)
-function epicOf(epics, row) {
-  const open = Object.values(epics).filter(e => e.state === 'open').sort((a, b) => Date.parse(a.created) - Date.parse(b.created));
-  return open.find(e => epicMembers(e).includes(row.id)) || (row.run ? open.find(e => epicMembers(e).includes(row.run)) : null) || null;
+export function mrScore({ retries = 0, dlvHours = 0, waiters = 0 } = {}) {
+  return Math.round(1200 - Math.min(retries * 50, 300) + Math.min(waiters * 100, 300) + dlvHours);
 }
 // resolve / fix rounds of a deliverable since it was recorded: its resolve runs (brief <state>/resolve/DLV-n-*) + fix-stage runs of its lane
 function retriesOf(runs, stateDir, row, since) {
@@ -64,19 +54,18 @@ function waitersOf(stateDir, runs) {
 }
 /**
  * The queue: every DONE-not-merged deliverable that is open (not parked, not superseded) and whose branch exists, in score order.
- * Returns { rows: [{ ...view row, score, priority, epic, epic_hours, dlv_hours, retries, gate, word (rehearsal), into (target branch) }], cfg,
+ * Returns { rows: [{ ...view row, score, dlv_hours, retries, gate, word (rehearsal) }], cfg,
  *   held: [{ id, branch, why }] (META-CATCH S2: a look item's row without its picture proof or a newer pass verdict stays out) }
  */
 export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = makeGit(), view = null } = {}) {
   const cfg = mergeConfig(project), slop = slopOn(project.policy), hash = slop ? rulesHash(projectSlop({ projectDir: project.project_dir }).rules) : null;
   const v = view || deliverablesView({ stateDir, project, now, git });
-  const epics = (() => { try { return loadEpics(stateDir); } catch { return {}; } })();
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
   const dlvs = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items);
   const red = loadMq(stateDir).red || {};   // piece 3: a bisect culprit stays out (no update, no batch) until its tip changes
   const waitOn = waitersOf(stateDir, runs);
   const looks = Object.values((() => { try { return loadRoadmap(stateDir).items; } catch { return {}; } })()).filter(n => n.proof === 'look');
-  const rows = [], held = [], into1 = new Map(), ib1 = into => (into1.has(into) ? into1.get(into) : into1.set(into, intoSha(cfg, into, git)).get(into));
+  const rows = [], held = [];
   for (const r of v.rows) {
     if (r.state !== 'done' || r.record_state !== 'open' || r.superseded || r.branch_exists === false) continue;
     // META-CATCH S2: the entry check of a look item's row - a proven DONE (an image newer than its start) and a pass verdict newer than the head
@@ -86,18 +75,12 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
       const why = lk.map(n => lookHold(r, { item: n, run: runs.find(x => x.id === r.run) || null, headMs: Number.isFinite(ct) && ct > 0 ? ct * 1000 : null })).filter(Boolean);
       if (why.length) { held.push({ id: r.id, branch: r.branch, why: why.join('; ') }); continue; }
     }
-    const ep = epicOf(epics, r);
-    const into = ep?.data.integration_branch || cfg.main;
-    // piece 4: a row already on its epic's integration branch has reached its queue target (main follows when the branch lands)
-    if (into !== cfg.main) { const ib = ib1(into); if (ib && r.tip && git(cfg.repo, ['merge-base', '--is-ancestor', r.tip, ib], { allowFail: true }) !== null) continue; }
     const since = Date.parse(dlvs.find(d => d.id === r.id)?.created || r.done_utc);
-    const priority = ep?.data.priority || 'P2';
-    const epic_hours = ep ? Math.max(0, (now - Date.parse(ep.created)) / H) : 0;
     const dlv_hours = Math.max(0, (now - Date.parse(r.done_utc)) / H);
     const retries = retriesOf(runs, stateDir, r, since), waiters = (r.lane && waitOn[r.lane]) || 0;
-    rows.push({ ...r, score: mrScore({ epicHours: epic_hours, priority, retries, dlvHours: dlv_hours, waiters }), priority, epic: ep?.id ?? null,
-      epic_hours: +epic_hours.toFixed(1), dlv_hours: +dlv_hours.toFixed(1), retries, waiters, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
-      into, red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null,
+    rows.push({ ...r, score: mrScore({ retries, dlvHours: dlv_hours, waiters }),
+      dlv_hours: +dlv_hours.toFixed(1), retries, waiters, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
+      red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null,
       slop: slop ? storedSlop(stateDir, r, hash) : 0 });   // RM-44 D1: the stored check of its tip (null = unchecked; the pick checks it) - not while off (META-BETA-PREP)
   }
   rows.sort((a, b) => b.score - a.score || Number(a.id.slice(4)) - Number(b.id.slice(4)));
@@ -107,10 +90,10 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
 // the BLOCK findings of a row's stored check at its tip with this rule set (a waiver applied), or null: not checked yet
 const storedSlop = (stateDir, r, hash) => { const c = r.tip ? storedCheck(stateDir, { branch: r.branch, head: r.tip, hash }) : null; return c ? c.findings.filter(f => f.level === 'BLOCK' && !f.shadow).length : null; };
 
-/** one `norn mergeq` line: id, score, priority / epic, gate kind, rehearsal, behind, target, branch, what it delivers */
+/** one `norn mergeq` line: id, score, gate kind, rehearsal, behind, branch, what it delivers */
 export function formatMq(r) {
-  return [r.id, pad(r.score, 5), pad(r.priority + (r.epic ? ' ' + r.epic : ''), 8), pad(r.gate, 5), pad(r.word, 18), pad(r.behind === null ? '' : `-${r.behind}`, 5),
-    r.into === 'main' ? '' : `-> ${r.into}`, r.red ? 'RED' : '', r.slop === null ? 'SLOP ?' : r.slop ? `SLOP ${r.slop}` : '', pad(r.branch, 30), String(r.delivers || '').slice(0, 70)].filter(x => x !== '').join(' ').trimEnd();
+  return [r.id, pad(r.score, 5), pad(r.gate, 5), pad(r.word, 18), pad(r.behind === null ? '' : `-${r.behind}`, 5),
+    r.red ? 'RED' : '', r.slop === null ? 'SLOP ?' : r.slop ? `SLOP ${r.slop}` : '', pad(r.branch, 30), String(r.delivers || '').slice(0, 70)].filter(x => x !== '').join(' ').trimEnd();
 }
 
 // ---------- 2. auto-UPDATE (not rebase; GitHub merge queue "update branch" / Gas Town done_rebase.go:28-46 aborts on conflict) ----------
@@ -159,13 +142,13 @@ export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acqu
   if (!row.behind) return res('skip', 'current with main');
   if (row.rehearsal && !row.rehearsal.clean) return res('skip', `${rehearsalWord(row)}: the resolve path (norn deliverables resolve ${row.id})`);
   if (!row.rehearsal) return res('skip', 'no merge rehearsal');
-  // native code is door work (the door flow; resolveDeliverable's rule): no update of a native branch, nor one that would pull main's native
+  // native code is door work (the controller lands it; resolveDeliverable's rule): no update of a native branch, nor one that would pull main's native
   // changes into a lane worktree (its built extension would no longer match its source)
-  if (row.native) return res('skip', `native-touching (${row.native_files.join(', ')}): its update is door work (the door flow)`);
+  if (row.native) return res('skip', `native-touching (${row.native_files.join(', ')}): its update is door work (the controller lands it)`);
   if (cfg.native?.length) {
     const nre = cfg.native.map(globToRe), mainSha = mainShaOf(row.repo, { ...cfg, git });
     const nat = (git(row.repo, ['diff', '--name-only', `${row.tip}...${mainSha}`], { allowFail: true }) || '').split(/\r?\n/).filter(f => f && nre.some(re => re.test(f)));
-    if (nat.length) return res('skip', `main brings native changes (${nat.slice(0, 3).join(', ')}${nat.length > 3 ? ', ...' : ''}): the update is door work (the door flow)`);
+    if (nat.length) return res('skip', `main brings native changes (${nat.slice(0, 3).join(', ')}${nat.length > 3 ? ', ...' : ''}): the update is door work (the controller lands it)`);
   }
   const where = branchWorktree(row.repo, B, git);
   if (where?.inMain) return res('skip', `checked out in the main checkout ${row.repo}`);
@@ -225,7 +208,7 @@ export function queueSkips(q, { updates = [], land = null, picked = null, skips 
       : u?.action === 'skip' && /not pushed/.test(u.why) ? { tip: r.tip, kind: 'unpushed', why: `not pushed at ${s7(r.tip)}: the tick's path to main pushes it` } : null;
     if (land) { if (r.branch in land) out[r.branch] = land[r.branch]; else if (uw) out[r.branch] = uw; continue; }
     if (!picked) continue;
-    out[r.branch] = picked.includes(r.id) ? null : r.gate === 'door' ? { tip: r.tip, kind: 'door', why: 'native-touching: it lands through the door flow' }
+    out[r.branch] = picked.includes(r.id) ? null : r.gate === 'door' ? { tip: r.tip, kind: 'door', why: 'native-touching: the controller lands it (door work)' }
       : r.red ? { tip: r.tip, kind: 'red', why: `red in the merge queue at ${s7(r.red)}: its fix stage merges main itself` }
       : r.word !== 'clean' ? { tip: r.tip, kind: 'conflict', why: `${r.word}: the resolve path (norn deliverables resolve ${r.id})` }
       : r.slop ? { tip: r.tip, kind: 'slop', why: `${r.slop} slop BLOCK finding(s) at ${s7(r.tip)}: fix or waive them` } : skips[r.id] ?? uw;
@@ -294,11 +277,10 @@ export function pickBatch(rows, { cfg, mq, stateDir, locksDir, writer = laneWrit
     const sha = live ? r.done_tip : r.tip;
     if (!sha) { skip(r, 'unpushed', live ? 'its lane has a live writer and no tip was recorded at DONE' : 'no pushed tip to merge'); continue; }
     if (mq.red[r.id] === sha) continue;
-    if (pick.length && r.into !== pick[0].into) { skip(r, 'target', `it merges into ${r.into}; this batch goes into ${pick[0].into}`); continue; }
     let block;
     try { block = door(r, sha); } catch (e) { skip(r, 'slop', `the slop check of ${s7(sha)} failed: ${String(e.message).split(/\r?\n/)[0]}`); continue; }
     if (block) { skip(r, 'slop', `${block} slop BLOCK finding(s) at ${s7(sha)}: fix or waive them`); continue; }
-    pick.push({ id: r.id, branch: r.branch, lane: r.lane, sha, into: r.into, staged: !!live });
+    pick.push({ id: r.id, branch: r.branch, lane: r.lane, sha, staged: !!live });
   }
   return pick;
 }
@@ -317,11 +299,11 @@ export function gateReds(log) {
 }
 /** main's reds of a main-red batch record: its main_reds, else read from its base gate log (records written before the field) */
 export const mainRedsOf = rec => rec.main_reds || gateReds(rec.runs?.find(r => r.label === 'base')?.log);
-/** the ids of the rows into `into` whose diff from `base` touches one of the files */
-export function fixesMain(rows, { files, base, into, cfg, git = makeGit() }) {
+/** the ids of the rows whose diff from `base` touches one of the files */
+export function fixesMain(rows, { files, base, cfg, git = makeGit() }) {
   const want = new Set(files.map(fwd));
   if (!want.size) return [];
-  return rows.filter(r => r.into === into && (r.tip || r.done_tip)).filter(r => {
+  return rows.filter(r => r.tip || r.done_tip).filter(r => {
     const d = git(cfg.repo, ['diff', '--name-only', `${base}...${r.tip || r.done_tip}`], { allowFail: true });
     return (d || '').split(/\r?\n/).some(f => want.has(fwd(f.trim())));
   }).map(r => r.id);
@@ -332,11 +314,10 @@ export function fixesMain(rows, { files, base, into, cfg, git = makeGit() }) {
  * with the ones before it is dropped from this batch). Returns { base, tip, members [{..., merge}], dropped [{id, why}] }.
  */
 export function buildBatch(n, pick, { cfg, git = makeGit() }) {
-  const wt = ensureScratch(cfg, git), gw = (a, o) => git(wt, a, o), into = pick[0].into;
+  const wt = ensureScratch(cfg, git), gw = (a, o) => git(wt, a, o), into = cfg.main;
   gw(['fetch', '--quiet', cfg.remote], { allowFail: true });
   gw(['merge', '--abort'], { allowFail: true });
-  // piece 4: a new integration branch starts at main (Gas Town `gt mq integration`); its first push creates it
-  const base = intoSha(cfg, into, git) || intoSha(cfg, cfg.main, git);
+  const base = intoSha(cfg, into, git);
   gw(['checkout', '--quiet', '--force', '-B', `mq/batch-${n}`, base]);
   const members = [], dropped = [];
   for (const m of pick) {
@@ -395,7 +376,7 @@ export function batchSlop(stateDir, rec, { repo, tool, projectDir = null } = {})
   return doorCheck({ state: stateDir, repo, branch: `mq/batch-${rec.n}`, head: rec.merge_tip, base: rec.base, projectDir, ...(tool ? { tool } : {}) }).open;
 }
 
-// a green prefix of k members -> the ONE MERGE stage brief for main (piece 4: an integration branch is pushed instead)
+// a green prefix of k members -> the ONE MERGE stage brief for main
 function finish(stateDir, rec, k, { cfg, project, git }) {
   rec.merge_members = rec.members.slice(0, k);
   rec.merge_tip = rec.merge_members[k - 1].merge;
@@ -403,13 +384,6 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
   const changed = (git(cfg.repo, ['diff', '--name-only', rec.base, rec.merge_tip], { allowFail: true }) || '').split(/\r?\n/).filter(Boolean);
   const uiRe = cfg.ui.map(globToRe);
   rec.ui = changed.some(f => uiRe.some(re => re.test(f)));
-  if (rec.into !== cfg.main) {   // piece 4: an integration branch takes the gated tip as a fast-forward push - no MERGE stage, never a force
-    const p = git(cfg.scratch, ['push', '--quiet', cfg.remote, `${rec.merge_tip}:refs/heads/${rec.into}`], { status: true });
-    rec.status = p.code === 0 ? 'merged' : 'stale';
-    rec.pushed = p.code === 0 ? `${cfg.remote}/${rec.into} = ${rec.merge_tip}` : null;
-    if (p.code !== 0) rec.why = `push ${cfg.remote} ${rec.into} refused (it moved since the batch was built): rebuilt next pass`;
-    return;
-  }
   const held = slopOn(project.policy) ? batchSlop(stateDir, rec, { repo: cfg.repo, projectDir: project.project_dir }) : [];
   if (held.length) { rec.status = 'slop'; rec.slop = held.map(findingLine); return; }   // no MERGE brief: the combination is held
   rec.notes = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-NOTES.md`));
@@ -435,7 +409,7 @@ function dropBatchBranch(stateDir, rec, { cfg, git }) {
 }
 
 const WHY = {
-  green: (rec) => `batch-${rec.n} GREEN (${rec.members.length} branches, ${rec.gate_runs} gate run): ${rec.brief ? `MERGE brief ${rec.brief}` : rec.pushed ? `pushed ${rec.pushed}` : rec.why}`,
+  green: (rec) => `batch-${rec.n} GREEN (${rec.members.length} branches, ${rec.gate_runs} gate run): ${rec.brief ? `MERGE brief ${rec.brief}` : rec.why}`,
   flaky: (rec, m) => `batch-${rec.n} red, then GREEN on its one retry: merged as green, counted unpinned (${m.unpinned} in a row); MERGE brief ${rec.brief}`,
   pinned: (rec) => `batch-${rec.n} RED: bisect pinned ${rec.culprit.id} in ${rec.bisect_runs} bisect run(s) (fix ask ${rec.culprit.fix}); ${rec.merge_members?.length ?? 0} branch(es) before it go on${rec.brief ? `: MERGE brief ${rec.brief}` : ''}`,
   'main-red': (rec) => `batch-${rec.n} RED and ${rec.into} ${rec.base.slice(0, 7)} itself is red under the gate: nothing pinned, nothing merged`,
@@ -494,7 +468,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       const redBase = last?.status === 'main-red' && intoSha(cfg, last.into, git) === last.base ? last : null;
       let fixers = [];
       if (redBase) {
-        fixers = fixesMain(rows, { files: mainRedsOf(redBase).map(t => t.file), base: redBase.base, into: redBase.into, cfg, git });
+        fixers = fixesMain(rows, { files: mainRedsOf(redBase).map(t => t.file), base: redBase.base, cfg, git });
         rows = [...rows.filter(r => fixers.includes(r.id)), ...rows.filter(r => !fixers.includes(r.id))];
       }
       const skips = {}, pick = pickBatch(rows, { cfg, mq, stateDir, locksDir, skips, ...(slopOn(project.policy) ? {} : { door: () => 0 }) });
