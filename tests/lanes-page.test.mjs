@@ -114,7 +114,7 @@ test('L1-L4 the priority chip on every lane with a run, the select only while li
 test('the lane drawers close with closeBtn (no text Close)', () => {
   const src = fs.readFileSync(path.join(DASH, 'pages', 'lanes.mjs'), 'utf8');
   assert.doesNotMatch(src, />Close<\/button>/);
-  for (const a of ['lane-file-close', 'lane-detail-close']) assert.match(src, new RegExp(`closeBtn\('data-act="${a}"'\)`), a);
+  for (const a of ['lane-file-close', 'lane-detail-close']) assert.match(src, new RegExp(`closeBtn\\('data-act="${a}"'\\)`), a);
 });
 
 test('no timer in the Lanes page module (the elapsed bar is a CSS animation); nothing under engine/dash imports three.js', () => {

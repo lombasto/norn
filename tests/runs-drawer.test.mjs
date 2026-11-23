@@ -24,7 +24,7 @@ const data = () => ({
 const page = (run = null) => renderTab('runs', data(), { now: NOW, projects: [], runsView: runsViewOf(new URLSearchParams()), run });
 const rowOf = (html, id) => html.match(new RegExp(`<tr class="rrow[^"]*" id="node-${id}"[^]*?<!--/row-->`))?.[0] ?? '';
 const cell = (row, label) => row.match(new RegExp(`<td[^>]*data-label="${label}"[^]*?</td>`))?.[0] ?? '';
-const docOf = html => html.slice(html.indexOf('id="run-doc"'));
+const docOf = html => html.slice(html.lastIndexOf('<article', html.indexOf('id="run-doc"')));   // the drawer, from its <article>
 const shown = doc => [...doc.matchAll(/<div class="rd-view" data-view="(\w+)"( hidden)?>/g)].filter(m => !m[2]).map(m => m[1]);
 
 test('R1 the columns: agent and priority after run; the run cell holds the id, the agent cell the dwarf and the agent file', () => {

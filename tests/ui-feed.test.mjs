@@ -34,13 +34,13 @@ test('drawer lines: one line per event, tool = name + summary, ids for the durat
   for (const kind of ['text', 'step', 'error']) { const h = renderFeedEvent({ ts: null, kind, summary: kind + ' line' }); assert.match(h, new RegExp(`k-${kind}`)); clean(h, kind); }
 });
 
-test('Agents rows of runs open the feed (data-feed); subagents and talk sessions do not', async () => {
+test('Runs rows of runs open their drawer (run-open); subagents and talk sessions do not', async () => {
   const f = await fixture();
   try {
     const get = async p => (await f.get(p)).data;
     const d = await loadTab('runs', 'kestrel', get), html = renderTab('runs', { ...d, ...await loadParts('runs', 'kestrel', d, get), parts_loading: false }, { project: 'kestrel' });   // the live part + its history part (the ended RUN-1)
-    assert.match(html, /id="node-RUN-1"[^>]*data-feed="RUN-1"/); assert.match(html, /data-feed="RUN-2"/);
-    assert.ok(!/data-feed="(?!RUN-)/.test(html), 'only runs');
+    assert.match(html, /id="node-RUN-1" data-act="run-open" data-run="RUN-1"/); assert.match(html, /data-act="run-open" data-run="RUN-2"/);
+    assert.ok(!/data-act="run-open" data-run="(?!RUN-)/.test(html), 'only runs');
   } finally { await f.done(); }
 });
 

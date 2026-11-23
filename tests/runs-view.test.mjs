@@ -44,7 +44,7 @@ test('agentsTree: a finished run carries its start and end; ran = start to end, 
   assert.match(rowOf(html, 'RUN-1'), /ended 50 min ago/);
   assert.match(rowOf(html, 'RUN-2'), /<span class="rtime">25 min<\/span>/, 'the live row: ran 25 min so far');
   assert.doesNotMatch(rowOf(html, 'RUN-2'), /ago/, 'no end while running');
-  assert.ok(html.includes('<thead><tr><th>state</th><th>run</th><th>lane · stage</th><th>model</th><th>age</th><th>tools</th><th>words</th><th>commits</th><th>pace</th></tr></thead>'), 'the columns');
+  assert.ok(html.includes('<thead><tr><th>state</th><th>run</th><th>agent</th><th>priority</th><th>lane · stage</th><th>model</th><th>age</th><th>tools</th><th>words</th><th>commits</th><th>pace</th></tr></thead>'), 'the columns');
 });
 
 test('the window: an end 5 h ago is out at 2 h and in at 12 h; today = since local midnight; an unknown window is refused', () => {
@@ -79,7 +79,7 @@ test('runsOrder: running (newest start first), then queued (longest waiting firs
   const ids = [...html.matchAll(/id="node-([^"]+)"/g)].map(x => x[1]);
   assert.deepEqual(ids, ['RUN-5', 'talk:ask', 'RUN-2', 'RUN-7', 'RUN-3', 'RUN-6', 'RUN-1'], 'the page renders that order; the queue is in the tree');
   assert.match(rowOf(html, 'RUN-7'), /waited 20 min/, 'a queued row: how long it has waited');
-  assert.doesNotMatch(html, /id="node-RUN-7"[^>]*data-feed/, 'a queued run has no feed yet');
+  assert.doesNotMatch(html, /id="node-RUN-7"[^>]*data-act="run-open"/, 'a queued run has no feed yet');
 });
 
 test('the filters: state, kind, project and lane; the view round-trips through the URL and a plain link stays plain', () => {
@@ -208,7 +208,7 @@ test('agentsTree: tools / words / commits from a Claude transcript (every line c
   assert.deepEqual(by('RUN-1').acts, { tools: 4, words: 4, commits: 2 }, '4 tool calls, the 4 words it wrote, 2 commits (git log --grep is not one)');
   assert.equal(by('RUN-2').acts, null, 'a codex run: not counted');
   const html = renderTab('runs', { tree }, { now: Date.now(), projects: [] });
-  assert.match(rowOf(html, 'RUN-1'), /data-label="tools">4<\/td><td class="rnum mono" data-label="words">4<\/td><td class="rnum mono" data-label="commits">2<\/td>/, 'the counts in the row');
+  assert.match(rowOf(html, 'RUN-1'), /data-label="tools"><button class="lnk rfeed"[^>]*data-kind="tools"[^>]*>4<\/button><\/td><td class="rnum mono" data-label="words"><button class="lnk rfeed"[^>]*>4<\/button><\/td><td class="rnum mono" data-label="commits"><button class="lnk rfeed"[^>]*>2<\/button><\/td>/, 'the counts in the row: one tap to their feed');
   assert.match(rowOf(html, 'RUN-2'), /data-label="tools"><span class="mute">-<\/span><\/td>/, 'none read: a dash');
 });
 
@@ -241,8 +241,8 @@ test('the Runs table: one row per run by attention (live, queued, ended), the st
   assert.match(live, /40 % of the last hour in test runs/, 'why slow, in words');
   assert.match(live, /2 of 4/, 'items as n of m');
   assert.match(live, /1 h 40 \/ 1 h 30/, 'time against the budget in words');
-  assert.match(live, /data-label="tools">41<\/td>[^]*data-label="words">1,?200<\/td>[^]*data-label="commits">3<\/td>/, 'the counts');
-  assert.match(live, /data-feed="RUN-2"/, 'a row opens its run');
+  assert.match(live, /data-label="tools">[^]*>41<\/button><\/td>[^]*data-label="words">[^]*>1,?200<\/button><\/td>[^]*data-label="commits">[^]*>3<\/button><\/td>/, 'the counts');
+  assert.match(live, /data-act="run-open" data-run="RUN-2"/, 'a row opens its run');
   const ended = rowOf(html, 'RUN-1');
   assert.match(ended, /red test/, 'an ended row says why it ended');
   assert.match(ended, /ended 30 min ago/);
