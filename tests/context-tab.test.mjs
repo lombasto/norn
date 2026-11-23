@@ -1,5 +1,5 @@
 // META-UX-BUILD S4: Context = Instructions without the reader and the checks (REPORT s.2, owner DIR-65 "3) A": label + URL renamed,
-// the URL says tab=context). Summary of at most 4 numbers + Per role / Per file / Is it growing? / Check-ins per day,
+// the URL says tab=context). Summary of at most 4 numbers + Per role / Per file / Growth / Check-ins per day,
 // each its own part, state in the URL; the two standing-context tables are ONE table in Per role; the checks stay reachable from
 // one link (not in the default view) until the Slop slice moves them.
 // Sandbox only: pure renders, the shared dash fixture (temp dirs, no real ~/.claude) and a private headless browser.
@@ -33,8 +33,8 @@ const ROWS = Array.from({ length: 45 }, (_, i) => row(`f${i}`, `file-${i}.md`, i
 test('the tab is Context (label + URL id); the API route stays /api/instructions', () => {
   assert.ok(TABS.some(t => t[0] === 'context' && t[1] === 'Context')); assert.ok(!TABS.some(t => t[0] === 'instructions'));
   assert.ok(MORE.find(g => g[0] === 'Health')[1].includes('context')); assert.ok(ONE_PROJECT.includes('context'));
-  assert.deepEqual(CONTEXT_SUBS.map(x => x[0]), ['role', 'file', 'growing', 'checkins']);
-  assert.deepEqual(CONTEXT_SUBS.map(x => x[1]), ['Per role', 'Per file', 'Is it growing?', 'Check-ins per day']);
+  assert.deepEqual(CONTEXT_SUBS.map(x => x[0]), ['role', 'file', 'growth', 'checkins']);
+  assert.deepEqual(CONTEXT_SUBS.map(x => x[1]), ['Per role', 'Per file', 'Growth', 'Check-ins per day']);
 });
 
 test('4 numbers at most: one check-in, one worker, today by N sessions, the check-in load since the first day of the trend', () => {
@@ -78,7 +78,7 @@ test('the default view: 4 numbers, 4 sub-views, Per role = what one session load
   assert.match(many, /<td class="num">10<\/td><td class="num"><details class="ctxprofs"><summary>~5\.0k-20\.0k <span class="small mute">2 profiles<\/span><\/summary>[\s\S]*worker runner \(claude\) · 3 today · ~5\.0k/);
 });
 
-test('each sub-view is its own part: Per file (count card, file map, most tokens, the files capped), growing, check-ins; the checks page keeps every check', () => {
+test('each sub-view is its own part: Per file (count card, file map, most tokens, the files capped), growth, check-ins; the checks page keeps every check', () => {
   const s = summary();
   assert.match(renderTab('context', { ...s, sub: 'file', parts_loading: true }), /id="context-sub-loading"/);
   const file = renderTab('context', { ...s, sub: 'file', limit: 40, rows: ROWS, parts_loading: false });
@@ -86,7 +86,10 @@ test('each sub-view is its own part: Per file (count card, file map, most tokens
   assert.equal((file.match(/<table/g) || []).length, 1, 'Files and the file map are one view: one table under the map');
   assert.equal((file.match(/<tr id="ins-row-/g) || []).length, 40); assert.match(file, /showing 40 of 45/);
   assert.match(file, /data-ins="f0"/, 'a file name opens the Docs reader');
-  assert.match(renderTab('context', { ...s, sub: 'growing', parts_loading: false }), /id="ins-trend"/);
+  const growth = renderTab('context', { ...s, sub: 'growth', parts_loading: false });
+  assert.match(growth, /id="ins-trend"><h3>Context growth /, 'the title is Context growth');
+  assert.match(growth, /<norn-chart id="ctx-growth"><script type="application\/json">[^]*<svg [^>]*preserveAspectRatio="xMidYMid meet"/, 'the zoomable chart');
+  assert.doesNotMatch(renderTab('context', { ...s, sub: 'growing', parts_loading: false }), /id="ins-trend"/, 'no alias: sub=growing opens the first view');
   assert.match(renderTab('context', { ...s, sub: 'checkins', parts_loading: false }), /id="ins-checkins"[\s\S]*9<\/b> \(5 mechanical/);
   const checks = renderTab('context', { ...s, sub: 'checks', parts_loading: false, rows: ROWS, findings: [], hints: [], suggest: [], rules: { rules: [], counts: { prose: 0, repeated: 0, enforced: 0, retired: 0 }, cards: [], advisories: [] } });
   for (const id of ['ins-managed', 'ins-findings-card', 'ins-ladder', 'ins-repeats', 'ins-audits', 'ins-memory']) assert.match(checks, new RegExp(`id="${id}"`), id);
@@ -123,7 +126,7 @@ test('Per file: the map groups are its filter chips; every block and every name 
   } finally { ctxView.show = 'all'; }
 });
 
-test('the loader: the summary alone for Per role / growing / check-ins; the files part for Per file; every list for the checks; keyed by sub', async () => {
+test('the loader: the summary alone for Per role / growth / check-ins; the files part for Per file; every list for the checks; keyed by sub', async () => {
   const s = summary(), got = [];
   const get = async u => { got.push(u); return u.includes('part=') ? { rows: ROWS } : s; };
   const d = await loadTab('context', 'kestrel', get, {});
@@ -154,13 +157,13 @@ test('the browser: tab=context opens Context; a sub-view tap is in the URL (Back
     assert.ok(await pg.until(`!!document.querySelector('#ins-table [data-ins]')`, 60000), 'Per file loads its part');
     assert.match(await pg.ev('location.search'), /sub=file/);
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (Per file)');
-    for (const sub of ['growing', 'checkins']) {
+    for (const sub of ['growth', 'checkins']) {
       await pg.ev(`document.querySelector('#context-sub-${sub}').click()`);
       assert.ok(await pg.until(`document.querySelector('#context-sub')?.dataset.sub === '${sub}'`, 30000), sub);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `no sideways scroll (${sub})`);
     }
     await pg.ev('history.back()');
-    assert.ok(await pg.until(`document.querySelector('#context-sub')?.dataset.sub === 'growing'`, 30000), 'Back returns to the sub-view before');
+    assert.ok(await pg.until(`document.querySelector('#context-sub')?.dataset.sub === 'growth'`, 30000), 'Back returns to the sub-view before');
     // the checks page has no link on Context (cac85cda: no footer); Slop › Rules reaches it
     await pg.go(`${f.url}/?project=kestrel&tab=slop&sub=rules`);
     assert.ok(await pg.until(`!!document.querySelector('[data-go=context][data-gosub=checks]')`, 60000), 'Slop › Rules links the checks');

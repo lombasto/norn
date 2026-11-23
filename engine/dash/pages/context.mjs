@@ -1,10 +1,10 @@
 // The Context page (moved from ui.mjs, ui-context-docs): what every session loads before any work and what it costs - the summary
-// numbers once under the view switch, Per role / Per file / Is it growing? / Check-ins per day, and the checks page one link away
+// numbers once under the view switch, Per role / Per file / Growth / Check-ins per day, and the checks page one link away
 // (sub=checks: findings, the ladder, said again, audits, memory). Every file name opens the Docs reader. ui.mjs keeps the dispatch line.
 // The shared steering-file cells (load words and chips, ~tokens, the memory gauge) live here; pages/docs.mjs imports them. The audit
 // and enforce cards and the severity chips are cards.mjs's (the Inbox shows the same cards).
 import { esc, fin, dash, int, plural, chip, fmtTime, goAttrs, filterChips } from '../cells.mjs';
-import { bars, stack, board, lines } from '../widgets.mjs';
+import { bars, stack, board, nornChart } from '../widgets.mjs';
 import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextNumbers, standingRows, perDay, worstFiles, measuredRows } from '../insparts.mjs';
 import { diffBlock } from '../diffview.mjs';
@@ -27,14 +27,14 @@ function insRefreshing(d, now) {
 const insMore = (shown, n, where) => (n > shown ? `<p class="small mute" style="padding:0 12px">showing ${int(shown)} of ${int(n)}${where ? ` · ${where}` : ''}</p>` : '');
 // META-UX-BUILD S4 (REPORT s.2): Context = what a session loads before any work and what it costs. The sub-view pattern: the 4 numbers
 // ONCE under the view switch (each marked low / medium / high), then Per role (what one session loads + the ONE standing table) / Per
-// file (the files and their map in one view) / Is it growing? / Check-ins per day. Reading is in the Docs reader (every file name lands
+// file (the files and their map in one view) / Growth / Check-ins per day. Reading is in the Docs reader (every file name lands
 // there); the checks page (`sub=checks`, no fifth sub-view) is reached from Slop › Rules.
 export function context(d, ctx) {
   const now = ctx.now ?? Date.now();
   if (d.pending || (d.error && !d.at)) return `${insRefreshing(d, now)}`;
   if (d.sub === 'checks') return `${insRefreshing(d, now)}${ctxChecks(d)}`;
   const none = w => `<p class="small mute">${esc(w)}</p>`;
-  const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growing' ? insTrend(d.measured) || none('no measured session in the last 30 days')
+  const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growth' ? insTrend(d.measured) || none('no measured session in the last 30 days')
     : d.sub === 'checkins' ? insCheckins(d.checkins) || none('no check-in recorded yet') : `${insLoads(d)}${ctxRoles(d)}`;
   return subviewPage('context', { title: 'Context', lead: insRefreshing(d, now), numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? d.counts?.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading });
 }
@@ -166,7 +166,8 @@ function insAudits(a) {
    <div class="inswrap"><table class="instab" id="ins-audit-runs"><thead><tr><th>run</th><th>started</th><th>outcome</th><th>hunks</th><th>accepted</th><th>declined</th><th>open</th><th>watch after apply</th></tr></thead><tbody>${runs || '<tr><td colspan="8" class="mute">no audit has run yet</td></tr>'}</tbody></table></div>
    ${a.cards.length ? `<ul>${a.cards.map(c => auditCard(c, null)).join('')}</ul>` : ''}</div>`;
 }
-// META-TEND P5 (REPORT 5.3 view 1): is it growing forever? - the median standing context per session, one line per role, 30 days
+// META-TEND P5 (REPORT 5.3 view 1) + owner list 2026-11-23 item 2: Context growth - the median standing context per session, one line
+// per role, 30 days, in a <norn-chart> (zoom, pan, the overview window; the window survives a repaint, widgets.mjs CHART_VIEWS)
 function insTrend(m) {
   const rows = m?.trend?.rows || [];
   if (!rows.length) return '';
@@ -174,8 +175,8 @@ function insTrend(m) {
   const days = Array.from({ length: n }, (_, i) => new Date(end - (n - 1 - i) * 86400000).toISOString().slice(0, 10));
   const keys = [...new Set(rows.map(r => r.key))], lab = k => k.replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w);
   const series = keys.map(k => ({ key: k, label: lab(k), points: rows.filter(r => r.key === k && r.median_turn1 !== null).map(r => ({ x: r.day, y: r.median_turn1 })) }));
-  return `<div class="tablecard" id="ins-trend"><h3>Is it growing forever? <span class="mute small">standing tokens per session (the median first request), per role and day, last ${int(n)} days</span></h3>
-   <div style="padding:0 12px 8px">${lines(series, { days, fmt: tk, title: 'standing tokens per session', unit: 'tokens' })}</div></div>`;
+  return `<div class="tablecard" id="ins-trend"><h3>Context growth <span class="mute small">standing tokens per session (the median first request), per role and day, last ${int(n)} days</span></h3>
+   <div style="padding:0 12px 8px">${nornChart(series, { days, fmt: tk, id: 'ctx-growth', title: 'standing tokens per session', unit: 'tokens' })}</div></div>`;
 }
 function insRepeats(L) {
   if (!L) return '';
