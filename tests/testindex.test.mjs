@@ -86,7 +86,7 @@ test('T2 pickRun: the new impact.json leaves the light pick unchanged (static de
 });
 
 test('tickTests also starts tests index, detached, when impact.json is not at HEAD and no index started in the last 10 min', () => {
-  const w = world(), calls = [], spawnFn = (exe, args) => (calls.push(args.slice(1, 3).join(' ')), { pid: 1 }), p = { file: 'p.json', root: w.repo }, now = Date.now();
+  const w = world(), calls = [], spawnFn = (exe, args) => (calls.push(args.slice(1, 3).join(' ')), { pid: 1 }), p = { file: 'p.json', root: w.repo }, now = Date.parse('2026-11-22T12:00:00Z'); // midday UTC: now + 30 min stays on git-history's day
   fs.mkdirSync(path.join(w.state, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(w.state, 'tests', 'git-history.json'), JSON.stringify({ at: new Date(now).toISOString(), points: [] }));
   assert.match(tickTests(p, w.state, { metaCmd: 'norn.mjs', spawnFn, now }), /tests index: started pid 1/);
