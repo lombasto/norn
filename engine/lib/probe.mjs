@@ -14,7 +14,6 @@ import { resolveShim } from './paths.mjs';
 export class ProbeRefused extends Error { constructor(msg, code = 1) { super(msg); this.code = code; } }
 
 const PROMPT = 'Reply with the single word OK. Use no tools.';
-const MODEL = { claude: 'claude-opus-5-5', fake: 'fake' };   // = norn run's defaults (norn.mjs runCmd DEF); a typed entry names its model
 
 /** The probe's command { exe, args, env (vars to set, null = delete), parse, model, agent } in temp dir `dir`; throws ProbeRefused. */
 export function probeCommand({ name, entry = {}, machine, env = process.env, dir }) {
@@ -25,7 +24,7 @@ export function probeCommand({ name, entry = {}, machine, env = process.env, dir
   const vars = isApi(entry) ? providerEnv(entry, env) : { vars: {}, missing: null };
   if (vars.missing) throw new ProbeRefused(`key var ${vars.missing} unset`);
   const cli = isCli(entry);
-  const model = entry.model || MODEL[name], effort = 'low', agent = cli ? undefined : entry.agent;
+  const model = entry.model || BUILTIN[name]?.model, effort = 'low', agent = cli ? undefined : entry.agent;
   const brief = path.join(dir, 'probe-brief.md');
   fs.writeFileSync(brief, cli ? PROMPT + '\n' : 'mode: done\n');
   const o = { executor: name, brief, worktree: dir, model, effort, agent, promptText: PROMPT, session_id: crypto.randomUUID(), readonly: true, ...(cli ? { provider: entry } : {}) };

@@ -11,11 +11,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CAP_KEYS, HOOKS, RESUME_STYLES, CHATS } from './harness/common.mjs';
 
+// model = the executor's default model id, the one table of them (launch, probe, check-in trial and policy defaults read it)
 export const BUILTIN = {
-  claude: { kind: 'worker', harness: 'claude', caps: ['max_claude_workers'] },
-  fake: { kind: 'fake', harness: 'fake', caps: ['max_claude_workers'] },
-  'codex-sol': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_sol'] },
-  'codex-astra': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_astra'] },
+  claude: { kind: 'worker', harness: 'claude', caps: ['max_claude_workers'], model: 'claude-opus-5-5' },
+  fake: { kind: 'fake', harness: 'fake', caps: ['max_claude_workers'], model: 'fake' },
+  'codex-sol': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_sol'], model: 'gpt-6.1-sol' },
+  'codex-astra': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_astra'], model: 'gpt-6-astra' },
 };
 export const PROVIDER_TYPE = 'claude-compatible';
 export const OPENAI_TYPE = 'openai-compatible';

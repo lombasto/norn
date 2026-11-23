@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadProject } from './config.mjs';
 import { withDefaults, merged, laneMatch } from './policy.mjs';
-import { isTyped } from './executors.mjs';
+import { BUILTIN, isTyped } from './executors.mjs';
 
 // ---------- lean launch profiles (policy.launch: { roles: { worker | merge | checkin | chat: name }, profiles: { name: overrides } }) ----------
 // harness-agnostic switches; each adapter maps them to its flags (profileArgs) or states a gap (profileGap)
@@ -110,8 +110,8 @@ const EXPLICIT = { model: 'model', effort: 'effort', agent: 'agent', class: 'cls
 export function launchParts({ project, budget = {}, executor, lane, explicit = {}, claudeDir, worktree }) {
   const xc = project?.executors?.[executor] || {};
   const pol = withDefaults(merged(budget, project?.policy)).policy;   // META-TEND P2: the class table the launcher stamps from (workclass.mjs)
-  const DEF = { claude: [budget.claude_model || 'claude-opus-5-5', budget.claude_effort || 'medium'], 'codex-sol': ['gpt-6.1-sol', budget.codex_sol_effort || 'medium'],
-    'codex-astra': ['gpt-6-astra', budget.codex_astra_effort || 'medium'], fake: ['fake', '-'] }[executor] || [];
+  const DEF = { claude: [budget.claude_model || BUILTIN.claude.model, budget.claude_effort || 'medium'], 'codex-sol': [BUILTIN['codex-sol'].model, budget.codex_sol_effort || 'medium'],
+    'codex-astra': [BUILTIN['codex-astra'].model, budget.codex_astra_effort || 'medium'], fake: [BUILTIN.fake.model, '-'] }[executor] || [];
   // a typed executor (claude-compatible / openai-compatible / cli): data only; its model / effort / exe come from the entry
   const prov = isTyped(xc) ? xc : undefined;
   if (prov) DEF.push(prov.model, prov.effort || 'medium');

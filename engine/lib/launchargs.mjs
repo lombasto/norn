@@ -23,7 +23,6 @@ import { expandLate } from './config.mjs';
 
 export const STAGE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/;
 export const CLAUDE_ALIASES = ['haiku', 'sonnet', 'opus', 'fable'];
-const DEFAULT_MODEL = { 'codex-sol': 'gpt-6.1-sol', 'codex-astra': 'gpt-6-astra' };
 // the budget keys that name a Claude model (Settings: policy.mjs)
 const BUDGET_MODEL_KEYS = ['claude_model', 'checkin_model', 'checkin_minor_model', 'chat_model', 'worker_min_model'];
 const uniq = a => [...new Set(a.filter(x => typeof x === 'string' && x))];
@@ -35,6 +34,7 @@ export function knownExecutors(project, { fake = true } = {}) {
   return [...Object.keys(BUILTIN).filter(n => (fake || n !== 'fake') && ex[n]?.enabled !== false),
     ...Object.entries(ex).filter(([n, x]) => isTyped(x) && !BUILTIN[n] && x.enabled !== false).map(([n]) => n)];
 }
+const isCodex = executor => BUILTIN[executor]?.kind === 'codex';
 /** the models of executor `executor` -> [ids], or null = not checked (fake, a typed executor) */
 export function knownModels(executor, { project, budget = {} } = {}) {
   const xc = project?.executors?.[executor] || {};
@@ -43,11 +43,11 @@ export function knownModels(executor, { project, budget = {} } = {}) {
     const named = [...BUDGET_MODEL_KEYS.map(k => budget[k]), xc.model, pol.checkin?.merge_model, ...Object.values(pol.executors || {}).map(e => e?.model)];
     return uniq([...FLOOR_MODELS, ...named.filter(m => claudeRank(m) && !CLAUDE_ALIASES.includes(m)), ...CLAUDE_ALIASES]);
   }
-  if (DEFAULT_MODEL[executor]) return uniq([DEFAULT_MODEL[executor], xc.model]);
+  if (isCodex(executor)) return uniq([BUILTIN[executor].model, xc.model]);
   return null;
 }
 /** the efforts of executor `executor` -> [names], or null = not checked */
-export const knownEfforts = executor => (executor === 'claude' || DEFAULT_MODEL[executor] ? EFFORT_ORDER : null);
+export const knownEfforts = executor => (executor === 'claude' || isCodex(executor) ? EFFORT_ORDER : null);
 
 /** the existing lane names of a state dir (sorted) */
 export function laneNames(state) {
