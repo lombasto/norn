@@ -7,6 +7,8 @@ export const CLASSES = { code: CODE, comment: COMMENT, string: STRING, quote: QU
 export const isJs = f => /\.(?:mjs|cjs|js|jsx|ts|tsx|mts|cts)$/.test(f);
 
 export const norm = s => String(s).replace(/\s+/g, ' ').trim();
+/** the length of the common start of two strings */
+export const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
 export const lineAt = (text, i) => text.slice(0, i).split('\n').length;
 export const lineText = (text, n) => (text.split('\n')[n - 1] ?? '');
 
@@ -61,6 +63,13 @@ export function masked(text, want, file = '') {
   let out = '';
   for (let i = 0; i < text.length; i++) out += text[i] === '\n' || keep.has(cls[i]) ? text[i] : ' ';
   return out;
+}
+
+/** the TOML tables whose name passes keep (`tool.ruff`, `lints`), headers and bodies, joined; null = none */
+export function tomlTables(text, keep) {
+  let on = false; const out = [];
+  for (const l of text.split(/\r?\n/)) { const h = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(l); if (h) on = keep(h[1]); if (on) out.push(l); }
+  return out.length ? out.join('\n') : null;
 }
 
 /** K2's reason test: a comment explains when it has two words or more and does not start with a deny-list word */

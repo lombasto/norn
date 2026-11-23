@@ -1,0 +1,45 @@
+{
+  "id": "LR",
+  "level": "WARN",
+  "kind": "lint",
+  "tool": "clippy",
+  "source": "log",
+  "log": ["{git}/norn/clippy/{head}*.log"],
+  "title": "a clippy diagnostic on a Rust file the branch touches",
+  "explain": {
+    "what": "The head's clippy log names a Rust file the branch touches (LR/clippy::<lint>, or LR/<rustc lint>).",
+    "why": "CI runs clippy with -D warnings, so main is clean and a diagnostic on a touched file is new. Choppa never builds: he reads the log the head's own gate wrote.",
+    "fix": "Fix what the diagnostic says and run clippy again. A diagnostic that must stay needs a waiver for LR/<lint>.",
+    "rules": {
+      "no-evidence": {
+        "what": "No clippy log for this head: the branch touches Rust files and nothing shows clippy ran on them.",
+        "why": "Choppa reads clippy, never runs it (a build takes minutes). CI still gates it; this only says the run end could not see it.",
+        "fix": "Run the crate's clippy at the head and keep its output: `cargo clippy --all-targets -- -D warnings 2>&1 | tee \"$(git rev-parse --git-common-dir)/norn/clippy/$(git rev-parse HEAD).log\"`."
+      },
+      "config-changed": {
+        "what": "The branch edits clippy's config (clippy.toml, or a [lints] table of a Cargo.toml).",
+        "why": "The config says what clippy looks for; editing it is the cheapest way to clear a finding.",
+        "fix": "Keep the config as it is, or ask the owner: his waiver for LR/config-changed approves the rule change."
+      }
+    }
+  },
+  "files": ["**/*.rs"],
+  "exclude": ["**/vendor/**", "**/third_party/**"],
+  "levels": { "*": "BLOCK", "no-evidence": "WARN" },
+  "fixture": {
+    "hit": {
+      "base": { "crate/src/lib.rs": "pub fn f() -> u8 {\n    1\n}\n" },
+      "head": { "crate/src/lib.rs": "pub fn f() -> u8 {\n    return 1;\n}\n" },
+      "recorded": {
+        "head": "warning: unneeded `return` statement\n --> src/lib.rs:2:5\n  |\n2 |     return 1;\n  |     ^^^^^^^^\n  |\n  = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return\n  = note: `-D clippy::needless-return` implied by `-D warnings`\n\nwarning: `crate` (lib) generated 1 warning\n"
+      }
+    },
+    "miss": {
+      "base": { "crate/src/lib.rs": "pub fn f() -> u8 {\n    1\n}\n", "crate/src/other.rs": "pub fn g() -> u8 {\n    return 2;\n}\n" },
+      "head": { "crate/src/other.rs": "pub fn g() -> u8 {\n    return 2;\n}\n", "crate/src/lib.rs": "pub fn f() -> u8 {\n    2\n}\n" },
+      "recorded": {
+        "head": "warning: unneeded `return` statement\n --> src/other.rs:2:5\n  |\n  = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return\n\nwarning: `crate` (lib) generated 1 warning\n"
+      }
+    }
+  }
+}
