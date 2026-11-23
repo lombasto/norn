@@ -234,7 +234,7 @@ test('the browser: the header holds the pool, the check-ins box and the cog; the
         await pg.go(`${f.url}/?project=kestrel&tab=lanes`, 90000);
         assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && /^status \\d\\d:\\d\\d · /.test(document.querySelector('#ckbox #status')?.textContent ?? '')`, 30000), 'the status line in the check-ins box: a local time, no Z');
         assert.ok(await pg.ev(`!!document.querySelector('#ckbox #pause') && !!document.querySelector('#ckbox #tick') && !document.querySelector('header #look, header #theme, #more-sheet [data-tab=settings]')`), 'Pause + Run tick in the box; no Look / Theme in the header, no Settings in More');
-        assert.ok(await pg.until(`/^Claude workers \\d+ of 2/.test(document.querySelector('#pool')?.textContent ?? '')`, 30000), 'the pool: Claude workers of the machine cap');
+        assert.ok(await pg.until(`/^Claude \\d+ \\/ 2·/.test(document.querySelector('#pool')?.textContent ?? '')`, 30000), 'the pool: Claude workers in use / the machine cap');
         await pg.ev(`document.querySelector('#tab-settings').click()`);
         assert.ok(await pg.until(`document.body.dataset.ready === 'settings' && !document.querySelector('#setview').hidden && !!document.querySelector('#setview .settings')`, 60000), 'the cog opens Settings in the overlay');
         assert.ok(await pg.ev(`!!document.querySelector('#main #panel-lanes') && document.querySelector('#tab-settings').getAttribute('aria-current') === 'page'`), 'the page under it stays; the cog is current');
