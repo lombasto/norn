@@ -13,7 +13,7 @@ import { KINDS, readEvents, recordsFile, fold, loadState, homeOf, HOME_RE } from
 import { writeViews } from './views.mjs';
 import { buildTree, writeRoadmapView, roadmapViewPath } from './roadmap.mjs';
 import { commitLedger } from './ledger.mjs';
-import { fedOf } from './fed.mjs';
+import { fedOf } from './claimsref.mjs';
 import { listClaims, registerHome, registerProject, homeKey, projectKey } from './claims.mjs';
 import { ghSlug } from './mergeland.mjs';
 import { subdirOf } from './monorepo.mjs';

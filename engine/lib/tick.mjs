@@ -49,7 +49,7 @@ import { tickPaths } from './lanepaths.mjs';
 import { tickProposals } from './proposals.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
 import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
-import { fedOf } from './fed.mjs';
+import { fedOf } from './claimsref.mjs';
 import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync, claimLeader, leaderKey } from './claims.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');

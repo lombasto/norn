@@ -1,5 +1,4 @@
-// RM-46 S2a (SPEC 3.5, 3.6): the claims branch core, shared by fed's run claims (keys under runs/) and the multi-home work claims
-// (claims.mjs: work/, homes/, projects/, allow/, leader/). Branch `claims` of the ledger remote holds one JSON file per entry. A writer
+// The claims branch core of the multi-home work claims (claims.mjs: work/, homes/, projects/, allow/, leader/) and of sync.mjs. Branch `claims` of the ledger remote holds one JSON file per entry. A writer
 // commits its edits on the claims tip it fetched and pushes WITHOUT force: git's receive-pack updates the ref only from the old value the
 // push was built on (non-fast-forward = rejected; a concurrent update = a failed ref lock) - a compare-and-swap on the branch.
 // Locally the fetched tip is refs/sync/claims of this machine's ledger repo (bare). Endpoint f = { dir: that repo, remote, host }.
@@ -10,6 +9,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { boundedSync } from './bounded.mjs';
 import { refSha } from './gitfacts.mjs';
+import { withLock } from './records.mjs';
 
 export class ClaimsError extends Error {}
 
@@ -20,8 +20,8 @@ export const SYNC_CLAIMS = 'refs/sync/claims';
 const CLAIMS_SPEC = '+refs/heads/claims*:refs/sync/claims*';
 
 export function rgit(f, args, { input, ok = [0], index } = {}) {
-  const env = { ...process.env, GIT_DIR: f.dir, GIT_TERMINAL_PROMPT: '0', GIT_AUTHOR_NAME: 'norn-fed', GIT_AUTHOR_EMAIL: `fed@${f.host}`,
-    GIT_COMMITTER_NAME: 'norn-fed', GIT_COMMITTER_EMAIL: `fed@${f.host}` };
+  const env = { ...process.env, GIT_DIR: f.dir, GIT_TERMINAL_PROMPT: '0', GIT_AUTHOR_NAME: 'norn-claims', GIT_AUTHOR_EMAIL: `claims@${f.host}`,
+    GIT_COMMITTER_NAME: 'norn-claims', GIT_COMMITTER_EMAIL: `claims@${f.host}` };
   for (const k of ['GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[k];
   if (index) env.GIT_INDEX_FILE = index;
   const r = boundedSync('git', args, { env, input, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
@@ -36,7 +36,7 @@ export function initRepo(f) {
   const r = boundedSync('git', ['init', '-q', '--bare', f.dir], { timeout: 120000 });
   if (r.status !== 0) throw new ClaimsError(`git init failed: ${(r.stderr || '').trim()}`);
 }
-/** the remote's claims branch into refs/sync/claims, plus `extra` refspecs in the same fetch (fed: the machine branches) */
+/** the remote's claims branch into refs/sync/claims, plus `extra` refspecs in the same fetch (sync: the machine branches) */
 export function fetchRefs(f, extra = []) {
   initRepo(f);
   rgit(f, ['fetch', '-q', '--prune', '--no-tags', f.remote, CLAIMS_SPEC, ...extra]);
@@ -112,7 +112,11 @@ export function casClaims(f, tip, edits, msg, { beforePush } = {}) {
     return { ok: true, sha };
   } finally { try { fs.unlinkSync(index); } catch { /* never written: nothing to remove */ } }
 }
-// one claims operation at a time per machine repo (two projects' fills share the ledger repo; refs/sync/claims would race). The caller
-// takes it with records.mjs withLock: importing records here would close an import cycle (records -> fed -> claimsref)
+// one claims operation at a time per machine repo (two projects' fills share the ledger repo; refs/sync/claims would race)
 /** the claims lock of f's repo (created first): withLock(file, fn, opts) */
-export const claimsLock = f => { initRepo(f); return { file: path.join(f.dir, 'fed.lock'), opts: { staleMs: 120000, timeoutMs: 60000 } }; };
+export const claimsLock = f => { initRepo(f); return { file: path.join(f.dir, 'claims.lock'), opts: { staleMs: 120000, timeoutMs: 60000 } }; };
+/** fn under the claims lock of f's repo */
+export const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
+export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+/** a ledger config (ledger.mjs ledgerConfig / spec.git_ledger) -> the claims endpoint f, or null (no remote = no claims) */
+export const fedOf = led => (led?.remote && led?.dir ? { dir: led.dir, remote: led.remote, host: String(led.branch || '').replace(/^machine\//, '') || hostName() } : null);

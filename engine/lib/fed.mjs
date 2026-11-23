@@ -9,8 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { withLock, fold } from './records.mjs';
-import { rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, claimsLock } from './claimsref.mjs';
+import { fold } from './records.mjs';
+import { rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, under, fedOf, hostName } from './claimsref.mjs';
+export { fedOf, hostName };
 
 export class FedError extends Error {}
 
@@ -33,7 +34,6 @@ export function servedLabels(machine) {
 }
 /** the labels of `labels` a machine serving `served` lacks ([] = it serves the run) */
 export const unserved = (labels = [], served = [osLabel()]) => labels.filter(l => !served.includes(l));
-export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace(/[^a-z0-9._-]/g, '-');
 
 // ---------- piece 2: the claim protocol over the ledger repo ----------
 // Branch `claims` of the ledger remote holds one file per claimed run: runs/<home host>/<project>/<RUN-n>.json (RM-46 C6: the branch is
@@ -46,8 +46,6 @@ export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace
 export const claimKey = (home, project, run) => `runs/${home}/${project}/${run}.json`;
 // the claims branch next to the machine branches, one fetch (refs/fed/machine/*: the import below)
 const fetchFed = f => fetchRefs(f, ['+refs/heads/machine/*:refs/fed/machine/*']);
-/** fn under the claims lock of f's repo (claims.mjs takes it too: one lock for fed's and the work claims) */
-export const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
 
 
 /**
@@ -97,8 +95,6 @@ export const fetchClaims = f => under(f, () => { fetchFed(f); return readClaims(
 /** a node claim whose lease ran out at `now` (a home claim and a done claim never expire) */
 export const leaseExpired = (c, now = Date.now()) => ['claimed', 'running'].includes(c?.state) && Number.isFinite(c.lease_s)
   && Date.parse(c.heartbeat_at) + c.lease_s * 1000 < now;
-/** a ledger config (ledger.mjs ledgerConfig / spec.git_ledger) -> the fed endpoint, or null (no remote = no federation) */
-export const fedOf = led => (led?.remote && led?.dir ? { dir: led.dir, remote: led.remote, host: String(led.branch || '').replace(/^machine\//, '') || hostName() } : null);
 
 // ---------- piece 3: offers, the machine branches, the import ----------
 // The home walk's offered rows (piece 1) as <state>/views/FED-OFFERS.json - in the ledger whitelist (views/**), so the next ledger commit +
