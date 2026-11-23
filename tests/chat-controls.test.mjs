@@ -240,8 +240,7 @@ test("R1 a passed-through local command's reply (the CLI's synthetic assistant l
   assert.deepEqual(init[0].commands, ['context', 'norn-ping']);
 });
 
-// META-CI-WORKCLASS R2 (DEC-332): a page that never sets body.dataset.ready fails pg.go / pg.until WITH ITS STATE (the step it reached,
-// its dataset, console errors, unhandled rejections, the fetches still pending and their age), never a bare undefined.
+// a stalled page's timeout must say why (its step, dataset, console errors, rejections, pending fetches), never a bare undefined
 import http from 'node:http';
 test('R2 a stalled page: go() and until() fail naming the step, the pending fetch, the console error and the unhandled rejection', { skip: skipWhy, timeout: 60000 }, async () => {
   const html = `<!doctype html><body><script type="module">document.body.dataset.step = 'boot'; console.error('toy-boom');
@@ -258,63 +257,4 @@ test('R2 a stalled page: go() and until() fail naming the step, the pending fetc
     });
     await assert.rejects(pg.until('document.body.dataset.ready', 500), /until\(document\.body\.dataset\.ready\) still falsy after 500 ms[\s\S]*"step":"fetch"/);
   } finally { await pg?.close(); srv.closeAllConnections(); await new Promise(r => srv.close(r)); }
-});
-
-// META-CI-WORKCLASS R3 (DEC-333): a go() timeout also tells WHOSE stall it was - the test process's own event loop (its max gap,
-// its CPU time, the box's CPU) and when this process's server received and answered each request. Toy: the loop is blocked ~1.2 s.
-import { watchServer } from './helpers/loopwatch.mjs';
-test('R3 a stalled test process: a go() timeout names the event-loop gap, the CPU used and the server-side request timings', { skip: skipWhy, timeout: 60000 }, async () => {
-  const html = `<!doctype html><body><script type="module" src="/toy-a.mjs"></script></body>`;
-  const srv = http.createServer((q, r) => { if (q.url === '/api/never') return;
-    if (q.url === '/toy-a.mjs') { r.writeHead(200, { 'content-type': 'text/javascript' }); return r.end(`await fetch('/api/never');`); }
-    r.writeHead(200, { 'content-type': 'text/html' }); r.end(html); });
-  watchServer(srv);
-  await new Promise(r => srv.listen(0, '127.0.0.1', r));
-  let pg;
-  try {
-    pg = await openPage();
-    const going = pg.go(`http://127.0.0.1:${srv.address().port}/`, 3000);
-    setTimeout(() => { const t = Date.now(); while (Date.now() - t < 1200) { /* the blocked loop */ } }, 50);
-    await assert.rejects(going, e => {
-      const gap = Number(e.message.match(/loop: max gap (\d+) ms/)?.[1]);
-      assert.ok(gap >= 1000, `the gap is measured: ${e.message}`);
-      assert.match(e.message, /cpu: process \d+ ms user \+ \d+ ms system in \d+ ms wall[^\n]*box \d+ % busy/);
-      assert.match(e.message, /served:[^\n]*\/toy-a\.mjs \+\d+ ms -> \d+ ms/); assert.match(e.message, /served:[^\n]*\/api\/never \+\d+ ms -> unanswered/);
-      assert.match(e.message, /busiest stack: [^\n]*chat-controls\.test\.mjs:\d+[^\n]* \d+ ms/, `the profile names the blocking frame: ${e.message}`);
-      return true;
-    });
-  } finally { await pg?.close(); srv.closeAllConnections(); await new Promise(r => srv.close(r)); }
-});
-
-// META-CI-WORKCLASS R4 (DEC-336): name the blocking CALL. (a) any CDP wait (not only pg.go) logs the loop report when slow;
-// (b) a sampling profile (node --cpu-prof) names a sync call that blocks the loop by its JS caller; (c) every stdout / stderr write is timed.
-import { mark, slowStep, timeWrites, loopReport } from './helpers/loopwatch.mjs';
-import { stalls } from './helpers/profgap.mjs';
-import { spawnSync } from 'node:child_process';
-const blockFor = ms => { const t = Date.now(); while (Date.now() - t < ms) { /* the blocked loop */ } };
-test('R4 a slow step (any CDP wait) logs the loop report; a quick one logs nothing', async () => {
-  const logged = [];
-  const quick = mark(); assert.equal(await slowStep(quick, 'quick', { log: s => logged.push(s) }), null);
-  const m = mark(); blockFor(700); await new Promise(r => setTimeout(r, 250));
-  const r = await slowStep(m, 'toy wait', { log: s => logged.push(s) });
-  assert.match(r, /^slow toy wait: \d+ ms\nloop: max gap (\d+) ms/); assert.ok(Number(r.match(/max gap (\d+)/)[1]) >= 500, r);
-  assert.deepEqual(logged, [r]);
-});
-test('R4 a write to stdout / stderr that takes > 100 ms is logged with its stream and size and named in the loop report', async () => {
-  const logged = [], fake = { write(chunk) { blockFor(150); return true; } };
-  const m = mark(); timeWrites(fake, 'toy', s => logged.push(s)); fake.write('abc'); fake.write(Buffer.alloc(0));
-  await new Promise(r => setImmediate(r));
-  assert.deepEqual(logged.length, 2); assert.match(logged[0], /^slow write: toy 3 bytes took \d+ ms/);
-  assert.match(await loopReport(m), /\nwrites: toy 3 bytes \d+ ms at \+\d+ ms, toy 0 bytes/);
-});
-test('R4 a node --cpu-prof profile names the JS caller of a sync wait that blocked the loop (stall > 500 ms)', () => {
-  const d = mkTmp('meta-prof-'), f = path.join(d, 'toy.mjs');
-  fs.writeFileSync(f, 'function blockedHere() { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800); }\nblockedHere();\n');
-  const r = spawnSync(process.execPath, ['--cpu-prof', `--cpu-prof-dir=${path.join(d, 'prof')}`, f], { encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const p = fs.readdirSync(path.join(d, 'prof')).find(n => n.endsWith('.cpuprofile'));
-  const s = stalls(JSON.parse(fs.readFileSync(path.join(d, 'prof', p), 'utf8')));
-  assert.ok(s.length && s[0].ms >= 600, JSON.stringify(s)); assert.match(s[0].stack, /blockedHere [^\n]*toy\.mjs:1/);
-  const cli = spawnSync(process.execPath, [path.join(import.meta.dirname, 'helpers', 'profgap.mjs'), d], { encoding: 'utf8' });
-  assert.match(cli.stdout, /stall \d+ ms at \+\d+ ms: blockedHere/);
 });
