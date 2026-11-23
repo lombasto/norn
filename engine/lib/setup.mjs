@@ -30,7 +30,8 @@ import { limitLines } from './limitgate.mjs';
 import { splitRepo, normSubdir } from './monorepo.mjs';
 import { ensureHook, hookProblem, HOOK_BIN, HOOK_BUILD } from './hookbin.mjs';
 import { frontOf } from './instrchecks.mjs';
-import { repoFacts } from './adopt.mjs';
+import { repoFacts } from './gitfacts.mjs';
+import { githubRepo } from './overlap.mjs';
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export class SetupError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
@@ -296,7 +297,7 @@ export function projectNew(o) {
   if (o.subdir !== undefined && split.subdir && subdir !== split.subdir) throw new SetupError(`--root ${fwd(given)} is the folder ${split.subdir} of its repo, --subdir says ${subdir}: give one of them`);
   const root = path.resolve(split.root);
   if (subdir && !exists(path.join(root, subdir))) throw new SetupError(`subdir ${subdir}: no such folder in ${fwd(root)}`);
-  const facts = repoFacts(root, subdir), detected = { name: facts.name, branch: facts.default_branch, ci: facts.github || 'none' };   // adopt owns them
+  const facts = repoFacts(root, subdir), detected = { name: facts.name, branch: facts.default_branch, ci: githubRepo(facts.origin) || 'none' };
   const hasCodex = !!machine.codex?.exe, have = ['claude', ...(hasCodex ? CODEX_EXECUTORS : [])];
   detected.executors = have.join(',');
   const interactive = !o.nonInteractive && (process.stdin.isTTY || env.META_INTERACTIVE === '1');

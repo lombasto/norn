@@ -17,6 +17,7 @@ import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 import { normSubdir, subdirOf } from './monorepo.mjs';
 import { githubRepo } from './overlap.mjs';
+import { slugOf, repoFacts } from './gitfacts.mjs';
 import { profileCaps } from './setup.mjs';
 import { loadProfiles, getProfile } from './profiles.mjs';
 import { lineAt } from './slop/scan.mjs';
@@ -32,7 +33,6 @@ const sh = (cwd, args) => {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, timeout: 120000, maxBuffer: 64 << 20 });
   return r.status === 0 ? r.stdout.replace(/\r\n/g, '\n').trimEnd() : null;
 };
-export const slugOf = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 export const AGENT_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', '.cursorrules', '.windsurfrules', '.clinerules', '.github/copilot-instructions.md', 'CONVENTIONS.md'];
 const PLAN_RE = /^(?:docs\/)?(?:ROADMAP|TODO|BACKLOG|PLAN|MILESTONES)[^/]*\.(?:md|txt)$|^TODO$/i;
@@ -65,13 +65,6 @@ function commandsOf(files, read) {
   return out;
 }
 
-/** the repo facts scan and setup's `project new` share (one slug, one GitHub parser): { name, default_branch, origin, github ('o/r' | null) } */
-export function repoFacts(root, sub = '') {
-  const origin = sh(root, ['remote', 'get-url', 'origin']);
-  return { name: slugOf(path.basename(sub || root)), origin, github: githubRepo(origin),
-    default_branch: sh(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') || sh(root, ['symbolic-ref', '--short', 'HEAD']) || 'main' };
-}
-
 /**
  * FACTS about a repo (read-only; writes nothing anywhere). o.now = the clock for branch ages; o.forge = parsed forge answers (A6).
  * o.subdir = a monorepo project's folder (project.subdir): only the files, commits and TODO markers under it count, matched as if it
@@ -84,7 +77,7 @@ export function scan(root, o = {}) {
   let sub;
   try { sub = normSubdir(o.subdir); } catch (e) { throw new AdoptError(e.message); }
   const pre = sub ? sub + '/' : '', only = sub ? ['--', sub] : [];
-  const { name: slug, default_branch: head, origin, github } = repoFacts(root, sub);
+  const { name: slug, default_branch: head, origin } = repoFacts(root, sub), github = githubRepo(origin);
   const files = (sh(root, ['ls-tree', '-r', '--name-only', head, ...only]) || '').split('\n').filter(Boolean)
     .filter(f => f.startsWith(pre)).map(f => f.slice(pre.length));
   if (sub && !files.length) throw new AdoptError(`subdir ${sub}: no tracked file under it on ${head}`);
