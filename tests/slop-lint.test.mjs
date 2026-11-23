@@ -1,6 +1,6 @@
 // SloppaChoppa 2 S1b (SPEC 3.1-3.4, 7 S1b): the kind `lint` - one rule (LJ) per language tool, sub-rule ids, levels and shadow in
 // Choppa's data, the config read from the merge base, LJ/config-changed, the replay of a retirement, a cold tool cache fails closed.
-// ESLint's output is recorded (each test hands the check its tool); only the cold-cache test starts npm, offline.
+// S3: LP (ruff, recorded JSON) and LR (clippy, its head log read for real). ESLint's output is recorded (each test hands the check its tool); only the cold-cache test starts npm, offline.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, effectiveRules, slopCheck, explainOf, replay, KIND_PARAMS } from '../engine/lib/slop/check.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { LINTERS } from '../engine/lib/slop/lang/index.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
 const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
@@ -98,4 +99,39 @@ test('a check on a cold tool cache with no network holds the merge: LJ could not
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /^BLOCK LJ `\*` could not run: npm ci failed \(lock [0-9a-f]{12}\)/m);
   assert.match(r.stdout, /; could not run: .*\bLJ\b/);
+});
+
+// ---------- S3: LP (ruff, recorded JSON) and LR (clippy, read from the head's log) ----------
+const LP = loadRules().find(r => r.id === 'LP'), LR = loadRules().find(r => r.id === 'LR');
+const ruffHit = (filename, row, code, message) => ({ code, filename, location: { row, column: 1 }, end_location: { row, column: 2 }, message });
+const PYPROJECT = '[project]\nname = "pkg"\n\n[tool.ruff.lint]\nselect = ["F"]\n';
+
+test('LP: only a new ruff finding counts, as LP/<code> (BLOCK); both sides run under the merge base\'s config; a file under no ruff config gets no run', () => {
+  const repo = repoOf({ 'pkg/pyproject.toml': PYPROJECT, 'pkg/src/pkg/a.py': 'import os\nX = 1\n', 'loose/b.py': 'Y = 1\n' },
+    { 'pkg/pyproject.toml': PYPROJECT.replace('"pkg"', '"pkg2"'), 'pkg/src/pkg/a.py': 'import os\nimport sys\nX = 1\n', 'loose/b.py': 'import re\nY = 1\n' });
+  const os1 = ruffHit('pkg/src/pkg/a.py', 1, 'F401', '`os` imported but unused'), o = {};
+  const r = slopCheck({ repo, base: 'main', rules: [LP], tool: recorded({ base: [os1], head: [os1, ruffHit('pkg/src/pkg/a.py', 2, 'F401', '`sys` imported but unused')] }, o) });
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.line, b.level]), [['LP/F401', 'pkg/src/pkg/a.py', 2, 'BLOCK']], 'the old `os` finding is not new; a [project] edit is no config change');
+  assert.deepEqual(o.runs.map(x => [x.side, Object.keys(x.run.configs), x.run.configs.pkg.text, x.run.configs.pkg.files]), [['head', ['pkg'], PYPROJECT, ['pkg/src/pkg/a.py']], ['base', ['pkg'], PYPROJECT, ['pkg/src/pkg/a.py']]]);
+});
+
+test('LP: a [tool.ruff] edit is LP/config-changed; a file ruff cannot parse is LP/parse (BLOCK)', () => {
+  const repo = repoOf({ 'pkg/pyproject.toml': PYPROJECT, 'pkg/src/pkg/a.py': 'X = 1\n' }, { 'pkg/pyproject.toml': PYPROJECT.replace('["F"]', '[]'), 'pkg/src/pkg/a.py': 'X = (\n' });
+  const bad = { ...ruffHit('pkg/src/pkg/a.py', 1, null, 'SyntaxError: Expected \')\', found newline'), code: null };
+  const r = slopCheck({ repo, base: 'main', rules: [LP], tool: recorded({ base: [], head: [bad] }) });
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.level]).sort(), [['LP/config-changed', 'pkg/pyproject.toml', 'BLOCK'], ['LP/parse', 'pkg/src/pkg/a.py', 'BLOCK']]);
+  assert.equal(explainOf('LP/F401').fix, `${LP.explain.fix} (ruff: https://docs.astral.sh/ruff/rules/ (F401))`);
+});
+
+test('LR: the head\'s clippy log at {git}/norn/clippy/<head>.log names a touched file: LR/<lint> (BLOCK); a diagnostic on an untouched file is not the branch\'s; no log is LR/no-evidence (WARN)', () => {
+  const repo = repoOf({ 'crate/src/lib.rs': 'pub fn f() -> u8 {\n    1\n}\n', 'crate/src/other.rs': 'pub fn g() -> u8 {\n    return 2;\n}\n' }, { 'crate/src/lib.rs': 'pub fn f() -> u8 {\n    return 1;\n}\n' });
+  const clippy = (rule, side, o) => LINTERS.clippy.run(rule, side, o);
+  const none = slopCheck({ repo, base: 'main', rules: [LR], tool: clippy });
+  assert.deepEqual([none.blocks, none.findings.map(f => [f.rule, f.level])], [[], [['LR/no-evidence', 'WARN']]]);
+  const ret = file => `warning: unneeded \`return\` statement\n --> ${file}:2:5\n  |\n  = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return\n  = note: \`-D clippy::needless-return\` implied by \`-D warnings\`\n`;
+  const dir = path.join(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'), 'norn', 'clippy');
+  put(dir, { [`${git(repo, 'rev-parse', 'HEAD')}.log`]: `${ret('src\\lib.rs')}\n${ret('src/other.rs')}\nwarning: \`crate\` (lib) generated 2 warnings\n` });
+  const r = slopCheck({ repo, base: 'main', rules: [LR], tool: clippy });
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.line, b.level]), [['LR/clippy::needless_return', 'crate/src/lib.rs', 2, 'BLOCK']]);
+  assert.match(explainOf('LR/clippy::needless_return').fix, /\(clippy: https:\/\/rust-lang\.github\.io\/rust-clippy\/master\/index\.html#needless_return\)$/);
 });
