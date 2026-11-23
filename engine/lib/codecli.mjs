@@ -26,7 +26,7 @@ function parse(verb, argv) {
   return f;
 }
 /** o: { out, err, where(flags) -> { project, state }, now } -> exit code */
-export function codeCmd(argv, { out = console.log, err = console.error, where, now } = {}) {
+export function codeCmd(argv, { out, err, where, now } = {}) {
   const verb = argv[0];
   let f, w;
   try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); w = where(f); }

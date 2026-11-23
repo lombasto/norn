@@ -20,7 +20,6 @@ const git = (dir, args, input) => execFileSync('git', ['-C', dir, '-c', 'core.qu
 export const lineCount = buf => { let n = 0; for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) n++; return buf.length && buf[buf.length - 1] !== 10 ? n + 1 : n; };
 // git's own test: a NUL in the first 8000 bytes is a binary
 const isBinary = buf => buf.subarray(0, 8000).includes(0);
-const day = t => new Date(t).toISOString().slice(0, 10);
 
 /** HEAD's blobs under dir -> [{ file, buf }], text files only, vendor/ and node_modules/ dropped */
 function headBlobs(dir) {
@@ -36,11 +35,11 @@ function headBlobs(dir) {
   }
   return blobs;
 }
-/** the first-parent history, newest first -> [{ sha, t (ms), subject, stat: [[file, added, deleted]] }] (binary rows dropped) */
+/** the first-parent history, newest first -> [{ sha, t (ms), day (UTC), subject, stat: [[file, added, deleted]] }] (binary rows dropped) */
 function history(dir) {
   return git(dir, ['log', '--first-parent', '--no-renames', '--relative', '--numstat', '--format=%x01%H%x02%ct%x02%s', 'HEAD']).toString('utf8').split('\x01').filter(Boolean).map(c => {
     const [head, ...rows] = c.split('\n'), [sha, ct, subject] = head.split('\x02');
-    return { sha, t: Number(ct) * 1000, subject, stat: rows.map(r => r.split('\t')).filter(r => r.length === 3 && r[0] !== '-').map(([a, d, f]) => [f, Number(a), Number(d)]) };
+    return { sha, t: Number(ct) * 1000, day: new Date(Number(ct) * 1000).toISOString().slice(0, 10), subject, stat: rows.map(r => r.split('\t')).filter(r => r.length === 3 && r[0] !== '-').map(([a, d, f]) => [f, Number(a), Number(d)]) };
   });
 }
 /** Borda points per value: the values below it + half the others equal to it (ties share the mean rank) */
@@ -59,10 +58,10 @@ export function codeIndex(dir, { weeks = 26, now = Date.now() } = {}) {
   for (const c of commits) for (const [f, a, d] of c.stat) {
     const x = F.get(f);
     if (!x) continue;
-    x.born = day(c.t);   // newest first: the last write is the oldest commit
+    x.born = c.day;   // newest first: the last write is the oldest commit
     if (c.t > since90 && c.t <= now) { x.commits_90d++; x.churn_90d += a + d; }
     if (c.t > since30 && c.t <= now) added30 += a;
-    if (x.last.length < LAST) x.last.push({ sha: c.sha.slice(0, 12), day: day(c.t), subject: c.subject, added: a, deleted: d });
+    if (x.last.length < LAST) x.last.push({ sha: c.sha.slice(0, 12), day: c.day, subject: c.subject, added: a, deleted: d });
   }
   // growth: walk the week ends from the newest back, undoing every commit newer than each
   const ends = Array.from({ length: weeks }, (_, i) => now - (weeks - 1 - i) * 7 * DAY), size = new Map([...F].map(([f, x]) => [f, x.lines])), grow = new Map([...F.keys()].map(f => [f, []]));
@@ -74,6 +73,6 @@ export function codeIndex(dir, { weeks = 26, now = Date.now() } = {}) {
   for (const b of blobs) if (JS.test(b.file)) { fan.set(b.file, fan.get(b.file) ?? 0); for (const t of importsOf(b.file, b.buf.toString('utf8'))) if (t !== b.file && JS.test(t) && F.has(t)) fan.set(t, (fan.get(t) ?? 0) + 1); }
   const files = [...F.values()].sort((a, b) => (a.file < b.file ? -1 : 1)), n = files.length;
   const pf = borda(files.map(x => fan.get(x.file) ?? 0)), pc = borda(files.map(x => x.churn_90d));
-  return { at: new Date(now).toISOString(), sha, weeks: ends.map(day), added_30d: added30, files: files.map((x, i) => ({ ...x, rel_churn: x.lines ? Math.round(1000 * x.churn_90d / x.lines) / 1000 : null,
+  return { at: new Date(now).toISOString(), sha, weeks: ends.map(t => new Date(t).toISOString().slice(0, 10)), added_30d: added30, files: files.map((x, i) => ({ ...x, rel_churn: x.lines ? Math.round(1000 * x.churn_90d / x.lines) / 1000 : null,
     growth: grow.get(x.file), fan_in: fan.has(x.file) ? fan.get(x.file) : null, importance: n > 1 ? Math.round(100 * (pf[i] + pc[i]) / (2 * (n - 1))) : 100 })) };
 }
