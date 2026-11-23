@@ -71,7 +71,7 @@ test('agentsTree: one root per RUN (running + ended < 2 h), children = subagents
   const now = LAST + 10 * 60000;
   const log = path.join(d.root, 'codex.log');
   fs.writeFileSync(log, ['OpenAI Codex', '--------', 'workdir: /fx/wt', 'model: gpt-5.4', 'reasoning effort: xhigh', `session id: ${CSID}`, '--------', 'work'].join('\n'));
-  record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen', session_id: SID, model: 'claude-opus-5-5', effort: 'medium', budget_min: 90 } });
+  record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'gen', session_id: SID, model: 'claude-opus-5-5', effort: 'medium', budget_min: 90, agent: 'kestrel-implementer', priority: 'P1' } });
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'codex', executor: 'codex-sol', lane: 'render', log } });
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'cli', executor: 'grok', lane: 'triage', model: 'grok-4' } });
   record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'old' } });
@@ -86,6 +86,8 @@ test('agentsTree: one root per RUN (running + ended < 2 h), children = subagents
   assert.equal(w.ctx_limit, 110000);
   assert.equal(w.children.length, 1);
   assert.equal(w.children[0].agentType, 'kestrel-implementer');
+  assert.deepEqual([w.agent, w.priority], ['kestrel-implementer', 'P1'], 'the node carries the agent file and the priority');
+  assert.deepEqual([c.agent, c.priority], [null, null], 'none recorded: null');
   assert.equal(c.executor, 'codex-sol');
   assert.equal(c.model, 'gpt-5.4');
   assert.equal(c.effort, 'xhigh');

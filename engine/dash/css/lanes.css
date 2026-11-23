@@ -80,3 +80,6 @@ details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>
 /* the Branches / Worktrees sub-views (pages/lanes.mjs branchesPart): one table, a card per row under 700 px */
 .brtab .brname{overflow-wrap:anywhere;min-width:180px}.brtab .brwhy{white-space:normal;max-width:260px}.brtab .brpath{overflow-wrap:anywhere}.brfilters{flex-wrap:wrap}.brfilters select{max-width:100%}
 @media (max-width:700px){.brtab thead{display:none}.brtab tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 10px;padding:8px 10px;border-bottom:1px solid var(--line)}.brtab td{border:0;padding:0;min-width:0;overflow-wrap:anywhere;white-space:normal}.brtab .brname{grid-column:1/-1;min-width:0}.brtab td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--mute)}.brtab .brname::before{display:none}.brtab .brwhy{max-width:none}.brtab td:last-child{grid-column:1/-1}}
+/* owner 2026-11-23: who runs the lane (pages/lanes.mjs whoLine) under the now line; the executor + model chip wraps to its own line on a phone */
+.lwho{margin-top:2px;display:flex;flex-wrap:wrap;align-items:center;gap:0 4px;min-width:0;overflow-wrap:anywhere}.lwho .chip{white-space:normal}
+.lane-det-head .xclose,.fileview-head .xclose{margin-left:auto}

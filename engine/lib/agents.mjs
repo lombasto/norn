@@ -199,7 +199,7 @@ export function agentsTree(runs, o = {}) {
   for (const r of [...runs].filter(x => x.kind === 'run').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)))) {
     if (!shown(r, now, o.window) || !inPart(r, o.part, items)) continue;
     const d = r.data || {}, end = r.end || {};
-    const node = { id: r.id, ...doerOf(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
+    const node = { id: r.id, ...doerOf(r), agent: d.agent ?? null, priority: d.priority ?? null, kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
       model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, stop: stopOf(r),
       critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
       dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log, ms, suite }) => ({ name, code, counts, log, ms, suite })) } : null,   // META-DOD 1; ms + suite: the gate text (DOD-GATE-FAST)

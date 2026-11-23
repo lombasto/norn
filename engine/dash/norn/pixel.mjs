@@ -60,12 +60,13 @@ export const GLYPHS = {
   needs: ['...ooo...', '..oaaao..', '..oaaao..', '..oaaao..', '..oaaao..', '...oao...', '...ooo...', '...oao...', '...ooo...'], // "!" rune
   urd: ['oo.....oo', 'oao...oao', 'oao...oao', 'oao...oao', 'oaao.oaao', 'oabaoabao', 'oabbabbao', '.oaabaao.', '..ooooo..'], // U - what was
   verdandi: ['o.......o', 'ao.....oa', 'bao.o.oab', '.baoaoab.', '.oabobao.', '..oabao..', '..oaoao..', '...o.o...', '.........'], // W - what is
+  close: ['oo.....oo', 'oao...oao', '.oao.oao.', '..oabao..', '...oco...', '..oabao..', '.oao.oao.', 'oao...oao', 'oo.....oo'], // the drawers' close X (assets.mjs closeBtn)
   skuld: ['...oooo..', '..oaaao..', '.oao.....', '.oaoo....', '..oaaao..', '....ooao.', '.....oao.', '..oaaao..', '..oooo...'], // S - what shall be
 };
 export const RAMP = {
   running: ['thread', 'spark', 'gold'], handoff: ['aqua', 'wellglow', 'teal'], stopped: ['weird', 'frost', 'weird'], bad: ['rune', 'ember', 'blood'],
   done: ['leaf', 'moss', 'spark'], parked: ['frost', 'mist', 'snow'], 'no-result': ['frost', 'mist', 'snow'], idle: ['mist', 'dusk', 'frost'],
-  needs: ['ember', 'spark', 'rune'], urd: ['aqua', 'wellglow', 'teal'], verdandi: ['thread', 'spark', 'gold'], skuld: ['frost', 'snow', 'mist'],
+  needs: ['ember', 'spark', 'rune'], close: ['rune', 'ember', 'blood'], urd: ['aqua', 'wellglow', 'teal'], verdandi: ['thread', 'spark', 'gold'], skuld: ['frost', 'snow', 'mist'],
 };
 // the glyph's pixels as [x, y, '#rrggbb'] (pure: the tests check every colour is a palette entry)
 export function glyphPixels(name, ground) {

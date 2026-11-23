@@ -94,6 +94,29 @@ test('the PR track: done -> PR -> merged (-> installed for an install target, c3
   assert.equal(track(null), '<span class="ltrack none"></span>');
 });
 
+// owner list 2026-11-23 item 3 (SPEC 3 L1-L4): every lane with a run shows its priority (faded when the default), the select only
+// while its run is live, and a "who" line: the dwarf (or the kind word) · the agent file · the executor and model, Claude included
+test('L1-L4 the priority chip on every lane with a run, the select only while live; the who line names the dwarf, the agent and the model', () => {
+  const rows = [lane('ended', 'today', { priority: { p: 'P1', dflt: false, live: false }, dwarf: { id: 'brokk', name: 'Brokk' }, agent: 'kestrel-implementer', executor: 'claude', model: 'claude-opus-5-5', effort: 'medium' }),
+    lane('queued', 'waiting', { run: 'RUN-9', run_state: 'queued', text: 'queued', priority: { p: 'P1', dflt: false, live: true } }),
+    lane('plain', 'today', { priority: { p: 'P2', dflt: true, live: false }, kind_word: 'check-in' }), lane('never', 'today', { run: null, run_state: null, priority: null })];
+  const plan = { parts: [{ project: 'k', priorities: ['P0', 'P1', 'P2'], upnext: [{ id: 'RUN-9', priority: 'P1' }, { id: 'RUN-6', priority: 'P1' }] }] };
+  const h = renderTab('lanes', { lanes: rows, plan }, { project: 'k', now: Date.now(), laneShow: ALL }), art = n => h.match(new RegExp(`<article class="lrow[^"]*" id="lane-${n}"[^]*?</article>`))[0];
+  assert.match(art('ended'), /<span class="chip idle prio"[^>]*>P1<\/span>/, 'L1 an ended run keeps its priority'); assert.doesNotMatch(art('ended'), /<select/, 'L1 no select once it ended');
+  assert.match(art('queued'), /<select class="pl-prio" data-act="prio" data-project="k" data-run="RUN-9"/, 'L2 a queued run: the select');
+  assert.match(art('plain'), /<span class="chip idle prio dflt"[^>]*>P2<\/span>/, 'L3 no priority: P2, the default');
+  assert.doesNotMatch(art('never'), /class="chip idle prio/, 'no run: no priority');
+  assert.match(art('ended'), /<div class="lwho small"> <b class="aname" data-dwarf="brokk">Brokk<\/b> · <span class="mono">kestrel-implementer<\/span> · <span class="chip claude">claude opus-5-5 · medium<\/span><\/div>/, 'L4 dwarf · agent · executor + model, Claude shown');
+  assert.match(art('plain'), /<div class="lwho small"> <span class="mute">check-in<\/span>/, 'no dwarf: the kind word');
+  assert.doesNotMatch(art('never'), /class="lwho/, 'nobody ran it: no who line');
+});
+
+test('the lane drawers close with closeBtn (no text Close)', () => {
+  const src = fs.readFileSync(path.join(DASH, 'pages', 'lanes.mjs'), 'utf8');
+  assert.doesNotMatch(src, />Close<\/button>/);
+  for (const a of ['lane-file-close', 'lane-detail-close']) assert.match(src, new RegExp(`closeBtn\\('data-act="${a}"'\\)`), a);
+});
+
 test('no timer in the Lanes page module (the elapsed bar is a CSS animation); nothing under engine/dash imports three.js', () => {
   for (const f of ['lanes.mjs', 'lanes-acts.mjs']) assert.ok(!/setInterval|setTimeout|requestAnimationFrame/.test(fs.readFileSync(path.join(DASH, 'pages', f), 'utf8')), f);
   assert.match(page(), /<span class="ebar" role="img" aria-label="\d+ of 60 min"><i style="--from:[\d.]+%;--dur:\d+s"><\/i><\/span>/, 'the bar carries its start and its duration');

@@ -1,10 +1,12 @@
 // The run document's live feed (stage RUNS: it replaces the feed drawer). The module owns one detached <section id="run-feed">: a
 // paint of #main drops the document, and mountFeed() puts the same section back into the new document's #run-feed-slot, so the
-// stream, the activity view and the event list outlive every re-render. createFeed(c): c = { onFollow(project, run) } (a live run
+// stream, the activity view and the event list outlive every re-render (a drawer view switch too: Activity and Feed show parts of
+// this one section, runs.css). The slot's data-kind / data-seed: a new seed presses that kind alone, on the open stream. createFeed(c): c = { onFollow(project, run) } (a live run
 // that hands off: open the next run); returns { F, mountFeed, stopFeed }.
 import { esc, renderFeedHead, renderFeedEvent, renderActivity } from '../cells.mjs';
 import { activityInit, activityAdd, activityView, fmtDur } from '../activity.mjs';
 import { hoChip } from '../widgets.mjs';
+import { runView } from './runs.mjs';
 // the kind filters of the event list (in place of "All events"): each button shows its kinds; none pressed = the list folds away
 export const FEED_KINDS = [['tools', 'tools', ['tool', 'error']], ['words', 'words', ['text', 'step']], ['commits', 'commits', ['marker']]];
 const FEED_HTML = `<h3>Live feed<span class="spacer"></span>
@@ -13,23 +15,22 @@ const FEED_HTML = `<h3>Live feed<span class="spacer"></span>
   <div id="feed-now" class="small"></div>
   <div id="feed-status" class="small mute"></div>
   <div id="feed-act" aria-label="What the worker is doing"></div>
-  <div id="feed-raw-bar" class="small" role="group" aria-label="Show events">${FEED_KINDS.map(([k, t]) => `<button class="hf" data-feed-kind="${k}" aria-pressed="true" aria-controls="feed-list">${t}</button>`).join('')}<span class="mute" id="feed-raw-n"></span></div>
+  <div id="feed-raw-bar" class="small" role="group" aria-label="Show events">${FEED_KINDS.map(([k, t]) => `<button class="hf" data-feed-kind="${k}" aria-pressed="false" aria-controls="feed-list">${t}</button>`).join('')}<span class="mute" id="feed-raw-n"></span></div>
   <div id="feed-list" class="flist mono" aria-live="polite"></div>`;
 export function createFeed({ onFollow = () => {} } = {}) {
   const box = document.createElement('section'); box.className = 'rd-sec rd-feed'; box.id = 'run-feed'; box.innerHTML = FEED_HTML;
   const $ = s => box.querySelector(s);
 // one EventSource for the shown run (the server keeps one tailer per run, at most 4 feeds). F.act = the activity fold of every event
 // of the run (full=1: the whole run, not the last 256 KB), painted at most every 300 ms; the Now duration ticks each second while the
-// feed is on screen; <details data-k> keep their open state across paints
-const F = { es: null, run: null, project: null, tools: new Map(), act: null, actT: null, tick: null, keep: new Map(), n: 0, scroll: false };
-const narrow = () => matchMedia('(max-width:700px)').matches;
+// feed is on screen; <details data-k> keep their open state across paints (closed until the owner opens one: F.keep is the seed)
+const F = { es: null, run: null, project: null, seed: null, tools: new Map(), act: null, actT: null, tick: null, keep: new Map(), n: 0, scroll: false };
 function paintAct() {
   F.actT = null; if (!F.act || !F.run) return;
   const h = F.head || {}, act = $('#feed-act'), ended = !!F.ended || (h.state && h.state !== 'running');
   act.querySelectorAll('details[data-k]').forEach(d => F.keep.set(d.dataset.k, d.open));
   const v = activityView(F.act, { now: Date.now(), root: h.worktree ?? null, brief: h.brief_items, notesDone: h.notes_done, ended });
   act.innerHTML = renderActivity(v, { ended });
-  act.querySelectorAll('details[data-k]').forEach(d => { if (F.keep.has(d.dataset.k)) d.open = F.keep.get(d.dataset.k); });
+  act.querySelectorAll('details[data-k]').forEach(d => { d.open = F.keep.get(d.dataset.k) ?? false; });
   $('#feed-raw-n').textContent = `${F.n} events`;
 }
 const actSoon = () => { if (!F.actT) F.actT = setTimeout(paintAct, 300); };
@@ -82,10 +83,10 @@ function feedEnded(project, run, tries = 0) {
     es.addEventListener('end', () => { es.close(); feedEnded(project, run, tries + 1); });
     es.onerror = () => { es.close(); feedEnded(project, run, tries + 1); }; }, 3000);
 }
-function openFeed(project, run) {
+function openFeed(project, run, kind, seed) {
   stopFeed(); F.head = null; F.hoNow = ''; F.live0 = undefined; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear();
   $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = ''; $('#feed-act').innerHTML = '';
-  $('#feed-status').textContent = 'connecting ...'; kinds(narrow() ? [] : FEED_KINDS.map(k => k[0])); F.tick = setTimeout(tickDur, 1000);   // a phone: the activity view first
+  $('#feed-status').textContent = 'connecting ...'; kinds([kind]); F.seed = seed; F.tick = setTimeout(tickDur, 1000);
   const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}&full=1`);
   es.onopen = () => { $('#feed-status').textContent = 'live · the server polls the run files every 2 s'; };
   es.addEventListener('head', m => feedHead(JSON.parse(m.data)));
@@ -93,12 +94,14 @@ function openFeed(project, run) {
   es.addEventListener('end', () => { es.close(); F.ended = true; actSoon(); feedEnded(project, run); });
   es.onerror = () => { if (F.es !== es) return; $('#feed-status').textContent = es.readyState === EventSource.CLOSED ? 'feed refused or gone (at most 4 live feeds)' : 'reconnecting ...'; };
 }
-/** after a paint: the document's slot takes the feed (a new run / project opens its stream); no slot = the feed stops */
+/** after a paint: the document's slot takes the feed (a new run / project opens its stream; a new seed on the same run presses its
+ * kind alone, no reconnect); no slot = the feed stops (no drawer: its view is forgotten too) */
 function mountFeed() {
   const slot = document.getElementById('run-feed-slot');
-  if (!slot) { if (F.run) stopFeed(); return; }
-  const { run, project } = slot.dataset;
-  if (F.run !== run || F.project !== project) openFeed(project, run);
+  if (!slot) { if (F.run) stopFeed(); if (!document.getElementById('run-doc')) runView.run = null; return; }
+  const { run, project, kind = 'tools', seed } = slot.dataset;
+  if (F.run !== run || F.project !== project) openFeed(project, run, kind, seed);
+  else if (F.seed !== seed) { kinds([kind]); F.seed = seed; }
   slot.replaceWith(box);
 }
   return { F, mountFeed, stopFeed };

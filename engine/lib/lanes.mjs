@@ -21,8 +21,9 @@ export function landState(r, build, pr) {
   if (isMergeStage(r.data?.stage) && ['queued', 'claimed'].includes(r.state)) return doneRun(build) ? 'awaiting-merge' : null;
   return pr && doneRun(r) ? 'awaiting-pr' : null;
 }
-// fair-slots item 3: the priority of a queued or running run (data.priority; none = the fill's default P2, said so)
-export const priorityOf = r => ['queued', 'claimed', 'running'].includes(r?.state) ? (r.data?.priority ? { p: r.data.priority, dflt: false } : { p: DEFAULT_PRIORITY, dflt: true }) : null;
+// fair-slots item 3 + owner 2026-11-23: the priority of the lane's latest run (data.priority; none = the fill's default P2, said so);
+// live = queued, claimed or running: only then can it be changed; no run = null
+export const priorityOf = r => !r ? null : { p: r.data?.priority ?? DEFAULT_PRIORITY, dflt: !r.data?.priority, live: ['queued', 'claimed', 'running'].includes(r.state) };
 
 // the evidence runs.hbLate found for a late beat: the CPU the sweep sampled, or how long ago the run's own output moved
 const lateWhy = l => l.cpu != null ? `CPU ${l.cpu} %` : `output ${l.output_age < 60e3 ? `${Math.round(l.output_age / 1000)} s` : `${Math.round(l.output_age / 60000)} min`} ago`;
@@ -103,7 +104,7 @@ export const sortLanes = rows => rows.sort((a, b) => String(b.at ?? '').localeCo
 
 /**
  * Lanes view: LANE records active | parked (all states with all), in sortLanes order. Each row: { name, id, state, data, run,
- * executor, text, handoff, created, ended, at, rule, path, land, pr, priority, position }: land = landState ('awaiting-merge' |
+ * executor, agent, model, effort, text, handoff, created, ended, at, rule, path, land, pr, priority, position }: land = landState ('awaiting-merge' |
  * 'awaiting-pr' | null), pr = the lane's open PR ({ url, number }), priority = priorityOf the latest run, position = its place in
  * the fill order (queueOf) while it is queued.
  * o: { all, now, hbAge (runId, run) -> ms since the last heartbeat, hbLate (runId, run, { age, cpu }) -> runs.hbLate's evidence when a stale one is only late,
@@ -151,7 +152,7 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
       : land === 'awaiting-pr' ? `${LAND_WORDS[land]}: PR #${pr.number ?? '?'}` : rt;
     // a lost run ended when it was found lost (runs.mjs records `lost`, never `end`): boardOf ages it from there, so a lane lost an hour ago is Stopped, not Old
     const ended = r?.history.findLast(h => h.ev === 'end' || h.ev === 'lost')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null, at = live ? r.created : ended ?? l.updated;
-    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, ...(r ? doerOf(r) : { dwarf: null, kind_word: null }), executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
+    return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, ...(r ? doerOf(r) : { dwarf: null, kind_word: null }), executor: r?.data.executor ?? null, agent: r?.data.agent ?? null, model: r ? r.end?.model ?? r.data.model ?? null : null, effort: r ? r.end?.effort ?? r.data.effort ?? null : null, run_state: r?.state ?? null, text,
       handoff: park || done || !r ? null : handoffOf(r, st.items, { talked, wrote, now }), created: l.created, ended, at, rule: rules.get(name) ?? null, path: path(name, now),
       outcome: r?.end?.outcome ?? null, ruled: !!ruled, started: r?.created ?? null, budget_min: r?.data.budget_min ?? null, runs: (strips[name] ?? []).slice(-STRIP),
       runs_total: strips[name]?.length ?? 0, ask: park?.q && st.items[park.q]?.state === 'open' ? park.q : asks[name] ?? null,

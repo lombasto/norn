@@ -1,19 +1,26 @@
 /* The Runs page (stage RUNS): one table of every run (a card per row under 700 px, no sideways scroll), its time bars, and the
-   run document in the drawer a row opens, with its live feed. */
+   run document in the drawer a row opens: 4 views on its head (one section shown; Activity and Feed hide parts of the one live
+   section), a full sheet on a phone with the [x] top right. */
 .runs-filters{gap:6px 10px;margin:0 0 8px}.runs-filters input[type=search]{width:9em;min-width:0}
 .runtab td{vertical-align:middle}.runtab .rnum{text-align:right;font-variant-numeric:tabular-nums}.runtab .rwho{min-width:10em;overflow-wrap:anywhere}.runtab .rwho .aname{font-size:14px}
 .runtab .rlane{overflow-wrap:anywhere}.runtab .rpace{min-width:14em}.rnone td{padding:10px 12px}
-.rrow[data-feed]{cursor:pointer}.rrow[data-feed]:hover{background:var(--soft)}.rrow:focus-visible{outline:2px solid var(--run);outline-offset:-2px}
+.rrow[data-act="run-open"]{cursor:pointer}.rrow[data-act="run-open"]:hover{background:var(--soft)}.rrow:focus-visible{outline:2px solid var(--run);outline-offset:-2px}
 .rrow.sel{background:var(--soft);box-shadow:inset 3px 0 0 var(--run)}
 .pl-prio{font-size:12px;padding:0 2px;max-width:56px}
+.runtab .ragent{min-width:7em;overflow-wrap:anywhere}.runtab .ragent .mono{color:var(--mute);font-size:11px}
+.rfeed{padding:2px 4px;min-height:0;font:inherit;font-variant-numeric:tabular-nums}
+.rd-views{display:flex;flex-wrap:wrap;gap:4px}
+.rdoc[data-view="activity"] #feed-raw-bar,.rdoc[data-view="activity"] #feed-list{display:none}.rdoc[data-view="feed"] #feed-act{display:none}
 .rtimes{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;min-width:0}
 .rfold{display:block;width:100%;text-align:left;padding:4px 2px;border:0;border-radius:0;background:none;color:var(--mute);font:inherit;font-size:12px}.rfold:hover{background:var(--soft)}.rfoldrow td{padding:2px 10px}
 .rd-head{display:flex;flex-direction:column;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 .rdoc.drawer{display:block;overflow:auto;overscroll-behavior:contain;min-width:0}.rd-title .spacer{flex:1}
 @media (max-width:700px){.runs-filters input[type=search]{flex:1 1 7em}
+  .rdoc.drawer{width:100vw;border-left:0;padding:10px 12px}.rd-title{position:relative;padding-right:44px}.rd-title .xclose{position:absolute;top:-8px;right:-8px}
+  .rfeed{min-height:32px;min-width:32px}
   .runtab thead{display:none}.runtab tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:4px 10px;padding:8px 10px;border-bottom:1px solid var(--line)}
   .runtab td{border:0;padding:0;min-width:0;overflow-wrap:anywhere;white-space:normal}.runtab td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--mute)}
-  .runtab .rwho,.runtab .rlane,.runtab .rpace{grid-column:1/-1;min-width:0}.runtab .rstate::before,.runtab .rwho::before{display:none}.runtab .rnum{text-align:left}
+  .runtab .rwho,.runtab .ragent,.runtab .rlane,.runtab .rpace{grid-column:1/-1;min-width:0}.runtab .rstate::before,.runtab .rwho::before{display:none}.runtab .rnum{text-align:left}
   .runtab tr.rnone,.runtab tr.rfoldrow{display:block}.rd-facts{grid-template-columns:72px minmax(0,1fr)}}
 .rline{overflow-wrap:anywhere}.rline.warn{color:var(--warn)}.rline.bad{color:var(--bad)}
 .rrow.ended{color:var(--mute)}.rrow.ended .aname{color:var(--mute)}

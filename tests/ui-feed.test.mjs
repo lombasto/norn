@@ -28,19 +28,19 @@ test('drawer head: the dwarf, run id, lane, executor chip, state word, elapsed v
 
 test('drawer lines: one line per event, tool = name + summary, ids for the duration pairing, text escaped', () => {
   const t = renderFeedEvent({ ts: '2026-11-08T10:00:05.200Z', kind: 'tool', name: 'Bash', id: 'toolu_1', summary: 'cat <x> & y' });
-  assert.match(t, /data-tid="toolu_1"/); assert.match(t, /Bash/); assert.match(t, /cat &lt;x&gt; &amp; y/); assert.match(t, /10:00:05/);
+  assert.match(t, /data-tid="toolu_1"/); assert.match(t, /Bash/); assert.match(t, /cat &lt;x&gt; &amp; y/); const d = new Date('2026-11-08T10:00:05.200Z'), p2 = n => String(n).padStart(2, '0'); assert.ok(t.includes(`${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`), 'the local time, as the feed formats it');
   const m = renderFeedEvent({ ts: null, kind: 'marker', summary: '## DONE' });
   assert.match(m, /k-marker/); clean(m, 'marker');
   for (const kind of ['text', 'step', 'error']) { const h = renderFeedEvent({ ts: null, kind, summary: kind + ' line' }); assert.match(h, new RegExp(`k-${kind}`)); clean(h, kind); }
 });
 
-test('Agents rows of runs open the feed (data-feed); subagents and talk sessions do not', async () => {
+test('Runs rows of runs open their drawer (run-open); subagents and talk sessions do not', async () => {
   const f = await fixture();
   try {
     const get = async p => (await f.get(p)).data;
     const d = await loadTab('runs', 'kestrel', get), html = renderTab('runs', { ...d, ...await loadParts('runs', 'kestrel', d, get), parts_loading: false }, { project: 'kestrel' });   // the live part + its history part (the ended RUN-1)
-    assert.match(html, /id="node-RUN-1"[^>]*data-feed="RUN-1"/); assert.match(html, /data-feed="RUN-2"/);
-    assert.ok(!/data-feed="(?!RUN-)/.test(html), 'only runs');
+    assert.match(html, /id="node-RUN-1" data-act="run-open" data-run="RUN-1"/); assert.match(html, /data-act="run-open" data-run="RUN-2"/);
+    assert.ok(!/data-act="run-open" data-run="(?!RUN-)/.test(html), 'only runs');
   } finally { await f.done(); }
 });
 

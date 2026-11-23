@@ -4,7 +4,8 @@
 // the elapsed bar is a CSS animation, rows redraw on stream events only. Waiting holds the queued lanes in fill order with the
 // retired Plan page's Up next (priority control, estimate, start, hold-ups; /api/plan). Its Branches / Worktrees sub-views list
 // every branch and worktree.
-import { esc, fin, dash, chip, exClass, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime, filterChips } from '../cells.mjs';
+import { closeBtn } from '../norn/assets.mjs';
+import { esc, fin, dash, chip, exClass, exChip, projTag, homeChip, pendingChips, pauseAct, progDetail, backlogLine, runWho, landChip, int, plural, fmtTime, filterChips } from '../cells.mjs';
 import { renderMarkdown } from '../docs.mjs';
 import { SUB_CAP, subviewPage, subMore } from '../subviews.mjs';
 
@@ -137,6 +138,8 @@ function expand(l, ctx, open) {
     <div class="lexp-cols"><div>${g ? `<div class="small"><b>${esc(g.stage ?? 'Brief')}</b>: ${esc(g.line)}</div>${progDetail(g)}${g.slow?.line ? `<p class="small lslow"><b>Why slow:</b> ${esc(g.slow.line)}</p>` : ''}` : '<p class="small mute">No brief checklist for this run.</p>'}</div>
     <div>${laneWhy(l.driver)}${laneKind(l)}${overlapChips(l.overlap)}${path}<div class="small lfacts">${facts}</div><div class="rowacts">${detailBtn(l, ctx)}${l.board !== 'archived' ? btn('archive', l, 'Archive', 'ghost') : ''}</div></div></div></div>`;
 }
+// owner 2026-11-23: who runs the lane - its latest run's dwarf (or kind word) · the agent file · the executor and model (Claude too)
+const whoLine = l => !l.run ? '' : `<div class="lwho small">${[runWho(l.dwarf, l.kind_word), l.agent ? `<span class="mono">${esc(l.agent)}</span>` : '', l.executor || l.model ? exChip(l.executor, l.model, l.effort) : ''].filter(Boolean).join(' · ')}</div>`;
 // the retired Plan page's Up next on a queued lane (owner 2026-11-20: "set on queued lanes in the lane tab"): its run's entry in the
 // project's /api/plan part - the priority control with its place in the fill order, and the estimate, start and hold-ups in words
 const upOf = (d, l) => { const part = (d.plan?.parts || []).find(p => p.project === l.project), u = l.run && (part?.upnext || []).find(x => x.id === l.run); return u ? { u, priorities: part.priorities } : null; };
@@ -150,12 +153,11 @@ function upLine(up, now) {
 }
 function row(l, ctx, up = null) {
   const k = laneKey(l.project, l.name), open = ctx.laneOpen?.has(k), why = ctx.laneRefused?.[k], tok = tileToken(l), late = /heartbeat late/.test(l.text ?? '');
-  const tag = l.executor && exClass(l.executor) !== 'claude' ? ` ${chip(exClass(l.executor), l.executor)}` : '';   // the executor only when not the default
   const word = `${groupWord(l.board)}${late ? ', heartbeat late' : ''}`;
   return `<article class="lrow b-${esc(l.board)}" id="lane-${esc(l.name)}" data-type="${esc(l.lane_type?.type ?? '')}">
     <span class="ltile t-${tok}" role="img" aria-label="${esc(word)}" title="${esc(word)}">${shape(tok)}</span>
-    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''}${tag} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${l.land ? ` ${landChip(l)}` : ''}${l.priority ? ` ${up ? prioCtl(l, up) : prioChip(l)}` : ''}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
-      <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${upLine(up, ctx.now)}${nextLine(l)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
+    <div class="lmain"><div class="lhead"><b class="lname">${projTag(ctx, l.project)}${esc(l.name)}</b>${l.lane_type?.type ? ` <span class="ltype small mute" title="${esc(`type from ${l.lane_type.signal ?? '-'}`)}">${esc(l.lane_type.type)}</span>` : ''} ${homeChip(l)}${pendingChips(l)}${conflictChips(l.conflicts)}${l.land ? ` ${landChip(l)}` : ''}${l.priority ? ` ${l.priority.live && up ? prioCtl(l, up) : prioChip(l)}` : ''}${(l.waits || []).map(w => ` <span class="waits small">waits for ${esc(w)}</span>`).join('')}</div>
+      <div class="lnow small" title="${esc(nowLine(l, ctx.now))}">${esc(nowLine(l, ctx.now))}</div>${whoLine(l)}${upLine(up, ctx.now)}${nextLine(l)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</div>
     ${progress(l, ctx.now) || '<span class="lprog"></span>'}${strip(l)}${track(l.dlv)}
     <div class="rowacts">${actions(l).join(' ')}</div>
     <button class="lopen" data-act="lane-open" data-project="${esc(l.project)}" data-lane="${esc(l.name)}" aria-expanded="${!!open}" aria-controls="lx-${esc(l.name)}" aria-label="${esc(`${open ? 'Close' : 'Open'} ${l.name}`)}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
@@ -163,8 +165,8 @@ function row(l, ctx, up = null) {
 }
 /** the priority control of a queued run (index.html: a change posts /api/requeue; Runs and Lanes): re-queued at that priority, its conditions kept */
 export const prioSelect = (project, run, p, priorities) => !(priorities || []).length ? '' : `<select class="pl-prio" data-act="prio" data-project="${esc(project)}" data-run="${esc(run)}" aria-label="priority of ${esc(run)}" title="re-queue at this priority (its conditions are kept)">${priorities.map(x => `<option${x === (p ?? 'P2') ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
-// fair-slots item 3: the queued / running run's priority + its place in the fill order, one short chip in the row head; a run
-// with no priority shows the default P2, faded and said so in its title
+// fair-slots item 3 + owner 2026-11-23: the lane run's priority (+ its place in the fill order while queued), one short chip in the row
+// head on every lane with a run; a run with no priority shows the default P2, faded and said so in its title
 export const prioChip = l => !l.priority ? '' : `<span class="chip idle prio${l.priority.dflt ? ' dflt' : ''}" title="${esc(`priority ${l.priority.p}${l.priority.dflt ? ' (default: the run has no priority)' : ''}${l.position ? ` · #${l.position} in this project's fill order` : ''}`)}">${esc(l.priority.p)}${l.position ? ` #${l.position}` : ''}</span>`;
 // lane-outputs item 8: what happens next on a lane whose last run ended (laneout.mjs laneNext) - never a bare DONE - with the run's own
 // last summary line under it, the open rulings as a 'Questions' chip (to the Inbox: the Inbox has no Decisions section since the UI redesign 2026-11-20) and the background work its CLI cut off
@@ -178,7 +180,7 @@ const kb = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} K
 export function fileViewer(f, ctx = {}) {
   if (!f) return '';
   if (f.error) return `<div class="fileview card small">${chip('bad', 'not shown')} ${esc(f.error)}</div>`;
-  const head = `<div class="fileview-head"><b>${esc(f.name)}</b> <span class="small mute inspath">${esc(f.path)}</span> <button class="ghost" data-act="lane-file-close">Close</button></div>`;
+  const head = `<div class="fileview-head"><b>${esc(f.name)}</b> <span class="small mute inspath">${esc(f.path)}</span> ${closeBtn('data-act="lane-file-close"')}</div>`;
   if (f.image) return `<div class="fileview card">${head}<img class="fileview-img" alt="${esc(f.name)}" src="${esc(`/api/file?project=${encodeURIComponent(ctx.project ?? '')}&path=${encodeURIComponent(f.path)}`)}"></div>`;
   if (!f.code && /\.(?:md|markdown)$/i.test(f.path ?? '')) return `<div class="fileview card">${head}<article class="md">${renderMarkdown(f.text ?? '', { sanitize: ctx.sanitize }).html}</article></div>`;
   const lines = String(f.text ?? '').split(/\r?\n/);
@@ -193,7 +195,7 @@ const PR_CLS = { open: 'needs', approved: 'running', merged: 'ok', closed: 'idle
  */
 export function laneDetail(d, ctx = {}, file = null) {
   if (!d) return `<section class="card lane-det" id="lane-det"><p class="small mute">loading ...</p></section>`;
-  if (d.error) return `<section class="card lane-det" id="lane-det">${chip('bad', 'not loaded')} <span class="small">${esc(d.error)}</span> <button class="ghost" data-act="lane-detail-close">Close</button></section>`;
+  if (d.error) return `<section class="card lane-det" id="lane-det">${chip('bad', 'not loaded')} <span class="small">${esc(d.error)}</span> ${closeBtn('data-act="lane-detail-close"')}</section>`;
   const t = iso => (iso ? esc(fmtTime(iso, ctx.now)) : '?');
   const find = d.findings ? `<div class="md lane-find">${renderMarkdown(d.findings.text, { sanitize: ctx.sanitize }).html}</div>` : `<p class="small mute">No 'Summary for the owner' in the lane's NOTES.md.</p>`;
   const plan = !d.plan ? '' : `<h4>${esc(d.plan.title)} <span class="small mute">(${esc(d.plan.run)}${d.plan.open ? `, ${plural(d.plan.open, 'stage')} to pick` : ''})</span></h4><ul class="small lane-stages">${d.plan.stages.map(s => `<li><b>${esc(s.key)}</b> ${esc(s.title || '')} - ${esc(s.where)}${s.by ? ` <span class="mute">(picked by ${esc(s.by)}, ${t(s.at)})</span>` : ''}</li>`).join('')}</ul>`;
@@ -202,7 +204,7 @@ export function laneDetail(d, ctx = {}, file = null) {
   const open = file?.path;
   const outs = !d.outputs?.length ? `<p class="small mute">Nothing in ${esc(d.dir)}.</p>` : d.outputs.map(g => `<h4>${esc(g.label)} <span class="small mute">${int(g.files.length)}</span></h4><ul class="small lane-files">${g.files.map(f => `<li${f.path === open ? ' class="on"' : ''}><button class="lnk" data-act="lane-file" data-path="${esc(f.path)}">${esc(f.rel)}</button> <span class="mute">${kb(f.size)} · ${t(f.mtime)} · ${esc(f.run ?? 'no run')}</span></li>`).join('')}</ul>`).join('');
   const nr = d.written?.length ? `<div class="small">${chip('warn', 'written by the run that ended without a result')} ${esc(d.written.join(', '))}</div>` : '';
-  return `<section class="card lane-det" id="lane-det"><div class="lane-det-head"><h3>${projTag(ctx, d.project)}${esc(d.lane)}</h3><button class="ghost" data-act="lane-detail-close">Close</button></div>
+  return `<section class="card lane-det" id="lane-det"><div class="lane-det-head"><h3>${projTag(ctx, d.project)}${esc(d.lane)}</h3>${closeBtn('data-act="lane-detail-close"')}</div>
     ${nextLine(d)}<div class="lane-det-sec" id="lane-findings"><h4>Findings</h4>${find}</div>
     ${plan || asks ? `<div class="lane-det-sec" id="lane-follow"><h4>Follow-up</h4>${plan}${asks}</div>` : ''}${prs ? `<div class="lane-det-sec" id="lane-prs">${prs}</div>` : ''}
     <div class="lane-det-sec" id="lane-outputs"><h4>Outputs <span class="small mute inspath">${esc(d.dir)}</span></h4>${nr}${outs}</div>${fileViewer(file, ctx)}</section>`;
