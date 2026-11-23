@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp } from './helpers/tmp.mjs';
-import { repoIndex, keyOf, runCached, cacheLog, freshPass } from '../engine/lib/testcache.mjs';
+import { repoIndex, keyOf, runCached, cacheLog, caseLog, caseIds, freshPass } from '../engine/lib/testcache.mjs';
 
 const SLOW = `import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -69,4 +69,29 @@ test('an edited import is a new key and runs again; a fail is never reused; a lo
   assert.deepEqual([r3.how, r3.ok, r3.key, w.starts()], ['ran', true, k3, 3]);
   assert.equal(fs.existsSync(path.join(w.dir, `${k3}.lock`)), false);
   assert.deepEqual(cacheLog(w.dir).map(r => r.how), ['ran', 'ran', 'ran']);
+});
+
+// SPEC dash-owner-1123 s.1.1 / T3: per-case times ride a second reporter that runNode adds itself - the key is still keyOf(file, extra \0 node flags)
+test('runCached records per-case times: the result json and cases.jsonl get one row per case; a reuse adds none; the key is unchanged', async () => {
+  const w = world();
+  fs.writeFileSync(path.join(w.root, 'tests', 'a.test.mjs'), `import test from 'node:test';
+test('casecheck: fast', () => {});
+test('casecheck: busy 30 ms', () => { const t = Date.now(); while (Date.now() - t < 30); });
+`);
+  const r1 = await w.go('RUN-1', { env: { ...process.env, META_RUN_STATE: path.join(w.root, 'st', 'kestrel') } });
+  assert.deepEqual([r1.how, r1.ok, r1.counts?.pass], ['ran', true, 2]);
+  assert.equal(r1.key, keyOf('tests/a.test.mjs', repoIndex(w.root), '\0').key, 'the reporter arguments are not part of the key');
+  const res = freshPass(w.dir, r1.key);
+  assert.deepEqual(res.cases.map(c => [c.id, c.line, c.ok]), [['tests/a.test.mjs::casecheck: fast', 2, true], ['tests/a.test.mjs::casecheck: busy 30 ms', 3, true]]);
+  assert.ok(res.cases[1].ms >= 29, `the busy case took its 30 ms (${res.cases[1].ms})`);
+  const rows = caseLog(w.dir);
+  assert.deepEqual(rows.map(r => [r.run, r.state, r.file, r.id, r.ok]), [['RUN-1', 'kestrel', 'tests/a.test.mjs', 'tests/a.test.mjs::casecheck: fast', true], ['RUN-1', 'kestrel', 'tests/a.test.mjs', 'tests/a.test.mjs::casecheck: busy 30 ms', true]]);
+  assert.equal((await w.go('RUN-2')).how, 'reused');
+  assert.equal(caseLog(w.dir).length, 2, 'a reused file did not run: no row');
+});
+
+test('caseIds: subtests end before their parent; each gets its title path', () => {
+  const rows = [{ name: 'one', nesting: 0, line: 2, ms: 1, ok: true }, { name: 'deep', nesting: 2, line: 4, ms: 1, ok: false }, { name: 'two', nesting: 1, line: 3, ms: 1, ok: true },
+    { name: 'three', nesting: 1, line: 5, ms: 1, ok: true }, { name: 'outer', nesting: 0, line: 3, ms: 3, ok: false }];
+  assert.deepEqual(caseIds('tests/a.test.mjs', rows).map(c => c.id.split('::').slice(1).join('::')), ['one', 'outer::two::deep', 'outer::two', 'outer::three', 'outer']);
 });
