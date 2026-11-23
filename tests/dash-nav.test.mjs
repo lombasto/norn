@@ -9,7 +9,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { record } from '../engine/lib/records.mjs';
 import { isNeed } from '../engine/dash/terms.mjs';
-import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { TABS } from '../engine/dash/ui.mjs';
 import { BAR, MORE, COG, routeTab, renderBar, renderMore, renderStatus, renderCog, checkinStatus, PAGE_KEYS, keysOf, refetchFor } from '../engine/dash/shell.mjs';
 import { poolLine } from '../engine/dash/widgets.mjs';
@@ -18,14 +17,13 @@ import { agentOf, agentSessions } from '../engine/lib/agentprocs.mjs';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
-const RETIRED = ['overview', 'work', 'health', 'history', 'home'];
+const RETIRED = ['overview', 'work', 'health', 'history', 'home'], IDS = TABS.map(t => t[0]);
 
 test('the bar is Talk, Lanes, Runs, Inbox + More: links with aria-current, the Inbox badge, no tablist; More lists every other page but Settings (the cog)', () => {
   assert.deepEqual(BAR.map(b => b[0]), ['talk', 'lanes', 'runs', 'inbox']);
-  assert.deepEqual(TABS.map(t => t[0]), SERVER_TABS, 'one page list');
-  for (const r of RETIRED) assert.ok(!SERVER_TABS.includes(r), `${r} retired`);
+  for (const r of RETIRED) assert.ok(!IDS.includes(r), `${r} retired`);
   const more = MORE.flatMap(([, ids]) => ids);
-  assert.deepEqual([...BAR.map(b => b[0]), ...more, COG].sort(), [...SERVER_TABS].sort(), 'every page once: on the bar, in More or the cog');
+  assert.deepEqual([...BAR.map(b => b[0]), ...more, COG].sort(), [...IDS].sort(), 'every page once: on the bar, in More or the cog');
   assert.equal(COG, 'settings'); assert.ok(!more.includes('settings'), 'Settings is not a page in More');
   assert.deepEqual(MORE.map(g => g[0]), ['Health', 'History', 'Plan']);
   const html = renderBar('runs', { project: 'p', needs: 4 });
@@ -46,7 +44,7 @@ test('the bar is Talk, Lanes, Runs, Inbox + More: links with aria-current, the I
 });
 
 test('the router: a page id opens itself; unknown or retired ids open Lanes (no alias table)', () => {
-  for (const id of SERVER_TABS) assert.equal(routeTab(id), id);
+  for (const id of IDS) assert.equal(routeTab(id), id);
   assert.equal(routeTab('adopt'), 'adopt', 'the setup page');
   for (const id of [...RETIRED, null, '', 'nope']) assert.equal(routeTab(id), 'lanes', String(id));
   const html = fs.readFileSync(path.join(ENGINE, 'dash', 'index.html'), 'utf8');
@@ -54,7 +52,7 @@ test('the router: a page id opens itself; unknown or retired ids open Lanes (no 
 });
 
 test('keyed refetch: a pulse refreshes the strip only; a rec refetches the open page only when it reads that file', () => {
-  for (const t of SERVER_TABS) assert.ok(Array.isArray(PAGE_KEYS[t]) && PAGE_KEYS[t].length, `${t} declares its keys`);
+  for (const t of IDS) assert.ok(Array.isArray(PAGE_KEYS[t]) && PAGE_KEYS[t].length, `${t} declares its keys`);
   assert.deepEqual(keysOf('pulse', {}), ['strip']);
   assert.deepEqual(refetchFor('runs', keysOf('pulse', {})), { strip: true, page: false });
   assert.deepEqual(refetchFor('runs', keysOf('rec', { file: 'runs' })), { strip: true, page: true });
@@ -153,9 +151,6 @@ test('/api/strip: counts from the run records, never the run tree; /api/lanes ro
     record(S, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'render: which pass', lane: 'render', options: [{ key: 'a', text: 'x' }] } });
     const q3 = record(S, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'seabed: depth', lane: 'seabed', options: [{ key: 'a', text: 'x' }] } });
     record(S, { kind: 'question', ev: 'answer', id: q3.id, by: 'owner', data: { text: 'a', via: 'chat' } });
-    const ov = (await f.get('/api/overview?project=kestrel')).data, st = (await f.get('/api/strip?project=kestrel')).data;
-    assert.equal(st.needs_you, ov.needs_you, 'one needs-you count'); assert.deepEqual(st.running, { claude: ov.running.claude, merge: ov.running.merge, codex: ov.running.codex });
-    assert.deepEqual(st.usage, ov.burn.usage); assert.deepEqual(st.checkin, ov.strip.checkin); assert.equal(st.strip.questions, ov.strip.questions);
     const items = (await f.get('/api/inbox?project=kestrel')).data.items, lanes = (await f.get('/api/lanes?project=kestrel')).data.lanes;
     for (const l of lanes) assert.equal(l.needs, items.filter(i => isNeed(i) && i.lane === l.name && i.project === l.project).length, l.name);
     assert.ok(lanes.find(l => l.name === 'render').needs >= 1); assert.ok(!items.some(i => i.id === q3.id && isNeed(i)), 'answered: not a need');
@@ -177,17 +172,17 @@ function hold(f, re) {
 }
 const BAR_IDS = `[...document.querySelectorAll('#tabs > a, #tabs > button')].map(x => x.id).join()`;
 
-test('the browser: the bar paints before /api/strip and /api/overview answer; both looks; the badge on every page at 1440 and 390 px', { skip: skipWhy, timeout: 300000 }, async () => {
+test('the browser: the bar paints before /api/strip answers; both looks; the badge on every page at 1440 and 390 px', { skip: skipWhy, timeout: 300000 }, async () => {
   const f = await fixture(), need = String((await f.get('/api/inbox?project=kestrel')).data.needs_you);
   for (const size of [[1440, 900], [390, 844]]) {
     const pg = await openPage(size);
     try {
-      const release = hold(f, /^\/api\/(strip|overview)\b/);
+      const release = hold(f, /^\/api\/strip\b/);
       await pg.send('Page.navigate', { url: `${f.url}/?project=kestrel&tab=lanes` });
       assert.equal(await pg.until(BAR_IDS, 30000), 'tab-talk,tab-lanes,tab-runs,tab-inbox,tab-more', 'the bar while the strip is held');
       assert.ok(await pg.until(`document.querySelector('#status-strip')?.textContent.includes('…')`), 'the strip waits with "…"');
       release();
-      for (const look of ['norn', 'classic']) for (const t of [...SERVER_TABS, ...RETIRED]) {
+      for (const look of ['norn', 'classic']) for (const t of [...IDS, ...RETIRED]) {
         await pg.go(`${f.url}/?project=kestrel&tab=${t}&look=${look}`, 90000);
         const open = RETIRED.includes(t) ? 'lanes' : t;
         assert.equal(await pg.ev('document.body.dataset.tab'), open, `${t} -> ${open}`);

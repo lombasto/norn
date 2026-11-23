@@ -1,4 +1,4 @@
-// The Overview "Set up" steps (setupOf, META-ADOPT A3) count what is really in place: a repo's own agent rules file (CLAUDE.md,
+// The "Set up" steps (setupOf, on the strip) count what is really in place: a repo's own agent rules file (CLAUDE.md,
 // AGENTS.md) is rules, a cap set in budget.json (Settings) is chosen unless it is the starter cap norn setup wrote, and the merge gate
 // step sets the proposed command in one click on the Settings write path. Temp dirs only (dash fixture).
 import test from 'node:test';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fixture, budget0 } from './helpers/dash-fixture.mjs';
 import { getProfile, profileBudget } from '../engine/lib/profiles.mjs';
 
-const setup = async (f, p = 'kestrel') => (await f.get(`/api/overview?project=${p}`)).data.setup;
+const setup = async (f, p = 'kestrel') => (await f.get(`/api/strip?project=${p}`)).data.setup;
 
 test('a repo with CLAUDE.md and budget caps has no rules or caps gap; the card would name the file and the values', async () => {
   const f = await fixture();

@@ -9,7 +9,6 @@ import path from 'node:path';
 import { homeEvents, renderThread, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
 import { TABS, renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { BAR, renderBar } from '../engine/dash/shell.mjs';
-import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { threadFile } from '../engine/lib/chatact.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
@@ -113,7 +112,7 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
 });
 
 test('C2 nav: the thread is Talk, the first page on the one bar (UI redesign 2026-11-20; Lanes stays the landing; the same bar on desktop and phone)', async () => {
-  assert.deepEqual(TABS[0], ['talk', 'Talk']); assert.equal(SERVER_TABS[0], 'talk'); assert.deepEqual(BAR[0], ['talk', 'Talk']);
+  assert.deepEqual(TABS[0], ['talk', 'Talk']); assert.deepEqual(BAR[0], ['talk', 'Talk']);
   const bar = renderBar('talk', { project: 'kestrel', needs: 2 });
   assert.match(bar, /data-tab="talk" aria-current="page"/); assert.match(bar, /aria-label="2 need you">2</); assert.match(bar, /data-act="more"/);
   const seen = [];
@@ -140,7 +139,7 @@ test('C2 /api/home on the fixture state: the thread file, runs, needs, the side 
     assert.ok(d.side.now.some(n => n.run === 'RUN-2' && n.state === 'running'));
     assert.ok(d.side.waiting.some(w => w.id === 'Q-1')); assert.ok(d.side.orders.some(o => o.text === 'keep going'));
     assert.ok(d.side.ruled.some(x => /which/.test(x.text)), 'a decision made today'); assert.equal(d.side.interval_min, 15);
-    assert.equal(f.app.sessions && (await f.get('/api/chat?project=kestrel')).data.status.running, false, 'reading the home starts no chat');
+    assert.equal((await f.get('/api/home?project=kestrel')).data.status.running, false, 'reading the home starts no chat');
     assert.equal((await f.get('/api/home?project=all')).status, 400, 'one project');
   } finally { await f.done(); }
 });

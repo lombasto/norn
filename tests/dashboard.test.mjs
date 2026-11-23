@@ -4,18 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { createDashboard, parseStatus, TABS } from '../engine/dash/server.mjs';
-import { createSessions } from '../engine/dash/sessions.mjs';
+import { parseStatus } from '../engine/dash/server.mjs';
 import { parseReset } from '../engine/lib/cost.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 
 import { HERE, ENGINE, FIX, SID, CSID, budget0, walkFiles, projectFile, fixture } from './helpers/dash-fixture.mjs';
 import { GROK } from './helpers/command-matrix.mjs';
-import { mkTmp } from './helpers/tmp.mjs';
 
 
 test('status and reset use file values and local calendar time', () => {
@@ -45,13 +41,6 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     assert.match(fs.readFileSync(path.join(f.pa.state, 'views', 'OWNER-QUESTIONS.md'), 'utf8'), /yes next/, 'views regenerated');
     assert.equal((await f.post('/api/answer', { id: 'Q-1', text: 'twice' })).status, 409);
     assert.equal((await f.post('/api/answer', { id: 'Q-1', text: '' })).status, 400);
-    const log = await fetch(f.url + '/log?run=RUN-1'); assert.equal(log.status, 200);
-    const lines = (await log.text()).trim().split('\n'); assert.equal(lines.length, 200); assert.equal(lines[0], 'line 31');
-    assert.equal((await fetch(f.url + '/log?run=../budget')).status, 404);
-    const a = await f.post('/api/ask', { text: 'Please wait.' });
-    assert.equal(a.status, 200); assert.equal(a.data.saved.length, 1);
-    const dir = loadState(f.pa.state).items[a.data.saved[0]];
-    assert.equal(dir.data.text, 'Wait for the owner.'); assert.equal(dir.data.via, 'chat'); assert.equal(dir.by, 'dashboard');
     assert.equal((await f.post('/api/directive', { text: 'hold gen' })).status, 200);
     assert.equal((await f.post('/api/directive/revoke', { id: 'DIR-1' })).status, 200);
     assert.equal((await f.post('/api/directive/revoke', { id: 'DIR-1' })).status, 409);
@@ -64,7 +53,6 @@ test('HTTP actions are authenticated, bounded and conflict-aware; buttons go thr
     assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { origin: 'https://evil.example' })).status, 403);
     assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'x-dash-token': 'wrong' })).status, 403);
     assert.equal((await f.post('/api/pause', { mode: 'checkins' }, { 'sec-fetch-site': 'cross-site' })).status, 403);
-    assert.equal(f.counts.asks, 1);
   } finally { await f.done(); }
 });
 
@@ -82,9 +70,9 @@ test('each tab has a data endpoint from records / runs / transcripts', async () 
     const w = tree.find(n => n.id === 'RUN-1'), c = tree.find(n => n.id === 'RUN-2');
     assert.equal(w.ctx, 4 + 33810 + 31513); assert.equal(w.children[0].agentType, 'kestrel-implementer'); assert.equal(w.ctx_limit, 110000);
     assert.equal(c.model, 'gpt-5.4'); assert.equal(c.tokens, 60559); assert.equal(c.tokens_src, 'live');
-    const o = (await f.get('/api/overview')).data;
-    assert.equal(o.needs_you, 1); assert.equal(o.running.codex.n, 1); assert.equal(o.running.codex.cap, 5); assert.equal(o.running.lanes[0].name, 'render');
-    assert.equal(o.burn.usage.source, 'live'); assert.equal(o.burn.usage.weeklyUsed, 96); assert.equal(o.burn.usage.guard, 'STOP'); assert.equal(o.burn.usage.estimate.weekly, 60);
+    const o = (await f.get('/api/strip')).data;
+    assert.equal(o.needs_you, 1); assert.equal(o.running.codex.n, 1); assert.equal(o.running.codex.cap, 5);
+    assert.equal(o.usage.source, 'live'); assert.equal(o.usage.weeklyUsed, 96); assert.equal(o.usage.guard, 'STOP'); assert.equal(o.usage.estimate.weekly, 60);
     const r = (await f.get('/api/records')).data;
     assert.equal(r.decisions[0].id, 'DEC-1'); assert.equal(r.directives[0].history.length, 1);
     assert.equal((await f.get('/api/records?kind=directive')).data.decisions.length, 0);
@@ -104,19 +92,19 @@ test('usage falls back to the STATUS.md estimate when live usage is stale', asyn
   const f = await fixture();
   try {
     fs.writeFileSync(path.join(f.root, 'live-usage.json'), JSON.stringify({ seven_day_pct: 10, at_utc: '2026-01-01T00:00:00Z' }));
-    const u = (await f.get('/api/overview')).data.burn.usage;
+    const u = (await f.get('/api/strip')).data.usage;
     assert.equal(u.source, 'estimate'); assert.equal(u.weeklyUsed, 60); assert.equal(u.guard, 'ok');
   } finally { await f.done(); }
 });
 
-test('project switcher: two projects, ?project= scopes every tab, all sums the overview', async () => {
+test('project switcher: two projects, ?project= scopes every tab, all sums the strip', async () => {
   const f = await fixture();
   try {
     assert.deepEqual((await f.get('/api/projects')).data.projects, [{ name: 'kestrel', title: 'KESTREL', needs: 1 }, { name: 'other', title: 'OTHER', needs: 1 }]);
     const b = (await f.get('/api/inbox?project=other')).data.items;
     assert.deepEqual(b.map(i => i.title), ['other project question']);
     assert.equal((await f.get('/api/lanes?project=other')).data.lanes.length, 0);
-    const all = (await f.get('/api/overview?project=all')).data;
+    const all = (await f.get('/api/strip?project=all')).data;
     assert.equal(all.needs_you, 2); assert.deepEqual(all.projects, ['kestrel', 'other']);
     assert.ok((await f.get('/api/inbox?project=all')).data.items.some(i => i.project === 'other'));
     assert.equal((await f.get('/api/records?project=all')).status, 400);
@@ -127,68 +115,10 @@ test('project switcher: two projects, ?project= scopes every tab, all sums the o
   } finally { await f.done(); }
 });
 
-function fakeClaude() {
-  const calls = [];
-  const spawnFn = (exe, args) => {
-    const child = new EventEmitter(); child.pid = 4242; child.stdout = new PassThrough(); child.stderr = new PassThrough();
-    const stdin = new PassThrough(); child.stdin = stdin; calls.push({ args, child });
-    stdin.on('data', b => { for (const row of b.toString().split('\n').filter(Boolean)) {
-      const said = JSON.parse(row).message.content[0].text.slice(-20);
-      child.stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'heard ' + said + '\nDIRECTIVE: hold gen' }, { type: 'tool_use', name: 'Read', input: { file_path: 'x' } }], usage: { input_tokens: 5, cache_read_input_tokens: 95000, cache_creation_input_tokens: 0 } } }) + '\n');
-      child.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0.1 }) + '\n'); } });
-    stdin.on('finish', () => setTimeout(() => child.emit('close', 0), 5));
-    return child;
-  };
-  return { spawnFn, calls };
-}
-
-test('talk sessions: controller spawns stream-json, keeps stdin open, records DIRECTIVE lines (via talk), shows in agents, stops', async () => {
-  const fake = fakeClaude(), f = await fixture({ spawnFn: fake.spawnFn });
-  const pause = () => new Promise(r => setTimeout(r, 80));
-  try {
-    assert.equal((await f.post('/api/sessions', { kind: 'worker', text: 'x' })).status, 400);
-    assert.equal((await f.post('/api/sessions', { kind: 'controller', text: 'status please' })).status, 200);
-    assert.equal((await f.post('/api/sessions', { kind: 'controller', text: 'again' })).status, 409);
-    for (const a of ['--input-format', '--output-format', 'stream-json', '--tools']) assert.ok(fake.calls[0].args.includes(a), a);
-    await pause();
-    assert.equal((await f.post('/api/sessions/controller/send', { text: 'second message' })).status, 200);
-    await pause();
-    const list = (await f.get('/api/sessions')).data.sessions;
-    assert.equal(list[0].name, 'controller'); assert.equal(list[0].alive, true); assert.equal(list[0].context, 95005); assert.equal(list[0].project, 'kestrel');
-    const t = (await f.get('/api/sessions/controller')).data, kinds = t.items.map(i => i.kind);
-    for (const k of ['owner', 'text', 'tool', 'notice']) assert.ok(kinds.includes(k), k);
-    const dirs = Object.values(loadState(f.pa.state).items).filter(i => i.kind === 'directive' && i.data.via === 'talk');
-    assert.ok(dirs.length >= 1 && dirs.every(d => d.data.text === 'hold gen' && d.by === 'dashboard'));
-    const talk = (await f.get('/api/agents')).data.tree.find(n => n.kind === 'talk');
-    assert.equal(talk.id, 'talk:controller'); assert.equal(talk.ctx, 95005); assert.equal(talk.state, 'alive');
-    assert.equal((await f.post('/api/sessions/controller/stop', {})).status, 400);
-    assert.equal((await f.post('/api/sessions/controller/stop', { confirm: true })).status, 200);
-    await pause();
-    const after = (await f.get('/api/sessions')).data.sessions[0]; assert.equal(after.alive, false); assert.equal(after.exit, 0);
-    assert.equal((await f.get('/api/sessions/..%2Fx')).status, 404);
-  } finally { await f.done(); }
-});
-
-// CI 43207062452 (Windows): list() read exit from the registry file while the close handler's save still sat in the async
-// write queue - alive (memory) false, exit (file) null. Red-first toy: the list taken in the same turn as the close.
-test('talk sessions: list() right after the process closes shows alive false AND its exit code (no torn read behind the write queue)', async () => {
-  const dir = mkTmp('meta-sess-');
-  let child;
-  const spawnFn = () => { child = new EventEmitter(); child.pid = 1; child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); return child; };
-  const s = createSessions({ dir, exe: 'claude', spawnFn });
-  await s.start({ name: 'controller', kind: 'controller', model: 'm', effort: 'e', cwd: dir });
-  child.emit('close', 0);
-  const [row] = await s.list();
-  assert.equal(row.alive, false);
-  assert.equal(row.exit, 0);
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-});
-
 test('GET / serves the UI shell and injects the token (tab / panel ids: tests/ui.test.mjs)', async () => {
   const f = await fixture();
   try {
     const r = await fetch(f.url + '/'), html = await r.text(); assert.equal(r.status, 200);
-    assert.deepEqual(TABS, ['talk', 'lanes', 'runs', 'inbox', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings']);
     for (const id of ['tabs', 'main', 'project', 'ckbox', 'pool', 'tab-settings', 'setview']) assert.ok(html.includes(`id="${id}"`), id);
     assert.ok(html.includes(f.app.token)); assert.ok(!/api\/phone|qrSvg/.test(html));
   } finally { await f.done(); }

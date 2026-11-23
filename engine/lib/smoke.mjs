@@ -2,7 +2,7 @@
 // windows / ubuntu / macos. Clone (git clone --depth 1 file://) -> setup --non-interactive --no-scheduler with the example project ->
 // records add / answer / apply / supersede -> views vs tests/golden/smoke -> fake run handoff -> auto-resume -> done ->
 // second writer refused (exit 3) -> scheduler files (dry, nothing installed) -> dashboard on a random 127.0.0.1 port whose
-// /api/overview + /api/agents show the running fake run -> project new / list / remove on a temp repo with a GitHub origin (an
+// /api/strip + /api/agents show the running fake run -> project new / list / remove on a temp repo with a GitHub origin (an
 // edited installed agent is kept) -> doctor names an install line for each missing optional tool (META-ONBOARD S5). Sandbox: temp HOME / CLAUDE_CONFIG_DIR (real RUSTUP_HOME / CARGO_HOME), a placeholder `claude` file
 // first on PATH (setup needs one; the smoke never starts claude), META_NO_TICK (no check-in is ever launched).
 import fs from 'node:fs';
@@ -159,10 +159,10 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     dash.stdout.on('data', d => { buf += d; }); dash.stderr.on('data', d => { buf += d; });
     const url = (await until('dashboard URL', () => buf.match(/DASH (http:\/\/127\.0\.0\.1:\d+\/)/), 15000))[1];
     const get = async p => { const r = await fetch(url + p); if (r.status !== 200) throw new SmokeError(`GET ${p} -> ${r.status}`); return r.json(); };
-    const ov = await get('api/overview?project=example'), ag = await get('api/agents?project=example');
+    const sp = await get('api/strip?project=example'), ag = await get('api/agents?project=example');
     if (!JSON.stringify(ag).includes(`"${holder}"`)) throw new SmokeError(`/api/agents lacks ${holder}: ${JSON.stringify(ag).slice(0, 300)}`);
-    if (!(ov.running?.claude?.n >= 1)) throw new SmokeError(`/api/overview running.claude.n = ${ov.running?.claude?.n}, want >= 1`);
-    ok('dashboard', `${url} /api/overview (running ${ov.running.claude.n}) + /api/agents contain ${holder}`);
+    if (!(sp.running?.claude?.n >= 1)) throw new SmokeError(`/api/strip running.claude.n = ${sp.running?.claude?.n}, want >= 1`);
+    ok('dashboard', `${url} /api/strip (running ${sp.running.claude.n}) + /api/agents contain ${holder}`);
     must(['stop', holder, '--as', 'owner', '--project', PJ]);
     holder = null;
 

@@ -54,13 +54,13 @@ test('dashboard: the hand edit is a needs-you item; POST /api/handedit keeps it 
     const html = renderTab('inbox', { items: e }, { project: 'kestrel', now: Date.now() });
     assert.match(html, /Let Norn take it back/); assert.match(html, /Keep my version/); assert.match(html, /data-act="handedit"/);
     assert.match(html, /Norn never updates this file again/, 'the row says what Keep does'); assert.match(html, /most likely not edited by a person/);
-    assert.ok((await f.get('/api/overview?project=kestrel')).data.needs.some(i => i.type === 'handedit'), 'it counts as needs-you');
+    const needs = async () => (await f.get('/api/strip?project=kestrel')).data.needs_you, n0 = await needs();
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: e[0].file, choice: 'keep' }, { 'x-dash-token': 'wrong' })).status, 403, 'the page token, as every POST');
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: e[0].file, choice: 'keep' }, { origin: 'http://evil.example' })).status, 403, 'a cross-origin POST is refused');
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: e[0].file, choice: 'nah' })).status, 400);
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: path.join(f.root, 'kestrel-implementer.md'), choice: 'takeback' })).status, 409, 'only a listed generated file');
     assert.equal((await f.post('/api/handedit', { project: 'kestrel', file: e[0].file, choice: 'keep' })).status, 200);
-    assert.deepEqual(await items(), [], 'kept: the item leaves');
+    assert.deepEqual(await items(), [], 'kept: the item leaves'); assert.equal(await needs(), n0 - 1, 'it counted as needs-you');
     fs.appendFileSync(file, 'more\n');
     e = await items();
     assert.equal(e.length, 1, 'a new hand edit: back');

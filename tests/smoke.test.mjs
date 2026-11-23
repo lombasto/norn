@@ -34,7 +34,7 @@ test('norn dash serves the registered projects on a random 127.0.0.1 port (--por
   try {
     const m = await firstLine(c, /DASH (http:\/\/127\.0\.0\.1:(\d+)\/)/);
     assert.notEqual(m[2], '8737');
-    const r = await fetch(m[1] + 'api/overview?project=example');
+    const r = await fetch(m[1] + 'api/strip?project=example');
     assert.equal(r.status, 200);
     assert.ok(JSON.stringify(await r.json()).includes('example'));
   } finally { c.kill(); }

@@ -17,7 +17,7 @@ import { renderTab, loadTab, TABS } from '../engine/dash/ui.mjs';
 import { MORE } from '../engine/dash/shell.mjs';
 import { guardRows, guardView } from '../engine/lib/guardview.mjs';
 import { guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
-import { TABS as SERVER_TABS, createDashboard } from '../engine/dash/server.mjs';
+import { createDashboard } from '../engine/dash/server.mjs';
 import { ADAPTERS } from '../engine/lib/harness/index.mjs';
 
 after(cleanTmp);
@@ -211,7 +211,6 @@ const VIEW = {
 };
 test('Context: in Health next to Usage (UX review 2), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
   assert.ok(TABS.some(([k, l]) => k === 'context' && l === 'Context'));   // META-UX-BUILD S4 (owner DIR-65)
-  assert.ok(SERVER_TABS.includes('context'));
   assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'context']);   // stage NAV: More, Health
   assert.ok(renderTab('context', { one: true }).includes('Choose one project'));
   const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...VIEW, sub, limit: 1000 }, {})).join('');
@@ -240,9 +239,9 @@ test('Context: in Health next to Usage (UX review 2), a one-project tab; rows wi
   assert.equal(d.file, undefined);
 });
 
-test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; /api/instructions/<id> opens only a listed file', async () => {
+test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; the Docs reader opens only a listed file', async () => {
   const f = fx();
-  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
+  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {} });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
@@ -250,9 +249,9 @@ test('the dashboard API: /api/instructions (the summary) + ?part=files lists the
     for (let i = 0; l.pending && i < 600; i++) { await new Promise(r => setTimeout(r, 100)); l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json(); }
     const row = byName((await (await fetch(`${url}/api/instructions?project=kestrel&part=files`)).json()).rows, 'repo/CLAUDE.md');
     assert.ok(row && l.method === TOKEN_METHOD);
-    const one = await fetch(`${url}/api/instructions/${row.id}?project=kestrel`);
-    assert.equal(one.status, 200); assert.match((await one.json()).text, /Repo rules/);
-    assert.equal((await fetch(`${url}/api/instructions/nope?project=kestrel`)).status, 404);
+    const one = await fetch(`${url}/api/docs?project=kestrel&part=file&file=${row.id}`);
+    assert.equal(one.status, 200); assert.match((await one.json()).doc.text, /Repo rules/);
+    assert.equal((await fetch(`${url}/api/docs?project=kestrel&part=file&file=nope`)).status, 404);
   } finally { await app.close(); }
 });
 
@@ -279,7 +278,7 @@ test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, 
   const { launchBrowser, killTree, killProfileProcs, removeProfile } = shotLib;
   const f = fx();
   w(path.join(f.repo, 'deep', 'a-very-long-folder-name-for-the-phone-width-test', 'another-long-folder-name-that-does-not-break', 'CLAUDE.md'), '# deep\n');
-  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
+  const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {} });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   // the instruction-file scan runs in a worker (META-UX-BUILD S1): until it lands, Slop has no H- / T- rows and Per file no rows,
