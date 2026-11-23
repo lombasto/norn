@@ -5,11 +5,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { hookReady } from './helpers/hook.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { projectRemove } from '../engine/lib/setup.mjs';
+import { ROLE_AGENTS } from '../engine/lib/policy.mjs';
 import { ADAPTERS } from '../engine/lib/sched/index.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
@@ -18,6 +20,7 @@ const GIT_DIR = path.dirname(which('git'));
 const fwd = p => p.split(path.sep).join('/');
 
 function sandbox() {
+  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
   const t = mkTmp('meta-prm-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg') };
   for (const x of [d.root, d.home, d.bin, d.cfg]) fs.mkdirSync(x, { recursive: true });
@@ -149,9 +152,44 @@ test('sched adapters installed() ask the OS through the injected io', () => {
   assert.equal(ADAPTERS.launchd.installed(O, io(0, '', false)), false); assert.equal(ADAPTERS.launchd.installed(O, io(1)), false);
 });
 
-test('sched install with no registered project = exit 2 ("add a project first"); sched show prints installed: yes|no', () => {
+// caps come before the scheduler: a tick with no caps would start workers without limit. The no-caps case names a cron task with no
+// crontab on PATH, so even a missing refusal installs nothing.
+test('sched install refuses (exit 2): no registered project ("add a project first"); no caps (one line: budget.json, norn setup, Settings); sched show prints installed: yes|no', () => {
   const sb = sandbox();
   const r = sb.run('sched', 'install');
   assert.equal(r.code, 2); assert.match(r.err, /add a project first/);
   assert.match(sb.run('sched', 'show').out, /^installed: (yes|no)$/m);
+  const mf = path.join(sb.root, 'local', 'machine.json'), bf = path.join(sb.root, 'local', 'budget.json');
+  fs.writeFileSync(mf, JSON.stringify({ ...sb.machine(), scheduler: { kind: 'cron', name: 'meta-ootb-test-never-installed', interval_min: 15 }, projects: [{ name: 'x', config: '${norn}/local/x.json' }] }));
+  for (const budget of [null, '{"weekly_stop_pct": 50}']) {
+    if (budget === null) fs.rmSync(bf, { force: true }); else fs.writeFileSync(bf, budget);
+    const x = sb.run('sched', 'install');
+    assert.equal(x.code, 2, x.err + x.out);
+    const lines = (x.err + x.out).trim().split(/\r?\n/);
+    assert.equal(lines.length, 1, lines.join('\n'));
+    assert.match(lines[0], /^error: no caps set .*budget\.json.*(max_claude_workers|missing).*norn setup.*Settings/);
+  }
+});
+
+// the generic role agents are installed under shared names: they go with the last project that uses them, and a same-named file the
+// user owns is theirs (never overwritten by project new, never deleted by project remove)
+test('remove: the shared role agents stay while another project uses them and go with the last; the user\'s own planner.md is never touched', () => {
+  const sb = sandbox(), agents = path.join(sb.cfg, 'agents'), own = path.join(agents, 'planner.md'), ours = ROLE_AGENTS.filter(n => n !== 'planner');
+  fs.mkdirSync(agents, { recursive: true }); fs.writeFileSync(own, 'the user\'s own planner\n');
+  for (const n of ['app-a', 'app-b']) {
+    const r = path.join(sb.t, 'repos', n); fs.mkdirSync(r, { recursive: true }); execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: r, stdio: 'ignore' });
+    sb.run('project', 'new', '--root', r, '--non-interactive');
+    assert.ok(sb.machine().projects.some(p => p.name === n), `${n} registered`);
+  }
+  for (const n of ours) assert.ok(fs.existsSync(path.join(agents, n + '.md')), n);
+  const ra = sb.run('project', 'remove', 'app-a');
+  assert.equal(ra.code, 0, ra.err + ra.out);
+  for (const n of ours) assert.ok(fs.existsSync(path.join(agents, n + '.md')), `${n} kept: app-b still uses it`);
+  assert.match(ra.out, /kept .*implementer\.md.*app-b/);
+  const chk = sb.run('gen', '--check');
+  assert.doesNotMatch(chk.out + chk.err, /missing|orphan/, 'app-b\'s generated files still line up with the manifest');
+  const rb = sb.run('project', 'remove', 'app-b');
+  assert.equal(rb.code, 0, rb.err + rb.out);
+  for (const n of ours) assert.ok(!fs.existsSync(path.join(agents, n + '.md')), `${n} deleted with the last project`);
+  assert.equal(fs.readFileSync(own, 'utf8'), 'the user\'s own planner\n');
 });

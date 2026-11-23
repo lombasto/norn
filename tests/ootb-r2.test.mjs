@@ -1,4 +1,5 @@
-// OOTB-REVIEW R2 (sdd-codex-reviews/norn-ootb-r2/REPORT.md sec. 3): the ship-gate fixes N-2 .. N-5, N-16 (B-1 lives in smoke.test.mjs).
+// What a fresh machine hits right after project new: --project resolving a name, an auth exit reaching the dashboard, and the run
+// stamp never crossing into another project. Each case was a ship-gate defect of the out-of-the-box review (its rehearsal case lives in adopt-e2e).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,6 +7,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { hookReady } from './helpers/hook.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 
@@ -16,6 +18,7 @@ const GIT_DIR = path.dirname(which('git'));
 
 /** a fresh machine: temp META_ROOT / HOME / config dir, a placeholder claude on PATH (+ git, node), no META_* inherited */
 function sandbox(extra = {}) {
+  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
   const t = mkTmp('meta-ootb-r2-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });
@@ -43,35 +46,8 @@ function young(sb, name = 'harbour') {
   git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'init');
   return r;
 }
-/** init --non-interactive + approve every part + apply: the project with its first lane (parse-one-station-file) */
-function adopted(sb, name = 'harbour') {
-  const repo = young(sb, name);
-  const init = sb.ok(['init', repo, '--non-interactive', '--answer', 'goal=A tide clock', '--answer', 'first=Parse one station file', '--profile', 'try-it', '--no-read']);
-  const pf = sb.projectFile(name), p = JSON.parse(sb.ok(['adopt', 'show', '--project', pf, '--json']).out);
-  for (const x of p.parts.filter(y => y.status === 'to review'))
-    sb.ok(['adopt', 'approve', x.id, ...(x.pick ? ['--pick', x.lines[0].id] : []), '--project', pf, '--as', 'owner']);
-  const apply = sb.ok(['adopt', 'apply', '--project', pf, '--as', 'owner']);
-  return { repo, pf, init, apply, lane: 'parse-one-station-file' };
-}
 
-test('N-2 init --non-interactive and adopt apply print the free rehearsal; its relative --brief resolves against the caller\'s folder', { timeout: 240000 }, () => {
-  const sb = sandbox(), a = adopted(sb);
-  assert.match(a.init.out, /rehearse it for free: norn run --executor fake --lane parse-one-station-file --brief \S+ --project \S+ --wait/, 'init names the rehearsal (after apply)');
-  const m = a.apply.out.match(/rehearse it for free: (norn run --executor fake .* --wait)/);
-  assert.ok(m, 'adopt apply prints the rehearsal command\n' + a.apply.out);
-  const st = sb.project('harbour').state, brief = path.join(st, 'briefs', a.lane + '.md');
-  assert.ok(fs.existsSync(brief));
-  const cwd = path.dirname(st), rel = path.relative(cwd, brief);
-  assert.ok(!path.isAbsolute(rel));
-  const r = sb.ok(['run', '--executor', 'fake', '--lane', a.lane, '--brief', rel, '--notes', 'NOTES-rel.md', '--project', a.pf, '--wait'], { cwd });
-  assert.match(r.out, /^RUN-\d+ exited: DONE$/m, r.all);
-  // N-4: the rehearsal does not mark the first roadmap item shipped
-  const road = sb.ok(['road', 'show', '--project', a.pf]).out;
-  assert.match(road, /Parse one station file/);
-  assert.doesNotMatch(road, /shipped|stage DONE/, road);
-});
-
-test('N-3 --project <name>: a registered name wins over a same-named folder in the cwd; a project.json path still wins', { timeout: 120000 }, () => {
+test('N-3--project <name>: a registered name wins over a same-named folder in the cwd; a project.json path still wins', { timeout: 120000 }, () => {
   const sb = sandbox(), repo = young(sb);
   sb.ok(['setup', '--non-interactive', '--no-scheduler']);
   sb.ok(['project', 'new', '--root', repo, '--non-interactive']);
