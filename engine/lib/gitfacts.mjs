@@ -15,6 +15,13 @@ import { readText as read } from './harness/common.mjs';
 export const GIT_MS = 60000;
 const MEMO_MAX = 4000;   // entries per repo memo file; the oldest go first
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** a name as a lowercase slug (a-z 0-9 -): one rule, so `project new` and the adopt scan name a my_app repo alike */
+export const slugOf = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+/** the facts the adopt scan and setup's `project new` both take: { name (of the project's folder), default_branch, origin (url | null) } */
+export function repoFacts(root, sub = '') {
+  return { name: slugOf(path.basename(sub || root)), origin: gitOut(root, ['remote', 'get-url', 'origin']),
+    default_branch: gitOut(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') || gitOut(root, ['symbolic-ref', '--short', 'HEAD']) || 'main' };
+}
 /** the non-empty trimmed lines of a git output */
 export const lines = s => String(s ?? '').split('\n').map(x => x.trim()).filter(Boolean);
 

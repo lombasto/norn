@@ -53,12 +53,13 @@ export function memoryDir(root, claudeConfig) {
 }
 
 // ---------- frontmatter of a rule / topic / agent file (a small YAML subset: key: value, list items, [a, b]) ----------
-/** text -> { has, ok, meta { key: string | [strings] }, end (the line after the closing ---) } */
+/** the one frontmatter parser (setup's role / skill files and agentDef read it too): text -> { has, ok, meta { key: string | [strings] },
+ *  end (the line after the closing ---), body (the text from that line on, its line ends kept) } */
 export function frontOf(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  if (lines[0]?.trim() !== '---') return { has: false, ok: true, meta: {}, end: 0 };
+  const raw = String(text ?? ''), lines = raw.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return { has: false, ok: true, meta: {}, end: 0, body: raw };
   const close = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
-  if (close < 0) return { has: true, ok: false, meta: {}, end: 0 };
+  if (close < 0) return { has: true, ok: false, meta: {}, end: 0, body: raw };
   const meta = {};
   let cur = null, ok = true;
   for (const l of lines.slice(1, close)) {
@@ -72,7 +73,7 @@ export function frontOf(text) {
     } else if (item && cur) meta[cur].push(unq(item[1]));
     else ok = false;
   }
-  return { has: true, ok, meta, end: close + 1 };
+  return { has: true, ok, meta, end: close + 1, body: raw.split(/(?<=\n)/).slice(close + 1).join('') };
 }
 export const rulePaths = text => { const f = frontOf(text); const p = f.ok ? f.meta.paths : null; return Array.isArray(p) ? p : typeof p === 'string' ? [p] : []; };
 

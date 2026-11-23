@@ -11,11 +11,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CAP_KEYS, HOOKS, RESUME_STYLES, CHATS } from './harness/common.mjs';
 
+// model = the executor's default model id, the one table of them (launch, probe, check-in trial and policy defaults read it)
 export const BUILTIN = {
-  claude: { kind: 'worker', harness: 'claude', caps: ['max_claude_workers'] },
-  fake: { kind: 'fake', harness: 'fake', caps: ['max_claude_workers'] },
-  'codex-sol': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_sol'] },
-  'codex-astra': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_astra'] },
+  claude: { kind: 'worker', harness: 'claude', caps: ['max_claude_workers'], model: 'claude-opus-5-5' },
+  fake: { kind: 'fake', harness: 'fake', caps: ['max_claude_workers'], model: 'fake' },
+  'codex-sol': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_sol'], model: 'gpt-6.1-sol' },
+  'codex-astra': { kind: 'codex', harness: 'codex', caps: ['max_codex', 'max_astra'], model: 'gpt-6-astra' },
 };
 export const PROVIDER_TYPE = 'claude-compatible';
 export const OPENAI_TYPE = 'openai-compatible';
@@ -74,10 +75,10 @@ export const capDefault = entry => (Number.isInteger(entry?.cap) ? entry.cap : P
 // installs the engine's generic implementer / planner / runner there) + any other agent name its policy already routes to (a
 // project using another project's agents, e.g. norn on a product project's). Sorted; never a built-in, typed executor or fallback keyword.
 const NOT_AGENTS = ['auto', 'fable', 'opus-xhigh', 'wait', 'claude', 'fake'];
+/** the agent names of an agents folder (its *.md files; none / no folder = []): roleAgents and launchpolicy knownAgents both scan with it */
+export const agentFiles = dir => { try { return dir ? fs.readdirSync(dir).filter(f => f.endsWith('.md') && fs.statSync(path.join(dir, f)).isFile()).map(f => f.slice(0, -3)) : []; } catch { return []; } };
 export function roleAgents(project) {
-  const names = new Set(), pv = providersOf(project), dir = project?.install?.agents;
-  try { if (dir) for (const f of fs.readdirSync(dir)) if (f.endsWith('.md') && fs.statSync(path.join(dir, f)).isFile()) names.add(f.slice(0, -3)); } catch { /* no dir */ }
-  const pol = project?.policy || {};
+  const names = new Set(agentFiles(project?.install?.agents)), pv = providersOf(project), pol = project?.policy || {};
   for (const n of [...Object.values(pol.executors || {}).map(e => e?.executor), ...Object.values(pol.fallbacks || {})])
     if (typeof n === 'string' && n && !NOT_AGENTS.includes(n) && !Object.hasOwn(BUILTIN, n) && !Object.hasOwn(pv, n)) names.add(n);
   return [...names].sort();
