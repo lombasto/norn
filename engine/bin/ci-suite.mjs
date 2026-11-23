@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt.
-// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--gate-wait MIN] [--cpu-prof DIR]
+// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--gate-wait MIN]
 //   [--changed BASE [--max N]] [glob ...]   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, GATE_WAIT_MIN, "tests/*.test.mjs", --max 20).
 //   --changed BASE runs only the matched files the change BASE...HEAD touches (lib/cisuite.mjs pickTests: the
 //   fast PR job; the full suite runs after the merge and nightly); --max N caps the files picked only for importing a changed file.
@@ -26,7 +26,7 @@ const argv = process.argv.slice(2), globs = [];
 // CI-HANG-B7F6833: the per-file wall cap - a file that has not exited by then is a hang: its process tree is killed, its output so
 // far printed and the suite fails naming it (a watchdog that turns a hang into a named red, well under the CI job's 60 min)
 const FILE_CAP_S = 600;
-let known = 'tests/KNOWN-REDS.txt', conc = '3', capS = FILE_CAP_S, cpuProf = null, gateWait = GATE_WAIT_MIN, changed = null, max = null;
+let known = 'tests/KNOWN-REDS.txt', conc = '3', capS = FILE_CAP_S, gateWait = GATE_WAIT_MIN, changed = null, max = null;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--known') known = argv[++i];
   else if (argv[i] === '--gate-wait') gateWait = Number(argv[++i]);
@@ -34,7 +34,6 @@ for (let i = 0; i < argv.length; i++) {
   else if (argv[i] === '--max') max = Number(argv[++i]);
   else if (argv[i] === '--concurrency') conc = argv[++i];
   else if (argv[i] === '--file-cap') capS = Number(argv[++i]);
-  else if (argv[i] === '--cpu-prof') cpuProf = argv[++i];
   else if (argv[i].startsWith('--')) { console.error(`ci-suite: unknown flag ${argv[i]}`); process.exit(2); }
   else globs.push(argv[i]);
 }
@@ -87,18 +86,12 @@ if (process.platform === 'win32') { const j = await holdJob(process.pid, { name:
 // `node --test` with its own temp dir (TEMP / TMP / TMPDIR), so every temp state it makes - and every process it starts there -
 // names that dir. When the file is done, a process whose command line still names it is that file's leak: the file fails, naming
 // the pids (never a listed red: KNOWN-REDS cannot hold it), and the suite kills them. 11-13: 22 supervisor + fake-executor pairs.
-// META-CI-WORKCLASS R4 (DEC-336): --cpu-prof DIR - a browser test file (it imports shot.mjs or helpers/cdp.mjs) runs with
-// NODE_OPTIONS --cpu-prof into DIR/<file>, so its node processes leave a sampling profile that names a sync call blocking the loop
-// by its JS caller (tests/helpers/profgap.mjs reads them; the Windows CI job)
-const isBrowserFile = f => isBrowserTest(fs.readFileSync(f, 'utf8'));
-const profEnv = f => !cpuProf || !isBrowserFile(f) ? {}
-  : { NODE_OPTIONS: `${childEnv.NODE_OPTIONS ?? ''} --cpu-prof --cpu-prof-dir="${fwd(path.resolve(cpuProf, path.basename(f, '.mjs')))}"`.trim() };
 const runFile = (name, f, i) => new Promise(resolve => {
   const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`);
   fs.mkdirSync(ft);
   console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, ...profEnv(f), TEMP: ft, TMP: ft, TMPDIR: ft } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft } });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;
@@ -135,7 +128,7 @@ const phase = async (name, c, files) => {
 // CI 44335427788: a fresh runner's first browser launch is slow (ubuntu: 25-36 s; two at once passed the 30 s DevTools wait). With a
 // browser test in the run, one launch to the DevTools port and down goes first: the one-time cost lands here, measured, not on a
 // test's clock. A failed warm-up is logged and the suite goes on: the browser tests then fail with their own message.
-if (files.some(isBrowserFile)) {
+if (files.some(f => isBrowserTest(fs.readFileSync(f, 'utf8')))) {
   const { findBrowser, warmBrowser } = await import('../lib/shot.mjs'), browser = findBrowser();
   if (browser) { const w = await warmBrowser({ browser, tmp });
     console.log(`ci-suite: browser warm-up ${w.ms} ms (${browser.exe})${w.error ? `, failed: ${w.error}` : ''}`);
