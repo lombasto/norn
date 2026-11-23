@@ -165,7 +165,7 @@ test('dash: the Inbox holds one card per open hunk; accept = a decision + the di
     const d = await f.post('/api/audit', { project: 'kestrel', id: cards[1].id, verdict: 'decline' });
     assert.equal(d.data.directive, null);
     const v = auditsView({ ...f.pa, name: 'kestrel' }, loadState(st).items);
-    const html = ['checks', 'growing'].map(sub => renderTab('context', { sub, rows: [], audits: v, measured: { roles: [], trend: { days: 30, rows: [{ day: '2026-11-13', key: 'worker', median_turn1: 30000 }, { day: '2026-11-14', key: 'worker', median_turn1: 32000 }, { day: '2026-11-14', key: 'checkin', median_turn1: 61000 }] } } }, {})).join('');   // META-UX-BUILD S4: the audits on the checks page, the trend in Is it growing?
+    const html = ['checks', 'growth'].map(sub => renderTab('context', { sub, rows: [], audits: v, measured: { roles: [], trend: { days: 30, rows: [{ day: '2026-11-13', key: 'worker', median_turn1: 30000 }, { day: '2026-11-14', key: 'worker', median_turn1: 32000 }, { day: '2026-11-14', key: 'checkin', median_turn1: 61000 }] } } }, {})).join('');   // META-UX-BUILD S4: the audits on the checks page, the trend in Growth
     assert.match(html, /id="ins-audits"[\s\S]*triggers stay manual[\s\S]*id="ins-audit-runs"[\s\S]*RUN-\d+[\s\S]*done[\s\S]*<td class="num">2<\/td><td class="num">1<\/td><td class="num">1<\/td><td class="num">0<\/td>[\s\S]*0 of 5 runs watched/);
     assert.match(html, /id="ins-trend"[\s\S]*<polyline points="[^"]+"\/>[\s\S]*workers <b>~32\.0k<\/b>[\s\S]*check-ins <b>~61\.0k<\/b>/);
   } finally { await f.done(); }
