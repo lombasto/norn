@@ -124,6 +124,17 @@ test('project new on a folder of a repo: root = the top level, subdir = the fold
   }
 });
 
+test('project new takes the name, branch and GitHub repo the adopt scan gives (my_app: one slug, my-app)', () => {
+  const sb = sandbox(), m = mono(path.join(sb.t, 'my_app'));
+  m.g('remote', 'add', 'origin', 'git@github.com:o/my_app.git');
+  const f = scan(m.dir), r = sb.run(['project', 'new', '--root', m.dir, '--non-interactive']);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.deepEqual([f.name, f.default_branch, f.forge?.repo], ['my-app', 'main', 'o/my_app']);
+  assert.ok(fs.existsSync(sb.fileOf(f.name)), r.out);
+  const p = json(sb.fileOf(f.name));
+  assert.deepEqual([p.name, p.ci], [f.name, { repo: f.forge.repo, branch: f.default_branch }]);
+});
+
 test('lanes of a subdir project branch as norn/<project>/<lane>; a whole-repo project keeps norn/<lane>', () => {
   assert.equal(laneBranch('fix'), 'norn/fix');
   assert.equal(laneBranch('fix', { name: 'all' }), 'norn/fix');

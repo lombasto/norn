@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 const EFFORTS=['low','medium','high','xhigh'];
-const MODELS=['claude-opus-5-5','claude-sonnet-5-5'];
+const OPUS=BUILTIN.claude.model,SOL=BUILTIN['codex-sol'].model,ASTRA=BUILTIN['codex-astra'].model,MODELS=[OPUS,'claude-sonnet-5-5'];   // the default ids: executors.mjs BUILTIN
 // CHECKIN-V2 piece 4: the check-in executors = the built-ins whose harness adapter attaches the meta MCP server (caps.mcp); a
 // non-claude one runs only under checkin_executor_trial (auto-fallback to claude). The chat on adapters is H5: claude only.
 export const HARNESS_EXECUTORS=Object.keys(BUILTIN).filter(n=>n!=='fake'&&(ADAPTERS[BUILTIN[n].harness]?.caps?.mcp??'none')!=='none');
@@ -25,7 +25,7 @@ const rolesOf=extra=>(extra?.agents?.length?extra.agents:ROLE_AGENTS);
 const executorsOf=extra=>['auto','codex-astra','codex-sol',...rolesOf(extra),'fable'];   // + the project's configured typed executors (extra.providers)
 const fallbacksOf=extra=>['codex-astra','codex-sol',...rolesOf(extra).filter(a=>/(^|-)implementer$/.test(a)),'opus-xhigh','wait'];   // the implementer role takes fallback work
 const EXECUTORS=executorsOf(),FALLBACK=fallbacksOf();
-const ANY_MODELS=['','claude-opus-5-5','claude-sonnet-5-5','gpt-6-astra','gpt-6.1-sol','fable'];
+const ANY_MODELS=['',OPUS,'claude-sonnet-5-5',ASTRA,SOL,'fable'];
 export const POLICY_MODELS=ANY_MODELS;   // META-PRACTICE-P1 check 18: the model names policy knows
 const ESCALATE=['raise effort','switch to Fable','re-scope','ask owner'];
 const fail=m=>Object.assign(new Error(m),{status:400});
@@ -44,9 +44,9 @@ export const POLICY_DEFAULTS={
   // `norn tests run` and the machine's result cache; run_budget_min = the test wall time a run may spend (0 = none); browser ci = page tests
   // run in CI only; full_suite deny (TEST-GOVERNANCE S1, owner Q-28). The scope hook and the Done check read it.
   tests:{mode:'light',run_budget_min:3,browser:'ci',full_suite:'deny'},   // RM-37 safe pause (pause.mjs): report a run not at a clean point after clean_min; pause half leaves a run near_end_min from its end alone
-  executors:{implementation:ex('auto','',''),critical_implementation:ex('implementer','claude-opus-5-5','high'),review:ex('codex-sol','gpt-6.1-sol','medium'),
-    diagnosis:ex('codex-sol','gpt-6.1-sol','medium'),planning:ex('planner','claude-opus-5-5','xhigh'),chores:ex('auto','',''),passfail:ex('auto','',''),
-    images:ex('codex-sol','gpt-6.1-sol','medium'),docs:ex('runner','claude-sonnet-5-5','medium')},
+  executors:{implementation:ex('auto','',''),critical_implementation:ex('implementer',OPUS,'high'),review:ex('codex-sol',SOL,'medium'),
+    diagnosis:ex('codex-sol',SOL,'medium'),planning:ex('planner',OPUS,'xhigh'),chores:ex('auto','',''),passfail:ex('auto','',''),
+    images:ex('codex-sol',SOL,'medium'),docs:ex('runner','claude-sonnet-5-5','medium')},
   allowed_classes:{},
   critical_lanes:[],critical_effort:'high',
   fallbacks:{claude_over_guard:'codex-astra',codex_down:'implementer',fable_unavailable:'opus-xhigh'},
