@@ -32,9 +32,8 @@
         "$comment": "RM-46 S4 (SPEC 4.3): the optional ntfy doorbell - its own topic (never the notify one), a secret shared out of band; unset = poll only" } } },
     "projects_home": { "type": "string", "$comment": "META-ONBOARD 3.2: where `norn project new` writes <name>/project.json (default ${home}/.norn/projects; never inside the engine tree)" },
     "fed": { "type": "object", "additionalProperties": false, "properties": {
-      "labels": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$" } }, "id": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,15}$" }, "host": { "type": "string", "pattern": "^[a-z0-9._-]+$" },
-      "heartbeat_s": { "type": "integer", "minimum": 1 }, "lease_s": { "type": "integer", "minimum": 1 },
-      "path_map": { "type": "array", "items": { "type": "object", "required": ["from", "to"], "additionalProperties": false, "properties": { "from": { "type": "string" }, "to": { "type": "string" } } } } } },
+      "labels": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$" } }, "host": { "type": "string", "pattern": "^[a-z0-9._-]+$" } },
+      "$comment": "host: this machine's ledger branch name (ledger.mjs). labels: read by nothing since the federation went; it stays until tests/setup-keeps-keys.test.mjs stops seeding it" },
     "projects": { "type": "array", "items": { "type": "object", "required": ["name", "config"], "additionalProperties": false,
       "properties": { "name": { "type": "string" }, "config": { "type": "string" } } } }
   }

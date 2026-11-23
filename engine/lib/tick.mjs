@@ -49,7 +49,7 @@ import { tickPaths } from './lanepaths.mjs';
 import { tickProposals } from './proposals.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
 import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
-import { fedOf } from './fed.mjs';
+import { fedOf } from './claimsref.mjs';
 import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync, claimLeader, leaderKey } from './claims.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -235,7 +235,7 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
   const freeWhy = c => {
     if (['done', 'archived'].includes(items[laneId(c.lane, state)]?.state)) return runOf(c.lane) ? null : '';
     const rs = runsOf(c.lane);
-    if (!rs.length || rs.some(r => ['running', 'queued', 'claimed'].includes(r.state))) return null;   // a claim before its first run record: not judged
+    if (!rs.length || rs.some(r => ['running', 'queued'].includes(r.state))) return null;   // a claim before its first run record: not judged
     const s = shipped(c.lane, ...rs);
     if (s) return `landed (${s})`;
     const last = Math.max(...rs.map(r => Date.parse(r.history.at(-1)?.ts ?? '') || 0));
@@ -369,7 +369,7 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
       if (!rs.length) continue;   // a claim before its first run record: not judged
       const tipAt = Math.max(there ? Number(gitOut(wt, ['log', '-1', '--format=%ct'])) * 1000 || 0 : 0, Date.parse(rs[0].history?.at(-1)?.ts ?? '') || 0) || null;
       const dirty = there ? (gitOut(wt, ['status', '--porcelain']) ?? 'unreadable').trim() !== '' : null;
-      if (laneAlive({ live: rs.some(r => ['running', 'queued', 'claimed'].includes(r.state)), open: open.has(c.lane), dirty, tipAt }, now, p.policy?.collide)) continue;
+      if (laneAlive({ live: rs.some(r => ['running', 'queued'].includes(r.state)), open: open.has(c.lane), dirty, tipAt }, now, p.policy?.collide)) continue;
       let r = null;
       try { r = releaseWork(f, c); } catch { /* offline: the next pass */ }
       if (!(r?.ok || r?.gone)) continue;

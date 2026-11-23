@@ -13,7 +13,7 @@ import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { collidePass } from '../engine/lib/tick.mjs';
 import { casesOf, actionsOf, readCollide } from '../engine/lib/intents.mjs';
 import { claimWork, allowPair, writeSync, readSync } from '../engine/lib/claims.mjs';
-import { fedOf } from '../engine/lib/fed.mjs';
+import { fedOf } from '../engine/lib/claimsref.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
 const OLD = '2026-01-05T10:00:00Z';

@@ -63,8 +63,9 @@ export function stuckOf(runs, merges, pol, now, { past = false } = {}) {
     flag: !past && fired.length ? { ts: iso(fired[0][1]), why: fired.map(([k]) => words[k]) } : null };
 }
 
-/** the merges an item's reach shows: a merged / installed branch (its round's end), a MERGE run ended done */
-export const mergesOf = (runs, branches) => [...branches.filter(b => ['merged', 'installed'].includes(b.state)).map(b => b.ts),
+/** the merges an item's reach shows: a branch's latched merges, every round's (land-reuse, DEC-b-56: a reused deliverable keeps them
+ * after a newer DONE); a merged / installed branch with none latched yet (git found it) at its round's end; a MERGE run ended done */
+export const mergesOf = (runs, branches) => [...branches.flatMap(b => b.merges.length ? b.merges : ['merged', 'installed'].includes(b.state) ? [b.ts] : []),
   ...runs.filter(r => isMergeRun(r.data) && r.state === 'exited' && r.end?.outcome === 'done').map(endOf)].filter(Boolean);
 
 export const stuckWords = s => `${s.runs} runs, ${s.days} days, ${s.stopped_row} stopped in a row`;
