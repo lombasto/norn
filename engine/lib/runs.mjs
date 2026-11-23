@@ -23,7 +23,6 @@ import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
 import { limitRefusal, openLimits } from './limitgate.mjs';
 import { briefMarker } from './mergebrief.mjs';
 import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
-import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { mailHook, raiseFlag } from './mail.mjs';
 import { scopeHookOf, guardSettings, writeScopeFile } from './scope.mjs';
@@ -632,9 +631,9 @@ const startFields = (o, info) => ({
   agent: o.agent, model: o.model, effort: o.effort, worktree: o.worktree, brief: o.brief, notes: o.notes });
 const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, ...classStamp(o), q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
   from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
-  epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf, dod_of: o.dodOf, dod_ready: o.dod ? { mode: o.dod.mode, ok: o.dod.ok, missing: o.dod.missing } : undefined,   // META-DOD 1: the Ready verdict + the Done-check resume
+  priority: o.priority, nudge: o.nudge, slop_of: o.slopOf, dod_of: o.dodOf, dod_ready: o.dod ? { mode: o.dod.mode, ok: o.dod.ok, missing: o.dod.missing } : undefined,   // META-DOD 1: the Ready verdict + the Done-check resume
   critique: o.critique, floor: o.floor,   // floor: the worker floor raised this run (floor.mjs); META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
-    // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
+    // slop_of: the run-end slop resume
   replaces: o.replaces,
   launch_profile: o.profile?.name || 'full', memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // launch_profile: the profile EVERY run launched with (launchpolicy.mjs profileOf; no profile = full) - overhead-audit S1: a floor is judged against it   // replaces: META-AUTONOMY R1 (norn requeue)
 // META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
@@ -649,12 +648,10 @@ function withFloor(o) {
 }
 const floorNotice = o => (o.floor ? [`raised to the worker floor: ${Object.entries(o.floor).map(([k, [a, b]]) => `${k} ${a || '(default)'} -> ${b}`).join(', ')}`] : []);
 const fableNotice = o => (isFable(o) ? [`Fable (${o.model || o.executor}) is the cost class: use it for the hardest long work only (the Spend page counts the week's Fable runs)`] : []);
-// META-GTP-DAG piece 2: a NEW run (not a fill / resume / re-queue of one) named --epic joins that open epic; no --priority = the epic's
-const isNew = o => !o.fromQueue && !o.resumeOf && !o.requeueOf && !o.replaces;
-function withEpic(o) {
+// a typo in --priority is refused before any record (no priority = the fill's default)
+function checkPriority(o) {
   if (o.priority !== undefined && o.priority !== null && !PRIORITIES.includes(o.priority)) throw new RunError(`--priority ${JSON.stringify(o.priority)}: want ${PRIORITIES.join(' | ')}`);
-  if (!o.epic || !isNew(o)) return o;
-  try { return { ...o, priority: o.priority ?? openEpic(o.state, o.epic).data.priority }; } catch (e) { if (e instanceof EpicError) throw new RunError(e.message); throw e; }
+  return o;
 }
 // MERGE-FIRST (owner 11-19: "prioritize merging so we don't end up with some huge backlog of finished but unmerged work"; 11 merges
 // waited at the default P2 while P0 / P1 build work passed them): a LANDING run - a MERGE, or the resolve run that brings a branch up
@@ -857,7 +854,7 @@ function collideTerm(spec, q, cache, now) {
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = mergeSpec(withFloor(landingPriority(withEpic(noCaller(o)))));
+  o = mergeSpec(withFloor(landingPriority(checkPriority(noCaller(o)))));
   // lane-collide S1b: a resume of a run whose prompt the door built drops it, so the resume's own prompt is built again
   if (o.resumeOf && o.collide_prompt) { const { collide_prompt: cp, promptText: pt, ...r } = o; o = pt === cp ? r : { ...r, promptText: pt }; }
   duplicateCheck(o);
@@ -931,7 +928,6 @@ export function startRun(o) {
     const ctx_marks = info.harness === 'claude' || info.harness === 'fake' ? { ...ctxLimits(specPolicy({ ctx_from: policySource(o) }), ctxRole(o)), src: 'role' } : undefined;
     const ev = withDwarf(o, info, staleMs, dw => record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), ...dw, log, final, session_id, ...runTail(o), ctx_marks, warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined, collide: col?.stamp?.length ? col.stamp : undefined }) }));
     const run = ev.id;
-    if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
     fs.mkdirSync(path.join(o.state, 'hb'), { recursive: true });
     fs.mkdirSync(path.join(o.state, 'logs'), { recursive: true });
@@ -997,7 +993,7 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
 //    claude_model / *_effort, the typed executors' caps), and the project policy parts (launchpolicy.mjs resolveAtFill: memory, launch
 //    profile, model / effort / agent / class when not given on the command line, a typed executor's entry). The pause files and
 //    STATUS are paths derived from the state dir; their existence / content is read at each fill, so they never go stale.
-//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, epic, priority, parent / via,
+//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, priority, parent / via,
 //    the flags the dispatcher gave (refill.explicit: --model / --effort / --agent / --class), budget_min, the state / locks dirs.
 // Not refreshed (machine.json, rarely changed): exe, git_ledger. The queue spec keeps NO copy of the budget: queueRun names
 // the file (the caller's budget_file, else this install's local/budget.json) and drops the object, so every fill reads the file. A file
@@ -1020,7 +1016,7 @@ export function queueRun(o) {
   if (!o.fromQueue) { const lw = leaderRefusal(o); if (leaderGone(lw)) throw new RunRefused(lw, 3); }   // merge-slot: a MERGE that can never start here is refused, not queued behind the caps
   const caller = o.caller;
   o = { ...o, budget_file: path.resolve(o.budget_file ?? machineBudgetFile()) };   // GAP-2: the fill reads this file, never a copy
-  o = mergeSpec(withFloor(landingPriority(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) })))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
+  o = mergeSpec(withFloor(landingPriority(checkPriority(noCaller({ ...o, budget: o.budget ?? liveBudget(o) })))));   // a re-queue of a spec (no budget kept): the file's; GAP-6: a MERGE's own merge worktree
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
@@ -1029,7 +1025,6 @@ export function queueRun(o) {
   }
   const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, budget: _b, ...spec } = o;
   const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore, warnings: [...floorNotice(o), ...fableNotice(o)].length ? [...floorNotice(o), ...fableNotice(o)] : undefined }) });
-  if (o.epic && isNew(o)) joinEpic(o.state, o.epic, ev.id);
   const file = queueSpecPath(o.state, ev.id);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(spec, null, 1));
@@ -1048,7 +1043,7 @@ export function queueOf(runs, pins = {}) {
   return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => fillKey(a) - fillKey(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
     .map((r, i) => ({ id: r.id, dwarf: pins[r.data.lane] ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
       executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
-      after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null }));
+      after: r.data.after ?? [], inputs: r.data.inputs ?? [], priority: r.data.priority ?? null }));
 }
 /**
  * Start every queued run that may start now, in fill order (priority, then oldest first - META-GTP-DAG piece 4): not before its not_before, not while PAUSED, never on a worktree with a
@@ -1245,7 +1240,7 @@ export function resourceRefusal(res, fill = {}, { cpu = true } = {}) {
 const authGate = (spec, o = {}) => (spec.state ? authRefusal(spec.state, infoOf(spec)?.harness, { spec, ...o }) : null);
 // merge-slot: a merge in the merge slot is short and unblocks other work - the CPU gate never holds it (the memory gate does)
 const resourceGate = (spec, sample, slot = false) => { if (!spec.policy?.fill) return null; const r = resourceRefusal(sample(), spec.policy.fill, { cpu: !slot }); return r ? `resources: ${r}` : null; };
-/** readiness(state, { now }) -> the dry walk's rows in fill order: { id, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
+/** readiness(state, { now }) -> the dry walk's rows in fill order: { id, lane, stage, executor, priority, position, ready, terms, withdraw? } */
 export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null });
 
 // fair-slots items 1 + 8: the Claude pool is machine-wide, so a slot one project frees is offered to every project (fillAll), and before
@@ -1300,7 +1295,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
   let OW = null;
   const othersLanding = () => (OW ??= projectStates(state).filter(s => s !== path.resolve(state)).reduce((n, s) => { try { return n + waitingLanding(s, queueOf(runsOf(s)), now).length; } catch { return n; } }, 0));
   for (const q of queue) {
-    const row = { id: q.id, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
+    const row = { id: q.id, lane: q.lane, stage: q.stage, executor: q.executor, priority: q.priority, position: q.position, ready: false, terms: [] };
     rows.push(row);
     const gone = why => { row.withdraw = why; row.terms.push(`withdraw: ${why}`); act?.withdraw(q.id, why); };
     if (q.after.length) {   // NORN-WATCH S4: an unmet trigger waits without blocking FIFO (like not_before)

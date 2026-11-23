@@ -23,8 +23,7 @@ import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
 import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
-import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
-import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
+import { parseAfter, parseInputs, AfterError, readyWords } from '../lib/after.mjs';
 import { loadRoadmap, setCaveat, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, allowRefusal, pairKey } from '../lib/collide.mjs';
@@ -33,7 +32,6 @@ import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderPropo
 import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
-import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
 import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
 import { launchParts, refillOf, agentRefusal } from '../lib/launchpolicy.mjs';
 import { launchArgsRefusal } from '../lib/launchargs.mjs';
@@ -371,14 +369,14 @@ function setupCmd(argv, env, out, err) {
 
 // ---------- S4: norn run / norn stop / norn hook session ----------
 const RUN_USAGE = {
-  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n [--why W] (links the run to its roadmap item; a lane the item does not link warns, and is refused without --why when the item links other lanes)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
+  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage STAGE] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--priority P0|P1|P2|P3 (default P2)] [--item RM-n [--why W] (links the run to its roadmap item; a lane the item does not link warns, and is refused without --why when the item links other lanes)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
   requeue: 'norn requeue RUN-n [--after "<conditions as norn run --after> | none"] [--priority P0-P4] [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions or priority: same launch args, a flag left out keeps the old value (a MERGE / resolve stays at P1 or above); the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
 // SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
 const RUN_SHORT = 'norn run --executor E --lane L --brief F [options]    (every option: norn run --help)';
-const RUN_FLAGS = ['executor', 'after', 'inputs', 'epic', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item', 'not-before'];
+const RUN_FLAGS = ['executor', 'after', 'inputs', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item', 'not-before'];
 function runFlags(cmd, argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -450,7 +448,7 @@ function briefMergeWt(flags, brief) {
   if (!isMergeStage(flags.stage) || !brief || brief === '-') return null;
   try { return briefMarker(fs.readFileSync(brief, 'utf8'))?.merge_wt || null; } catch { return null; }
 }
-// the launch spec of one run from the norn run flags (shared by norn run and norn flow; META-GTP-FLOW piece 2)
+// the launch spec of one run from the norn run flags (norn run, and the review / audit / fix / adopt runs the CLI starts)
 function runSpec(flags, env, { project, state, locks }) {
   const ex = flags.executor;
   if (!ex) throw new RunError('--executor is required');
@@ -478,7 +476,7 @@ function runSpec(flags, env, { project, state, locks }) {
     state, locksDir: locks, executor: ex, lane: flags.lane, brief: callerPath(flags.brief), project: project?.name,
     ...(project && subdirOf(project) ? { subdir: subdirOf(project) } : {}),   // a monorepo project: the scope guard keeps a run without Scope: inside it
     worktree: flags.worktree || late(project?.lane_defaults?.worktree) || briefMergeWt(flags, callerPath(flags.brief)), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
-    after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), epic: flags.epic, priority: flags.priority,
+    after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), priority: flags.priority,
     caller: flags.as || env.META_ROLE,   // META-CONTROLLER C4: a check-in's run on a held lane is refused (runs.heldRefusal)
     parent: flags.parent, via: flags.via, stage: flags.stage, round: flags.round === undefined ? undefined : Number(flags.round), budgetMin: flags['budget-min'] === undefined ? undefined : Number(flags['budget-min']),
     profile: parts.profile, cls: parts.cls, workPolicy: parts.workPolicy, agent: parts.agent, model: parts.model, effort: parts.effort,
@@ -1422,8 +1420,6 @@ Every day:
 
 Plan and land work:
   norn lane                        a new lane: its worktree / branch (--task: an owner directive + its first brief)
-  norn flow                        start / resume a multi-step flow
-  norn epic                        group runs and deliverables under one goal
   norn crew                        the dwarves who take the worker runs: list, pin to a lane, retire, recall
   norn road                        the roadmap: themes, items, derived status, audit
   norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
@@ -1477,7 +1473,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, collide: COLLIDE_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, crew: CREW_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, collide: COLLIDE_USAGE, proposal: PROPOSAL_USAGE, asks: ASKS_USAGE, pause: PAUSE_USAGE, resume: RESUME_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, size: SIZE_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     claim: CLAIM_USAGE, sync: SYNC_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1533,7 +1529,6 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'claim') return claimCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'sync') return syncCmd(argv.slice(1), env, out, err);
-  if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'crew') return crewCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
@@ -1544,7 +1539,6 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'resume') return pauseCmd(argv.slice(1), env, out, err, { resume: true });
   if (argv[0] === 'adopt') return adoptCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'init') return initCmd(argv.slice(1), env, out, err);
-  if (argv[0] === 'flow') return flowCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'ready') return readyCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'plan') return planCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'instructions') return instructionsCmd(argv.slice(1), env, out, err);
@@ -1656,9 +1650,9 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
 }
 
 // ---------- META-GTP-DAG piece 3: norn ready - every queued run, ready | blocked + its unmet terms (the fill's own walk, dry; read-only) ----------
-const READY_USAGE = 'norn ready [--json] [--epic EP-n] [--project F | --state D] [--locks D]';
+const READY_USAGE = 'norn ready [--json] [--project F | --state D] [--locks D]';
 // ---------- META-GTP-MERGEQ: norn mergeq - the merge queue (MR score order; code only, no LLM) ----------
-const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority / epic, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; else the mechanical landing: merge the top clean pushed row in a merge worktree, run the quick check (syntax + its changed test files), open its PR - a conflict, red check or slop block queues its MERGE run; --batching = the kill switch)';
+const MQ_USAGE = 'norn mergeq [--json] [--update | --run | --batching on|off --why W] [--project F] [--state D] [--locks D]    (DONE-not-merged deliverables in Gas Town MR-score order: score, priority, gate kind door | batch | stage, merge rehearsal, behind, target; --update merges main into every idle branch behind it and pushes - never a force-push; --run = --update + one batch where merge.gate.fast: build mq/batch-<n>, gate, retry once, bisect, the MERGE brief / fix ask; else the mechanical landing: merge the top clean pushed row in a merge worktree, run the quick check (syntax + its changed test files), open its PR - a conflict, red check or slop block queues its MERGE run; --batching = the kill switch)';
 function mergeqCmd(argv, env, out, err) {
   try {
     const flags = {};
@@ -1727,20 +1721,14 @@ function readyCmd(argv, env, out, err) {
     for (let i = 0; i < argv.length; i++) {
       const a = argv[i];
       if (a === '--json') { flags.json = true; continue; }
-      if (!['--epic', '--project', '--state', '--locks'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (!['--project', '--state', '--locks'].includes(a)) throw new RunError(`unexpected ${a}`);
       if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
     }
     const { state } = where(flags, env);
-    let rows = readiness(state);
-    if (flags.epic) {
-      const ep = loadEpics(state)[flags.epic];
-      if (!ep) throw new RunError(`${flags.epic} does not exist`);
-      const members = new Set(epicMembers(ep));
-      rows = rows.filter(r => r.epic === flags.epic || members.has(r.id));
-    }
+    const rows = readiness(state);
     if (flags.json) { out(JSON.stringify(rows, null, 1)); return 0; }
-    for (const r of rows) out(`${r.id}  lane ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''}  ${r.priority ?? '-'}${r.epic ? ' ' + r.epic : ''}  ${readyWords(r)}`);
+    for (const r of rows) out(`${r.id}  lane ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''}  ${r.priority ?? '-'}  ${readyWords(r)}`);
     if (!rows.length) out('no queued run');
     return 0;
   } catch (e) {
@@ -1995,69 +1983,6 @@ function doneSlop(state, run, out, err) {
   out(`${run} DONE refused: ${c.open.length} open slop BLOCK finding(s) on ${c.branch}, no result written. Fix them, commit, and run \`norn done\` again.`);
   return true;
 }
-// ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
-const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P4] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
-const FLOW_FLAGS = ['project', 'state', 'locks', 'machine', 'budget', 'as', 'var*', 'executor', 'priority', 'flows-dir', 'briefs-dir', 'dry-run!', 'json!', 'no-tick!'];
-function flowCmd(argv, env, out, err) {
-  try {
-    const flags = { var: [] }, pos = [];
-    for (let i = 0; i < argv.length; i++) {
-      const a = argv[i];
-      if (!a.startsWith('--')) { pos.push(a); continue; }
-      const k = FLOW_FLAGS.find(x => x.replace(/[!*]$/, '') === a.slice(2));
-      if (!k) throw new RunError(`unknown flag ${a}`);
-      if (k.endsWith('!')) { flags[a.slice(2)] = true; continue; }
-      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
-      if (k.endsWith('*')) flags[a.slice(2)].push(argv[++i]); else flags[a.slice(2)] = argv[++i];
-    }
-    const [sub, name, ...more] = pos;
-    if (!['start', 'status', 'resume'].includes(sub)) throw new RunError(sub ? `unknown subcommand ${sub}` : 'missing subcommand');
-    if (!name) throw new RunError(`${sub} needs ${sub === 'start' ? 'a flow name' : 'an EP-n'}`);
-    if (more.length) throw new RunError(`unexpected ${more[0]}`);
-    const given = {};
-    for (const kv of flags.var) { const m = kv.match(/^(\w+)=([\s\S]*)$/); if (!m) throw new RunError(`--var ${kv}: want k=v`); given[m[1]] = m[2]; }
-    const { project, state, locks } = where(flags, env);
-    const dir = flags['flows-dir'] || FLOWS_DIR, root = metaRoot(env);
-    const ctx = { briefs_dir: flags['briefs-dir'] || project?.briefs_dir || path.join(state, 'briefs'), norn: `node "${fwd(root)}/engine/bin/norn.mjs"`, project };
-    const ov = flags.executor;
-    const launch = (s, { after, brief, epic, flow }) => {
-      const rf = { executor: ov || s.executor, lane: s.lane, brief, worktree: s.worktree, notes: s.notes, stage: s.stage, 'budget-min': String(s.budget_min),
-        agent: s.agent, model: ov ? undefined : s.model, effort: ov ? undefined : s.effort, machine: flags.machine, budget: flags.budget, 'no-tick': flags['no-tick'] };
-      const o = { ...runSpec(rf, env, { project, state, locks }), after, epic, flow };
-      return startRun(after.length ? o : { ...o, queue: true });   // no need = starts at once (a full cap / the usage guard queues it)
-    };
-    const row = s => `  ${s.id}  ${s.run ?? '-'}  ${s.run ? (s.queued ? `QUEUED (${s.why})` : 'STARTED') : 'dry'}${s.after.length ? `  after ${s.after.join(',')}` : ''}  ${fwd(s.brief)}`;
-    const fills = () => { if (!flags['dry-run']) for (const q of fillAll(state)) out(fillWords(q, path.basename(state))); };
-    if (sub === 'start') {
-      const by = flags.as || env.META_ROLE;
-      if (!by && !flags['dry-run']) throw new RunError('no role: pass --as <role> or set META_ROLE');
-      const r = startFlow(loadFlow(name, { dir }), given, { state, by, ctx, priority: flags.priority, dryRun: flags['dry-run'], launch });
-      out(`${r.epic ?? '(dry run)'} flow ${name} ${r.priority}: ${r.title}`);
-      for (const s of r.steps) out(row(s));
-      fills();
-      return 0;
-    }
-    if (sub === 'status') {
-      const s = flowStatus(state, name, { dir });
-      const { f: _f, ...rest } = s;
-      if (flags.json) { out(JSON.stringify(rest, null, 1)); return 0; }
-      out(`${s.epic} flow ${s.flow} ${s.state}: ${s.title}  ${s.steps.filter(x => ['done', 'passed'].includes(x.state)).length}/${s.steps.length}${s.done ? '  DONE' : ''}`);
-      for (const x of s.steps) out(`  ${x.id}  ${x.run ?? '-'}  ${x.state}${x.why && x.state === 'gone' ? `: ${x.why}` : ''}${x.ask_q ? ` (${x.ask_q})` : ''}  ${x.title}`);
-      return 0;
-    }
-    const r = resumeFlow(state, name, given, { dir, ctx, launch, dryRun: flags['dry-run'] });
-    if (!r.target) { out(`${name}: nothing to resume (no STOPPED / withdrawn step)`); return 0; }
-    out(`${name} resume from ${r.target}${r.dry ? ' (dry run)' : ''}`);
-    for (const s of r.steps) out(r.dry ? `  ${s.id}` : row(s));
-    fills();
-    return 0;
-  } catch (e) {
-    if (e instanceof RunError || e instanceof FlowError || e instanceof EpicError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + FLOW_USAGE); return 2; }
-    if (e instanceof RunRefused) { out('REFUSED: ' + e.message); return e.code; }
-    if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
-    throw e;
-  }
-}
 
 // ---------- DWARVES S1: norn crew (the machine's dwarves, crew.mjs): list | show | pin | unpin | retire | recall ----------
 // Each act writes its crew event and a DEC by the caller (dwarf in its links) under the crew lock; retire drops the pins in the same DEC.
@@ -2132,69 +2057,6 @@ function pinTarget(state, lane) {
   const dir = path.join(path.dirname(path.resolve(state)), m[1]);
   if (!fs.existsSync(path.join(dir, 'records.jsonl'))) throw new RunError(`no project ${m[1]} on this machine (no state dir ${fwd(dir)})`);
   if (!loadState(dir).items['L:' + m[2]]) throw new RunError(`project ${m[1]} has no lane ${m[2]}`);
-}
-
-// ---------- META-GTP-DAG piece 2: norn epic add | member | close | show | list (records in epics.jsonl; done is derived) ----------
-const EPIC_USAGE = 'norn epic add --title T --priority P0|P1|P2|P3 [--members RUN-n,DLV-n] [--integration-branch B] | member EP-n [--add ids] [--remove ids] | close EP-n [--why W] | show EP-n [--json] | list [--open] [--json]    [--project F | --state D] [--as role]';
-const EPIC_FLAGS = ['project', 'state', 'as', 'title', 'priority', 'members', 'integration-branch', 'add', 'remove', 'why', 'json!', 'open!'];
-function epicCmd(argv, env, out, err) {
-  try {
-    const flags = {}, pos = [];
-    for (let i = 0; i < argv.length; i++) {
-      const a = argv[i];
-      if (!a.startsWith('--')) { pos.push(a); continue; }
-      const k = EPIC_FLAGS.find(x => x.replace(/!$/, '') === a.slice(2));
-      if (!k) throw new RunError(`unknown flag ${a}`);
-      if (k.endsWith('!')) { flags[a.slice(2)] = true; continue; }
-      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
-      flags[a.slice(2)] = argv[++i];
-    }
-    const { state } = where(flags, env);
-    const [sub, id, ...more] = pos;
-    if (more.length) throw new RunError(`unexpected ${more[0]}`);
-    const ids = v => (v ? v.split(',').map(x => x.trim()).filter(Boolean) : []);
-    const fmt = s => `${s.id}  ${s.state}  ${s.priority}  ${s.members.filter(m => m.done).length}/${s.members.length}${s.done ? '  DONE' : ''}  ${s.title}`;
-    if (sub === 'list') {
-      if (id) throw new RunError(`unexpected ${id}`);
-      const ev = makeEval(state);
-      const rows = Object.values(loadEpics(state)).filter(e => !flags.open || e.state === 'open').map(e => epicStatus(state, e, { ev }));
-      if (flags.json) out(JSON.stringify(rows, null, 1)); else for (const r of rows) out(fmt(r));
-      return 0;
-    }
-    if (sub === 'show') {
-      const it = id && loadEpics(state)[id];
-      if (!it) throw new RunError(id ? `${id} does not exist` : 'show needs an EP-n');
-      const s = epicStatus(state, it);
-      if (flags.json) { out(JSON.stringify(s, null, 1)); return 0; }
-      out(`${s.id} ${s.state} ${s.priority} ${s.title}${s.integration_branch ? ` (integration ${s.integration_branch})` : ''}: ${s.done ? 'DONE' : 'not done'}`);
-      for (const m of s.members) out(`  ${m.id}  ${m.done ? 'done' : m.gone ? `gone: ${m.gone}` : 'open'}`);
-      return 0;
-    }
-    const by = flags.as || env.META_ROLE;
-    if (!['add', 'member', 'close'].includes(sub)) throw new RunError(sub ? `unknown subcommand ${sub}` : 'missing subcommand');
-    if (!by) throw new RunError('no role: pass --as <role> or set META_ROLE');
-    if (sub === 'add') {
-      if (id) throw new RunError(`unexpected ${id}`);
-      const members = ids(flags.members);
-      checkMembers(state, members);
-      const data = { title: flags.title, priority: flags.priority, members, ...(flags['integration-branch'] ? { integration_branch: flags['integration-branch'] } : {}) };
-      out(record(state, { kind: 'epic', ev: 'create', by, data }, { views: false }).id);
-      return 0;
-    }
-    if (!id) throw new RunError(`${sub} needs an EP-n`);
-    if (sub === 'close') { record(state, { kind: 'epic', ev: 'close', id, by, data: flags.why ? { why: flags.why } : {} }, { views: false }); out(`${id} closed`); return 0; }
-    const add = ids(flags.add), remove = ids(flags.remove);
-    if (!add.length && !remove.length) throw new RunError('member needs --add and / or --remove');
-    checkMembers(state, add);
-    if (add.length) record(state, { kind: 'epic', ev: 'add', id, by, data: { members: add } }, { views: false });
-    if (remove.length) record(state, { kind: 'epic', ev: 'remove', id, by, data: { members: remove } }, { views: false });
-    out(`${id} members ${epicMembers(loadEpics(state)[id]).join(',') || '(none)'}`);
-    return 0;
-  } catch (e) {
-    if (e instanceof RunError || e instanceof EpicError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + EPIC_USAGE); return 2; }
-    if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
-    throw e;
-  }
 }
 
 // ---------- META-ROADMAP S1: norn road (roadmap records in roadmap.jsonl; status is derived, never typed; engine/lib/roadmap.mjs) ----------

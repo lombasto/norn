@@ -53,12 +53,13 @@ test('item records refuse a typed status, bad links, a drop without a ref, a par
   refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: t, phase: 'past' }), /is derived/);
   refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: t, links: ['RUN-3'] }), /link/);
   refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: t, links: ['run:abc'] }), /link/);
+  refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: t, links: ['ep:EP-1'] }), /link/);   // epics are gone
   refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: t, horizon: 'soon' }), /horizon/);
   refused(() => rec(s, 'create', { title: 'x', kind: 'item' }), /parent/);
   refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: 'RM-9' }), /RM-9 does not exist/);
   refused(() => rec(s, 'create', { title: 'x', kind: 'theme', parent: t }), /theme/);
   refused(() => rec(s, 'create', { title: 'x', kind: 'item', parent: t, legacy: { word: 'SHIPPED' } }), /legacy/);
-  const a = rec(s, 'create', { title: 'a', kind: 'item', parent: t, links: ['dir:DIR-1', 'lane:x-y', 'run:RUN-2', 'dlv:DLV-3', 'ep:EP-1', 'q:Q-4', 'dec:DEC-5', 'branch:feat/x', 'sha:abc1234', 'doc:docs/a b.md'] }).id;
+  const a = rec(s, 'create', { title: 'a', kind: 'item', parent: t, links: ['dir:DIR-1', 'lane:x-y', 'run:RUN-2', 'dlv:DLV-3', 'q:Q-4', 'dec:DEC-5', 'branch:feat/x', 'sha:abc1234', 'doc:docs/a b.md'] }).id;
   refused(() => rec(s, 'drop', { why: 'w' }, a), /ref/);
   refused(() => rec(s, 'drop', { why: 'w', ref: 'RUN-1' }, a), /ref/);
   refused(() => rec(s, 'move', { parent: a }, t), /theme/);
@@ -117,7 +118,7 @@ const byId = xs => Object.fromEntries(xs.map(x => [x.id, x]));
 const dlvRow = (id, branch, state, { lane = null, days = 2, superseded = false } = {}) => ({ id, branch, lane, state, target: 'install', record_state: superseded ? 'superseded' : 'open',
   days, done_utc: iso(NOW - days * DAY), merges: [], ...(superseded ? { superseded: { by: 'abc1234' } } : {}) });
 const W = (o = {}) => worldOf({ now: NOW, items: byId(o.items || []), dlv: o.dlv || [], branches: o.branches || {}, shas: o.shas || {}, docs: o.docs || [],
-  hasInstall: !!o.install, epics: o.epics || {} });
+  hasInstall: !!o.install });
 const node = (links = [], extra = {}) => ({ id: 'RM-2', kind: 'item', title: 'x', note: '', links, stages: [], horizon: null, caveat: null, legacy: null,
   state: 'open', dropped: null, parent: 'RM-1', created: iso(NOW - 9 * DAY), ...extra });
 const st = (n, w) => { const d = derive(n, w); return [d.row, d.status, d.phase]; };
@@ -189,8 +190,6 @@ test('derive rows 10-14: runs not all DONE = building; all DONE and no branch = 
   // checkin runs and withdrawn / filled queue entries are never the item's work
   assert.deepEqual(st(node(['lane:a']), W({ items: [runRec('RUN-11', 'a', { state: 'running', kind: 'checkin' })] })).slice(1), ['idea', 'future']);
   assert.deepEqual(st(node(['lane:a']), W({ items: [runRec('RUN-12', 'a', { state: 'withdrawn' })] })).slice(1), ['idea', 'future']);
-  // an epic link brings its member runs
-  assert.deepEqual(st(node(['ep:EP-1']), W({ items: [runRec('RUN-13', 'b', { state: 'running' })], epics: { 'EP-1': { state: 'open', title: 'e', members: ['RUN-13'] } } })).slice(0, 2), [2, 'building']);
 });
 
 test('derive spans (S2 time line): one stretch per started run, oldest first, start -> end (live: open), the run word; first = the oldest start', () => {
@@ -232,19 +231,18 @@ test('D2 contradiction: the legacy word disagrees with the derived status, or th
   assert.deepEqual(flagsOf(node(['lane:a'], { caveat: { text: 'default off', by: 'checkin', ts: iso(NOW - DAY) } }), W({ items: [r] })).drift, []);
 });
 
-test('D3 unplaced: recent / live lanes, DONE-not-merged DLVs, active directives and open epics that no item links', () => {
+test('D3 unplaced: recent / live lanes, DONE-not-merged DLVs and active directives that no item links', () => {
   const items = [runRec('RUN-1', 'a', { start: 1, end: 0.5 }), runRec('RUN-2', 'u', { state: 'running', start: 0.2 }), runRec('RUN-3', 'old', { start: 12, end: 10 }),
     runRec('RUN-4', 'ck', { state: 'running', kind: 'checkin' }), runRec('RUN-5', 'kid', { state: 'running', parent: 'RUN-2' }), runRec('RUN-6', 'byrun', { state: 'running' }),
     recd('DIR-1', 'directive', 'active', { text: 'do the thing' }), recd('DIR-2', 'directive', 'active'), recd('DIR-3', 'directive', 'done')];
   const dlv = [dlvRow('DLV-1', 'feat/x', 'done', { lane: 'zz' }), dlvRow('DLV-2', 'feat/a', 'done', { lane: 'a' }), dlvRow('DLV-3', 'feat/y', 'merged'), dlvRow('DLV-4', 'feat/z', 'done', { superseded: true })];
-  const epics = { 'EP-1': { state: 'open', title: 'e1', members: [] }, 'EP-2': { state: 'closed', title: 'e2', members: [] }, 'EP-3': { state: 'open', title: 'e3', members: [] } };
-  const w = W({ items, dlv, epics });
-  const nodes = [node(['lane:a', 'dir:DIR-2', 'run:RUN-6']), node(['ep:EP-3'], { state: 'dropped', dropped: { why: 'w', ref: 'DEC-1' } })];
+  const w = W({ items, dlv });
+  const nodes = [node(['lane:a', 'run:RUN-6']), node(['dir:DIR-2'], { state: 'dropped', dropped: { why: 'w', ref: 'DEC-1' } })];
   const u = unplacedOf(nodes, w);
-  assert.deepEqual(u.map(x => x.id).sort(), ['DIR-1', 'DLV-1', 'EP-1', 'L:u'].sort());
+  assert.deepEqual(u.map(x => x.id).sort(), ['DIR-1', 'DLV-1', 'L:u'].sort());
   assert.match(u.find(x => x.id === 'L:u').why, /live now/);
   assert.match(u.find(x => x.id === 'DLV-1').why, /feat\/x DONE 2 d, not on main/);
-  assert.deepEqual(unplacedOf([node(['lane:u', 'dlv:DLV-1', 'dir:DIR-1', 'dir:DIR-2', 'ep:EP-1', 'ep:EP-3', 'lane:a', 'lane:byrun'])], w), []);
+  assert.deepEqual(unplacedOf([node(['lane:u', 'dlv:DLV-1', 'dir:DIR-1', 'dir:DIR-2', 'lane:a', 'lane:byrun'])], w), []);
 });
 
 test('D4 idle: a present item with no run for 7 d (horizon now: 3 d); live, queued and future items are never idle', () => {
@@ -258,10 +256,10 @@ test('D4 idle: a present item with no run for 7 d (horizon now: 3 d); live, queu
   assert.equal(flagsOf(node(['dlv:DLV-1']), W({ dlv: [dlvRow('DLV-1', 'feat/x', 'done', { days: 9 })] })).idle, 9, 'no run: the DLV DONE date counts');
 });
 
-test('D5 link gone: a linked branch / record / sha / doc that does not exist', () => {
+test('D5 link gone: a linked branch / record / sha / doc that does not exist, and an old ep: link (epics are gone)', () => {
   const w = W({ items: [recd('DIR-1', 'directive', 'active'), recd('L:a', 'lane', 'active', { name: 'a' }), runRec('RUN-1', 'b')], dlv: [dlvRow('DLV-1', 'feat/x', 'done')],
-    branches: un, shas: { abc1234: true }, docs: ['SPEC.md'], epics: { 'EP-1': { state: 'open', members: [] } } });
-  const ok = ['dir:DIR-1', 'lane:a', 'lane:b', 'run:RUN-1', 'dlv:DLV-1', 'ep:EP-1', 'branch:feat/u', 'branch:feat/x', 'sha:abc1234', 'doc:SPEC.md'];
+    branches: un, shas: { abc1234: true }, docs: ['SPEC.md'] });
+  const ok = ['dir:DIR-1', 'lane:a', 'lane:b', 'run:RUN-1', 'dlv:DLV-1', 'branch:feat/u', 'branch:feat/x', 'sha:abc1234', 'doc:SPEC.md'];
   assert.deepEqual(flagsOf(node(ok), w).gone, []);
   const bad = ['dir:DIR-9', 'dec:DEC-9', 'q:Q-9', 'lane:zz', 'run:RUN-9', 'dlv:DLV-9', 'ep:EP-9', 'branch:feat/gone', 'sha:fff9999', 'doc:NOPE.md'];
   assert.deepEqual(flagsOf(node(bad), w).gone, bad);
@@ -328,7 +326,7 @@ test('checkLinks refuses a link to something that does not exist (records, lanes
   assert.throws(() => checkLinks(s, ['branch:feat/x']), e => e instanceof RoadmapError && /repo/.test(e.message));
 });
 
-test('C8: a deliverables view or an epics read that fails is that error, never "every dlv: / ep: link is gone"', () => {
+test('C8: a deliverables view that fails is that error, never "every dlv: link is gone"', () => {
   const s = seedState(), repo = mkTmp('meta-road-repo-');
   const g = (...a) => spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8', windowsHide: true }).stdout.trim();
   g('init', '-q', '-b', 'main'); fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); g('add', '-A'); g('commit', '-qm', 'init');
@@ -337,8 +335,6 @@ test('C8: a deliverables view or an epics read that fails is that error, never "
   const real = makeGit(), broken = (r, args, o) => { if (args[0] === 'cherry') throw new Error('git cherry: boom'); return real(r, args, o); };
   assert.throws(() => checkLinks(s, [`dlv:${id}`], { git: broken }), e => !(e instanceof RoadmapError) && /git cherry: boom/.test(e.message));
   checkLinks(s, [`dlv:${id}`]);   // the same link with a working git: valid
-  fs.appendFileSync(path.join(s, 'epics.jsonl'), '{"torn"');
-  assert.throws(() => checkLinks(s, ['ep:EP-1']), e => !(e instanceof RoadmapError) && /integrity/.test(e.message));
 });
 
 // ---------- piece 5: norn road (SPEC sec. 3) ----------

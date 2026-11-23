@@ -9,7 +9,6 @@ import { record, readEvents, recordsFile, loadState, loadShared, homeOf, laneIdI
 import { deliverablesView, deliverableConfig, lastInstall, mergeTimes } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { landedOf } from './dlvmerge.mjs';
-import { loadEpics, epicMembers } from './epics.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
 import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
 
@@ -85,7 +84,7 @@ export const childrenOf = (R, id) => [...(R.kids[id || ''] || [])];
 const DAY = 864e5;
 export const PHASE = { shipped: 'past', dropped: 'past', building: 'present', waiting: 'present', built: 'present', merged: 'present',
   queued: 'future', planned: 'future', idea: 'future' };
-export const LINK_KINDS = ['dir', 'dec', 'q', 'lane', 'run', 'dlv', 'ep', 'branch', 'sha', 'doc'];
+export const LINK_KINDS = ['dir', 'dec', 'q', 'lane', 'run', 'dlv', 'branch', 'sha', 'doc'];
 export const parseLink = t => { const i = String(t).indexOf(':'); return { kind: t.slice(0, i), id: t.slice(i + 1) }; };
 export function linksOf(links = []) {
   const L = Object.fromEntries(LINK_KINDS.map(k => [k, []]));
@@ -106,26 +105,25 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : w.endsWith('h') ? 'es' : 's'
  * The world derive() reads, from plain parts (pure; world() fills it from the state dir, deliverables and git).
  * parts: { now (ms), items (loadState items: questions, decisions, directives, lanes, runs), dlv (deliverablesView rows),
  *   branches: { name: { exists, merged, installed, ref_date } } | fn(name) -> that | null, shas: { sha: onMain } | fn(sha) -> bool | null (unknown),
- *   docs: [paths] | fn(path) -> bool, hasInstall (the target is an install: deliverables receipts set), epics: { EP-n: { state, title, members } },
+ *   docs: [paths] | fn(path) -> bool, hasInstall (the target is an install: deliverables receipts set),
  *   idle: { days (default 7), now (default 3) } }
  */
 // home = the state dir's home id (RM-46 S1a): a lane link x names L:<home>/x there
-export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {}, policy = {}, home = null } = {}) {
+export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, idle = {}, policy = {}, home = null } = {}) {
   const fnOf = (v, miss) => typeof v === 'function' ? v : Array.isArray(v) ? (k => v.includes(k)) : (k => (k in v ? v[k] : miss));
   // OOTB-R2 N-4: a fake-executor run is a rehearsal - never evidence for the derived status (as deliverables' NOT_DELIVERING)
   const runs = Object.values(items).filter(i => i.kind === 'run' && i.data?.kind !== 'checkin' && i.data?.executor !== 'fake');
   const group = key => { const m = {}; for (const d of dlv) if (d[key]) (m[d[key]] ||= []).push(d); return m; };
   return { now, home, lane: n => laneIdIn(n, home), items, runs, dlv, dlvById: Object.fromEntries(dlv.map(d => [d.id, d])), dlvByBranch: group('branch'), dlvByLane: group('lane'),
-    branch: fnOf(branches, null), sha: fnOf(shas, null), doc: fnOf(docs, false), hasInstall, epics, idle: { days: 7, now: 3, ...idle }, stuck: stuckPolicy(policy) };   // META-CATCH S1: policy.stuck
+    branch: fnOf(branches, null), sha: fnOf(shas, null), doc: fnOf(docs, false), hasInstall, idle: { days: 7, now: 3, ...idle }, stuck: stuckPolicy(policy) };   // META-CATCH S1: policy.stuck
 }
 
-/** the runs, DLVs and branches an item's links reach (a lane brings its runs + DLVs, an epic its member runs + DLVs) */
+/** the runs, DLVs and branches an item's links reach (a lane brings its runs + DLVs) */
 export function reach(node, W) {
   const L = linksOf(node.links);
-  const members = L.ep.flatMap(id => W.epics[id]?.members || []);
-  const runIds = new Set([...L.run, ...members.filter(m => /^RUN-/.test(m))]);
+  const runIds = new Set(L.run);
   const runs = W.runs.filter(r => (L.lane.includes(r.data?.lane) || runIds.has(r.id)) && !['withdrawn', 'filled'].includes(r.state));
-  const dlvs = new Set([...L.dlv, ...members.filter(m => /^DLV-/.test(m))].map(id => W.dlvById[id]).filter(Boolean));
+  const dlvs = new Set(L.dlv.map(id => W.dlvById[id]).filter(Boolean));
   for (const b of L.branch) for (const d of W.dlvByBranch[b] || []) dlvs.add(d);
   for (const l of L.lane) for (const d of W.dlvByLane[l] || []) dlvs.add(d);
   const br = new Map();
@@ -216,14 +214,13 @@ export const LEGACY_WORDS = { "REQUESTED": 'idea', "SPEC'D": 'planned', "BUILDIN
   // META-ADOPT A1: the generic words a hand-kept ROADMAP / TODO uses (the importer keeps them as legacy.word, a claim)
   "IN PROGRESS": 'building', "WIP": 'building', "PLANNED": 'planned', "DONE": 'shipped' };
 
-/** D5: the links that point at nothing (a record, lane, run, DLV, epic, branch, sha or doc that does not exist) */
+/** D5: the links that point at nothing (a record, lane, run, DLV, branch, sha or doc that does not exist; an old ep: link too) */
 export function goneLinks(links, W) {
   return (links || []).filter(t => {
     const { kind, id } = parseLink(t);
     if (['dir', 'dec', 'q', 'run'].includes(kind)) return !W.items[id];
     if (kind === 'lane') return !W.items[W.lane(id)] && !W.runs.some(r => r.data?.lane === id);
     if (kind === 'dlv') return !W.dlvById[id];
-    if (kind === 'ep') return !W.epics[id];
     if (kind === 'branch') { if (W.dlvByBranch[id]) return false; const g = W.branch(id); return !g || (!g.exists && !g.merged); }
     if (kind === 'sha') return W.sha(id) === null || W.sha(id) === undefined;
     if (kind === 'doc') return !W.doc(id);
@@ -247,14 +244,13 @@ export function detect(node, d, W) {
   return { claimed, drift, idle, gone: goneLinks(node.links, W) };
 }
 
-/** D3: live / recent (3 d) lanes, DONE-not-merged DLVs, active directives and open epics that no item (open or dropped) links */
+/** D3: live / recent (3 d) lanes, DONE-not-merged DLVs and active directives that no item (open or dropped) links */
 export function unplacedOf(nodes, W) {
   const L = linksOf(nodes.flatMap(n => n.links || []));
-  const members = L.ep.flatMap(id => W.epics[id]?.members || []);
-  const runIds = new Set([...L.run, ...members.filter(m => /^RUN-/.test(m))]);
+  const runIds = new Set(L.run);
   const lanes = new Set(L.lane);
   for (const r of W.runs) if (runIds.has(r.id) && r.data?.lane) lanes.add(r.data.lane);
-  const dlvs = new Set([...L.dlv, ...members.filter(m => /^DLV-/.test(m))]), brs = new Set(L.branch);
+  const dlvs = new Set(L.dlv), brs = new Set(L.branch);
   const out = [], byLane = {};
   for (const r of W.runs) {
     if (r.data?.parent || !r.data?.lane || ['withdrawn', 'filled'].includes(r.state)) continue;   // a child run is its parent's work
@@ -266,7 +262,6 @@ export function unplacedOf(nodes, W) {
     out.push({ kind: 'dlv', id: d.id, why: `${d.branch} DONE ${Number(d.days ?? 0).toFixed(0)} d, not on main` });
   for (const i of Object.values(W.items)) if (i.kind === 'directive' && i.state === 'active' && !L.dir.includes(i.id))
     out.push({ kind: 'dir', id: i.id, why: String(i.data?.text ?? '').replace(/\s+/g, ' ').slice(0, 90) });
-  for (const [id, e] of Object.entries(W.epics)) if (e.state === 'open' && !L.ep.includes(id)) out.push({ kind: 'ep', id, why: String(e.title ?? '') });
   return out;
 }
 
@@ -307,23 +302,19 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
   };
   const docs = p => fs.existsSync(path.isAbsolute(p) ? p : path.join(project.root || path.dirname(path.resolve(stateDir)), p));
   rows = [...rows, ...copyItems(stateDir, 'deliverable').map(dlvCopyRow)];
-  const W = worldOf({ now, items: { ...st.items, ...Object.fromEntries(away.map(r => [r.id, r])) }, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy, home: homeOf(stateDir)?.id });
+  const W = worldOf({ now, items: { ...st.items, ...Object.fromEntries(away.map(r => [r.id, r])) }, dlv: rows, branches, shas, docs, hasInstall, idle, policy: project.policy, home: homeOf(stateDir)?.id });
   W.repo = cfg.repo || null;
   return W;
 }
 
-function epicsOf(stateDir) {
-  return Object.fromEntries(Object.entries(loadEpics(stateDir)).map(([id, e]) => [id, { state: e.state, title: e.data.title, members: epicMembers(e) }]));
-}
-
-/** META-ROADMAP S3: the audit's Unplaced list (D3) for the digest - no git (lanes, DLV rows, directives, epics); null = no roadmap yet */
+/** META-ROADMAP S3: the audit's Unplaced list (D3) for the digest - no git (lanes, DLV rows, directives); null = no roadmap yet */
 export function unplacedNow(stateDir, { now = Date.now(), items, dlv = [] } = {}) {
   const nodes = Object.values(hereLinks(loadRoadmap(stateDir), homeOf(stateDir)).items);
   if (!nodes.length) return null;
-  return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, epics: epicsOf(stateDir), home: homeOf(stateDir)?.id }));
+  return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, home: homeOf(stateDir)?.id }));
 }
 
-/** refuse links to what does not exist (SPEC sec. 1: the checkRefs rule epics use); a branch / sha needs the project's repo */
+/** refuse links to what does not exist (SPEC sec. 1); a branch / sha needs the project's repo */
 export function checkLinks(stateDir, links, { project = {}, git, now } = {}) {
   if (!links?.length) return;
   const W = world({ stateDir, project, git, now });
@@ -333,7 +324,7 @@ export function checkLinks(stateDir, links, { project = {}, git, now } = {}) {
 }
 
 // ---------- the tree (themes -> items -> stages -> runs) ----------
-const SIG_KINDS = ['question', 'run', 'deliverable', 'epic', 'item'];
+const SIG_KINDS = ['question', 'run', 'deliverable', 'item'];
 const sigOf = stateDir => SIG_KINDS.map(k => { try { const s = fs.statSync(recordsFile(stateDir, k)); return `${s.mtimeMs}:${s.size}`; } catch { return '-'; } }).join('|');
 
 /** the tree from a structure fold + a world (pure) */
@@ -420,11 +411,11 @@ export function renderAudit(tr) {
 }
 
 // ---------- norn road apply: a whole plan as ONE batch (one lock) ----------
-const SHORT = { lanes: 'lane', dir: 'dir', dec: 'dec', q: 'q', runs: 'run', dlv: 'dlv', epics: 'ep', branches: 'branch', shas: 'sha', docs: 'doc' };
+const SHORT = { lanes: 'lane', dir: 'dir', dec: 'dec', q: 'q', runs: 'run', dlv: 'dlv', branches: 'branch', shas: 'sha', docs: 'doc' };
 export const refTerm = ref => (/^DIR-/.test(ref || '') ? ['dir:' + ref] : /^DEC-/.test(ref || '') ? ['dec:' + ref] : []);
 /**
  * plan = { themes: [{ title, note?, links?, items: [node] }] }, node = { title, note?, horizon?, stages?, links? (kind:id terms) or the
- * short lists lanes / dir / dec / q / runs / dlv / epics / branches / shas / docs, caveat?, dropped? { why, ref }, items? [node] }
+ * short lists lanes / dir / dec / q / runs / dlv / branches / shas / docs, caveat?, dropped? { why, ref }, items? [node] }
  * -> { events (creates refer to each other as $n), links (to check), counts { theme, item } }. Never a status: the records refuse one.
  * META-ADOPT A1: a theme with an `id` (RM-n) is an existing theme (no create; its items go under it); a node's `legacy` (the
  * importer's claim) is written as is, with legacy_by = o.legacy_by - the records take legacy only from role migration.

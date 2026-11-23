@@ -46,9 +46,7 @@ writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of eve
 - run `RUN-n` (runs.jsonl): kind (worker | codex | cli | provider | checkin | talk | interactive | fake), project, lane, stage, round,
   executor, agent, model, effort, worktree, brief, notes, log, final, session_id, transcript, pid, supervisor_pid, budget_min,
   resume_of. end: {exit, outcome done|stopped|handoff|no-result|crash, outcome_source result (its `norn done`)|exit|none, why, summary, handoff (HANDOFF.md), usage, tokens}. review: {by, refs}.
-  A queued / started run may carry epic (EP-n) and priority (P0-P4; default: its epic's) - META-GTP-DAG.
-- epic `EP-n` (epics.jsonl, META-GTP-DAG): title, priority P0-P4, members [RUN-n | DLV-n], integration_branch optional.
-  add / remove: {members}. close: {why}. DONE is derived (every member run ended DONE via its successors, every member DLV merged).
+  A queued / started run may carry priority (P0-P4; none = P2).
 
 ## 3.4 State machines + who may move them
 | kind | states (initial first) | transitions -> allowed roles |
@@ -58,7 +56,6 @@ writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of eve
 | directive | active, done, superseded, revoked | create: owner (dashboard, talk reply `DIRECTIVE:` line, or chat via=chat). done (one-shot executed): controller, checkin with refs. supersede: controller / checkin ONLY citing a newer owner DIR/answer; owner any time. revoke: owner (dashboard delete). |
 | lane | active, parked, done, archived | create / park / unpark / done: controller, checkin. archive / unarchive: owner, controller. Parked is set by the Q that blocks it and cleared by its apply. claim {until, holder, why} / release (a hold, flag only): controller, owner - while held, a check-in write on the lane exits 5 (`norn lane claim / release`). |
 | run | running, exited, lost, killed (+ flag reviewed) | start / end / lost: launcher (supervisor), status pass (lost only, when the heartbeat is > 120 s old). kill: owner (dashboard Stop) / controller. review: checkin, controller. Agents write NO records. |
-| epic | open, closed (+ derived done) | create / remove / close: controller, checkin, owner. add: those + launcher (`norn run --epic EP-n` joins the new run). |
 Not security (any local process can write the file - same as today); it is consistency + audit: every event names role + run.
 
 ## 3.5 CLI (the agents' only interface; `norn` = `node <norn install>/engine/bin/norn.mjs`, on PATH after setup)
@@ -75,9 +72,7 @@ norn rec answer Q-7 --choice a --text "<owner words>" --via chat    norn rec ans
 norn rec apply Q-7 --refs DEC-n,RUN-n     norn rec supersede DIR-2 --by DIR-3 --why "its own text: supersedes the line above"
 norn rec list [--open] [--kind Q|DEC|DIR|L] [--lane x] [--json]     norn rec show Q-7 (full history)
 norn runs [--unreviewed] [--lane x] [--json]   norn runs review RUN-n --refs DEC-n
-norn epic add --title "..." --priority P1 [--members RUN-n,DLV-n] [--integration-branch B]   norn epic member EP-1 --add RUN-n --remove DLV-n
-norn epic close EP-1 [--why W]   norn epic show EP-1 [--json]   norn epic list [--open] [--json]
-norn ready [--json] [--epic EP-1]   (each queued run: ready | blocked + its unmet terms - the fill's own walk, read-only)
+norn ready [--json]   (each queued run: ready | blocked + its unmet terms - the fill's own walk, read-only)
 norn road add --from DIR-n --theme RM-1 | link RM-2 dir:DIR-n | move RM-2 --after RM-3 --ref DEC-n | drop RM-2 --why W --ref DIR-n
 norn road show | list | audit   (the roadmap, roadmap.jsonl: structure only; status derived, never typed. Workers write none)
 norn run ... --item RM-2   norn rec add lane --name L --item RM-2   (link new work to its roadmap item)

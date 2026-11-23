@@ -1,4 +1,4 @@
-// The engine-root variable is `norn` (`${norn}` in project.json / machine.json, `{{norn}}` in flow and check-in templates).
+// The engine-root variable is `norn` (`${norn}` in project.json / machine.json, `{{norn}}` in check-in and merge templates).
 // RM-9 (Q-39): its old name `meta` is gone - an unknown variable is an error, never silently the engine root.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProject, loadMachine, portable, ConfigError } from '../engine/lib/config.mjs';
-import { renderFlow, BUILTIN_VARS } from '../engine/lib/flows.mjs';
 import { renderCheckin } from '../engine/lib/tick.mjs';
 import { renderMergeBrief } from '../engine/lib/mergebrief.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -41,12 +40,6 @@ test('machine.json: ${norn} resolves, ${meta} does not; portable() stores ${norn
   assert.equal(loadMachine(write(d, m('${norn}/projects/demo/project.json'), 'n.json'), { meta: M }).projects[0].config, '/mm/meta/projects/demo/project.json');
   assert.throws(() => loadMachine(write(d, m('${meta}/projects/demo/project.json'), 'o.json'), { meta: M }), /unknown variable \$\{meta\}/);
   assert.equal(portable(path.join(d, 'x', 'p.json'), { meta: d }), '${norn}/x/p.json');
-});
-
-test('flow templates: {{norn}} is a builtin, {{meta}} is not', () => {
-  assert.ok(BUILTIN_VARS.includes('norn')); assert.ok(!BUILTIN_VARS.includes('meta'));
-  const f = { name: 'demo', title: 'x {{norn}}', vars: {}, steps: [], order: [] };
-  assert.equal(renderFlow(f, {}, { norn: 'node "/n/norn.mjs"' }).title, 'x node "/n/norn.mjs"');
 });
 
 test('check-in pack: {{norn}} in a custom checkin_extra renders the command; {{meta}} is an unknown placeholder', () => {

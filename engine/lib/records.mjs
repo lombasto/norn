@@ -114,15 +114,6 @@ export const KINDS = {
     // DLV-MERGED-TRUTH: the owner's ruling "still open" on a deliverable Norn cannot tell is merged { why?, q? }: it reads DONE again
     still_open: { from: ['open', 'parked'], to: null, roles: [...CK, ...OWNER] },
   } },
-  // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
-  // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
-  // The launcher adds a run started / queued with `norn run --epic EP-n`.
-  epic: { prefix: 'EP-', file: 'epics', events: {
-    create: { from: null, to: 'open', roles: [...CK, ...OWNER] },
-    add: { from: ['open'], to: null, roles: [...CK, ...OWNER, 'launcher'] },
-    remove: { from: ['open'], to: null, roles: [...CK, ...OWNER] },
-    close: { from: ['open'], to: 'closed', roles: [...CK, ...OWNER] },
-  } },
   // META-GTP-MAIL piece 1 (GT-PARITY-PLAN 2.7; Gas Town: mail = a bead with an assignee, internal/mail/router.go:214-225,1113-1179):
   // a message to RUN-n | lane:L | role:checkin | role:controller. Its own file (mail.jsonl), so loadState stays as is. deliver is
   // THE compare-and-set of delivery (queued -> delivered under the log's lock): a hook and an MCP reader racing for one mail =
@@ -198,7 +189,7 @@ export const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
 export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
 // a lane is <name> (this home's) or <home>/<name> (another home's, or a home's own in an address)
 const LANE_REF = '(?:[a-z][a-z0-9]{0,15}/)?[A-Za-z0-9][A-Za-z0-9_.-]*';
-export const ITEM_LINK_RE = new RegExp(`^(?:dir:${NID('DIR')}|dec:${NID('DEC')}|q:${NID('Q')}|run:${NID('RUN')}|dlv:${NID('DLV')}|ep:${NID('EP')}`
+export const ITEM_LINK_RE = new RegExp(`^(?:dir:${NID('DIR')}|dec:${NID('DEC')}|q:${NID('Q')}|run:${NID('RUN')}|dlv:${NID('DLV')}`
   + `|lane:${LANE_REF}|branch:[A-Za-z0-9][A-Za-z0-9._/-]*|sha:[0-9a-f]{7,40}|doc:\\S.*)$`);
 export const HORIZONS = ['now', 'next', 'later'];
 // the current parent of an item record (create.parent, then the last move that set one)
@@ -224,7 +215,6 @@ export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
 export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3', 'P4'];   // Gas Town's 0-4 (bd create); P2 = the default
-export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
 const createEv = kind => CREATE_EV[kind] || 'create';
@@ -671,12 +661,6 @@ function validateData(kind, ev, d, target, st, by, home = null) {
       } else if (!/^[0-9a-f]{7,40}$/.test(d.by)) fail(`supersede --by must be a DLV-n or a commit sha (7-40 hex), got ${JSON.stringify(d.by)}`);
     }
   }
-  if (kind === 'epic') {
-    const members = m => { list(m, 'members'); for (const x of m || []) if (!EPIC_MEMBER_RE.test(x)) fail(`members: ${JSON.stringify(x)} is not a RUN-n / DLV-n id`); };
-    if (ev === 'create') { str(d.title, 'title', { max: 200 }); oneOf(d.priority, 'priority', PRIORITIES); members(d.members); str(d.integration_branch, 'integration_branch', { max: 200, req: false }); }
-    if (ev === 'add' || ev === 'remove') { members(d.members); if (!d.members?.length) fail('members: at least one id'); }
-    if (ev === 'close') str(d.why, 'why', { req: false });
-  }
   if (kind === 'mail') {
     if (ev === 'create') {
       str(d.subject, 'subject', { max: 120 }); str(d.from, 'from'); str(d.to, 'to');
@@ -696,14 +680,11 @@ function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'item') validateItem(ev, d, target, st, by);
   if (kind === 'proposal') validateProposal(ev, d, target, st);
   if (kind === 'run') {
-    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !new RegExp(`^${NID('EP')}$`).test(d.epic)) fail('epic must be an EP-n id'); }
+    if (ev === 'start' || ev === 'queue') oneOf(d.priority, 'priority', PRIORITIES, false);
     if (ev === 'start' || ev === 'queue') oneOf(d.kind, 'kind', ['worker', 'codex', 'cli', 'checkin', 'talk', 'interactive', 'fake', 'provider', 'audit']);
     if ((ev === 'start' || ev === 'queue') && d.after !== undefined && !(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string'))))
       fail('after must be a list of {kind, id, state}');
     if ((ev === 'start' || ev === 'queue') && d.inputs !== undefined) list(d.inputs, 'inputs');
-    // META-GTP-FLOW piece 2: the flow step a run is (norn flow start / resume): { name, step, vars: { k: string } }
-    if ((ev === 'start' || ev === 'queue') && d.flow !== undefined && !(d.flow && typeof d.flow.name === 'string' && typeof d.flow.step === 'string'
-      && d.flow.vars && typeof d.flow.vars === 'object' && Object.values(d.flow.vars).every(v => typeof v === 'string'))) fail('flow must be { name, step, vars: { k: string } }');
     if (ev === 'end') { oneOf(d.outcome, 'outcome', ['done', 'stopped', 'handoff', 'no-result', 'crash', 'limit', 'auth', 'nudged', ...(target?.data?.kind === 'interactive' ? ['ended'] : []),...(by === 'migration' ? ['legacy'] : [])]); if (d.exit !== null && !Number.isInteger(d.exit)) fail('exit must be an integer or null'); }
     if (ev === 'review') list(d.refs, 'refs');
     if (ev === 'resume' && !d.next === !d.refused) fail('resume needs exactly one of next / refused');
@@ -721,7 +702,7 @@ function validateData(kind, ev, d, target, st, by, home = null) {
 // sits at the root, an item under an open theme or item (never under itself); `after` names a sibling (null = first).
 function validateItem(ev, d, target, st, by) {
   for (const k of ['status', 'phase', 'progress']) if (k in d) fail(`${k} is derived from the item's links, never typed (SPEC sec. 2)`);
-  const links = v => { list(v, 'links'); for (const x of v || []) if (typeof x !== 'string' || !ITEM_LINK_RE.test(x)) fail(`link ${JSON.stringify(x)}: want dir: | dec: | q: | lane: | run: | dlv: | ep: | branch: | sha: | doc: <id>`); };
+  const links = v => { list(v, 'links'); for (const x of v || []) if (typeof x !== 'string' || !ITEM_LINK_RE.test(x)) fail(`link ${JSON.stringify(x)}: want dir: | dec: | q: | lane: | run: | dlv: | branch: | sha: | doc: <id>`); };
   const node = (id, name) => {
     const it = st.items[id];
     if (!it || it.kind !== 'item') fail(`${name} ${id} does not exist`);
@@ -895,7 +876,7 @@ function waiverGuard(stateDir, d) {
   if (!q || q.kind !== 'question') fail(`${d.q} is not a question`);
   if (!['answered', 'applied'].includes(q.state)) fail(`${d.q} is ${q.state}, not answered: a check-in waives only what the owner ruled`);
 }
-// META-GTP-MAIL piece 1: the cross-file rules of mail (the runs + epics logs are read here, under the mail log's lock).
+// the cross-file rules of mail (the runs log is read here, under the mail log's lock).
 // A run's mailbox = its id, the runs it continues (resume / queue fill / re-queue / fallback chain), lane:<its lane>, and
 // role:checkin for a check-in run; in home h (RM-46 S1a) lane:h/<lane> and role:checkin@h.
 const CHAIN = ['resume_of', 'from_queue', 'requeue_of', 'fallback_of'];
@@ -907,19 +888,6 @@ export function mailboxOf(runs, id, home = null) {
   if (me.data.lane) box.add(laneAddrIn(me.data.lane, home));
   if (me.data.kind === 'checkin') box.add(roleAddrIn('checkin', home));
   return box;
-}
-// the epics run `id` belongs to: members (create + add - remove, as epics.mjs epicMembers) or the run's own epic field
-function epicsOf(stateDir, runs, id) {
-  const out = new Set(runs[id]?.data.epic ? [runs[id].data.epic] : []);
-  for (const e of Object.values(fold(readEvents(recordsFile(stateDir, 'epic'))).items)) {
-    let m = [...(e.data.members || [])];
-    for (const h of e.history.slice(1)) {
-      if (h.ev === 'add') m.push(...(h.data.members || []));
-      if (h.ev === 'remove') m = m.filter(x => !(h.data.members || []).includes(x));
-    }
-    if (m.includes(id)) out.add(e.id);
-  }
-  return out;
 }
 // a run of this state dir: solo RUN-n; a home its own RUN-<home>-n (the bare home also RUN-n). Another home's run is not in this
 // state (RM-46 S1a: its existence is not checked here)
@@ -938,9 +906,8 @@ function mailGuard(stateDir, e, run, st) {
     if (e.by !== 'worker') return;
     const me = needRun();
     if (d.from !== run) fail(`from must be ${run} (a run sends as itself)`);
-    const peers = () => { const mine = epicsOf(stateDir, runs, run); return mine.size > 0 && [...epicsOf(stateDir, runs, d.to)].some(x => mine.has(x)); };
-    const ok = d.to !== run && (d.to === checkin || d.to === controller || d.to === me.data.parent || (ownRun(d.to, home) && peers()));
-    if (!ok) fail(`${run} may not mail ${d.to}: a run mails its parent, ${checkin}, ${controller} or runs of its own epic`);
+    const ok = d.to !== run && (d.to === checkin || d.to === controller || d.to === me.data.parent);
+    if (!ok) fail(`${run} may not mail ${d.to}: a run mails its parent, ${checkin} or ${controller}`);
   }
   if ((e.ev === 'deliver' || e.ev === 'ack') && e.by === 'worker') {
     needRun();

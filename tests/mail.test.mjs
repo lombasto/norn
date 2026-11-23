@@ -54,21 +54,16 @@ test('mail: the shape - subject, body <= 2 KB xor body_file, to = RUN-n | lane:L
   refused(ctl({ from: 'role:checkin' }), /from/);   // the controller sends as role:controller
 });
 
-test('mail send rights: check-in / controller -> any run; a run -> its parent, the check-in, the controller, runs of its own epic', () => {
+test('mail send rights: check-in / controller -> any run; a run -> its parent, the check-in, the controller', () => {
   const s = tmp();
   const parent = startRun(s), child = startRun(s, { parent }), other = startRun(s);
-  const peer = startRun(s, { epic: 'EP-1' }), me = startRun(s, { epic: 'EP-1', parent });
-  rec(s, { kind: 'epic', ev: 'create', by: 'controller', data: { title: 'E', priority: 'P1', members: [peer] } });
-  rec(s, { kind: 'epic', ev: 'add', id: 'EP-1', by: 'launcher', data: { members: [me] } });
-  const ep2 = startRun(s);
-  rec(s, { kind: 'epic', ev: 'create', by: 'controller', data: { title: 'E2', priority: 'P1', members: [ep2] } });
+  const me = startRun(s, { parent });
   for (const by of ['checkin', 'controller']) for (const to of [parent, child, other, 'lane:demo', 'role:checkin'])
     assert.doesNotThrow(() => send(s, by, { from: `role:${by}`, to }), `${by} -> ${to}`);
   const w = (to, run = me, from = run) => () => send(s, 'worker', { from, to }, run);
-  for (const to of [parent, 'role:checkin', 'role:controller', peer]) assert.doesNotThrow(w(to), `run -> ${to}`);
-  assert.doesNotThrow(w(parent, child), 'child -> parent (no epic)');
+  for (const to of [parent, 'role:checkin', 'role:controller']) assert.doesNotThrow(w(to), `run -> ${to}`);
+  assert.doesNotThrow(w(parent, child), 'child -> parent');
   refused(w(other), /may not mail/);
-  refused(w(ep2), /may not mail/);   // another epic
   refused(w(child), /may not mail/);   // not its parent
   refused(w('lane:demo'), /may not mail/);
   refused(w(me), /may not mail/);   // itself
