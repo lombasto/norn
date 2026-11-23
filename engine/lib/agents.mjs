@@ -106,6 +106,8 @@ const readJson = readJsonS;
 
 const subNames = ents => ents.map(e => e.name).filter(n => /^agent-.+\.jsonl$/.test(n)).sort();
 const subDir = mainFile => path.join(mainFile.replace(/\.jsonl$/, ''), 'subagents');
+/** the subagent transcripts of a main transcript, <sid>/subagents/agent-<id>.jsonl (the cost and standing readers too) */
+export const subFiles = mainFile => { const dir = subDir(mainFile); return subNames(readdirS(dir)).map(n => path.join(dir, n)); };
 /** Subagents of a main transcript: <sid>/subagents/agent-<id>.jsonl + agent-<id>.meta.json. */
 export function subagents(mainFile, cache = new Map(), { now = Date.now() } = {}) {
   const dir = subDir(mainFile), names = subNames(readdirS(dir));

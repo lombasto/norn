@@ -3,7 +3,7 @@
 // usage (claude -p json, = its transcript sum), a running / killed / lost one its transcript (+ subagents), tailed incrementally.
 // Codex: totals only (rollout token_count live, end.tokens at the end) - its own plan, no Claude %. Providers bill their own
 // account. Node built-ins only; the transcript tail is the Runs page's (agents.mjs), the file finders the harness adapters'.
-import { tail, codexInfo } from './agents.mjs';
+import { tail, codexInfo, subFiles } from './agents.mjs';
 import { runTranscript } from './standing.mjs';
 import { findRollout } from './harness/codex.mjs';
 import { parseCodexLog } from './runs.mjs';
@@ -49,10 +49,7 @@ export function transcriptUsage(file, cache = new Map()) {
   if (!r) return null;
   const tokens = add(zero(), r.c.sum);
   let bytesRead = r.bytesRead;
-  const dir = path.join(file.replace(/\.jsonl$/, ''), 'subagents');
-  let names = [];
-  try { names = fs.readdirSync(dir).filter(n => /^agent-.+\.jsonl$/.test(n)); } catch { /* no subagents */ }
-  for (const n of names) { const s = tailUsage(path.join(dir, n), cache); if (s) { add(tokens, s.c.sum); bytesRead += s.bytesRead; } }
+  for (const f of subFiles(file)) { const s = tailUsage(f, cache); if (s) { add(tokens, s.c.sum); bytesRead += s.bytesRead; } }
   return { tokens, bytesRead };
 }
 
