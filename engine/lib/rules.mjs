@@ -37,7 +37,6 @@ const proseLines = text => { let fence = false; const out = []; String(text).spl
 const HOME_RANK = { repo: 0, import: 1, rule: 2, rules: 2, checkin_extra: 3, prompt: 3, agent: 4, skill: 4, user: 5, memory: 6, 'memory-topic': 7, directive: 8 };
 const rank = h => (HOME_RANK[h.kind] ?? (String(h.kind).endsWith('-source') ? 3 : 5));
 export const STATES = ['prose', 'repeated', 'enforced', 'retired'];
-export const STATE_LABEL = { prose: 'prose only', repeated: 'repeated', enforced: 'enforced', retired: 'retired' };
 const SOURCE = 'REPORT meta-practice s.5.0 (the rule ledger)';
 
 /** the rule lines of the hand-written rows + active directives: [{ path, row, kind, line, raw, text }] */

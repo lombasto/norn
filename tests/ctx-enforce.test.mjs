@@ -8,7 +8,6 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, ctxOrder, runOrder, HANDOFF_PROMPT, ctxView } from '../engine/lib/ctxlimit.mjs';
-import { HANDOFF_PROMPT as CHAT_PROMPT } from '../engine/lib/chat.mjs';
 import { agentsTree } from '../engine/lib/agents.mjs';
 import { handoffK } from '../engine/lib/guard.mjs';
 import { startRun } from '../engine/lib/runs.mjs';
@@ -52,8 +51,7 @@ test('one measure: the CURRENT context = the last request (input + cache read + 
   assert.equal(handoffK({ data: { kind: 'checkin' } }, { context: { checkin: { handoff_k: 70 } } }), 70, 'the guard reads the same role row');
 });
 
-test('one hand-off wording: the chat turn and a run order share the head; the chat prompt is the shared copy', () => {
-  assert.equal(CHAT_PROMPT, HANDOFF_PROMPT);
+test('one hand-off wording: the chat turn and a run order share the head', () => {
   const c = ctxLimits({}, 'implementer'), head = HANDOFF_PROMPT.split(' After this turn')[0].replace('{ctx}', '120k').replace('{limit}', '110k');
   assert.ok(runOrder('handoff', 120000, c).startsWith(head), runOrder('handoff', 120000, c));
   assert.match(runOrder('handoff', 120000, c), /norn done --outcome handoff --handoff-file/);

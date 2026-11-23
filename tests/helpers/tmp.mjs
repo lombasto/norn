@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { procsNaming, orphanHolds } from '../../engine/lib/testprocs.mjs';
+import { procsNaming } from '../../engine/lib/testprocs.mjs';
 import { listProcs } from '../../engine/lib/strays.mjs';
 import { killTree } from '../../engine/lib/runs.mjs';
 import { CALLER_ENV } from '../../engine/lib/cisuite.mjs';
@@ -27,6 +27,18 @@ process.env[TEST_OWNER] = testOwnerValue();
 // names one of its mkTmp dirs is killed with its tree. 11-13: 22 supervisor + fake-executor pairs a run of delegate / agnostic left
 // behind lived 23-28 h. ci-suite fails a file that still leaves one (the hard check behind this teardown).
 const made = [], ever = [];
+// A jobguard hold names no test dir, only its exe and its supervisor's pid: a supervisor killed while its hold was starting leaves the
+// hold alive, and one whose held pid is gone or reused (a process born after the hold) is reaped; a live run's hold never is.
+const HOLD = /meta-jobguard-[0-9a-f]+\.exe"?\s+hold\s+(\d+)\s/i;
+/** the jobguard hold processes of procs whose held process is gone -> [{ pid, ppid, name, created, cmd }] */
+export function orphanHolds(procs = listProcs()) {
+  const byPid = new Map(procs.map(p => [p.pid, p]));
+  return procs.filter(p => {
+    const m = HOLD.exec(p.cmd || ''); if (!m || p.pid === process.pid) return false;
+    const h = byPid.get(Number(m[1]));
+    return !h || (Number.isFinite(h.created) && Number.isFinite(p.created) && h.created > p.created);
+  }).map(({ pid, ppid, name, created, cmd }) => ({ pid, ppid, name, created, cmd }));
+}
 /** kill every process (and its tree) whose command line names a dir mkTmp made in this process, and every jobguard hold whose
  *  supervisor is gone (a supervisor killed while its hold started: the hold names no mkTmp dir); -> the killed [{ pid, name, cmd }] */
 export function reapTmp() {

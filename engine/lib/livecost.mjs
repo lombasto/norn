@@ -90,5 +90,3 @@ export function liveRunCost(run, { projectsDir, now = Date.now() } = {}) {
   for (const x of names) { const s = tailUsd(path.join(dir, x), run.started, run.model, now); if (s) { usd += s.usd; mtime = Math.max(mtime, s.mtime); files++; } }
   return { usd, estimate: true, mtime, files };
 }
-/** test seam: forget every cached read */
-export function resetLiveCost() { tails.clear(); found.clear(); missed.clear(); }

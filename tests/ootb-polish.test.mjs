@@ -13,8 +13,8 @@ import { which } from '../engine/lib/paths.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { createDashboard } from '../engine/dash/server.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
-import { REQUIRED_CAPS, ROLE_AGENTS, WORK_CLASSES, SECTIONS, STARTER_CAPS, settingsView } from '../engine/lib/policy.mjs';
-import { loadProfiles, getProfile, profileBudget, profilePolicy, profileChanges, COSTS, BASIC_KEYS } from '../engine/lib/profiles.mjs';
+import { REQUIRED_CAPS, ROLE_AGENTS, WORK_CLASSES, SECTIONS, BASIC_KEYS, settingsView } from '../engine/lib/policy.mjs';
+import { loadProfiles, getProfile, profileBudget, profilePolicy, profileChanges, COSTS } from '../engine/lib/profiles.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';

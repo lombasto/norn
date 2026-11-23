@@ -60,12 +60,6 @@ export function notesDirOf(state, lane, items) {
   const n = laneRuns(lane, items).filter(r => r.data.notes).sort((a, b) => num(b.id) - num(a.id))[0]?.data.notes;
   return path.resolve(n ? (/\.md$/i.test(n) ? path.dirname(n) : n) : path.join(state, 'notes', lane));
 }
-/** the path guard: rel inside dir (no ../ escape, no absolute rel, no drive) -> the absolute path, else null */
-export function insideDir(dir, rel) {
-  if (typeof rel !== 'string' || !rel || path.isAbsolute(rel) || /^[a-z]:/i.test(rel)) return null;
-  const f = path.resolve(dir, rel), r = path.relative(path.resolve(dir), f);
-  return r && !r.startsWith('..') && !path.isAbsolute(r) ? f : null;
-}
 
 // ---------- the sections ----------
 const headsOf = lines => lines.map((l, i) => { const m = HEAD.exec(l); return m ? { i, level: m[1].length, text: m[2].replace(/[*_`]/g, '').trim() } : null; }).filter(Boolean);

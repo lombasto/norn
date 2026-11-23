@@ -13,7 +13,6 @@ import { POLICY_DEFAULTS } from './policy.mjs';
 import { ctxRole, ctxLimits } from './ctxlimit.mjs';
 
 export const GUARD_DEFAULTS = POLICY_DEFAULTS.guard;   // policy.guard (policy.mjs: the defaults + settings rows)
-export const GUARD_CLASSES = ['runaway', 'over-handoff', 'tool-spam'];
 export const GUARD_ACTIONS = ['let-run', 'mail', 'stop'];
 export const SOURCES_METHOD = '~tokens = characters / 4 of each piece of text a run appends (a tool result, the model\'s own text / thinking / tool inputs, '
   + 'injected user / hook / mail text); it is cached by the next call and read again by every call after that (until a compaction drops the '

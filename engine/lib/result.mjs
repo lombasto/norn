@@ -12,7 +12,6 @@ export const NO_RESULT = 'no-result';
 export const resultDir = (state, run) => path.join(state, 'results', run);
 export const resultPath = (state, run) => path.join(resultDir(state, run), 'result.json');
 export const HANDOFF_FILE = 'HANDOFF.md';
-export const handoffPath = (state, run) => path.join(resultDir(state, run), HANDOFF_FILE);
 const RUN_ID = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/;   // a node state dir's runs too (RUN-wsl-3: records.mjs kindOfId)
 const HANDOFF_MAX = 64 * 1024;
 const oneLine = s => String(s ?? '').replace(/\s+/g, ' ').trim();
