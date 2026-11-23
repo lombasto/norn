@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { CHECKS } from './instrchecks.mjs';
 import { HINT_FIX, TIGHTEN_FIX, hintSlopId } from './instructions.mjs';
 import { ADVICE_FIX } from './advice.mjs';
+import { lintersView } from './slop/linters.mjs';
 
 /** [type, label, the tab that owns it] in display order */
 export const GUARD_TYPES = [['code', 'code', 'runs'], ['tests', 'tests', 'tests'], ['instructions', 'instruction files', 'context'],
@@ -81,7 +82,7 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
       action: c.fix ?? null, cls: c.id, ...fixOf('model-advice', ADVICE_FIX, 'Model advice for a class of work'), go: { tab: 'spend', sub: 'advice' } });
   for (const h of holds) for (const b of h.blocks || [])
     out.push({ id: 'S-' + b.fp, type: 'code', severity: 'high', surface: `branch ${h.branch}`, path: b.file, line: b.line ?? null, why: `${b.rule}: ${b.msg}`,
-      source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn rec add waiver)', run: h.run ?? null, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
+      source: 'SloppaChoppa (norn slop check)', action: 'fix it on the branch, or waive it (norn rec add waiver)', run: h.run ?? null, rule: b.rule, msg: b.msg, branch: h.branch, ...fixOf('slop-block', SLOP_FIX, SLOP_FIX.title),
       go: { tab: 'slop', jump: 'slop-S-' + b.fp } });   // its own Slop row (an ended run is on no live Runs view)
   for (const v of voice) for (const f of v.findings || [])
     out.push({ id: 'V-' + f.fp, type: 'code', severity: 'low', surface: `branch ${v.branch} · second voice`, path: f.file, line: f.line ?? null, why: `${f.rule}: ${f.msg}`, quote: f.snippet,
@@ -105,7 +106,7 @@ export function rankRows(rows) {
 const DAY = 86400000, dayOf = ms => new Date(ms).toISOString().slice(0, 10);
 /**
  * guardView(rows with first_seen / new (crossings), { rules (the rule ledger counts), now, days = 30 }) ->
- * { types: [{ type, label, tab, open, warn, new }], rows (ranked), trend: { days, series: [{ key, label, points }] }, ledger, total, new }
+ * { types: [{ type, label, tab, open, warn, new }], rows (ranked), trend: { days, series: [{ key, label, points }] }, ledger, linters (slop/linters.mjs), total, new }
  * The trend counts, per type and day, the findings open now that were first seen on or before that day: how the open pile grew.
  */
 export function guardView(rows, { rules = null, now = Date.now(), days = 30, slop = true } = {}) {
@@ -120,5 +121,5 @@ export function guardView(rows, { rules = null, now = Date.now(), days = 30, slo
     const firsts = rows.filter(x => x.type === type).map(x => (x.first_seen ? x.first_seen.slice(0, 10) : axis.at(-1)));
     return { key: type, label, points: axis.map(d => ({ x: d, y: firsts.filter(f => f <= d).length })) };
   });
-  return { types, rows: ranked, trend: { days: axis, series }, ledger: rules ? { ...rules } : null, total: rows.length, new: types.reduce((n, t) => n + t.new, 0) };
+  return { types, rows: ranked, trend: { days: axis, series }, ledger: rules ? { ...rules } : null, linters: lintersView(rows), total: rows.length, new: types.reduce((n, t) => n + t.new, 0) };
 }
