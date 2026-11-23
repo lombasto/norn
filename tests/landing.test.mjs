@@ -94,6 +94,23 @@ test('a clean deliverable lands with no Claude run: merged in a merge worktree, 
   assert.deepEqual(again.land.landed, [], 'a PR is open: the row is on its way, not landed twice');
 });
 
+test('land-reuse (DEC-b-56): a reused deliverable whose PR merged lands again after a newer DONE: a new PR, not "nothing to land"', async () => {
+  const f = fixture([['feat/a', { 'engine/a.mjs': 'export const a = 1;\n' }]]), x = { ...fakeCli(), ...fakeGh() };
+  assert.deepEqual((await pass(f, x)).land.landed, ['DLV-1']);
+  // PR #41 merges (the tick latches it) and leaves GitHub's open list; the lane's next round ends DONE at a new head
+  const merged_at = new Date(Date.now() - 60e3).toISOString();
+  record(f.state, { kind: 'deliverable', ev: 'merged', id: 'DLV-1', by: 'checkin', data: { how: 'pr', pr: 41, url: 'https://github.com/o/r/pull/41', merged_at } }, { views: false });
+  x.prs.delete('feat/a');
+  const wt = path.join(f.t, 'wt-a'), tip = commit(wt, 'engine/a2.mjs', 'export const b = 2;\n', 'round 2'); g(wt, 'push', '-q', 'origin', 'feat/a');
+  record(f.state, { kind: 'deliverable', ev: 'done', id: 'DLV-1', by: 'launcher', data: { run: 'RUN-9', tip, done_utc: new Date().toISOString() } }, { views: false });
+  const row = deliverablesView({ stateDir: f.state, project: f.project, git: ghGit() }).rows[0];
+  assert.deepEqual([row.state, row.pr], ['done', null]);
+  const r = await pass(f, x);
+  assert.deepEqual(r.land.landed, ['DLV-1'], r.why);
+  assert.equal(x.prs.get('feat/a').number, 42);
+  assert.deepEqual(deliverablesView({ stateDir: f.state, project: f.project, git: ghGit() }).rows[0].pr, { url: 'https://github.com/o/r/pull/42', number: 42 });
+});
+
 test('a red quick check (a changed test file fails) queues an LLM MERGE with the failure attached; the same tip is not tried again', async () => {
   const f = fixture([['feat/b', { 'tests/b.test.mjs': RED_TEST }]]), x = { ...fakeCli(), ...fakeGh() };
   const r = await pass(f, x);

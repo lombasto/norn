@@ -94,6 +94,9 @@ function prsOf(it, merged, prs) {
   }
   return out;
 }
+// a PR that ended before t: GitHub's merged / closed answer (deliverables-pr.json), or the `merged` event the tick latched for it
+const prEnded = (it, url, prs, t) => { const c = prs[url], end = c?.state === 'MERGED' ? c.merged_at : c?.state === 'CLOSED' ? c.closed_at : null;
+  return Date.parse(end) < t || it.history.some(h => h.ev === 'merged' && h.data?.url === url && Date.parse(h.data.merged_at || h.ts) < t); };
 
 /**
  * One row per deliverable. opts: { stateDir, project, now (ms), git (makeGit()), questions (records items, default loaded) }
@@ -127,7 +130,9 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const parkEv = it.state === 'parked' ? lastEv(it, ['park']) : null;
     // META-GTP-MERGEQ piece 0: superseded = terminal (the work landed another way): at its target, never due / resolved / rehearsed
     const supEv = it.state === 'superseded' ? lastEv(it, ['supersede']) : null;
-    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;   // the PR norn merge-land opened
+    // the PR norn merge-land opened; land-reuse (DEC-b-56): one that merged or closed before the last DONE was an earlier round's (a
+    // reused deliverable, ci-fix): in prs, not the row's pr, so the queue lands the new round and why_not claims no open PR
+    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url && !prEnded(it, prEv.data.url, prCache, Date.parse(doneUtc)) ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;
     const superseded = supEv ? { by: supEv.data.by, why: supEv.data.why, at: supEv.ts } : null;
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
