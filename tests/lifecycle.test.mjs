@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { laneRules, tickLanes, lanesProbe, lanePolicy, laneHooks } from '../engine/lib/lifecycle.mjs';
 import { tickPaths } from '../engine/lib/lanepaths.mjs';
-import { lanesView } from '../engine/lib/lanes.mjs';
+import { lanesView, boardOf } from '../engine/lib/lanes.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -48,7 +48,7 @@ test('model-tab-visualization: an owner lane with no run is idle past policy.idl
   assert.deepEqual(laneRules(loadState(state), { now: T0 + 7 * H, idleH: 12 }), [], 'the policy hours');
   assert.deepEqual(lanePolicy({ idle_lanes: { hours: 12 } }).idleH, 12);
   const v = lanesView(loadState(state), { now: T0 + 7 * H }).find(l => l.name === 'model-tab-visualization');
-  assert.equal(v.text, 'idle: no run'); assert.equal(v.group, 'needs', 'not shown as active / queued');
+  assert.equal(v.text, 'idle: no run'); assert.equal(boardOf({ ...v, needs: 0 }, T0 + 7 * H), 'old', 'idle by its rule: not Waiting');
   assert.deepEqual(tickLanes(state, { now: T0 + 7 * H, git: noGit }), [], 'never archived by the tick: the check-in decides');
   assert.deepEqual(lanesProbe({})({ at: T0 + 7 * H, items: Object.values(loadState(state).items) }), ['lanes:idle:L:model-tab-visualization'], 'a gate wake');
   const d = digest(state, {}, { now: T0 + 7 * H, git: noGit });

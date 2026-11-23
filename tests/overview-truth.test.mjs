@@ -1,6 +1,7 @@
 // OVERVIEW-TRUTH (owner report 2026-11-19): the Overview, Lanes and run counts said what their sources do not. Fixtures for each fix:
 // (2) every 'why not merged' reason, rendered; (3) the one done-not-merged count; (5) the Lanes page (withdrawn, shipped, lost);
 // (6) run counts (bookkeeping apart, hand-off chains as one piece, unfinished with cost) and the withdraw why. Pure folds + temp state.
+// A fixture run records how it ended as the supervisor does: an exited run an `end` event, a lost run a `lost` event, an hour after its start.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ import { whyNotMerged, stoppedLine } from '../engine/lib/dlvwhy.mjs';
 import { mergeBacklog } from '../engine/lib/deliverables.mjs';
 import { dlvWhyNot, renderDeliverable } from '../engine/dash/ui.mjs';
 import { stateOf } from '../engine/dash/cells.mjs';
-import { lanesView } from '../engine/lib/lanes.mjs';
+import { lanesView, boardOf } from '../engine/lib/lanes.mjs';
 import { laneHooks } from '../engine/lib/lifecycle.mjs';
 import { runCounts, countsLine, withdrawClass } from '../engine/lib/runcount.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
@@ -20,7 +21,7 @@ test.after(cleanTmp);
 const NOW = Date.parse('2026-11-19T18:00:00Z'), T = h => new Date(NOW + h * 3600e3).toISOString();
 const run = (n, o = {}) => { const { lane = 'a', stage = null, state = 'exited', outcome = 'done', h = -5, ev = [], data = {}, end = {}, ...rest } = o;
   return { id: `RUN-${n}`, kind: 'run', state, data: { lane, stage, ...data }, ...(state === 'exited' ? { end: { outcome, ...end } } : {}),
-    history: [{ ev: 'start', ts: T(h) }, ...ev], created: T(h), updated: T(h + 1), ...rest }; };
+    history: [{ ev: 'start', ts: T(h) }, ...(state === 'exited' ? [{ ev: 'end', ts: T(h + 1) }] : state === 'lost' ? [{ ev: 'lost', ts: T(h + 1) }] : []), ...ev], created: T(h), updated: T(h + 1), ...rest }; };
 const lane = (name, o = {}) => ({ id: `L:${name}`, kind: 'lane', state: 'active', data: {}, history: [{ ev: 'create', ts: T(-30) }], created: T(-30), updated: T(-30), ...o });
 const items = (...xs) => Object.fromEntries(xs.map(x => [x.id, x]));
 const row = (o = {}) => ({ id: 'DLV-21', project: 'solve-shack', record_state: 'open', state: 'done', target: 'install', at_target: false, repo: 'C:/r', branch: 'norn/a',
@@ -71,10 +72,10 @@ test('Lanes: a withdrawn run says why; bookkeeping never stands for the lane; an
   const st = { items: items(lane('rt'), run(10, { lane: 'rt', state: 'lost', h: -9 }), run(11, { lane: 'rt', h: -6 }), { ...wd, data: { ...wd.data, lane: 'rt' } },
     lane('lo'), run(20, { lane: 'lo', h: -9 }), run(21, { lane: 'lo', state: 'lost', h: -4 }),
     lane('only'), { ...wd, id: 'RUN-30', data: { lane: 'only', stage: 'MERGE' } }) };
-  const v = Object.fromEntries(lanesView(st, { now: NOW, all: true }).map(l => [l.name, l]));
+  const v = Object.fromEntries(lanesView(st, { now: NOW, all: true }).map(l => [l.name, l])), B = l => boardOf({ ...l, needs: 0 }, NOW);
   assert.equal(v.rt.run, 'RUN-11', 'the DONE is the newest meaningful run');
-  assert.equal(v.rt.text, 'exited: DONE · then RUN-12 withdrawn: landed by hand: PR #33'); assert.equal(v.rt.group, 'done');
-  assert.equal(v.lo.text, 'lost', 'a lost run that is the newest meaningful run shows'); assert.equal(v.lo.group, 'needs');
+  assert.equal(v.rt.text, 'exited: DONE · then RUN-12 withdrawn: landed by hand: PR #33'); assert.equal(B(v.rt), 'today');
+  assert.equal(v.lo.text, 'lost', 'a lost run that is the newest meaningful run shows'); assert.equal(B(v.lo), 'stopped', 'lost 3 h ago: Stopped, not folded into Old');
   assert.equal(v.only.text, 'withdrawn: landed by hand: PR #33', 'never "exited: no-result"');
   assert.deepEqual(stateOf(v.only.text), ['idle', 'withdrawn']);
 });
@@ -89,10 +90,10 @@ test('Lanes: a lane whose work is on main is shipped and leaves the active list,
   const st = { items: items(lane('inbox-replies'), run(1, { lane: 'inbox-replies', state: 'lost', h: -3 }), lane('rm9'), run(2, { lane: 'rm9', outcome: 'no-result', h: -3 }),
     lane('open'), run(3, { lane: 'open', state: 'lost', h: -3 }), lane('busy'), run(4, { lane: 'busy', state: 'running', h: -1 })) };
   const h = laneHooks(state);
-  const v = Object.fromEntries(lanesView(st, { now: NOW, ...h }).map(l => [l.name, l]));
-  assert.equal(v['inbox-replies'].text, `shipped: ${d1.id} PR #34`); assert.equal(v['inbox-replies'].group, 'done');
-  assert.equal(v.rm9.text, `shipped: ${d2.id} ruled merged`); assert.equal(v.rm9.group, 'done');
-  assert.equal(v.open.text, 'lost', 'its deliverable is not merged: still needs a look'); assert.equal(v.open.group, 'needs');
+  const v = Object.fromEntries(lanesView(st, { now: NOW, ...h }).map(l => [l.name, l])), B = l => boardOf({ ...l, needs: 0 }, NOW);
+  assert.equal(v['inbox-replies'].text, `shipped: ${d1.id} PR #34`); assert.equal(B(v['inbox-replies']), 'today');
+  assert.equal(v.rm9.text, `shipped: ${d2.id} ruled merged`); assert.equal(B(v.rm9), 'today');
+  assert.equal(v.open.text, 'lost'); assert.equal(B(v.open), 'stopped', 'its deliverable is not merged: still needs a look');
   assert.deepEqual(stateOf(v.rm9.text), ['done', 'shipped']);
 });
 

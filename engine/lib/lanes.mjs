@@ -149,7 +149,8 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, hbL
       : park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
       : land ==='awaiting-merge' ? `${LAND_WORDS[land]}${rt.startsWith('queued: ') ? ` - ${rt.slice(8)}` : ''}`
       : land === 'awaiting-pr' ? `${LAND_WORDS[land]}: PR #${pr.number ?? '?'}` : rt;
-    const ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null, at = live ? r.created : ended ?? l.updated;
+    // a lost run ended when it was found lost (runs.mjs records `lost`, never `end`): boardOf ages it from there, so a lane lost an hour ago is Stopped, not Old
+    const ended = r?.history.findLast(h => h.ev === 'end' || h.ev === 'lost')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null, at = live ? r.created : ended ?? l.updated;
     return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, ...(r ? doerOf(r) : { dwarf: null, kind_word: null }), executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,
       handoff: park || done || !r ? null : handoffOf(r, st.items, { talked, wrote, now }), created: l.created, ended, at, rule: rules.get(name) ?? null, path: path(name, now),
       outcome: r?.end?.outcome ?? null, ruled: !!ruled, started: r?.created ?? null, budget_min: r?.data.budget_min ?? null, runs: (strips[name] ?? []).slice(-STRIP),
