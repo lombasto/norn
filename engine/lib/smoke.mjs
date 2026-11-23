@@ -42,6 +42,7 @@ export function sandboxEnv({ home, bin, cfg, root }, base = process.env) {
   const real = base.USERPROFILE || base.HOME || os.homedir();
   const env = { ...base, PATH: bin + path.delimiter + (base.PATH || ''), HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: cfg,
     LOCALAPPDATA: path.join(home, 'AppData', 'Local'), APPDATA: path.join(home, 'AppData', 'Roaming'), META_ROOT: root, META_NO_TICK: '1',
+    META_FILL_SAMPLE: '{"free_gb":64,"cpu_pct":0}',   // the fill's resource gate is not under the smoke's test: a busy runner held RUN-2 queued (CI-45087248853)
     RUSTUP_HOME: base.RUSTUP_HOME || path.join(real, '.rustup'), CARGO_HOME: base.CARGO_HOME || path.join(real, '.cargo') };
   for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'NPM_CONFIG_PREFIX', 'npm_config_prefix', 'META_HB_MS']) delete env[k];
   return env;

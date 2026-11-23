@@ -11,6 +11,10 @@ import { openPage, skipWhy } from './helpers/cdp.mjs';
 // every request the page sends from now on: { u, t0 } (page clock); a URL matching slow waits `ms` before it goes out
 const wrap = (slow, ms) => `(() => { window.__req = []; const of = window.__of ??= window.fetch, re = new RegExp(${JSON.stringify(slow)});
   window.fetch = async (u, ...a) => { window.__req.push({ u: String(u), t0: performance.now() }); if (re.test(String(u))) await new Promise(r => setTimeout(r, ${ms})); return of(u, ...a); }; return true; })()`;
+// every state-stream event the server sends (a second EventSource on the page's own /api/stream: pulse and derived go to every client):
+// { e, t0, d } on the page clock, so a strip request no tap asked for names the event behind it (CI-45087248853 R2)
+const listen = `(() => { window.__ev = []; const es = window.__es ??= new EventSource('/api/stream?project=kestrel');
+  for (const k of ['hello', 'rec', 'pulse', 'derived', 'state', 'reset']) es.addEventListener(k, m => window.__ev.push({ e: k, t0: performance.now(), d: String(m.data).slice(0, 200) })); return true; })()`;
 const tap = id => `(() => { document.body.dataset.ready = ''; document.querySelector('#tab-${id}').click(); return true; })()`;
 
 // the server's own timing log: Server-Timing on every answer; a slow request and a loop stall (with the requests in its window) in
@@ -52,10 +56,11 @@ test('the browser: a tab render fetches the header (/api/strip) and the tab at o
     assert.ok(ib.t0 - ov.t0 < 400, `the Inbox request went out ${Math.round(ib.t0 - ov.t0)} ms after the header's: a waterfall`);
     // a page change's render asks for the strip once (a state-stream event may refresh it later) and never for the run tree's
     // /api/overview (the strip reads the run records)
-    await pg.ev(wrap('^$', 0)); await pg.ev(tap('talk'));
+    await pg.ev(listen); await pg.ev(wrap('^$', 0)); await pg.ev(tap('talk'));
     assert.ok(await pg.until(`document.body.dataset.ready === 'talk'`, 30000), 'Talk painted');
-    const o = await pg.ev('window.__req'), st = o.filter(x => x.u.startsWith('/api/strip?'));
-    assert.ok(st.length >= 1, JSON.stringify(o)); assert.equal(st.filter(x => x.t0 - st[0].t0 < 50).length, 1, `one strip request per render: ${JSON.stringify(o)}`);
+    const o = await pg.ev('window.__req'), st = o.filter(x => x.u.startsWith('/api/strip?')), evs = await pg.ev('window.__ev');
+    assert.ok(st.length >= 1, JSON.stringify(o)); assert.equal(st.filter(x => x.t0 - st[0].t0 < 50).length, 1, `one strip request per render: ${JSON.stringify(o)}
+stream events: ${JSON.stringify(evs)}`);
     assert.ok(!o.some(x => x.u.startsWith('/api/overview')), JSON.stringify(o));
   } finally { await pg.close(); await f.done(); }
 });
