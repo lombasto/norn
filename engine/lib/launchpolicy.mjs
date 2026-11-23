@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadProject } from './config.mjs';
 import { withDefaults, merged, laneMatch } from './policy.mjs';
-import { isTyped } from './executors.mjs';
+import { BUILTIN, isTyped, agentFiles } from './executors.mjs';
+import { frontOf } from './instrchecks.mjs';
 
 // ---------- lean launch profiles (policy.launch: { roles: { worker | merge | checkin | chat: name }, profiles: { name: overrides } }) ----------
 // harness-agnostic switches; each adapter maps them to its flags (profileArgs) or states a gap (profileGap)
@@ -60,11 +61,9 @@ export const roleOfSpec = o => (o.kind === 'checkin' ? 'checkin' : /merge|door/i
 /** an agent file (frontmatter + body) -> the --agents definition { description, prompt, tools?, model? } (Claude Code), or null */
 export function agentDef(file) {
   let t; try { t = fs.readFileSync(file, 'utf8'); } catch { return null; }
-  const m = t.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!m) return null;
-  const fm = {};
-  for (const l of m[1].split(/\r?\n/)) { const k = l.match(/^([\w-]+):\s*(.*)$/); if (k) fm[k[1]] = k[2].trim(); }
-  return { description: fm.description || fm.name || path.basename(file, '.md'), prompt: m[2], ...(fm.tools ? { tools: fm.tools.split(/\s*,\s*/).filter(Boolean) } : {}), ...(fm.model ? { model: fm.model } : {}) };
+  const { end, meta: fm, body } = frontOf(t), tools = typeof fm.tools === 'string' ? fm.tools.split(/\s*,\s*/).filter(Boolean) : fm.tools;
+  if (!end) return null;
+  return { description: fm.description || fm.name || path.basename(file, '.md'), prompt: body, ...(tools?.length ? { tools } : {}), ...(fm.model ? { model: fm.model } : {}) };
 }
 /**
  * A profile without the user setup (user_setup: false) also loses the user-level agents (~/.claude/agents; calibration: "--agent not
@@ -82,14 +81,8 @@ export function inlineAgent(profile, agent, { claudeDir, worktree } = {}) {
  * The Claude agents a run may name with --agent: the user's (<claudeDir>/agents), the worktree's (.claude/agents) and the project's own
  * (install.agents). -> sorted names. A plugin agent (plugin:name) is not listed here and is never refused (Claude Code resolves it).
  */
-export function knownAgents({ claudeDir, worktree, project } = {}) {
-  const names = new Set();
-  for (const d of [claudeDir && path.join(claudeDir, 'agents'), worktree && path.join(worktree, '.claude', 'agents'), project?.install?.agents]) {
-    if (!d) continue;
-    try { for (const f of fs.readdirSync(d)) if (f.endsWith('.md')) names.add(f.slice(0, -3)); } catch { /* no dir */ }
-  }
-  return [...names].sort();
-}
+export const knownAgents = ({ claudeDir, worktree, project } = {}) =>
+  [...new Set([claudeDir && path.join(claudeDir, 'agents'), worktree && path.join(worktree, '.claude', 'agents'), project?.install?.agents].flatMap(agentFiles))].sort();
 /** null = agent ok (none, a plugin agent, or a known one); else the refusal text. A Claude run on an unknown agent used to start and
  *  crash at once ("--agent 'worker' not found"): it is refused before it starts, naming the agents there are. */
 export function agentRefusal(agent, o = {}) {
@@ -110,8 +103,8 @@ const EXPLICIT = { model: 'model', effort: 'effort', agent: 'agent', class: 'cls
 export function launchParts({ project, budget = {}, executor, lane, explicit = {}, claudeDir, worktree }) {
   const xc = project?.executors?.[executor] || {};
   const pol = withDefaults(merged(budget, project?.policy)).policy;   // META-TEND P2: the class table the launcher stamps from (workclass.mjs)
-  const DEF = { claude: [budget.claude_model || 'claude-opus-5-5', budget.claude_effort || 'medium'], 'codex-sol': ['gpt-6.1-sol', budget.codex_sol_effort || 'medium'],
-    'codex-astra': ['gpt-6-astra', budget.codex_astra_effort || 'medium'], fake: ['fake', '-'] }[executor] || [];
+  const DEF = { claude: [budget.claude_model || BUILTIN.claude.model, budget.claude_effort || 'medium'], 'codex-sol': [BUILTIN['codex-sol'].model, budget.codex_sol_effort || 'medium'],
+    'codex-astra': [BUILTIN['codex-astra'].model, budget.codex_astra_effort || 'medium'], fake: [BUILTIN.fake.model, '-'] }[executor] || [];
   // a typed executor (claude-compatible / openai-compatible / cli): data only; its model / effort / exe come from the entry
   const prov = isTyped(xc) ? xc : undefined;
   if (prov) DEF.push(prov.model, prov.effort || 'medium');

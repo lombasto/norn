@@ -68,6 +68,20 @@ test('roadmap: derive carries the fold (policy.stuck from the world) and road sh
   assert.equal(off.stuck.flag, null, 'every threshold 0 = no flag');
 });
 
+test('land-reuse (DEC-b-56): a deliverable\'s merged events reset the clock after a newer DONE (state done); a git-found merged row with none keeps its round\'s end', () => {
+  const rs = [run(0, 'stopped'), run(2, 'stopped'), run(4, 'stopped'), run(6, 'stopped')];
+  const items = Object.fromEntries(rs.map(r => [r.id, r]));
+  const node = { id: 'RM-7', kind: 'item', title: 'water picture', state: 'open', links: ['lane:water'], stages: [] };
+  const dlv = { id: 'DLV-1', branch: 'norn/water', lane: 'water', state: 'done', done_utc: iso(T0 + 7 * H), merges: [iso(T0 + 3.5 * H)] };
+  const W = worldOf({ now: T0 + 10 * H, items, dlv: [dlv], policy: { stuck: POL } });
+  assert.deepEqual(reach(node, W).branches[0].merges, [T0 + 3.5 * H], 'reach carries the deliverable\'s merges');
+  const d = derive(node, W);
+  assert.equal(d.stuck.last_merge, iso(T0 + 3.5 * H), 'the earlier round\'s merge still counts');
+  assert.equal(d.stuck.stopped_row, 2); assert.equal(d.stuck.flag, null);
+  const git = derive(node, worldOf({ now: T0 + 10 * H, items, dlv: [{ ...dlv, state: 'merged', merges: [] }], policy: { stuck: POL } }));
+  assert.equal(git.stuck.last_merge, iso(T0 + 7 * H), 'merged by git, not yet latched: its round\'s end');
+});
+
 function sandbox() {
   const t = mkTmp('meta-stuck-'), state = path.join(t, 'state', 'demo');
   fs.mkdirSync(state, { recursive: true });
