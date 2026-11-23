@@ -36,7 +36,7 @@
     },
     "miss": {
       "base": { "crate/src/lib.rs": "pub fn f() -> u8 {\n    1\n}\n", "crate/src/other.rs": "pub fn g() -> u8 {\n    return 2;\n}\n" },
-      "head": { "crate/src/lib.rs": "pub fn f() -> u8 {\n    2\n}\n" },
+      "head": { "crate/src/other.rs": "pub fn g() -> u8 {\n    return 2;\n}\n", "crate/src/lib.rs": "pub fn f() -> u8 {\n    2\n}\n" },
       "recorded": {
         "head": "warning: unneeded `return` statement\n --> src/other.rs:2:5\n  |\n  = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return\n\nwarning: `crate` (lib) generated 1 warning\n"
       }

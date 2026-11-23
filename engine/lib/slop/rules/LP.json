@@ -28,7 +28,7 @@
   "fixture": {
     "hit": {
       "base": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "X = 1\n" },
-      "head": { "pkg/src/pkg/a.py": "import os\nX = 1\n" },
+      "head": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "import os\nX = 1\n" },
       "recorded": {
         "base": [],
         "head": [{ "code": "F401", "filename": "pkg/src/pkg/a.py", "location": { "row": 1, "column": 8 }, "end_location": { "row": 1, "column": 10 }, "message": "`os` imported but unused" }]
@@ -36,7 +36,7 @@
     },
     "miss": {
       "base": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "import os\nX = 1\n" },
-      "head": { "pkg/src/pkg/a.py": "import os\nX = 2\n" },
+      "head": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "import os\nX = 2\n" },
       "recorded": {
         "base": [{ "code": "F401", "filename": "pkg/src/pkg/a.py", "location": { "row": 1, "column": 8 }, "end_location": { "row": 1, "column": 10 }, "message": "`os` imported but unused" }],
         "head": [{ "code": "F401", "filename": "pkg/src/pkg/a.py", "location": { "row": 1, "column": 8 }, "end_location": { "row": 1, "column": 10 }, "message": "`os` imported but unused" }]
