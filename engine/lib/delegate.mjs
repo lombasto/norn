@@ -28,9 +28,18 @@ const Q_CHARS = 120;
 export const runsOf = state => fold(readEvents(recordsFile(state, 'run'))).items;
 export const fileLines = f => { try { return fs.readFileSync(f, 'utf8').replace(/\s+$/, '').split(/\r?\n/); } catch { return []; } };
 
-/** Ranked helper executors for class `cls`: allowed by policy, enabled, key set (API types). */
-export function pickExecutors({ policy, cls, providers = {}, env = process.env }) {
+/**
+ * Ranked helper executors for class `cls`: allowed by policy, enabled, key set (API types). A pinned `executor` (--executor) is the
+ * only one, checked the same way (fake by name); RunError (2) when it may not help.
+ */
+export function pickExecutors({ policy, cls, providers = {}, env = process.env, executor }) {
   const names = Object.keys(providers);
+  if (executor) {
+    if (executor !== 'fake' && !Object.hasOwn(providers, executor)) throw new RunError(`executor ${executor} is not a helper executor (fake | a configured typed executor name; Claude-pool executors are never helpers)`);
+    if (executor !== 'fake' && !executorsFor(policy, cls, names).includes(executor)) throw new RunError(`executor ${executor} is not allowed to do ${cls} work (policy.allowed_classes)`);
+    if (providers[executor]?.enabled === false) throw new RunError(`executor ${executor} is disabled in project.json`);
+    return [executor];
+  }
   return executorsFor(policy, cls, names).filter(n => {
     const p = providers[n];
     return !!p && p.enabled !== false && (!isApi(p) || keySet(p, env)) && (!p.preset || !!presetExe(p, env));   // a preset: inert until its exe is detected
@@ -46,12 +55,15 @@ export function helperMode(executor, entry, mode) {
   return [null, 'read-only'];
 }
 
-/** The generated helper brief (with the answer contract). access: read-only (default) | no-tools | write (mode = its name). */
-export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, access = 'read-only', mode }) {
+/**
+ * The generated helper brief (with the answer contract). access: read-only (default) | no-tools | write (mode = its name). via: the
+ * command that asks (norn ask's cold helper too); context: lines after the question (norn ask: the run, its NOTES and its tail).
+ */
+export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, access = 'read-only', mode, via = 'norn delegate', context = [] }) {
   const write = access === 'write';
   const who = parent ? `parent ${parent}` : 'no parent run';
   return [
-    `# Helper ${write ? 'task' : 'question'} (norn delegate; ${who}; class ${cls}${mode ? `; mode ${mode}` : ''})`,
+    `# Helper ${write ? 'task' : 'question'} (${via}; ${who}; class ${cls}${mode ? `; mode ${mode}` : ''})`,
     '',
     ...(write ? [`You are a helper with the tools of mode ${mode}: change files only inside the worktree, never commit or push (your caller reviews every change), and name the exact commands you ran.`,
       `Worktree: ${worktree}`, ...(rules ? [`House rules (obey them): ${rules}`] : [])]
@@ -62,6 +74,7 @@ export function helperBrief({ q, read = [], out, worktree, parent, cls, rules, a
     `## ${write ? 'Task' : 'Question'}`,
     q,
     '',
+    ...context,
     ...(read.length ? ['## Read first', ...read.map(r => `- ${r}`), ''] : []),
     ...answerContract(out),
     '',
@@ -122,17 +135,8 @@ export function delegateStart(o) {
   }
 
   const providers = providersOf(o.project);
-  let candidates;
-  if (o.executor) {
-    const ok = o.executor === 'fake' || Object.hasOwn(providers, o.executor);
-    if (!ok) throw new RunError(`executor ${o.executor} is not a helper executor (fake | a configured typed executor name; Claude-pool executors are never helpers)`);
-    if (o.executor !== 'fake' && !executorsFor(policy, cls, Object.keys(providers)).includes(o.executor)) throw new RunError(`executor ${o.executor} is not allowed to do ${cls} work (policy.allowed_classes)`);
-    if (providers[o.executor]?.enabled === false) throw new RunError(`executor ${o.executor} is disabled in project.json`);
-    candidates = [o.executor];
-  } else {
-    candidates = pickExecutors({ policy, cls, providers, env });
-    if (!candidates.length) throw new RunRefused(`no helper executor for class ${cls} (allowed, enabled, key set) - do it yourself`, 4);
-  }
+  const candidates = pickExecutors({ policy, cls, providers, env, executor: o.executor });
+  if (!candidates.length) throw new RunRefused(`no helper executor for class ${cls} (allowed, enabled, key set) - do it yourself`, 4);
   // the mode decides the brief: with --executor it is that entry's; ranked candidates must agree on the access (default read-only)
   const modes = Object.fromEntries(candidates.map(ex => [ex, helperMode(ex, providers[ex], o.mode)]));
   const access = modes[candidates[0]][1];

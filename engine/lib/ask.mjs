@@ -12,7 +12,7 @@ import { providersOf, isProvider, typedExe } from './executors.mjs';
 import { harnessOf, capsOf } from './harness/index.mjs';
 import { transcriptEvents } from './harness/claude.mjs';
 import { runTranscript } from './standing.mjs';
-import { pickExecutors, helperMode, delegateWait, startRanked, answerContract, runsOf, fileLines, ASK_MAX_S, HELPER_BUDGET_MIN, MAX_LINES } from './delegate.mjs';
+import { pickExecutors, helperMode, delegateWait, startRanked, helperBrief, answerContract, runsOf, fileLines, ASK_MAX_S, HELPER_BUDGET_MIN, MAX_LINES } from './delegate.mjs';
 import { withDefaults } from './policy.mjs';
 import { readJsonS } from './fsnap.mjs';
 
@@ -67,17 +67,13 @@ export function transcriptTail(file, n = TAIL_LINES) {
   return out.slice(-n);
 }
 
-/** The cold helper's brief: the question, the run's NOTES (tail) and its transcript (or log) tail, the answer contract. */
-export function coldBrief({ q, it, notes = [], tail = [], tailOf = 'transcript', out, access = 'read-only' }) {
+/** The cold helper's brief: norn delegate's helper brief whose context is the asked run, its NOTES (tail) and its transcript (or log) tail. */
+export function coldBrief({ q, it, notes = [], tail = [], tailOf = 'transcript', out, access = 'read-only', worktree = it.data.worktree ?? '-' }) {
   const d = it.data;
-  return [`# Question about the finished run ${it.id} (norn ask, cold helper)`, '',
-    access === 'no-tools' ? 'You are a helper with NO tools: answer from the text below only.'
-      : `You are a READ-ONLY helper: no shell, no edit tools. You may read files of the run's worktree: ${d.worktree ?? '-'}`,
-    `The run: ${it.id} ${it.state}${it.end?.outcome ? ' ' + it.end.outcome : ''}, lane ${d.lane ?? '-'}, executor ${d.executor ?? '-'} ${d.model ?? ''}, brief ${d.brief ?? '-'}.`,
-    '', '## Question', q, '',
+  return helperBrief({ q, out, worktree, parent: it.id, cls: 'chores', access, via: 'norn ask, cold helper', context: [
+    `## The run: ${it.id} ${it.state}${it.end?.outcome ? ' ' + it.end.outcome : ''}, lane ${d.lane ?? '-'}, executor ${d.executor ?? '-'} ${d.model ?? ''}, brief ${d.brief ?? '-'}`, '',
     `## The run's NOTES (${d.notes ?? 'none'}; last ${notes.length} lines)`, ...(notes.length ? notes : ['(none)']), '',
-    `## The run's ${tailOf} tail (last ${tail.length} lines)`, ...(tail.length ? tail : ['(none)']), '',
-    ...answerContract(out), ''].join('\n');
+    `## The run's ${tailOf} tail (last ${tail.length} lines)`, ...(tail.length ? tail : ['(none)']), ''] });
 }
 
 /** Asks started today (UTC) in `state` (runs with via ask). */
@@ -129,8 +125,7 @@ export function askStart(o) {
 
   // cold: a read-only helper on a helper executor (norn delegate's ranking; fake by name)
   const providers = providersOf(o.project);
-  const candidates = o.executor ? [o.executor] : pickExecutors({ policy, cls: 'chores', providers, env });
-  if (o.executor && o.executor !== 'fake' && !Object.hasOwn(providers, o.executor)) throw new RunError(`executor ${o.executor} is not a helper executor (fake | a configured typed executor name)`);
+  const candidates = pickExecutors({ policy, cls: 'chores', providers, env, executor: o.executor });
   if (!candidates.length) throw new RunRefused(`no helper executor for a cold ask (${plan.why}) - read its NOTES yourself`, 4);
   const tailFile = transcript || d.log;
   const notesTail = fileLines(d.notes).slice(-NOTES_LINES);
@@ -138,7 +133,7 @@ export function askStart(o) {
   const worktree = d.worktree && fs.existsSync(d.worktree) ? d.worktree : dir;
   return startRanked({ candidates, providers, env, machine: o.machine, pinned: !!o.executor, yourself: 'read its NOTES yourself' }, (ex, exe) => {
     const prov = providers[ex], [mode, access] = helperMode(ex, prov, null);
-    const text = coldBrief({ q: o.q, it, notes: notesTail, tail, tailOf: transcript ? 'transcript' : 'log', out, access });
+    const text = coldBrief({ q: o.q, it, notes: notesTail, tail, tailOf: transcript ? 'transcript' : 'log', out, access, worktree });
     fs.writeFileSync(brief, text);
     const r = startRun({ ...common, executor: ex, provider: prov, brief, worktree, model: prov ? prov.model : 'fake', effort: prov ? prov.effort || 'medium' : '-',
       exe, ...(mode ? { mode } : {}), promptText: isProvider(prov) ? text : undefined, env: { ...(prov?.env || {}), META_PARENT_RUN: it.id, META_ROLE: null } });
