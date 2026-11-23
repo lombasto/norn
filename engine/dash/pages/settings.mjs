@@ -95,7 +95,7 @@ function computers(s, ctx) {
   return `<div class="home-names" id="sync-homes"><b>Computers</b> <span class="help">the names travel with the ledger; the id stays the key (branch, records, run ids)</span>
     ${rows.map(row).join('')}<span><button class="ghost" data-act="home-names-save">Save names</button></span><pre class="small sync-out" id="sync-names-out" role="status">${esc(ctx.syncOut?.names ?? '')}</pre></div>`;
 }
-/** Save names: each changed name -> POST /api/sync/name { project, home, name } (the route is SHELL's: a 404 until then shows its error line) */
+/** Save names: each changed name -> POST /api/sync/name { project, home, name } (a failed post, 404 included, shows its error line) */
 export const acts = {
   'home-names-save': async (b, { S, post, render }) => {
     const o = document.getElementById('sync-names-out'), ch = [...document.querySelectorAll('[data-home-name]')].filter(i => i.value.trim() !== i.dataset.orig);
