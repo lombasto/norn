@@ -286,7 +286,7 @@ export function testsPart(state, name, { picked = null, merges = [], limit = 40,
     const cs = read(state, CASES_FILE), label = new Map((cs?.cases ?? []).map(c => [c.id, c.name]));
     const st = byId(caseRows(state, new Set(label.keys()), now - CASE_DAYS * 86400e3));
     return { medians: [...st].map(([cid, rs]) => { const ms = rs.map(r => r.ms).filter(Number.isFinite); return { id: cid, label: label.get(cid), file: rs[0].file, value: median(ms), max: ms.length ? Math.max(...ms) : null, runs: rs.length }; })
-      .filter(c => Number.isFinite(c.value)).sort((a, b) => b.value - a.value || a.id.localeCompare(b.id)), days: CASE_DAYS };
+      .filter(c => Number.isFinite(c.value)).sort((a, b) => b.value - a.value || a.id.localeCompare(b.id)), case_days: CASE_DAYS };
   }
   if (name === 'impact') {
     const im = read(state, IMPACT_FILE), tests = [...new Set(Object.values(im?.sources ?? {}).flat())];
