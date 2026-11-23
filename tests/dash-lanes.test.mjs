@@ -101,25 +101,27 @@ test('lanesView + boardOf: running, stopped, waiting, done today, archived, park
 // fair-slots items 2 + 3 (owner 2026-11-19): a lane whose build is DONE and whose MERGE waits read only 'queued'; once merge-land
 // opened the PR it reads 'awaiting PR approval'. Each queued / running lane says its run's priority (none = the default P2, marked)
 // and a queued one its place in the fill order.
-test('lanesView: done - awaiting merge, awaiting PR approval; the run priority (P2 default marked) and the fill position', () => {
+test('lanesView: done - awaiting merge, awaiting PR approval; the run priority on every lane with a run (P2 default marked, live while queued / running), the fill position; who runs it', () => {
   const s = mkTmp('fair-lanes-');
   for (const n of ['mrg', 'prd', 'fast', 'live', 'red']) record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: n } });
   const run = (lane, extra = {}, outcome) => { const e = record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane, ...extra } });
     if (outcome) record(s, { kind: 'run', ev: 'end', id: e.id, by: 'launcher', data: { exit: 0, outcome } }); return e.id; };
   const queue = (lane, extra = {}) => record(s, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane, ...extra } });
   run('mrg', {}, 'done'); queue('mrg', { stage: 'MERGE' });         // build DONE, its MERGE queued (no priority: P2)
-  run('prd', {}, 'done'); run('prd', { stage: 'MERGE' }, 'done');   // merged by merge-land: a PR is open
+  run('prd', {}, 'done'); run('prd', { stage: 'MERGE', priority: 'P1' }, 'done');   // merged by merge-land: a PR is open
   queue('fast', { priority: 'P1' });                                // a queued build at P1: after the P2 MERGEs (MERGE-FIRST)
-  run('live', { priority: 'P0' });                                  // running at P0
+  run('live', { priority: 'P0', agent: 'kestrel-implementer', model: 'claude-opus-5-5', effort: 'medium' });   // running at P0
   run('red', {}, 'stopped'); queue('red', { stage: 'MERGE' });      // the build did not finish: its queued MERGE is plain queued
   const v = lanesView(loadState(s), { prs: { prd: { url: 'https://github.com/o/r/pull/7', number: 7 } } }), by = n => v.find(l => l.name === n);
   assert.equal(by('mrg').land, 'awaiting-merge'); assert.equal(by('mrg').text, 'done - awaiting merge'); assert.equal(boardOf({ ...by('mrg'), needs: 0 }), 'waiting');
   assert.equal(by('prd').land, 'awaiting-pr'); assert.equal(by('prd').text, 'awaiting PR approval: PR #7'); assert.equal(by('prd').pr.number, 7);
   assert.equal(boardOf({ ...by('prd'), needs: 0, dlv: { step: 'pr', pr: 7 } }), 'land', 'a PR to approve: To land');
   assert.equal(by('red').land, null); assert.equal(by('red').text, 'queued');
-  assert.deepEqual(by('mrg').priority, { p: 'P2', dflt: true }, 'no priority: the default P2, marked as the default');
-  assert.deepEqual(by('fast').priority, { p: 'P1', dflt: false }); assert.deepEqual(by('live').priority, { p: 'P0', dflt: false });
-  assert.equal(by('prd').priority, null, 'an ended run has no priority to show');
+  assert.deepEqual(by('mrg').priority, { p: 'P2', dflt: true, live: true }, 'no priority: the default P2, marked as the default');
+  assert.deepEqual(by('fast').priority, { p: 'P1', dflt: false, live: true }); assert.deepEqual(by('live').priority, { p: 'P0', dflt: false, live: true });
+  assert.deepEqual(by('prd').priority, { p: 'P1', dflt: false, live: false }, 'an ended run keeps its priority (not changeable)');
+  assert.deepEqual([by('live').agent, by('live').model, by('live').effort], ['kestrel-implementer', 'claude-opus-5-5', 'medium'], 'who runs it');
+  assert.deepEqual([by('fast').agent, by('fast').model, by('fast').effort], [null, null, null]);
   // MERGE-FIRST (runs.mjs fillKey): a landing run outranks the runs of one priority level above, so the two P2 MERGEs go before the P1 build
   assert.deepEqual([by('mrg').position, by('red').position, by('fast').position], [1, 2, 3], 'the fill order: landing first (FIFO), then the P1 build');
   assert.equal(by('live').position, null, 'a running run has no queue position');
