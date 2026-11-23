@@ -28,7 +28,6 @@ import { PRIORITIES } from './records.mjs';
 import { mailHook, raiseFlag } from './mail.mjs';
 import { scopeHookOf, guardSettings, writeScopeFile } from './scope.mjs';
 import { specPolicy, ctxLimits, ctxRole } from './ctxlimit.mjs';
-import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
@@ -38,7 +37,7 @@ import { shareOf, slotVerdict } from './share.mjs';
 import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, claimHold, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
-import { ClaimsError, readClaims } from './claimsref.mjs';
+import { ClaimsError, readClaims, fedOf } from './claimsref.mjs';
 import { touchedOf, workOf, gatherIntents, briefIntent, casesOf, rulingsOf, openCase, caseAction, itemStages } from './intents.mjs';
 import { collisions, collidePolicy, holdsOf, holdTerm, workerLine, hitLines, caseKey } from './collide.mjs';
 import { prompt as basePrompt } from './harness/common.mjs';
@@ -213,12 +212,12 @@ function acquireSlot(o, opts) {
   for (let i = 0; i < o.merge_slots; i++) { try { return acquireLock(o.locksDir, slotKey(o.merge_repo, i), opts); } catch (e) { if (!(e instanceof RunRefused)) throw e; } }
   throw new RunRefused(slotsFull(o, opts.staleMs) || `merge slots full in ${fwd(o.merge_repo)}`, 3);
 }
-// the merge worktrees a run may still need: those of queued / running / claimed runs, and of a run that ended HANDOFF in the last
+// the merge worktrees a run may still need: those of queued / running runs, and of a run that ended HANDOFF in the last
 // day (its resume goes on there). Every other one in <state>/mq is a leftover.
 // MAIL-10 (RUN-134 swept mid-suite): a lost run may only be stalled (a stale heartbeat), so it keeps its merge worktree too; and a
 // run that may still work keeps the merge worktree its brief names, whatever worktree its record names.
 export const MERGE_WT_KEEP_MS = 24 * 3600e3;
-const MAY_WORK = ['queued', 'running', 'claimed', 'lost'];
+const MAY_WORK = ['queued', 'running', 'lost'];
 export function mergeWtInUse(state, now = Date.now()) {
   const keep = new Set(), last = new Map();
   for (const r of runsOf(state)) {
@@ -636,8 +635,8 @@ const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume
   epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf, dod_of: o.dodOf, dod_ready: o.dod ? { mode: o.dod.mode, ok: o.dod.ok, missing: o.dod.missing } : undefined,   // META-DOD 1: the Ready verdict + the Done-check resume
   critique: o.critique, floor: o.floor,   // floor: the worker floor raised this run (floor.mjs); META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
     // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
-  labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
-  launch_profile: o.profile?.name || 'full', memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // launch_profile: the profile EVERY run launched with (launchpolicy.mjs profileOf; no profile = full) - overhead-audit S1: a floor is judged against it   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
+  replaces: o.replaces,
+  launch_profile: o.profile?.name || 'full', memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // launch_profile: the profile EVERY run launched with (launchpolicy.mjs profileOf; no profile = full) - overhead-audit S1: a floor is judged against it   // replaces: META-AUTONOMY R1 (norn requeue)
 // META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
 const classStamp = o => { const w = workClass(o, o.workPolicy); return { class: w.class, class_basis: w.basis }; };
 // owner Q4: Fable is the cost class - a run on it carries a notice (printed at launch, shown on the Spend page with the week's count)
@@ -867,10 +866,6 @@ export function startRun(o) {
     const { queue: _q, ...rest } = o;
     return { ...queueRun(rest), queued: true, why: 'waits for its after: conditions' };
   }
-  if (o.labels?.length && !o.fromQueue && !o.claim_of) {   // META-GTP-FED piece 1: a labelled run always queues; the fill here or a node serving its labels starts it (a node's claimed run starts in place)
-    const { queue: _q, ...rest } = o;
-    return { ...queueRun(rest), queued: true, why: `labels ${o.labels.join(',')}: started by a machine that serves them` };
-  }
   // RM-37: while a pause holds starts (Hold the queue / Pause everything) new work and hand-off resumes wait queued, never refused;
   // a resume (a continuation) goes ahead of new work, merges first (pausemode.mjs heldPriority). A check-in and a helper are not held here.
   if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {
@@ -895,7 +890,7 @@ export function startRun(o) {
   // META-LIMIT-GATE: an executor out of quota dies in seconds (RUN-562) - refused like a full cap (exit 4), naming its reset and an open
   // executor; a queued run was gated by the fill's walk (its clock), so a fill start is not checked twice
   if (!o.fromQueue) { const lr = limitRefusal(o.state, o, { now: o.now }); if (lr) throw new RunRefused(lr, 4); }
-  if (!o.fromQueue && !o.claim_of) { const a = queuedAhead(o); if (a.length) throw new RunRefused(`${aheadWords(a)} (norn run --queue joins the queue)`, 4); }   // fair-slots item 4
+  if (!o.fromQueue) { const a = queuedAhead(o); if (a.length) throw new RunRefused(`${aheadWords(a)} (norn run --queue joins the queue)`, 4); }   // fair-slots item 4
   if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {   // META-AUTH: while the login is down a launch dies in 0.1 s - it waits queued
     const a = authGate(o);
     if (a) return { ...queueRun(o), queued: true, why: a };
@@ -980,9 +975,9 @@ const CONTINUES = ['parent', 'fromQueue', 'resumeOf', 'requeueOf', 'fallbackOf',
 export function duplicateOf(o) { return o.state ? duplicateIn(runsOf(o.state), o) : null; }
 /** the same check on a list of run items (pure: the replay's history check walks recorded moves through it) */
 export function duplicateIn(runs, o) {
-  if (!o.lane || !o.stage || o.kind === 'checkin' || o.role === 'helper' || o.claim_of) return null;
+  if (!o.lane || !o.stage || o.kind === 'checkin' || o.role === 'helper') return null;
   const mine = new Set(CONTINUES.map(k => o[k]).filter(Boolean));
-  return runs.find(r => ['queued', 'running', 'claimed'].includes(r.state) && !mine.has(r.id) && r.data.kind !== 'checkin' && r.data.role !== 'helper'
+  return runs.find(r => ['queued', 'running'].includes(r.state) && !mine.has(r.id) && r.data.kind !== 'checkin' && r.data.role !== 'helper'
     && r.data.lane === o.lane && r.data.stage === o.stage && (r.data.round ?? null) === (o.round ?? null)) ?? null;
 }
 function duplicateCheck(o) {
@@ -1002,9 +997,9 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
 //    claude_model / *_effort, the typed executors' caps), and the project policy parts (launchpolicy.mjs resolveAtFill: memory, launch
 //    profile, model / effort / agent / class when not given on the command line, a typed executor's entry). The pause files and
 //    STATUS are paths derived from the state dir; their existence / content is read at each fill, so they never go stale.
-//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, epic, priority, labels, parent / via,
+//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, epic, priority, parent / via,
 //    the flags the dispatcher gave (refill.explicit: --model / --effort / --agent / --class), budget_min, the state / locks dirs.
-// Not refreshed (machine.json, rarely changed): exe, node_labels, git_ledger. The queue spec keeps NO copy of the budget: queueRun names
+// Not refreshed (machine.json, rarely changed): exe, git_ledger. The queue spec keeps NO copy of the budget: queueRun names
 // the file (the caller's budget_file, else this install's local/budget.json) and drops the object, so every fill reads the file. A file
 // that is gone = {} (as `norn run` reads it); one that does not parse holds the run this pass (a term), never a launch on a guess.
 export const machineBudgetFile = (env = process.env) => path.join(metaRoot(env), 'local', 'budget.json');
@@ -1053,7 +1048,7 @@ export function queueOf(runs, pins = {}) {
   return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => fillKey(a) - fillKey(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
     .map((r, i) => ({ id: r.id, dwarf: pins[r.data.lane] ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null, kind: r.data.kind ?? null, role: r.data.role ?? null,
       executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
-      after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null, labels: r.data.labels ?? [] }));
+      after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null }));
 }
 /**
  * Start every queued run that may start now, in fill order (priority, then oldest first - META-GTP-DAG piece 4): not before its not_before, not while PAUSED, never on a worktree with a
@@ -1123,7 +1118,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
         started.push(...fillPass(state, at, res, authProbe));
         onPass?.();
       } while (flagged());
-      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); writeOffers(state, ready); noteFillWhy(state, ready, isLandingStage, { now: at }); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
+      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready, role: 'fill' }); noteFillWhy(state, ready, isLandingStage, { now: at }); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
     } finally { release(); }
     if (!flagged()) return started;
   }
@@ -1154,7 +1149,6 @@ function atFill(spec) {
 function fillPass(state, now, resources, authProbe) {
   const started = [];
   const withdraw = (id, why) => tryRecord(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } });
-  fedPass(state, now);
   // a hold is recorded once per why (and cleared once): the walk runs on every fill, the log grows only on a change
   const holds = new Map(runsOf(state).filter(r => r.state === 'queued' && r.hold).map(r => [r.id, r.hold]));
   const hold = (id, why) => {
@@ -1166,7 +1160,6 @@ function fillPass(state, now, resources, authProbe) {
     withdraw,
     hold,
     start: (q, spec) => {
-      homeClaim(state, q, spec);
       try { return startRun({ ...atFill(spec), fromQueue: q.id }).run; } catch (e) { if (e instanceof ClaimHeld) noteClaimHold(state, q.id, e); throw e; }   // RM-46 S2b: stays queued, the digest names the holder
     },
     started(q, next) {
@@ -1195,52 +1188,6 @@ function noteSkip(state, id, why, now) {
     fs.appendFileSync(f, `${new Date(now).toISOString()}${tag}${why}\n`);
     if (text.length > FILL_LOG_MAX) { const t = fs.readFileSync(f, 'utf8'); fs.writeFileSync(f, t.slice(t.indexOf('\n', t.length >> 1) + 1)); }
   } catch { /* a log never fails a fill */ }
-}
-
-// ---------- META-GTP-FED piece 2: the home side of the claim protocol (fed.mjs) ----------
-// Runs only while a queued labelled run or a claimed run exists (else no git at all) and their spec names a ledger remote (machine.json
-// ledger.remote, stamped into every spec as git_ledger). One fetch per pass. A node's claim of a queued run = record claim (it leaves the
-// queue); a done claim = record fill (next = the node run); an expired lease = the claim removed by CAS, then record release (back in the
-// queue) - only when that CAS won (a heartbeat that landed first keeps the run). A fetch failure is logged; the pass goes on without it.
-const fedLog = (state, s) => { try { fs.appendFileSync(path.join(state, 'fed.log'), `${new Date().toISOString()} ${s}\n`); } catch { /* no dir */ } };
-// the node runs of this project, read-only (digest sec. 1, norn runs --all-nodes); -cache.json = never in the ledger
-export function writeForeign(state, nodes) {
-  const f = path.join(state, 'fed-cache.json');
-  writeAtomic(f, { at: new Date().toISOString(), nodes: Object.fromEntries(nodes.map(n => [n.node, n.runs])) });
-}
-function fedPass(state, now) {
-  const watch = runsOf(state).filter(r => (r.state === 'queued' && r.data.labels?.length) || r.state === 'claimed');
-  if (!watch.length) return;
-  let f = null;
-  for (const r of watch) if ((f = fedOf(readJson(queueSpecPath(state, r.id))?.git_ledger))) break;
-  if (!f) return;
-  const project = path.basename(path.resolve(state));
-  let claims;
-  try { claims = fetchClaims(f); } catch (e) { fedLog(state, `claims not read: ${e.message}`); return; }
-  try { writeForeign(state, importForeign(f, project)); } catch (e) { fedLog(state, `node runs not imported: ${e.message}`); }
-  const rec = (id, ev, data) => tryRecord(state, { kind: 'run', ev, id, by: 'launcher', data: drop(data) });
-  for (const r of watch) {
-    const key = claimKey(f.host, project, r.id), c = claims[key];
-    let st = r.state;
-    if (st === 'queued' && c && c.node !== f.host && rec(r.id, 'claim', { node: c.node, claimed_at: c.claimed_at, lease_s: c.lease_s })) st = 'claimed';
-    if (st !== 'claimed') continue;
-    if (!c) { rec(r.id, 'release', { why: 'its claim is gone from the claims branch' }); continue; }
-    // META-GTP-FED-2 piece 1: a node with its own workspace pushed the run's NOTES on machine/<node> before its done mark (notes_key): the
-    // fill names the home's read-only copy
-    if (c.state === 'done') { rec(r.id, 'fill', { next: c.node_run || `${c.node}:not-started`, node: c.node, outcome: c.outcome, head: c.head, notes: importNotes(f, state, c.node, c.notes_key, r.id) }); continue; }
-    if (!leaseExpired(c, now)) continue;
-    const why = `lease expired: ${c.node} last heartbeat ${c.heartbeat_at} (lease ${c.lease_s} s)`;
-    try { if (releaseClaim(f, key, c.nonce, why, { fetched: true }).ok) rec(r.id, 'release', { why, node: c.node }); } catch (e) { fedLog(state, `release ${r.id} failed: ${e.message}`); }
-  }
-}
-// a labelled run this machine serves: with a ledger remote the home claims it (state home, no lease) before it starts - a node serving the
-// same labels may be claiming it now; the CAS decides (lost = refused, exit 3: the next pass sees the node's claim)
-function homeClaim(state, q, spec) {
-  const f = q.labels?.length ? fedOf(spec.git_ledger) : null;
-  if (!f) return;
-  let r;
-  try { r = claimRun(f, { home: f.host, project: path.basename(path.resolve(state)), run: q.id, labels: q.labels, state: 'home' }); } catch (e) { throw new RunRefused(`claim: ${e.message}`, 3); }
-  if (!r.won) throw new RunRefused(`claim: ${r.why}`, 3);
 }
 
 // ---------- META-GTP-DAG piece 3: ONE walk for the fill and `norn ready` (kill criterion: two evaluators = a disagreement) ----------
@@ -1387,12 +1334,6 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     { const ct = claimTerm(spec, (CL ??= new Map())); if (ct) { row.terms.push(ct.term); act?.claimHeld?.(q.id, ct); } }   // queue-stall: the claim door's no-network pre-check; holds no cap
     // lane-collide S1b: the collision door's judgement, re-done every pass (level-triggered); a held row names its holder or after (auto)
     { const ct = collideTerm(spec, q, (CC ??= {}), now); if (ct?.held) { row.terms.push(...ct.held.map(holdTerm)); act?.collideHeld?.(q.id, ct.j); } else if (ct) act?.collideHeld?.(q.id, null); }
-    // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
-    // this walk stays the one readiness evaluator (META-GTP-DAG piece 3): a node claims only an offered row
-    // META-GTP-FED-2 piece 3: Claude rows are offered too (DEC-47 interim "node 2 non-Claude only" lifted): the usage term above is the same
-    // weekly guard + RATE_OK, and its estimate now counts the node runs' cache_read (status.mjs fedCacheR) - one ledger push of lag
-    const served = spec.node_labels ?? [osLabel()], miss = unserved(q.labels, served);
-    if (miss.length) { if (!row.terms.length) row.offer = true; row.terms.push(`labels ${miss.join(',')}: not served here (serves ${served.join(',')}) - a node serving them claims it`); continue; }
     if (row.terms.length) continue;   // the terms above wait without holding a cap for younger runs
     const reserve = land ? 0 : Math.max(0, Number({ ...FILL_DEFAULTS, ...(spec.policy?.fill || {}) }.merge_reserve) || 0);
     const full = capFull(spec, staleMs, pending, { reserve, waiting: reserve ? landing.size + othersLanding() : 0 });

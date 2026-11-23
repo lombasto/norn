@@ -12,7 +12,6 @@ import { capKey, capDefault, capsOfRun } from './executors.mjs';
 import { capText } from './policy.mjs';
 import { weekStart, nextReset, parseReset } from './cost.mjs';
 import { ciMain } from './ciwatch.mjs';
-import { fedCacheR } from './fed.mjs';
 import { limitLines } from './limitgate.mjs';
 import { isApi, billingLine } from './billing.mjs';
 import { readPause, PAUSE_MODES, pauseFiles } from './pausemode.mjs';
@@ -48,6 +47,27 @@ export function ciMainLine({ repo, workflow = 'ci.yml', branch = 'main', cacheFi
   return `${label} ${r.conclusion || r.status || 'unknown'} ${r.headSha.slice(0, 9)} ${age(now - Date.parse(r.createdAt))}`;
 }
 
+// fedCacheR stays until tests/status.test.mjs (outside the d-fed lane's Scope) drops its fed-cache case: nothing writes fed-cache.json now
+/** the cache_read of the node runs in the fed-cache.json of every project under stateRoot whose end is at or after sinceMs. One key per
+ * project / node / run: each cache file is rewritten whole by its fill, so a re-import never counts a run twice. */
+function fedCacheR(stateRoot, sinceMs) {
+  if (!stateRoot) return 0;
+  let dirs = [];
+  try { dirs = fs.readdirSync(stateRoot, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); } catch { return 0; }
+  const seen = new Map();
+  for (const p of dirs) {
+    let c;
+    try { c = JSON.parse(fs.readFileSync(path.join(stateRoot, p, 'fed-cache.json'), 'utf8')); } catch { continue; }
+    for (const [node, runs] of Object.entries(c?.nodes || {})) for (const r of runs || []) {
+      const e = (r?.history || []).find(h => h.ev === 'end'), ms = Date.parse(e?.ts ?? '');
+      if (!(ms >= sinceMs)) continue;
+      seen.set(`${p}/${node}/${r.id}`, Number(e.data?.node_usage?.cache_read) || 0);
+    }
+  }
+  let sum = 0;
+  for (const v of seen.values()) sum += v;
+  return sum;
+}
 /** the account's cacheR since sinceMs, by source: transcripts, check-in and dashboard chat result jsons, and (META-GTP-FED-2 piece 2) the
  * node runs the home fills imported into every project's fed-cache.json under the state root (o.stateRoot, else the parent of o.state) */
 export function accountCacheR(o, sinceMs, { transcripts = true } = {}) {

@@ -4,12 +4,11 @@
 // S2b adds renew (renewWork), the observer's stale clock (observeClaims / isStale) and the owner's take over (takeWork); the home's own
 // bookkeeping (its claims, the n it saw per foreign claim, the runs a claim holds, the digest rows) lives in <state>/sync/*.json. Two claims of different homes overlap by item, branch or scope (collide.mjs overlapOf): item and
 // branch refuse, scope queues. Own claims never block own dispatch. Every CAS round re-reads and re-checks overlap: a rejected push is
-// never retried blind (fed's rule F5), and a rejected-looking push that landed is found by nonce + n.
+// never retried blind (a retry would hide a lost race), and a rejected-looking push that landed is found by nonce + n.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { ClaimsError, fetchRefs, readClaims, casClaims } from './claimsref.mjs';
-import { under } from './fed.mjs';
+import { ClaimsError, fetchRefs, readClaims, casClaims, under } from './claimsref.mjs';
 import { overlapOf, wholeRepo, verdict } from './collide.mjs';
 import { syncPolicy } from './policy.mjs';
 
