@@ -118,6 +118,24 @@ const createOnce = (f, key, body, msg, o) => under(f, () => rounds(f, claims => 
 /** a home registers its id: homes/<id>.json, CAS-created once (a taken id = { exists }) */
 export const registerHome = (f, { id, branch, projects = [], now = Date.now() }, o = {}) =>
   createOnce(f, homeKey(id), { v: 1, kind: 'home', id, branch: branch || `home/${id}`, projects, joined_at: new Date(now).toISOString() }, `register home ${id}`, o);
+// NORN-DASH-1123 item 6: a home's display name (the id stays the key everywhere). 1-24 chars of ASCII letters, digits, space, - and _.
+const HOME_NAME = /^[A-Za-z0-9 _-]{1,24}$/;
+/** the trimmed name, or a ClaimsError naming the rule */
+export const homeNameOf = v => { const n = String(v ?? '').trim(); if (!HOME_NAME.test(n)) throw new ClaimsError(`home name ${JSON.stringify(v)}: 1-24 letters, digits, spaces, - or _`); return n; };
+/** any home names any home: CAS-update homes/<id>.json with { name, named_by, named_at } (last write wins by the CAS order) ->
+ *  { ok, key, claim } | { unchanged } | { unknown, why } (no such home) | { queued, busy } */
+export function setHomeName(f, { id, name, by, now = Date.now() }, o = {}) {
+  const key = homeKey(id), n = homeNameOf(name), at = new Date(now).toISOString();
+  return under(f, () => rounds(f, claims => {
+    const c = claims[key];
+    if (c?.kind !== 'home') return { unknown: true, key, why: `no home ${id} on the ledger` };
+    if (c.name === n) return { ok: true, unchanged: true, key, claim: c };
+    const claim = { ...c, name: n, named_by: by ?? null, named_at: at };
+    return { edits: { [key]: claim }, msg: `name home ${id} "${n}" by ${by ?? '-'}`, ok: { ok: true, key, claim }, landed: x => x[key]?.name === n && x[key]?.named_at === at };
+  }, o));
+}
+/** { id: name } of every named home, from the claims as last fetched (no network) */
+export const homeNames = f => Object.fromEntries(Object.values(localClaims(f)).filter(c => c?.kind === 'home' && c.name && HOME.test(c.id)).map(c => [c.id, c.name]).sort(([x], [y]) => (x < y ? -1 : 1)));
 /** a synced project names its repo and bare home: projects/<p>.json, CAS-created once */
 export const registerProject = (f, { project, repo, bare_home }, o = {}) =>
   createOnce(f, projectKey(project), { v: 1, kind: 'project', project, repo, bare_home: want(HOME, bare_home, 'home') }, `register project ${project}`, o);

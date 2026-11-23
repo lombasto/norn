@@ -11,7 +11,7 @@ export const BATCH_ROWS = 3;
 /** the order of the kinds of fix = advisory.mjs FIX_KINDS (this file is served to the page, which cannot load lib/; a test holds them equal) */
 export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 
-/** [id, label]: To fix (every open finding) · Per type (the counts per type) · Rules (the rule ledger + the rule rows) · By age (the open findings by first-seen day) */
+/** [id, label]: To fix (every open finding) · Per type (the counts per type) · Rules (the rule ledger + the rule rows + the Linters) · By age (the open findings by first-seen day) */
 export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['age', 'By age']];   // UX review 6: open findings by first-seen day (not the open count over time)
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
@@ -127,7 +127,7 @@ export function guardPart(g, name, limit = SUB_CAP, batch = null, finding = null
     return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}), ...(finding ? { finding, found: !!home } : {}) } };
   }
   if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length, hist: g.hist ?? null } };   // hist: lib/slophist.mjs histTypes
-  if (name === 'rules') return { rules: { ledger: g.ledger ?? null, precision: g.precision ?? [], ...capList(ruleRows(g), limit) } };
+  if (name === 'rules') return { rules: { ledger: g.ledger ?? null, precision: g.precision ?? [], linters: g.linters ?? null, ...capList(ruleRows(g), limit) } };
   if (name === 'age') return { age: { trend: g.trend ?? null } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });
 }

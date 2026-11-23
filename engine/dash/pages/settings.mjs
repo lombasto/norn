@@ -2,7 +2,7 @@
 // nav + search, one-line help per row, the modified-from-default marker + reset, the danger zone. Controls keep data-key = the key.
 // UI redesign 2026-11-20: the header's cog opens it over the page (index.html #setview), and Look and Theme (this browser's, once
 // header buttons) head it.
-import { esc, chip, fmtTime, guardOn, guardChip } from '../cells.mjs';
+import { esc, chip, fmtTime, guardOn, guardChip, homeName } from '../cells.mjs';
 import { capStrip } from '../widgets.mjs';
 
 const showVal = v => Array.isArray(v) ? v.join(', ') || '(none)' : typeof v === 'boolean' ? (v ? 'on' : 'off') : v === '' ? '(default)' : v;
@@ -82,7 +82,33 @@ function remotePane(r) {
 // (Check = the dry run, Apply = pause, cut, publish + fetch, resume); duplicates = Find duplicates (dry) / Write the cards. The buttons
 // post /api/sync/* (index.html); the answers land in the role=status <pre> below each.
 const ago = s => (s == null ? 'never' : s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`);
-function syncPane(x, d, said = {}) {
+// NORN-DASH-1123 item 6: the Computers block (a home's sync pane): one row per home - id, a name input (cells.mjs homeName: the strip's
+// names), joined, last fetch / publish; this computer marked. Save posts /api/sync/name per changed name (acts below; SHELL wires them)
+function computers(s, ctx) {
+  const rows = [{ home: s.home, me: true, joined_at: s.joined_at }, ...(s.homes || []).filter(h => h.home !== s.home)];
+  const when = h => (h.me ? `${s.head ? `published ${esc(String(s.head).slice(0, 8))}` : 'nothing published yet'} · ${s.fetched_at ? `fetched ${esc(fmtTime(s.fetched_at, ctx.now))}` : 'not fetched yet'}`
+    : `last record ${esc(ago(h.lag_s))} ago`);
+  const row = h => { const n = homeName(h.home), v = n === h.home ? '' : n;
+    return `<div class="home-row" data-home-row="${esc(h.home)}"><b class="mono">${esc(h.home)}</b>${h.me ? ' <span class="tag">this computer</span>' : ''}
+      <input type="text" data-home-name="${esc(h.home)}" data-orig="${esc(v)}" value="${esc(v)}" placeholder="no name: shows ${esc(h.home)}" maxlength="24" pattern="[A-Za-z0-9 _\-]{1,24}" autocomplete="off" spellcheck="false" aria-label="name of home ${esc(h.home)}">
+      <span class="small mute">${h.joined_at ? `joined ${esc(fmtTime(h.joined_at, ctx.now))} · ` : ''}${when(h)}</span></div>`; };
+  return `<div class="home-names" id="sync-homes"><b>Computers</b> <span class="help">the names travel with the ledger; the id stays the key (branch, records, run ids)</span>
+    ${rows.map(row).join('')}<span><button class="ghost" data-act="home-names-save">Save names</button></span><pre class="small sync-out" id="sync-names-out" role="status">${esc(ctx.syncOut?.names ?? '')}</pre></div>`;
+}
+/** Save names: each changed name -> POST /api/sync/name { project, home, name } (a failed post, 404 included, shows its error line) */
+export const acts = {
+  'home-names-save': async (b, { S, post, render }) => {
+    const o = document.getElementById('sync-names-out'), ch = [...document.querySelectorAll('[data-home-name]')].filter(i => i.value.trim() !== i.dataset.orig);
+    if (!ch.length) { o.textContent = 'No change.'; return; }
+    o.textContent = 'Saving ...';
+    try {
+      for (const i of ch) await post('/api/sync/name', { project: S.project, home: i.dataset.homeName, name: i.value.trim() });
+      o.textContent = S.syncOut.names = 'Saved; the other home sees it at its next fetch (doorbell: at once).'; render();
+    } catch (e) { o.textContent = e.message; }
+  },
+};
+function syncPane(x, d, ctx = {}) {
+  const said = ctx.syncOut || {};
   const s = d.sync || {}, id = `sub-sync-${x.id}`, out = k => `<pre class="small sync-out" id="sync-${k}-out" role="status">${esc(said[k] ?? '')}</pre>`;
   const head = `<h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>`, wrap = (body, search) => `<div class="ssub" id="${id}">${head}<div class="srow" data-basic="1" data-search="${esc(search)}" data-mod="0">${body}</div></div>`;
   if (x.id === 'machine') {
@@ -92,7 +118,7 @@ function syncPane(x, d, said = {}) {
     const lag = (s.homes || []).map(h => `<li>home <b>${esc(h.home)}</b> <span class="mute">last record ${esc(ago(h.lag_s))} ago${h.ahead_s ? ` · ${esc(ago(h.ahead_s))} not merged here yet` : ''}</span></li>`).join('');
     return wrap(`<div class="sl"><b>This machine</b> <span class="tag">machine</span> ${st} ${s.doorbell ? chip('ok', 'doorbell on') : chip('idle', 'doorbell off')}
       <span class="help">${s.home ? `${pub} · ${fetched}` : 'Solo: this project is built on this machine only. Set up / join below makes it a home.'}</span>
-      ${lag ? `<ul class="small">${lag}</ul>` : ''}</div>
+      ${lag ? `<ul class="small">${lag}</ul>` : ''}${s.home ? computers(s, ctx) : ''}</div>
      <div class="sc sync-form"><label>Ledger remote <input type="text" id="sync-remote" value="${esc(s.remote ?? '')}" placeholder="URL of your private ledger repo" autocomplete="off" spellcheck="false"${s.home_id ? ' disabled title="one ledger repo: move it by hand (docs/MULTI-HOME.md)"' : ''}></label>
       <label>Doorbell topic <input type="password" id="sync-topic" placeholder="${s.doorbell ? 'set (hidden)' : 'not set'}" autocomplete="off"></label>
       <button class="ghost" data-act="sync-ledger" data-version="${esc(s.version ?? '')}">Save</button>${out('ledger')}</div>`, 'sync home ledger remote doorbell topic publish fetch lag solo');
@@ -172,7 +198,7 @@ export function settings(d, ctx) {
   }).join('');
   const panes = sections.map(c => {
     const subs = c.info ? (c.id === 'notify' ? notifyPane(d) + remotePane(d.remote) : filesPane(d)) : c.subs.map(x => {
-      if (x.pane) return syncPane(x, d, ctx.syncOut);
+      if (x.pane) return syncPane(x, d, ctx);
       const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
       const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'spend', sub: 'advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
       return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${x.id === 'capacity' ? capPane(d) : ''}${body}</div>`;

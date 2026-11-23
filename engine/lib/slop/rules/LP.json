@@ -1,0 +1,46 @@
+{
+  "id": "LP",
+  "level": "WARN",
+  "kind": "lint",
+  "tool": "ruff",
+  "title": "a new ruff finding on a Python file the branch touches",
+  "explain": {
+    "what": "ruff found something new in a Python file the branch touches; the finding names the ruff rule (LP/<code>).",
+    "why": "ruff is the project's own Python linter, with the project's own config (its merge base copy). It is a hard CI gate, so catching a new finding here saves the CI round.",
+    "fix": "Fix what the message says: `uv run --no-sync ruff check --fix <file>` applies the safe fixes, `ruff format <file>` the formatting. A finding that must stay needs a waiver for LP/<code>.",
+    "rules": {
+      "parse": {
+        "what": "ruff cannot parse a Python file the branch touches.",
+        "why": "A file that does not parse cannot be imported, and no other check can read it.",
+        "fix": "Fix the syntax error the message names, then run the check again."
+      },
+      "config-changed": {
+        "what": "The branch edits ruff's config ([tool.ruff] in a pyproject.toml, or ruff.toml).",
+        "why": "The config says what ruff looks for; editing it is the cheapest way to clear a finding. The check lints with the merge base's config either way.",
+        "fix": "Keep the config as it is, or ask the owner: his waiver for LP/config-changed approves the rule change."
+      }
+    }
+  },
+  "files": ["**/*.py", "**/*.pyi"],
+  "exclude": ["**/vendor/**", "**/third_party/**"],
+  "levels": { "*": "BLOCK" },
+  "fix": ["safe-fixes", "format"],
+  "fixture": {
+    "hit": {
+      "base": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "X = 1\n" },
+      "head": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "import os\nX = 1\n" },
+      "recorded": {
+        "base": [],
+        "head": [{ "code": "F401", "filename": "pkg/src/pkg/a.py", "location": { "row": 1, "column": 8 }, "end_location": { "row": 1, "column": 10 }, "message": "`os` imported but unused" }]
+      }
+    },
+    "miss": {
+      "base": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "import os\nX = 1\n" },
+      "head": { "pkg/pyproject.toml": "[project]\nname = \"pkg\"\n\n[tool.ruff.lint]\nselect = [\"F\"]\n", "pkg/src/pkg/a.py": "import os\nX = 2\n" },
+      "recorded": {
+        "base": [{ "code": "F401", "filename": "pkg/src/pkg/a.py", "location": { "row": 1, "column": 8 }, "end_location": { "row": 1, "column": 10 }, "message": "`os` imported but unused" }],
+        "head": [{ "code": "F401", "filename": "pkg/src/pkg/a.py", "location": { "row": 1, "column": 8 }, "end_location": { "row": 1, "column": 10 }, "message": "`os` imported but unused" }]
+      }
+    }
+  }
+}

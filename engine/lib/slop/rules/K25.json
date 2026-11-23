@@ -1,0 +1,24 @@
+{
+  "id": "K25",
+  "level": "BLOCK",
+  "kind": "suppress",
+  "title": "a new suppression with no reason on its line",
+  "explain": {
+    "what": "The branch adds a suppression (# noqa, # type: ignore, # pyright: ignore, #[allow] / #[expect], eslint-disable) with no reason on its line.",
+    "why": "Switching a linter off where it fires is the cheapest way to clear a finding. A suppression that says why can be judged; one that says nothing hides the finding from every later reader.",
+    "fix": "Fix what the linter found and delete the suppression. If it must stay, say why on its line: `# noqa: F401  # re-exported for the plugin API`, `#[allow(x, reason = \"...\")]` or `// eslint-disable-next-line x -- why`."
+  },
+  "files": ["**/*.py", "**/*.pyi", "**/*.rs", "**/*.mjs", "**/*.js", "**/*.cjs"],
+  "exclude": ["**/vendor/**", "**/third_party/**"],
+  "reason": ["ignore","ignored","ok","okay","best effort","nothing","noop","no-op","empty","todo","fine","whatever","swallow"],
+  "fixture": {
+    "hit": {
+      "base": { "a.py": "import sys\n" },
+      "head": { "a.py": "import sys\nimport os  # noqa: F401\n", "b.rs": "#[allow(dead_code)]\nfn x() {}\n" }
+    },
+    "miss": {
+      "base": { "a.py": "import sys  # noqa: F401\n" },
+      "head": { "a.py": "import sys  # noqa: F401\nimport os  # noqa: F401 # re-exported for the plugin API\n", "b.rs": "#[allow(dead_code, reason = \"kept for the save format\")]\nfn x() {}\n" }
+    }
+  }
+}

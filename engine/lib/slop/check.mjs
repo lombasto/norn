@@ -9,8 +9,9 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
-import { runTool, TOOLS, PARSE } from './tools.mjs';
-import { norm, lineAt, lineText, masked } from './scan.mjs';
+import { runTool, PARSE } from './tools.mjs';
+import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
+import { packOf, LINTERS } from './lang/index.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
@@ -25,7 +26,7 @@ export const KIND_PARAMS = {
   'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
   ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
-  model: ['files', 'exclude'],
+  model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'],
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'lint'];
 
@@ -35,7 +36,7 @@ export const EXPLAIN = ['what', 'why', 'fix'];
 function checkRule(r, f) {
   if (!r.id || !LEVELS.includes(r.level) || !DETECT[r.kind]) throw new Error(`${f}: a rule needs an id, a level (${LEVELS.join(' | ')}) and a known kind`);
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
-  if (r.kind === 'lint' && (!TOOLS[r.tool] || !r.rules || Object.keys(r.rules).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
+  if (r.kind === 'lint' && (!LINTERS[r.tool] || (r.tool === 'eslint' && !r.rules) || Object.keys(r.rules || {}).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
   if (r.kind === 'ast' && (r.tool !== 'eslint' || !r.selectors?.length || r.selectors.some(s => typeof s.selector !== 'string' || typeof s.message !== 'string'))) throw new Error(`${f}: an ast rule is a list of { selector, message } (tool eslint)`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
@@ -95,8 +96,8 @@ export function explainOf(id, projectDir = null) {
   const [base, sub] = String(id).split(/\/(.*)/s), f = base.startsWith('P-') && projectDir && path.join(projectDir, 'rules', 'slop', `${base}.json`);
   const r = base.startsWith('P-') ? (f && existsS(f) ? readRule(f) : null) : (shipped ||= new Map(loadRules().map(x => [x.id, x]))).get(base);
   if (!r || !sub) return r?.explain ?? null;
-  const { rules = {}, ...own } = r.explain, e = { ...own, ...rules[sub] }, doc = r.tool === 'eslint' && ![PARSE, 'config-changed'].includes(sub);
-  return { what: e.what, why: e.why, fix: doc ? `${e.fix} (ESLint: https://eslint.org/docs/latest/rules/${sub})` : e.fix };
+  const { rules = {}, ...own } = r.explain, e = { ...own, ...rules[sub] }, doc = ![PARSE, 'config-changed', 'no-evidence'].includes(sub) && LINTERS[r.tool]?.doc;
+  return { what: e.what, why: e.why, fix: doc ? `${e.fix} (${doc(sub)})` : e.fix };
 }
 
 // ---------- git ----------
@@ -171,7 +172,6 @@ export function patterns(rule, text, file, ctx) {
 // RM-9 (DIR-2, the CLAUDE.md rule on old names kept alive): K16. The rule's patterns line by line, plus every page whose label does not
 // name its id (a page has ONE name: label, id and URL). One finding a line, the first pattern's; each message ends with the rule's fix.
 const stem = t => (t.length > 3 ? t.replace(/s$/, '') : t);
-const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
 /** the label names the id: a part of the id (split on - and _, a plural s dropped) is in the label's letters, or starts like a label
  *  word (4 letters, or the whole part: notify ~ Notifications) */
 export const labelNamesId = (id, label) => {
@@ -202,28 +202,19 @@ export function shimFindings(rule, text, file) {
   return [...byLine.values()].sort((a, b) => a.line - b.line);
 }
 
-// static `import ... from 'x'` / `export ... from 'x'` / `import 'x'` (a dynamic import() is no load-order edge)
-const IMPORT_RE = /^\s*(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/gm;
+// the edges of the files under the roots, each read by its language pack (S3: JS, Python, Rust); a target is any file of the tree
 function importGraph(rule, ctx, side) {
-  const files = ctx.tree(side).filter(f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f));
-  const texts = ctx.texts(side, files), set = new Set(files), edges = new Map();
-  files.forEach((f, k) => {
-    const out = [];
-    for (const m of (texts[k] || '').matchAll(IMPORT_RE)) {
-      if (!m[1].startsWith('.')) continue;
-      const to = path.posix.normalize(path.posix.join(path.posix.dirname(f), m[1]));
-      if (set.has(to)) out.push({ to, line: lineAt(texts[k], m.index + m[0].indexOf(m[1])), text: norm(m[0]) });
-    }
-    edges.set(f, out);
-  });
-  return edges;
+  const tree = ctx.tree(side), has = new Set(tree), files = tree.filter(f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && packOf(f));
+  const texts = ctx.texts(side, files), at = { has: f => has.has(f), tree, memo: {} };
+  return new Map(files.map((f, k) => [f, packOf(f).imports(f, texts[k] || '', at)]));
 }
-// Tarjan's strongly connected components; a component of 2+ files (or a self-import) is a cycle
+// Tarjan's strongly connected components; a component of 2+ files (or a self-import) is a cycle. A layer-only edge (order: false,
+// Rust's `use` inside a crate) is no load order
 function cycles(edges) {
   let n = 0; const idx = new Map(), low = new Map(), on = new Set(), stack = [], out = [];
   const visit = v => {
     idx.set(v, n); low.set(v, n); n++; stack.push(v); on.add(v);
-    for (const { to } of edges.get(v) || []) {
+    for (const { to } of (edges.get(v) || []).filter(e => e.order !== false && edges.has(e.to))) {
       if (!idx.has(to)) { visit(to); low.set(v, Math.min(low.get(v), low.get(to))); }
       else if (on.has(to)) low.set(v, Math.min(low.get(v), idx.get(to)));
     }
@@ -256,6 +247,9 @@ const DETECT = {
   },
   pattern: (rule, ctx) => content(rule, ctx, (t, f) => patterns(rule, t, f, ctx)),
   shim: (rule, ctx) => content(rule, ctx, (t, f) => shimFindings(rule, t, f)),
+  // S3 (SPEC 4.5, the linter-gaming guard): a suppression the file's language pack finds needs a reason on its line (K2's test)
+  suppress: (rule, ctx) => content(rule, ctx, (t, f) => (packOf(f)?.suppressions(t) || []).filter(s => !isReason(s.reason, rule.reason).ok)
+    .map(s => ({ file: f, line: s.line, msg: rule.title, snippet: lineText(t, s.line) }))),
   lint,
   ast: lint,
   dup,
@@ -361,6 +355,7 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
       return by;
     },
     grepLines: (s, re, spec) => grep(s, ['-h', '-o', '-E', '-e', re], spec),
+    gitDir: () => (ctx.common ||= gitRun(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim()),   // the project tools' logs and main checkout
   };
   const renamed = new Map(entries.filter(e => e.old && e.old !== e.path).map(e => [e.old, e.path]));
   for (const rule of run) {

@@ -135,3 +135,11 @@ test('scope guard + DoD: a brief without Scope: stays in apps/alpha; a change to
   assert.deepEqual(d.out_of_scope, [`${OTHER}/src/leak.mjs`]);
   execFileSync('git', ['checkout', '-q', 'main'], { cwd: m.root });
 });
+
+test('tests index (norn tests index): alpha\'s test cases and impact map, not beta\'s', () => {
+  const m = monorepo(), out = [];
+  assert.equal(testsCmd(['index', '--json'], { out: s => out.push(s), err: () => {}, where: () => ({ project: m.project(), state: m.state }) }), 0);
+  assert.equal(JSON.parse(out.join('\n')).files, 1, 'tests/alpha.test.mjs only');
+  const cs = JSON.parse(fs.readFileSync(path.join(m.state, 'tests', 'cases.json'), 'utf8'));
+  assert.ok(cs.cases.length && cs.cases.every(c => c.file === 'tests/alpha.test.mjs'), JSON.stringify(cs.cases.map(c => c.id)));
+});
