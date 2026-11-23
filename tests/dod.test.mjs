@@ -195,12 +195,17 @@ test('doneCheck off: no tests and no gate, said so; Tests: none still holds a wr
   assert.match(none.why, /the brief declares no tests/);
 });
 
-/** a sandboxed project + `norn run --executor fake` on the lane worktree; -> { r, state } */
-function normRun(t, wt, repo, { brief, policy, gate }) {
+// the fill's resource gate is not under test here. The Done resume starts through it (supervisor fixEnd -> startRun with queue), so a
+// busy box (CI-45229791934, windows: CPU > fill.max_cpu_pct in ci-suite's parallel phase) held it queued, the supervisor's own fill
+// was held the same way, and --no-tick left nothing to start it. normRun pins an idle sample over the caller's env (the MAIL-98 pattern).
+const IDLE = '{"free_gb":64,"cpu_pct":0}', BUSY = '{"free_gb":64,"cpu_pct":99}';
+
+/** a sandboxed project + `norn run --executor fake` on the lane worktree (base: the caller's env); -> { r, state } */
+function normRun(t, wt, repo, { brief, policy, gate, base = process.env }) {
   const state = path.join(t, 'state', 'kestrel'), pf = path.join(t, 'project.json');
   fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'k', root: fwd(repo), ledger: '${root}/L.md', briefs_dir: '${root}', policy, ...(gate ? { merge: { gate } } : {}) }));
   const bf = path.join(t, 'brief.md'); fs.writeFileSync(bf, brief);
-  const env = { ...process.env, META_ROOT: t, HOME: t, USERPROFILE: t, META_HB_MS: '150' };
+  const env = { ...base, META_ROOT: t, HOME: t, USERPROFILE: t, META_HB_MS: '150', META_FILL_SAMPLE: IDLE };
   const r = spawnSync(process.execPath, [NORN, 'run', '--executor', 'fake', '--project', pf, '--state', state, '--locks', path.join(t, 'locks'), '--lane', 'x',
     '--brief', bf, '--worktree', wt, '--notes', path.join(t, 'NOTES.md'), '--no-tick'], { encoding: 'utf8', env });
   return { r, state };
@@ -225,7 +230,8 @@ test('norn run refuses a brief without the Ready lines (refuse, exit 6), warns (
 test('run end: a DONE whose Done check fails is STOPPED, resumed once with the evidence; the second fail stays STOPPED for the check-in', async () => {
   const t = mkTmp('meta-dod-end-'), { repo, wt } = laneRepo(t);
   fs.writeFileSync(path.join(wt, 'stray.txt'), 'left behind');
-  const { r, state } = normRun(t, wt, repo, { brief: `mode: done\n${READY}`, policy: { dod: { ready: 'refuse' }, slop: { enabled: false } }, gate: { cmd: 'node -e ""' } });
+  // from a busy caller env (the CI runner's state): the pin wins, so the resume starts instead of waiting queued with no tick
+  const { r, state } = normRun(t, wt, repo, { brief: `mode: done\n${READY}`, policy: { dod: { ready: 'refuse' }, slop: { enabled: false } }, gate: { cmd: 'node -e ""' }, base: { ...process.env, META_FILL_SAMPLE: BUSY } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const runs = () => Object.values(loadState(state).items).filter(i => i.kind === 'run').sort((a, b) => a.id.localeCompare(b.id));
   await waitFor(() => runs().length === 2 && runs().every(settled), { producer: stateBusy(state), what: 'the run + its one Done resume end' });
