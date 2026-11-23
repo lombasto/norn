@@ -10,7 +10,7 @@ import { inflateSync } from 'node:zlib';
 import { ENGINE, fixture } from './helpers/dash-fixture.mjs';
 import { PALETTE } from '../engine/dash/norn/palette.mjs';
 import { HEX, artScale, glyphPixels, GLYPHS, RAMP } from '../engine/dash/norn/pixel.mjs';
-import { ASSETS, ART_FILES, TOKENS, EMPTIES, CHIP_TOKEN } from '../engine/dash/norn/assets.mjs';
+import { ASSETS, ART_FILES, TOKENS, EMPTIES, CHIP_TOKEN, PLACEHOLDER } from '../engine/dash/norn/assets.mjs';
 import { createScheduler, motionAllowed } from '../engine/dash/norn/motion.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { dashCss } from './helpers/dash-css.mjs';
@@ -176,4 +176,13 @@ test('the orc art: every orc asset present at its size, indexed, binary alpha, o
 test('the phone header orc-16 is drawn on the UI scale', () => {
   assert.equal(ASSETS['orc-16'].k, 'ui');
   assert.equal(ASSETS['orc-32'].k, 1, 'the desktop 32 stays at its native size');
+});
+
+test('the close icon: a 9 x 9 X glyph on the red ramp (palette only, the lock above), the 16 px UI asset drawn from it until a PNG lands', () => {
+  assert.deepEqual(RAMP.close, ['rune', 'ember', 'blood'], 'the red ramp, as bad');
+  assert.equal(GLYPHS.close.length, 9);
+  for (let i = 0; i < 9; i++) { assert.notEqual(GLYPHS.close[i][i], '.', `diagonal ${i}`); assert.notEqual(GLYPHS.close[i][8 - i], '.', `anti-diagonal ${i}`); }
+  for (const ground of ['dark', 'light']) for (const [, , c] of glyphPixels('close', ground)) assert.ok(PAL.has(c), `${ground} ${c}`);
+  assert.deepEqual(ASSETS['icon-close-16'], { file: 'icon-close-16.png', w: 16, h: 16, k: 'ui', use: ASSETS['icon-close-16'].use });
+  assert.deepEqual(PLACEHOLDER('icon-close-16'), { glyph: 'close' });
 });

@@ -266,3 +266,14 @@
 :root.norn .dv-head { border-bottom: calc(1 * var(--px)) solid var(--line); }
 :root.norn mark.dv-w, :root.norn .dvpip-tools button { border-radius: 0; }
 :root.norn .dv-row.dv-cur { outline: calc(2 * var(--px)) solid var(--gold); }
+/* the drawers' close button (norn/assets.mjs closeBtn): one per look - the Norn art, else the classic SVG X (this sheet loads in
+   both looks); a 44 px touch target */
+.xclose{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0;background:none;border:0;cursor:pointer;flex:none}
+:root.norn .xclose .xc-svg{display:none}
+:root:not(.norn) .xclose .xc-art{display:none}
+/* the time chart's fades (widgets.mjs timeChart / outliers, base.css) redrawn solid: the hover band and the overview window as an
+   outline (they never hide the lines under them), a legend series switched off in the muted ink, the outlier dots full */
+:root.norn .tchov:hover{fill:transparent;fill-opacity:1;stroke:var(--line)}
+:root.norn .tcwin{fill:transparent;fill-opacity:1}
+:root.norn .tcleg[aria-pressed=false]{opacity:1;color:var(--mute)}
+:root.norn .wodot{opacity:1}
