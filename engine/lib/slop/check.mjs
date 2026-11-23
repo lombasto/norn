@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
 import { runTool, PARSE } from './tools.mjs';
-import { norm, lineAt, lineText, masked, isReason } from './scan.mjs';
+import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
 import { packOf, LINTERS } from './lang/index.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
@@ -172,7 +172,6 @@ export function patterns(rule, text, file, ctx) {
 // RM-9 (DIR-2, the CLAUDE.md rule on old names kept alive): K16. The rule's patterns line by line, plus every page whose label does not
 // name its id (a page has ONE name: label, id and URL). One finding a line, the first pattern's; each message ends with the rule's fix.
 const stem = t => (t.length > 3 ? t.replace(/s$/, '') : t);
-const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
 /** the label names the id: a part of the id (split on - and _, a plural s dropped) is in the label's letters, or starts like a label
  *  word (4 letters, or the whole part: notify ~ Notifications) */
 export const labelNamesId = (id, label) => {

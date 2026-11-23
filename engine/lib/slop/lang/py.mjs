@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { which } from '../../paths.mjs';
-import { lineAt, norm, tomlTables } from '../scan.mjs';
+import { lineAt, norm, tomlTables, prefix } from '../scan.mjs';
 
 const P = path.posix;
 /** dotted module name -> [files]: every module inside a package (a folder with __init__.py), named from its top package; a loose
@@ -25,14 +25,13 @@ function index(tree) {
   }
   return out;
 }
-const common = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
 // module level only (column 0): an import inside a function or `if TYPE_CHECKING:` is no load-order edge
 const IMPORT_RE = /^(?:from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n#;]+)|import[ \t]+([^\n#;]+))/gm;
 const names = s => s.replace(/[()\\]/g, ' ').split(',').map(x => x.trim().split(/\s+/)[0]).filter(x => /^[\w.]+$/.test(x));
 /** the import edges of a module to files of the tree: [{ to, line, text }]; at.memo.py caches the module index of the side */
 export function imports(file, text, at) {
   const idx = (at.memo.py ||= index(at.tree)), out = [];
-  const abs = dotted => (idx.get(dotted) || []).reduce((best, f) => (!best || common(f, file) > common(best, file) ? f : best), null);
+  const abs = dotted => (idx.get(dotted) || []).reduce((best, f) => (!best || prefix(f, file) > prefix(best, file) ? f : best), null);
   const rel = (dir, dotted) => { const b = dotted ? `${dir}/${dotted.replace(/\./g, '/')}` : dir; return [`${b}.py`, `${b}/__init__.py`].map(x => P.normalize(x)).find(x => at.has(x)) || null; };
   for (const m of text.matchAll(IMPORT_RE)) {
     const line = lineAt(text, m.index), src = norm(m[0]), hits = [];

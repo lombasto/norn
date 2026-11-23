@@ -7,6 +7,8 @@ export const CLASSES = { code: CODE, comment: COMMENT, string: STRING, quote: QU
 export const isJs = f => /\.(?:mjs|cjs|js|jsx|ts|tsx|mts|cts)$/.test(f);
 
 export const norm = s => String(s).replace(/\s+/g, ' ').trim();
+/** the length of the common start of two strings */
+export const prefix = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
 export const lineAt = (text, i) => text.slice(0, i).split('\n').length;
 export const lineText = (text, n) => (text.split('\n')[n - 1] ?? '');
 
