@@ -65,11 +65,12 @@ function configs(files, tree, read) {
     let d = P.dirname(f), c = at(d);
     while (!c && d !== '.') { d = P.dirname(d); c = at(d); }
     if (!c) continue;
-    const g = (out[d] ||= { name: P.basename(c.f), text: read(c.f), files: [], dirs: [] });
+    const g = (out[d] ||= { name: P.basename(c.f), text: read(c.f), files: [], mods: [] });
     g.files.push(f);
   }
-  // the folders two deep under each config's folder: ruff's isort tells first-party imports by the folders under `src`
-  for (const [d, g] of Object.entries(out)) g.dirs = [...new Set(tree.filter(f => d === '.' || f.startsWith(d + '/')).map(f => (d === '.' ? f : f.slice(d.length + 1)).split('/').slice(0, -1).slice(0, 2).join('/')).filter(Boolean))];
+  // every module under each config's folder: ruff's isort tells a first-party import by its module's FILE under `src` (ruff 0.15:
+  // `from pkg.a import x` is first-party only if src/pkg/a.py exists), so the temp folder holds an empty stand-in of each
+  for (const [d, g] of Object.entries(out)) g.mods = tree.filter(f => /\.pyi?$/.test(f) && (d === '.' || f.startsWith(d + '/')));
   return out;
 }
 /** ruff on a side's texts: per config folder, the merge base's config and the texts in a temp folder, the project's ruff run there */
@@ -81,9 +82,9 @@ function run(rule, side, { texts, env = process.env }) {
     for (const [d, g] of Object.entries(rule.configs)) {
       const cwd = path.join(tmp, d), here = g.files.filter(f => texts.has(f));
       if (!here.length) continue;
-      for (const sub of g.dirs) fs.mkdirSync(path.join(cwd, sub), { recursive: true });
+      for (const f of g.mods) { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), texts.get(f) ?? ''); }
+      for (const f of here) { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), texts.get(f)); }   // a new module too
       fs.writeFileSync(path.join(cwd, g.name), g.text);
-      for (const f of here) { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), texts.get(f)); }
       const r = spawnSync(uv, ['run', '--no-sync', '--project', path.join(main, d), 'ruff', 'check', '--output-format', 'json', '--no-cache', '--force-exclude', ...here.map(f => path.relative(cwd, path.join(tmp, f)))],
         { cwd, env: clean, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26, timeout: 300000 });
       if (r.error) throw r.error;
