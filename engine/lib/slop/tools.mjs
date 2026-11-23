@@ -10,9 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { which, resolveShim } from '../paths.mjs';
 import { metaRoot } from '../config.mjs';
 import { askVoice } from './voice.mjs';
+import { RUFF } from './lang/py.mjs';
+import { CLIPPY } from './lang/rs.mjs';   // not lang/index.mjs: lang/js.mjs imports this module (a cycle)
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOOL_SETS = path.join(HERE, '..', '..', '..', 'tools');
+/** the project's own lint tools (S3): each pack runs it (ruff in the project's venv) or reads its log (clippy); never pinned here */
+const PROJECT_TOOLS = { ruff: RUFF, clippy: CLIPPY };
 export const TOOLS = { eslint: { set: 'lint', bin: ['node_modules', 'eslint', 'bin', 'eslint.js'] } };
 const JS_FILES = ['**/*.mjs', '**/*.js', '**/*.cjs'];
 /**
@@ -76,7 +80,7 @@ function eslintRun(t, run, texts, env) {
 /**
  * The real tool runner: tool(rule, side, { dir, texts }) -> raw output | null (no output for that side). A tool rule here is the
  * ONE ESLint run of a check: { tool: 'eslint', rules, selectors, config (the merge base's repo config text, or null) } over texts,
- * Map(path -> that side's text). A command rule runs once, at check time in dir (its output is the machine's, not a side's: the
+ * Map(path -> that side's text); a ruff / clippy rule goes to its language pack's run. A command rule runs once, at check time in dir (its output is the machine's, not a side's: the
  * check keeps only the lines whose source the diff touches). A model read (kind `model`: { id, prompt }) is one no-tools call on
  * o.voice, the route voiceRoute picked at the launch; with no route (a door, `norn slop check`) it throws: each model rule is a
  * WARN "could not run" (the voice holds nothing) and reads at the run end. o.env.
@@ -92,6 +96,7 @@ export function makeTool({ env = process.env, voice = null } = {}) {
       if (r.error) throw r.error;
       return r.stdout;
     }
+    if (PROJECT_TOOLS[rule.tool]) return PROJECT_TOOLS[rule.tool].run(rule, side, { dir, texts, env });
     const t = TOOLS[rule.tool];
     if (!t) throw new Error(`${rule.id}: unknown tool ${rule.tool}`);
     return eslintRun(t, rule, texts, env);
