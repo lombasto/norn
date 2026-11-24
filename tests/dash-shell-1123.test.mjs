@@ -71,6 +71,15 @@ test('Tests wired: the &case= param reaches testsPart (the case part), the Suite
     const d = await loadTab('tests', 'kestrel', async p => (await f.get(p)).data, { case: 'tests/a.test.mjs::beta two' });
     assert.equal(d.case?.name, 'beta two');
     assert.match(renderTab('tests', d, {}), /<div id="panel-tests">[^]*id="tests-case"/);
+    // MAIL-a-192: Run time's "slowest" fills - the runtime part carries the per-case medians beside the per-run list
+    const cache = path.join(path.dirname(path.resolve(f.pa.state)), 'testcache'), at = new Date().toISOString();
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'cases.jsonl'), [120, 140, 160].map(ms => JSON.stringify({ at, run: 'RUN-1', state: null, file: 'tests/a.test.mjs', id: 'tests/a.test.mjs::alpha one', ms, ok: true }) + '\n').join(''));
+    const rt = (await f.get('/api/tests?project=kestrel&part=runtime')).data;
+    assert.ok(Array.isArray(rt.rows),'the per-run list is still there');
+    assert.deepEqual(rt.medians?.map(m => [m.id, m.value]), [['tests/a.test.mjs::alpha one', 140]], 'the slowest list has its medians');
+    const rd = await loadTab('tests', 'kestrel', async p => (await f.get(p)).data, { sub: 'runtime' });
+    assert.match(renderTab('tests', rd, {}), /id="tests-slowest"[^]*id="tests-outliers"/);
   } finally { await f.done(); }
   const ui = fs.readFileSync(path.join(DASH, 'ui.mjs'), 'utf8');
   assert.doesNotMatch(ui, /function testsSuite|const TESTS_PART/, 'the old Tests renderers are gone from ui.mjs');

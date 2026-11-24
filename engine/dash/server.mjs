@@ -1210,7 +1210,7 @@ export function createDashboard(o) {
       const lf = lane ? (lanes.includes(lane) ? await laneFiles(p, lane) : { error: `no lane ${lane} in ${p.name}` }) : null;
       return testsPart(p.state, 'impact', { picked: { lanes, lane, files: lf ? lf.files ?? [] : files, error: lf?.error ?? null } });
     }
-    if (name === 'runtime') return testsRuntime(p);
+    if (name === 'runtime') return { ...await testsRuntime(p), ...testsPart(p.state, 'runtime') };   // the per-run list + the per-case medians (Slowest tests)
     return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [], case: url.searchParams.get('case'), sort: url.searchParams.get('sort') ?? undefined, q: url.searchParams.get('q') ?? '' });
   }
   // test-diet S1: the Run time view - the worker runs of the last RUNTIME_DAYS with their wall / test split (the Runs page's transcript
