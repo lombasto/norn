@@ -248,7 +248,7 @@ export async function drawMap({ state, repo, refresh = false, skill, ask, budget
     const per = Number((budget ?? readJsonS(machineBudgetFile(env)) ?? {}).cacheR_per_pct);
     if (refresh && !(per > 0)) return skip('no plan calibration (budget cacheR_per_pct) to meter it by');
     skill ??= floorplanHome({ env });
-    if (!fs.existsSync(path.join(work, '.git'))) git(dir, ['clone', '-q', '--no-checkout', repo, 'work']);
+    if (!fs.existsSync(path.join(work, '.git'))) git(dir, ['clone', '-q', '--no-checkout', '-c', 'core.longpaths=true', repo, 'work']);   // a deep state dir + deep fixtures pass 260 on Windows
     git(work, ['fetch', '-q', 'origin', 'HEAD']); git(work, ['checkout', '-q', '-f', '--detach', full]);
     const fp = path.join(work, 'floorplan'), seedFile = path.join(work, 'docs', 'architecture.json'), seed = fs.existsSync(seedFile) ? sha256(fs.readFileSync(seedFile)) : null;
     const first = !fs.existsSync(path.join(fp, 'index.html'));
