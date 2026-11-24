@@ -135,6 +135,12 @@ if (guard && process.platform === 'win32') {
   // K3 round 2: process.env too - the runs THIS process starts (auto-resume, nudge, queue fill, fallback) break away from its job
   if (j.error) logLine(`reap: unguarded (${j.error})`); else { job = j; env.META_JOB = j.name; process.env.META_JOB = j.name; }
 }
+// NORN-DOD-NOCOMMIT (#161): the HEAD the run starts on - the Done check measures its changed set from there (dod.mjs since). A resume
+// (the Done / slop fix, a hand-off) keeps its first run's through continuation(spec), so a run never sheds its own commits by resuming
+if (spec.dod?.ready && spec.worktree && !spec.dod_since) {
+  const h = spawnSync(spec.git || 'git', ['rev-parse', 'HEAD'], { cwd: spec.worktree, encoding: 'utf8', timeout: 5000, windowsHide: true });
+  if (h.status === 0 && /^[0-9a-f]{40}$/.test(h.stdout.trim())) spec.dod_since = h.stdout.trim();
+}
 logLine(`start ${run} executor=${spec.executor} model=${spec.model ?? '-'} effort=${spec.effort ?? '-'} resumes=${spec.resumes || 0} brief=${spec.brief}`);
 const fds = [];
 const open = (f, m) => { const fd = fs.openSync(f, m); fds.push(fd); return fd; };
@@ -281,7 +287,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {
     const hb = setInterval(beat, spec.hbMs);
-    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks'), state, cache: cacheDirOf(state) }); }
+    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks'), state, cache: cacheDirOf(state), since: spec.dod_since ?? null }); }
     catch (e) { data.dod = { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
     finally { clearInterval(hb); }
     logLine(`dod: Done ${data.dod.ok ? 'green' : 'RED: ' + data.dod.why}${data.dod.tests.length ? ' (' + data.dod.tests.map(testLine).join('; ') + ')' : ''}`);

@@ -22,11 +22,13 @@ const iso = t => new Date(t).toISOString();
 /**
  * runs: the item's reached runs (fold items); merges: [ms] (a merged / installed deliverable's round end, a MERGE run ended done).
  * -> { fires [{ ts, threshold, value }] (every crossing, all episodes - the replay), episode { runs, first, row, reasons, fired } }.
- * A round = a started work run (not a merge run, not a helper). done breaks the stopped row; handoff / lost / killed neither
+ * A round = a started work run (not a merge run, not a helper, not an approach review). done breaks the stopped row; handoff / lost / killed neither
  * count nor break. Each threshold fires once per episode (an episode ends at a merge).
  */
 export function stuckTimeline(runs, merges, pol, now = Date.now()) {
-  const rounds = runs.filter(r => !isMergeRun(r.data) && r.data?.role !== 'helper' && !['queued', 'claimed', 'withdrawn', 'filled'].includes(r.state));
+  // an approach-review run is never a round of the flag it reviews (#161: its stop counted its model as stuck and voided its verdict)
+  const rounds = runs.filter(r => !isMergeRun(r.data) && r.data?.role !== 'helper' && String(r.data?.stage ?? '').toUpperCase() !== REVIEW_STAGE
+    && !['queued', 'claimed', 'withdrawn', 'filled'].includes(r.state));
   const evs = [...merges.filter(Boolean).map(t => ({ t, k: 0 })), ...rounds.flatMap(r => [{ t: startOf(r), k: 1, r }, ...(endOf(r) ? [{ t: endOf(r), k: 2, r }] : [])])]
     .filter(e => e.t).sort((a, b) => a.t - b.t || a.k - b.k);
   const fires = [];

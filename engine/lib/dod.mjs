@@ -109,29 +109,36 @@ export function gateProgress(text) {
  * set (lightJobs) one file at a time through the test cache (cache: its dir; state: the project state dir, for the last measure's
  * times), no gate; once run_budget_min is spent no further file starts - the rest is named in tests_left, left to CI (unknown, not a
  * pass, not red). off: no tests at all. out.tests_policy names the policy, out.tests_uncovered the changed modules no test covers directly.
+ * NORN-DOD-NOCOMMIT (#155, #161): since = the HEAD the run started on (the supervisor's spec.dod_since). The changed set is measured
+ * from it when it lies on the lane line (the merge base its ancestor, itself HEAD's), so a run is charged only with what IT did: a
+ * review run in another lane's worktree is not charged with that lane's commits. out.since names it when used.
  */
-export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = null, cache = cacheDir() }) {
+export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = null, cache = cacheDir(), since = null }) {
   const ready = dod.ready, tp = testsPolicy({ tests: dod.tests }), out = { ok: false, why: null, at: new Date().toISOString(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [], tests_policy: policyWords(tp) };
   const st = gitRun(worktree, ['status', '--porcelain', '-z', '--untracked-files=all']).split('\0').filter(Boolean);
   out.dirty = st.filter(l => /^.. /.test(l)).map(l => l.slice(3));
   const bb = branchBase(worktree);
   out.head = gitRun(worktree, ['rev-parse', 'HEAD']).trim();
-  if (bb) {
-    Object.assign(out, { branch: bb.branch, base: bb.base });
-    out.changed = gitRun(worktree, ['diff', '--name-only', '--no-renames', '-z', bb.base, 'HEAD']).split('\0').filter(Boolean);
+  const from = sinceOf(worktree, since, bb?.base) ?? bb?.base;
+  if (bb) Object.assign(out, { branch: bb.branch, base: bb.base });
+  if (from && from !== bb?.base) out.since = from;
+  // NORN-DOD-NOCOMMIT: a `Tests: none` run with no lane branch and a clean tree has nothing to diff - its intended outcome, not a problem
+  const none = /^\s*none\b/i.test(String(ready.tests ?? ''));
+  if (from) {
+    out.changed = gitRun(worktree, ['diff', '--name-only', '--no-renames', '-z', from, 'HEAD']).split('\0').filter(Boolean);
     // the NOTES file and the shots beside it (images in its folder) belong to the run whatever Scope says
     const nd = dod.notes ? fwd(path.relative(worktree, path.dirname(path.resolve(dod.notes)))) : null, nf = dod.notes ? fwd(path.relative(worktree, path.resolve(dod.notes))) : null;
     const own = p => p === nf || (nd !== null && !nd.startsWith('..') && path.posix.dirname(p) === (nd || '.') && /\.(png|jpe?g|webp|gif)$/i.test(p));
     out.out_of_scope = out.changed.filter(p => !inScope(p, ready.scope) && !own(p));
-  } else out.problems.push('no lane branch to diff against main');
+  } else if (!none) out.problems.push('no lane branch to diff against main');
   // NORN-DOD-TESTS-NONE: a design run's `Tests: none - ...` is green only on a branch that changed nothing (no commit, no edit of a
   // tracked or untracked file); with any change it is red, so a writing run cannot dodge its tests by writing "none"
-  const none = /^\s*none\b/i.test(String(ready.tests ?? '')), touched = none ? new Set([...out.changed, ...out.dirty]).size : 0;
+  const touched = none ? new Set([...out.changed, ...out.dirty]).size : 0;
   const light = !none && tp.mode === 'light' ? lightJobs(ready.tests, worktree, dod.test_cmd, out.changed, state) : null;
   const t = none || tp.mode === 'off' ? {} : light ? { cmds: light.cmds } : testCmds(ready.tests, worktree, dod.test_cmd);
   if (t.problem) out.problems.push(t.problem);
   if (none && touched) out.problems.push(`the branch changed ${touched} file${touched === 1 ? '' : 's'} but the brief declares no tests`);
-  else if (none && bb) out.tests_none = 'none declared, nothing changed';
+  else if (none) out.tests_none = 'none declared, nothing changed';
   if (!none && tp.mode === 'off') out.tests_off = 'policy.tests.mode = off: the Done check runs no tests and no gate - CI runs them on the pull request';
   if (light?.uncovered.length) out.tests_uncovered = light.uncovered;
   // a docs-only branch runs no gate: CI ignores such a push and its MERGE runs no suite (RUN-1063 / RUN-1072 timed out on README + pictures)
@@ -172,6 +179,13 @@ export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = 
   out.ok = !why.length;
   out.why = why.length ? why.join('; ') : null;
   return out;
+}
+
+/** the run's start HEAD when it lies on the lane line (base, the merge base if any, is its ancestor; it is HEAD's), else null */
+function sinceOf(worktree, since, base) {
+  if (!since) return null;
+  const anc = (a, b) => { try { gitRun(worktree, ['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } };
+  return (!base || anc(base, since)) && anc(since, 'HEAD') ? since : null;
 }
 
 /** one line of a Done check's evidence (Agents, the feed, the resume prompt) */

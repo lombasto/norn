@@ -34,6 +34,14 @@ test('fold: the third stopped round in a row fires stopped_rounds at its end; a 
   assert.deepEqual(s.reasons.map(x => x.why), ['check failed at h0', 'check failed at h4', 'check failed at h6'], 'the last three stop reasons');
 });
 
+test('#161: an approach-review run is never a round of the flag it reviews: its stop neither counts nor joins the rounds', () => {
+  const rs = [run(0, 'stopped'), run(2, 'stopped'), run(4, 'stopped')], review = run(8, 'stopped', { data: { stage: 'approach-review', executor: 'codex', model: 'm-b' } });
+  const s = stuckOf([...rs, review], [], POL, T0 + 10 * H);
+  assert.equal(s.runs, 3); assert.equal(s.stopped_row, 3);
+  assert.deepEqual(s.rounds.map(x => `${x.executor}/${x.model}`), ['claude/m-a', 'claude/m-a', 'claude/m-a'], 'the reviewer\'s model is not a stuck model');
+  assert.ok(!s.reasons.some(x => x.run === review.id));
+});
+
 test('fold: runs_without_merge fires at the n-th start, days_without_merge at the first run + d days; 0 switches a threshold off', () => {
   const rs = Array.from({ length: 8 }, (_, i) => run(i * 2, 'handoff'));
   assert.deepEqual(stuckTimeline(rs, [], POL, T0 + 20 * H).fires, [{ ts: iso(T0 + 14 * H), threshold: 'runs_without_merge', value: 8 }]);
