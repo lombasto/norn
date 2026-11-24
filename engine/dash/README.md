@@ -5,9 +5,9 @@ random port, `--no-open` skips the browser, `--project <project.json>` limits it
 only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the page (a fresh random token each start).
 
 ## Where things are (stage NAV: 5 destinations, plain names, both looks)
-The bar is **Talk · Lanes · Runs · Inbox · More** (`shell.mjs` `BAR`), the same on a desktop and a phone (at the bottom there),
+The bar is **Controller · Lanes · Runs · Inbox · More** (`shell.mjs` `BAR`), the same on a desktop and a phone (at the bottom there),
 as link nav (`<nav>` + `aria-current`). Lanes is the landing page. **More** is a menu, not a page: a popover on a desktop, a
-bottom sheet on a phone (`MORE`): **Health** = Spend, Slop, Tests, Context; **History** = Records, Ledger, Docs; **Plan** =
+bottom sheet on a phone (`MORE`): **Health** = Spend, Slop, Tests, Code, Context; **History** = Records, Ledger, Docs; **Plan** =
 Roadmap. Settings is no page of the bar or More: the cog at the top right of the header opens it over the page (`#setview`),
 Close (Esc) puts the page back. When one of the More pages is open, More is marked current; a
 Health page in a bad state puts a dot on More. Every page's label, tab id and URL are the same word (`?tab=runs` is Runs); an
@@ -25,7 +25,8 @@ refreshes the strip only, a record refetches the open page only when the page re
   Check-ins box (status time in local time, check-ins on / paused, tick running, live; Pause / Resume, Run tick now); the cog
   (Settings, with Look and Theme inside). On a phone the pool and the Check-ins box sit behind More. Every time on the dashboard
   is the browser's local time (`cells.mjs` `fmtTime` / `fmtDate`). The tab title shows `(n)` when something needs you.
-- Talk: the controller chat and the check-in thread.
+- Controller: the controller chat and the check-in thread (`?tab=controller`; `?tab=talk` is no page and opens Lanes).
+- Tests: the suite, its cases (`&case=` opens one), sort and search; Code: the code map (`&file=` opens one file). Both read a file's text from `GET /api/source`.
 - Inbox: open questions with their options as small cards (key, text, cost; the recommended one marked, with its why) and a
   free-text answer; answered-not-applied questions, parked lanes, unreviewed runs. Its text goes through the one prose renderer
   (`prose.mjs`, on the Docs markdown stack): ids, lanes, PRs and commits as chips, file paths shortened (full path in the title, a
@@ -58,6 +59,7 @@ refreshes the strip only, a record refetches the open page only when the page re
 
 ## Words (UX review 4: one name per thing, one count per thing)
 The dashboard says these words and only these; a count of the same thing comes from one function, so every place agrees.
+- **Controller**: the page with the controller chat and the check-in thread (it was "Talk"; `talk` stays only as a run kind).
 - **Lane** (`L:<name>`): one line of work with its own branch and worktree (a LANE record). Not "thread", not "task".
 - **Run** (`RUN-n`): one session of an agent on a lane, from start to end. The Runs page lists them; the Overview's "Running" counts
   runs in flight against the caps. **Worker** appears only in the cap names (`max_claude_workers`, `merge_workers`): the most runs at once.
@@ -65,7 +67,7 @@ The dashboard says these words and only these; a count of the same thing comes f
 - **Needs you**: an Inbox row that waits for you - an open question, a fixer result to apply, an approval card, a login or setup to do,
   a parked lane, an unreviewed run. Answered questions (waiting for the next check-in), model advice and an enforce card already
   asked for (its directive exists) are listed in the Inbox for information but are not counted. ONE count: `terms.mjs` `needsYou` - the Overview card, the Inbox head, the Inbox badge, the page
-  title, the Home filter and the project picker all show it (`tests/dash-counts.test.mjs`). Pending chat approvals in the Home thread
+  title, the Controller filter and the project picker all show it (`tests/dash-counts.test.mjs`). Pending chat approvals in the Controller thread
   are counted beside it by name ("+ n to approve").
 - **Finding**: one open problem a check reports (instruction files, memory, rules, docs, tests, models, code checks). The **Slop** page
   lists every open finding; "slop" names the page, never a count. A **new finding** is one at warn level (medium or high) first seen
@@ -83,12 +85,12 @@ bad colour, so an error never reads as a highlight; every chip's text is WCAG AA
 
 ## Writes
 Every button writes through the records library (`engine/lib/records.mjs`, rules in `engine/prompts/RECORDS.md`): answers,
-directives, overrules and stops become events; the generated views are re-rendered. Talk to the controller (prompt
+directives, overrules and stops become events; the generated views are re-rendered. The Controller page talks to the controller (prompt
 `engine/dash/ASK.md`): a reply line `DIRECTIVE: ...` becomes a directive record (via talk). Settings writes `local/budget.json`
 and the project's `project.json` and regenerates the marked policy lines (`<!-- policy:<key> -->`) in `project.policy_targets`.
 
 ## API (GET, `?project=<name>`; overview / inbox / lanes / agents also take `all`)
-`/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents` (`&window=2h|12h|24h|today`: ended runs kept; default 2h), `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`,
+`/api/overview`, `/api/inbox`, `/api/lanes`, `/api/agents` (`&window=2h|12h|24h|today`: ended runs kept; default 2h), `/api/records`, `/api/docs`, `/api/ledger`, `/api/settings`, `/api/tests`, `/api/code`, `/api/source?file=` (a repo file's text),
 `/log?run=RUN-n` (last 200 lines of that run's log), `/api/feed?run=RUN-n` (SSE live feed of one run), `/api/stream` (SSE state stream: record appends, flag flips, heartbeat pulse, derived changes - the page re-renders from it).
 `/api/timing`: the server's own timings - requests slower than 1 s and event-loop stalls over 250 ms (with the requests that ran in
 the stall), the last 100 of each; also appended to `local/dash-timing-<port>.jsonl` (one file per port). Every answer carries `Server-Timing` (`app` = ms in

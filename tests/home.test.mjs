@@ -95,8 +95,8 @@ const HOME = {
 };
 
 test('C2 renderHome (Look 3): the side columns, the thread header (harness, context vs hand-off), the filters with the needs count, the composer', () => {
-  const html = renderTab('talk', HOME, { project: 'kestrel', look: 'norn', now: Date.parse(T(60)) });
-  assert.match(html, /id="panel-talk"/);
+  const html = renderTab('controller', HOME, { project: 'kestrel', look: 'norn', now: Date.parse(T(60)) });
+  assert.match(html, /id="panel-controller"/);
   for (const h of ['Now', 'Held by this chat', 'Usage this week', 'Next check-in', 'Waiting for you', 'Ruled for you today', 'Your standing orders']) assert.ok(html.includes(`>${h}<`), h);
   assert.match(html, /class="home-l"/); assert.match(html, /class="home-r"/); assert.match(html, /class="home-c"/);
   const text = html.replace(/<[^>]+>/g, '');
@@ -107,18 +107,18 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   assert.match(html, /<textarea id="chat-text"[^>]*maxlength="8000"/); assert.match(html, /data-act="chat-send"/);
   assert.match(html, /data-rid="DEC-112"/); assert.match(html, /data-rid="DIR-15"/); assert.match(html, /RUN-411/);
   assert.match(html, /38 % of the weekly guard/); assert.match(html, /every 15 min/);
-  assert.match(renderTab('talk', HOME, { project: 'kestrel', homeFilter: 'run' }), /data-filter="run" aria-pressed="true"/);
-  assert.match(renderTab('talk', { one: true }, { project: 'all' }), /belongs to one project/);
+  assert.match(renderTab('controller', HOME, { project: 'kestrel', homeFilter: 'run' }), /data-filter="run" aria-pressed="true"/);
+  assert.match(renderTab('controller', { one: true }, { project: 'all' }), /belongs to one project/);
 });
 
-test('C2 nav: the thread is Talk, the first page on the one bar (UI redesign 2026-11-20; Lanes stays the landing; the same bar on desktop and phone)', async () => {
-  assert.deepEqual(TABS[0], ['talk', 'Talk']); assert.deepEqual(BAR[0], ['talk', 'Talk']);
-  const bar = renderBar('talk', { project: 'kestrel', needs: 2 });
-  assert.match(bar, /data-tab="talk" aria-current="page"/); assert.match(bar, /aria-label="2 need you">2</); assert.match(bar, /data-act="more"/);
+test('C2 nav: the thread is Controller, the first page on the one bar (UI redesign 2026-11-20; Lanes stays the landing; the same bar on desktop and phone)', async () => {
+  assert.deepEqual(TABS[0], ['controller', 'Controller']); assert.deepEqual(BAR[0], ['controller', 'Controller']);
+  const bar = renderBar('controller', { project: 'kestrel', needs: 2 });
+  assert.match(bar, /data-tab="controller" aria-current="page"/); assert.match(bar, /aria-label="2 need you">2</); assert.match(bar, /data-act="more"/);
   const seen = [];
-  const d = await loadTab('talk', 'kestrel', async p => { seen.push(p); return p.startsWith('/api/home') ? { project: 'kestrel', events: [] } : {}; });
+  const d = await loadTab('controller', 'kestrel', async p => { seen.push(p); return p.startsWith('/api/home') ? { project: 'kestrel', events: [] } : {}; });
   assert.deepEqual(seen, ['/api/home?project=kestrel']); assert.equal(d.project, 'kestrel');
-  assert.deepEqual(await loadTab('talk', 'all', async () => assert.fail('no fetch for all')), { one: true });
+  assert.deepEqual(await loadTab('controller', 'all', async () => assert.fail('no fetch for all')), { one: true });
 });
 
 test('C2 /api/home on the fixture state: the thread file, runs, needs, the side columns and the chat status (no process started)', async () => {
@@ -175,7 +175,7 @@ test('C2 /api/file: images inside the allow-listed roots (project root, state, r
 // stalled step ran into the 120 s test timeout without a word and the finally (browser + server close) never ran - the file hung to
 // the 600 s cap. The shared openPage: every wait bounded, a timeout fails naming the page's state, pg.close in the finally.
 import { openPage, skipWhy } from './helpers/cdp.mjs';
-test('C2 the Talk tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
+test('C2 the Controller tab at 390 x 844 (phone, both grounds): document scrollWidth == the viewport width; at 1440 the three columns sit side by side', {
   skip: skipWhy, timeout: 120000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
@@ -187,15 +187,15 @@ test('C2 the Talk tab at 390 x 844 (phone, both grounds): document scrollWidth =
       await pg.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
       await pg.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: ground }] });
       // read only the NEW page, and only once it says it painted (go: the load event, then body data-ready = the tab or 'error')
-      const ready = await pg.go(`${f.url}/?project=kestrel&tab=talk&theme=${ground}`);
+      const ready = await pg.go(`${f.url}/?project=kestrel&tab=controller&theme=${ground}`);
       return { ready, ...await pg.ev(`new Promise(r => setTimeout(() => r({ error: document.querySelector('#error')?.textContent || null,
-        sw: document.documentElement.scrollWidth, w: innerWidth, ev: document.querySelectorAll('#panel-talk .ev').length,
+        sw: document.documentElement.scrollWidth, w: innerWidth, ev: document.querySelectorAll('#panel-controller .ev').length,
         bar: getComputedStyle(document.querySelector('#tabs')).position, l: document.querySelector('.home-l') && getComputedStyle(document.querySelector('.home-l')).display,
         cols: [...document.querySelectorAll('.home > *')].filter(e => getComputedStyle(e).display !== 'none').map(e => Math.round(e.getBoundingClientRect().left)) }), 300))`) };
     };
     for (const ground of ['dark', 'light']) {
       const m = await measure(390, 844, ground, true);
-      assert.equal(m.ready, 'talk', `${ground}: the page painted the Talk tab (${JSON.stringify(m)})`);
+      assert.equal(m.ready, 'controller', `${ground}: the page painted the Controller tab (${JSON.stringify(m)})`);
       assert.ok(m.ev >= 3, `${ground}: the thread rendered (${JSON.stringify(m)})`);
       assert.equal(m.sw, m.w, `${ground}: no sideways scroll at 390 (${JSON.stringify(m)})`); assert.equal(m.w, 390);
       assert.equal(m.bar, 'fixed', 'the page bar at the bottom'); assert.equal(m.l, 'none');

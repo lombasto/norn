@@ -87,6 +87,7 @@ import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
 import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
+import { codeCmd } from '../lib/codecli.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
@@ -1435,6 +1436,7 @@ Plan and land work:
   norn speed                        worker speed: tok/s, model / tools / tests / idle per ended run, by workers running (the cap's data)
   norn size                         the sessions of a lane stage: floor, first edit, peak against the marks they ran under, a verdict
   norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
+  norn code                         the code history: per tracked file lines, growth, churn and fan-in (the Code page's data)
   norn deliverables                follow finished work to main and to an install
   norn mergeq                      the merge queue of finished branches
   norn cv                          per-executor / model track record
@@ -1557,6 +1559,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   const delegate = run => { try { const c = run(); return c instanceof Promise ? c.catch(configExit) : c; } catch (e) { return configExit(e); } };
   if (argv[0] === 'slop') return delegate(() => slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) }));
   if (argv[0] === 'tests') return delegate(() => testsCmd(argv.slice(1), { out, err, env, where: f => runWhere(f, env) ?? where(f, env) }));
+  if (argv[0] === 'code') return delegate(() => codeCmd(argv.slice(1), { out, err, where: f => where(f, env) }));
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'speed') return speedCmd(argv.slice(1), env, out, err);
   try {

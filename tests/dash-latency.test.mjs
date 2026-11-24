@@ -56,8 +56,8 @@ test('the browser: a tab render fetches the header (/api/strip) and the tab at o
     assert.ok(ib.t0 - ov.t0 < 400, `the Inbox request went out ${Math.round(ib.t0 - ov.t0)} ms after the header's: a waterfall`);
     // a page change's render asks for the strip once (a state-stream event may refresh it later) and never for the run tree's
     // /api/overview (the strip reads the run records)
-    await pg.ev(listen); await pg.ev(wrap('^$', 0)); await pg.ev(tap('talk'));
-    assert.ok(await pg.until(`document.body.dataset.ready === 'talk'`, 30000), 'Talk painted');
+    await pg.ev(listen); await pg.ev(wrap('^$', 0)); await pg.ev(tap('controller'));
+    assert.ok(await pg.until(`document.body.dataset.ready === 'controller'`, 30000), 'Controller painted');
     const o = await pg.ev('window.__req'), st = o.filter(x => x.u.startsWith('/api/strip?')), evs = await pg.ev('window.__ev');
     assert.ok(st.length >= 1, JSON.stringify(o)); assert.equal(st.filter(x => x.t0 - st[0].t0 < 50).length, 1, `one strip request per render: ${JSON.stringify(o)}
 stream events: ${JSON.stringify(evs)}`);

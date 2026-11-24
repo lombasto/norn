@@ -1,6 +1,6 @@
 // The live hand-off state (lanes.mjs handoffOf): one server-side field every page reads. Unit cases over a real records fold (fresh
 // run, hand-off pending at each step, resumed, ended, refused, a slop resume), then one dashboard fixture walked through a hand-off:
-// the Lanes, Runs, Map and Talk pages, the live feed head and the plain log each show the chip / line.
+// the Lanes, Runs, Map and Controller pages, the live feed head and the plain log each show the chip / line.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -102,9 +102,9 @@ test('dashboard: every page that shows the run or its lane carries the hand-off 
     const lanes = await loadTab('lanes', 'kestrel', ui);
     assert.equal(lanes.lanes.find(l => l.name === 'relay')?.handoff?.step, 'starting');
     assert.match(renderTab('lanes', lanes, ctx), /id="lane-relay"[^]*?class="lnow small"[^>]*>Hand-off in progress - session 2 starting\.</, 'the Lanes row says it in its now line');
-    const home = await loadTab('talk', 'kestrel', ui);
+    const home = await loadTab('controller', 'kestrel', ui);
     assert.equal(home.side.now.find(n => n.run === b)?.handoff?.step, 'starting');
-    assert.match(renderTab('talk', home, ctx), /class="hrow ho-row"><span class="ho pending"/);
+    assert.match(renderTab('controller', home, ctx), /class="hrow ho-row"><span class="ho pending"/);
     // 3. session 2 talks: resumed
     const dir = path.join(f.root, 'claude-projects', 'C--fx-wt');
     fs.writeFileSync(path.join(dir, `${sid2}.jsonl`), JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: 'r1',

@@ -347,7 +347,7 @@ mark.dv-w{color:var(--on-accent);border-radius:2px}.dv-del mark.dv-w{background:
  .srow,.srow.inline{grid-template-columns:minmax(0,1fr)}.srow .sc{justify-content:flex-start}}
 /* the Home tab: the thread between the side columns, full bleed under the bar; the composer
    under the thread. Phone: one column, the page scrolls, the composer sticks over the bottom bar (Home / Inbox / Runs / Plan / More) */
-body[data-tab=talk] main{padding:0;max-width:none}
+body[data-tab=controller] main{padding:0;max-width:none}
 .home{display:grid;grid-template-columns:minmax(220px,290px) minmax(0,1fr) minmax(220px,290px);height:calc(100vh - var(--home-top,110px));min-height:420px}
 .home-l,.home-r{background:var(--panel);padding:12px 14px;overflow-y:auto;min-width:0;font-size:13px}
 .home-l{border-right:1px solid var(--line)}.home-r{border-left:1px solid var(--line)}
