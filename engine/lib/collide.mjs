@@ -6,7 +6,8 @@
 //              commits, branch, tip, dlv, stacked_on: [{ lane, n }], names: { runs, dlvs, lanes }, tests, done, brief }
 // Kinds built here: item, territory (grades exclusive > conflict > same-files > covers > scopes, the commons dropped; conflict from the tick's merge-tree), order (stacked, planned, named), stale
 // (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1, of a run and of a lane). First come: a hold only
-// from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix.
+// from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix. S2a: the remedy menu and who may apply
+// it (APPLY_BY, policy.collide.apply_by), the judge reads a recorded wait and part, narrowScope for norn collide narrow.
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -120,6 +121,12 @@ function order(me, o, items) {
 export const pairKey = (a, b) => [a, b].sort().join('+');
 /** a recorded allow covers this pair for kind k: rulings = { pairKey: { verdict: allow | hold, kinds: [] (all) | [kind] } } */
 export const allowedBy = (rulings, a, b, k) => { const r = rulings?.[pairKey(a, b)]; return r?.verdict === 'allow' && (!r.kinds?.length || r.kinds.includes(k)); };
+/** S2a: a recorded wait holds lane me behind lane o for kind k -> the case's COL id | null. Only a start or a queued run waits: a running
+ *  run is never held (SPEC 4A.4 standing rules); the hold ends when o's work merges (o is no intent then: no hit, no hold) */
+export const waitedBy = (rulings, me, o, k) => { const r = rulings?.[pairKey(me.lane, o)];
+  return r?.verdict === 'hold' && r.waiter === me.lane && ['new', 'queued'].includes(me.state) && (!r.kinds?.length || r.kinds.includes(k)) ? r.col : null; };
+/** S2a: one lane of the pair is a declared part of the other's item (norn collide part: the part_of field of lane B) */
+export const partBy = (rulings, a, b) => { const p = rulings?.[pairKey(a, b)]?.part; return !!p && ((p.lane === a && p.of === b) || (p.lane === b && p.of === a)); };
 
 /** SPEC 4A.1 the land-first wait: a starting or queued run whose territory warn (covers, same-files) meets a DONE deliverable not merged
  *  waits up to auto.land_wait_min from its queue time while the merge queue lands it -> { until (ms), dlv } | null */
@@ -138,8 +145,9 @@ export function collisions(me, others, ctx = {}) {
   const loud = (key, o) => { const v = P.kinds[key] ?? 'warn'; return (v === 'hold' || v === 'refuse') && !ahead(o, me) ? 'warn' : v; };
   for (const o of others) {
     if (!o || o.lane === me.lane) continue;
-    const add = h => { if (h.verdict !== 'off' && !allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) out.push({ ...h, why: bound(h.why), other: o.lane, pick: recommend(h, me, o, ctx.policy) }); };
-    const items = exempt.item(me) || exempt.item(o) || me.part_of === o.lane || o.part_of === me.lane ? [] : (me.items || []).filter(i => (o.items || []).includes(i));
+    const add = h => { if (h.verdict === 'off' || allowedBy(ctx.rulings, me.lane, o.lane, h.kind)) return; const w = waitedBy(ctx.rulings, me, o.lane, h.kind);
+      out.push({ ...h, ...(w ? { verdict: 'hold', ruled: w } : {}), why: bound(h.why), other: o.lane, pick: recommend(h, me, o, ctx.policy) }); };
+    const items = exempt.item(me) || exempt.item(o) || me.part_of === o.lane || o.part_of === me.lane || partBy(ctx.rulings, me.lane, o.lane) ? [] : (me.items || []).filter(i => (o.items || []).includes(i));
     if (items.length) add({ kind: 'item', grade: null, verdict: loud('item', o), items, why: `${few(items)}: lane ${o.lane} holds it (${held(o)}); this run is not a declared part` });
     const t = territory(me, o, P, ctx.tracked, ctx.conflicts);
     if (t) { const h = { kind: 'territory', ...t, verdict: loud(t.grade === 'exclusive' ? 'exclusive' : 'territory', o) }, land = landWait(h, me, o, P, ctx.now ?? Date.now());
@@ -242,11 +250,11 @@ export const caseKey = (h, me) => `${h.kind}${h.grade ? '/' + h.grade : ''}:${h.
 /** the hits that hold a run: verdict hold, from an automatic reaction policy.collide.auto has on (exclusive: hold_exclusive, order: order_after) */
 export function holdsOf(hits, policy) {
   const A = pol(policy).auto;
-  return hits.filter(h => h.verdict === 'hold' && (h.land ? true : h.kind === 'territory' ? A.hold_exclusive : h.kind === 'order' ? A.order_after : true));
+  return hits.filter(h => h.verdict === 'hold' && (h.land || h.ruled ? true : h.kind === 'territory' ? A.hold_exclusive : h.kind === 'order' ? A.order_after : true));
 }
 /** the term the fill walk shows for one hold: the derived condition for order (SPEC 4A.1: after (auto)), the holder for the rest */
 export const holdTerm = h => (h.kind === 'order' && h.after ? `after (auto): ${h.after} - ${h.why}`
-  : h.land ? `collide: territory (${h.grade}) land-first: waits up to ${h.land.min} min for ${h.land.dlv} of lane ${h.other}${h.col ? ` (${h.col})` : ''}` : `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}${h.col ? ` (${h.col})` : ''} - waits for lane ${h.other}`);
+  : h.land ? `collide: territory (${h.grade}) land-first: waits up to ${h.land.min} min for ${h.land.dlv} of lane ${h.other}${h.col ? ` (${h.col})` : ''}` : `collide: ${h.kind}${h.grade ? ` (${h.grade})` : ''}${h.col ? ` (${h.col})` : ''} - waits for lane ${h.other}${h.ruled ? ` (a wait, ${h.ruled})` : ''}`);
 /** SPEC 5.4: the worker's prompt line for the territory warns of a run that starts (null = none) */
 export function workerLine(hits) {
   const t = hits.filter(h => h.kind === 'territory' && h.verdict === 'warn' && h.files?.length);
@@ -254,12 +262,79 @@ export function workerLine(hits) {
   const what = t.map(h => `lane ${h.other} changes ${h.files.slice(0, 6).join(', ')}${h.files.length > 6 ? ` (+${h.files.length - 6})` : ''}`).join('; ');
   return `Other open work in your Scope: ${what} (not merged). Do not move or rewrite those files wholesale. If you must change them, say which and why in NOTES.`;
 }
-// SPEC 4A.3, the allow column (S2a checks the whole menu against policy.collide.apply_by): the lowest role that may allow a kind
-const ALLOW_BY = { item: 'controller', goal: 'controller', lead: 'owner', exclusive: 'controller' };
+// ---------- S2a: the remedy menu and who may apply it (SPEC 4A.2, 4A.3: policy.collide.apply_by) ----------
+// per kind (exclusive = territory / exclusive) the lowest role that may apply each remedy; a remedy missing from a row is not on the
+// menu for that kind. The 'automatic' cells of 4A.3 (a wait on exclusive, resource, order) are Norn's: a check-in may still record one.
+// any = a ruling on a pair with no case (norn collide allow <a> <b>): the caller judges its kinds one by one.
+export const APPLY_BY = {
+  item: { wait: 'checkin', part: 'checkin', fold: 'controller', allow: 'controller' },
+  lead: { wait: 'checkin', part: 'owner', fold: 'controller', allow: 'owner' },
+  goal: { wait: 'checkin', part: 'controller', fold: 'controller', allow: 'controller' },
+  exclusive: { wait: 'checkin', narrow: 'controller', allow: 'controller' },
+  territory: { wait: 'checkin', narrow: 'checkin', allow: 'checkin' },
+  resource: { wait: 'checkin', allow: 'checkin' },
+  order: { wait: 'checkin', allow: 'checkin' },
+  stale: {},
+  any: { allow: 'checkin' },
+};
+export const REMEDIES = ['part', 'narrow', 'fold', 'wait', 'allow'];
+const ROLES = ['checkin', 'controller', 'owner'];
 const RANK_OF = { checkin: 0, controller: 1, owner: 2, dashboard: 2 };
-/** may role allow a pair past kind k (grade g)? -> null (yes) | why not */
-export function allowRefusal(role, k, g) {
-  const need = ALLOW_BY[g === 'exclusive' ? 'exclusive' : k] ?? 'checkin';
-  if (!(role in RANK_OF)) return `${role} may not allow a collision (checkin, controller or owner)`;
-  return RANK_OF[role] < RANK_OF[need] ? `an allow past ${k}${g ? ` (${g})` : ''} is the ${need}'s (SPEC 4A.3); a ${role} may ask for it` : null;
+const menuKey = (k, g) => (k === 'territory' && g === 'exclusive' ? 'exclusive' : k);
+/** the role a remedy of kind k (grade g) needs -> checkin | controller | owner | null (not on the menu). policy.collide.apply_by may move a
+ *  cell (a project whose check-ins rule like the controller lowers its cells to checkin); an owner's cell stays the owner's */
+export function applyNeed(remedy, k, g, policy) {
+  const key = menuKey(k, g), base = APPLY_BY[key]?.[remedy] ?? null, set = pol(policy).apply_by?.[key]?.[remedy];
+  return base && base !== 'owner' && ROLES.includes(set) ? set : base;
 }
+/** the menu of kind k (grade g): the remedies with a cell, in the order of SPEC 4A.2 */
+export const menuOf = (k, g, policy) => REMEDIES.filter(r => applyNeed(r, k, g, policy));
+/** may role apply remedy to kind k (grade g)? -> null (yes) | why not */
+export function applyRefusal(role, remedy, k, g, policy) {
+  if (!(role in RANK_OF)) return `${role} may not apply a remedy (checkin, controller or owner)`;
+  const need = applyNeed(remedy, k, g, policy), what = `${k}${g ? ` (${g})` : ''}`;
+  if (!need) return `${remedy} is not on the menu for ${what} (${menuOf(k, g, policy).join(', ') || 'nothing: Norn corrects it by itself'})`;
+  return RANK_OF[role] < RANK_OF[need] ? `${remedy === 'allow' ? 'an allow past' : `${remedy} on`} ${what} is the ${need}'s (SPEC 4A.3); a ${role} may ask for it (norn collide ask COL-n --want ${remedy})` : null;
+}
+/** a remedy in the controller's or the owner's column is a recorded decision (DEC-n) */
+export const needsDecision = (remedy, k, g, policy) => ['controller', 'owner'].includes(applyNeed(remedy, k, g, policy));
+/** may lane B (me) become a declared part of lane A's (o) item? Its Scope is readable and meets none of A's changed files or Exclusive:
+ *  globs outside the commons -> null | why not (the text names narrow or wait) */
+export function partRefusal(me, o, policy) {
+  if (!me.scope?.length) return `lane ${me.lane}'s Scope is not readable${me.scope_why ? ` (${me.scope_why})` : ''}: a part needs a Scope apart from lane ${o.lane}'s files - wait, or narrow it first`;
+  return meets(me, o, pol(policy)) ? `lane ${me.lane}'s Scope ${few(me.scope, 4)} meets lane ${o.lane}'s changed files or Exclusive: globs - narrow it first, or wait` : null;
+}
+
+// ---------- S2a: narrowScope (SPEC 4A.4 narrow) ----------
+const slash = p => String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+/** the folder a glob stands for -> 'X' (X/** or a bare X) | '' (**, the whole repo) | null (another wildcard) */
+const folderOf = g => (g === '**' ? '' : /^[^*?]*\/\*\*$/.test(g) ? g.slice(0, -3) : /[*?]/.test(g) ? null : g);
+/** the free entries of folder dir: the folder whole when none of its files is taken, else its children one level down */
+function freeIn(dir, fs, taken) {
+  if (!fs.some(f => taken.has(f))) return [`${dir ? dir + '/' : ''}**`];
+  const kids = new Map(), pre = dir ? dir + '/' : '';
+  for (const f of fs) { const k = f.slice(pre.length).split('/')[0]; kids.set(k, [...(kids.get(k) || []), f]); }
+  return [...kids.keys()].sort().flatMap(k => { const xs = kids.get(k), p = pre + k; return xs.length === 1 && xs[0] === p ? (taken.has(p) ? [] : [p]) : freeIn(p, xs, taken); });
+}
+/** narrowScope(scope, taken (A's files), tracked (git ls-files)) -> { scope, dropped }: a glob that matches none of the taken files stays;
+ *  one that does is split a folder level at a time into the folders and files that are free (a wildcard that is no folder: into its free
+ *  tracked files). dropped = the taken files the old Scope covered */
+export function narrowScope(scope, taken, tracked) {
+  const T = new Set(taken.map(slash)), tr = (tracked || []).map(slash), out = [], dropped = new Set();
+  for (const g0 of scope) {
+    const g = slash(g0), hit = [...T].filter(f => inScope(f, [g]));
+    if (!hit.length) { out.push(g0); continue; }
+    hit.forEach(f => dropped.add(f));
+    const dir = folderOf(g), all = [...new Set([...tr.filter(f => inScope(f, [g])), ...hit])].sort();
+    if (dir === null) out.push(...all.filter(f => !T.has(f)));
+    else if (!(all.length === 1 && all[0] === dir)) out.push(...freeIn(dir, all, T));
+  }
+  return { scope: [...new Set(out)], dropped: [...dropped].sort() };
+}
+/** the files of lane o a narrow leaves out of a Scope: its changed files and the tracked files of its Exclusive: globs, outside the commons */
+export function takenBy(o, tracked, policy) {
+  const P = pol(policy), ex = uncommon(o.exclusive, P);
+  return [...new Set([...files(o.touched, P), ...(ex.length ? files(tracked, P).filter(f => inScope(f, ex)) : [])])];
+}
+/** the dropped files a Ready line (Tests: or Done:) of me names */
+export const namesDropped = (me, dropped) => dropped.filter(f => `${me.tests ?? ''} ${me.done ?? ''}`.includes(f));

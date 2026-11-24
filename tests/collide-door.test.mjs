@@ -140,7 +140,9 @@ test('allow: `norn collide allow` releases the hold, the next fill starts the ru
   assert.deepEqual(got.map(x => x.queued), [r.run]);
   const acts = actionsOf(casesOf(f.state)['COL-1']);
   assert.deepEqual(acts.map(a => [a.action, a.by]), [['hold', 'launcher'], ['allow', 'controller'], ['released', 'launcher']]);
-  assert.deepEqual(acts[1].args, { pair: 'web-nav+web-runs', kinds: ['territory'] });
+  const { dec, ...args } = acts[1].args;   // S2a: an allow is a recorded decision, the case names it
+  assert.deepEqual(args, { pair: 'web-nav+web-runs', kinds: ['territory'] });
+  assert.match(dec, /^DEC-/);
   await f.ended(got[0].next);
 });
 

@@ -84,6 +84,7 @@ test('profiles decide the tools: controller <= 16 one-line tools, checkin has no
   for (const x of ['norn_answer', 'norn_directive', 'norn_tick', 'norn_pause', 'norn_settings', 'norn_boot', 'norn_run']) assert.ok(n(ctl).includes(x), x);
   for (const x of ['norn_answer', 'norn_directive', 'norn_tick', 'norn_pause']) assert.ok(!n(ck).includes(x), x);
   assert.ok(n(ck).includes('norn_settings') && n(ck).includes('norn_run'));
+  assert.ok(n(ctl).includes('norn_collide') && n(ck).includes('norn_collide') && !n(ctl).includes('norn_ledger'), 'lane-collide S2a');
   assert.deepEqual(n(wk), ['norn_mail', 'norn_run_show', 'norn_status']);   // META-GTP-MAIL: + its own mailbox
 });
 
@@ -93,7 +94,7 @@ test('norn_status view plan: listed in every profile, read-only plan text + the 
   for (const prof of ['controller', 'checkin', 'worker']) {
     const m = server(['--state', s, '--profile', prof]); await m.init();
     const st = (await m.call('tools/list')).result.tools.find(t => t.name === 'norn_status');
-    assert.deepEqual(st.inputSchema.properties.view.enum, ['status', 'plan', 'instructions'], prof);
+    assert.deepEqual(st.inputSchema.properties.view.enum, ['status', 'plan', 'instructions', 'collide', 'ledger'], prof);
     await m.close();
   }
   const m = server(['--state', s, '--profile', 'controller']); await m.init();
@@ -267,7 +268,7 @@ test('settings get / dry-run / set through policy validation; ledger tail; check
   assert.deepEqual(JSON.parse(fs.readFileSync(pf, 'utf8')).policy, { ...pol0, cadence: { checkin_interval_min: 20 } });
   const bad = await m.tool('norn_settings', { set: { key: 'no_such_setting', value: 1 } });
   assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2);
-  assert.deepEqual((await m.tool('norn_ledger', { tail: 2 })).structuredContent.lines, ['l2', 'l3']);
+  assert.deepEqual((await m.tool('norn_status', { view: 'ledger', tail: 2 })).structuredContent.lines, ['l2', 'l3']);   // lane-collide S2a: norn_ledger is a view
   await m.close();
   const c = server(['--project', pf, '--profile', 'checkin'], env); await c.init();
   assert.ok(!(await c.tool('norn_settings', { get: ['max_claude_workers'] })).isError);
@@ -404,4 +405,24 @@ test('setup elicitation (spec 2025-06-18): the server asks the HUMAN for the pro
   assert.ok(!a.isError, text(a)); assert.match(text(a), /caps profile solo/);
   assert.equal((await m.tool('norn_adopt_show', { project: name })).structuredContent.state, 'applied');
   await m.close();
+});
+
+// lane-collide S2a (SPEC 4A.4 MCP): norn_collide calls the CLI's verbs with the server's role; the plan is norn_status view collide
+test('norn_collide: list and show the cases, a remedy goes through the CLI with the profile’s role and its refusal; view collide is the plan', async () => {
+  const s = tmp();
+  const col = record(s, { kind: 'collision', ev: 'open', by: 'launcher', data: { key: 'item:a+b', kind: 'item', grade: null, verdict: 'warn', door: 'run', a: { lane: 'a' }, b: { lane: 'b' }, files: [], files_n: 0, why: 'synthetic item', pair: 'a+b' } }).id;
+  const m = server(['--state', s, '--profile', 'checkin']); await m.init();
+  const l = await m.tool('norn_collide', { action: 'list' });
+  assert.ok(!l.isError, text(l)); assert.match(text(l), new RegExp(`^${col} open item warn a > b`, 'm'));
+  assert.equal((await m.tool('norn_collide', { action: 'show', case: col })).structuredContent.case.id, col);
+  const no = await m.tool('norn_collide', { action: 'allow', case: col, why: 'x' });
+  assert.equal(no.isError, true); assert.match(text(no), /controller's/); assert.equal(no.structuredContent.code, 3);
+  const ask = await m.tool('norn_collide', { action: 'ask', case: col, want: 'allow', why: 'one item' });
+  assert.ok(!ask.isError, text(ask)); assert.match(text(ask), /asked the controller for allow/);
+  const p = await m.tool('norn_status', { view: 'collide' });
+  assert.ok(!p.isError, text(p)); assert.ok(Array.isArray(p.structuredContent.collide.intents));
+  await m.close();
+  const w = server(['--state', s, '--profile', 'worker']); await w.init();
+  assert.equal((await w.tool('norn_status', { view: 'ledger' })).isError, true, 'the ledger is not a worker’s');
+  await w.close();
 });

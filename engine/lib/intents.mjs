@@ -164,14 +164,16 @@ export const casesOf = state => fold(readEvents(recordsFile(state, 'collision'))
 const undoneOf = c => new Set(c.history.filter(h => h.ev === 'undo').map(h => h.data.action));
 /** the actions of a case, each with its history index and whether it was undone */
 export const actionsOf = c => { const u = undoneOf(c); return c.history.map((h, i) => ({ ...h, i })).filter(h => h.ev === 'action').map(h => ({ ...h.data, at: h.ts, by: h.by, i: h.i, undone: u.has(h.i) })); };
-/** the pair rulings the judge reads: { pairKey: { verdict: 'allow', kinds: [] (every kind) | [kind], col, by, at, why } } - every allow
- *  action not undone, on any case (a ruling outlives the case that took it: an allow is per pair, not per case) */
+/** the pair rulings the judge reads: { pairKey: { verdict: 'allow' | 'hold' (a wait: waiter, holder), kinds: [] (every kind) | [kind],
+ *  col, by, at, why, part?: { lane, of, col } } } - every allow, wait and part action not undone, on any case, in time order: the later of
+ *  an allow and a wait rules the pair (a ruling outlives the case that took it: it is per pair, not per case) */
 export function rulingsOf(cases) {
-  const out = {};
-  for (const c of Object.values(cases)) for (const a of actionsOf(c)) {
-    if (a.action !== 'allow' || a.undone) continue;
-    const k = a.args?.pair, r = out[k], kinds = a.args?.kinds || [];
-    out[k] = { verdict: 'allow', kinds: r && (!r.kinds.length || !kinds.length) ? [] : [...new Set([...(r?.kinds || []), ...kinds])], col: c.id, by: a.by, at: a.at, why: a.why ?? null };
+  const out = {}, acts = Object.values(cases).flatMap(c => actionsOf(c).filter(a => ['allow', 'wait', 'part'].includes(a.action) && !a.undone).map(a => ({ ...a, col: c.id })));
+  for (const a of acts.sort((x, y) => String(x.at).localeCompare(String(y.at)))) {
+    const k = a.args?.pair, r = out[k], kinds = a.args?.kinds || [], base = { col: a.col, by: a.by, at: a.at, why: a.why ?? null, ...(r?.part ? { part: r.part } : {}) };
+    if (a.action === 'part') out[k] = { ...(r || {}), part: { lane: a.args.lane, of: a.args.of, col: a.col } };
+    else if (a.action === 'wait') out[k] = { verdict: 'hold', kinds, waiter: a.args.waiter, holder: a.args.holder, ...base };
+    else out[k] = { verdict: 'allow', kinds: r?.verdict === 'allow' && (!r.kinds.length || !kinds.length) ? [] : [...new Set([...(r?.verdict === 'allow' ? r.kinds : []), ...kinds])], ...base };
   }
   return out;
 }

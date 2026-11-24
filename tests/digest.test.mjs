@@ -219,3 +219,13 @@ test('L-21: a digest that cannot be built is an {error} STATUS prints; a corrupt
   assert.equal(r.status, 0, r.stderr);
   assert.match(fs.readFileSync(path.join(state, 'STATUS.md'), 'utf8'), /## Digest\r\n- could not be built: .*deliverables\.jsonl/);
 });
+
+test('digest collisions: each open row carries the real command - the remedy when a check-in may apply it, else an ask for it', () => {
+  const d = tmp('meta-digest-col-');
+  const row = (col, kind, grade, remedy) => ({ col, kind, grade, verdict: 'warn', lane: 'web-runs', run: null, other: 'web-nav', why: 'synthetic', files: [], files_n: 0, pick: { remedy, why: 'w' } });
+  fs.writeFileSync(path.join(d, 'collide.json'), JSON.stringify({ at: new Date().toISOString(), rows: [row('COL-1', 'territory', 'covers', 'narrow'), row('COL-2', 'territory', 'exclusive', 'narrow'), row('COL-3', 'item', null, 'fold'), row('COL-4', 'item', null, 'part')], handled: [], wide: [] }));
+  const dos = p => digest(d, p).sections.collisions.map(r => r.do);
+  assert.deepEqual(dos({}), ['META collide narrow COL-1 --as checkin --why W', 'META collide ask COL-2 --want narrow --as checkin --why W',
+    'META collide ask COL-3 --want fold --as checkin --why W', 'META collide part COL-4 --as checkin --why W']);
+  assert.equal(dos({ policy: { collide: { apply_by: { exclusive: { narrow: 'checkin' } } } } })[1], 'META collide narrow COL-2 --as checkin --why W', 'apply_by lowers the cell');
+});

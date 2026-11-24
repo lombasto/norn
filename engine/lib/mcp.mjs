@@ -99,13 +99,16 @@ export function needsYou(i, h = null, stateDir = null) {
 const CTL = ['controller', 'chat'], CK = ['controller', 'checkin', 'chat'], ALL = ['controller', 'checkin', 'worker', 'chat'], SETUP = ['setup'], CHAT = ['chat'];
 const CONTROLLERS = ['controller', 'chat'];
 const EVENTS = ['apply', 'supersede', 'withdraw', 'park', 'unpark', 'overrule', 'revoke', 'done'];
+const COLLIDE_ACTIONS = ['list', 'show', 'wait', 'allow', 'narrow', 'part', 'undo', 'ask'];
 export const TOOLS = [
   { name: 'norn_boot', profiles: CK, description: 'Role pack (your instructions) plus a state digest. Call first in every session.',
     schema: obj({ role: S.str('', { enum: ['controller', 'checkin'] }) }, ['role']), run: boot },
   // META-PLAN R1: the plan rides on norn_status (view plan) - the controller profile is capped at 16 tools (as META-GTP-ASK on norn_run_show)
-  { name: 'norn_status', profiles: ALL, description: 'STATUS.md of the project (budget, caps, records), at most 60 lines; view plan = what happens next, and when.',
+  // lane-collide S2a: the collide plan and the ledger ride on it too (norn_ledger became view ledger: the controller stays at 16 tools)
+  { name: 'norn_status', profiles: ALL, description: 'STATUS.md of the project (budget, caps, records), at most 60 lines; view plan = what happens next; collide; ledger (tail).',
     schema: obj({ project: S.str('project name (optional; this server serves one project)'),
-      view: S.str('status (default) | plan: up next, chains, landing next, usage forecast | instructions: the files that steer agents, ~tokens, cost today, hints (read-only)', { enum: ['status', 'plan', 'instructions'] }) }), run: status },
+      view: S.str('status (default) | plan: up next, chains, landing next, usage forecast | instructions: the files that steer agents, ~tokens, cost today, hints (read-only) | collide: the open lanes and their collisions, each with the pick of SloppaChoppa | ledger: its last lines (checkin / controller)', { enum: ['status', 'plan', 'instructions', 'collide', 'ledger'] }),
+      tail: S.int(1, 40) }), run: status },
   { name: 'norn_inbox', profiles: CK, description: 'Needs-you items (open / answered-unapplied questions, parked lanes, unreviewed runs) plus a cursor.',
     schema: obj({ project: S.str(), since_seq: S.int(0), since_runs_seq: S.int(0) }), run: inbox },
   { name: 'norn_records', profiles: CK, description: 'Record rows: questions, decisions, directives, lanes, runs (filter by kind / state / id / lane).',
@@ -139,8 +142,10 @@ export const TOOLS = [
   // META-GTP-MAIL delivery (b): the mailbox of the run this server serves (META_RUN_ID) - for executors without the mail hook
   { name: 'norn_mail', profiles: ['worker'], description: 'Your mail: check (takes delivery of unread mail), send (to your parent, role:checkin, role:controller or your epic), ack MAIL-n.',
     schema: obj({ action: S.str('', { enum: ['check', 'send', 'ack'] }), to: S.str('RUN-n | role:checkin | role:controller'), subject: S.str(), body: S.str('<= 2 KB'), urgent: S.bool, id: S.str('MAIL-n (ack)') }, ['action']), run: mailTool },
-  { name: 'norn_ledger', profiles: CK, description: 'Last lines of the project ledger.',
-    schema: obj({ tail: S.int(1, 40) }), run: ledger },
+  // lane-collide S2a (SPEC 4A.4 MCP): the remedy menu through the CLI's verbs, with this server's role (SPEC 4A.3 decides who may)
+  { name: 'norn_collide', profiles: ['controller', 'checkin'], description: 'Collision cases (COL-n): list, show; a remedy wait | allow | narrow | part; ask (hand it to the role that may); undo.',
+    schema: obj({ action: S.str('', { enum: COLLIDE_ACTIONS }), case: S.str('COL-n'), why: S.str('required for a write'), scope: S.str('narrow: the globs to keep'), kind: S.str('allow: one kind'),
+      of: S.str('part: the lead lane'), want: S.str('ask: the remedy', { enum: ['part', 'narrow', 'fold', 'wait', 'allow'] }), for: S.str('list: checkin | controller | owner'), n: S.int(1) }, ['action']), run: collideTool },
   // META-CONTROLLER C3 (SPEC sec. 3): the three verbs the chat needs to do what the chat controller does today (profile chat only)
   { name: 'norn_show', profiles: CHAT, description: "Show a file or image inline in the owner's thread (the project root, its state, the briefs dir, run / lane worktrees and NOTES folders only).",
     schema: obj({ path: S.str('absolute path'), caption: S.str() }, ['path']), run: showTool },
@@ -224,6 +229,12 @@ function status(a, ctx) {
     const instructions = JSON.parse(r.out);
     return { text: formatInstructions(instructions), data: { instructions } };
   }
+  if (a.view === 'collide') {   // lane-collide S2a: norn collide plan, read-only
+    const p = ctx.cliRun(['collide', 'plan', '--json']), t = ctx.cliRun(['collide', 'plan']);
+    if (p.code) throw new ToolError(p.err || p.out, p.code);
+    return { text: t.out, data: { collide: JSON.parse(p.out) } };
+  }
+  if (a.view === 'ledger') { if (!['checkin', ...CONTROLLERS].includes(ctx.profile)) bad(`view ledger is for the checkin / controller profiles, not ${ctx.profile}`); return ledger(a, ctx); }
   const r = ctx.cliRun(['status']);
   if (r.code) throw new ToolError(r.err || r.out, r.code);
   const text = tail(path.join(ctx.state, 'STATUS.md'), 10000).split('\n').slice(0, 60).join('\n');
@@ -374,6 +385,23 @@ function settings(a, ctx) {
   const g = genAfterPolicy(p);   // DEC-362: the targets are regenerated from the sources, never written directly
   const gl = g.ran ? `; norn gen: ${g.lines.join('; ')}${g.problems.length ? `; PROBLEM ${g.problems.join('; PROBLEM ')}` : ''}` : `; ${g.why}`;
   return { text: `${a.set.key} ${JSON.stringify(diff[0].from)} -> ${JSON.stringify(diff[0].to)}${more}; wrote ${written.map(fwd).join(', ') || 'nothing'}${gl}`, data: { diff, written: written.map(fwd), gen: g } };
+}
+// norn_collide: one CLI call per write (the CLI refuses a role below the cell: exit 3); list / show read the JSON and the text
+function collideTool(a, ctx) {
+  if (a.action !== 'list' && !a.case) bad(`${a.action} needs case (COL-n)`);
+  const base = ['collide', a.action, ...(a.case ? [a.case] : []), ...(a.for ? ['--for', a.for] : [])];
+  if (['list', 'show'].includes(a.action)) {
+    const j = ctx.cliRun([...base, '--json']), t = ctx.cliRun(base);
+    if (j.code) throw new ToolError(j.err || j.out, j.code);
+    const v = JSON.parse(j.out);
+    return { text: t.out, data: a.action === 'list' ? { cases: v } : { case: v } };
+  }
+  if (!a.why) bad(`${a.action} needs why`);
+  const args = [...base, '--as', ctx.writer, '--why', a.why];
+  for (const [k, f] of [['scope', 'scope'], ['kind', 'kind'], ['of', 'of'], ['want', 'want'], ['n', 'action']]) if (a[k] !== undefined) args.push('--' + f, String(a[k]));
+  const r = ctx.cliRun(args);
+  if (r.code) throw new ToolError(r.err || r.out, r.code);
+  return { text: r.out, data: { case: a.case, action: a.action } };
 }
 function ledger(a, ctx) {
   const p = needProject(ctx);
@@ -554,8 +582,10 @@ function showTool(a, ctx) {
   emit(ctx.state, { kind: 'show', path: fwd(real), caption: a.caption ?? null, image, ...(excerpt !== undefined ? { excerpt } : {}) });
   return { text: `shown in the thread: ${fwd(real)}`, data: { path: fwd(real), image } };
 }
+// lane-collide S2a: a collide remedy's tier is its case's cell (the project's policy.collide may lower it)
+const actOf = ctx => ({ state: ctx.state, policy: ctx.project?.policy?.collide });
 function cliTool(a, ctx) {
-  const plan = cliPlan(a.args);
+  const plan = cliPlan(a.args, actOf(ctx));
   if (plan.verbatim !== undefined) guard(ctx, plan.verbatim, 'norn lane new --task (an owner directive)');
   const argv = ['run --queue', 'lane claim', 'lane release'].includes(plan.sub) ? [...plan.argv, '--via', ctx.via] : plan.argv;
   const r = ctx.cliRun(argv, { META_ROLE: 'controller' });
@@ -578,8 +608,8 @@ function cardOf(t, a, ctx) {
   if (t.name === 'norn_pause') return a.mode ? { title: `${PAUSE_MODES[a.mode].label}: ${who}`, text: PAUSE_MODES[a.mode].says } : a.runs ? { title: `Pause ${a.runs.join(', ')} safely`, text: 'Each gets an urgent order: finish the step, commit, hand off and end. Its hand-off waits for your resume.' }
     : a.resume === 'all' ? { title: `Resume all: ${who}`, text: 'The pause is released and every paused hand-off is queued, merges first.' } : { title: `Resume ${a.resume}`, text: 'Its hand-off is queued at the front.' };
   if (t.name === 'norn_settings') return { title: `Change setting ${a.set.key}`, text: settings({ ...a, dry_run: true }, ctx).text };
-  if (t.name === 'norn_cli') return { title: `norn ${cliPlan(a.args).sub}`, command: 'norn ' + a.args.join(' '),
-    text: a.args.includes('--batching') ? 'The merge-queue kill switch.' : 'Builds and gates a merge batch; its MERGE run moves main.' };
+  if (t.name === 'norn_cli') return { title: `norn ${cliPlan(a.args, actOf(ctx)).sub}`, command: 'norn ' + a.args.join(' '),
+    text: a.args[0] === 'collide' ? 'A collision remedy above the check-in cell (SPEC 4A.3): applied as the owner.' : a.args.includes('--batching') ? 'The merge-queue kill switch.' : 'Builds and gates a merge batch; its MERGE run moves main.' };
   return { title: t.name, text: clip(JSON.stringify(a), 600) };
 }
 // the done card of an act, with an Undo where the verb has one (SPEC sec. 8 C3: requeue / stop of a queued run / revoke)
@@ -595,7 +625,7 @@ function doneCard(t, a, r, ctx) {
 }
 /** profile chat: tier 0 / 1 run (an act leaves its done card), tier 2 waits for the owner's tap, tier 3 is refused */
 function gated(t, a, ctx) {
-  const tier = tierOf(t.name, a);
+  const tier = tierOf(t.name, a, actOf(ctx));
   if (tier >= 3) bad(`${t.name} is off in the chat (tier 3)`);
   if (tier < 2) {
     const r = t.run(a, ctx);
@@ -631,7 +661,7 @@ function actLane(name, a, ctx) {
 const isoMin = min => new Date(Date.now() + min * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 function autoHold(t, a, ctx) {
   let lane = null;
-  try { if (tierOf(t.name, a) < 1) return; lane = actLane(t.name, a, ctx); } catch { return; }
+  try { if (tierOf(t.name, a, actOf(ctx)) < 1) return; lane = actLane(t.name, a, ctx); } catch { return; }
   const l = lane && st(ctx).items[laneId(lane, ctx.state)];
   if (!l || !KINDS.lane.events.claim.from.includes(l.state)) return;   // no LANE record (nothing to hold) or done / archived
   const h = holdOf(l), holder = ctx.profile === 'chat' ? 'chat' : 'controller';
