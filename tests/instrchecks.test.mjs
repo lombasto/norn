@@ -207,7 +207,7 @@ test('Context sits in Health beside Usage; the tab draws what one session loads,
     worker: { run: 'RUN-1', method: 'request', total: 1000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 700 }, { key: 'claude_md', label: 'CLAUDE.md / AGENTS.md chain', ours: true, tokens: 300 }, { key: 'memory', label: 'memory index', ours: true, tokens: 0 }] },
     chat: { run: 'chat', method: 'request', total: 2000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 1500 }, { key: 'memory', label: 'memory index', ours: true, tokens: 500 }] } } };
   const v = instructionsView(p, { home, git: false, standing, now: Date.parse('2026-11-14T12:00:00Z') });
-  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'context'], 'Context in Health beside Spend, Slop and Tests (UX review 2)');
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'code', 'context'], 'Context in Health beside Spend, Slop, Tests and Code (UX review 2)');
   assert.ok(!MORE.find(g => g[0] === 'History')[1].includes('context'));
   // file map data: every row has loads per day and one state of four
   assert.ok(v.rows.every(r => typeof r.loads_day === 'number' && ['fresh', 'stale', 'conflict', 'generated-stale'].includes(r.map_state)));
