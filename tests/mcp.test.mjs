@@ -408,7 +408,7 @@ test('setup elicitation (spec 2025-06-18): the server asks the HUMAN for the pro
 });
 
 // lane-collide S2a (SPEC 4A.4 MCP): norn_collide calls the CLI's verbs with the server's role; the plan is norn_status view collide
-test('norn_collide: list and show the cases, a remedy goes through the CLI with the profile's role and its refusal; view collide is the plan', async () => {
+test('norn_collide: list and show the cases, a remedy goes through the CLI with the profile’s role and its refusal; view collide is the plan', async () => {
   const s = tmp();
   const col = record(s, { kind: 'collision', ev: 'open', by: 'launcher', data: { key: 'item:a+b', kind: 'item', grade: null, verdict: 'warn', door: 'run', a: { lane: 'a' }, b: { lane: 'b' }, files: [], files_n: 0, why: 'synthetic item', pair: 'a+b' } }).id;
   const m = server(['--state', s, '--profile', 'checkin']); await m.init();
@@ -423,6 +423,6 @@ test('norn_collide: list and show the cases, a remedy goes through the CLI with 
   assert.ok(!p.isError, text(p)); assert.ok(Array.isArray(p.structuredContent.collide.intents));
   await m.close();
   const w = server(['--state', s, '--profile', 'worker']); await w.init();
-  assert.equal((await w.tool('norn_status', { view: 'ledger' })).isError, true, 'the ledger is not a worker's');
+  assert.equal((await w.tool('norn_status', { view: 'ledger' })).isError, true, 'the ledger is not a worker’s');
   await w.close();
 });
