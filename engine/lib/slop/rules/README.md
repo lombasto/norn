@@ -76,6 +76,21 @@ rule (it is not in the summary's `ran:` list); every other check runs it. The fl
 - `shadow: true` runs the rule and records its findings; they never hold a merge.
 - `value` / `base_value` carry a measured number at head and at base (a finding of `dup` carries the count of copies).
 
+## Fixed by code (`fix`)
+
+A rule's `fix` list names the findings code may fix (SPEC 3.5); nothing else is ever edited. K1: `{ "msg": "trailing whitespace" }`,
+`{ "msg": "new blank line at EOF" }` (git's message; the line git names). A lint rule on ESLint: `{ "sub": "<core rule>" }` applies
+ESLint's own `fix` object of the message; `"suggestion": "<messageId>"` applies that suggestion instead; `"in": "import"` only when the
+edit lies inside an import declaration (LJ's `no-unused-vars`: an unused import specifier, never an unused local, whose initialiser
+may have an effect). A file the worktree changed since HEAD is not edited.
+
+- `norn slop fix [--lane L]` applies the fixes to the open BLOCK findings of the branch in the worktree, prints each one, commits nothing.
+- The run end applies the same fixes, commits them on the lane branch as `style(slop): autofix N findings (LJ/no-unused-vars 3, K1 2)`
+  (nothing is pushed) and checks the new head; only what is left goes into the resume. If the Done check is red on the fixed head
+  and green on the unfixed one, the branch goes back to the unfixed head and the findings go to the resume (`reverted`).
+- `<state>/slop/outcomes.jsonl` keeps one line per finding with its action: `autofix`, `reverted`, `resume`. A class (a finding's
+  rule) with 2 reverts in its last 10 fixes is switched off (no more fixes by code) and the digest's slop line says so once.
+
 ## Proving a rule
 
 Each rule's fixtures run in `tests/slop.test.mjs` (tool rules from their recorded output); `norn slop fixtures` runs the real tools on

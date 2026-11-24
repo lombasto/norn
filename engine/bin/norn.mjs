@@ -1439,7 +1439,7 @@ Plan and land work:
   norn speed                        worker speed: tok/s, model / tools / tests / idle per ended run, by workers running (the cap's data)
   norn size                         the sessions of a lane stage: floor, first edit, peak against the marks they ran under, a verdict
   norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
-  norn code                         the code history: per tracked file lines, growth, churn and fan-in (the Code page's data)
+  norn code                         the code history (per tracked file lines, growth, churn, fan-in) and map (Floorplan): the Code page's data
   norn deliverables                follow finished work to main and to an install
   norn mergeq                      the merge queue of finished branches
   norn cv                          per-executor / model track record

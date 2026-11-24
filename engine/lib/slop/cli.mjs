@@ -1,11 +1,12 @@
-// META-SLOP-A: `norn slop` - check | loc | sweep | daily | fixtures | replay (SloppaChoppa 2 S1b). Code only, no model; every write goes through hostWrite.
+// META-SLOP-A: `norn slop` - check | fix (SloppaChoppa 2 S1c) | loc | sweep | daily | fixtures | replay (S1b). Code only, no model; every write goes through hostWrite.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadRules, slopCheck, gitRun, explainOf, replay } from './check.mjs';
 import { loadState, laneId } from '../records.mjs';
-import { checkBranch } from './runend.mjs';
-import { hostWrite, activeWaivers, covers, findingLine, explainLines, meterSeries } from './host.mjs';
+import { checkBranch, projectSlop } from './runend.mjs';
+import { hostWrite, activeWaivers, covers, findingLine, explainLines, meterSeries, fixOff } from './host.mjs';
+import { planFixes, applyFixes, fixCounts } from './fix.mjs';
 import { makeTool } from './tools.mjs';
 import { locReport, formatLoc, mainRef } from './loc.mjs';
 import { meterOf, meterInput, formatMeter, loadMeter } from './meter.mjs';
@@ -13,10 +14,10 @@ import { sweep, formatSweep } from './sweep.mjs';
 import { dailyReport } from './daily.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
-export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures'
+export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | fix [--lane L] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures'
   + ' | replay <rule> --as <ids,...> [--main REF] [--last N] [--config FILE] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
-  + ' --ci skips the rules that read the machine state; meter: how slopified main is, 0-100 and a band; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2)';
-const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], loc: ['since', 'json!'], sweep: ['json!'], meter: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'json!'] };
+  + ' --ci skips the rules that read the machine state; fix: applies the fix lists of the rules to the open findings in the worktree, commits nothing; meter: how slopified main is, 0-100 and a band; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2)';
+const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], fix: ['lane'], loc: ['since', 'json!'], sweep: ['json!'], meter: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'json!'] };
 
 function parse(verb, argv) {
   const spec = [...(FLAGS[verb] || []), 'project', 'state', 'repo'], f = {};
@@ -45,13 +46,26 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   const repoOf = () => toplevel(f.repo || project?.deliverables?.repo || project?.root || process.cwd());
   // gap #7: a monorepo project (project.subdir; not with an explicit --repo) counts and sweeps only its own folder / branches
   const own = !f.repo && project && subdirOf(project) ? { name: project.name, subdir: subdirOf(project) } : null;
+  // check / fix: the checkout of --repo, of --lane's worktree, or here
+  let repo = f.repo ? toplevel(f.repo) : process.cwd();
+  if ((verb === 'check' || verb === 'fix') && f.lane) {
+    const lane = state && loadState(state).items[laneId(f.lane, state)];
+    if (!lane?.data?.worktree) { err(`error: lane ${f.lane} names no worktree${state ? '' : ' (no state: pass --project / --state)'}`); return 2; }
+    repo = lane.data.worktree;
+  }
+  if (verb === 'fix') {
+    repo = toplevel(repo);
+    const c = checkBranch({ repo, state, projectDir: project?.project_dir });
+    if (!c) { out('slop fix: no lane branch here (detached, on main, or no main to diff against): nothing to fix'); return 0; }
+    const ws = state ? activeWaivers(state) : [], open = c.result.blocks.filter(b => !ws.some(w => covers(w, b)));
+    const plan = planFixes({ repo, base: c.base, open, rules: projectSlop({ projectDir: project?.project_dir }).rules, off: state ? fixOff(state) : new Set() }), files = applyFixes(repo, plan);
+    for (const x of plan.fixed) out('fixed ' + findingLine(x));
+    for (const x of plan.left) out(`not fixed (${x.why}) ${findingLine(x.f)}`);
+    const n = plan.fixed.length, s = k => (k === 1 ? '' : 's');
+    out(`slop fix: ${n} finding${s(n)} fixed in ${files.length} file${s(files.length)}${n ? ` (${fixCounts(plan.fixed)})` : ''}; nothing committed: review the diff, commit, then run norn slop check`);
+    return 0;
+  }
   if (verb === 'check') {
-    let repo = f.repo ? toplevel(f.repo) : process.cwd();
-    if (f.lane) {
-      const lane = state && loadState(state).items[laneId(f.lane, state)];
-      if (!lane?.data?.worktree) { err(`error: lane ${f.lane} names no worktree${state ? '' : ' (no state: pass --project / --state)'}`); return 2; }
-      repo = lane.data.worktree;
-    }
     repo = toplevel(repo);
     const [typed, head] = f.diff ? f.diff.split('..') : [null, 'HEAD'];
     if (f.diff && (f.diff.includes('...') || !(typed && head))) { err('error: --diff wants base..head (two dots: the check starts at their merge base)'); return 2; }

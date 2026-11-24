@@ -25,13 +25,16 @@ import { usageRefusal } from './usageguard.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { syncStep } from './sync.mjs';
-import { endCheck, couldNotCheck, slopPrompt, slopList } from './slop/runend.mjs';
+import { endCheck, couldNotCheck, slopPrompt, slopList, projectSlop } from './slop/runend.mjs';
+import { autofixCommit } from './slop/fix.mjs';
+import { gitRun } from './slop/check.mjs';
+import { makeTool } from './slop/tools.mjs';
 import { procStartAsync, running } from './procs.mjs';
 import { testOwner, ownerGoneWhy, OWNER_PROBE_MS } from './derelict.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { cacheDirOf } from './testcache.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
-import { hostWrite } from './slop/host.mjs';
+import { hostWrite, fixOff, revertedAt } from './slop/host.mjs';
 import { removeMergeWorktree } from './mergewt.mjs';
 import { pauseOf } from './pause.mjs';
 import { readPause, holdsStarts } from './pausemode.mjs';
@@ -45,6 +48,9 @@ import { postRunAsks } from './runasks.mjs';
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const { run, state } = spec;
+// the branch the run end's slop check read; its autofix (S1c) { from, to, fixed, subject, branch, check (the unfixed head's stored
+// check), open (its open findings) } | null
+let slopBranch = null, slopFix = null;
 // gap #3: this run's own result directory (`norn done` writes result.json [+ HANDOFF.md] there; META_RESULT_DIR / META_RESULT)
 const RESULT_DIR = resultDir(path.resolve(state), run), RESULT = resultPath(path.resolve(state), run);
 const fwdPath = p => String(p).split(path.sep).join('/');
@@ -278,7 +284,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     } catch { /* no projects dir */ }
   }
   // RM-44 D1: every lane run end that leaves commits is checked (stopped and hand-off too) - slop before the Done check
-  const slopOpen = slopEnd();
+  let slopOpen = slopEnd();
+  if (slopFix) data.autofix = { from: slopFix.from, to: slopFix.to, subject: slopFix.subject };
   // WORK-SIZING S1: the session's size on its end record, so the run stays judged after its transcript is gone (sizing.mjs)
   if (data.transcript && cmd?.parse === 'claude') {
     try { const s = sizeOfRun(data.transcript, { notesDir: spec.notes ? path.dirname(spec.notes) : null }); if (s) data.ctx = s; } catch (e) { logLine(`session size: ${e.message}`); }
@@ -287,9 +294,15 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
   if (outcome === 'done' && dodOn()) {
     const hb = setInterval(beat, spec.hbMs);
-    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks'), state, cache: cacheDirOf(state), since: spec.dod_since ?? null }); }
-    catch (e) { data.dod = { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
-    finally { clearInterval(hb); }
+    const dodHere = async () => {
+      try { return await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run, locksDir: path.join(path.dirname(path.resolve(state)), 'locks'), state, cache: cacheDirOf(state), since: spec.dod_since ?? null }); }
+      catch (e) { return { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
+    };
+    try {
+      data.dod = await dodHere();
+      const was = !data.dod.ok && slopFix ? await unfixEnd(dodHere) : null;   // SPEC 3.5 safety: did the autofix turn it red?
+      if (was) { data.dod = was; slopOpen = slopFix.open; data.autofix.reverted = true; }
+    } finally { clearInterval(hb); }
     logLine(`dod: Done ${data.dod.ok ? 'green' : 'RED: ' + data.dod.why}${data.dod.tests.length ? ' (' + data.dod.tests.map(testLine).join('; ') + ')' : ''}`);
     if (!data.dod.ok) { outcome = 'stopped'; data.outcome = 'stopped'; data.why = `Done check failed: ${data.dod.why}`; }
   }
@@ -466,23 +479,56 @@ function autoResume(handoff) {
 // its open BLOCK findings (no waiver) hold the branch's merge. -> the open findings ([] = none, or not checked)
 function slopEnd() {
   if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
-  let c;
   // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
   let brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
-  // SloppaChoppa 2 S2: endCheck reads the check `norn done` stored at this head and rule set instead of running it twice
-  try { c = endCheck({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir, voice: spec.policy?.slop?.voice ?? null, brief, lane: spec.lane, run }); } catch (e) {
-    // SPEC 1.3 F7: a check that threw is no "no findings" - the branch is held "could not check" (the dashboard and the digest show it);
-    // no resume: the worker cannot fix the check, and the door runs its own
-    const why = e.message.split('\n')[0];
-    logLine(`slop: could not check: ${why}`);
-    try { const p = couldNotCheck(spec.worktree, why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e2) { logLine(`slop: the could-not-check hold was not stored: ${e2.message.split('\n')[0]}`); }
-    return [];
-  }
-  if (!c) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
-  const unrun = c.check.findings.filter(f => f.unrun).map(f => f.rule);
-  logLine(`slop: ${c.open.length} open BLOCK finding(s) on ${c.branch} (${c.result ? c.result.ran.join(' ') : `the check stored at ${c.check.head.slice(0, 7)} by ${c.check.run ?? '-'}`}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
-  return c.open;
+  const projectDir = spec.policy?.slop?.project_dir, voice = spec.policy?.slop?.voice ?? null;
+  const check = () => {
+    let c;
+    // SloppaChoppa 2 S2: endCheck reads the check `norn done` stored at this head and rule set instead of running it twice
+    try { c = endCheck({ repo: spec.worktree, state, projectDir, voice, brief, lane: spec.lane, run }); } catch (e) {
+      // SPEC 1.3 F7: a check that threw is no "no findings" - the branch is held "could not check" (the dashboard and the digest show it);
+      // no resume: the worker cannot fix the check, and the door runs its own
+      const why = e.message.split('\n')[0];
+      logLine(`slop: could not check: ${why}`);
+      try { const p = couldNotCheck(spec.worktree, why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e2) { logLine(`slop: the could-not-check hold was not stored: ${e2.message.split('\n')[0]}`); }
+      return null;
+    }
+    if (!c) return null;   // no lane branch (on main, detached, no main to diff against), or no commits past main
+    const unrun = c.check.findings.filter(f => f.unrun).map(f => f.rule);
+    logLine(`slop: ${c.open.length} open BLOCK finding(s) on ${c.branch} (${c.result ? c.result.ran.join(' ') : `the check stored at ${c.check.head.slice(0, 7)} by ${c.check.run ?? '-'}`}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
+    return c;
+  };
+  const c = check();
+  if (!c) return [];
+  slopBranch = c.branch;
+  // SloppaChoppa 2 S1c (SPEC 3.5, Q3 yes): what the rules' fix lists cover is fixed by code and committed on the lane branch (nothing
+  // pushed), the new head checked; only the rest goes to the resume. Not again at a head whose fix was reverted (a resume's end).
+  if (!c.open.length || revertedAt(state, c.branch, c.check.head)) return c.open;
+  let f = null;
+  try { f = autofixCommit({ repo: spec.worktree, base: c.check.base, open: c.open, rules: projectSlop({ projectDir }).rules, tool: makeTool({ voice }), off: fixOff(state) }); }
+  catch (e) { logLine(`slop: autofix failed, nothing committed: ${e.message.split('\n')[0]}`); }
+  if (!f) return c.open;
+  slopFix = { ...f, branch: c.branch, check: c.check, open: c.open };
+  hostWrite(state, { type: 'outcome', branch: c.branch, lane: spec.lane, run, head: f.from, fix: f.to, action: 'autofix', findings: f.fixed });
+  logLine(`slop: ${f.subject}: ${f.to.slice(0, 7)} on ${f.from.slice(0, 7)}`);
+  return check()?.open ?? [];
+}
+// SPEC 3.5 safety: the Done check is red on the fixed head -> it runs on the unfixed one; green there means the fix broke it: the branch
+// goes back to the unfixed head (reset --keep: the run's other uncommitted files stay), the unfixed head's check holds again and its
+// findings go to the resume -> that green check | null (red there too: the fix stays)
+async function unfixEnd(dodHere) {
+  const back = sha => { try { gitRun(spec.worktree, ['reset', '-q', '--keep', sha]); return true; } catch (e) { logLine(`slop: reset to ${sha.slice(0, 7)} failed: ${e.message.split('\n')[0]}`); return false; } };
+  if (!back(slopFix.from)) return null;
+  const was = await dodHere();
+  if (!was.ok) { back(slopFix.to); logLine(`dod: red on the unfixed head ${slopFix.from.slice(0, 7)} too: the autofix stays`); return null; }
+  try {
+    const k = slopFix.check;
+    hostWrite(state, { ...k, type: 'check', blocks: k.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow) });
+    const { off } = hostWrite(state, { type: 'outcome', branch: slopFix.branch, lane: spec.lane, run, head: slopFix.from, fix: slopFix.to, action: 'reverted', findings: slopFix.fixed });
+    logLine(`slop: autofix reverted: the Done check is red on ${slopFix.to.slice(0, 7)} and green on ${slopFix.from.slice(0, 7)}; the branch is back there${off.length ? `; autofix OFF for ${off.join(', ')}` : ''}`);
+  } catch (e) { logLine(`slop: the revert was not recorded: ${e.message.split('\n')[0]}`); }
+  return was;
 }
 
 // a DONE with open slop findings and / or a red Done check goes back to the SAME lane ONCE, as one resume carrying both lists (slop
@@ -502,6 +548,8 @@ function fixEnd(open, d) {
     const promptText = [...(slop.length ? [slopPrompt(slop, null, { listFile: fwdPath(list) })] : []), ...(dod ? [dodPrompt(dod, null)] : []), ...(spec.brief ? [`Your brief: ${spec.brief}`] : [])].join('\n');
     const s = startRun({ ...rest, resumeOf: run, ...(slop.length ? { slopOf: run } : {}), ...(dod ? { dodOf: run } : {}), ...(nudgeable() ? { resumeSid: sid } : {}), promptText });
     next = s.run; if (s.queued) logLine(`resume ${next} queued: ${s.why}`);
+    try { if (slop.length) hostWrite(state, { type: 'outcome', branch: slopBranch, lane: spec.lane, run, head: gitRun(spec.worktree, ['rev-parse', 'HEAD']).trim(), action: 'resume', findings: slop }); }
+    catch (e) { logLine(`slop: the resume outcomes were not recorded: ${e.message.split('\n')[0]}`); }
   } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
   const what = { ...(slop.length ? { slop: slop.length } : {}), ...(dod ? { dod: dod.why } : {}) };
   try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, ...what } : { refused, ...what } }); }
