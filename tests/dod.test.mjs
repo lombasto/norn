@@ -247,9 +247,14 @@ test('run end: a DONE whose Done check fails is STOPPED, resumed once with the e
 
 test('run end: a green Done check keeps DONE and records the evidence (exit codes, counts, logs)', async () => {
   const t = mkTmp('meta-dod-ok-'), { repo, wt } = laneRepo(t);
-  const { r, state } = normRun(t, wt, repo, { brief: `mode: done\n${READY}`, policy: { dod: { ready: 'refuse' }, slop: { enabled: false } }, gate: { cmd: 'node -e ""' } });
+  const go = path.join(t, 'go');
+  const { r, state } = normRun(t, wt, repo, { brief: `mode: done\nuntil: ${go}\n${READY}`, policy: { dod: { ready: 'refuse' }, slop: { enabled: false } }, gate: { cmd: 'node -e ""' } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  const id = 'RUN-1';
+  const id = 'RUN-1', log = JSON.parse(fs.readFileSync(path.join(state, 'runs', `${id}.spec.json`), 'utf8')).log;
+  // NORN-DOD-NOCOMMIT: the run's changed set starts at its start HEAD - the run commits src/b.mjs, laneRepo's earlier src/a.mjs is not its
+  await waitFor(() => fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes(`start ${id} executor=`), { what: 'the supervisor took its start HEAD' });
+  fs.writeFileSync(path.join(wt, 'src', 'b.mjs'), 'export const b = 1;\n'); git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', 'b');
+  fs.writeFileSync(go, '');
   await waitFor(() => settled(loadState(state).items[id]), { what: 'the run ends' });
   const e = loadState(state).items[id].end;
   assert.equal(e.outcome, 'done'); assert.equal(e.dod.ok, true);
@@ -257,7 +262,8 @@ test('run end: a green Done check keeps DONE and records the evidence (exit code
   assert.deepEqual(e.dod.tests.map(x => [x.name, x.code]), [['tests', 0]]);
   assert.match(e.dod.gate_skipped, /policy\.tests\.mode = light: the light set replaces the gate/);
   assert.equal(e.dod.tests_policy, 'policy.tests: mode light, budget 3 min, browser ci, full suite deny');
-  assert.deepEqual(e.dod.tests_uncovered, ['src/a.mjs'], 'no test covers the changed module: named, left to CI');
+  assert.deepEqual(e.dod.tests_uncovered, ['src/b.mjs'], 'no test covers the changed module: named, left to CI');
+  assert.deepEqual(e.dod.changed, ['src/b.mjs'], 'measured from the start HEAD: the lane\'s earlier commit is not this run\'s');
 });
 
 test('Agents shows Ready and Done with the evidence', () => {
