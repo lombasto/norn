@@ -1,6 +1,7 @@
 // SPEC dash-owner-1123 s.7 (K3, K4, page side): pages/code.mjs rendered in node from synthetic parts - the summary (<= 4 numbers), Files
 // (fileTable, sorts, the folder filter, show more), the file drawer (growth chart, last commits, the viewer), Growth (timeChart + the
-// fastest), Outliers (the oversized file past the fence), Map (the not-built text, no iframe) - and its loader's requests. The 390 px
+// fastest), Outliers (the oversized file past the fence), Map (the drawn map in a sandboxed iframe on /code-map/; none drawn: the
+// not-built text, no iframe) - and its loader's requests. The 390 px
 // check is CI's page test once the SHELL lane wires the page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,10 +58,17 @@ test('K4 Outliers: size, growth and churn charts; the oversized fixture file is 
   assert.doesNotMatch(h, /class="wobar out" data-act="code-file" data-id="engine\/m\d\.mjs"/);
 });
 
-test('K3 Map: the not-built text and no iframe', () => {
+test('K3 Map: the drawn map in an iframe sandboxed to scripts only on /code-map/; none drawn: the not-built text and no iframe', () => {
   const h = code(base({ sub: 'map', map: null }));
-  assert.match(h, /id="code-map"[^]*Not built yet: the floor plan \(a static floorplan\/index\.html in an iframe\) comes here/);
+  assert.match(h, /id="code-map"[^]*not built yet[^]*norn code map/);
   assert.doesNotMatch(h, /<iframe/);
+  const map = { at: '2026-11-24T10:00:00Z', sha: 'abc123def456', tool: '0.11.0', workflow: 'refresh', calls: 2, pct: 0.008, bytes: 2900000, skipped: null };
+  const m = code(base({ sub: 'map', map }));
+  assert.match(m, /<iframe id="code-map-frame" class="cmap" sandbox="allow-scripts" src="\/code-map\/\?project=kestrel" title="Architecture map \(Floorplan\)" loading="lazy" referrerpolicy="no-referrer"><\/iframe>/);
+  assert.match(m, /id="code-map"[^]*abc123def456[^]*Floorplan 0\.11\.0/);
+  assert.doesNotMatch(m, /allow-same-origin/);
+  const s = code(base({ sub: 'map', map: { ...map, skipped: { at: '2026-11-24T12:00:00Z', sha: 'fff000fff000', why: '~0.06 % > 0.05 % of plan (10 model jobs)' } } }));
+  assert.match(s, /refresh skipped at fff000fff000[^]*0\.06 % &gt; 0\.05 %[^]*norn code map/);
 });
 
 test('codeLoad: the summary, the open view\'s part (Files: cap, sort, folder) and, with a file open, its part and its source', async () => {

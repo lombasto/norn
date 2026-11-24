@@ -4,7 +4,8 @@
 //              A row opens the file drawer (#code-file, &file=): its growth chart, its last commits and the code viewer (/api/source).
 //   Growth   - lines per top-level area over 26 weeks (widgets timeChart) and the 10 fastest-growing files
 //   Outliers - widgets outliers() over size, growth and churn (Tukey fences)
-//   Map      - the slot for the Floorplan embed: the not-built text, no iframe
+//   Map      - the Floorplan map (`norn code map`, lib/codemap.mjs) in an iframe sandboxed to scripts only on GET /code-map/ (its own CSP);
+//              none drawn: the not-built text, no iframe. A skipped refresh (over the meter) says so above it.
 // No index yet: the parts say what writes it, never a number. Click handlers are data-act names (SHELL wires them).
 import { esc, fin, int, chip, filterChips } from '../cells.mjs';
 import { timeChart, outliers } from '../widgets.mjs';
@@ -77,7 +78,14 @@ function codeOutliers(d) {
     ${outliers(d[k] || [], { fmt: int, unit: 'lines', top: 10, id: `code-outliers-${k}`, act: 'code-file' }) || '<p class="small mute" style="padding:0 12px">no file</p>'}</div>`).join('');
 }
 
-const codeMap = () => '<div class="card" id="code-map"><p class="small">Not built yet: the floor plan (a static floorplan/index.html in an iframe) comes here.</p></div>';
+// ---- Map: the drawn Floorplan file on its own route (own CSP), framed with scripts only: an opaque origin, no dashboard cookie or API ----
+function codeMap(d) {
+  const m = d.map;
+  if (!m) return '<div class="card" id="code-map"><p class="small mute" style="padding:0 12px"><span class="chip idle">not built yet</span> the architecture map <span class="mute">(`norn code map` draws it with the pinned Floorplan; the tick refreshes it after a merge)</span></p></div>';
+  const skip = m.skipped ? ` · ${chip('warn', `refresh skipped at ${m.skipped.sha}`)} ${esc(m.skipped.why)}; <span class="mono">norn code map</span> draws it` : '';
+  return `<div class="card" id="code-map"><p class="small mute" style="padding:0 12px">map at <span class="mono">${esc(m.sha)}</span>, ${esc(String(m.at).slice(0, 16))} · Floorplan ${esc(m.tool)} · Ask is off (no map server)${skip}</p>
+    <iframe id="code-map-frame" class="cmap" sandbox="allow-scripts" src="/code-map/?project=${esc(encodeURIComponent(d.project))}" title="Architecture map (Floorplan)" loading="lazy" referrerpolicy="no-referrer"></iframe></div>`;
+}
 
 const CODE_PART = { files: codeFiles, growth: codeGrowth, outliers: codeOutliers, map: codeMap };
 /** the Code page: d = codeLoad's answer (the summary + the open view's part + the open file) */
