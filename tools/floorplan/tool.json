@@ -1,0 +1,11 @@
+{
+  "name": "floorplan",
+  "version": "0.11.0",
+  "description": "The pinned architecture-map tool of `norn code map` (Code > Map). The tag archive is downloaded, checked against lock.json and the release's own CHECKSUMS.txt, and unpacked into <meta root>/state/tools/floorplan/<lock hash>/, never in a worktree; nothing under engine/ imports it, its scripts run as child processes and its serve.mjs never runs. Every change here is an owner approval (K20).",
+  "license": "MIT (the bundled ELK: EPL-2.0)",
+  "repo": "https://github.com/haydenschmitty/floorplan",
+  "tag": "floorplan--v0.11.0",
+  "archive": "https://github.com/haydenschmitty/floorplan/archive/refs/tags/floorplan--v0.11.0.tar.gz",
+  "root": "floorplan-floorplan-v0.11.0",
+  "skill": "skills/floorplan"
+}
