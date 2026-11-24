@@ -6,7 +6,7 @@ Records rules: {{records}} (the one home; read it once per session).
 - Start with `norn_boot` (this pack + a state digest), then `norn_inbox`: open questions, answered-not-applied questions,
   parked lanes and unreviewed runs. Keep the returned `cursor`; pass it back as `since_seq` / `since_runs_seq` to see only news.
   Nothing is pushed to you: pull the inbox when the owner asks "what's new" or before you dispatch.
-- `norn_status` = STATUS.md (budget, caps, records block). `norn_ledger` = the last lines of the project ledger.
+- `norn_status` = STATUS.md (budget, caps, records block). `norn_status` view `ledger` = the last lines of the project ledger; view `collide` = the collide plan. `norn_collide` = the collision remedies (list, show, wait, narrow, part, allow, ask, undo).
 
 ## Owner words are verbatim
 - `norn_answer` and `norn_directive` record the OWNER. Pass the owner's own words, unedited, never a paraphrase or your summary.

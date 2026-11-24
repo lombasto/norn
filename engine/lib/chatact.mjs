@@ -3,6 +3,7 @@
 // - tiers: 0 read / 1 act, recorded (what a check-in may do unattended) / 2 your tap (approval card, 30 min, then deny + ping) /
 //   3 off (raw shell, file edits - the Settings switch chat_raw_shell, C5: off / ask = a card / on). tierOf (Norn tools), promptTier (the CLI's own tools).
 // - norn_cli: an allow-listed `meta` subcommand as an argument list, never a shell; role, project and via are injected, never given.
+//   lane-collide S2a: `collide` too - its remedy's tier is the case's cell (check-in's: tier 1 as controller; higher: the owner's tap).
 // - the verbatim guard: a directive / an owner answer is recorded only in words the owner wrote in this thread.
 // - the outbox: the MCP server drops thread events (approval, verdict, done, show) as files; the dashboard's chat drains them into
 //   the thread, so the thread keeps ONE writer. Approvals: <state>/chat/approvals/<AP-id>.json + .verdict.json (first writer wins).
@@ -11,6 +12,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadState } from './records.mjs';
 import { realPath } from './config.mjs';
+import { casesOf } from './intents.mjs';
+import { applyNeed } from './collide.mjs';
 
 export const APPROVAL_MS = 30 * 60000;   // SPEC sec. 3 tier 2: waits 30 min, then denies and pings you
 export const chatDir = state => path.join(state, 'chat');
@@ -20,15 +23,15 @@ export const approvalsDir = state => path.join(chatDir(state), 'approvals');
 export class ActError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 
 // ---------- tiers ----------
-const READ = new Set(['norn_boot', 'norn_status', 'norn_inbox', 'norn_records', 'norn_ledger', 'norn_show', 'norn_approve']);
+const READ = new Set(['norn_boot', 'norn_status', 'norn_inbox', 'norn_records', 'norn_show', 'norn_approve']);
 const ACT = new Set(['norn_answer', 'norn_directive', 'norn_question_add', 'norn_decision_add', 'norn_record_event', 'norn_run', 'norn_stop', 'norn_tick']);
 /** The tier of a Norn tool call (norn_cli by its subcommand; a refused subcommand throws). Unknown = 3 (off). */
-export function tierOf(tool, a = {}) {
+export function tierOf(tool, a = {}, o = {}) {
   if (READ.has(tool)) return 0;   // norn_approve is the tap itself: it decides nothing, the owner does
   if (tool === 'norn_run_show') return a.ask !== undefined ? 1 : 0;   // an ask is a paid run, as a check-in may start
   if (tool === 'norn_settings') return a.set && !a.dry_run ? 2 : 0;
   if (tool === 'norn_pause') return a.half ? 0 : 2;   // RM-37: pause half's pick only reads
-  if (tool === 'norn_cli') return cliPlan(a.args).tier;
+  if (tool === 'norn_cli') return cliPlan(a.args, o).tier;
   return ACT.has(tool) ? 1 : 3;
 }
 // the CLI's own tools, as its permission prompt (--permission-prompt-tool -> norn_approve) names them
@@ -54,12 +57,13 @@ const REC_ACT = ['add question', 'add decision', 'add lane', 'apply', 'supersede
 const DLV_ACT = ['park', 'unpark', 'supersede', 'ask', 'resolve'];
 // META-CONTROLLER C4 (SPEC sec. 2): a controller's act on a lane holds it this long (a Settings row in C5)
 export const HOLD_MIN = 30;   // the default; Settings chat_hold_min (C5) is read by the MCP server on every act
-export const CLI_ALLOWED = ['instructions suggest', 'instructions confirm', 'instructions apply', 'lane new', 'lane claim', 'lane release', 'mergeq', 'deliverables', 'mail send', 'notify', 'run --queue', 'requeue', ...[...REC_READ, ...REC_ACT].map(s => `rec ${s}`)];
+export const CLI_ALLOWED = ['instructions suggest', 'instructions confirm', 'instructions apply', 'lane new', 'lane claim', 'lane release', 'mergeq', 'deliverables', 'mail send', 'notify', 'run --queue', 'requeue', 'collide', ...[...REC_READ, ...REC_ACT].map(s => `rec ${s}`)];
 /**
  * args: the `meta` argument list (no shell) -> { sub, tier, argv (as run: + the injected role where the verb takes no env role),
  * verbatim? (owner words this call records) }; a subcommand not on the list, or an injected flag, throws ActError.
+ * o: { state, policy (policy.collide) } - a collide remedy's tier is the cell of its case (SPEC 4A.3).
  */
-export function cliPlan(args) {
+export function cliPlan(args, o = {}) {
   if (!Array.isArray(args) || !args.length || args.some(a => typeof a !== 'string')) throw new ActError('norn_cli needs args: the norn subcommand as an argument list of strings');
   for (const a of args) if (INJECTED.some(f => a === f || a.startsWith(f + '='))) throw new ActError(`norn_cli: ${a.split('=')[0]} is set by Norn (role controller, this project, via chat), never by the caller`);
   const [c, s, ...rest] = args, refuse = sub => new ActError(`norn_cli: \`norn ${sub}\` is not on the chat's list (${CLI_ALLOWED.join(', ')})`);
@@ -85,6 +89,16 @@ export function cliPlan(args) {
   if (c === 'notify') return { sub: 'notify', tier: 1, argv: args };
   if (c === 'run') { if (!has(args, '--queue')) throw refuse('run (without --queue: use norn_run)'); return { sub: 'run --queue', tier: 1, argv: args }; }
   if (c === 'requeue') return { sub: 'requeue', tier: 1, argv: args };
+  // lane-collide S2a (SPEC 4A.4 MCP): a remedy in the check-in's cell is a recorded act; a higher cell is the owner's tap, so it runs as the owner
+  if (c === 'collide') {
+    if (['plan', 'list', 'show'].includes(s)) return { sub: `collide ${s}`, tier: 0, argv: args };
+    if (s === 'undo' || s === 'ask') return { sub: `collide ${s}`, tier: 1, argv: [...args, '--as', 'controller'] };
+    if (!['wait', 'narrow', 'part', 'allow'].includes(s)) throw refuse(`collide ${s ?? ''}`.trim());
+    const col = /^COL-\d+$/.test(rest[0] ?? '') ? (o.state ? casesOf(o.state)[rest[0]] : null) : null;
+    if (!col && s !== 'allow') throw new ActError(`norn_cli: norn collide ${s} needs an open case (COL-n)${rest[0] ? `: ${rest[0]} not found` : ''}`);
+    const own = col && applyNeed(s, col.data?.kind, col.data?.grade, o.policy) === 'checkin';
+    return { sub: `collide ${s}`, tier: own ? 1 : 2, argv: [...args, '--as', own ? 'controller' : 'owner'] };
+  }
   if (c === 'rec') {
     const sub = s === 'add' ? `add ${rest[0] ?? ''}`.trim() : s;
     if (sub === 'answer' || sub === 'add directive') throw new ActError(`norn_cli: \`norn rec ${sub}\` records owner words - use ${sub === 'answer' ? 'norn_answer' : 'norn_directive'} (the verbatim guard)`);

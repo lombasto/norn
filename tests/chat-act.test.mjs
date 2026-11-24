@@ -29,7 +29,8 @@ const fakeCli = calls => (argv, env, out) => { calls.push({ argv, role: env.META
 
 test('C3 role and tier table: profile chat = controller tools + norn_show, norn_cli, norn_approve; the tiers of SPEC sec. 3', async () => {
   const ctl = names('controller'), chat = names('chat');
-  assert.deepEqual([...chat].sort(), [...ctl, 'norn_show', 'norn_cli', 'norn_approve'].sort());
+  // lane-collide S2a: the chat applies a collide remedy through norn_cli (its tier is the case's cell), not norn_collide
+  assert.deepEqual([...chat].sort(), [...ctl.filter(n => n !== 'norn_collide'), 'norn_show', 'norn_cli', 'norn_approve'].sort());
   assert.ok(ctl.length <= 16 && !ctl.includes('norn_cli'), 'the controller profile stays as it is');
   assert.match(refusal('chat', { META_RUN_ID: 'RUN-1' }), /refused/); assert.match(refusal('chat', { META_ROLE: 'checkin' }), /refused/); assert.equal(refusal('chat', {}), null);
   const cli = args => ['norn_cli', { args }];

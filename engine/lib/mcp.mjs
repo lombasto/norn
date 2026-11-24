@@ -582,8 +582,10 @@ function showTool(a, ctx) {
   emit(ctx.state, { kind: 'show', path: fwd(real), caption: a.caption ?? null, image, ...(excerpt !== undefined ? { excerpt } : {}) });
   return { text: `shown in the thread: ${fwd(real)}`, data: { path: fwd(real), image } };
 }
+// lane-collide S2a: a collide remedy's tier is its case's cell (the project's policy.collide may lower it)
+const actOf = ctx => ({ state: ctx.state, policy: ctx.project?.policy?.collide });
 function cliTool(a, ctx) {
-  const plan = cliPlan(a.args);
+  const plan = cliPlan(a.args, actOf(ctx));
   if (plan.verbatim !== undefined) guard(ctx, plan.verbatim, 'norn lane new --task (an owner directive)');
   const argv = ['run --queue', 'lane claim', 'lane release'].includes(plan.sub) ? [...plan.argv, '--via', ctx.via] : plan.argv;
   const r = ctx.cliRun(argv, { META_ROLE: 'controller' });
@@ -606,8 +608,8 @@ function cardOf(t, a, ctx) {
   if (t.name === 'norn_pause') return a.mode ? { title: `${PAUSE_MODES[a.mode].label}: ${who}`, text: PAUSE_MODES[a.mode].says } : a.runs ? { title: `Pause ${a.runs.join(', ')} safely`, text: 'Each gets an urgent order: finish the step, commit, hand off and end. Its hand-off waits for your resume.' }
     : a.resume === 'all' ? { title: `Resume all: ${who}`, text: 'The pause is released and every paused hand-off is queued, merges first.' } : { title: `Resume ${a.resume}`, text: 'Its hand-off is queued at the front.' };
   if (t.name === 'norn_settings') return { title: `Change setting ${a.set.key}`, text: settings({ ...a, dry_run: true }, ctx).text };
-  if (t.name === 'norn_cli') return { title: `norn ${cliPlan(a.args).sub}`, command: 'norn ' + a.args.join(' '),
-    text: a.args.includes('--batching') ? 'The merge-queue kill switch.' : 'Builds and gates a merge batch; its MERGE run moves main.' };
+  if (t.name === 'norn_cli') return { title: `norn ${cliPlan(a.args, actOf(ctx)).sub}`, command: 'norn ' + a.args.join(' '),
+    text: a.args[0] === 'collide' ? 'A collision remedy above the check-in cell (SPEC 4A.3): applied as the owner.' : a.args.includes('--batching') ? 'The merge-queue kill switch.' : 'Builds and gates a merge batch; its MERGE run moves main.' };
   return { title: t.name, text: clip(JSON.stringify(a), 600) };
 }
 // the done card of an act, with an Undo where the verb has one (SPEC sec. 8 C3: requeue / stop of a queued run / revoke)
@@ -623,7 +625,7 @@ function doneCard(t, a, r, ctx) {
 }
 /** profile chat: tier 0 / 1 run (an act leaves its done card), tier 2 waits for the owner's tap, tier 3 is refused */
 function gated(t, a, ctx) {
-  const tier = tierOf(t.name, a);
+  const tier = tierOf(t.name, a, actOf(ctx));
   if (tier >= 3) bad(`${t.name} is off in the chat (tier 3)`);
   if (tier < 2) {
     const r = t.run(a, ctx);
@@ -659,7 +661,7 @@ function actLane(name, a, ctx) {
 const isoMin = min => new Date(Date.now() + min * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 function autoHold(t, a, ctx) {
   let lane = null;
-  try { if (tierOf(t.name, a) < 1) return; lane = actLane(t.name, a, ctx); } catch { return; }
+  try { if (tierOf(t.name, a, actOf(ctx)) < 1) return; lane = actLane(t.name, a, ctx); } catch { return; }
   const l = lane && st(ctx).items[laneId(lane, ctx.state)];
   if (!l || !KINDS.lane.events.claim.from.includes(l.state)) return;   // no LANE record (nothing to hold) or done / archived
   const h = holdOf(l), holder = ctx.profile === 'chat' ? 'chat' : 'controller';
