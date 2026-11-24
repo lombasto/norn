@@ -5,12 +5,11 @@
 import '../lib/gitprof.mjs';   // first: NORN_GIT_PROFILE=<file> counts every git call of this process (git-perf S1); unset, a no-op
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { inScope } from '../lib/ready.mjs';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems, HOME_RE, NID, RUN_ID_RE } from '../lib/records.mjs';
-import { writeViews, writeQueueView } from '../lib/views.mjs';
+import { writeViews, writeQueueView, sha } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
 import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS, updateMachine } from '../lib/config.mjs';
@@ -2300,7 +2299,6 @@ function collideCase(pos, flags, env, out) {
 // SPEC 4A.3: a remedy in the controller's or the owner's column is a recorded decision, linked to its case
 const remedyDecision = (state, col, remedy, flags) => record(state, { kind: 'decision', ev: 'create', by: flags.as,
   data: { lane: col.data.b?.lane ?? '-', question: `${col.id} ${col.data.kind}${col.data.grade ? ` (${col.data.grade})` : ''}: which remedy?`, choice: remedy, why: flags.why, col: col.id } }).id;
-const sha256 = s => createHash('sha256').update(s).digest('hex');
 const SCOPE_LINE = /^\s*(?:[-*]\s+)?Scope:/, READY_LINE = /^\s*(?:[-*]\s+)?(Scope|Tests|Done|Exclusive):/;
 /** SPEC 4A.4 narrow: B's brief gets the narrowed Scope line and the Narrowed line under its Ready lines -> the action's args (the old line
  *  and both sha256 kept for the undo). Refused for a running run, an empty or too long result, or a dropped file the Tests / Done line names */
@@ -2328,7 +2326,7 @@ function narrowBrief(col, flags, { a, b, g, pol, refuse }) {
   lines.splice(last + 1, 0, note);
   const next = lines.join(text.includes('\r\n') ? '\r\n' : '\n');
   fs.writeFileSync(b.brief, next);
-  return { brief: b.brief, before, after, note, scope, dropped: dropped.slice(0, 20), dropped_n: dropped.length, sha256_before: sha256(text), sha256: sha256(next) };
+  return { brief: b.brief, before, after, note, scope, dropped: dropped.slice(0, 20), dropped_n: dropped.length, sha256_before: sha(text), sha256: sha(next) };
 }
 // SPEC 4A.3 "nothing sits": the case handed to the role that may apply the remedy; for the owner one question (owner_only), one option per
 // remedy on the kind's menu, SloppaChoppa's pick recommended - never a second for the same case
