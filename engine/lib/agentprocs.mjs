@@ -1,5 +1,5 @@
 // The agent CLI sessions on this computer (UI redesign 2026-11-20, header item 1): every Claude Code and Codex CLI process on the
-// machine, split into Norn's own (a run's executor or supervisor, a Talk session the dashboard started - the process or one of its
+// machine, split into Norn's own (a run's executor or supervisor, a Controller session the dashboard started - the process or one of its
 // ancestors is a pid Norn knows) and the others (a terminal, an IDE, the desktop app). Pure: the process list (strays.mjs listProcs)
 // and Norn's pids go in, the counts come out; the dash server samples it in the background, never inside a request.
 const CLAUDE_EXE = /^claude(\.exe)?$/i, CODEX_EXE = /^codex(\.exe)?$/i;

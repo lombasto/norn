@@ -204,11 +204,11 @@ export const SETTINGS=[
   S('cadence','policy.checkin.merge_model','Staged-merge run model',en(MODELS),'Model of the MERGE run a failed mechanical landing queues (a conflict, a red quick check or a slop block).','claude-sonnet-5-5','Opus costs ~5x Sonnet per merge run.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_effort','Staged-merge run effort',en(EFFORTS),'Effort of that MERGE run.','medium','Higher effort per merge multiplies with merges.',['norn tick (engine/lib/checkins.mjs)']),
   S('cadence','policy.checkin.merge_agent','Staged-merge run agent',{type:'text',pattern:'^[A-Za-z0-9._-]{0,60}$'},'Agent of that MERGE run (blank = none).','the project runner agent','—',['norn tick (engine/lib/checkins.mjs)']),
-  S('cadence','checkin_model','Check-in model',en(MODELS),`Model of the scheduled check-in and the Talk controller. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_model','Check-in model',en(MODELS),`Model of the scheduled check-in and the dashboard Controller. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'claude-opus-5-5','Opus costs ~5x Sonnet per check-in.',['checkin.ps1','dashboard Controller']),
   // CHECKIN-V2 piece 2 (GT-3 ruling): a MINOR wake (gate.mjs wakeClass) runs this model / effort on the reduced prompt CHECKIN-MINOR.md
   S('cadence','checkin_minor_model','Minor check-in model',en(['',...MODELS]),'Model of a MINOR check-in (a forced quiet tick, a run start by another, the guard band): the reduced prompt engine/prompts/CHECKIN-MINOR.md; it escalates with MAJOR NEEDED. Empty = every tick is the full check-in.','claude-sonnet-5-5','Opus on minor ticks costs ~5x Sonnet for ticks that mostly act on nothing.',['norn tick (engine/lib/tick.mjs)']),
   S('cadence','checkin_minor_effort','Minor check-in effort',en(EFFORTS),'Effort of a MINOR check-in.','medium','Higher effort per minor tick multiplies with their count.',['norn tick (engine/lib/tick.mjs)']),
-  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),`Effort of the check-in. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Talk']),
+  S('cadence','checkin_effort','Check-in effort',en(EFFORTS),`Effort of the check-in. Below ${CHECKIN_FLOOR_TEXT} the settings review warns.`,'medium','Higher effort per check-in multiplies with the interval.',['checkin.ps1','dashboard Controller']),
   // META-CHECKIN-GATE: norn tick wakes the LLM check-in only on a material change (engine/lib/gate.mjs); a slow forced check-in stays
   S('cadence','checkin_gate','Check-in gate (wake on change only)',bool,'A tick (scheduled or run exit) starts the LLM check-in only when the material state changed since the last one: run starts / ends / kills / stalls, owner records, questions, ready lanes, guard band, quiet flag / pause. No change = a logged skip.','on','Off = every tick is one Opus check-in (~0.9M cache-read tokens each), about half of them with nothing to do.',['norn tick (engine/lib/gate.mjs)']),
   S('cadence','checkin_max_quiet_min','Forced check-in after (min quiet)',int(15,1440),'With the gate on, a check-in still runs once the last real one is older than this, change or not.','60','Lower = more no-change check-ins (one Opus turn each); higher = slower reaction to what the gate does not see (time-only rules).',['norn tick (engine/lib/gate.mjs)']),
@@ -259,7 +259,7 @@ export const SECTIONS=[
     {id:'rounds',label:'Rounds & escalation',help:'When a stage counts as grinding and what happens then.'}]},
   {id:'checkins',label:'Check-ins & scheduling',help:'When the scheduled check-in runs and on which model.',subs:[
     {id:'schedule',label:'Schedule',help:'Task Scheduler repetition and exit triggers.'},
-    {id:'model',label:'Check-in model',help:'The check-in and the dashboard Talk controller.'}]},
+    {id:'model',label:'Check-in model',help:'The check-in and the dashboard Controller.'}]},
   {id:'chat',label:'Controller chat',help:'The controller chat on the Home tab: its harness, model, idle stop, lane holds and raw shell. Read live - no restart.',subs:[
     {id:'session',label:'Session',help:'Harness, model, effort and idle stop of the chat process (the next message obeys a change).'},
     {id:'acting',label:'Acting',help:'How long a chat act holds a lane, and whether shell / file edits are off, ask, or on.'}]},
