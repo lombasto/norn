@@ -13,7 +13,9 @@ import { mkTmp } from './helpers/tmp.mjs';
 import { runEnded } from './helpers/wait.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
-const BASE_ENV = { META_ROLE: '', META_PROJECT: '', META_STATE: '', META_RUN_ID: '', META_RUN_STATE: '', META_RESULT: '', META_RESULT_DIR: '', META_NO_TICK: '1' };
+// META_FILL_SAMPLE: the fill's resource gate is not under test. A busy windows runner (CPU > 90 %) held the hand-off's resume queued
+// at the first run's exit fill, and with no tick nothing filled it again: the file waited out the 600 s cap (CI-45433642006, CI-45445221016)
+const BASE_ENV = { META_ROLE: '', META_PROJECT: '', META_STATE: '', META_RUN_ID: '', META_RUN_STATE: '', META_RESULT: '', META_RESULT_DIR: '', META_NO_TICK: '1', META_FILL_SAMPLE: '{"free_gb":64,"cpu_pct":0}' };
 const meta = (args, env = {}) => {
   const r = spawnSync(process.execPath, [META, ...args], { encoding: 'utf8', windowsHide: true, env: { ...process.env, ...BASE_ENV, ...env } });
   return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() };
@@ -115,8 +117,8 @@ test('a hand-off: the end names HANDOFF.md and the auto-resume hands it to the n
   assert.equal(fs.readFileSync(end.handoff, 'utf8'), 'next: the fake step\n');
   const next = loadState(d.state).items[id].resume?.next;
   assert.ok(next, 'auto-resumed');
-  // the resume is a continuation (supervisor.mjs continuation: queue): a gate of a loaded runner (resources, usage, runs ahead) holds it
-  // queued, and the fill starts it as a new run (CI 44923548243, windows: RUN-2 filled, no RUN-2.spec.json) - follow the fill
+  // the resume is a continuation (supervisor.mjs continuation: queue): the first run's exit fill may start it as a new run (CI 44923548243,
+  // windows: RUN-2 filled, no RUN-2.spec.json) - follow the fill. The resource gate is pinned idle (BASE_ENV), so that fill never holds it
   const q = await runEnded(d.state, next), ran = q.state === 'filled' ? q.fill.next : next;
   if (ran !== next) await runEnded(d.state, ran);
   const spec = JSON.parse(fs.readFileSync(path.join(d.state, 'runs', `${ran}.spec.json`), 'utf8'));
