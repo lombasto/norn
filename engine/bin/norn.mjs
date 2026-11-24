@@ -2165,7 +2165,8 @@ function stuckCmd(argv, env, out, err) {
 
 // ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
 const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)'
-  + ' | list [--all] [--json] | show COL-n [--json] | allow (COL-n | <lane a> <lane b>) [--kind K] --as checkin|controller|owner --why W | undo COL-n [--action N] --as R --why W';
+  + ' | list [--all] [--for checkin|controller|owner] [--json] | show COL-n [--json] | allow (COL-n | <lane a> <lane b>) [--kind K] | wait COL-n | narrow COL-n [--scope "<globs>"] | part COL-n [--of <lead lane>]'
+  + ' | ask COL-n --want part|narrow|fold|wait|allow | undo COL-n [--action N]    (every write: --as checkin|controller|owner|dashboard --why W; who may apply what: SPEC 4A.3, policy.collide.apply_by)';
 function collideCmd(argv, env, out, err) {
   try {
     const flags = {}, pos = [];
@@ -2174,11 +2175,11 @@ function collideCmd(argv, env, out, err) {
       if (!a.startsWith('--')) { pos.push(a); continue; }
       const k = a.slice(2);
       if (k === 'json' || k === 'all') { flags[k] = true; continue; }
-      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want', 'for'].includes(k)) throw new RunError(`unknown flag ${a}`);
       flags[k] = argv[++i];
     }
     if (['list', 'show', 'allow', 'undo', 'wait', 'narrow', 'part', 'ask'].includes(pos[0])) return collideCase(pos, flags, env, out);
-    if (pos[0] !== 'plan') throw new RunError(pos[0] ? `unknown verb ${pos[0]} (plan, list, show, allow, undo)` : 'collide needs a verb (plan, list, show, allow, undo)');
+    if (pos[0] !== 'plan') throw new RunError(`${pos[0] ? `unknown verb ${pos[0]}` : 'collide needs a verb'} (plan, list, show, allow, wait, narrow, part, ask, undo)`);
     if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
     if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
     const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
@@ -2216,15 +2217,19 @@ function collideCmd(argv, env, out, err) {
   }
 }
 // lane-collide S1b: the cases (COL-n) - list, show, and the two writes of S1b: allow (the pair ruling that releases a hold; SPEC 4A.3 says
-// who may) and undo (of an allow only: a hold, an after or a told is nobody's choice - it ends by itself, or by an allow). A worker run
-// applies nothing (META_RUN_ID set and no check-in / controller role), as in round 1.
+// who may) and undo (a hold, an after or a told is nobody's choice - it ends by itself, or by an allow). S2a: wait, narrow, part, ask,
+// each checked against policy.collide.apply_by, and their undo. A worker run applies nothing (META_RUN_ID set and no check-in /
+// controller role), as in round 1.
 const caseLine = c => { const a = actionsOf(c), d = c.data; return `${c.id} ${c.state} ${d.kind}${d.grade ? ` (${d.grade})` : ''} ${d.verdict} ${d.a?.lane ?? '?'} > ${d.b?.lane ?? '?'} door ${d.door ?? '-'}${a.length ? ` - ${a.map(x => x.action + (x.undone ? ' (undone)' : '')).join(', ')}` : ''}`; };
 const STRICTEST = { territory: 'exclusive' };   // an allow of a whole kind with no case behind it is judged at the kind's strictest grade
 function collideCase(pos, flags, env, out) {
   const { state } = where(flags, env), cases = casesOf(state), [verb, ...args] = pos;
   const json = c => ({ id: c.id, state: c.state, ...c.data, actions: actionsOf(c) });
   if (verb === 'list') {
-    const xs = Object.values(cases).filter(c => flags.all || c.state === 'open').sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)));
+    if (flags.for && !['checkin', 'controller', 'owner'].includes(flags.for)) throw new RunError('--for takes checkin, controller or owner');
+    // --for R: the cases marked for R by their last live ask; a case nobody asked about is the check-in's (it walks the open cases)
+    const asked = c => actionsOf(c).filter(a => a.action === 'ask' && !a.undone).at(-1)?.args?.role ?? 'checkin';
+    const xs = Object.values(cases).filter(c => (flags.all || c.state === 'open') && (!flags.for || asked(c) === flags.for)).sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)));
     if (flags.json) { out(JSON.stringify(xs.map(json), null, 1)); return 0; }
     if (!xs.length) out(flags.all ? 'no collision case' : 'no open collision case');
     for (const c of xs) out(caseLine(c));

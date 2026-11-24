@@ -176,6 +176,8 @@ test('ask: an owner cell becomes one owner question with the menu, SloppaChoppa\
   const it = f.case('item');
   ok(f.norn(['ask', it, '--want', 'allow', '--as', 'checkin', '--why', 'x']), /asked the controller for allow$/m);
   assert.equal(f.acts(it)[0].args.q, undefined, 'a controller ask is a mark, no question');
+  const ids = who => f.norn(['list', '--for', who]).stdout.split(/\r?\n/).filter(l => /^COL-/.test(l)).map(l => l.split(' ')[0]);
+  assert.deepEqual([ids('controller'), ids('owner'), ids('checkin')], [[it], [col], []], 'each case is marked by its last live ask');
 });
 
 test('a worker run applies no remedy: every verb is refused', () => {
