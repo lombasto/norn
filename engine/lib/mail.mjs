@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
+import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num, MAIL_BODY_MAX, homeOfId } from './records.mjs';
 import { hookEntry } from './hookbin.mjs';
 const fwd = p => String(p).replace(/\\/g, '/');
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
@@ -38,11 +38,24 @@ export function mailRole(state, env, as) {
 }
 
 /** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>, role:<by>@<home> in a home); returns the envelope */
-export function sendMail(state, { by, run = null, to: typed, subject, body, body_file, urgent }) {
-  const to = qualify(typed, homeOf(state)?.id), from = by === 'worker' ? run : roleAddr(by, state);
+export function sendMail(state, { by, run = null, to: typed, subject, body: typedBody, body_file: typedFile, urgent }) {
+  const home = homeOf(state), to = qualify(typed, home?.id);
+  const { body, body_file } = inlineBody(typedBody, typedFile, home && addrHome(to, home.bare_home) !== home.id);
+  const from = by === 'worker' ? run : roleAddr(by, state);
   const e = record(state, { kind: 'mail', ev: 'create', by, data: drop({ from, to, subject, body, body_file, urgent: urgent ? true : undefined }) }, { run });
   flagRecipients(state, e.data.to);
   return e;
+}
+
+// A body_file is a path on the sender's machine: another home cannot read it. A file that fits the body limit goes in as the body
+// (every home reads it); a longer one stays a path for this home's own readers and is refused for another home's address.
+const addrHome = (to, bare) => (/^role:/.test(to) ? to.match(/@([a-z][a-z0-9]{0,15})$/)?.[1] ?? bare : /^lane:/.test(to) ? to.slice(5).match(/^([a-z][a-z0-9]{0,15})\//)?.[1] ?? bare : homeOfId(to, bare));
+function inlineBody(body, body_file, remote) {
+  if (body_file === undefined || body_file === null) return { body, body_file };
+  const text = fs.readFileSync(body_file, 'utf8');
+  if (Buffer.byteLength(text, 'utf8') <= MAIL_BODY_MAX) return { body: text, body_file: undefined };
+  if (remote) throw new RecordError(`body_file is ${Buffer.byteLength(text, 'utf8')} bytes: mail to another home carries its body inline (at most 2 KB) - shorten it`, 2);
+  return { body, body_file };
 }
 
 // ---------- hook-fast S1 (Q-b-46 ruling "flag"): <state>/mail/flag/<RUN-n> = the mail hook has something for the run (a queued mail, a
