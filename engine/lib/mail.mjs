@@ -14,6 +14,18 @@ const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== u
 // RM-46 S1d (SPEC 4.6): in a synced dir the merged mail - a home delivers what is addressed to it, whichever home sent it
 export const loadMail = state => loadShared(state, 'mail').items;
 const loadRuns = state => fold(readEvents(recordsFile(state, 'run'))).items;
+
+// A home-less role / lane address (role:controller, lane:x) is qualified with a home: what a writer types means its OWN home (a
+// mail home b's check-in sends to role:controller is for home b's controller), while a bare address already stored in a log keeps
+// its legacy meaning, bare_home (records.mjs primaryOf). Run ids and addresses that name a home pass unchanged; no home = unchanged.
+export function qualify(to, h) {
+  const t = String(to ?? '');
+  if (!h) return t;
+  if (/^role:[a-z]+$/.test(t)) return `${t}@${h}`;
+  if (/^lane:[^/]+$/.test(t)) return `lane:${h}/${t.slice(5)}`;
+  return t;
+}
+const stored = (state, m) => qualify(m.data.to, homeOf(state)?.bare_home ?? null);
 const byId = (a, b) => num(a.id) - num(b.id);
 
 /**
@@ -26,8 +38,8 @@ export function mailRole(state, env, as) {
 }
 
 /** create MAIL-n from `by` (worker: from = its run; checkin / controller: from = role:<by>, role:<by>@<home> in a home); returns the envelope */
-export function sendMail(state, { by, run = null, to, subject, body, body_file, urgent }) {
-  const from = by === 'worker' ? run : roleAddr(by, state);
+export function sendMail(state, { by, run = null, to: typed, subject, body, body_file, urgent }) {
+  const to = qualify(typed, homeOf(state)?.id), from = by === 'worker' ? run : roleAddr(by, state);
   const e = record(state, { kind: 'mail', ev: 'create', by, data: drop({ from, to, subject, body, body_file, urgent: urgent ? true : undefined }) }, { run });
   flagRecipients(state, e.data.to);
   return e;
@@ -43,18 +55,18 @@ export const clearFlag = (state, run) => fs.rmSync(flagFile(state, run), { force
 /** raise the flag of every running run whose mailbox takes `to` (a run id, lane:L, role:checkin: records.mailboxOf) */
 export function flagRecipients(state, to) {
   const runs = loadRuns(state), home = homeOf(state)?.id;
-  for (const r of Object.values(runs)) if (r.state === 'running' && mailboxOf(runs, r.id, home).has(to)) raiseFlag(state, r.id);
+  for (const r of Object.values(runs)) if (r.state === 'running' && mailboxOf(runs, r.id, home).has(qualify(to, home))) raiseFlag(state, r.id);
 }
 /** a queued mail waits in run's mailbox: the supervisor's beat raises the flag for mail no sender flagged (another home's, synced in) */
 export function mailWaiting(state, run) {
   const box = boxOf(state, { run });
-  return Object.values(loadMail(state)).some(m => m.state === 'queued' && box.has(m.data.to));
+  return Object.values(loadMail(state)).some(m => m.state === 'queued' && box.has(stored(state, m)));
 }
 
 /** the addresses a reader takes mail for: a run's mailbox (records.mailboxOf), or one address (the controller's role:controller) */
 export function boxOf(state, { run, to }) {
   if (run) return mailboxOf(loadRuns(state), run, homeOf(state)?.id);
-  return new Set(to ? [to] : []);
+  return new Set(to ? [qualify(to, homeOf(state)?.id)] : []);
 }
 
 const bodyOf = m => {
@@ -70,7 +82,7 @@ const bodyOf = m => {
 export function checkMail(state, { by, run = null, to, via }) {
   const box = boxOf(state, { run, to });
   const got = [];
-  for (const m of Object.values(loadMail(state)).filter(x => x.state === 'queued' && box.has(x.data.to)).sort(byId)) {
+  for (const m of Object.values(loadMail(state)).filter(x => x.state === 'queued' && box.has(stored(state, x))).sort(byId)) {
     try { record(state, { kind: 'mail', ev: 'deliver', id: m.id, by, data: drop({ run, via }) }, { run }); }
     catch (e) {
       if (e instanceof RecordError && e.code === 2 && loadMail(state)[m.id]?.state !== 'queued') continue;   // taken by another reader
@@ -87,7 +99,8 @@ export function ackMail(state, { by, run = null, id }) {
 
 /** rows for `norn mail list`: { id, state, from, to, subject, urgent, created, delivered_to, nudged } */
 export function listMail(state, { to, open } = {}) {
-  return Object.values(loadMail(state)).filter(m => (!to || m.data.to === to) && (!open || m.state !== 'acked')).sort(byId)
+  const want = to ? qualify(to, homeOf(state)?.id) : null;
+  return Object.values(loadMail(state)).filter(m => (!want || stored(state, m) === want) && (!open || m.state !== 'acked')).sort(byId)
     .map(m => ({ id: m.id, state: m.state, from: m.data.from, to: m.data.to, subject: m.data.subject, urgent: !!m.data.urgent, created: m.created,
       ...(m.deliver?.run ? { delivered_to: m.deliver.run } : {}), ...(m.nudge ? { nudged: m.nudge.run } : {}) }));
 }
