@@ -2366,7 +2366,7 @@ function collideUndo(state, col, flags, pol, out) {
     const text = fs.existsSync(a.args.brief) ? fs.readFileSync(a.args.brief, 'utf8') : '', lines = text.split(/\r?\n/), at = lines.findIndex(l => SCOPE_LINE.test(l));
     if (lines[at] !== a.args.after) throw new RunRefused(`${fwd(a.args.brief)}'s Scope line changed since the narrow: it stays as it is`, 3);
     const same = f => !!f && path.resolve(f).toLowerCase() === path.resolve(a.args.brief).toLowerCase();
-    const ran = Object.values(loadState(state).items).find(r => r.kind === 'run' && same(r.data?.brief) && r.history.some(h => h.ev === 'start' && h.ts > a.at));
+    const ran = Object.values(loadState(state).items).find(r => r.kind === 'run' && same(r.data?.brief) && r.history.some(h => h.ev === 'start' && h.ts >= a.at));   // ts are whole seconds: a start in the narrow's second counts
     if (ran) throw new RunRefused(`${ran.id} started from the narrowed brief: it ran under that Scope, so the brief stays as it is`, 3);
     lines[at] = a.args.before;
     const k = lines.indexOf(a.args.note);
