@@ -1,6 +1,7 @@
 // `norn code history` (SPEC dash-owner-1123 s.7): writes <state>/code/index.json, codeindex.mjs's per-file index of the project folder
 // (git only, no model). tickCode is the tick's hook: it starts the verb detached when HEAD moved past the index. codeAt answers the dash's
 // /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map), read from that one file.
+// `norn code map [--refresh]` draws the Floorplan map (codemap.mjs); the same hook starts its metered refresh when HEAD moved past it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -8,11 +9,14 @@ import { readJsonS } from './fsnap.mjs';
 import { atomicWrite } from './policy.mjs';
 import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
+import { drawMap, tickMap, mapAt } from './codemap.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
-  + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)';
+  + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
+  + '       norn code map [--refresh] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
+  + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!'] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
@@ -32,6 +36,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); w = where(f); }
   catch (e) { err('error: ' + e.message); err(CODE_USAGE); return 2; }
   const dir = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), t0 = Date.now();
+  if (verb === 'map') return mapCmd(f, w.state, dir, { out, err });
   let ix;
   try { ix = codeIndex(dir, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
@@ -41,12 +46,25 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   return 0;
 }
 
+/** `norn code map`: draw (the first map, or the owner's unmetered update) or --refresh (metered) -> exit code (a skipped refresh is 0) */
+async function mapCmd(f, state, repo, { out, err }) {
+  let r;
+  try { r = await drawMap({ state, repo, refresh: Boolean(f.refresh) }); } catch (e) { err(`error: code map: ${String(e.stderr || e.message).trim()}`); return 2; }
+  if (f.json) out(JSON.stringify(r));
+  else out(r.drawn ? `code map: drew ${r.workflow} at ${r.sha} (${r.calls} model jobs${r.pct === null ? '' : `, ~${r.pct.toFixed(3)} % of plan`}) -> ${r.file}` : `code map: ${r.skipped ? `refresh skipped: ${r.skipped}` : r.why}`);
+  return r.drawn || r.skipped || r.sha ? 0 : 2;
+}
+
 /** the tick's hook: `norn code history` detached when HEAD is not the index's sha (not while one started in the last 10 min; the mark is
- *  the start time) -> the tick-log words | null */
+ *  the start time), and the map's metered refresh (codemap.mjs tickMap) -> the tick-log words | null */
 export function tickCode(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
   if (!p?.file || !p.root) return null;
   let head;
   try { head = execFileSync('git', ['-C', projectHome(p), 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; /* no git repo: nothing to index */ }
+  const said = [tickHistory(p, state, { metaCmd, spawnFn, now, head }), tickMap(p, state, { metaCmd, spawnFn, now, head })].filter(Boolean);
+  return said.length ? said.join('; ') : null;
+}
+function tickHistory(p, state, { metaCmd, spawnFn, now, head }) {
   if (head === readJsonS(indexOf(state))?.sha) return null;
   const mark = path.join(state, 'code', 'history.started');
   try { if (now - Number(fs.readFileSync(mark, 'utf8')) < START_GAP_MS) return null; } catch { /* never started: start it now */ }
@@ -78,7 +96,7 @@ export async function codeAt(p, url) {
     const top = sorted(ix.files.map(rowOf), 'importance')[0];
     return { project: p.name, index: { at: ix.at, sha: ix.sha }, total: { files: ix.files.length, lines: ix.files.reduce((n, x) => n + x.lines, 0), added_30d: ix.added_30d, hotspot: top?.file ?? null }, commands: { history: 'norn code history' } };
   }
-  if (part === 'map') return { map: null };
+  if (part === 'map') return { map: mapAt(p.state) };
   const rows = ix ? ix.files.map(rowOf) : null;
   if (part === 'files') {
     if (!rows) return { list: null };
