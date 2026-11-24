@@ -35,7 +35,7 @@ test('C3 role and tier table: profile chat = controller tools + norn_show, norn_
   const cli = args => ['norn_cli', { args }];
   const TABLE = [
     [0, 'norn_boot', { role: 'controller' }], [0, 'norn_status', {}], [0, 'norn_inbox', {}], [0, 'norn_records', {}], [0, 'norn_run_show', { run: 'RUN-1' }],
-    [0, 'norn_ledger', {}], [0, 'norn_show', { path: '/x.png' }], [0, 'norn_settings', { get: ['a'] }], [0, 'norn_settings', { set: { key: 'a', value: 1 }, dry_run: true }],
+    [0, 'norn_status', { view: 'ledger' }], [0, 'norn_show', { path: '/x.png' }], [0, 'norn_settings', { get: ['a'] }], [0, 'norn_settings', { set: { key: 'a', value: 1 }, dry_run: true }],
     [0, ...cli(['rec', 'list'])], [0, ...cli(['mergeq', '--json'])], [0, ...cli(['deliverables', '--due'])],
     [1, 'norn_run', { lane: 'x', brief: 'b' }], [1, 'norn_stop', { run: 'RUN-1', why: 'w' }], [1, 'norn_decision_add', {}], [1, 'norn_question_add', {}],
     [1, 'norn_record_event', {}], [1, 'norn_answer', {}], [1, 'norn_directive', {}], [1, 'norn_tick', {}], [1, 'norn_run_show', { run: 'RUN-1', ask: 'why?' }],
@@ -206,4 +206,19 @@ test('C3 endpoints: POST /api/chat/approve and /api/chat/undo - token-guarded bu
     const after = (await f.get(`/api/home?project=${P}`)).data.events.find(e => e.line === done.line);
     assert.equal(after.undone, true);
   } finally { await f.done(); }
+});
+
+// lane-collide S2a (SPEC 4A.4 MCP): collide in the chat's list - reading verbs tier 0; a remedy in the check-in's column, undo and ask tier 1
+// (applied as the controller); a remedy in the controller's or the owner's column tier 2, applied as the owner after the tap
+test('chat: norn collide by tier - the cell of the case decides; the tap is the owner’s, so the argv says --as owner', () => {
+  const s = mkTmp('meta-chat-col-');
+  const open = (kind, grade) => record(s, { kind: 'collision', ev: 'open', by: 'launcher', data: { key: `${kind}:a+b`, kind, grade, verdict: 'warn', door: 'run', a: { lane: 'a' }, b: { lane: 'b' }, files: [], files_n: 0, why: 'synthetic', pair: 'a+b' } }).id;
+  const cov = open('territory', 'covers'), ex = open('territory', 'exclusive'), lead = open('lead', null);
+  const o = { state: s }, plan = args => cliPlan(['collide', ...args, '--why', 'w'], o);
+  assert.deepEqual(['plan', 'list', 'show'].map(v => cliPlan(['collide', v], o).tier), [0, 0, 0]);
+  assert.deepEqual([plan(['narrow', cov]), plan(['wait', ex]), plan(['undo', ex]), plan(['ask', lead, '--want', 'part'])].map(p => [p.tier, p.argv.at(-1)]), [[1, 'controller'], [1, 'controller'], [1, 'controller'], [1, 'controller']]);
+  assert.deepEqual([plan(['narrow', ex]), plan(['part', lead]), plan(['allow', 'a', 'b'])].map(p => [p.tier, p.argv.at(-1)]), [[2, 'owner'], [2, 'owner'], [2, 'owner']]);
+  assert.equal(cliPlan(['collide', 'narrow', ex, '--why', 'w'], { state: s, policy: { apply_by: { exclusive: { narrow: 'checkin' } } } }).tier, 1, 'apply_by lowers the cell');
+  assert.equal(tierOf('norn_cli', { args: ['collide', 'narrow', cov, '--why', 'w'] }, o), 1);
+  assert.throws(() => cliPlan(['collide', 'fold', cov], o), /not on the chat's list/);
 });
