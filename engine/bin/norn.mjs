@@ -193,7 +193,7 @@ function addData(what, f, cmd, by) {
   }
   if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
   if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
-  if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until });
+  if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until, q: f.q });
   if (what === 'lane') return drop({ name: f.name, worktree: f.worktree, notes: f.notes, branch: f.branch, brief_dir: f['brief-dir'], stage: f.stage, round_estimate: f['round-estimate'], executor_hint: f['executor-hint'] });
   throw new Usage(`unknown kind ${what}`, cmd);
 }

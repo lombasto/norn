@@ -59,6 +59,24 @@ test('add question -> Q-1 on stdout, envelope written, questions view generated'
   assert.match(fs.readFileSync(path.join(s, 'views', 'OWNER-QUESTIONS.md'), 'utf8'), /### Q-1 · Carve or fill\?/);
 });
 
+test('checkin add waiver keeps --q: refuses an open question, records the owner answer', () => {
+  const s = tmp();
+  const q = run(s, 'checkin', 'rec', 'add', 'question', '--lane', 'gen', '--title', 'Waive K9?');
+  assert.equal(q.code, 0, q.err); assert.equal(q.out, 'Q-1');
+  const args = ['rec', 'add', 'waiver', '--rule', 'K9', '--scope', 'abc', '--why', 'w', '--q', 'Q-1'];
+  const open = run(s, 'checkin', ...args);
+  assert.equal(open.code, 2, open.err);
+  assert.equal(fs.existsSync(path.join(s, 'waivers.jsonl')), false);
+  const answer = run(s, 'owner', 'rec', 'answer', 'Q-1', '--text', 'Waive K9 for abc', '--via', 'chat');
+  assert.equal(answer.code, 0, answer.err);
+  const waived = run(s, 'checkin', ...args);
+  assert.equal(waived.code, 0, waived.err); assert.equal(waived.out, 'WVR-1');
+  const e = JSON.parse(fs.readFileSync(path.join(s, 'waivers.jsonl'), 'utf8'));
+  assert.equal(e.by, 'checkin'); assert.equal(e.kind, 'waiver'); assert.equal(e.ev, 'create');
+  assert.deepEqual(e.data, { rule: 'K9', scope: 'abc', why: 'w', q: 'Q-1' });
+  assert.match(open.err, /Q-1 is open, not answered/);
+});
+
 test('answer / apply / supersede / list / show round trip', () => {
   const s = tmp();
   assert.equal(run(s, 'checkin', 'rec', 'add', 'question', '--lane', 'gen', '--title', 'T', '--option', 'a|A', '--option', 'b|B').out, 'Q-1');
