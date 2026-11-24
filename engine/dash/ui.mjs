@@ -5,13 +5,11 @@
 import { renderProse } from './prose.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { columns, stack } from './widgets.mjs';
 import { CONTEXT_SUBS, contextParts } from './insparts.mjs';
-import { SUB_CAP, pickSub, subviewPage } from './subviews.mjs';
-import { TESTS_SUBS } from './testparts.mjs';
+import { SUB_CAP, pickSub } from './subviews.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc } from './docparts.mjs';
-import { esc, fin, int, fmtMin, pct, plural, chip, pauseAct, fmtTime, goAttrs, filterChips } from './cells.mjs';
+import { esc, fin, plural, chip, pauseAct, fmtTime } from './cells.mjs';
 import { lanesPage, LANES_SUBS } from './pages/lanes.mjs';
 import { runs } from './pages/runs.mjs';
 import { context } from './pages/context.mjs';
@@ -20,14 +18,16 @@ import { roadmap } from './pages/roadmap.mjs';
 import { spend } from './pages/spend.mjs';
 import { slopPage } from './pages/slop.mjs';
 import { settings } from './pages/settings.mjs';
+import { tests, testsLoad } from './pages/tests.mjs';
+import { code, codeLoad } from './pages/code.mjs';
 import { inbox } from './pages/inbox.mjs';
 import { records, ledger } from './pages/ledger.mjs';
 // NORN-UI-NAV: every page, the bar's four first (shell.mjs BAR), then the More sheet's (shell.mjs MORE), then Settings (the header's
 // cog, shell.mjs COG). Label = id = URL (?tab=<id>)
-export const TABS = [['talk', 'Talk'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'],
-  ['spend', 'Spend'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
+export const TABS = [['controller', 'Controller'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['inbox', 'Inbox'],
+  ['spend', 'Spend'], ['slop', 'Slop'], ['tests', 'Tests'], ['code', 'Code'], ['context', 'Context'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'],
   ['roadmap', 'Roadmap'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['talk', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
+export const ONE_PROJECT = ['controller', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests', 'code'];
 
 
 const panel = (tab, html) => `<div id="panel-${tab}">${html}</div>`;
@@ -51,16 +51,14 @@ const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve
 // META-UX-BUILD S3: Docs - the open file is its one part (&file=<key>) of one list (project + sig).
 // META-UX-BUILD S4: Context (the Instructions view's cost half) - the parts its sub-view needs (contextParts), of one view (project + scan
 // time + sub); its route stays /api/instructions (the Norn vocabulary rule: routes stay, labels and the URL tab move).
-// TESTS-RUNTIME: Tests - the chosen sub-view's part; Impact's pick rides in batch ('files:a,b' | 'lane:<name>')
 // Stage RUNS: Runs paints the live part (running + queue) first; its one part is the history (the ended runs in the window), keyed by
 // the live answer's time so a stream repaint fetches it afresh
-const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), tests: d => [d.sub], runs: () => ['history'] };
+const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []), runs: () => ['history'] };
 const PART_API = { context: 'instructions', slop: 'guard', runs: 'agents' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
 const runsWin = w => (w && w !== '2h' ? `&window=${w}` : '');
-export const partsKey = (tab, project, d) => (tab === 'runs' ? `${project}|${d.window}|${d.at}` : tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : tab === 'tests' ? `${project}|${d.git?.at}|${d.advisories?.at}|${d.sub}|${d.limit}|${d.batch ?? ''}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}|${d.finding ?? ''}`);
+export const partsKey = (tab, project, d) => (tab === 'runs' ? `${project}|${d.window}|${d.at}` : tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}|${d.finding ?? ''}`);
 export async function loadParts(tab, project, d, get) {
-  const pick = b => (b.startsWith('lane:') ? `&lane=${encodeURIComponent(b.slice(5))}` : `&files=${encodeURIComponent(b.slice(6))}`);
-  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? (tab === 'tests' ? pick(d.batch) : `&batch=${encodeURIComponent(d.batch)}`) : ''}${d.finding ? `&finding=${encodeURIComponent(d.finding)}` : ''}` : '';
+  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? `&batch=${encodeURIComponent(d.batch)}` : ''}${d.finding ? `&finding=${encodeURIComponent(d.finding)}` : ''}` : '';
   if (tab === 'runs') return { ended: (await get(`/api/agents?${q}&part=history${runsWin(d.window)}`)).tree };   // the Ended band (its own key: `tree` is the live part's)
   const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
@@ -76,7 +74,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
   }
   const q = `project=${encodeURIComponent(project)}`, all = project === 'all';
   if (all && ONE_PROJECT.includes(tab)) return { one: true };
-  if (tab === 'talk') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
+  if (tab === 'controller') return get(`/api/home?${q}`);   // META-CONTROLLER C2 (the route keeps its name: routes stay, labels and the URL tab move)
   if (tab === 'inbox') return get(`/api/inbox?${q}`);
   if (tab === 'lanes') {   // the Lanes page's sub-views: the lane table (+ the queue's plan: Up next on the Waiting lanes), or every branch / worktree of the repo (branches.mjs, the cached scan)
     const sub = pickSub(LANES_SUBS, ctx.sub), limit = ctx.limit || SUB_CAP;
@@ -116,11 +114,9 @@ export async function loadTab(tab, project, get, ctx = {}) {
   }
   // Spend carries the forecast: /api/plan's forecast per project, beside the usage parts; sub = the open drawer view
   if (tab === 'spend') { const [u, pl] = await Promise.all([get(`/api/usage?${q}`), get(`/api/plan?${q}`).catch(() => null)]); return { ...u, forecasts: Object.fromEntries((pl?.parts || []).map(p => [p.project, p.forecast])), sub: ctx.sub ?? null }; }
-  if (tab === 'tests') {   // META-TEND TESTS. TESTS-RUNTIME: the summary first, then the chosen sub-view's part (Impact: its pick in batch)
-    const sub = pickSub(TESTS_SUBS, ctx.sub), d = { ...(await get(`/api/tests?${q}`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'impact' && ctx.batch ? { batch: ctx.batch } : {}) };
-    const have = partsHave(ctx, 'tests', project, d);
-    return { ...d, ...(have || {}), parts_loading: !have };
-  }
+  // dash-owner-1123: Tests (the summary, the open view's part and the open case) and Code (the summary, the open view's part and the open file)
+  if (tab === 'tests') return testsLoad(project, get, ctx);
+  if (tab === 'code') return codeLoad(project, get, ctx);
   if (tab === 'slop') {   // META-TEND P6. META-UX-BUILD S2: the summary first, then the chosen sub-view's part. S5: Slop (was Guard); one open batch
     const sub = ctx.finding ? 'fix' : pickSub(GUARD_SUBS, ctx.sub), finding = ctx.finding || null;   // &finding=<id>: To fix, unfiltered, its batch open
     const d = { ...(await get(`/api/guard?${q}&part=summary`)), sub, kind: finding ? null : ctx.kind ?? null, ...(finding ? { finding } : {}), limit: ctx.limit || SUB_CAP, ...(sub === 'fix' && ctx.batch ? { batch: ctx.batch } : {}) };
@@ -141,99 +137,8 @@ export function renderTab(tab, d, ctx = {}) {
   if (d?.one) return oneProject(tab);
   const now = ctx.now ?? Date.now();
   if (tab === 'lanes') return panel(tab, stripCards(tab, ctx.strip) + lanesPage(d, { ...ctx, now }));
-  if (tab === 'talk') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, slop: slopPage, spend })[tab](d, { ...ctx, now }));
-}
-
-// The Tests tab = a summary of numbers, the open alerts the test machinery raised (linked to their Inbox question), and four sub-views
-// (testparts.mjs TESTS_SUBS), each its own part:
-//   Suite            - over time: test cases and lines per day from git (`norn tests history`, the tick runs it once a day)
-//   Costs and health - gate time per merge and the last merge check (copy-paste in the changed test files)
-//   Impact           - which test files cover a source file, or a lane's changed files (`norn tests for`); a test's file opens in the
-//                      code viewer drawer (index.html #srcview)
-//   Run time         - per worker run of the last 24 h / 3 days its wall time, test time and share (norn speed), the
-//                      duplicate test files the machine's test cache spared it, and the policy.tests in force with its Settings rows
-// A part whose source does not exist yet says so and what writes it - never a number.
-const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`) : '-');
-const notYet = (what, src) => `<p class="small mute tnotyet" style="padding:0 12px"><span class="chip idle">not measured yet</span> ${what}${src ? ` <span class="mute">(${src})</span>` : ''}</p>`;
-const nodeOnly = d => (d.suite === 'pytest' ? `<p class="small mute tscope" style="padding:0 12px">${chip('idle', 'node:test only')} reads node:test suites only: this project's suite is pytest, so nothing fills here.</p>` : '');
-// a test's file opens the code viewer
-const srcBtn = (file, line, label) => `<button class="lnk mono small" data-act="test-src" data-file="${esc(file)}" data-line="${esc(line ?? '')}" title="open ${esc(file)}${line ? ` at line ${esc(line)}` : ''} (read-only)">${esc(label ?? `${file}${line ? `:${line}` : ''}`)}</button>`;
-const ratio = g => `${(g.test_lines / (g.code_lines || 1)).toFixed(2)}:1`;
-function testsNumbers(d) {
-  const gl = (d.git?.points || []).at(-1), al = (d.alerts || []).length, adv = d.advisories;
-  return [{ n: gl ? int(gl.tests) : '-', label: 'test cases (git)' }, { n: gl ? int(gl.test_files) : '-', label: 'test files' }, { n: gl ? ratio(gl) : '-', label: 'test lines per code line' },
-    al ? { n: int(al), label: 'alerts: they need you', cls: 'warn' } : { n: adv ? int(adv.list.length) : '-', label: 'last merge check findings' }];
-}
-function testsAlerts(d) {
-  const xs = d.alerts || [];
-  if (!xs.length) return '';
-  return `<div class="card" id="tests-alerts"><b>The test machinery needs you</b> <span class="small mute">each is an Inbox question: answer it here or there</span>${xs.map(q => {
-    const rk = q.recommend?.key;
-    return `<div class="item" id="tests-alert-${esc(q.id)}">${chip('needs', q.id)}<div style="flex:1;min-width:0"><b>${esc(q.title)}</b>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${(q.options || []).map(o => { const k = o.key ?? o.k; return `<button class="${k === rk ? 'primary' : ''}" data-act="answer" data-project="${esc(d.project)}" data-id="${esc(q.id)}" data-choice="${esc(k)}" data-text="${esc(`(${k}) ${o.text ?? o.t ?? ''}`)}">${esc(o.text ?? o.t ?? k)}${k === rk ? ' - recommended' : ''}</button>`; }).join('')}
-      <button class="lnk" data-tab="inbox">Open in Inbox</button></div></div></div>`; }).join('')}</div>`;
-}
-// ---- Suite: over time ----
-function testsSuite(d) {
-  const g = d.git?.points || [], gl = g.at(-1);
-  const col = (title, cur, body) => `<div><div class="small"><b>${title}</b> <span class="mute">${cur}</span></div>${body}</div>`;
-  return `<div class="tablecard" id="tests-time"><h3>Over time <span class="mute small">per day: test cases and lines (git, first parent)</span></h3><div class="tgrid">
-    ${col('test cases', gl ? `${int(gl.tests)} now` : '-', g.length ? columns(g.map(x => ({ label: x.day.slice(5), value: x.tests })), { fmt: int, title: 'test cases per day', id: 'tests-count', unit: 'tests', per: 'day' }) : '<p class="small mute">no history yet</p>')}
-    ${col('test lines per code line', gl ? `${ratio(gl)} now` : '-', g.length ? columns(g.map(x => ({ label: x.day.slice(5), value: Math.round(100 * x.test_lines / (x.code_lines || 1)) / 100 })), { fmt: v => `${v}:1`, title: 'test lines per code line', id: 'tests-ratio', per: 'day' })
-      + stack([{ key: 'tests', label: 'test lines', value: gl.test_lines }, { key: 'code', label: 'code lines', value: gl.code_lines }], { fmt: int }) : '')}</div></div>`;
-}
-// ---- Costs and health ----
-const MQ = { merged: 'ok', green: 'ok', landed: 'ok', red: 'bad', 'main-red': 'bad', pinned: 'bad', flaky: 'warn', slop: 'warn', gating: 'running' };
-function testsMerges(d, ctx) {
-  const head = '<h3>Per merge <span class="mute small">the merge queue\'s batches: gate time and what the gate ran</span></h3>', xs = d.merges || [];
-  if (!xs.length) return `<div class="tablecard" id="tests-merges">${head}<p class="small mute" style="padding:0 12px">no merge-queue batch yet</p></div>`;
-  return `<div class="tablecard" id="tests-merges">${head}<ul class="tlist">${xs.map(b => `<li>${chip(MQ[b.status] ?? MQ[b.result] ?? 'idle', b.status)} <b>batch-${esc(b.n)}</b> <b class="mono">${b.skipped ? 'gate skipped' : sec(b.gate_ms)}</b> <span class="small mute">${esc(fmtTime(b.done ?? b.built, ctx.now))} · ${int(b.runs.length)} gate run${b.runs.length === 1 ? '' : 's'}${b.runs.some(r => r.timedOut) ? ' · timed out' : ''}</span>
-    <div class="small mono" style="overflow-wrap:anywhere">${esc(b.skipped || b.gate || '-')}</div><div class="small mute" style="overflow-wrap:anywhere">${esc(b.members.join(', '))}</div></li>`).join('')}</ul></div>`;
-}
-function testsAdv(d) {
-  const adv = d.advisories, head = `<h3>Last merge check <span class="mute small">${adv ? `${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · ` : ''}copy-paste, advisory, never a merge block</span></h3>`;
-  if (d.suite === 'pytest') return `<div class="tablecard" id="tests-adv">${head}${nodeOnly(d)}</div>`;
-  if (!adv) return `<div class="tablecard" id="tests-adv">${head}<p class="small mute" style="padding:0 12px">no merge check yet</p></div>`;
-  return `<div class="tablecard" id="tests-adv">${head}${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>`;
-}
-const testsCosts = (d, ctx) => testsMerges(d, ctx) + testsAdv(d);
-// ---- Impact ----
-function testsImpact(d) {
-  const im = d.impact, p = d.picked;
-  const form = `<div class="card" id="tests-impact-pick"><div class="small"><b>Which tests cover a file?</b> <span class="mute">the answer of <span class="mono">${esc(d.commands.for)} &lt;files&gt;</span>, from impact.json${im ? ` (${esc(String(im.at).slice(0, 16))}, ${esc(im.sha ?? '?')})` : ''}</span></div>
-    <div class="tpick"><input type="search" id="tests-impact-files" list="tests-srcs" placeholder="source files, comma-separated" value="${esc(p && !p.lane ? p.files.join(', ') : '')}"><button data-act="tests-impact">Which tests?</button></div>
-    <datalist id="tests-srcs">${(im?.sources || []).map(s => `<option value="${esc(s)}">`).join('')}</datalist>
-    ${d.lanes?.length ? `<div class="tpick"><select id="tests-impact-lane" aria-label="a lane">${d.lanes.map(l => `<option${p?.lane === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><button data-act="tests-impact-lane">A lane's changed files</button></div>` : ''}</div>`;
-  if (!im) return form + `<div class="card" id="tests-impact-out">${notYet('test impact', 'no impact.json in the project state')}</div>`;
-  if (!p) return form + `<p class="small mute" id="tests-impact-out">${int(im.sources.length)} source files are covered by the suite: pick one, or a lane.</p>`;
-  if (p.error) return form + `<div class="card" id="tests-impact-out">${chip('bad', 'refused')} ${esc(p.error)}</div>`;
-  return form + `<div class="tablecard" id="tests-impact-out"><h3>${p.lane ? `Lane ${esc(p.lane)}: ${int(p.files.length)} changed file(s)` : `${int(p.files.length)} file(s)`} → <b>${int(p.tests.length)} test file(s)</b></h3>
-    ${p.tests.length ? `<p class="small" style="padding:0 12px">${p.tests.map(t => srcBtn(t, null, t)).join(' ')}</p>` : ''}
-    <ul class="tlist">${p.rows.map(r => `<li><span class="mono">${esc(r.file)}</span> <span class="small mute">${r.tests.length ? `${int(r.tests.length)} test file(s)` : r.known ? 'covered by no test' : 'not in the impact map (a test file, or not run by any test)'}</span></li>`).join('')}</ul>
-    <p class="small mute" style="padding:0 12px">The same answer in a terminal: <span class="mono" style="overflow-wrap:anywhere">${esc(d.commands.for)} ${esc(p.files.join(' '))}</span></p></div>`;
-}
-// ---- Run time (test-diet S1) ----
-const RT_WIN = [['24h', '24 h', 86400e3], ['3d', '3 days', 3 * 86400e3]];
-function testsRuntime(d, ctx) {
-  const f = { window: '24h', over: false, saved: false, ...(ctx.testsRt || {}) }, now = ctx.now ?? Date.now(), win = RT_WIN.find(w => w[0] === f.window) ?? RT_WIN[0];
-  const all = (d.rows || []).filter(r => r.state === 'running' || now - Date.parse(r.ended ?? r.started) <= win[2]), rows = all.filter(r => (!f.over || r.over) && (!f.saved || r.dup > 0));
-  const sum = k => rows.reduce((n, r) => n + (r[k] || 0), 0), wall = sum('wall_ms'), test = sum('test_ms');
-  const chips = filterChips('window', RT_WIN.map(([k, text]) => ({ act: 'tests-rt', data: { rt: 'window', v: k }, on: f.window === k, text })))
-    + filterChips('show only', [{ act: 'tests-rt', data: { rt: 'over' }, on: f.over, text: 'over budget', n: all.filter(r => r.over).length, title: 'runs whose test time went past policy.tests.run_budget_min' },
-      { act: 'tests-rt', data: { rt: 'saved' }, on: f.saved, text: 'saved', n: all.filter(r => r.dup > 0).length, title: 'runs the test cache spared a duplicate test run' }]);
-  const pol = `<p class="small" id="tests-policy" style="padding:0 12px">In force: <b>${esc(d.words ?? '-')}</b> · ${(d.settings || []).map(k => `<button class="lnk" data-act="open-setting" data-setting="${esc(k)}" title="open ${esc(k)} in Settings">${esc(k.split('.').pop())}</button>`).join(' · ')}</p>`;
-  const li = r => `<li data-run="${esc(r.id)}"><button class="lnk" ${goAttrs({ tab: 'runs', jump: `node-${r.id}` })} title="open it on the Runs page">${esc(r.id)}</button> <span class="mute">${esc(r.lane ?? '')}</span>${r.state === 'running' ? ` ${chip('running', 'running')}` : ''}${r.over ? ` ${chip('bad', 'over budget')}` : ''}
-    <div class="small">${fin(r.wall_ms) ? `<b>${fmtMin(r.test_ms / 60000)}</b> of ${fmtMin(r.wall_ms / 60000)} in tests${fin(r.test_pct) ? ` (<b>${pct(r.test_pct, 0)}</b>)` : ''}` : '<span class="mute">no transcript: no split</span>'}${r.dup ? ` · cache: ${int(r.dup)} duplicate${r.dup === 1 ? '' : 's'} spared, ${sec(r.saved_ms)} saved` : ''} <span class="mute">${esc(fmtTime(r.started, now))}</span></div></li>`;
-  return `<div class="tablecard" id="tests-runtime"><h3>Run time vs test time <span class="mute small">worker runs · ${rows.length ? `${int(rows.length)} run${rows.length === 1 ? '' : 's'}: ${fmtMin(test / 60000)} of ${fmtMin(wall / 60000)} in tests (${pct(wall > 0 ? 100 * test / wall : 0, 0)}), ${sec(sum('saved_ms'))} saved by the cache` : 'none in this window'}</span></h3>
-    <div class="filters" style="padding:0 12px">${chips}</div>${pol}${rows.length ? `<ul class="tlist" id="tests-rt-rows">${rows.map(li).join('')}</ul>` : '<p class="small mute" style="padding:0 12px">no worker run in this window</p>'}</div>`;
-}
-const TESTS_PART = { suite: testsSuite, costs: testsCosts, impact: testsImpact, runtime: testsRuntime };
-function tests(d, ctx) {
-  // a project whose suite Norn cannot read: say which suite it is and what still fills, instead of a page of "not measured yet"
-  const why = d.suite === false ? `<div class="banner" id="tests-scope">Norn reads node:test suites (tests/*.test.mjs) and pytest suites (tests/test_*.py); this project's tests/ holds neither, so only the charts under <b>Suite</b> and <b>Run time</b> fill: test cases and lines per day from git (refreshed once a day by the tick) and the runs' test time.</div>`
-    : !(d.git?.points || []).length ? '<div class="banner" id="tests-scope">Nothing yet. The tick fills the charts under <b>Suite</b> from git once a day.</div>' : '';
-  return subviewPage('tests', { title: 'Tests', lead: why + testsAlerts(d), numbers: testsNumbers(d), views: TESTS_SUBS, active: d.sub, loading: d.parts_loading, body: d.parts_loading ? '' : TESTS_PART[d.sub](d, ctx) });
+  if (tab === 'controller') return panel(tab, renderHome(d, { ...ctx, now }));
+  return panel(tab, ({ inbox, lanes: lanesPage, runs, roadmap, records, docs, context, ledger, settings, tests, code, slop: slopPage, spend })[tab](d, { ...ctx, now }));
 }
 
 // META-ADOPT A3 (SPEC sec. 5): the setup gaps of one project - each names what is missing in one line and offers the next action

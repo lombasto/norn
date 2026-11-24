@@ -12,7 +12,7 @@ test('R1 the browser: a Home filter stays pressed and applied across a live re-r
   const f = await fixture(); let pg;
   try {
     pg = await openPage();
-    assert.equal(await pg.go(`${f.url}/?project=kestrel&tab=talk`), 'talk');
+    assert.equal(await pg.go(`${f.url}/?project=kestrel&tab=controller`), 'controller');
     await pg.until('!!document.querySelector("[data-act=home-filter][data-filter=talk]")');
     await pg.ev('document.querySelector("[data-act=home-filter][data-filter=talk]").click()');
     const pressed = 'document.querySelector("[data-act=home-filter][aria-pressed=true]")?.dataset.filter';
@@ -200,12 +200,12 @@ test('R1 the browser: the filter survives a reload (URL); the empty "you + contr
   const f = await fixture(); let pg;
   try {
     pg = await openPage();
-    assert.equal(await pg.go(`${f.url}/?project=kestrel&tab=talk`), 'talk');
+    assert.equal(await pg.go(`${f.url}/?project=kestrel&tab=controller`), 'controller');
     await pg.until('!!document.querySelector("[data-act=home-filter][data-filter=talk]")');
     await pg.ev('document.querySelector("[data-act=home-filter][data-filter=talk]").click()');
     assert.match(await pg.ev('location.search'), /filter=talk/, 'the filter is in the URL');
     assert.match(await pg.until('document.querySelector("#thread .thread-empty")?.textContent'), /separate from any Claude Code session/, 'the empty chat view says what it is');
-    assert.equal(await pg.go(await pg.ev('location.href')), 'talk');
+    assert.equal(await pg.go(await pg.ev('location.href')), 'controller');
     assert.equal(await pg.until('document.querySelector("[data-act=home-filter][aria-pressed=true]")?.dataset.filter'), 'talk', 'a reload keeps the filter');
     // the "/" menu
     await pg.ev('(() => { const t = document.querySelector("#chat-text"); t.focus(); t.value = "/"; t.dispatchEvent(new Event("input", { bubbles: true })); })()');

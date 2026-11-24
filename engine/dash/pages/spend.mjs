@@ -6,6 +6,7 @@
 // Data: /api/usage (engine/lib/cost.mjs per project) + the status strip (ctx.strip.usage: billing and the guard, machine-wide).
 import { esc, fin, dash, int, mTok, pct, plural, chip, exClass, projTag, guardChip, filterChips, fmtTime } from '../cells.mjs';
 import { bars, stack, meter } from '../widgets.mjs';
+import { closeBtn } from '../norn/assets.mjs';
 
 /** the drawer's views [id, label]: one breakdown at a time (&sub=<id>); no sub = the drawer is closed */
 export const SPEND_VIEWS = [['lane', 'By lane'], ['stage', 'Lane and stage'], ['cli', 'Agent CLI'], ['day', 'By day'], ['work', 'Kind of work'],
@@ -245,7 +246,7 @@ const HELP = `<details class="lhelp"><summary aria-label="About these numbers">?
 function drawer(parts, open, d, ctx) {
   const n = parts.reduce((a, p) => a + (p.advice?.cards?.length || 0), 0), multi = ctx.project === 'all';
   const chips = filterChips('Breakdown', SPEND_VIEWS.map(([k, text]) => ({ act: 'sub', data: { sub: k }, text, on: k === open, ...(k === 'advice' ? { n } : {}) })), 'spend-views');
-  return `<aside class="drawer spend-drawer" id="spend-drawer" aria-label="Spend details"><div class="dh"><b>Spend details</b>${HELP}<span class="spacer"></span><button type="button" class="ghost" id="spend-close" data-act="sub" data-sub="" title="Close">Close</button></div>
+  return `<aside class="drawer spend-drawer" id="spend-drawer" aria-label="Spend details"><div class="dh"><b>Spend details</b>${HELP}<span class="spacer"></span>${closeBtn('type="button" id="spend-close" data-act="sub" data-sub=""')}</div>
    ${chips}<div class="spend-dbody" id="spend-view-${esc(open)}">${parts.map(p => (multi ? `<h3>${esc(p.project)}</h3>` : '') + VIEW[open](p, ctx, d)).join('') || '<p class="mute">No project.</p>'}</div></aside>`;
 }
 const BULB = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.2v.6h4v-.6c0-.5.2-.9.6-1.2A4.5 4.5 0 0 0 8 1.5zM6 13.6h4M6.6 15h2.8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>';

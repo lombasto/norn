@@ -1,4 +1,4 @@
-// NORN-UI-NAV (SPEC 4.1): the shell - one flat bar (Talk, Lanes, Runs, Inbox, More) as link nav, the More sheet, the status strip
+// NORN-UI-NAV (SPEC 4.1): the shell - one flat bar (Controller, Lanes, Runs, Inbox, More) as link nav, the More sheet, the status strip
 // from GET /api/strip (never the run tree), the router (unknown / retired ids open Lanes), keyed refetch (a pulse refreshes the strip
 // only), one needs-you count (the badge, the title, the strip and each /api/lanes row's `needs`); the header (UI redesign 2026-11-20):
 // the worker pool, the check-ins group box, the cog that opens Settings over the page, local times. Sandbox only: the shared dash
@@ -19,8 +19,8 @@ import { openPage, skipWhy } from './helpers/cdp.mjs';
 
 const RETIRED = ['overview', 'work', 'health', 'history', 'home'], IDS = TABS.map(t => t[0]);
 
-test('the bar is Talk, Lanes, Runs, Inbox + More: links with aria-current, the Inbox badge, no tablist; More lists every other page but Settings (the cog)', () => {
-  assert.deepEqual(BAR.map(b => b[0]), ['talk', 'lanes', 'runs', 'inbox']);
+test('the bar is Controller, Lanes, Runs, Inbox + More: links with aria-current, the Inbox badge, no tablist; More lists every other page but Settings (the cog)', () => {
+  assert.deepEqual(BAR.map(b => b[0]), ['controller', 'lanes', 'runs', 'inbox']);
   for (const r of RETIRED) assert.ok(!IDS.includes(r), `${r} retired`);
   const more = MORE.flatMap(([, ids]) => ids);
   assert.deepEqual([...BAR.map(b => b[0]), ...more, COG].sort(), [...IDS].sort(), 'every page once: on the bar, in More or the cog');
@@ -59,24 +59,24 @@ test('keyed refetch: a pulse refreshes the strip only; a rec refetches the open 
   assert.deepEqual(refetchFor('records', keysOf('rec', { file: 'runs' })), { strip: true, page: false }, 'Records reads records.jsonl only');
   assert.deepEqual(refetchFor('records', keysOf('rec', { file: 'records' })), { strip: true, page: true });
   assert.deepEqual(refetchFor('settings', keysOf('reset', { file: 'runs' })), { strip: true, page: true }, 'a reset refetches everything');
-  assert.deepEqual(refetchFor('lanes', ['chat']), { strip: false, page: false }, 'a chat line is the thread only (Talk)');
+  assert.deepEqual(refetchFor('lanes', ['chat']), { strip: false, page: false }, 'a chat line is the thread only (Controller)');
   assert.deepEqual(refetchFor('spend', keysOf('derived', {})), { strip: true, page: true });
 });
 
-test('the status strip: running / cap, usage vs guard and hourly cap, the next check-in, the needs count; "…" until its data comes', () => {
+test('the status strip: running (never the machine sum of the caps), usage vs guard and hourly cap, the next check-in, the needs count; "…" until its data comes', () => {
   const none = renderStatus(null, { look: 'classic' });
   assert.match(none, /id="status-strip"/); assert.equal((none.match(/…/g) || []).length, 4);
   const s = { needs_you: 2, running: { claude: { n: 1, cap: 2 }, codex: { n: 1, cap: 5 } }, usage: { weeklyUsed: 40, weeklyStopPct: 95, rate: 0.2, cap: 0.43, guard: 'ok' },
     checkin: { next: '2030-01-10T12:30:00.000Z', every_min: 30 }, strip: { landed_today: 3, last_landed: null, running: 2, parked: 1, questions: 2, queued: 4 } };
   const txt = h => h.replace(/<[^>]+>/g, '');
   const c = txt(renderStatus(s, { look: 'classic', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
-  assert.match(c, /2 running \/ 7/); assert.match(c, /40\.0 % of 95 %/); assert.match(c, /0\.20 %\/h of 0\.43/); assert.match(c, /next check-in/); assert.match(c, /2 need you/);
+  assert.match(c, /2 running/); assert.doesNotMatch(c, /running \/ 7/, 'never claude cap + codex cap (dash-owner-1123 s.9)'); assert.match(c, /40\.0 % of 95 %/); assert.match(c, /0\.20 %\/h of 0\.43/); assert.match(c, /next check-in/); assert.match(c, /2 need you/);
   assert.ok(!/Urd|Verdandi|Skuld/.test(c), 'classic: plain labels');
   const n = txt(renderStatus(s, { look: 'norn', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
-  assert.match(n, /Urd[^]*Verdandi[^]*Skuld/); assert.match(n, /2 running \/ 7/); assert.match(n, /2 need you/);
+  assert.match(n, /Urd[^]*Verdandi[^]*Skuld/); assert.match(n, /2 running/); assert.doesNotMatch(n, /running \/ 7/); assert.match(n, /2 need you/);
   // merge-slot: the merge slot is its own pool beside the lane workers
   const m = txt(renderStatus({ ...s, running: { ...s.running, merge: { n: 1, cap: 1 } } }, { look: 'classic', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
-  assert.match(m, /2 running \/ 7 · merge 1 \/ 1/);
+  assert.match(m, /2 running · merge 1 \/ 1/);
 });
 
 test('the header: the cog links Settings, the check-ins status line, the worker pool counted apart; times print local, no Z', () => {
@@ -179,14 +179,14 @@ test('the browser: the bar paints before /api/strip answers; both looks; the bad
     try {
       const release = hold(f, /^\/api\/strip\b/);
       await pg.send('Page.navigate', { url: `${f.url}/?project=kestrel&tab=lanes` });
-      assert.equal(await pg.until(BAR_IDS, 30000), 'tab-talk,tab-lanes,tab-runs,tab-inbox,tab-more', 'the bar while the strip is held');
+      assert.equal(await pg.until(BAR_IDS, 30000), 'tab-controller,tab-lanes,tab-runs,tab-inbox,tab-more', 'the bar while the strip is held');
       assert.ok(await pg.until(`document.querySelector('#status-strip')?.textContent.includes('…')`), 'the strip waits with "…"');
       release();
       for (const look of ['norn', 'classic']) for (const t of [...IDS, ...RETIRED]) {
         await pg.go(`${f.url}/?project=kestrel&tab=${t}&look=${look}`, 90000);
         const open = RETIRED.includes(t) ? 'lanes' : t;
         assert.equal(await pg.ev('document.body.dataset.tab'), open, `${t} -> ${open}`);
-        assert.equal(await pg.ev(BAR_IDS), 'tab-talk,tab-lanes,tab-runs,tab-inbox,tab-more', `${look} ${t}: 5 items`);
+        assert.equal(await pg.ev(BAR_IDS), 'tab-controller,tab-lanes,tab-runs,tab-inbox,tab-more', `${look} ${t}: 5 items`);
         assert.ok(await pg.until(`document.querySelector('#tab-inbox .count')?.textContent === '${need}'`), `${look} ${t} ${size[0]}: the badge`);
         // the bar is drawn, not squashed by another .bar rule (the 6 px meter): full height, the badge inside it
         assert.ok(await pg.ev(`(() => { const n = document.querySelector('#tabs').getBoundingClientRect(), b = document.querySelector('#tab-inbox .count').getBoundingClientRect(); return n.height >= 36 && b.height > 0 && b.top >= n.top - 1 && b.bottom <= n.bottom + 1; })()`), `${look} ${t} ${size[0]}: the bar shows its items`);

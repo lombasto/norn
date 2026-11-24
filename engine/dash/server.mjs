@@ -26,7 +26,7 @@ import { threadOf, rulingOf, unanswered, pickOf } from '../lib/qthread.mjs';
 import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync } from '../lib/views.mjs';
 import { hbPath, hbLate, stopRunAsync, requeueRun, queueOf, sweptCpu, loadPath, STALE_MS, noteCpu, cpuLogFile, isLandingStage, mergeWorkers } from '../lib/runs.mjs';
-import { SHARE_KEY, RESERVE, shareOf } from '../lib/share.mjs';
+import { SHARE_KEY, RESERVE, CEILING, shareOf } from '../lib/share.mjs';
 import { runSpeedA, isWorker, speedWords } from '../lib/speed.mjs';
 import { mergeBacklog, backlogMax, loadDeliverables, isLanded } from '../lib/deliverables.mjs';
 import { lanesView, sortLanes, handoffOf, boardOf, prStep } from '../lib/lanes.mjs';
@@ -68,7 +68,8 @@ import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
 import { ledgerConfig } from '../lib/ledger.mjs';
-import { loopOf } from '../lib/sync.mjs';
+import { loopOf, renameHome } from '../lib/sync.mjs';
+import { codeAt } from '../lib/codecli.mjs';
 import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
@@ -115,10 +116,10 @@ const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'silkscree
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
   'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage
 // stage NAV: the pages' modules and the sheets, served from pages/ and css/ by allowlist
-const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs', 'settings.mjs', 'context.mjs', 'context-acts.mjs', 'docs.mjs', 'roadmap.mjs', 'inbox.mjs', 'inbox-acts.mjs', 'ledger.mjs', 'ledger-acts.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css', 'slop.css', 'context.css', 'roadmap.css', 'inbox.css', 'ledger.css'];
+const PAGES = ['lanes.mjs', 'runs.mjs', 'lanes-acts.mjs', 'runs-acts.mjs', 'runs-feed.mjs', 'spend.mjs', 'spend-acts.mjs', 'slop.mjs', 'slop-acts.mjs', 'settings.mjs', 'context.mjs', 'context-acts.mjs', 'docs.mjs', 'roadmap.mjs', 'inbox.mjs', 'inbox-acts.mjs', 'ledger.mjs', 'ledger-acts.mjs', 'tests.mjs', 'code.mjs'], SHEETS = ['base.css', 'lanes.css', 'runs.css', 'spend.css', 'slop.css', 'context.css', 'roadmap.css', 'inbox.css', 'ledger.css', 'tests.css', 'code.css'];
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['talk', 'lanes', 'runs', 'inbox', 'spend', 'slop', 'tests', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
+export const TABS = ['controller', 'lanes', 'runs', 'inbox', 'spend', 'slop', 'tests', 'code', 'context', 'records', 'ledger', 'docs', 'roadmap', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -862,7 +863,10 @@ export function createDashboard(o) {
   // check-in, the pause; + the first-run box and the setup gaps the landing shows. Same numbers as the Overview's fields.
   // merge-slot: the Claude pool as the fill splits it - the merges in the merge slots (budget.merge_workers) apart from the lane workers
   const claudePool = (stages, m) => { const merge = Math.min(stages.filter(isLandingStage).length, mergeWorkers(m));
-    return { claude: { n: stages.length - merge, cap: m.max_claude_workers ?? null }, merge: { n: merge, cap: mergeWorkers(m) } }; };
+    return { claude: { n: stages.length - merge, cap: m.max_claude_workers ?? null }, merge: { n: merge, cap: mergeWorkers(m), reserved: mergeWorkers(m) > 0 } }; };
+  // dash-owner-1123 s.9: the page project's share of the Claude pool (Settings > Capacity; ceiling null = none set: any); s.6: the homes' names (sync.mjs's cache)
+  const stripShare = async p => { const b = JSON.parse((await readA(o.budgetFile, '{}')) || '{}'), sh = shareOf(b, p.name); return { reserve: sh.reserve, ceiling: Number.isInteger(b[SHARE_KEY]?.[p.name]?.[CEILING]) ? sh.ceiling : null }; };
+  const homeNamesOf = async () => { const cfg = metaRootDir ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null; if (!cfg) return {}; try { return JSON.parse(await readA(path.join(cfg.dir, 'home-names.json'), '{}')) || {}; } catch { return {}; } };
   async function statusStrip(ps) {
     const m = policyOf(ps[0]), live = ps.flatMap(p => runsOf(st(p)).filter(r => r.state === 'running').map(r => ({ ...r, project: p.name })));
     const codexR = r => String(r.data.executor).startsWith('codex'), claudeR = r => !codexR(r) && (r.data.kind === 'worker' || r.data.kind === 'fake');
@@ -871,7 +875,8 @@ export function createDashboard(o) {
     if (meterP) await prime({ files: [path.join(slopDir(meterP.state), 'series.json')] });
     const lanesRunning = ps.flatMap(p => lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running')));
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needs,
-      running: { ...claudePool(live.filter(claudeR).map(r => r.data.stage), m), codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null } },
+      running: { ...claudePool(live.filter(claudeR).map(r => r.data.stage), m), codex: { n: live.filter(codexR).length, cap: m.max_codex ?? null }, ...(ps.length === 1 ? { share: await stripShare(ps[0]) } : {}) },
+      home_names: await homeNamesOf(),
       pool: await poolOf(),
       usage: usage(ps[0], m), checkin: stripOf(ps, lanesRunning, m).checkin, strip: stripOf(ps, lanesRunning, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
@@ -1205,8 +1210,8 @@ export function createDashboard(o) {
       const lf = lane ? (lanes.includes(lane) ? await laneFiles(p, lane) : { error: `no lane ${lane} in ${p.name}` }) : null;
       return testsPart(p.state, 'impact', { picked: { lanes, lane, files: lf ? lf.files ?? [] : files, error: lf?.error ?? null } });
     }
-    if (name === 'runtime') return testsRuntime(p);
-    return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [] });
+    if (name === 'runtime') return { ...await testsRuntime(p), ...testsPart(p.state, 'runtime') };   // the per-run list + the per-case medians (Slowest tests)
+    return testsPart(p.state, name, { limit, merges: name === 'costs' ? await mergeBatches(p) : [], case: url.searchParams.get('case'), sort: url.searchParams.get('sort') ?? undefined, q: url.searchParams.get('q') ?? '' });
   }
   // test-diet S1: the Run time view - the worker runs of the last RUNTIME_DAYS with their wall / test split (the Runs page's transcript
   // tail, speed.mjs runSpeedA), the machine's test-cache log and the project's policy.tests
@@ -1217,9 +1222,9 @@ export function createDashboard(o) {
       return { id: r.id, lane: r.data.lane ?? null, state: r.state, started: r.created, ended: ended(r), speed: s ? { wall_ms: s.wall_ms, test_ms: s.test_ms } : null }; }));
     return runtimePart({ runs, cache: cacheLog(cacheDirOf(p.state), { since }), policy: policyOf(p).policy, now });
   }
-  // TESTS-RUNTIME: a test's file for the code viewer - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
+  // a repo file for the code viewer (Tests, Code; GET /api/source) - read-only, only inside the project repo (testtimes.repoFile: no absolute path,
   // no .. or link out, nothing under .git), text only, at most 2 MB
-  async function testSource(p, url) {
+  async function repoSource(p, url) {
     if (!p.root) throw fail(404, 'This project has no repository folder');
     const rel = String(url.searchParams.get('file') ?? ''), real = repoFile(projectHome(p), rel);
     if (!real) throw fail(403, 'Only a file inside the project repository opens here');
@@ -1729,7 +1734,10 @@ data: ${JSON.stringify(l)}
       return { ok: true, line: r.out.trim() };
     }
     if (route.startsWith('/api/sync/')) {   // NORN-UI-SYNC: Settings > Sync
-      if (!['/api/sync/plan', '/api/sync/apply', '/api/sync/ledger', '/api/sync/reconcile'].includes(route)) throw fail(404, 'Not found');
+      if (!['/api/sync/plan', '/api/sync/apply', '/api/sync/ledger', '/api/sync/reconcile', '/api/sync/name'].includes(route)) throw fail(404, 'Not found');
+      if (route === '/api/sync/name') {   // dash-owner-1123 s.6: name a home (sync.mjs renameHome: the claims ref + the names cache)
+        const cfg = metaRootDir ? ledgerConfig(machine, { metaRoot: metaRootDir, machineFile }) : null, r = cfg ? renameHome(cfg, { home: String(data.home ?? ''), name: String(data.name ?? ''), by: 'dashboard' }) : { off: true };
+        if (r.ok) return r; throw r.off ? fail(409, 'This project is not synced: no ledger, no home names') : r.refused ? fail(400, r.refused.join('; ')) : fail(500, r.error); }
       return syncPost(p, route, data);
     }
     if (route === '/api/answer') {
@@ -2061,7 +2069,7 @@ data: ${JSON.stringify(l)}
           const inWin = ps.flatMap(p => runsOf(st(p)).filter(r => ['queued', 'claimed', 'running'].includes(r.state) || Date.now() - Date.parse(r.updated) <= win));
           const rc = runCounts(inWin), counts = { ...rc, text: countsLine(rc), scope: `${ps.length > 1 ? 'all projects' : ps[0]?.name ?? 'this project'}, runs active or updated ${w === 'today' ? 'today' : `in the last ${w.replace('h', ' h')}`}` };
           const tree = (await Promise.all(ps.map(p => agents(p, win, { homes: true, part })))).flat();
-          return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: (await Promise.all(ps.map(async p => queueOf(runsOf(st(p)), await lanePinsAsync(p.state)).map(q => ({ ...q, project: p.name }))))).flat() }) });
+          return send(200, { window: w, at: iso(), ...(part ? { part } : {}), counts, tree, ...(part === 'history' ? {} : { queue: (await Promise.all(ps.map(async p => queueOf(runsOf(st(p)), await lanePinsAsync(p.state)).map(q => ({ ...q, agent: st(p).items[q.id]?.data.agent ?? null, priority: q.priority ?? null, project: p.name }))))).flat() }) });
         }
         if (route === '/api/branches') {
           const vs = await Promise.all(pick(url, { all: true }).map(branchesOf)), counts = {};
@@ -2084,7 +2092,8 @@ data: ${JSON.stringify(l)}
         if (route === '/api/instructions') return send(200, insOf(one(url), url));
         if (route === '/api/guard') return send(200, await guardAt(one(url), url));   // META-TEND P6
         if (route === '/api/tests') return send(200, await testsAt(one(url), url));   // META-TEND TESTS; TESTS-RUNTIME: the summary or one sub-view's part
-        if (route === '/api/tests/source') return send(200, await testSource(one(url), url));   // TESTS-RUNTIME: the code viewer
+        if (route === '/api/source') return send(200, await repoSource(one(url), url));   // the code viewer (Tests, Code)
+        if (route === '/api/code') return send(200, await codeAt(one(url), url));   // dash-owner-1123 s.7: the Code page's summary or one part (codecli.mjs)
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
         if (route === '/api/settings') { const p = one(url); return send(200, { ...settingsInfo(p), sync: await syncInfo(p), capacity: await capacityOf() }); }
         if (route === '/api/feed') return await openFeed(req, res, url);

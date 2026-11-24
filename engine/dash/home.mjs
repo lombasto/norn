@@ -1,4 +1,4 @@
-// META-CONTROLLER C2 (SPEC sec. 8 + 10, owner Q-25 = Look 3 "Thread home"): the Talk page (was Home) is the thread - your messages, the
+// META-CONTROLLER C2 (SPEC sec. 8 + 10, owner Q-25 = Look 3 "Thread home"): the Controller page (was Talk, before that Home) is the thread - your messages, the
 // controller's, check-in events, runs, merges, needs-you cards and shots in ONE time-ordered list with filters; the side columns
 // (now / held / usage / next check-in | waiting / ruled today / standing orders) on a desktop.
 // Pure: the same module runs in the browser (/home.mjs) and in node --test. homeEvents assembles (the server feeds it the thread
@@ -83,8 +83,8 @@ export function pickProject(projects = [], { url = null, saved = null } = {}) {
 }
 // pokes that only carry earlier ones along (a queued repeat, a catch-up after a hidden tab)
 const CARRY = new Set(['again', 'visible']);
-/** A re-render poked by chat lines alone (on Talk) repaints only the thread: no strip, no page. */
-export const threadOnly = (why = [], tab) => tab === 'talk' && why.some(r => r === 'chat') && why.every(r => r === 'chat' || CARRY.has(r));
+/** A re-render poked by chat lines alone (on Controller) repaints only the thread: no strip, no page. */
+export const threadOnly = (why = [], tab) => tab === 'controller' && why.some(r => r === 'chat') && why.every(r => r === 'chat' || CARRY.has(r));
 
 /**
  * One time-ordered thread. o: { thread (chat lines), runs (run items of the records fold), items (all items of the fold, for the
@@ -256,7 +256,7 @@ export function chatState(st = {}, now = Date.now()) {
 }
 /** the state line's class: the pulsing dot while the chat works */
 export const chatStateClass = (st = {}) => (st.busy || st.handing_off ? 'small chat-live' : 'mute small');
-/** The Talk page body. d: GET /api/home; ctx: { project, homeFilter, now } */
+/** The Controller page body. d: GET /api/home; ctx: { project, homeFilter, now } */
 export function renderHome(d, ctx = {}) {
   const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you, approvals = d.approvals;   // UX review 4: the Inbox's count; approvals by name beside it
   const harness = `${HARNESS[st.executor] ?? esc(st.executor ?? 'claude')}${st.model ? ` · ${esc(SHORT(st.model))}` : ''}${st.effort ? `<span class="heff"> · ${esc(st.effort)}</span>` : ''}`;
