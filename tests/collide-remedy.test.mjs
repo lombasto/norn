@@ -188,3 +188,19 @@ test('a worker run applies no remedy: every verb is refused', () => {
   }
   assert.deepEqual(f.acts(col), []);
 });
+
+test('norn run --part-of: the run is a declared part of the lead\'s item - recorded on the run, no item collision', () => {
+  const f = fixture();
+  f.nav();
+  const th = record(f.state, { kind: 'item', ev: 'create', by: 'owner', data: { kind: 'theme', title: 'Web' } }).id;
+  const it = record(f.state, { kind: 'item', ev: 'create', by: 'owner', data: { kind: 'item', title: 'the nav', parent: th, links: ['lane:web-nav'] } }).id;
+  const wt = f.lane('web-runs'), brief = f.brief('runs', `# web-runs RUNS ${it}\nScope: web/pages/**\nTests: t\nDone: d\nmode: done\n`);
+  const run = (...x) => spawnSync(process.execPath, [NORN, 'run', '--executor', 'fake', '--lane', 'web-runs', '--brief', brief, '--worktree', wt, '--no-tick', '--project', f.pf, '--state', f.state, '--locks', f.locks, ...x],
+    { encoding: 'utf8', windowsHide: true, env: { ...ENV, META_ROOT: f.t, HOME: f.t, USERPROFILE: f.t, META_NO_TICK: '1', META_RUN_ID: '', META_ROLE: '' } });
+  const r = run('--part-of', 'web-nav');
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.doesNotMatch(r.stdout + r.stderr, /collide: item/);
+  const rec = Object.values(loadState(f.state).items).find(x => x.kind === 'run' && x.data.lane === 'web-runs');
+  assert.equal(rec.data.part_of, 'web-nav');
+  assert.deepEqual(gatherIntents({ state: f.state, repo: f.home }).intents.filter(x => x.lane === 'web-runs').map(x => x.part_of), rec.state === 'running' ? ['web-nav'] : []);
+});

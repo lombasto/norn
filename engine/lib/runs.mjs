@@ -632,7 +632,7 @@ const startFields = (o, info) => ({
 const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, ...classStamp(o), q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
   from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
   priority: o.priority, nudge: o.nudge, slop_of: o.slopOf, dod_of: o.dodOf, dod_ready: o.dod ? { mode: o.dod.mode, ok: o.dod.ok, missing: o.dod.missing } : undefined,   // META-DOD 1: the Ready verdict + the Done-check resume
-  critique: o.critique, floor: o.floor,   // floor: the worker floor raised this run (floor.mjs); META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
+  critique: o.critique, floor: o.floor, part_of: o.part_of,   // part_of: norn run --part-of (lane-collide SPEC 4.4); floor: the worker floor raised this run (floor.mjs); META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
     // slop_of: the run-end slop resume
   replaces: o.replaces,
   launch_profile: o.profile?.name || 'full', memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // launch_profile: the profile EVERY run launched with (launchpolicy.mjs profileOf; no profile = full) - overhead-audit S1: a floor is judged against it   // replaces: META-AUTONOMY R1 (norn requeue)
