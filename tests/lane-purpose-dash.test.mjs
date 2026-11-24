@@ -83,7 +83,7 @@ test('the Lanes rows: a type chip naming its signal and the output in words; the
   } finally { await f.done(); }
 });
 
-test('the Runs page: a row\'s lane - a worker (lane · stage, linked to its row), a MERGE, a check-in; the row heads with the id + the dwarf (else the kind word)', () => {
+test('the Runs page: a row\'s lane - a worker (lane · stage, linked to its row), a MERGE, a check-in; the agent cell holds the dwarf (else the kind word)', () => {
   const tree = [
     { id: 'RUN-7', dwarf: { id: 'oin', name: 'Óin' }, kind_word: null, kind: 'worker', state: 'running', executor: 'claude', lane: 'gen', stage: 'S1', project: 'kestrel', started: new Date().toISOString(), children: [], helpers: { n: 1, running: 0, tokens: 1200 } },
     { id: 'RUN-8', dwarf: null, kind_word: 'merge', kind: 'worker', state: 'exited', outcome: 'done', executor: 'claude', lane: 'gen', stage: 'MERGE', project: 'kestrel', started: new Date().toISOString(), children: [] },
@@ -91,9 +91,10 @@ test('the Runs page: a row\'s lane - a worker (lane · stage, linked to its row)
   ];
   const html = renderTab('runs', { tree }, { project: 'kestrel', now: Date.now() }), node = id => html.split('id="node-').find(x => x.startsWith(`${id}"`));
   // a8b060ac: Runs is one table again (a row's cells are <td>), and the run document is the drawer of the picked row (ctx.run)
-  assert.match(node('RUN-7'), /<td class="rlane" data-label="lane"><a class="lanelink" data-rid="L:gen" href="\?project=kestrel&tab=lanes&show=needs,running,stopped,waiting,land,parked,today,old,archived">gen<\/a> · S1<\/td>/);
-  assert.match(node('RUN-7'), /<td class="rwho" data-label="run"><span class="id">RUN-7<\/span> <b class="aname" data-dwarf="oin">Óin<\/b> <\/td>/);
-  assert.match(node('RUN-8'), /<td class="rwho" data-label="run"><span class="id">RUN-8<\/span> <span class="mute">merge<\/span> <\/td>/, 'no dwarf: the kind word');
+  assert.match(node('RUN-7'), /<td class="rlane" data-label="lane"><a class="lanelink" data-act="rid" data-rid="L:gen" href="\?project=kestrel&tab=lanes&show=needs,running,stopped,waiting,land,parked,today,old,archived">gen<\/a> · S1<\/td>/);
+  // ff1f96e9 (R1): the run cell holds the id, the agent cell the dwarf
+  assert.match(node('RUN-7'), /<td class="rwho" data-label="run"><span class="id">RUN-7<\/span> <\/td>\s*<td class="ragent" data-label="agent"> <b class="aname" data-dwarf="oin">Óin<\/b><\/td>/);
+  assert.match(node('RUN-8'), /<td class="rwho" data-label="run"><span class="id">RUN-8<\/span> <\/td>\s*<td class="ragent" data-label="agent"> <span class="mute">merge<\/span><\/td>/, 'no dwarf: the kind word');
   assert.match(renderTab('runs', { tree }, { project: 'kestrel', now: Date.now(), run: 'RUN-7' }), /id="run-doc" data-run="RUN-7"[^]*?<span class="mute">helpers<\/span><span>1, 1,200 tok<\/span>/, 'the helpers in the run document');
   assert.match(node('RUN-8'), /<span class="chip done">done<\/span>[^]*?<td class="rlane" data-label="lane"><a [^>]*>gen<\/a> · MERGE<\/td>/);
   assert.match(node('RUN-9'), /<td class="rlane" data-label="lane">check-in<\/td>/);

@@ -48,7 +48,7 @@ test('the API: a Lanes row and a Runs node carry the run\'s progress and the lan
     assert.match(node.progress.line, /^1 of 4 items done/);
     assert.equal(node.lane_card.lane, 'gen');
     const rhtml = renderTab('runs', { tree: runs.data.tree }, { project: 'kestrel', now: Date.now() }), rnode = rhtml.split('id="node-').find(x => x.startsWith(`${id}"`));
-    assert.match(rnode, /<td class="rlane" data-label="lane"><span class="lhov"><a class="lanelink" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
+    assert.match(rnode, /<td class="rlane" data-label="lane"><span class="lhov"><a class="lanelink" data-act="rid" data-rid="L:gen"[^>]*>gen<\/a> · S1<div class="lcard" role="dialog"/);
     assert.match(rnode, /<div class="rline small">1 of 4 items done/, 'the live row: the brief line');
     // worker-speed: a worker run with model requests shows its tok/s line; a live one its last 10 min
     const now = Date.now(), ts = s => new Date(now - s * 1000).toISOString(), sid = 'aaaaaaaa-2222-4333-8444-555555555555';

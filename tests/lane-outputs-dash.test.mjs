@@ -74,6 +74,6 @@ test('the browser at 390 px: Details opens the lane\'s findings and outputs; a M
       assert.ok(await pg.until(`!!document.querySelector(${JSON.stringify(sel)})`, 30000), `${rel} opens in place`);
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, `no sideways scroll with ${rel} open`);
     }
-    if (await pg.ev(`!!document.querySelector('.fileview img')`)) assert.ok(await pg.until(`document.querySelector('.fileview img').naturalWidth === 1`, 30000), 'the image loads from /api/file');
+    if (await pg.ev(`!!document.querySelector('.fileview img.fileview-img')`)) assert.ok(await pg.until(`document.querySelector('.fileview img.fileview-img').naturalWidth === 1`, 30000), 'the image loads from /api/file');
   } finally { await pg.close(); await f.done(); }
 });

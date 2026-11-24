@@ -111,15 +111,21 @@ test('the browser at 390 px: the run document feed opens on the activity view (r
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     const run = claudeRun(f);
     await pg.go(`${f.url}/?project=kestrel&tab=runs`);
-    assert.ok(await pg.until(`!!document.querySelector('[data-feed="${run.id}"]')`, 60000), 'the run row');
-    await pg.ev(`document.querySelector('[data-feed="${run.id}"]').click()`);
-    assert.ok(await pg.until(`!!document.querySelector('#feed-act #fa-now') && /policy\\.mjs/.test(document.querySelector('#feed-act').textContent)`, 30000), 'the activity view');
-    assert.equal(await pg.ev(`document.querySelector('#feed-list').hidden`), true, 'a phone: the raw list folded (no kind pressed)');
+    // ff1f96e9: a row tap opens the run drawer on Summary; Activity and Feed are two of its views over the one live section
+    assert.ok(await pg.until(`!!document.querySelector('tr[data-act="run-open"][data-run="${run.id}"]')`, 60000), 'the run row');
+    await pg.ev(`document.querySelector('tr[data-act="run-open"][data-run="${run.id}"]').click()`);
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.view === 'summary'`, 30000), 'a row tap opens Summary');
+    await pg.ev(`document.querySelector('#run-doc [data-act="run-view"][data-view="activity"]').click()`);
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.view === 'activity' && !!document.querySelector('#feed-act #fa-now') && /policy\\.mjs/.test(document.querySelector('#feed-act').textContent)`, 30000), 'the activity view');
+    assert.equal(await pg.ev(`getComputedStyle(document.querySelector('#feed-list')).display`), 'none', 'Activity: the raw list is the Feed view\'s');
     assert.match(await pg.ev(`document.querySelector('#fa-now').textContent`), /Thinking \/ writing/);
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (the run screen)');
-    await pg.ev(`document.querySelector('[data-feed-kind=tools]').click()`);
-    assert.equal(await pg.ev(`document.querySelector('#feed-list').hidden`), false, 'the tools filter shows the raw list');
+    await pg.ev(`document.querySelector('#run-doc [data-act="run-view"][data-view="feed"]').click()`);
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.view === 'feed' && getComputedStyle(document.querySelector('#feed-list')).display !== 'none'`, 30000), 'the Feed view shows the raw list');
+    assert.equal(await pg.ev(`document.querySelector('[data-feed-kind=tools]').getAttribute('aria-pressed')`), 'true', 'the feed opens on the tools kind (R6)');
     assert.ok(await pg.ev(`!!document.querySelector('#feed-list details.fl-x')`), 'an Edit line opens to its diff');
+    await pg.ev(`document.querySelector('#run-doc [data-act="run-view"][data-view="activity"]').click()`);
+    assert.ok(await pg.until(`document.querySelector('#run-doc')?.dataset.view === 'activity'`, 30000), 'back on Activity');
     // live: a Read call starts (no result yet) -> Now says what it reads
     fs.appendFileSync(run.file, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_live', name: 'Read', input: { file_path: run.wt + '/engine/lib/views.mjs', offset: 100, limit: 51 } }] } }) + '\n');
     assert.ok(await pg.until(`/Reading engine\\/lib\\/views\\.mjs, lines 100-150/.test(document.querySelector('#fa-now').textContent)`, 20000), 'the live call in Now');
@@ -132,8 +138,10 @@ test('the browser at 390 px: the run document feed opens on the activity view (r
     // replayed: the run ends; reopened, the feed shows the whole run and says it ended
     record(f.pa.state, { kind: 'run', ev: 'end', id: run.id, by: 'launcher', data: { exit: 0, outcome: 'done' } });
     await pg.go(`${f.url}/?project=kestrel&tab=runs`);
-    assert.ok(await pg.until(`!!document.querySelector('[data-feed="${run.id}"]')`, 60000));
-    await pg.ev(`document.querySelector('[data-feed="${run.id}"]').click()`);
+    assert.ok(await pg.until(`!!document.querySelector('tr[data-act="run-open"][data-run="${run.id}"]')`, 60000));
+    await pg.ev(`document.querySelector('tr[data-act="run-open"][data-run="${run.id}"]').click()`);
+    assert.ok(await pg.until(`!!document.querySelector('#run-doc [data-act="run-view"][data-view="activity"]')`, 30000));
+    await pg.ev(`document.querySelector('#run-doc [data-act="run-view"][data-view="activity"]').click()`);
     assert.ok(await pg.until(`/The run has ended/.test(document.querySelector('#fa-now')?.textContent ?? '') && !!document.querySelector('#fa-g-edited')`, 30000), 'replayed');
     assert.match(await pg.ev(`document.querySelector('#feed-act').textContent`), /5 pass, 0 fail/);
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll (replayed)');
