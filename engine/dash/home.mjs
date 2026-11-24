@@ -1,4 +1,4 @@
-// META-CONTROLLER C2 (SPEC sec. 8 + 10, owner Q-25 = Look 3 "Thread home"): the Controller page (was Talk, before that Home) is the thread - your messages, the
+// META-CONTROLLER C2 (SPEC sec. 8 + 10, owner Q-25 = Look 3 "Thread home"): the Controller page (named Talk until 11-23, before that Home) is the thread - your messages, the
 // controller's, check-in events, runs, merges, needs-you cards and shots in ONE time-ordered list with filters; the side columns
 // (now / held / usage / next check-in | waiting / ruled today / standing orders) on a desktop.
 // Pure: the same module runs in the browser (/home.mjs) and in node --test. homeEvents assembles (the server feeds it the thread
