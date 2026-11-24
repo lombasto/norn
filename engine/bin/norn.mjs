@@ -5,6 +5,8 @@
 import '../lib/gitprof.mjs';   // first: NORN_GIT_PROFILE=<file> counts every git call of this process (git-perf S1); unset, a no-op
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { inScope } from '../lib/ready.mjs';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf, copyItems, HOME_RE, NID, RUN_ID_RE } from '../lib/records.mjs';
@@ -24,9 +26,9 @@ import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecut
 import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, readyWords } from '../lib/after.mjs';
-import { loadRoadmap, setCaveat, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
+import { loadRoadmap, setCaveat, setLink, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
-import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, allowRefusal, pairKey } from '../lib/collide.mjs';
+import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, applyRefusal, applyNeed, needsDecision, menuOf, REMEDIES, partRefusal, narrowScope, takenBy, namesDropped, collidePolicy, pairKey } from '../lib/collide.mjs';
 import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction } from '../lib/intents.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
@@ -2171,10 +2173,10 @@ function collideCmd(argv, env, out, err) {
       if (!a.startsWith('--')) { pos.push(a); continue; }
       const k = a.slice(2);
       if (k === 'json' || k === 'all') { flags[k] = true; continue; }
-      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want'].includes(k)) throw new RunError(`unknown flag ${a}`);
       flags[k] = argv[++i];
     }
-    if (['list', 'show', 'allow', 'undo'].includes(pos[0])) return collideCase(pos, flags, env, out);
+    if (['list', 'show', 'allow', 'undo', 'wait', 'narrow', 'part', 'ask'].includes(pos[0])) return collideCase(pos, flags, env, out);
     if (pos[0] !== 'plan') throw new RunError(pos[0] ? `unknown verb ${pos[0]} (plan, list, show, allow, undo)` : 'collide needs a verb (plan, list, show, allow, undo)');
     if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
     if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
@@ -2240,39 +2242,143 @@ function collideCase(pos, flags, env, out) {
     return 0;
   }
   if (env.META_RUN_ID && !['checkin', 'controller'].includes(env.META_ROLE)) throw new RunRefused(`a worker run applies no remedy (run ${env.META_RUN_ID}): name the collision in NOTES`, 3);
-  if (!flags.as) throw new RunError(`${verb} needs --as checkin|controller|owner`);
+  if (!flags.as) throw new RunError(`${verb} needs --as checkin|controller|owner|dashboard`);
   if (!flags.why) throw new RunError(`${verb} needs --why`);
-  if (verb === 'undo') {
-    if (!col) throw new RunError('undo needs COL-n');
-    const acts = actionsOf(col), a = flags.action ? acts[Number(flags.action) - 1] : acts.filter(x => !x.undone).at(-1), n = acts.indexOf(a) + 1;
-    if (!a) throw new RunError(`${col.id} has no action${flags.action ? ` ${flags.action}` : ''} to undo`);
-    if (a.undone) throw new RunRefused(`${col.id} action ${n} (${a.action}) is already undone`, 3);
-    if (a.action === 'caveat') {   // S1c: the stale fact comes off - only while the caveat is still the text Norn wrote
-      const now = loadRoadmap(state).items[a.args.item]?.caveat?.text ?? null;
-      if (now !== a.args.after) throw new RunRefused(`${a.args.item}'s caveat changed since Norn noted ${a.args.run}'s end: it stays as it is`, 3);
-      setCaveat(state, a.args.item, a.args.before, flags.as);
-      record(state, { kind: 'collision', ev: 'undo', id: col.id, by: flags.as, data: { action: a.i, why: flags.why } });
-      out(`${col.id}: ${a.args.item}'s caveat is back to its old text - the tick does not note it again`);
-      return 0;
-    }
-    if (a.action !== 'allow') throw new RunRefused(`${col.id} action ${n} (${a.action}) has no undo: ${a.action === 'told' ? 'it was information' : 'a hold ends by itself when the holder lands, or by norn collide allow'}`, 3);
-    const r = allowRefusal(flags.as, col.data.kind, col.data.grade);
-    if (r) throw new RunRefused(r, 3);
-    record(state, { kind: 'collision', ev: 'undo', id: col.id, by: flags.as, data: { action: a.i, why: flags.why } });
-    out(`${col.id}: allow ${a.args?.pair} withdrawn - the judge holds the pair again from the next fill`);
+  const { project } = where(flags, env), pol = project?.policy?.collide, refuse = why => { if (why) throw new RunRefused(why, 3); };
+  if (verb === 'undo') return collideUndo(state, col, flags, pol, out);
+  if (verb === 'allow') {
+    if (!col && args.length !== 2) throw new RunError('allow needs COL-n or two lane names');
+    const kinds = flags.kind ? [flags.kind] : col ? [col.data.kind] : [], pair = col ? col.data.pair ?? pairKey(col.data.a.lane, col.data.b.lane) : pairKey(args[0], args[1]);
+    const open = Object.values(cases).filter(c => c.state === 'open' && (c.data.pair ?? pairKey(c.data.a?.lane, c.data.b?.lane)) === pair);
+    const need = [...(col ? [col] : open).filter(c => !kinds.length || kinds.includes(c.data.kind)).map(c => [c.data.kind, c.data.grade]),
+      ...(col ? [] : (kinds.length ? kinds : ['item', 'territory', 'order']).map(k => [k, STRICTEST[k] ?? null]))];
+    refuse(need.map(([k, g]) => applyRefusal(flags.as, 'allow', k, g, pol)).find(Boolean));
+    const id = col?.id ?? open[0]?.id ?? record(state, { kind: 'collision', ev: 'open', by: flags.as, data: { key: `ruling:${pair}`, kind: 'any', grade: null, verdict: 'allow', door: 'cli',
+      a: { lane: args[0] }, b: { lane: args[1] }, files: [], files_n: 0, why: flags.why, pair } }).id;
+    const dec = need.some(([k, g]) => needsDecision('allow', k, g, pol)) ? remedyDecision(state, casesOf(state)[id], 'allow', flags) : null;
+    caseAction(state, id, 'allow', { by: flags.as, auto: false, args: { pair, kinds, ...(dec ? { dec } : {}) }, why: flags.why });
+    out(`${id}: allow ${pair}${kinds.length ? ` for ${kinds.join(', ')}` : ' for every kind'} - a held run starts at the next fill${dec ? ` (${dec})` : ''}`);
     return 0;
   }
-  if (!col && args.length !== 2) throw new RunError('allow needs COL-n or two lane names');
-  const kinds = flags.kind ? [flags.kind] : col ? [col.data.kind] : [], pair = col ? col.data.pair ?? pairKey(col.data.a.lane, col.data.b.lane) : pairKey(args[0], args[1]);
-  const open = Object.values(cases).filter(c => c.state === 'open' && (c.data.pair ?? pairKey(c.data.a?.lane, c.data.b?.lane)) === pair);
-  const need = [...(col ? [col] : open).filter(c => !kinds.length || kinds.includes(c.data.kind)).map(c => [c.data.kind, c.data.grade]),
-    ...(col ? [] : (kinds.length ? kinds : ['item', 'territory', 'order']).map(k => [k, STRICTEST[k] ?? null]))];
-  const refused = need.map(([k, g]) => allowRefusal(flags.as, k, g)).find(Boolean);
-  if (refused) throw new RunRefused(refused, 3);
-  const id = col?.id ?? open[0]?.id ?? record(state, { kind: 'collision', ev: 'open', by: flags.as, data: { key: `ruling:${pair}`, kind: 'any', grade: null, verdict: 'allow', door: 'cli',
-    a: { lane: args[0] }, b: { lane: args[1] }, files: [], files_n: 0, why: flags.why, pair } }).id;
-  caseAction(state, id, 'allow', { by: flags.as, auto: false, args: { pair, kinds }, why: flags.why });
-  out(`${id}: allow ${pair}${kinds.length ? ` for ${kinds.join(', ')}` : ' for every kind'} - a held run starts at the next fill`);
+  // S2a (SPEC 4A.4): wait, narrow, part, ask - on an open case; the role is checked against policy.collide.apply_by before anything is read
+  if (!col) throw new RunError(`${verb} needs COL-n`);
+  if (col.state !== 'open') throw new RunRefused(`${col.id} is ${col.state}: its cause is gone`, 3);
+  const d = col.data, A = d.a.lane, B = d.b.lane;
+  if (verb === 'ask') return collideAsk(state, col, flags, pol, out);
+  refuse(applyRefusal(flags.as, verb, d.kind, d.grade, pol));
+  const cfg = deliverableConfig(project || {}), g = gatherIntents({ state, repo: project?.root, main: cfg.main, remote: cfg.remote, now: Date.now(), home: homeOf(state)?.id ?? null });
+  const a = g.intents.find(x => x.lane === (verb === 'part' && flags.of ? flags.of : A)), b = g.intents.find(x => x.lane === B);
+  let act, said;
+  if (verb === 'wait') {
+    if (!a) refuse(`lane ${A} has no open work (merged or ended): there is nothing to wait for`);
+    const bb = b ?? { lane: B, state: 'new', since: Date.now() };
+    refuse(!ahead(a, bb) && `lane ${A} (${a.state}) is not ahead of lane ${B} (${bb.state}): first come - a wait holds only the later side, never a running run`);
+    act = { pair: pairKey(A, B), kinds: d.kind === 'any' ? [] : [d.kind], waiter: B, holder: A };
+    said = `wait - lane ${B} waits for lane ${A}'s work${a.dlv ? ` (${a.dlv})` : ''}: its queued run is held at the next fill, a new start is queued; the wait ends when that work merges`;
+  }
+  if (verb === 'narrow') { act = narrowBrief(col, flags, { a, b, g, pol, refuse }); said = `narrow - ${fwd(act.brief)}: Scope ${act.scope.join(' ')} (left out: ${act.dropped.join(' ')}${act.dropped_n > act.dropped.length ? ' ...' : ''})`; }
+  if (verb === 'part') {
+    const lead = flags.of ?? A;
+    if (!b) refuse(`lane ${B} has no open work to declare a part`);
+    refuse(partRefusal(b, a ?? { lane: lead, touched: [], exclusive: [] }, pol));
+    const item = d.item ?? a?.items?.[0] ?? null, it = item ? loadRoadmap(state).items[item] : null, linked = !!it && it.state === 'open' && !it.links.includes(`lane:${B}`);
+    if (linked) setLink(state, item, `lane:${B}`, true, flags.as);
+    act = { pair: pairKey(B, lead), lane: B, of: lead, item, linked };
+    said = `part - lane ${B} is a declared part of lane ${lead}'s item${item ? ` ${item}${linked ? ` (linked lane:${B})` : ''}` : ''}; both run`;
+  }
+  const dec = needsDecision(verb, d.kind, d.grade, pol) ? remedyDecision(state, col, verb, flags) : null;
+  caseAction(state, col.id, verb, { by: flags.as, auto: false, args: { ...act, ...(dec ? { dec } : {}) }, why: flags.why });
+  out(`${col.id}: ${said}${dec ? ` (${dec})` : ''}`);
+  return 0;
+}
+// SPEC 4A.3: a remedy in the controller's or the owner's column is a recorded decision, linked to its case
+const remedyDecision = (state, col, remedy, flags) => record(state, { kind: 'decision', ev: 'create', by: flags.as,
+  data: { lane: col.data.b?.lane ?? '-', question: `${col.id} ${col.data.kind}${col.data.grade ? ` (${col.data.grade})` : ''}: which remedy?`, choice: remedy, why: flags.why, col: col.id } }).id;
+const sha256 = s => createHash('sha256').update(s).digest('hex');
+const SCOPE_LINE = /^\s*(?:[-*]\s+)?Scope:/, READY_LINE = /^\s*(?:[-*]\s+)?(Scope|Tests|Done|Exclusive):/;
+/** SPEC 4A.4 narrow: B's brief gets the narrowed Scope line and the Narrowed line under its Ready lines -> the action's args (the old line
+ *  and both sha256 kept for the undo). Refused for a running run, an empty or too long result, or a dropped file the Tests / Done line names */
+function narrowBrief(col, flags, { a, b, g, pol, refuse }) {
+  const A = col.data.a.lane, B = col.data.b.lane, running = Object.values(g.runs).find(r => r.kind === 'run' && r.state === 'running' && r.data?.lane === B);
+  refuse(running && `lane ${B}'s run ${running.id} is running: the run-end Scope check would judge it against a changed contract - wait instead`);
+  if (!b?.brief || b.brief === '-' || !fs.existsSync(b.brief)) refuse(`lane ${B} has no queued run with a brief file to narrow`);
+  if (!a) refuse(`lane ${A} has no open work (merged or ended): there is nothing to narrow around`);
+  if (!b.scope?.length) refuse(`lane ${B}'s Scope is not readable${b.scope_why ? ` (${b.scope_why})` : ''}: give the brief a Scope first`);
+  const taken = takenBy(a, g.tracked, pol), max = collidePolicy({ collide: pol }).narrow_files;
+  let scope, dropped;
+  if (flags.scope) { scope = flags.scope.split(/[\s,]+/).filter(Boolean); dropped = taken.filter(f => inScope(f, b.scope) && !inScope(f, scope)); }
+  else {
+    ({ scope, dropped } = narrowScope(b.scope, taken, g.tracked));
+    refuse(!dropped.length && `lane ${B}'s Scope covers none of lane ${A}'s files: nothing to narrow`);
+    refuse((!scope.length || scope.length > max) && `the narrowed Scope has ${scope.length} entries (${scope.length ? `more than narrow_files ${max}` : 'nothing is left'}): give --scope "<globs>"`);
+  }
+  const named = namesDropped(b, dropped);
+  refuse(named.length && `lane ${B}'s Tests: or Done: line names ${named.slice(0, 6).join(' ')}, which lane ${A} holds: a narrowed Scope would make the task impossible - wait instead`);
+  const text = fs.readFileSync(b.brief, 'utf8'), lines = text.split(/\r?\n/), at = lines.findIndex(l => SCOPE_LINE.test(l));
+  const last = Math.max(...['Scope', 'Tests', 'Done', 'Exclusive'].map(k => lines.findIndex(l => l.match(READY_LINE)?.[1] === k)));
+  const before = lines[at], after = `${before.match(SCOPE_LINE)[0]} ${scope.join(' ')}`;
+  const note = `Narrowed (${col.id}): ${dropped.slice(0, 8).join(' ')}${dropped.length > 8 ? ` (+${dropped.length - 8})` : ''} are lane ${A}'s until ${a.dlv ?? 'its work'} merges. If the task needs them, end stopped and name them; do not work around it.`;
+  lines[at] = after;
+  lines.splice(last + 1, 0, note);
+  const next = lines.join(text.includes('\r\n') ? '\r\n' : '\n');
+  fs.writeFileSync(b.brief, next);
+  return { brief: b.brief, before, after, note, scope, dropped: dropped.slice(0, 20), dropped_n: dropped.length, sha256_before: sha256(text), sha256: sha256(next) };
+}
+// SPEC 4A.3 "nothing sits": the case handed to the role that may apply the remedy; for the owner one question (owner_only), one option per
+// remedy on the kind's menu, SloppaChoppa's pick recommended - never a second for the same case
+const OPTION = { part: 'Make it a part: both run, the Scopes kept apart', narrow: 'Narrow the later Scope: both run', fold: 'Fold it into the lane ahead: one branch',
+  wait: 'Wait until the lane ahead lands', allow: 'Allow: both go on as they are' };
+function collideAsk(state, col, flags, pol, out) {
+  const d = col.data, want = flags.want;
+  if (!REMEDIES.includes(want)) throw new RunError(`ask needs --want ${REMEDIES.join('|')}`);
+  const need = applyNeed(want, d.kind, d.grade, pol);
+  if (!need) throw new RunRefused(`${want} is not on the menu for ${d.kind} (${menuOf(d.kind, d.grade, pol).join(', ')})`, 3);
+  if (!applyRefusal(flags.as, want, d.kind, d.grade, pol)) throw new RunRefused(`a ${flags.as} may apply ${want} itself: norn collide ${want} ${col.id} --why W`, 3);
+  let q = null;
+  if (need === 'owner') {
+    const was = Object.values(loadState(state).items).find(i => i.kind === 'question' && i.state === 'open' && i.data.col === col.id);
+    const keys = menuOf(d.kind, d.grade, pol), pick = d.recommended?.remedy;
+    q = was?.id ?? record(state, { kind: 'question', ev: 'create', by: flags.as, data: { title: `${col.id} ${d.kind}: lanes ${d.a.lane} and ${d.b.lane}`.slice(0, 120), lane: d.b.lane,
+      body: `${d.why}\n\n${flags.why}`, options: keys.map(k => ({ key: k, text: OPTION[k] })), ...(keys.includes(pick) ? { recommend: { key: pick, from: 'SloppaChoppa' } } : {}), owner_only: true, col: col.id } }).id;
+  }
+  caseAction(state, col.id, 'ask', { by: flags.as, auto: false, args: { want, role: need, ...(q ? { q } : {}) }, why: flags.why });
+  out(`${col.id}: asked the ${need} for ${want}${q ? ` (${q})` : ''}`);
+  return 0;
+}
+// SPEC 4A.4 undo: the named (default: the last) action of a case reversed from its stored before, and the undo recorded
+function collideUndo(state, col, flags, pol, out) {
+  if (!col) throw new RunError('undo needs COL-n');
+  const acts = actionsOf(col), a = flags.action ? acts[Number(flags.action) - 1] : acts.filter(x => !x.undone).at(-1), n = acts.indexOf(a) + 1;
+  if (!a) throw new RunError(`${col.id} has no action${flags.action ? ` ${flags.action}` : ''} to undo`);
+  if (a.undone) throw new RunRefused(`${col.id} action ${n} (${a.action}) is already undone`, 3);
+  const undone = () => record(state, { kind: 'collision', ev: 'undo', id: col.id, by: flags.as, data: { action: a.i, why: flags.why } });
+  if (a.action === 'caveat') {   // S1c: the stale fact comes off - only while the caveat is still the text Norn wrote
+    const now = loadRoadmap(state).items[a.args.item]?.caveat?.text ?? null;
+    if (now !== a.args.after) throw new RunRefused(`${a.args.item}'s caveat changed since Norn noted ${a.args.run}'s end: it stays as it is`, 3);
+    setCaveat(state, a.args.item, a.args.before, flags.as);
+    undone();
+    out(`${col.id}: ${a.args.item}'s caveat is back to its old text - the tick does not note it again`);
+    return 0;
+  }
+  if (!['allow', 'wait', 'narrow', 'part', 'ask'].includes(a.action)) throw new RunRefused(`${col.id} action ${n} (${a.action}) has no undo: ${a.action === 'told' ? 'it was information' : 'a hold ends by itself when the holder lands, or by norn collide allow'}`, 3);
+  if (a.action !== 'ask') { const r = applyRefusal(flags.as, a.action, col.data.kind, col.data.grade, pol); if (r) throw new RunRefused(r, 3); }
+  if (a.action === 'narrow') {   // only while the Scope line is the one narrow wrote and no run started from the brief since
+    const text = fs.existsSync(a.args.brief) ? fs.readFileSync(a.args.brief, 'utf8') : '', lines = text.split(/\r?\n/), at = lines.findIndex(l => SCOPE_LINE.test(l));
+    if (lines[at] !== a.args.after) throw new RunRefused(`${fwd(a.args.brief)}'s Scope line changed since the narrow: it stays as it is`, 3);
+    const same = f => !!f && path.resolve(f).toLowerCase() === path.resolve(a.args.brief).toLowerCase();
+    const ran = Object.values(loadState(state).items).find(r => r.kind === 'run' && same(r.data?.brief) && r.history.some(h => h.ev === 'start' && h.ts > a.at));
+    if (ran) throw new RunRefused(`${ran.id} started from the narrowed brief: it ran under that Scope, so the brief stays as it is`, 3);
+    lines[at] = a.args.before;
+    const k = lines.indexOf(a.args.note);
+    if (k >= 0) lines.splice(k, 1);
+    fs.writeFileSync(a.args.brief, lines.join(text.includes('\r\n') ? '\r\n' : '\n'));
+  }
+  if (a.action === 'part' && a.args.linked && loadRoadmap(state).items[a.args.item]?.links.includes(`lane:${a.args.lane}`)) setLink(state, a.args.item, `lane:${a.args.lane}`, false, flags.as);
+  if (a.action === 'ask' && a.args.q && loadState(state).items[a.args.q]?.state === 'open') record(state, { kind: 'question', ev: 'withdraw', id: a.args.q, by: flags.as, data: { why: flags.why } });
+  undone();
+  out(`${col.id}: ${{ allow: `allow ${a.args?.pair} withdrawn - the judge holds the pair again from the next fill`, wait: `wait withdrawn - lane ${a.args.waiter} is no longer held for lane ${a.args.holder}`,
+    narrow: `${fwd(a.args.brief)}: the old Scope line is back`, part: `lane ${a.args.lane} is no longer a part of lane ${a.args.of}'s item${a.args.linked ? ` (lane:${a.args.lane} unlinked from ${a.args.item})` : ''}`,
+    ask: `the ask for ${a.args.want} is withdrawn${a.args.q ? ` (${a.args.q})` : ''}` }[a.action]}`);
   return 0;
 }
 
