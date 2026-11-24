@@ -5,6 +5,7 @@
 //   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level) } - the door reads it
 //   REPORT.md + report.json - the daily report, its one digest line and the main it read to; daily.started / daily.missed - a daily start, the ones that wrote nothing
 //   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (RM-43: the second voice's precision; the last one counts)
+//   outcomes.jsonl one line per finding the run end acted on { at, branch, lane, run, head, fix, rule, fp, file, line, action } (S1c: autofix | reverted | resume)
 // Waivers are records (WVR-n, waivers.jsonl); a block is open while no active waiver covers it.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +21,7 @@ function writeJ(f, v) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.w
 const holdsFile = state => path.join(slopDir(state), 'holds.json');
 const checksFile = state => path.join(slopDir(state), 'checks.jsonl');
 const ratingsFile = state => path.join(slopDir(state), 'ratings.jsonl');
+const outcomesFile = state => path.join(slopDir(state), 'outcomes.jsonl');
 
 export const slopHolds = state => readJ(holdsFile(state), {});
 export const slopReport = state => readJ(path.join(slopDir(state), 'report.json'), null);
@@ -67,12 +69,28 @@ export function voicePrecision(state, rules) {
   });
 }
 
+// ---------- SloppaChoppa 2 S1c (SPEC 3.5): the outcomes of the run end's autofix, and its demotion rule ----------
+export const slopOutcomes = state => (readText(outcomesFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l));
+// lane-collide's demotion rule (its sec. 4A.6): a class (a finding's rule) with DEMOTE.reverts reverted fixes among its last DEMOTE.last
+// fixes (one fix = one autofix commit) is off - nothing fixes it by code again; switching it back on is the owner's
+export const DEMOTE = { last: 10, reverts: 2 };
+/** the classes switched off -> Set(rule) */
+export function fixOff(state) {
+  const ev = new Map();   // class -> Map(fix commit -> reverted)
+  for (const o of slopOutcomes(state)) if (o.fix && (o.action === 'autofix' || o.action === 'reverted')) { const m = ev.get(o.rule) || ev.set(o.rule, new Map()).get(o.rule); m.set(o.fix, m.get(o.fix) || o.action === 'reverted'); }
+  return new Set([...ev].filter(([, m]) => [...m.values()].slice(-DEMOTE.last).filter(Boolean).length >= DEMOTE.reverts).map(([k]) => k));
+}
+/** the fixes reverted at a head of a branch (a resume's end at the same head does not try them again) */
+export const revertedAt = (state, branch, head) => slopOutcomes(state).some(o => o.action === 'reverted' && o.branch === branch && o.head === head);
+
 /**
  * The one host write. payload.type:
  *  check  { branch, lane?, run?, base, head, hash (the rule set's), blocks, findings } -> one line in checks.jsonl
  *         (the new findings of every level) + the branch's hold set (blocks) or dropped (none); -> { open, check }
  *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }), main (the sha the landed-unchecked list ran to) } -> the report files
  *  rating { fp, up (true: the finding is right), by } -> one line in ratings.jsonl; only a stored model finding is rated -> { rating }
+ *  outcome { branch, lane?, run?, head (the unfixed head), fix? (the autofix commit), action, findings } -> one line per finding in
+ *         outcomes.jsonl; a class this switches off is said ONCE on the digest's slop line (report.json; the next daily replaces it) -> { off }
  */
 export function hostWrite(state, payload) {
   if (payload.type === 'check') {
@@ -107,6 +125,18 @@ export function hostWrite(state, payload) {
     fs.mkdirSync(slopDir(state), { recursive: true });
     fs.appendFileSync(ratingsFile(state), JSON.stringify(rating) + '\n');
     return { rating };
+  }
+  if (payload.type === 'outcome') {
+    const was = fixOff(state), at = new Date().toISOString();
+    fs.mkdirSync(slopDir(state), { recursive: true });
+    fs.appendFileSync(outcomesFile(state), payload.findings.map(f => JSON.stringify({ at, branch: payload.branch ?? null, lane: payload.lane ?? null, run: payload.run ?? null, head: payload.head,
+      fix: payload.fix ?? null, rule: f.rule, fp: f.fp, file: f.file, line: f.line, action: payload.action }) + '\n').join(''));
+    const off = [...fixOff(state)].filter(k => !was.has(k));
+    if (off.length) {
+      const rep = slopReport(state) || { day: null, at: null, main: null, line: 'slop: no daily report yet' };
+      writeJ(path.join(slopDir(state), 'report.json'), { ...rep, line: `${rep.line}; autofix OFF for ${off.join(', ')}: ${DEMOTE.reverts} of its last ${DEMOTE.last} fixes turned the Done check red` });
+    }
+    return { off };
   }
   throw new Error(`hostWrite: unknown payload type ${payload.type}`);
 }

@@ -2,6 +2,7 @@
   "id": "K1",
   "level": "BLOCK",
   "kind": "diff-check",
+  "fix": [{"msg": "trailing whitespace"}, {"msg": "new blank line at EOF"}],
   "title": "a conflict marker or a whitespace error in an added line",
   "explain": {
     "what": "An added line holds a merge conflict marker (<<<<<<<, =======, >>>>>>>) or a whitespace error such as trailing spaces.",
