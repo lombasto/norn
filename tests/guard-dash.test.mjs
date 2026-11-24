@@ -61,8 +61,8 @@ test('GET /api/guard: code, tests and the instruction scan in one ranked list, e
   } finally { await f.done(); }
 });
 
-test('Slop sits in More under Health beside Usage, Tests and Context; chips in place on Docs', () => {
-  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'context']);
+test('Slop sits in More under Health beside Usage, Tests, Code and Context; chips in place on Docs', () => {
+  assert.deepEqual(MORE.find(g => g[0] === 'Health')[1], ['spend', 'slop', 'tests', 'code', 'context']);
   assert.match(renderMore('slop', {}), /data-tab="slop" aria-current="page"/);
   // META-UX-BUILD S3: the Docs list carries each file's finding count (the same scan findings the Guard lists)
   const docs = renderTab('docs', { files: 2, groups: [{ id: 'project', label: 'Project docs', n: 2, rows: [{ key: 'doc-0', name: 'Plan', path: 'P', exists: true, findings: 0 }, { key: 'doc-1', name: 'Spec', path: 'S', exists: true, findings: 1 }] }] }, {});
