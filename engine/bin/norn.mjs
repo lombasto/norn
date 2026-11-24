@@ -27,7 +27,7 @@ import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, readyWords } from '../lib/after.mjs';
 import { loadRoadmap, setCaveat, setLink, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
-import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, applyRefusal, applyNeed, needsDecision, menuOf, REMEDIES, partRefusal, narrowScope, takenBy, namesDropped, collidePolicy, pairKey } from '../lib/collide.mjs';
+import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, applyRefusal, applyNeed, needsDecision, menuOf, REMEDIES, partRefusal, narrowScope, takenBy, namesDropped, collidePolicy, pairKey, foldRefusal } from '../lib/collide.mjs';
 import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction } from '../lib/intents.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
@@ -64,7 +64,7 @@ import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
 import { deliverableConfig, loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve, latchMerged, closeLandedQuestions } from '../lib/deliverables.mjs';
-import { tickLanes, othersShipped } from '../lib/lifecycle.mjs';
+import { tickLanes, othersShipped, foldFacts, applyFold, undoFold } from '../lib/lifecycle.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
 import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
 import { mergeConfig } from '../lib/mergecfg.mjs';
@@ -97,7 +97,7 @@ import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { sourceQuestion, SourceError } from '../lib/qsource.mjs';
 import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
-import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll, pausedHandoffs } from '../lib/pause.mjs';
+import { PauseError, setPause, pauseRun, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll, pausedHandoffs } from '../lib/pause.mjs';
 import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
@@ -2164,7 +2164,7 @@ function stuckCmd(argv, env, out, err) {
 
 // ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
 const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)'
-  + ' | list [--all] [--for checkin|controller|owner] [--json] | show COL-n [--json] | allow (COL-n | <lane a> <lane b>) [--kind K] | wait COL-n | narrow COL-n [--scope "<globs>"] | part COL-n [--of <lead lane>]'
+  + ' | list [--all] [--for checkin|controller|owner] [--json] | show COL-n [--json] | allow (COL-n | <lane a> <lane b>) [--kind K] | wait COL-n | narrow COL-n [--scope "<globs>"] | part COL-n [--of <lead lane>] | fold COL-n --into <kept lane> [--pause]'
   + ' | ask COL-n --want part|narrow|fold|wait|allow | undo COL-n [--action N]    (every write: --as checkin|controller|owner|dashboard --why W; who may apply what: SPEC 4A.3, policy.collide.apply_by)';
 function collideCmd(argv, env, out, err) {
   try {
@@ -2173,12 +2173,12 @@ function collideCmd(argv, env, out, err) {
       const a = argv[i];
       if (!a.startsWith('--')) { pos.push(a); continue; }
       const k = a.slice(2);
-      if (k === 'json' || k === 'all') { flags[k] = true; continue; }
-      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want', 'for'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      if (k === 'json' || k === 'all' || k === 'pause') { flags[k] = true; continue; }
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want', 'for', 'into'].includes(k)) throw new RunError(`unknown flag ${a}`);
       flags[k] = argv[++i];
     }
-    if (['list', 'show', 'allow', 'undo', 'wait', 'narrow', 'part', 'ask'].includes(pos[0])) return collideCase(pos, flags, env, out);
-    if (pos[0] !== 'plan') throw new RunError(`${pos[0] ? `unknown verb ${pos[0]}` : 'collide needs a verb'} (plan, list, show, allow, wait, narrow, part, ask, undo)`);
+    if (['list', 'show', 'allow', 'undo', 'wait', 'narrow', 'part', 'ask', 'fold'].includes(pos[0])) return collideCase(pos, flags, env, out);
+    if (pos[0] !== 'plan') throw new RunError(`${pos[0] ? `unknown verb ${pos[0]}` : 'collide needs a verb'} (plan, list, show, allow, wait, narrow, part, ask, fold, undo)`);
     if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
     if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
     const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
@@ -2217,7 +2217,7 @@ function collideCmd(argv, env, out, err) {
 }
 // lane-collide S1b: the cases (COL-n) - list, show, and the two writes of S1b: allow (the pair ruling that releases a hold; SPEC 4A.3 says
 // who may) and undo (a hold, an after or a told is nobody's choice - it ends by itself, or by an allow). S2a: wait, narrow, part, ask,
-// each checked against policy.collide.apply_by, and their undo. A worker run applies nothing (META_RUN_ID set and no check-in /
+// each checked against policy.collide.apply_by, and their undo; S2b: fold (lifecycle.mjs does its steps). A worker run applies nothing (META_RUN_ID set and no check-in /
 // controller role), as in round 1.
 const caseLine = c => { const a = actionsOf(c), d = c.data; return `${c.id} ${c.state} ${d.kind}${d.grade ? ` (${d.grade})` : ''} ${d.verdict} ${d.a?.lane ?? '?'} > ${d.b?.lane ?? '?'} door ${d.door ?? '-'}${a.length ? ` - ${a.map(x => x.action + (x.undone ? ' (undone)' : '')).join(', ')}` : ''}`; };
 const STRICTEST = { territory: 'exclusive' };   // an allow of a whole kind with no case behind it is judged at the kind's strictest grade
@@ -2270,6 +2270,7 @@ function collideCase(pos, flags, env, out) {
   if (col.state !== 'open') throw new RunRefused(`${col.id} is ${col.state}: its cause is gone`, 3);
   const d = col.data, A = d.a.lane, B = d.b.lane;
   if (verb === 'ask') return collideAsk(state, col, flags, pol, out);
+  if (verb === 'fold') return collideFold(state, col, flags, project, out);
   refuse(applyRefusal(flags.as, verb, d.kind, d.grade, pol));
   const cfg = deliverableConfig(project || {}), g = gatherIntents({ state, repo: project?.root, main: cfg.main, remote: cfg.remote, now: Date.now(), home: homeOf(state)?.id ?? null });
   const a = g.intents.find(x => x.lane === (verb === 'part' && flags.of ? flags.of : A)), b = g.intents.find(x => x.lane === B);
@@ -2294,6 +2295,29 @@ function collideCase(pos, flags, env, out) {
   const dec = needsDecision(verb, d.kind, d.grade, pol) ? remedyDecision(state, col, verb, flags) : null;
   caseAction(state, col.id, verb, { by: flags.as, auto: false, args: { ...act, ...(dec ? { dec } : {}) }, why: flags.why });
   out(`${col.id}: ${said}${dec ? ` (${dec})` : ''}`);
+  return 0;
+}
+// S2b (SPEC 4A.4 fold): keep one lane of the case, fold the other into it. Behind a live run on the folded lane the fold is pending (that run is
+// never stopped; --pause sends it the pause order) and the tick applies it when the run ends; else lifecycle.mjs applyFold does steps 1 to 5 now
+function collideFold(state, col, flags, project, out) {
+  const d = col.data, into = flags.into, lane = into === d.a.lane ? d.b.lane : into === d.b.lane ? d.a.lane : null;
+  if (!lane) throw new RunError(`fold needs --into ${d.a.lane} or ${d.b.lane} (the lane kept)`);
+  const cfg = deliverableConfig(project || {}), f = foldFacts(state, { lane, into, repo: cfg.repo || project?.root || null, main: cfg.main, remote: cfg.remote });
+  const pol = project?.policy?.collide, why = foldRefusal({ role: flags.as, kind: d.kind, grade: d.grade, lane, into, homes: [d.a.home, d.b.home], leads: f.leads, commits: f.commits.length, live: f.live, keepArchived: f.keepArchived, col: col.id, policy: pol });
+  if (why) throw new RunRefused(why, 3);
+  if (flags.pause && !['controller', 'owner', 'dashboard'].includes(flags.as)) throw new RunRefused("--pause is the controller's or the owner's (pause.mjs PAUSERS)", 3);
+  if (flags.pause && !f.live) throw new RunError(`--pause: lane ${lane} has no live run`);
+  const dec = flags.as !== 'checkin' && needsDecision('fold', d.kind, d.grade, pol) ? remedyDecision(state, col, 'fold', flags) : null;
+  if (f.live) {
+    let mail = null;
+    if (flags.pause) try { mail = pauseRun(state, { run: f.live, by: flags.as, why: `folded into ${into} (${col.id})` }).mail; } catch (e) { if (e instanceof PauseError) throw new RunRefused(e.message, 3); throw e; }
+    caseAction(state, col.id, 'fold', { by: flags.as, auto: false, args: { lane, into, pending: f.live, ...(mail ? { paused: mail } : {}), ...(dec ? { dec } : {}) }, why: flags.why });
+    out(`${col.id}: fold - pending: ${f.live} runs on lane ${lane} (a live run is never stopped); lane ${lane} is folded into lane ${into} when it ends${mail ? ` - pause order sent (${mail})` : ''}${dec ? ` (${dec})` : ''}`);
+    return 0;
+  }
+  const a = applyFold(state, { col: col.id, by: flags.as, why: flags.why, facts: f });
+  caseAction(state, col.id, 'fold', { by: flags.as, auto: false, args: { ...a, ...(dec ? { dec } : {}) }, why: flags.why });
+  out(`${col.id}: fold - lane ${lane} is folded into lane ${into}: ${a.file} (${a.sources.length} source${a.sources.length === 1 ? '' : 's'}, sha256 checked); ${a.moved.length} queued run${a.moved.length === 1 ? '' : 's'} moved${a.moved.length ? ` (${a.moved.map(m => `${m.from} -> ${m.to}`).join(', ')})` : ''}; lane ${lane} ${a.lane_after ?? a.lane_before}${a.commits_n ? `; ${a.commits_n} commit${a.commits_n === 1 ? '' : 's'} on ${a.branch} for lane ${into} to merge` : ''}${dec ? ` (${dec})` : ''}`);
   return 0;
 }
 // SPEC 4A.3: a remedy in the controller's or the owner's column is a recorded decision, linked to its case
@@ -2362,6 +2386,15 @@ function collideUndo(state, col, flags, pol, out) {
     setCaveat(state, a.args.item, a.args.before, flags.as);
     undone();
     out(`${col.id}: ${a.args.item}'s caveat is back to its old text - the tick does not note it again`);
+    return 0;
+  }
+  if (a.action === 'fold') {   // S2b: an applied fold reversed (a pending one with it); a pending one not applied yet is only withdrawn
+    const F = x => ({ ...x.args, i: x.i, undone: x.undone }), done = a.args?.pending && acts.find(x => x.action === 'fold' && x.args?.pending_of === a.i && !x.undone);
+    const t = F(done || a), n2 = acts.indexOf(done || a) + 1;
+    if (flags.as === 'checkin' && (t.commits_n || t.pending)) throw new RunRefused(`${col.id} action ${n2}: a check-in undoes only an empty fold - the controller's (norn collide ask ${col.id} --want fold)`, 3);
+    const said = t.pending ? [] : undoFold(state, t, { col: col.id, by: flags.as });
+    for (const i of [t.i, ...(Number.isInteger(t.pending_of) ? [t.pending_of] : [])]) record(state, { kind: 'collision', ev: 'undo', id: col.id, by: flags.as, data: { action: i, why: flags.why } });
+    out(`${col.id}: ${t.pending ? `the pending fold of lane ${t.lane} is withdrawn` : `the fold is undone - lane ${t.lane} is back`}${said.length ? `; ${said.join('; ')}` : ''}`);
     return 0;
   }
   if (!['allow', 'wait', 'narrow', 'part', 'ask'].includes(a.action)) throw new RunRefused(`${col.id} action ${n} (${a.action}) has no undo: ${a.action === 'told' ? 'it was information' : 'a hold ends by itself when the holder lands, or by norn collide allow'}`, 3);
