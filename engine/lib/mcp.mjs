@@ -99,13 +99,16 @@ export function needsYou(i, h = null, stateDir = null) {
 const CTL = ['controller', 'chat'], CK = ['controller', 'checkin', 'chat'], ALL = ['controller', 'checkin', 'worker', 'chat'], SETUP = ['setup'], CHAT = ['chat'];
 const CONTROLLERS = ['controller', 'chat'];
 const EVENTS = ['apply', 'supersede', 'withdraw', 'park', 'unpark', 'overrule', 'revoke', 'done'];
+const COLLIDE_ACTIONS = ['list', 'show', 'wait', 'allow', 'narrow', 'part', 'undo', 'ask'];
 export const TOOLS = [
   { name: 'norn_boot', profiles: CK, description: 'Role pack (your instructions) plus a state digest. Call first in every session.',
     schema: obj({ role: S.str('', { enum: ['controller', 'checkin'] }) }, ['role']), run: boot },
   // META-PLAN R1: the plan rides on norn_status (view plan) - the controller profile is capped at 16 tools (as META-GTP-ASK on norn_run_show)
-  { name: 'norn_status', profiles: ALL, description: 'STATUS.md of the project (budget, caps, records), at most 60 lines; view plan = what happens next, and when.',
+  // lane-collide S2a: the collide plan and the ledger ride on it too (norn_ledger became view ledger: the controller stays at 16 tools)
+  { name: 'norn_status', profiles: ALL, description: 'STATUS.md of the project (budget, caps, records), at most 60 lines; view plan = what happens next; collide; ledger (tail).',
     schema: obj({ project: S.str('project name (optional; this server serves one project)'),
-      view: S.str('status (default) | plan: up next, chains, landing next, usage forecast | instructions: the files that steer agents, ~tokens, cost today, hints (read-only)', { enum: ['status', 'plan', 'instructions'] }) }), run: status },
+      view: S.str('status (default) | plan: up next, chains, landing next, usage forecast | instructions: the files that steer agents, ~tokens, cost today, hints (read-only) | collide: the open lanes and their collisions, each with the pick of SloppaChoppa | ledger: its last lines (checkin / controller)', { enum: ['status', 'plan', 'instructions', 'collide', 'ledger'] }),
+      tail: S.int(1, 40) }), run: status },
   { name: 'norn_inbox', profiles: CK, description: 'Needs-you items (open / answered-unapplied questions, parked lanes, unreviewed runs) plus a cursor.',
     schema: obj({ project: S.str(), since_seq: S.int(0), since_runs_seq: S.int(0) }), run: inbox },
   { name: 'norn_records', profiles: CK, description: 'Record rows: questions, decisions, directives, lanes, runs (filter by kind / state / id / lane).',
@@ -139,8 +142,10 @@ export const TOOLS = [
   // META-GTP-MAIL delivery (b): the mailbox of the run this server serves (META_RUN_ID) - for executors without the mail hook
   { name: 'norn_mail', profiles: ['worker'], description: 'Your mail: check (takes delivery of unread mail), send (to your parent, role:checkin, role:controller or your epic), ack MAIL-n.',
     schema: obj({ action: S.str('', { enum: ['check', 'send', 'ack'] }), to: S.str('RUN-n | role:checkin | role:controller'), subject: S.str(), body: S.str('<= 2 KB'), urgent: S.bool, id: S.str('MAIL-n (ack)') }, ['action']), run: mailTool },
-  { name: 'norn_ledger', profiles: CK, description: 'Last lines of the project ledger.',
-    schema: obj({ tail: S.int(1, 40) }), run: ledger },
+  // lane-collide S2a (SPEC 4A.4 MCP): the remedy menu through the CLI's verbs, with this server's role (SPEC 4A.3 decides who may)
+  { name: 'norn_collide', profiles: ['controller', 'checkin'], description: 'Collision cases (COL-n): list, show; a remedy wait | allow | narrow | part; ask (hand it to the role that may); undo.',
+    schema: obj({ action: S.str('', { enum: COLLIDE_ACTIONS }), case: S.str('COL-n'), why: S.str('required for a write'), scope: S.str('narrow: the globs to keep'), kind: S.str('allow: one kind'),
+      of: S.str('part: the lead lane'), want: S.str('ask: the remedy', { enum: ['part', 'narrow', 'fold', 'wait', 'allow'] }), for: S.str('list: checkin | controller | owner'), n: S.int(1) }, ['action']), run: collideTool },
   // META-CONTROLLER C3 (SPEC sec. 3): the three verbs the chat needs to do what the chat controller does today (profile chat only)
   { name: 'norn_show', profiles: CHAT, description: "Show a file or image inline in the owner's thread (the project root, its state, the briefs dir, run / lane worktrees and NOTES folders only).",
     schema: obj({ path: S.str('absolute path'), caption: S.str() }, ['path']), run: showTool },
@@ -224,6 +229,12 @@ function status(a, ctx) {
     const instructions = JSON.parse(r.out);
     return { text: formatInstructions(instructions), data: { instructions } };
   }
+  if (a.view === 'collide') {   // lane-collide S2a: norn collide plan, read-only
+    const p = ctx.cliRun(['collide', 'plan', '--json']), t = ctx.cliRun(['collide', 'plan']);
+    if (p.code) throw new ToolError(p.err || p.out, p.code);
+    return { text: t.out, data: { collide: JSON.parse(p.out) } };
+  }
+  if (a.view === 'ledger') { if (!['checkin', ...CONTROLLERS].includes(ctx.profile)) bad(`view ledger is for the checkin / controller profiles, not ${ctx.profile}`); return ledger(a, ctx); }
   const r = ctx.cliRun(['status']);
   if (r.code) throw new ToolError(r.err || r.out, r.code);
   const text = tail(path.join(ctx.state, 'STATUS.md'), 10000).split('\n').slice(0, 60).join('\n');
@@ -374,6 +385,23 @@ function settings(a, ctx) {
   const g = genAfterPolicy(p);   // DEC-362: the targets are regenerated from the sources, never written directly
   const gl = g.ran ? `; norn gen: ${g.lines.join('; ')}${g.problems.length ? `; PROBLEM ${g.problems.join('; PROBLEM ')}` : ''}` : `; ${g.why}`;
   return { text: `${a.set.key} ${JSON.stringify(diff[0].from)} -> ${JSON.stringify(diff[0].to)}${more}; wrote ${written.map(fwd).join(', ') || 'nothing'}${gl}`, data: { diff, written: written.map(fwd), gen: g } };
+}
+// norn_collide: one CLI call per write (the CLI refuses a role below the cell: exit 3); list / show read the JSON and the text
+function collideTool(a, ctx) {
+  if (a.action !== 'list' && !a.case) bad(`${a.action} needs case (COL-n)`);
+  const base = ['collide', a.action, ...(a.case ? [a.case] : []), ...(a.for ? ['--for', a.for] : [])];
+  if (['list', 'show'].includes(a.action)) {
+    const j = ctx.cliRun([...base, '--json']), t = ctx.cliRun(base);
+    if (j.code) throw new ToolError(j.err || j.out, j.code);
+    const v = JSON.parse(j.out);
+    return { text: t.out, data: a.action === 'list' ? { cases: v } : { case: v } };
+  }
+  if (!a.why) bad(`${a.action} needs why`);
+  const args = [...base, '--as', ctx.writer, '--why', a.why];
+  for (const [k, f] of [['scope', 'scope'], ['kind', 'kind'], ['of', 'of'], ['want', 'want'], ['n', 'action']]) if (a[k] !== undefined) args.push('--' + f, String(a[k]));
+  const r = ctx.cliRun(args);
+  if (r.code) throw new ToolError(r.err || r.out, r.code);
+  return { text: r.out, data: { case: a.case, action: a.action } };
 }
 function ledger(a, ctx) {
   const p = needProject(ctx);
