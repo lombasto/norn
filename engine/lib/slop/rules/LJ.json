@@ -79,6 +79,7 @@
   },
   "levels": {"no-unused-vars":"BLOCK","no-duplicate-imports":"BLOCK","no-debugger":"BLOCK","no-console":"BLOCK","no-warning-comments":"BLOCK","no-restricted-properties":"BLOCK","parse":"BLOCK","config-changed":"BLOCK","*":"WARN"},
   "shadow_rules": ["*"],
+  "fix": [{"sub": "no-unused-vars", "suggestion": "removeVar", "in": "import"}],
   "fixture": {
     "hit": {
       "base": {
