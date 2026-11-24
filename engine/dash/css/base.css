@@ -34,7 +34,7 @@ button.ghost{background:transparent}
 button.strong{border-color:var(--ink);font-weight:600}
 a{color:inherit}
 .spacer{flex:1}.mute{color:var(--mute)}.small{font-size:12px}.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
-/* NORN-UI-NAV: the bar (shell.mjs renderBar) - Talk, Lanes, Runs, Inbox, More on every page, one row, a glyph beside each word; a
+/* NORN-UI-NAV: the bar (shell.mjs renderBar) - Controller, Lanes, Runs, Inbox, More on every page, one row, a glyph beside each word; a
    phone pins it to the bottom (thumb reach). The More sheet: a popover under More on a desktop, a bottom sheet on a phone. The status
    strip under the header (renderStatus): running / cap, usage, the next check-in, the needs count */
 .pagebar{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
