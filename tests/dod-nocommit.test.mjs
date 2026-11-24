@@ -10,7 +10,7 @@ import { doneCheck } from '../engine/lib/dod.mjs';
 import { parseReady } from '../engine/lib/ready.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const NONE = 'Scope: none (a review; no code)\nTests: none - a design run; nothing is committed\nDone: the decision recorded\n';
 const dodOf = text => ({ ready: parseReady(text), tests: { mode: 'light' } });
 const commit = (wt, file, msg) => { fs.mkdirSync(path.dirname(path.join(wt, file)), { recursive: true }); fs.writeFileSync(path.join(wt, file), msg + '\n'); git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', msg); };
