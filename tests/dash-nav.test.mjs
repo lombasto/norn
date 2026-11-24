@@ -63,20 +63,20 @@ test('keyed refetch: a pulse refreshes the strip only; a rec refetches the open 
   assert.deepEqual(refetchFor('spend', keysOf('derived', {})), { strip: true, page: true });
 });
 
-test('the status strip: running / cap, usage vs guard and hourly cap, the next check-in, the needs count; "…" until its data comes', () => {
+test('the status strip: running (never the machine sum of the caps), usage vs guard and hourly cap, the next check-in, the needs count; "…" until its data comes', () => {
   const none = renderStatus(null, { look: 'classic' });
   assert.match(none, /id="status-strip"/); assert.equal((none.match(/…/g) || []).length, 4);
   const s = { needs_you: 2, running: { claude: { n: 1, cap: 2 }, codex: { n: 1, cap: 5 } }, usage: { weeklyUsed: 40, weeklyStopPct: 95, rate: 0.2, cap: 0.43, guard: 'ok' },
     checkin: { next: '2030-01-10T12:30:00.000Z', every_min: 30 }, strip: { landed_today: 3, last_landed: null, running: 2, parked: 1, questions: 2, queued: 4 } };
   const txt = h => h.replace(/<[^>]+>/g, '');
   const c = txt(renderStatus(s, { look: 'classic', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
-  assert.match(c, /2 running \/ 7/); assert.match(c, /40\.0 % of 95 %/); assert.match(c, /0\.20 %\/h of 0\.43/); assert.match(c, /next check-in/); assert.match(c, /2 need you/);
+  assert.match(c, /2 running/); assert.doesNotMatch(c, /running \/ 7/, 'never claude cap + codex cap (dash-owner-1123 s.9)'); assert.match(c, /40\.0 % of 95 %/); assert.match(c, /0\.20 %\/h of 0\.43/); assert.match(c, /next check-in/); assert.match(c, /2 need you/);
   assert.ok(!/Urd|Verdandi|Skuld/.test(c), 'classic: plain labels');
   const n = txt(renderStatus(s, { look: 'norn', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
-  assert.match(n, /Urd[^]*Verdandi[^]*Skuld/); assert.match(n, /2 running \/ 7/); assert.match(n, /2 need you/);
+  assert.match(n, /Urd[^]*Verdandi[^]*Skuld/); assert.match(n, /2 running/); assert.doesNotMatch(n, /running \/ 7/); assert.match(n, /2 need you/);
   // merge-slot: the merge slot is its own pool beside the lane workers
   const m = txt(renderStatus({ ...s, running: { ...s.running, merge: { n: 1, cap: 1 } } }, { look: 'classic', project: 'p', now: Date.parse('2030-01-10T12:00:00.000Z') }));
-  assert.match(m, /2 running \/ 7 · merge 1 \/ 1/);
+  assert.match(m, /2 running · merge 1 \/ 1/);
 });
 
 test('the header: the cog links Settings, the check-ins status line, the worker pool counted apart; times print local, no Z', () => {

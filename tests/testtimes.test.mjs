@@ -129,7 +129,7 @@ test('repoFile (the code viewer\'s guard): only a file inside the project repo -
   if (linked) assert.equal(repoFile(repo, 'tests/link/b.txt'), null, 'a junction / link out of the repo');
 });
 
-// the dashboard: /api/tests = the summary (+ the open alerts the test machinery raised), ?part= one sub-view; /api/tests/source opens a
+// the dashboard: /api/tests = the summary (+ the open alerts the test machinery raised), ?part= one sub-view; /api/source opens a
 // test's file only from inside the project repo
 async function tabFixture() {
   const { fixture } = await import('./helpers/dash-fixture.mjs'), { record } = await import('../engine/lib/records.mjs');
@@ -145,20 +145,20 @@ async function tabFixture() {
   return f;
 }
 test('Tests tab: the summary (numbers, alerts as Inbox questions) and each sub-view\'s part; Impact for files; the source guard; beside Spend in More', async () => {
-  const { loadTab, loadParts, renderTab } = await import('../engine/dash/ui.mjs'), { TESTS_SUBS, codeView } = await import('../engine/dash/testparts.mjs');
+  const { loadTab, renderTab } = await import('../engine/dash/ui.mjs'), { TESTS_SUBS, codeView } = await import('../engine/dash/testparts.mjs');
   const { renderMore } = await import('../engine/dash/shell.mjs');
   const f = await tabFixture(), get = async p => (await f.get(p)).data, now = Date.parse('2026-11-19T12:00:00Z');
   try {
-    const view = async (sub, batch) => { const d = await loadTab('tests', 'kestrel', get, { sub, batch }); return { d, html: renderTab('tests', { ...d, ...(await loadParts('tests', 'kestrel', d, get)), parts_loading: false }, { now }) }; };
+    const view = async (sub, batch) => { const d = await loadTab('tests', 'kestrel', get, { sub, batch }); return { d, html: renderTab('tests', d, { now }) }; };
     assert.deepEqual(TESTS_SUBS.map(x => x[1]), ['Suite', 'Costs and health', 'Impact', 'Run time'], '4 sub-views (CLAUDE.md: never a fifth)');
     const first = await loadTab('tests', 'kestrel', get);
-    assert.deepEqual([first.project, first.sub, first.parts_loading, first.git.points.length], ['kestrel', 'suite', true, 2]);
+    assert.deepEqual([first.project, first.sub, first.git.points.length], ['kestrel', 'suite', 2]);
     const s = await view('suite');
     assert.equal(s.d.alerts.length, 1);
     assert.match(s.html, /id="tests-alerts"[^]*failed 3 times under load[^]*data-act="answer"[^]*data-choice="a"[^]*quarantine this test - recommended[^]*data-tab="inbox"/);
     assert.match(s.html, /id="tests-sum"[^]*<b class="mono">805<\/b><span class="small mute">test cases \(git\)[^]*<b class="mono">0\.38:1<\/b><span class="small mute">test lines per code line[^]*alerts: they need you/);
-    for (const id of ['tests-time', 'tests-count', 'tests-ratio']) assert.match(s.html, new RegExp(`id="${id}"`), id);
-    assert.match(s.html, /aria-label="test cases per day \(tests\): 11-18 961, 11-19 805"/);   // UX review 6: the unit in the label
+    for (const re of [/id="tests-time"/, /data-chart="tests-count"/, /data-chart="tests-lines"/]) assert.match(s.html, re);
+    assert.match(s.html, /aria-label="test cases per day \(tests\), 2026-11-18 to 2026-11-19: test cases 805"/);   // UX review 6: the unit in the label
     assert.doesNotMatch(s.html, /id="tests-scope"/, 'git history there: no banner');
     const c = await view('costs');
     assert.match(c.html, /id="tests-merges"[^]*batch-3<\/b> <b class="mono">61 s<\/b>[^]*node engine\/bin\/ci-suite\.mjs/);
@@ -175,10 +175,10 @@ test('Tests tab: the summary (numbers, alerts as Inbox questions) and each sub-v
     assert.match(rt.html, /data-act="open-setting" data-setting="policy\.tests\.run_budget_min"/);
     assert.match(rt.html, /id="tests-rt-rows"><li data-run="RUN-\d+"/, "the fixture's worker run is listed");
     // the code viewer: inside the repo only
-    const r = await f.get('/api/tests/source?project=kestrel&file=tests/a.test.mjs');
+    const r = await f.get('/api/source?project=kestrel&file=tests/a.test.mjs');
     assert.equal(r.status, 200); assert.equal(r.data.lines, 80); assert.match(r.data.text, /two <slow>/);
     for (const bad of ['../secret.txt', 'tests/../../secret.txt', path.join(f.root, 'secret.txt'), '.git/config', ''])
-      assert.equal((await f.get(`/api/tests/source?project=kestrel&file=${encodeURIComponent(bad)}`)).status, 403, bad);
+      assert.equal((await f.get(`/api/source?project=kestrel&file=${encodeURIComponent(bad)}`)).status, 403, bad);
     const cv = codeView({ file: 'tests/a.test.mjs', text: r.data.text, line: 60 });
     assert.match(cv, /<tr id="srcl-60" class="focus" data-focus="1"><td class="ln mute">60<\/td><td class="lt"><code class="hljs"><span class="hljs-title function_">test<\/span>/);
     assert.match(cv, /&lt;slow&gt;/, 'escaped');
