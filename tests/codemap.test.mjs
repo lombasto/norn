@@ -71,7 +71,7 @@ function release(d, { tamper = false } = {}) {
   const sums = `# synthetic\n${Object.entries(files).map(([f, t]) => `${sha256(t)}  ${f}`).join('\n')}\n`;
   put(path.join(root, 'CHECKSUMS.txt'), sums);
   if (tamper) fs.appendFileSync(path.join(root, 'skills/floorplan/workflow.json'), ' ');
-  execFileSync('tar', ['-czf', 'a.tgz', 'fp-9.9.9'], { cwd: path.join(d, 'rel') });
+  execFileSync('tar', ['-czf', 'a.tgz', 'fp-9.9.9'], { cwd: path.join(d, 'rel'), windowsHide: true });
   const archive = fs.readFileSync(path.join(d, 'rel', 'a.tgz'));
   return { archive, pin: { manifest: { name: 'floorplan', version: '9.9.9', archive: 'https://example.invalid/fp.tgz', root: 'fp-9.9.9', skill: 'skills/floorplan' },
     lock: { archive_sha256: sha256(archive), checksums_sha256: sha256(sums), checksums_files: Object.keys(files).length } } };
@@ -96,7 +96,7 @@ test('floorplanHome: the archive checked against the lock, every file against CH
 // ---- a synthetic project repo + the fake model ----
 function world() {
   const d = mkTmp('meta-map-'), repo = path.join(d, 'repo'), state = path.join(d, 'state', 'kestrel'), env = { META_ROOT: path.join(d, 'meta') };
-  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim();
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', windowsHide: true }).trim();
   fs.mkdirSync(repo, { recursive: true }); g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
   put(path.join(repo, 'a.mjs'), 'export const a = 1;\n'); put(path.join(repo, 'sheets.txt'), '1');
   put(path.join(repo, 'docs', 'architecture.json'), JSON.stringify({ audience: 'developers', project: { name: 'kestrel' }, nodes: [{ id: 'app', label: 'App', kind: 'library', paths: ['**'] }] }));
@@ -121,7 +121,7 @@ test('drawMap: the first map from the seed (no architecture job), the descriptio
   assert.deepEqual([m.calls, m.weighted], [1, 6000]); assert.match(m.etag, /^"[0-9a-f]{16}"$/);
   assert.match(m.csp, /script-src 'sha256-AAAA'/, 'the map\'s own meta policy kept');
   assert.equal(fs.existsSync(path.join(w.repo, 'floorplan')), false, 'nothing written in the project repo');
-  assert.equal(execFileSync('git', ['-C', w.repo, 'status', '--porcelain'], { encoding: 'utf8' }), '');
+  assert.equal(execFileSync('git', ['-C', w.repo, 'status', '--porcelain'], { encoding: 'utf8', windowsHide: true }), '');
 });
 
 test('drawMap refresh: metered - under 0.05 % it redraws at the new sha; over it the refresh is skipped with one tick-log line and the map kept', async () => {
