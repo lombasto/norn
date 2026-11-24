@@ -9,7 +9,6 @@
 // one tick-log line. GET /code-map/ serves the file under its own sandboxed CSP (codeMapPage).
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { which, resolveShim } from './paths.mjs';
@@ -18,15 +17,15 @@ import { atomicWrite } from './policy.mjs';
 import { fromUsage } from './cost.mjs';
 import { toolCache } from './slop/tools.mjs';
 import { machineBudgetFile } from './runs.mjs';
+import { sha as sha256 } from './views.mjs';
+import { tickLog } from './tick.mjs';   // the skip's one line in the tick's own log
 
 const PIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'tools', 'floorplan');
 export const MAP_REFRESH_MAX_PCT = 0.05;
 const CALL_W = 0.6e6;   // weighted tokens per model job before a draw measured its own (the spike: 19.34 M over 32 calls)
 const CONC = 4, LOCK_STALE_MS = 2 * 3600e3, START_GAP_MS = 10 * 60e3;
-const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 export const mapDir = state => path.join(state, 'code', 'map');
 const git = (dir, args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const tickLine = (state, msg) => { try { fs.appendFileSync(path.join(state, 'tick.log'), `${new Date().toISOString()} ${msg}\n`); } catch { /* log only */ } };
 
 // ---- the pinned tool ----
 /** tools/floorplan's manifest + lock -> { manifest, lock } */
@@ -244,7 +243,7 @@ export async function drawMap({ state, repo, refresh = false, skill, ask, budget
     if (refresh && !prev?.sha) return { drawn: false, why: 'no map yet: `norn code map` draws the first one' };
     if (refresh && prev.sha === head) return { drawn: false, sha: head, why: `the map is at ${head}` };
     const skip = why => { atomicWrite(mapFile, JSON.stringify({ ...prev, skipped: { at: new Date().toISOString(), sha: head, why } }));
-      tickLine(state, `code map: refresh skipped at ${head}: ${why}; \`norn code map\` draws it`); return { drawn: false, sha: head, skipped: why }; };
+      tickLog(state, `code map: refresh skipped at ${head}: ${why}; \`norn code map\` draws it`); return { drawn: false, sha: head, skipped: why }; };
     const per = Number((budget ?? readJsonS(machineBudgetFile(env)) ?? {}).cacheR_per_pct);
     if (refresh && !(per > 0)) return skip('no plan calibration (budget cacheR_per_pct) to meter it by');
     skill ??= floorplanHome({ env });

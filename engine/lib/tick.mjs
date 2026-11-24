@@ -61,7 +61,7 @@ export const quietFlag = p => p.quiet_file || path.join(p.root || '', '.superpow
 export const LOCK_STALE_MIN = 50;   // checkin.ps1: a lock older than 50 min is taken over
 const META_CMD = path.join(ENGINE, 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
-const tickLog = (state, msg) => { try { fs.appendFileSync(path.join(state, 'tick.log'), `${new Date().toISOString()} ${msg}\n`); } catch { /* log only */ } };
+export const tickLog = (state, msg) => { try { fs.appendFileSync(path.join(state, 'tick.log'), `${new Date().toISOString()} ${msg}\n`); } catch { /* log only */ } };
 
 export function policyLine(B = {}) {
   const astra = B.max_astra ?? B.max_codex, sol = B.max_sol ?? B.max_codex;

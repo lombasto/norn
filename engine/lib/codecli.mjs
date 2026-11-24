@@ -13,7 +13,7 @@ import { drawMap, tickMap, mapAt } from './codemap.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
-  + '       norn code map [--refresh] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
+  + 'usage: norn code map [--refresh] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
   + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'lines', 'growth', 'churn', 'fan_in', 'file'];
 const FLAGS = { history: [], map: ['refresh!'] }, START_GAP_MS = 10 * 60e3;
