@@ -66,3 +66,20 @@ test('legacy bare mail already in a log keeps its meaning (bare_home a): home a 
   assert.deepEqual(listMail(a, { to: 'role:controller@a', open: true }).map(r => r.id), ['MAIL-a-1']);
   assert.deepEqual(listMail(b, { to: 'role:controller', open: true }), []);
 });
+
+test('a body_file that fits 2 KB goes in as the body, so the other home reads the text, not a path on this machine', () => {
+  const { a, b, sync } = homes(), f = path.join(a, 'note.txt');
+  fs.writeFileSync(f, 'the whole message');
+  const m = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'S', body_file: f });
+  assert.equal(m.data.body, 'the whole message');
+  assert.equal(m.data.body_file, undefined);
+  sync();
+  assert.equal(checkMail(b, { by: 'controller', to: 'role:controller', via: 'cli' })[0].text, 'the whole message');
+});
+
+test('a body_file over 2 KB: kept as a path for this home, refused for another home', () => {
+  const { a } = homes(), f = path.join(a, 'long.txt');
+  fs.writeFileSync(f, 'x'.repeat(3000));
+  assert.equal(sendMail(a, { by: 'controller', to: 'role:controller', subject: 'S', body_file: f }).data.body_file, f);
+  assert.throws(() => sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'S', body_file: f }), /another home carries its body inline/);
+});
