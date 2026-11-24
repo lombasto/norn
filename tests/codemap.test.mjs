@@ -109,7 +109,6 @@ function world() {
   return { d, repo, state, env, skill, ask, asked, budget, commit, head: () => g('rev-parse', '--short=12', 'HEAD') };
 }
 const mapDir = state => path.join(state, 'code', 'map');
-const tickLog = state => { try { return fs.readFileSync(path.join(state, 'tick.log'), 'utf8'); } catch { return ''; } };
 
 test('drawMap: the first map from the seed (no architecture job), the descriptions asked, index.html + map.json in <state>/code/map, never in the repo', async () => {
   const w = world();
@@ -141,8 +140,8 @@ test('drawMap refresh: metered - under 0.05 % it redraws at the new sha; over it
   m = JSON.parse(fs.readFileSync(path.join(mapDir(w.state), 'map.json'), 'utf8'));
   assert.equal(m.sha, s2, 'the drawn map stays'); assert.equal(m.skipped.sha, s3);
   assert.match(fs.readFileSync(path.join(mapDir(w.state), 'index.html'), 'utf8'), /sheets 2 described 2/);
-  const lines = tickLog(w.state).trim().split('\n').filter(l => l.includes('code map'));
-  assert.equal(lines.length, 1); assert.match(lines[0], new RegExp(`code map: refresh skipped at ${s3}: ~0\\.06 % > 0\\.05 % of plan \\(10 model jobs\\); \`norn code map\` draws it`));
+  const tp = { file: 'kestrel.json', root: w.repo }, lines = [1, 2].map(() => tickMap(tp, w.state, { metaCmd: 'norn.mjs', spawnFn: () => assert.fail('no start'), head: s3 }));
+  assert.equal(lines[1], null, 'the skip is said once'); assert.match(lines[0],new RegExp(`code map: refresh skipped at ${s3}: ~0\\.06 % > 0\\.05 % of plan \\(10 model jobs\\); \`norn code map\` draws it`));
   const owner = await drawMap({ state: w.state, repo: w.repo, skill: w.skill, ask: w.ask, budget: w.budget, env: w.env });   // the owner's draw: unmetered
   assert.equal(owner.drawn, true); assert.equal(JSON.parse(fs.readFileSync(path.join(mapDir(w.state), 'map.json'), 'utf8')).sha, s3);
   w.commit(1);

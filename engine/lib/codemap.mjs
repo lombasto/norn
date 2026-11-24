@@ -18,7 +18,6 @@ import { fromUsage } from './cost.mjs';
 import { toolCache } from './slop/tools.mjs';
 import { machineBudgetFile } from './runs.mjs';
 import { sha as sha256 } from './views.mjs';
-import { tickLog } from './tick.mjs';   // the skip's one line in the tick's own log
 
 const PIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'tools', 'floorplan');
 export const MAP_REFRESH_MAX_PCT = 0.05;
@@ -243,7 +242,7 @@ export async function drawMap({ state, repo, refresh = false, skill, ask, budget
     if (refresh && !prev?.sha) return { drawn: false, why: 'no map yet: `norn code map` draws the first one' };
     if (refresh && prev.sha === head) return { drawn: false, sha: head, why: `the map is at ${head}` };
     const skip = why => { atomicWrite(mapFile, JSON.stringify({ ...prev, skipped: { at: new Date().toISOString(), sha: head, why } }));
-      tickLog(state, `code map: refresh skipped at ${head}: ${why}; \`norn code map\` draws it`); return { drawn: false, sha: head, skipped: why }; };
+      return { drawn: false, sha: head, skipped: why }; };   // the tick says it, once (tickMap)
     const per = Number((budget ?? readJsonS(machineBudgetFile(env)) ?? {}).cacheR_per_pct);
     if (refresh && !(per > 0)) return skip('no plan calibration (budget cacheR_per_pct) to meter it by');
     skill ??= floorplanHome({ env });
@@ -292,7 +291,13 @@ export function codeMapPage(state, ifNoneMatch) {
  *  sha tried and when); no map yet = nothing (the first map is the owner's) -> the tick-log words | null */
 export function tickMap(p, state, { metaCmd, spawnFn, head, now = Date.now() } = {}) {
   const m = readJsonS(path.join(mapDir(state), 'map.json'));
-  if (!m?.sha || !head || head === m.sha || head === m.skipped?.sha) return null;
+  if (!m?.sha || !head || head === m.sha) return null;
+  if (head === m.skipped?.sha) {   // the skipped refresh's one digest line, in the tick's log (the tick writes these words)
+    const said = path.join(mapDir(state), 'skip.said');
+    try { if (fs.readFileSync(said, 'utf8') === head) return null; } catch { /* not said yet */ }
+    fs.writeFileSync(said, head);
+    return `code map: refresh skipped at ${head}: ${m.skipped.why}; \`norn code map\` draws it`;
+  }
   const mark = path.join(mapDir(state), 'refresh.started'), [was, at] = (() => { try { return fs.readFileSync(mark, 'utf8').split(' '); } catch { return []; } })();
   if (was === head || now - Number(at) < START_GAP_MS) return null;
   fs.writeFileSync(mark, `${head} ${now}`);
