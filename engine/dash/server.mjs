@@ -70,6 +70,7 @@ import { parseLedgerLine } from './ledger.mjs';
 import { ledgerConfig } from '../lib/ledger.mjs';
 import { loopOf, renameHome } from '../lib/sync.mjs';
 import { codeAt } from '../lib/codecli.mjs';
+import { codeMapPage } from '../lib/codemap.mjs';
 import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
@@ -2010,7 +2011,7 @@ data: ${JSON.stringify(l)}
       res.setHeader('Server-Timing', `app;dur=${(performance.now() - tr.t0).toFixed(1)}${tr.prime === null ? '' : `, prime;dur=${tr.prime.toFixed(1)}`}`);
       res.writeHead(status, { 'content-type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); };
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     try {
       const local = String(req.socket.localAddress ?? '').replace(/^::ffff:/, '');
       if (local !== '127.0.0.1') throw fail(403, 'Interface not served'); // 127.0.0.1 only: a phone comes in through the tunnel agent's local connection (C6, DEC-140 supersedes the game project's dashboard rule for this dashboard)
@@ -2036,6 +2037,7 @@ data: ${JSON.stringify(l)}
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('data-asset="wordmark"', `data-asset="wordmark"${(await existsA(path.join(ART, 'wordmark.png'))) ? ' src="/norn/art/wordmark.png"' : ''}`).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
         if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/prose.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/shell.mjs' || route === '/cells.mjs' || route === '/cards.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs' || route === '/activity.mjs' || route === '/testparts.mjs' || route === '/diffview.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/code-map/') { const r = codeMapPage(one(url).state, req.headers['if-none-match']); res.writeHead(r.status, r.headers); return void res.end(r.body); }   // Code > Map: the drawn Floorplan file under its own sandboxed CSP (codemap.mjs)
         if (route === '/lib/testcmd.mjs') return send(200, await readA(path.join(DASH, '..', 'lib', 'testcmd.mjs')), 'text/javascript; charset=utf-8');   // activity.mjs's one lib import (TEST-GOVERNANCE S1: the test-command classifier)
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
