@@ -28,7 +28,9 @@ function repoWith(base = { 'a.txt': 'a\n' }) {
   commit(dir, base, 'base');
   return dir;
 }
-const noTool = rule => (rule.kind === 'command' ? null : '[]');
+// the secrets scan (LS, every added line) finds nothing: an empty SARIF 2.1.0 log; the other tools an empty JSON list
+const EMPTY_SARIF = JSON.stringify({ version: '2.1.0', runs: [{ tool: { driver: { name: 'gitleaks' } }, results: [] }] });
+const noTool = rule => (rule.kind === 'command' ? null : rule.tool === 'sarif' ? EMPTY_SARIF : '[]');
 const K15 = loadRules().find(r => r.id === 'K15');
 // a synthetic WARN rule: a "HACK" marker in a .txt file
 const WARN = { id: 'W9', level: 'WARN', kind: 'pattern', title: 'a hack marker', files: ['**/*.txt'], patterns: ['\\bHACK\\b'], fixture: { hit: {}, miss: {} } };
@@ -170,7 +172,7 @@ test('the PR #6 replay: the job\'s check of a branch shaped like PR #6 fails wit
     { filePath: 'lib/server.mjs', messages: [msg(1, 31, 'readdirS')] },
     { filePath: 'tests/legacy.test.mjs', messages: [msg(1, 8, 'path')] },
     { filePath: 'tests/scope.test.mjs', messages: [msg(1, 7, 'unusedRoot')] }]) };
-  const tool = (rule, side) => (rule.kind === 'lint' ? lintOut[side] : rule.kind === 'ast' ? astOut[side] : noTool(rule, side));   // one ESLint run (LJ), one ast-grep scan (every ast rule: K2)
+  const tool = (rule, side) => (rule.tool === 'eslint' ? lintOut[side] : rule.kind === 'ast' ? astOut[side] : noTool(rule, side));   // one ESLint run (LJ), one ast-grep scan (every ast rule: K2)
   const r = slopCheck({ repo, base, head, tool, machine: false });
   assert.ok(!r.ran.includes('K14') && !r.findings.some(f => f.rule === 'K14'), 'the CI form: the machine rule is not run');
   assert.ok(r.findings.filter(f => f.unrun).every(f => /^M\d/.test(f.rule) && f.level === 'WARN'), 'only the model rules (gate F, no route) could not run: WARN, never a hold');
