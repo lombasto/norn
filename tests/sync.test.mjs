@@ -213,3 +213,57 @@ test('receipts: a publish where only polled_at moved is a heartbeat and rings no
   syncStep(b.cfg, 'tick', { now: T6, ring: () => rings.push('ring') });
   assert.deepEqual(rings, ['ring'], 'what b holds of a moved: rung');
 });
+
+// HOME-MAIL S3 (REPORT 3.3): one status row per home, exit 1 on a broken rule; the tick fetches itself when its own poll is stale
+const seenAt = (h, of, ms, held = {}) => w(path.join(h.st, 'homes', of, 'seen.json'), JSON.stringify({ polled_at: new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z'), held }) + '\n');
+const fetchedAt = (h, ms) => { const f = path.join(h.cfg.dir, 'sync-fetch.json'); w(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), fetched_at: new Date(ms).toISOString() })); };
+
+test('norn sync status: one row per home; exit 1 naming home b when its heartbeat is 20 min old; fresh = exit 0; no receipt = unknown', () => {
+  const { a } = mailHomes(), now = Date.now();
+  const run = (...args) => spawnSync(process.execPath, [META, 'sync', 'status', ...args, '--machine', a.mf], { env: { ...process.env, META_ROOT: a.meta, META_STATE: '', META_PROJECT: '' }, encoding: 'utf8', windowsHide: true });
+  fetchedAt(a, now); seenAt(a, 'b', now - 20 * 60000);
+  let r = run();
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /home b: heartbeat 20 min old/);
+  assert.match(r.stdout, /demo home b: last push 20\d\d-.*last poll 20\d\d-/);
+  r = run('--json');
+  assert.equal(r.status, 1);
+  const s = JSON.parse(r.stdout), rows = s.projects[0].homes;
+  assert.deepEqual(rows.map(x => [x.home, x.own]), [['a', true], ['b', false]]);
+  assert.equal(rows[1].heartbeat_min, 20); assert.ok(rows[1].last_push, 'the commit time of the fetched tip');
+  assert.deepEqual(s.broken.map(x => [x.rule, x.home]), [['heartbeat', 'b']]);
+  seenAt(a, 'b', now - 2 * 60000);
+  assert.equal(run().status, 0);
+  fs.rmSync(path.join(a.st, 'homes', 'b', 'seen.json'));
+  r = run();
+  assert.equal(r.status, 0, 'a home on the old version breaks no rule');
+  assert.match(r.stdout, /demo home b: .*last poll unknown/);
+});
+
+test('tickFetch: a stale own poll (or none) runs one fetch pass; a fresh one none; sync off none', async () => {
+  const { tickFetch } = await import('../engine/lib/sync.mjs');
+  const { b } = mailHomes(), calls = [], pass = cfg => { calls.push(cfg.home_id ?? 'x'); return { homes: [] }; };
+  const ft = path.join(b.cfg.dir, 'sync-fetch.json'), T = Date.parse(JSON.parse(fs.readFileSync(ft, 'utf8')).fetched_at);
+  assert.equal(tickFetch(b.cfg, { now: T + 60000, pass }), null); assert.deepEqual(calls, [], 'fresh (1 min): no pass');
+  assert.ok(tickFetch(b.cfg, { now: T + 3 * 60000, pass })); assert.equal(calls.length, 1, 'stale (3 min): one pass');
+  fs.rmSync(ft); tickFetch(b.cfg, { now: T, pass }); assert.equal(calls.length, 2, 'never fetched: one pass');
+  assert.equal(tickFetch({ ...b.cfg, remote: null }, { now: T + 9e6, pass }), null); assert.equal(calls.length, 2);
+  const real = tickFetch(b.cfg, { now: T + 9e6 });
+  assert.deepEqual(real.homes, ['a'], 'the default pass is the real fetch');
+});
+
+test('syncAlerts: a home whose heartbeat passes 15 min is told once per episode; unknown is never told', async () => {
+  const { syncAlerts } = await import('../engine/lib/sync.mjs');
+  const { a } = mailHomes(), T = T0 + 3600e3;
+  seenAt(a, 'b', T - 10 * 60000);
+  assert.deepEqual(syncAlerts(a.st, { now: T, polledAt: new Date(T).toISOString() }), []);
+  seenAt(a, 'b', T - 16 * 60000);
+  const [n] = syncAlerts(a.st, { now: T, polledAt: new Date(T).toISOString() });
+  assert.match(n.title, /home b: heartbeat 16 min old/);
+  assert.deepEqual(syncAlerts(a.st, { now: T + 60000, polledAt: new Date(T).toISOString() }), [], 'once per episode');
+  seenAt(a, 'b', T); syncAlerts(a.st, { now: T, polledAt: new Date(T).toISOString() });
+  seenAt(a, 'b', T - 20 * 60000);
+  assert.equal(syncAlerts(a.st, { now: T, polledAt: new Date(T).toISOString() }).length, 1, 'a new episode is told again');
+  fs.rmSync(path.join(a.st, 'homes', 'b', 'seen.json'));
+  assert.deepEqual(syncAlerts(a.st, { now: T + 9e6, polledAt: new Date(T + 9e6).toISOString() }), []);
+});

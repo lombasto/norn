@@ -737,6 +737,9 @@ function s5Cmd(argv, env, out, err) {
         // META-CATCH S1: ONE notice per sweep that handled dead runs ("machine rebooted at T: n runs lost, m relaunched"), class alert
         if (r.lost_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.lost_notice.title, body: r.lost_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: lost-runs notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (lost runs) failed: ${e.message}`)));
+        // HOME-MAIL S3: ONE notice per broken sync rule (sync.mjs syncAlerts: a stale heartbeat, our mail unacked there) + S2's urgent arrivals, class alert
+        for (const n of r.sync_notices || []) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: n.title, body: n.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: sync notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (sync) failed: ${e.message}`)));
         // META-CATCH S1: ONE notice per new stuck flag (stuck.mjs: stuck.json noticed), class alert
         for (const n of r.stuck_notices || []) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: n.title, body: n.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: stuck notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (stuck) failed: ${e.message}`)));
@@ -3284,7 +3287,7 @@ function syncJoinCmd(argv, env, out, err) {
 }
 
 // ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE + '\n       ' + SYNC_JOIN_USAGE;
+const SYNC_USAGE = 'norn sync status [--json] | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head; status = one row per home (last push, last poll, what it holds of ours, our mail unread there, mail waiting here), exit 1 on a broken rule (a heartbeat past policy.sync.heartbeat_min, our mail unacked past policy.mail.unacked_alert_min). On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE + '\n       ' + SYNC_JOIN_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
   if (argv[0] === 'join') return syncJoinCmd(argv, env, out, err);
@@ -3292,6 +3295,7 @@ function syncCmd(argv, env, out, err) {
   for (let i = 0; i < rest.length; i++) {
     if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }
     if (sub === 'reconcile' && rest[i] === '--as' && rest[i + 1] !== undefined) { f.as = rest[++i]; continue; }
+    if (sub === 'status' && rest[i] === '--json') { f.json = true; continue; }
     if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
     f.machine = rest[++i];
   }
@@ -3302,13 +3306,21 @@ function syncCmd(argv, env, out, err) {
     const id = cfg && homeIdOf(cfg);
     if (!id) { err('error: sync is off (it needs machine.json ledger.remote and a synced project: a state dir with home.json)'); return 1; }
     if (sub === 'status') {
-      const s = syncStatus(cfg);
+      // HOME-MAIL S3 (REPORT 3.3): each project's limits come from its policy (machine.json projects[].config)
+      const policyOf = name => { const e = (machine?.projects || []).find(p => p.name === name); try { return e ? loadProject(e.config, { meta: root }).policy : {}; } catch { return {}; } };
+      const s = syncStatus(cfg, { policyOf });
+      if (f.json) { out(JSON.stringify(s, null, 2)); return s.broken.length ? 1 : 0; }
       out(`home ${s.home} remote set  published ${s.head ? s.head.slice(0, 10) : 'never'}${s.head && s.head !== s.pushed ? ' (not pushed yet)' : ''}`);
       if (s.stopped) out(`publish stopped: ${s.stopped}`);
       out(s.fetched_at ? `fetched ${s.fetched_at}` : 'never fetched');
       if (s.fetch_error) out(`stale since ${s.fetched_at || 'never'}: the fetch at ${s.failed_at} failed (${s.fetch_error})`);
       if (s.gone.length) out(`gone (copies kept): ${s.gone.join(' ')}`);
-      return 0;
+      const ago = (t, n) => t ? `${t}${n === null ? '' : ` (${n} min)`}` : 'unknown', box = b => `${b.count}${b.count ? ` (oldest ${b.oldest_min} min)` : ''}`;
+      for (const p of s.projects) for (const h of p.homes) out(`${p.project} home ${h.home}${h.own ? ' (this home)' : ''}: last push ${h.last_push || 'unknown'}, last poll ${ago(h.last_poll, h.heartbeat_min)}`
+        + (h.own ? '' : `, holds mail ${h.holds?.['mail.jsonl'] ?? 'unknown'} of our ${h.ours['mail.jsonl'] ?? 0}, our mail unread there ${box(h.unread_there)}, waiting here ${box(h.waiting_here)}${h.gone ? ' (gone)' : ''}`));
+      for (const p of s.projects.filter(x => x.error)) out(`${p.project}: no home rows (${p.error})`);
+      for (const b of s.broken) out(`broken: ${b.project} ${b.why}`);
+      return s.broken.length ? 1 : 0;
     }
     if (sub === 'reconcile') {   // S5: the likely duplicate pairs across homes -> one owner card each; the answered cards apply first
       const by = f.as || env.META_ROLE;
