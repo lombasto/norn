@@ -20,9 +20,13 @@ export const LANGS = ['javascript', 'typescript', 'python', 'rust'];
 export const HOWS = ['exact', 'probed', 'config', 'name', 'ambiguous'];
 /** the how classes of a call site (docs/code-graph.md "Call edges"); `unresolved` carries its why */
 export const CALL_HOWS = ['local', 'import', 'qualified', 'self', 'method-unique', 'ambiguous', 'external', 'unresolved'];
-/** the precision of each (language, level, how) class, `<lang>/file/<how>` and `<lang>/call/<how>`: measured by stages S4a / S4b of RM-a-53,
- *  "unmeasured" before (never a made-up number) */
-export const TRUST = Object.fromEntries(LANGS.flatMap(l => [...HOWS.map(h => [`${l}/file/${h}`, 'unmeasured']), ...CALL_HOWS.map(h => [`${l}/call/${h}`, 'unmeasured'])]));
+/** the file-level precision measured by `norn-code grade files` (S4a; docs/code-graph.md "Trust" has the intervals, commits and dates):
+ *  JavaScript / TypeScript on Norn @ 67f997cb, Python and Rust on a private project (prism) @ 4c3b5e24 (Python `ambiguous` on Norn's fixture rows) */
+const FILE_MEASURED = { 'javascript/file/exact': 1, 'javascript/file/probed': 1, 'javascript/file/config': 1, 'javascript/file/ambiguous': 1, 'typescript/file/probed': 1,
+  'python/file/exact': 1, 'python/file/probed': 1, 'python/file/ambiguous': 1, 'rust/file/exact': 1, 'rust/file/probed': 1, 'rust/file/config': 1 };
+/** the precision of each (language, level, how) class, `<lang>/file/<how>` and `<lang>/call/<how>`: measured by stages S4a / S4b of RM-a-53
+ *  (a number in 0..1; "below bar" when under SPEC 5's bar: consumers drop it), "unmeasured" when no graded row (never a made-up number) */
+export const TRUST = Object.fromEntries(LANGS.flatMap(l => [...HOWS.map(h => [`${l}/file/${h}`, FILE_MEASURED[`${l}/file/${h}`] ?? 'unmeasured']), ...CALL_HOWS.map(h => [`${l}/call/${h}`, 'unmeasured'])]));
 /** the reader's thresholds, the one named place: rows = the most rows an answer holds (the rest is counted in `truncated`);
  *  index_ms = the wait for one norn-code index run (SPEC 6's hard cap of a cold index is 20 s) */
 export const LIMITS = { rows: 500, index_ms: 120000 };
