@@ -159,6 +159,15 @@ questions, the rule hits and the brief's Scope lines. A docs-only branch is not 
 quote, so new-only and waivers work as for every rule. At most 10 findings. With no route (the doors, `norn slop check`) each
 model rule is a WARN finding "could not run": the voice is advisory and holds nothing.
 
+**A key never reaches the voice** (`secretLines`, `withhold`, `engine/lib/slop/voice.mjs`). A key sent to the reader's provider has
+left the machine and is burnt, whatever the merge does. So the check runs every other rule, LS included, before the model rules, and
+before the prompt is built every hunk with an added line LS reported is dropped (matched by file and line, never by the line's
+text); the prompt names such a file on one line, `Withheld by the secrets rule: <file>`, and a hunk of the same file without a
+finding is shown as before. Another rule's hit on a reported line is left out of the rule hits too (its snippet is the line). Fail
+closed: LS on but could not run (no pin, no network, a wrong checksum, no scan of the head) builds no prompt, and each model rule is
+the WARN "could not run: the secrets rule LS could not run (<why>)". LS switched off for the project (overrides.json): the voice
+reads every hunk as before.
+
 **The risk rank decides which diffs a short day's reads go to** (RM-a-68; `voiceGate`, `engine/lib/slop/voice.mjs`). At each run end
 `left` = the cap minus today's reads, and `expected` = the run-end checks (stored checks with a run) a day over the last 7 full UTC
 days (`VOICE_GATE.history_days`) times the share of the UTC day still left, rounded up, at least 1 (this diff included). When `left
