@@ -326,15 +326,21 @@ No class is below the bar. The fixtures grade 100 % in every class (tests/code-g
   reads `bin/<bin>-<source sha12>` through `binOf`. A checkout's own engine/code-rs/target/release (or engine/hook-rs/...), which a
   plain `cargo build` in the crate writes, is read by nothing since #235; nor is `target/code/release/norn-code` itself, which is
   only the file a build copies from.
-- The fingerprint drop (#238): cargo's fingerprint of a crate ignores the crate's path, so in the shared target dir another
-  checkout's build of the same package leaves a fingerprint whose dep-info lists only ITS files. A build of this checkout's sources
-  (a new module is not among those files) was then called fresh, and the other checkout's binary copied out under this source's
-  hash. So before cargo runs, a part with no binary for its sources drops its own `release/.fingerprint/<bin>-<16 hex>` dirs: this
-  crate always compiles, its dependencies keep their fingerprints and stay built.
+- The clean before each build: cargo names a package's build state in the shared target dir without the crate's path, so a build
+  of one checkout's sources can be called fresh after another checkout's build of the same package, and that checkout's binary
+  copied out under this source's hash (measured with a two-source crate on cargo 1.90, 1.96 and 1.100: B built after A is "fresh"
+  and runs as A). So a part with no binary for its sources runs cargo's own `cargo clean -p <bin> --release --target-dir <target>
+  --manifest-path <this source's Cargo.toml>` (rustbin.mjs `cleanOf`; the package is named as its bin), then the build: this crate
+  always compiles, its dependencies stay built. Norn assumes no layout of cargo's target dir (cargo 1.100 keeps a package's state
+  under `release/build/<package>/<hash>/` and has no `release/.fingerprint`, which 1.90 and 1.96 have); the clean is cargo's to do,
+  and it gave each source its own binary on all three. A failed clean is the ONE reason, like a failed build (`... did not build
+  (cargo clean exit N: ...); clean command: ...; build command: ...`). tests/rustbin.test.mjs proves it with real cargo. Measured
+  on a 20-core Windows machine (2026-11-25, cargo 1.100): clean + build of norn-hook 3.8 s (a cold build 3.6 s: it has no
+  dependencies); of norn-code 88-97 s (the clean 0.8 s, then the crate and its LTO link) against a cold build of 109 s.
 - The build lock: builds of different sources of one part share the one output file `target/<part>/release/<bin>`, and cargo's
   own lock covers its build only. Between its release and the copy-out, another checkout's build could replace that file, and the
   wrong binary would be stored under this source's hash. `ensurePart` and `ensurePartAsync` hold `<store>/<part>.lock` (records.mjs
-  `withLock` / `withLockAsync`) from before the fingerprint drop until the content-named file is in place:
+  `withLock` / `withLockAsync`) from before the clean until the content-named file is in place:
   - a part whose file exists takes no lock; a second build of the SAME sources waits, then finds the file and builds nothing;
   - a lock older than `BUILD_MS` + 2 min (rustbin.mjs `LOCK`: a holder's cargo dies at `BUILD_MS`) is a dead holder's and is
     broken; a waiter gives up after twice that, with ONE reason naming the lock file;
