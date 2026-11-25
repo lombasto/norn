@@ -46,9 +46,7 @@ export const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true
 
 // ---------- policy (S1b: policy.collide, POLICY_DEFAULTS in policy.mjs) ----------
 const D = POLICY_DEFAULTS.collide;
-// S3: policy.collide.demote (SPEC 4.3) - its POLICY_DEFAULTS row and its Settings row come with S5 (policy.mjs is not this stage's)
-const DEMOTE = { undone: 2, of: 10 };
-const pol = p => ({ ...D, ...(p || {}), kinds: { ...D.kinds, ...(p?.kinds || {}) }, auto: { ...D.auto, ...(p?.auto || {}) }, demote: { ...DEMOTE, ...(D.demote || {}), ...(p?.demote || {}) } });
+const pol = p => ({ ...D, ...(p || {}), kinds: { ...D.kinds, ...(p?.kinds || {}) }, auto: { ...D.auto, ...(p?.auto || {}) }, demote: { ...D.demote, ...(p?.demote || {}) } });
 /** a project's policy (the whole policy object) -> its policy.collide with the defaults filled in */
 export const collidePolicy = policy => pol(policy?.collide);
 

@@ -78,6 +78,7 @@ test('lane-collide S1b: policy.collide ships the SPEC 4.3 defaults; collide.mjs 
   assert.deepEqual(c.commons,['tests/**','docs/**']);
   assert.equal(c.narrow_files,25); assert.equal(c.recent_days,3);
   assert.deepEqual(c.auto,{hold_exclusive:true,land_early:true,order_after:true,stale_fix:true,tell_worker:true,land_wait_min:45,remedies:[]});
+  assert.deepEqual(c.demote,{undone:2,of:10});
   const { collidePolicy }=await import('../engine/lib/collide.mjs');
   assert.deepEqual(collidePolicy({collide:{kinds:{exclusive:'warn'}}}).kinds,{...c.kinds,exclusive:'warn'});
   assert.deepEqual(collidePolicy({collide:{auto:{land_early:false}}}).auto,{...c.auto,land_early:false});
