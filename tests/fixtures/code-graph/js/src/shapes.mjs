@@ -27,5 +27,5 @@ function copy(a, b) {
   return a + b;
 }
 
-let counter = 0;
+let counter = copy(0, 0);
 export { Square, helper, counter, twice };
