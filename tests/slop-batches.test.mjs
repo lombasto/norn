@@ -10,6 +10,7 @@ import { ADVICE_FIX } from '../engine/lib/advice.mjs';
 import { guardRows, guardView, SLOP_FIX } from '../engine/lib/guardview.mjs';
 import { GUARD_SUBS, guardSummary, guardPart, BATCH_ROWS, KIND_ORDER, chipView } from '../engine/dash/guardparts.mjs';
 import { renderTab, loadParts, TABS } from '../engine/dash/ui.mjs';
+import { ageLine } from '../engine/dash/pages/slop.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -136,4 +137,22 @@ test('GET /api/guard?part=fix: batches with kinds; &batch= opens one; tab=slop o
       assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on a phone');
     } finally { await pg.close(); }
   } finally { await f.done(); }
+});
+
+// owner 11-24: every row says when it was first seen and how old it is, in the viewer's local days; a batch header gives its oldest row's
+test('every row prints its first-seen day and age (local days), every batch header its oldest', () => {
+  const local = (d, h) => new Date(2026, 2, d, h).getTime(), iso = ms => new Date(ms).toISOString();
+  const now = local(10, 1);
+  assert.equal(ageLine(iso(local(10, 0)), now), 'first seen 2026-03-10 · today');
+  assert.equal(ageLine(iso(local(9, 23)), now), 'first seen 2026-03-09 · 1 d', 'two hours ago but yesterday on the viewer clock: 1 d');
+  assert.equal(ageLine(iso(local(1, 12)), now), 'first seen 2026-03-01 · 9 d');
+  assert.equal(ageLine(null, now), '', 'no store: no age');
+  const rows = guardRows({ ins: insView() }).map((r, i) => ({ ...r, first_seen: iso(local(9 - (i % 3), 12)) }));
+  const g = { ...guardView(rows), project: 'kestrel', pending: false, slop: true, voice: {}, errors: [] };
+  const b = guardPart(g, 'fix').fix.batches.find(x => x.key === 'instr-c16|drafts');
+  assert.ok(b.rows.length < b.n && b.rows.every(r => r.batch_oldest === iso(local(7, 12))), 'every row carries the oldest of its batch first_seen, past the rows it shows');
+  const html = renderTab('slop', { ...guardSummary(g), sub: 'fix', limit: 40, ...guardPart(g, 'fix'), parts_loading: false }, { project: 'kestrel' });
+  assert.match(html, /class="gage">first seen \d{4}-\d\d-\d\d · (today|\d+ d)</, 'a row prints its age');
+  assert.match(html, /class="gage">oldest: first seen \d{4}-\d\d-\d\d · (today|\d+ d)</, 'a batch prints its oldest');
+  assert.equal((html.match(/<li class="grow/g) || []).length, (html.match(/<li class="grow[^]*?class="gage">first seen/g) || []).length, 'every row has one');
 });

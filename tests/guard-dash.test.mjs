@@ -12,6 +12,8 @@ import { MORE, renderMore } from '../engine/dash/shell.mjs';
 import { GUARD_SUBS, guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
 import { explainOf } from '../engine/lib/slop/check.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
+import { record } from '../engine/lib/records.mjs';
+import { refusalsFile, withRefusals } from '../engine/lib/scope.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -91,4 +93,24 @@ test('the Slop row explains its finding on a phone: what / why / what to do / th
     for (const s of [explainOf('K2').what, explainOf('K2').fix, 'norn rec add waiver --rule K2 --scope 0123456789abcdef']) assert.ok(text.includes(s), s);
     assert.equal(width, 390, 'no sideways scroll on a phone');
   } finally { await pg.close(); await f.done(); }
+});
+
+// owner 11-24: a refusal is an open finding only while it can still change something; a lane that moved on keeps it in the run's drawer
+test('GET /api/guard: a refusal of a lane that moved on is in no row and no count, still in its run drawer; a live run keeps its row', { timeout: 120000 }, async () => {
+  const f = await fixture();
+  try {
+    const S = f.pa.state, at = new Date().toISOString(), ref = run => JSON.stringify({ at, run, lane: null, tool: 'Write', target: 'C:/x/y.txt', why: 'outside the run' });
+    fs.mkdirSync(path.dirname(refusalsFile(S)), { recursive: true });
+    fs.writeFileSync(refusalsFile(S), [ref('RUN-1'), ref('RUN-2')].join('\n') + '\n');   // RUN-1: seabed, ended, its lane's last run; RUN-2: render, running
+    const refs = g => g.rows.filter(r => r.id.startsWith('R-')).map(r => r.run).sort();
+    const g1 = (await f.get('/api/guard?project=kestrel')).data;
+    assert.deepEqual(refs(g1), ['RUN-1', 'RUN-2'], 'the last unlanded run of a lane and a running run: both open');
+    record(S, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'seabed' } });   // seabed moves on
+    const g2 = (await f.get('/api/guard?project=kestrel')).data;
+    assert.deepEqual(refs(g2), ['RUN-2'], 'the moved-on lane\'s refusal left the rows');
+    assert.equal(g2.total, g1.total - 1, 'and every count');
+    assert.equal(g2.types.find(t => t.type === 'code').open, g1.types.find(t => t.type === 'code').open - 1);
+    const feed = await withRefusals({ events: [], cursor: {} }, S, 'RUN-1', {});
+    assert.deepEqual(feed.events.map(e => e.summary), ['refused by Norn: outside the run'], 'still in RUN-1\'s drawer');
+  } finally { await f.done(); }
 });

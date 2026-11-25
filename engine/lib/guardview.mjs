@@ -96,6 +96,19 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   return out;
 }
 
+// owner 11-24: a refusal asks for a decision (widen the Scope and resume, or leave it) that can change something only while its run may
+// still work, or while it is its lane's last run and that work has not landed. A lane that moved on (a later run) or landed (merged,
+// shipped) and a withdrawn run leave history: the run's drawer keeps it (scope.mjs refusalFeed), the rows and every count do not.
+// A refusal of a run this state does not hold stays open: nothing says it can no longer matter.
+const LIVE = ['queued', 'running', 'lost'], NOT_RUN = ['withdrawn', 'filled'], runNo = id => Number(String(id).match(/(\d+)$/)?.[1] ?? 0);
+const later = (a, b) => String(a.created).localeCompare(String(b.created)) || runNo(a.id) - runNo(b.id);
+/** openRefusals(refusals, runs (run items), { landed (lane, run) -> bool }) -> the refusals still open (pure) */
+export function openRefusals(refusals, runs, { landed = () => false } = {}) {
+  const by = new Map(runs.map(r => [r.id, r])), last = new Map();
+  for (const r of runs) { const l = r.data?.lane; if (l && !NOT_RUN.includes(r.state) && (!last.has(l) || later(r, last.get(l)) > 0)) last.set(l, r); }
+  return refusals.filter(x => { const r = by.get(x.run), l = r?.data?.lane; return !r || LIVE.includes(r.state) || (!!l && last.get(l) === r && !landed(l, r)); });
+}
+
 /** the order rows are read in (and the one best action is picked from): warn level first (a low row never outranks a warning, new or
  * not), then new first, then severity, then type order */
 export function rankRows(rows) {
@@ -110,7 +123,10 @@ const DAY = 86400000, dayOf = ms => new Date(ms).toISOString().slice(0, 10);
  * The trend counts, per type and day, the findings open now that were first seen on or before that day: how the open pile grew.
  */
 export function guardView(rows, { rules = null, now = Date.now(), days = 30, slop = true } = {}) {
-  const ranked = rankRows(rows);
+  // owner 11-24: each row carries its batch's oldest first_seen (batch_oldest) - a batch header shows it, past the rows it is capped to
+  const bk = r => r.batch ?? `${r.type}|${r.kind ?? 'drafts'}`, old = new Map();
+  for (const r of rows) if (r.first_seen && (!old.has(bk(r)) || r.first_seen < old.get(bk(r)))) old.set(bk(r), r.first_seen);
+  const ranked = rankRows(rows).map(r => (old.has(bk(r)) ? { ...r, batch_oldest: old.get(bk(r)) } : r));
   // META-BETA-PREP (DIR-52): the project's SloppaChoppa switch off = no code (slop) type in the counts
   const types = GUARD_TYPES.filter(([type]) => slop || type !== 'code').map(([type, label, tab]) => {
     const r = rows.filter(x => x.type === type);

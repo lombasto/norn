@@ -3,14 +3,16 @@
 //   { since (when the store began), open: { id: [type, first_seen] }, closed: [[id, type, first_seen, closed_at]] (the last KEEP) }
 // Stepped on a full Guard view (server.mjs guardOf, never while the instruction scan is pending or a part failed): an id gone from the
 // view closes, only for the types the view covers (SloppaChoppa off = code ids stay as they were). The lint's hints and the tightening
-// candidates (H- / T- ids) stay out: their ids move with a line, so an edit above them would close and reopen them.
+// candidates (H- / T- ids) stay out: their ids move with a line, so an edit above them would close and reopen them. A scope refusal
+// (R- id) stays out too: it is never fixed, it leaves the view when its lane moves on or lands (guardview.mjs openRefusals) - closed it
+// would read as fixed. A store that still holds R- ids drops them on its next step, never as closed; its old closed R- lines count nothing.
 // Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 
 const DAY = 86400000, KEEP = 5000;
 export const histFile = state => path.join(state, 'advisory', 'closed.json');
-const tracked = r => typeof r?.id === 'string' && !/^[HT]-/.test(r.id);
+const tracked = r => typeof r?.id === 'string' && !/^[HTR]-/.test(r.id);
 
 /** the pure step: h (null = no store yet) + the view's rows + the types it covers -> { h, dirty } (dirty = write it back) */
 export function stepHist(h0, rows, { types, now = Date.now() }) {
@@ -22,6 +24,7 @@ export function stepHist(h0, rows, { types, now = Date.now() }) {
     here.add(r.id);
     if (!h.open[r.id]) { h.open[r.id] = [r.type, r.first_seen ?? iso]; dirty = true; }
   }
+  for (const id of Object.keys(h.open)) if (!tracked({ id })) { delete h.open[id]; dirty = true; }
   for (const [id, [type, first]] of Object.entries(h.open)) if (cover.has(type) && !here.has(id)) { delete h.open[id]; h.closed.push([id, type, first, iso]); dirty = true; }
   if (h.closed.length > KEEP) h.closed = h.closed.slice(-KEEP);
   return { h, dirty };
@@ -31,8 +34,8 @@ export function stepHist(h0, rows, { types, now = Date.now() }) {
 export function histTypes(h, now = Date.now()) {
   if (!h) return null;
   const cut = now - 7 * DAY, recent = t => Date.parse(t) >= cut, out = {}, of = t => (out[t] ??= { closed: 0, opened7: 0, closed7: 0, net7: 0 });
-  for (const [type, first] of Object.values(h.open)) { of(type); if (recent(first)) out[type].opened7++; }
-  for (const [, type, first, at] of h.closed) { const x = of(type); x.closed++; if (recent(first)) x.opened7++; if (recent(at)) x.closed7++; }
+  for (const [id, [type, first]] of Object.entries(h.open)) { if (!tracked({ id })) continue; of(type); if (recent(first)) out[type].opened7++; }
+  for (const [id, type, first, at] of h.closed) { if (!tracked({ id })) continue; const x = of(type); x.closed++; if (recent(first)) x.opened7++; if (recent(at)) x.closed7++; }
   for (const x of Object.values(out)) x.net7 = x.opened7 - x.closed7;
   return { since: h.since, types: out };
 }
