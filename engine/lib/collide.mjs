@@ -452,7 +452,8 @@ const HOLDS = ['hold', 'after', 'wait'];
 /**
  * collideReport(cases, { since, now, baseline }) -> { since, rows, weeks, baseline } (SPEC 4A.6 `norn collide report`). rows: per kind and
  * reaction (the case's first action, or none) - cases; automatic; confirmed as recommended, changed (the first remedy a person applied is
- * or is not SloppaChoppa's pick); undone; held minutes (median); merges clean and in conflict; resolve tokens; duplicate run minutes and
+ * or is not SloppaChoppa's pick); undone; held minutes (median); merges clean and in conflict, and unknown (merged with no evidence of how,
+ * never guessed) and open (no outcome yet); real yes / no / unruled; resolve tokens; duplicate run minutes and
  * tokens. weeks (sec. 7 targets): port commits on a pair Norn held or made wait (target 0), owner cards outside `lead` (at most 1), the
  * check-in's cards. baseline: the replay's pairs with no reaction.
  */
@@ -461,12 +462,15 @@ export function collideReport(cases, { since = 0, now = Date.now(), baseline = [
   for (const c of xs) {
     const acts = (c.history || []).filter(h => h.ev === 'action').map(h => h.data), first = acts.find(a => a.action !== 'ask'), o = c.outcome || {}, d = c.data || {};
     const k = `${d.kind}|${first?.action ?? 'none'}`, man = acts.find(a => !a.auto && REMEDIES.includes(a.action));
-    const r = rows.get(k) ?? { kind: d.kind, reaction: first?.action ?? 'none', cases: 0, automatic: 0, confirmed: 0, changed: 0, undone: 0, held: [], clean: 0, conflict: 0, resolve_tokens: 0, duplicate_min: 0, duplicate_tokens: 0 };
+    const r = rows.get(k) ?? { kind: d.kind, reaction: first?.action ?? 'none', cases: 0, automatic: 0, confirmed: 0, changed: 0, undone: 0, held: [], clean: 0, conflict: 0, unknown: 0, open: 0, real: { yes: 0, no: 0, unruled: 0 }, resolve_tokens: 0, duplicate_min: 0, duplicate_tokens: 0 };
     r.cases++; if (first?.auto) r.automatic++;
     if (man) r[man.action === d.recommended?.remedy ? 'confirmed' : 'changed']++;
     if ((c.history || []).some(h => h.ev === 'undo')) r.undone++;
     if (Number.isFinite(o.held_min)) r.held.push(o.held_min);
     if (o.merge === 'clean' || o.merge === 'conflict') r[o.merge]++;
+    else if (!c.outcome) r.open++;
+    else if (o.merge === 'unknown' || o.cause === 'merged') r.unknown++;   // a case closed as merged with merge none: the landing was never read
+    if (o.real in r.real) r.real[o.real]++;
     r.resolve_tokens += o.resolve_tokens || 0; r.duplicate_min += o.duplicate_min || 0; r.duplicate_tokens += o.duplicate_tokens || 0;
     rows.set(k, r);
     const w = weekOf(Date.parse(c.history[0].ts)), x = weeks.get(w) ?? { week: w, cases: 0, held_port_commits: 0, owner_cards: 0, checkin_cards: 0 };
@@ -484,8 +488,8 @@ export function collideReport(cases, { since = 0, now = Date.now(), baseline = [
 /** the report in lines */
 export function reportLines(rep) {
   const out = [`collide report since ${rep.since.slice(0, 10)}: ${says(rep.rows.reduce((s, r) => s + r.cases, 0), 'case')}`];
-  if (rep.rows.length) out.push('kind / reaction: cases, automatic, as recommended, changed, undone; held min (median); merges clean / conflict; resolve tokens; duplicate min');
-  for (const r of rep.rows) out.push(`  ${r.kind} / ${r.reaction}: ${r.cases}, ${r.automatic} auto, ${r.confirmed} as recommended, ${r.changed} changed, ${r.undone} undone; held ${r.held_med ?? '-'}; ${r.clean} clean / ${r.conflict} conflict; ${r.resolve_tokens} resolve tokens; ${r.duplicate_min} duplicate min`);
+  if (rep.rows.length) out.push('kind / reaction: cases, automatic, as recommended, changed, undone; held min (median); merges clean / conflict / unknown, open; real yes / no / unruled; resolve tokens; duplicate min');
+  for (const r of rep.rows) out.push(`  ${r.kind} / ${r.reaction}: ${r.cases}, ${r.automatic} auto, ${r.confirmed} as recommended, ${r.changed} changed, ${r.undone} undone; held ${r.held_med ?? '-'}; ${r.clean} clean / ${r.conflict} conflict / ${r.unknown} unknown, ${r.open} open; real ${r.real.yes} / ${r.real.no} / ${r.real.unruled}; ${r.resolve_tokens} resolve tokens; ${r.duplicate_min} duplicate min`);
   for (const w of rep.weeks) out.push(`week of ${w.week}: ${says(w.cases, 'case')}; port commits on held pairs ${w.held_port_commits} (target 0); owner cards outside lead ${w.owner_cards} (target at most 1); check-in cards ${w.checkin_cards}`);
   const b = rep.baseline;
   out.push(`baseline (replay since ${rep.since.slice(0, 10)}): ${says(b.pairs, 'pair')} collided with no reaction, ${says(b.port_commits, 'port commit')}, ${says(b.conflicts, 'landing conflict')}, ${b.resolve_tokens} resolve tokens`);
