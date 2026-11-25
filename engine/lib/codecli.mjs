@@ -11,7 +11,7 @@ import { atomicWrite } from './policy.mjs';
 import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
-import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
+import { codeSignals, writeSignals, readSignals, checkLine } from './codesignals.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
@@ -143,7 +143,8 @@ export async function codeAt(p, url) {
     if (!rows) return { list: null };
     const sort = CODE_SORTS.includes(q('sort')) ? q('sort') : 'importance', folder = String(q('folder') ?? '').replace(/\/+$/, ''), lim = Number(q('limit'));
     const hit = sorted(rows.filter(r => !folder || r.file.startsWith(`${folder}/`)), sort), shown = hit.slice(0, Number.isInteger(lim) && lim > 0 ? lim : CODE_CAP);
-    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null } };
+    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null,
+      checks: ['fix_first', 'importance'].map(k => ({ rank: k, status: sig?.check?.status === 'measured' ? sig.check[k].status : sig?.check?.status ?? null, line: checkLine(sig?.check ?? null, k) })) } };
   }
   if (part === 'growth') {
     if (!rows) return { days: [], areas: [], fastest: [] };

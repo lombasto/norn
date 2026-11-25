@@ -21,9 +21,9 @@ export const lineCount = buf => { let n = 0; for (let i = buf.indexOf(10); i !==
 // git's own test: a NUL in the first 8000 bytes is a binary
 const isBinary = buf => buf.subarray(0, 8000).includes(0);
 
-/** HEAD's blobs under dir -> [{ file, buf }], text files only, vendor/ and node_modules/ dropped */
-function headBlobs(dir) {
-  const ents = git(dir, ['ls-tree', '-r', '-z', 'HEAD']).toString('utf8').split('\0').filter(Boolean).map(l => { const t = l.indexOf('\t'), [, type, sha] = l.slice(0, t).split(' '); return { type, sha, file: l.slice(t + 1) }; })
+/** rev's (HEAD's) blobs under dir -> [{ file, buf }], text files only, vendor/ and node_modules/ dropped */
+function headBlobs(dir, rev) {
+  const ents = git(dir, ['ls-tree', '-r', '-z', rev]).toString('utf8').split('\0').filter(Boolean).map(l => { const t = l.indexOf('\t'), [, type, sha] = l.slice(0, t).split(' '); return { type, sha, file: l.slice(t + 1) }; })
     .filter(e => e.type === 'blob' && !SKIP.test(e.file));
   if (!ents.length) return [];
   const out = git(dir, ['cat-file', '--batch'], ents.map(e => e.sha).join('\n') + '\n'), blobs = [];
@@ -36,8 +36,8 @@ function headBlobs(dir) {
   return blobs;
 }
 /** the first-parent history, newest first -> [{ sha, t (ms), day (UTC), subject, stat: [[file, added, deleted]] }] (binary rows dropped) */
-function history(dir) {
-  return git(dir, ['log', '--first-parent', '--no-renames', '--relative', '--numstat', '--format=%x01%H%x02%ct%x02%s', 'HEAD']).toString('utf8').split('\x01').filter(Boolean).map(c => {
+function history(dir, rev) {
+  return git(dir, ['log', '--first-parent', '--no-renames', '--relative', '--numstat', '--format=%x01%H%x02%ct%x02%s', rev]).toString('utf8').split('\x01').filter(Boolean).map(c => {
     const [head, ...rows] = c.split('\n'), [sha, ct, subject] = head.split('\x02');
     return { sha, t: Number(ct) * 1000, day: new Date(Number(ct) * 1000).toISOString().slice(0, 10), subject, stat: rows.map(r => r.split('\t')).filter(r => r.length === 3 && r[0] !== '-').map(([a, d, f]) => [f, Number(a), Number(d)]) };
   });
@@ -49,9 +49,9 @@ export function borda(vals) {
   return vals.map(v => { if (!m.has(v)) { const a = lo(v), b = hi(v); m.set(v, a + (b - a - 1) / 2); } return m.get(v); });
 }
 
-/** dir: a git work tree folder; o.weeks (26), o.now (ms) -> { at, sha, weeks: [week-end days], added_30d, files: [...] } */
-export function codeIndex(dir, { weeks = 26, now = Date.now() } = {}) {
-  const sha = git(dir, ['rev-parse', '--short=12', 'HEAD']).toString().trim(), blobs = headBlobs(dir), commits = history(dir);
+/** dir: a git work tree folder; o.weeks (26), o.now (ms), o.rev (HEAD; an older landing re-ranks the past: codesignals.mjs rankCheck) -> { at, sha, weeks: [week-end days], added_30d, files: [...] } */
+export function codeIndex(dir, { weeks = 26, now = Date.now(), rev = 'HEAD' } = {}) {
+  const sha = git(dir, ['rev-parse', '--short=12', rev]).toString().trim(), blobs = headBlobs(dir, rev), commits = history(dir, rev);
   const F = new Map(blobs.map(b => [b.file, { file: b.file, lines: lineCount(b.buf), bytes: b.buf.length, lang: langOf(b.file), born: null, commits_90d: 0, churn_90d: 0, last: [] }]));
   const since90 = now - 90 * DAY, since30 = now - 30 * DAY;
   let added30 = 0;

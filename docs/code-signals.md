@@ -51,6 +51,9 @@ parsed throws: the reader never answers with a guess. From the shell, the same d
 | `last_fixes` | 5 | the newest fixes kept per file |
 | `types` | feat fix docs style refactor perf test build ci chore revert | the conventional types recognised |
 | `typed_min_share` | 0.25 | below this share of typed commits the fix history is n/a |
+| `check_days` | 90 | the rank check re-ranks as of this many days ago and counts the fixes since |
+| `check_top` | 20 | the rank check scores the top this many files of each ranking |
+| `check_min_history_days` | 180 | a history younger than this (its oldest commit to now): the rank check is n/a |
 
 ## The stored object
 
@@ -65,7 +68,8 @@ parsed throws: the reader never answers with a guess. From the shell, the same d
   batches_skipped: of those, batch landings,
   fixes:   { status: 'measured', typed, commits }
          | { status: 'n/a', typed, commits, reason },
-  files:   { '<path>': FileSignals, ... }    // every file of index.json (HEAD's text files, vendor/ and node_modules/ dropped)
+  files:   { '<path>': FileSignals, ... },   // every file of index.json (HEAD's text files, vendor/ and node_modules/ dropped)
+  check:   RankCheck                         // does the ranking predict anything (below)
 }
 ```
 
@@ -92,6 +96,33 @@ file the number of files below it plus half the others equal to it (ties share t
 (`round(100 * sum / (3 * (files - 1)))`, a single file = 100). Rank aggregation, so no invented weights: the same method as `importance`,
 which stays beside it.
 
+## The rank check (RM-a-70)
+
+Does the ranking predict anything? Out of sample, from git alone: the check day is `check_days` before the run; main's tip on that day is
+its newest first-parent landing at or before it. Both rankings are computed AS THEY WERE then: `codeIndex` and the signals at that landing,
+with that day as "now" (its tree, its fan-in, its churn and fixes up to that day only). Each ranking's top `check_top` files (fix first:
+ties by importance, then path, as `--top`; importance: ties by `churn_90d`, then path, as Code > Files) are scored against the fix landings
+(the definition above) from the check day to now. Beside it, the baseline: the share of ALL the files of that day's tree that got one. A
+file deleted or renamed since counts as not fixed unless a fix landing touched its old path.
+
+```
+RankCheck = { status: 'measured', basis: 'measured', as_of: 'YYYY-MM-DD' (the check day), days: check_days, sha: the landing ranked (12 hex),
+              files: the files of its tree, fixed: of them, the ones with a fix landing since,
+              fix_first:  { status: 'measured', hit, top: [{ file, rank (its fix_first then), fixed }] } | { status: 'n/a', reason },
+              importance: { status: 'measured', hit, top: [{ file, rank (its importance then), fixed }] } }
+          | { status: 'n/a', basis, as_of, days, reason, [sha, files, fixed] }
+```
+
+n/a, with the reason in words, when: the history is younger than `check_min_history_days` ("the history starts 2026-06-01: under 180
+days"); the commits since the check day are under `typed_min_share` typed ("0 of 4 commits in the last 90 days carry ..."); the tree then
+had no more than `check_top` files (the top would be every file); no file got a fix since (nothing to predict). `fix_first` alone is n/a
+when the history up to the check day was untyped (its reason prefixed "90 days ago: ").
+
+The one line (`checkLine(check, 'fix_first' | 'importance')` in engine/lib/codesignals.mjs; the dashboard and the daily report print it):
+`12 of the top 20 fix-first files got a fix in the last 90 days; baseline 9 % of files`. A ranking whose top share is at or under the
+baseline's says so: `...; baseline 10 % of files: at or under the baseline, the ranking predicted nothing`. n/a: `fix-first check: n/a
+(<reason>)`; signals without a check: `fix-first check: not built yet (...)`. The baseline percent is rounded; the comparison is exact.
+
 ## CLI
 
 - `norn code signals <file>.. [--json] [--project P | --state D]`: each file's fix-first rank and importance, its fix counts and last fix,
@@ -106,4 +137,6 @@ which stays beside it.
 
 Code > Files has a "fix first" sort and the columns "fixes 365 d" and "fix first"; the file drawer lists "Changes together with" (the
 partners) and "Last fixes". Without stored signals, or with signals of another commit than the index, they read "not built yet"; an
-untyped history reads n/a with the reason.
+untyped history reads n/a with the reason. Above the table, the rank check line of both rankings (`id="code-check"`; the files part of
+/api/code carries it as `checks: [{ rank, status, line }]`). The SloppaChoppa daily report has a "Rank check" section with the same two
+lines and the signals' commit.
