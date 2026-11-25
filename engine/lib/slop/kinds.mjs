@@ -23,8 +23,8 @@ function lintSide(ctx, side, tool, own = null) {
   if (side in memo) { if (memo[side] instanceof Error) throw memo[side]; return memo[side]; }
   try {
     const rules = own ? [own] : ctx.lintRules.filter(r => r.tool === tool), texts = new Map(), held = rules.filter(r => r.kind === 'lint'), cfg = held.find(r => r.config)?.config, t = LINTERS[tool];
-    const names = new Map();   // own: the side's path -> the head's path (a rename)
-    for (const r of rules) for (const x of sideFiles(r, ctx, side)) { texts.set(x.e.path, x.text); names.set(x.file, x.e.path); }
+    const names = new Map();   // the path the tool names -> the head's path (own: the side's path, a rename)
+    for (const r of rules) for (const x of sideFiles(r, ctx, side)) { texts.set(x.e.path, x.text); names.set(own ? x.file : x.e.path, x.e.path); }
     if (!texts.size) return (memo[side] = new Map());
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
     const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...held.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null),
@@ -32,7 +32,7 @@ function lintSide(ctx, side, tool, own = null) {
       : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, base: ctx.base, log: held.find(r => r.log)?.log, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
     const raw = ctx.tool(run, side, { texts, dir: ctx.repo }), by = new Map();
     if (raw === null) return (memo[side] = null);
-    for (const y of t.parse(raw, own ? [...names.keys()] : [...texts.keys()])) { const x = own ? { ...y, file: names.get(y.file) } : y; if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x); }
+    for (const y of t.parse(raw, [...names.keys()])) { const x = { ...y, file: names.get(y.file) }; if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x); }
     return (memo[side] = by);
   } catch (e) { memo[side] = e; throw e; }
 }
@@ -55,7 +55,7 @@ function astHit(rule, x, text) {
  * a lint rule's sub-rule -> { sub, level, shadow }: levels by name, then by the tool's own level of the finding (SARIF: error, warning,
  * note, none), `*` for the rest; shadow_rules by name, `*` = every one levels does not name
  */
-const subLevel = (rule, sub, toolLevel) => ({ sub, level: rule.levels?.[sub] ?? (toolLevel === undefined ? undefined : rule.levels?.[toolLevel]) ?? rule.levels?.['*'] ?? rule.level,
+const subLevel = (rule, sub, toolLevel) => ({ sub, level: rule.levels?.[sub] ?? rule.levels?.[toolLevel] ?? rule.levels?.['*'] ?? rule.level,
   shadow: (rule.shadow_rules || []).includes(sub) || (!(sub in (rule.levels || {})) && (rule.shadow_rules || []).includes('*')) });
 export function lint(rule, ctx) {
   const got = both(side => {

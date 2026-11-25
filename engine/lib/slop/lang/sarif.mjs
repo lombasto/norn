@@ -79,16 +79,15 @@ function run(rule, side) {
  * (ruleId), line (startLine; 0 with no region), msg, level (the SARIF level) }]; only results of kind fail with a physical location
  */
 function parse(raw, touched = []) {
-  const out = [];
-  read(raw, 'the log').runs.forEach((r, i) => r.results.forEach((x, k) => {
-    const at = `runs[${i}].results[${k}]`, rule = ruleOf(r, x, at);
-    if ((x.kind ?? 'fail') !== 'fail') return;   // pass, open, review, informational, notApplicable: no finding
-    const pl = (x.locations || []).find(l => isObj(l?.physicalLocation))?.physicalLocation, p = isObj(pl?.artifactLocation) && pathOf(r, pl.artifactLocation, at);
-    if (!p) return;   // a result with no file names nothing the branch touched
-    const line = pl.region?.startLine ?? 0, msg = msgOf(x, rule, at), level = levelOf(r, x, rule);
-    for (const f of touched.filter(f => p.path === f || p.path.endsWith('/' + f) || (!p.rooted && f.endsWith('/' + p.path)))) out.push({ file: f, rule: rule.id, line, msg, level });
-  }));
-  return out;
+  return read(raw, 'the log').runs.flatMap((r, i) => r.results.flatMap((x, k) => findingsOf(r, x, `runs[${i}].results[${k}]`, touched)));
+}
+/** one result -> its findings: none for a kind other than fail (pass, open, review, informational, notApplicable) or no file */
+function findingsOf(r, x, at, touched) {
+  const rule = ruleOf(r, x, at), pl = (x.locations || []).find(l => isObj(l?.physicalLocation))?.physicalLocation;
+  const p = (x.kind ?? 'fail') === 'fail' && isObj(pl?.artifactLocation) && pathOf(r, pl.artifactLocation, at);
+  if (!p) return [];
+  const line = pl.region?.startLine ?? 0, msg = msgOf(x, rule, at), level = levelOf(r, x, rule);
+  return touched.filter(f => p.path === f || p.path.endsWith('/' + f) || (!p.rooted && f.endsWith('/' + p.path))).map(f => ({ file: f, rule: rule.id, line, msg, level }));
 }
 /** SARIF has no config of its own (the project tool's is the project's); fromFile: each rule reads its own file at head and at the merge base */
 export const SARIF = { run, parse, fromFile: true, configOf: () => null };

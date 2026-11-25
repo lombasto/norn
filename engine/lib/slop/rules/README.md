@@ -97,8 +97,9 @@ A worked example, `<project folder>/rules/slop/P-scan.json`: the project's gate 
                                 "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/b.py" }, "region": { "startLine": 1 } } }] }] }] } } } } }
 ```
 
-The hit is `BLOCK P-scan/hardcoded-token src/a.py:2`. The near-miss reports nothing: its `src/a.py` result is old (the base had it on
-the same line text), and `src/b.py` is not touched. `tests/slop-sarif.test.mjs` runs this rule and its fixture.
+The hit is one BLOCK finding P-scan/hardcoded-token on line 2. The near-miss reports nothing: the result on the touched file is old
+(the base had it on the same line text, one line up), and the other file is not touched. `tests/slop-sarif.test.mjs` runs this rule
+and its fixture.
 
 ## The second voice (`model`)
 
