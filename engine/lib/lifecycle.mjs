@@ -61,6 +61,7 @@ export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = 
   const out = [];
   for (const l of items) {
     if (l.kind !== 'lane' || !['active', 'done', 'parked'].includes(l.state)) continue;
+    if (home && homeOfId(l.id) !== home) continue; // shared lanes, local runs: only this home can act on its lanes
     const name = laneNameIn(l.id, home), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id)), r = runs.at(-1);
     if (runs.some(x => LIVE.includes(x.state))) continue;
     const row = (rule, act, text, why, at = null) => out.push({ lane: name, id: l.id, rule, act, at, run: r?.id ?? null, text, why });
