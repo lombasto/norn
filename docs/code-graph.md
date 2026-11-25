@@ -494,7 +494,9 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
   under it keeps reading the binary of the engine it loaded, whose store schema matches its reader.
 - Built when missing by `norn setup`, by every run start (when the run's end check reads the graph) and before the run end's slop
   check, through `ensurePart` / `ensureParts`. A part that cannot be had (no cargo, no C compiler, a failed build) is ONE reason
-  naming the part, the cause and the build command: the run does not start, the branch is held "could not check".
+  naming the part, the cause and the build command: the run does not start, the branch is held "could not check". A lane
+  worktree's own engine parts are built at the run start too, but one that cannot be had there (a branch behind main's part
+  contract, a build error) is logged and the run starts, so it can merge main; the Done check names it at the end.
 - Measured on a 20-core Windows machine: a cold build 224 s and 166 MB of target/, an incremental one 114 s (lto, one codegen
   unit), a no-op 0.4 s; the binary is 7.3 MB.
 

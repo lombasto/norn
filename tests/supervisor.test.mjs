@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
@@ -13,7 +14,7 @@ import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/bounded.m
 import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
-import { rustPart, rustInto } from './helpers/rust.mjs';
+import { rustPart } from './helpers/rust.mjs';
 
 test.before(() => rustPart('hook'));   // the run-start test's stored part is the real norn-hook: a cold build runs here (seconds), never in a step; norn-code is not read, so not built
 
@@ -351,30 +352,49 @@ test('a slow start-time probe: the supervisor beats first - no lost sweep before
   assert.ok(Number.isFinite(end.supervisor_started), 'the end waits for the start time and names it');
 });
 
-// NORN-RUST-FRESH: the Rust parts a run reads are built before the executor starts. The worktree is a Norn checkout with this engine's
-// engine/hook-rs sources and the supervisor's PATH has no cargo, so no real cargo runs: a missing part is the run's ONE reason and the
-// executor is never spawned; a part already in the store costs no build and the run goes ahead. That stored part is this store's real
-// norn-hook (rustInto): the supervisor asks it its `version` and it answers the worktree's source hash, which a placeholder cannot.
-// It is built in the file's test.before, never inside the step
-test('run start: a missing Rust part with no cargo = stopped on ONE reason, no executor; a stored part = no build, the run goes', async () => {
-  const { partsOf, srcOf } = await import('../engine/lib/rustbin.mjs');
-  const d = sandbox(), policy = { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } };
-  fs.cpSync(srcOf('hook'), srcOf('hook', path.join(d.wt, 'engine')), { recursive: true, filter: f => path.basename(f) !== 'target' });
-  const [part] = partsOf({ parts: [], worktree: d.wt });
+// NORN-RUST-FRESH + NORN-PART-START: the Rust parts a run reads are built before the executor starts; the supervisor's PATH has no
+// cargo, so no real cargo runs. This engine's own part that cannot be had is the run's ONE reason and the executor is never spawned:
+// a copy of this engine outside git has its own empty store, so its norn-hook (a mail-hook run reads it) is missing. A lane worktree's
+// own part is that branch's business: a Norn checkout whose engine/hook-rs differs from this engine's, its entry the real norn-hook of
+// this store answering another source (a branch behind main's part contract), starts its run; the Done check at the end still names
+// that part as its problem. The real norn-hook is built in the file's test.before, never inside the step
+const noCargo = fn => {
   const sep = process.platform === 'win32' ? ';' : ':', old = process.env.PATH;
   const hasCargo = dir => ['cargo', 'cargo.exe'].some(n => fs.existsSync(path.join(dir.replace(/"/g, ''), n)));
-  let id;
-  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); id = d.run('mode: done\n', { policy }); } finally { process.env.PATH = old; }
+  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); return fn(); } finally { process.env.PATH = old; }
+};
+test('run start: this engine's own Rust part that cannot be had = stopped on ONE reason, no executor', async () => {
+  const d = sandbox(), eng = path.join(d.t, 'copy', 'engine');
+  fs.cpSync(path.join(import.meta.dirname, '..', 'engine'), eng, { recursive: true, filter: f => path.basename(f) !== 'target' });
+  const { startRun: startCopy } = await import(pathToFileURL(path.join(eng, 'lib', 'runs.mjs')).href);
+  const id = noCargo(() => startCopy({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt, notes: d.notes, hbMs: 150, staleMs: 3000, mail_hook: true,
+    policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } }, budget: {}, brief: d.brief('mode: done
+') }).run);
   const e = (await d.end(id)).data;
   assert.equal(e.outcome, 'stopped');
-  assert.match(e.why, /^the run did not start: norn-hook \(the per-tool-call hooks of every claude run\) cannot build: cargo is not on PATH \(install Rust: https:\/\/rustup\.rs\); build command: cargo build --release --locked /);
+  assert.match(e.why, /^the run did not start: norn-hook (the per-tool-call hooks of every claude run) cannot build: cargo is not on PATH (install Rust: https://rustup.rs); build command: cargo build --release --locked /);
   assert.equal(e.rust, e.why.replace('the run did not start: ', ''));
   assert.equal(e.pid, null, 'the executor was never spawned');
-  rustInto(path.join(d.wt, 'engine'), ['hook']);
-  assert.ok(fs.existsSync(part.exe), 'the worktree sources equal this engine\'s: this store\'s norn-hook is under the worktree part\'s name');
-  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); id = d.run('mode: done\n', { policy }); } finally { process.env.PATH = old; }
-  const ok = (await d.end(id)).data;
-  assert.equal(ok.outcome, 'done', JSON.stringify(ok));
-  assert.equal(ok.rust, undefined);
-  assert.ok(Number.isInteger(ok.pid), 'the executor ran');
+});
+test('run start: a lane worktree's part behind main's contract is logged and the run starts; its Done check names that part', async () => {
+  const { partsOf, srcOf, binOf } = await import('../engine/lib/rustbin.mjs');
+  const d = sandbox();
+  repo(d.wt);
+  const src = srcOf('hook', path.join(d.wt, 'engine'));
+  fs.cpSync(srcOf('hook'), src, { recursive: true, filter: f => path.basename(f) !== 'target' });
+  fs.writeFileSync(path.join(src, 'OLDER.txt'), 'a branch behind main
+');
+  const [part] = partsOf({ parts: [], worktree: d.wt });
+  assert.notEqual(path.basename(part.exe), path.basename(binOf('hook')), 'the worktree part has other sources');
+  fs.mkdirSync(path.dirname(part.exe), { recursive: true }); fs.copyFileSync(binOf('hook'), part.exe);   // its own temp store, never the shared one
+  const id = noCargo(() => d.run('mode: done
+', { policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } }, dod: { ready: { scope: ['**'], tests: '`node -e 0`' } }, dodOf: 'RUN-0' }));
+  const e = (await d.end(id)).data;
+  assert.ok(Number.isInteger(e.pid), `the executor ran: ${JSON.stringify(e)}`);
+  assert.equal(e.rust, undefined, 'the worktree part is no start reason');
+  const log = fs.readFileSync(loadState(d.state).items[id].data.log, 'utf8');
+  assert.match(log, /rust: norn-hook .*the run starts without that worktree part/s);
+  assert.equal(e.outcome, 'stopped');
+  assert.match(e.dod.rust, /norn-hook/, 'the Done check names the wrong part');
+  assert.match(e.why, /^Done check failed: .*Rust part: norn-hook/);
 });
