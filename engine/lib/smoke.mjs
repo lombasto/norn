@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadState } from './records.mjs';
-import { RUST_PARTS, ensurePart, binOf } from './rustbin.mjs';
+import { RUST_PARTS, ensurePart, binOf, srcOf, storeOf } from './rustbin.mjs';
 
 const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VIEWS = ['OWNER-QUESTIONS.md', 'DECISIONS-LOG.md', 'DIRECTIVES.md'];
@@ -60,14 +60,16 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     // 1. clone (committed HEAD only - what a user gets)
     cloneCommitted(ENGINE_ROOT, M);
     ok('clone', 'git clone --depth 1 file://');
-    // the Rust parts are built (cargo, minutes from scratch: norn-code's C grammars) in THIS repo, where cargo keeps its cache, and
-    // copied into the clone, so the setup step below finds them built and stays inside its 30 s (SMOKE-45554406629: setup was killed
-    // building norn-code); a fresh mtime, as a copy keeps the old one on Windows and the clone's sources are newer
+    // the Rust parts are built (cargo, minutes from scratch: norn-code's C grammars) in THIS repo's store, where cargo keeps its cache,
+    // and put in the clone's store under the clone's own source hash, so the setup step below finds them built and stays inside its
+    // 30 s (SMOKE-45554406629: setup was killed building norn-code). Same sources = the same binary, copied; a working tree whose part
+    // differs from its HEAD builds the clone's sources (into this store's target dir: its cache) straight to the clone's file
+    const cloneEngine = path.join(M, 'engine');
     for (const p of Object.keys(RUST_PARTS)) {
-      const b = ensurePart(p, { err });
+      const src = srcOf(p, cloneEngine), dst = binOf(p, { src, store: storeOf(cloneEngine) }), same = path.basename(dst) === path.basename(binOf(p));
+      const b = same ? ensurePart(p, { err }) : ensurePart(p, { err, src, exe: dst });
       if (!b.ok) throw new SmokeError(`rust part: ${b.why}`);
-      const dst = path.join(M, path.relative(ENGINE_ROOT, binOf(p)));
-      fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(binOf(p), dst); const now = new Date(); fs.utimesSync(dst, now, now);
+      if (same) { fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(binOf(p), dst); }
     }
     ok('rust', `${Object.values(RUST_PARTS).map(x => x.bin).join(', ')} built here, copied into the clone`);
 

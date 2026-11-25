@@ -491,3 +491,12 @@ impl<'a> Resolver<'a> {
         }
     }
 }
+
+/// the import roots of each Python file, in its search order (grade.rs hands them to the PathFinder grader as the declared roots)
+pub fn roots_of(ctx: &Ctx, files: &[&str]) -> HashMap<String, Vec<String>> {
+    let r = Resolver::new(ctx);
+    files
+        .iter()
+        .map(|f| (f.to_string(), r.roots_for(f)))
+        .collect()
+}

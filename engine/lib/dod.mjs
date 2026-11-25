@@ -17,6 +17,7 @@ import { repoIndex, runCached, cacheDir } from './testcache.mjs';
 import { pickGraph } from './testimpact.mjs';
 import { IMPACT_FILE } from './testtimes.mjs';
 import { readJsonS } from './fsnap.mjs';
+import { ensureParts, partsOf } from './rustbin.mjs';
 
 // The paths CI's ci.yml ignores (its push paths-ignore; tests/dod.test.mjs pins the lists equal): a change only here is docs.
 export const DOCS_ONLY = ['**/*.md', 'docs/**', '**/docs/**', '**/*.png', '**/*.html'];
@@ -116,8 +117,11 @@ export function gateProgress(text) {
  * NORN-DOD-NOCOMMIT (#155, #161): since = the HEAD the run started on (the supervisor's spec.dod_since). The changed set is measured
  * from it when it lies on the lane line (the merge base its ancestor, itself HEAD's), so a run is charged only with what IT did: a
  * review run in another lane's worktree is not charged with that lane's commits. out.since names it when used.
+ * NORN-RUST-FRESH: before any test, the Rust parts of the worktree's own engine (a checkout of Norn: its tests import that engine) are
+ * built when missing (ensure: rustbin.mjs ensureParts); out.rust_built names what was built. One that cannot be had is the check's
+ * ONE problem (out.rust names it) and no test runs: a test that needs the part would only read red or skipped on its absence.
  */
-export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = null, cache = cacheDir(), since = null }) {
+export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = null, cache = cacheDir(), since = null, ensure = wt => ensureParts(partsOf({ parts: [], worktree: wt })) }) {
   const ready = dod.ready, tp = testsPolicy({ tests: dod.tests }), out = { ok: false, why: null, at: new Date().toISOString(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [], tests_policy: policyWords(tp) };
   const st = gitRun(worktree, ['status', '--porcelain', '-z', '--untracked-files=all']).split('\0').filter(Boolean);
   out.dirty = st.filter(l => /^.. /.test(l)).map(l => l.slice(3));
@@ -138,8 +142,11 @@ export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = 
   // NORN-DOD-TESTS-NONE: a design run's `Tests: none - ...` is green only on a branch that changed nothing (no commit, no edit of a
   // tracked or untracked file); with any change it is red, so a writing run cannot dodge its tests by writing "none"
   const touched = none ? new Set([...out.changed, ...out.dirty]).size : 0;
-  const light = !none && tp.mode === 'light' ? lightJobs(ready.tests, worktree, dod.test_cmd, out.changed, state) : null;
-  const t = none || tp.mode === 'off' ? {} : light ? { cmds: light.cmds } : testCmds(ready.tests, worktree, dod.test_cmd);
+  const rust = none || tp.mode === 'off' ? { ok: true, built: [] } : await ensure(worktree), noRust = !rust.ok;
+  if (rust.built?.length) out.rust_built = rust.built;
+  if (noRust) { out.rust = rust.why; out.problems.push(`Rust part: ${rust.why}`); }
+  const light = !noRust && !none && tp.mode === 'light' ? lightJobs(ready.tests, worktree, dod.test_cmd, out.changed, state) : null;
+  const t = noRust || none || tp.mode === 'off' ? {} : light ? { cmds: light.cmds } : testCmds(ready.tests, worktree, dod.test_cmd);
   if (t.problem) out.problems.push(t.problem);
   if (none && touched) out.problems.push(`the branch changed ${touched} file${touched === 1 ? '' : 's'} but the brief declares no tests`);
   else if (none) out.tests_none = 'none declared, nothing changed';
@@ -149,7 +156,7 @@ export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = 
   const docs = bb && out.changed.length > 0 && out.changed.every(p => inScope(p, DOCS_ONLY));
   if (docs && dod.gate?.cmd) out.gate_skipped = `docs-only branch (every changed path in the CI paths-ignore: ${DOCS_ONLY.join(' ')})`;
   else if (tp.mode !== 'changed' && dod.gate?.cmd) out.gate_skipped = tp.mode === 'off' ? 'policy.tests.mode = off: no gate in a run' : 'policy.tests.mode = light: the light set replaces the gate; CI runs the rest';
-  const g = docs || tp.mode !== 'changed' || !dod.gate?.cmd ? null : gateJob(dod.gate, bb?.base);
+  const g = noRust || docs || tp.mode !== 'changed' || !dod.gate?.cmd ? null : gateJob(dod.gate, bb?.base);
   if (g?.skipped) out.gate_skipped = g.skipped;
   // the budget clock starts with the first job (that one always runs); a job that would start past it is left to CI
   const budget = tp.run_budget_min > 0 ? tp.run_budget_min * 60000 : Infinity, left = [];

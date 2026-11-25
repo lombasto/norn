@@ -74,21 +74,24 @@ test('--worktree resolves uncommitted work over HEAD in memory: stamped, the cha
 });
 
 test('rustbin names a missing, a stale and a wrong-schema norn-code, and a build without a C compiler names the install', () => {
-  const d = mkTmp('cg-part-'), src = path.join(d, 'code-rs'), exe = path.join(src, 'target', 'release', 'norn-code');
+  // NORN-RUST-FRESH: a binary is named by its source content (binOf), so a stale one is a binary not built for its source
+  const d = mkTmp('cg-part-'), src = path.join(d, 'code-rs');
   fs.mkdirSync(path.join(src, 'src'), { recursive: true });
   fs.writeFileSync(path.join(src, 'Cargo.lock'), '');
   const says = schema => () => ({ status: 0, stdout: JSON.stringify({ crate: '0.1.0', store_schema: schema }) });
-  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA) }), /^norn-code is not built \(/);
+  assert.match(partProblem('code', { src, exe: path.join(d, 'x'), run: says(CODE_STORE_SCHEMA) }), /^norn-code's source is missing \(/);
+  fs.writeFileSync(path.join(src, 'Cargo.toml'), '[package]\n');
+  const exe = binOf('code', { src, store: d });
+  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA) }), /^norn-code is not built for its source \(/);
   fs.mkdirSync(path.dirname(exe), { recursive: true }); fs.writeFileSync(exe, '');
-  const old = new Date(Date.now() - 60000); fs.utimesSync(exe, old, old);
-  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA) }), /^norn-code is older than its source \(/);
-  fs.utimesSync(exe, new Date(), new Date());
   assert.equal(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA) }), null);
+  fs.writeFileSync(path.join(src, 'src', 'main.rs'), 'fn main() {}\n');
+  assert.notEqual(binOf('code', { src, store: d }), exe, 'a changed source names another binary: the old one is stale');
   assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA + 1) }), /answers store_schema \d+, this engine reads/);
   fs.rmSync(exe);
   const r = ensurePart('code', { src, exe, cc: () => 'no C compiler found (x): install y', run: () => assert.fail('no cargo without a C compiler') });
   assert.equal(r.ok, false);
-  assert.match(r.why, /^norn-code \(the code graph \(docs\/code-graph\.md\)\) cannot build: no C compiler found .*then run cargo build --release --locked /);
+  assert.match(r.why, /^norn-code \(the code graph \(docs\/code-graph\.md\)\) cannot build: no C compiler found .*; build command: cargo build --release --locked /);
   assert.match(ccProblem({ env: { PATH: '' }, platform: 'linux', osRelease: 'ID=ubuntu\n' }), /install sudo apt-get install build-essential$/);
   assert.equal(ccProblem({ env: { PATH: '', CC: 'zig cc' }, platform: 'linux' }), null);
 });
