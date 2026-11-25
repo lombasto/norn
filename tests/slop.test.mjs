@@ -75,8 +75,10 @@ test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could
   const r = slopCheck({ repo, base: 'main', rules: LINT, tool: down });
   assert.equal('skipped' in r, false, 'skipped leaves the result shape');
   assert.deepEqual(r.ran, []);
-  assert.deepEqual(r.blocks.map(b => [b.rule, b.level, b.msg]), LINT.map(x => [x.id, 'BLOCK', 'could not run: npm not found on PATH']), 'every lint rule, the WARN one too');
-  assert.equal(new Set(r.blocks.map(b => b.fp)).size, LINT.length, 'one fingerprint per rule');
+  const held = LINT.filter(x => !x.shadow), unrun = r.findings.filter(f => f.unrun);
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.level, b.msg]), held.map(x => [x.id, 'BLOCK', 'could not run: npm not found on PATH']), 'every lint rule, the WARN one too');
+  assert.deepEqual(unrun.filter(f => f.shadow).map(f => f.rule), LINT.filter(x => x.shadow).map(x => x.id), 'a shadow rule (T4, T5) that could not run is recorded, never held');
+  assert.equal(new Set(unrun.map(b => b.fp)).size, LINT.length, 'one fingerprint per rule');
   assert.deepEqual(slopCheck({ repo, base: 'main', rules: LINT, tool: down }).blocks.map(b => b.fp), r.blocks.map(b => b.fp), 'stable: a waiver can name it');
 });
 test('F6: a file ESLint cannot parse is ONE BLOCK finding with the parser\'s message (not one per lint rule); the same error at base is not new', () => {
