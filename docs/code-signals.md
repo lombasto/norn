@@ -100,7 +100,9 @@ which stays beside it.
 
 Does the ranking predict anything? Out of sample, from git alone: the check day is `check_days` before the run; main's tip on that day is
 its newest first-parent landing at or before it. Both rankings are computed AS THEY WERE then: `codeIndex` and the signals at that landing,
-with that day as "now" (its tree, its fan-in, its churn and fixes up to that day only). Each ranking's top `check_top` files (fix first:
+with that day as "now" (its tree, its fan-in, its churn and fixes up to that day only). The fan-in of then is the code graph's AT that
+landing: `graphAt({ state, repo, at: <landing> })` (docs/code-graph.md; norn-code indexes that commit, reusing every stored blob, so only
+the files changed since are parsed), with the state and repo `norn code history` reads today's graph with. Each ranking's top `check_top` files (fix first:
 ties by importance, then path, as `--top`; importance: ties by `churn_90d`, then path, as Code > Files) are scored against the fix landings
 (the definition above) from the check day to now. Beside it, the baseline: the share of ALL the files of that day's tree that got one. A
 file deleted or renamed since counts as not fixed unless a fix landing touched its old path.
@@ -109,14 +111,17 @@ file deleted or renamed since counts as not fixed unless a fix landing touched i
 RankCheck = { status: 'measured', basis: 'measured', as_of: 'YYYY-MM-DD' (the check day), days: check_days, sha: the landing ranked (12 hex),
               files: the files of its tree, fixed: of them, the ones with a fix landing since,
               fix_first:  { status: 'measured', hit, top: [{ file, rank (its fix_first then), fixed }] } | { status: 'n/a', reason },
-              importance: { status: 'measured', hit, top: [{ file, rank (its importance then), fixed }] } }
+              importance: { status: 'measured', hit, top: [{ file, rank (its importance then), fixed }] } | { status: 'n/a', reason } }
           | { status: 'n/a', basis, as_of, days, reason, [sha, files, fixed] }
 ```
 
 n/a, with the reason in words, when: the history is younger than `check_min_history_days` ("the history starts 2026-06-01: under 180
 days"); the commits since the check day are under `typed_min_share` typed ("0 of 4 commits in the last 90 days carry ..."); the tree then
 had no more than `check_top` files (the top would be every file); no file got a fix since (nothing to predict). `fix_first` alone is n/a
-when the history up to the check day was untyped (its reason prefixed "90 days ago: ").
+when the history up to the check day was untyped (its reason prefixed "90 days ago: "). `importance` alone is n/a when the code graph at
+that landing cannot be had (no source of a graph language, norn-code not built): `no code graph at <sha>: <graphAt's reason>`. Importance
+is the Borda count of fan-in and churn, so it is never ranked from churn alone; fix first stays measured (a missing fan-in counts as 0,
+as in the rank itself).
 
 The one line (`checkLine(check, 'fix_first' | 'importance')` in engine/lib/codesignals.mjs; the dashboard and the daily report print it):
 `12 of the top 20 fix-first files got a fix in the last 90 days; baseline 9 % of files`. A ranking whose top share is at or under the
