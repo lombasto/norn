@@ -707,7 +707,7 @@ const GRADE_USAGE: &str = "usage: norn-code grade files | calls [--seed N] [--pe
 fn main() {
     let v: Vec<String> = std::env::args().skip(1).collect();
     let r = match v.first().map(String::as_str) {
-        Some("version") => Ok(json!({ "crate": env!("CARGO_PKG_VERSION"), "store_schema": limits::STORE_SCHEMA })),
+        Some("version") => Ok(json!({ "crate": env!("CARGO_PKG_VERSION"), "store_schema": limits::STORE_SCHEMA, "source": env!("NORN_SOURCE") })),
         Some("index") => args(&v[1..]).and_then(|a| index(&a)).map(|b| {
             let mut o = b.out;
             if o["worktree"] == json!(true) {
