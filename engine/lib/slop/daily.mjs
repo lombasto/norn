@@ -23,8 +23,18 @@ import { loadDeliverables } from '../deliverables.mjs';
 
 const today = now => new Date(now).toISOString().slice(0, 10);
 
+/** what the gate could NOT see in the week's run-end checks (a stored check with `run`; the doors and `norn slop check` have no voice by
+ * design): the run ends whose second voice could not run (an M* model rule's "could not run", the commonest why) and those that touched
+ * Rust with no clippy log (LR/no-evidence) -> { n, voice: { k, why }, rust: { k } } */
+export function blindSpots(checks, now = Date.now()) {
+  const ends = checks.filter(c => c.run && Date.parse(c.at) > now - 7 * 864e5), whys = new Map();
+  const voice = ends.filter(c => { const f = c.findings.find(x => /^M\d+$/.test(x.rule) && /^could not run: /.test(x.msg)); if (f) { const w = f.msg.slice(15); whys.set(w, (whys.get(w) || 0) + 1); } return !!f; });
+  return { n: ends.length, voice: { k: voice.length, why: [...whys].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null }, rust: { k: ends.filter(c => c.findings.some(f => f.rule === 'LR/no-evidence')).length } };
+}
+const blindWords = b => [b?.voice.k ? `second voice: could not run ${b.voice.k} of ${b.n} (${b.voice.why})` : '', b?.rust.k ? `Rust unchecked: ${b.rust.k} of ${b.n} run ends touched *.rs with no clippy log` : ''].filter(Boolean);
+
 /** the report from a LOC report + a sweep: { markdown, line } */
-export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0, meter = null, growth = null, register = null } = {}) {
+export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0, meter = null, growth = null, register = null, blind = null } = {}) {
   const then = loc.series.length > 7 ? loc.series[loc.series.length - 8] : loc.series[0];
   const L = [`# SloppaChoppa daily ${day}`, '', `Lines of code (non-blank, git) at ${loc.ref} ${loc.head.slice(0, 7)}; the change is against ${then?.day ?? '-'}.`, '',
     '| class | lines | 7 d |', '|---|---:|---:|', ...CLASSES.map(c => `| ${c} | ${num(loc.totals[c])} | ${delta(loc.totals[c], then?.totals[c] ?? 0)} |`),
@@ -53,12 +63,15 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = []
   if (growth) L.push('', ...renderGrowth(growth));
   // S7: the rule register's drift numbers and the deferrals that came due (registerDrift's result, or { error })
   if (register) L.push('', ...renderDrift(register));
+  // what the gate could not see in 7 d (blindSpots' result): a part only when its k > 0
+  const bw = blindWords(blind);
+  if (bw.length) L.push('', '## What the gate could not see in 7 d', '', ...bw.map(w => `- ${w}`));
   const c = then ? delta(loc.totals.code, then.totals.code) : '', mw = !meter ? '' : meter.error ? 'meter could not run; ' : `meter ${Math.round(meter.score)} ${meter.band}; `;
   const line = `slop ${day}: ${mw}code ${num(loc.totals.code)}${c ? ` ${c} in 7 d` : ''}, tests ${num(loc.totals.tests)}; big landings ${big.length}; branches: `
     + `${sw.real.length} real (${sw.real.filter(r => r.conflicts).length} conflict), ${sw.empty.length} empty; worktrees: ${sw.dead.length} dead, ${sw.at_risk.length} AT RISK; `
     + `${sw.remote_merged.length} remote merged; slop resumes ${resumes} in 7 d`
     + (landed.length ? `; LANDED UNCHECKED ${landed.length}: ${landed.map(l => `${l.sha.slice(0, 7)} (${landedWords(l)})`).join(', ')}` : '')
-    + (register && !register.error ? `; rules with no check: ${register.noCheck}` : '');
+    + (register && !register.error ? `; rules with no check: ${register.noCheck}` : '') + bw.map(w => `; ${w}`).join('');
   return { markdown: L.join('\n') + '\n', line };
 }
 
@@ -112,7 +125,7 @@ export function dailyReport({ repo, state, now = Date.now(), own = null, main = 
     if (fresh.length) hostWrite(state, { type: 'landings', points: fresh });
     growth = growthOf({ loc, points: [...stored, ...fresh], hotspots: hotspots(home, loc.ref, { tool: mt, now }), fan: fanList(home, loc.ref) });
   } catch (e) { growth = { error: String(e.message).split('\n')[0].slice(0, 300) }; }
-  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now), meter, growth, register: registerDrift({ repo, state, projectDir, tip, now }) });
+  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now), meter, growth, register: registerDrift({ repo, state, projectDir, tip, now }), blind: blindSpots(slopChecks(state), now) });
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
     empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length }, ...(meter.error ? {} : { meter: meterPoint(meter) }) };
   const fill = Object.fromEntries(loc.series.filter(p => p.day !== day).map(p => [p.day, { loc: { totals: p.totals, areas: p.areas }, filled: true }]));
