@@ -7,7 +7,7 @@
 import { gitRun, blobs, diffEntries } from './check.mjs';
 import { classOf, areaOf, landings, num, delta } from './loc.mjs';
 import { parseEslint } from './tools.mjs';
-import { masked, lineText, usesOf, isJs } from './scan.mjs';
+import { classify, maskClasses, lineText, usesOf, isJs } from './scan.mjs';
 import { graphAt, fans } from '../codegraph.mjs';
 
 /** SPEC 4.1 b / c: the function caps, the file ratchet, the branch's WARN (growth.branch_warn); S4's replay proposes their levels */
@@ -45,7 +45,7 @@ export function functionsOf(xs, text = '') {
     const at = `${x.line}:${x.column}`, f = by.get(at) || by.set(at, { name: nameOf(x, text), line: x.line, column: x.column, complexity: 0, lines: 0, depth: 0, params: 0, statements: 0, blocks: [] }).get(at);
     f[k] = Number(/(?:of |\()(\d+)\)?\. Maximum/.exec(x.msg)?.[1] || 0);
   }
-  const fns = [...by.values()].sort((a, b) => a.line - b.line || a.column - b.column), seen = {}, code = masked(text, ['code'], 'x.mjs');
+  const fns = [...by.values()].sort((a, b) => a.line - b.line || a.column - b.column), seen = {}, code = maskClasses(text, ['code'], classify(text));
   for (const f of fns) { f.end = f.line + Math.max(f.lines, 1) - 1; f.key = `${f.name}#${(seen[f.name] = (seen[f.name] || 0) + 1)}`; }
   // max-depth counts per function: a block belongs to the innermost function around it
   for (const x of depth) {
@@ -60,7 +60,7 @@ const excessOf = fns => fns.reduce((s, f) => s + Object.keys(CAPS).reduce((t, m)
 const codeLines = text => (text || '').split('\n').filter(l => /\S/.test(l)).length;
 // a function new at head whose name is used once more in the file, inside another function, counts with that caller (main -> main2)
 function folded(fns, text, baseKeys) {
-  const code = masked(text, ['code'], 'x.mjs'), out = fns.map(f => ({ ...f })), gone = new Set();
+  const code = maskClasses(text, ['code'], classify(text)), out = fns.map(f => ({ ...f })), gone = new Set();
   for (const f of out) {
     if (baseKeys.has(f.key) || f.name === '(anonymous)' || usesOf(code, f.name) !== 2) continue;
     const re = new RegExp(`(?<![\\w$])${f.name.replace(/\$/g, '\\$')}(?![\\w$])`, 'g'), lines = [...code.matchAll(re)].map(m => code.slice(0, m.index).split('\n').length).filter(l => l < f.line || l > f.end);

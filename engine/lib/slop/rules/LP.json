@@ -14,6 +14,11 @@
         "why": "A file that does not parse cannot be imported, and no other check can read it.",
         "fix": "Fix the syntax error the message names, then run the check again."
       },
+      "ERA001": {
+        "what": "A new comment line in a Python file is commented-out code (ruff's ERA001, which Norn selects beside the project's own rules: K12's Python route).",
+        "why": "Commented-out code does not run and is not tested. Readers cannot tell if it is a plan, a left-over or a bug. Git already keeps the old version.",
+        "fix": "Delete it. If it explains something, write the explanation in words."
+      },
       "config-changed": {
         "what": "The branch edits ruff's config ([tool.ruff] in a pyproject.toml, or ruff.toml).",
         "why": "The config says what ruff looks for; editing it is the cheapest way to clear a finding. The check lints with the merge base's config either way.",
@@ -24,6 +29,8 @@
   "files": ["**/*.py", "**/*.pyi"],
   "exclude": ["**/vendor/**", "**/third_party/**"],
   "levels": { "*": "BLOCK" },
+  "select": ["ERA001"],
+  "shadow_rules": ["ERA001"],
   "fix": ["safe-fixes", "format"],
   "fixture": {
     "hit": {

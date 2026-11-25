@@ -2,6 +2,8 @@
 // classify() tells code from comment from string per character (a light JS lexer: comments, quotes, templates with ${},
 // regex literals by the previous token), so a pattern can look at comments only, or at strings only, and a "quoted" span
 // inside a comment or a string (a cited user message) is its own class that no rule reads unless it asks for it.
+// slop-langs S3 (SPEC 4): this is the JS / TS lexer; Python's and Rust's are their packs' (lang/py.mjs, lang/rs.mjs). The dispatch by
+// file (masked, commentsIn) is lang/index.mjs's: the packs import this module, so it imports none of them.
 export const CODE = 0, COMMENT = 1, STRING = 2, QUOTE = 3;
 export const CLASSES = { code: CODE, comment: COMMENT, string: STRING, quote: QUOTE };
 export const isJs = f => /\.(?:mjs|cjs|js|jsx|ts|tsx|mts|cts)$/.test(f);
@@ -22,10 +24,12 @@ function regexStart(t, i) {
   return !!w && REGEX_AFTER.test(w[0]);
 }
 
+/** a "quoted" span (straight or curly double quotes, one line) in t[a, b) becomes QUOTE: a cited message inside a comment or a string */
+export function markQuotes(t, cls, a, b) { for (const m of t.slice(a, b).matchAll(/"[^"\n]*"|“[^”\n]*”/g)) cls.fill(QUOTE, a + m.index, a + m.index + m[0].length); }
+
 /** one class per character (CODE, COMMENT, STRING, QUOTE); a string's quote marks and a template's ${ } are code */
 export function classify(t) {
-  const cls = new Uint8Array(t.length), tpl = [];
-  const quoted = (a, b) => { for (const m of t.slice(a, b).matchAll(/"[^"\n]*"|“[^”\n]*”/g)) cls.fill(QUOTE, a + m.index, a + m.index + m[0].length); };
+  const cls = new Uint8Array(t.length), tpl = [], quoted = (a, b) => markQuotes(t, cls, a, b);
   let depth = 0;
   for (let i = 0; i < t.length;) {
     const ch = t[i], nx = t[i + 1];
@@ -56,10 +60,9 @@ export function classify(t) {
   return cls;
 }
 
-/** the text with every character outside the wanted classes blanked (newlines kept: line numbers and offsets stay) */
-export function masked(text, want, file = '') {
-  if (!isJs(file)) return text;   // a doc or a data file is all prose
-  const keep = new Set(want.map(w => CLASSES[w])), cls = classify(text);
+/** the text with every character outside the wanted classes blanked (newlines kept: line numbers and offsets stay); cls: a lexer's classes */
+export function maskClasses(text, want, cls) {
+  const keep = new Set(want.map(w => CLASSES[w]));
   let out = '';
   for (let i = 0; i < text.length; i++) out += text[i] === '\n' || keep.has(cls[i]) ? text[i] : ' ';
   return out;
@@ -78,11 +81,13 @@ export function isReason(comment, deny) {
   const denied = deny.map(d => d.toLowerCase()).some(d => why === d || why.startsWith(d + ' ') || why.startsWith(d + ',') || why.startsWith(d + ':'));
   return { why, ok: why.split(/\s+/).filter(Boolean).length >= 2 && !denied };
 }
-/** the comment text of a line range (1-based, inclusive) of a JS text */
-export function commentsIn(text, from, to) {
-  const lines = masked(text, ['comment', 'quote'], 'x.mjs').split('\n').slice(Math.max(0, from - 1), to);
-  return norm(lines.join(' ').replace(/\/\/|\/\*|\*\//g, ' '));
+/** the comment text of a line range (1-based, inclusive), given a lexer's classes and the language's comment marks (a global regex) */
+export function commentText(text, from, to, cls, marks) {
+  const lines = maskClasses(text, ['comment', 'quote'], cls).split('\n').slice(Math.max(0, from - 1), to);
+  return norm(lines.join(' ').replace(marks, ' '));
 }
+/** JS's comment marks (commentText) */
+export const JS_MARKS = /\/\/|\/\*|\*\//g;
 
 // ---------- one-statement helpers (K9) and exports (K4) ----------
 const canon = (params, body) => norm(`${params.trim().replace(/^\(\s*([\w$]+)\s*\)$/, '$1')} => ${body}`).replace(/;$/, '');

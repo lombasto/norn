@@ -2,6 +2,8 @@
 // tool (its findings, its docs, which file is its config). The import edges are the code graph's (codegraph.mjs).
 import { parseEslint } from '../tools.mjs';
 import { classify, COMMENT, lineAt } from '../scan.mjs';
+/** the pack's lexer and comment marks (lang/index.mjs masked / commentsIn): scan.mjs's JS lexer */
+export { classify, JS_MARKS as MARKS } from '../scan.mjs';
 
 /** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads (slop-langs SPEC 3.4) */
 export const ID = 'js', astLang = () => 'JavaScript';

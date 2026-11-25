@@ -8,7 +8,8 @@
     "why": "A deferral with no record is forgotten. The temporary code becomes permanent.",
     "fix": "Cite the open record that tracks the work (RM-n, DEC-n, DIR-n or Q-n), or add one. Or do the work now and delete the words."
   },
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.pyi","**/*.rs"],
+  "shadow_langs": ["ts","py","rs"],
   "exclude": ["tests/**","**/vendor/**"],
   "in": ["comment","string"],
   "patterns": [
@@ -18,11 +19,17 @@
   "fixture": {
     "hit": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"src/a.mjs":"// for now the retry is off\nexport const label = 'attachments come in a later stage';\n// remove once nothing calls it (see the notes)\nexport const a = 1;\n"}
+      "head": {"src/a.mjs":"// for now the retry is off\nexport const label = 'attachments come in a later stage';\n// remove once nothing calls it (see the notes)\nexport const a = 1;\n",
+        "src/b.py":"# for now the retry is off\nLABEL = \"attachments come in a later stage\"\n# remove once nothing calls it (see the notes)\nA = 1\n",
+        "src/c.rs":"// for now the retry is off\npub const LABEL: &str = \"attachments come in a later stage\";\n/// remove once nothing calls it (see the notes)\npub const A: u8 = 1;\n",
+        "src/d.ts":"// for now the retry is off\nexport const label: string = 'attachments come in a later stage';\n"}
     },
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"src/a.mjs":"// the user wrote \"for now, skip it\" and the text stays as written\nexport const dir = 'a temporary worktree';\n// a stop-gap until RM-12 lands\nexport const a = 1;\n"}
+      "head": {"src/a.mjs":"// the user wrote \"for now, skip it\" and the text stays as written\nexport const dir = 'a temporary worktree';\n// a stop-gap until RM-12 lands\nexport const a = 1;\n",
+        "src/b.py":"# the user wrote \"for now, skip it\" and the text stays as written\nDIR = \"a temporary worktree\"\n# a stop-gap until RM-12 lands\nA = 1\n",
+        "src/c.rs":"// the user wrote \"for now, skip it\" and the text stays as written\npub const DIR: &str = \"a temporary worktree\";\n// a stop-gap until RM-12 lands\npub const A: u8 = 1;\n",
+        "src/d.ts":"// a stop-gap until RM-12 lands\nexport const dir: string = 'a temporary worktree';\n"}
     }
   }
 }
