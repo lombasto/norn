@@ -262,10 +262,9 @@ test('digest sync: a stale heartbeat of home b and our mail unacked there are ro
   seen(T - 20 * 60000);
   const rows = () => digest(a, {}, { now: T, git: fakeGit(), dlv: [] }).sections.sync;
   assert.deepEqual(rows().map(r => [r.rule, r.home, r.id ?? null]), [['heartbeat', 'b', null], ['mail', 'b', m.id]]);
-  const out = renderDigest(digest(a, {}, { now: T, git: fakeGit(), dlv: [] }));
-  assert.match(out, /Sync rules broken \(2\)/);
-  assert.match(out, /home b: heartbeat 20 min old/);
-  assert.ok(out.includes(`${m.id} to role:controller@b unacked 40 min`), out);
+  const [hb, ml] = rows();
+  assert.match(hb.why, /^home b: heartbeat 20 min old/);
+  assert.ok(ml.what === `${m.id} to role:controller@b unacked 40 min`, ml.what);
   seen(T, { a: { 'mail.jsonl': m.seq } });
   assert.deepEqual(rows().map(r => r.rule), ['mail'], 'fresh heartbeat: that row leaves');
   assert.match(rows()[0].why, /b holds it/);

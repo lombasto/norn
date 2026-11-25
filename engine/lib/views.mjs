@@ -293,7 +293,5 @@ export function renderDigest(d, { level = 2 } = {}) {
   if (s.lanes) sec('13 Lanes nothing acts on (act this pass)', s.lanes, r => `- ${r.id} ${r.rule}${r.run ? ' (' + r.run + ')' : ''}: ${r.why}`);
   // HOME-MAIL S2: the controller's unacked mail; the row leaves at the ack (CHECKIN.md: a check-in takes it past policy.mail.checkin_take_min)
   if (s.mail) sec(`14 Mail for ${s.mail[0].to}`, s.mail, r => `- ${r.id} ${r.state}${r.urgent ? ' URGENT' : ''} from ${r.from} (${r.age_min} min): ${r.subject} - ${r.state === 'queued' ? 'norn mail check' : `norn mail ack ${r.id}`}`);
-  // HOME-MAIL S3: a broken sync rule (a silent home, our mail unacked there); the row leaves when the rule holds again
-  if (s.sync) sec('15 Sync rules broken', s.sync, r => `- ${r.why}`);
   return L.join('\n') + '\n';
 }
