@@ -148,7 +148,7 @@ test('callers (S3): each call site whose candidates hold the def, with its how; 
     ['src/calls.mjs', 25, 5, 'ambiguous', 2, 'src/calls.mjs#main', 1, 'unmeasured']]);
   assert.deepEqual(c.rows[1].targets, [AREA, 'src/shapes.mjs#src/shapes.mjs#Square.area#0']);
   const d2 = callers({ state: r.state, repo: r.repo, symbol: AREA, depth: 2 });
-  assert.deepEqual(d2.rows.slice(2).map(x => [x.line, x.name, x.how, x.depth]), [[24, 'walk', 'method-unique', 2]]);
+  assert.deepEqual(d2.rows.slice(2).map(x => [x.line, x.name, x.how, x.depth]), [[24, 'walk', 'method-unique', 2], [30, 'walk', 'method-unique', 2]]);
   assert.deepEqual(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:helper' }).rows.map(x => [x.line, x.how]), [[21, 'import']]);
   assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:area' }).why, /defines 2 named area; name one by id/);
   assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/nope.mjs#x#0' }).why, /no definition has the id/);
