@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { cards, cardGroup, markCard, cardReport, CARD_LIMITS } from '../engine/lib/codecard.mjs';
+import { cards, cardGroup, markCard, cardReport, reportLines, CARD_LIMITS } from '../engine/lib/codecard.mjs';
+import { warnMarks } from '../engine/lib/codewarn.mjs';
 import { codeCmd } from '../engine/lib/codecli.mjs';
 
 test.after(cleanTmp);
@@ -107,4 +108,20 @@ test('norn code card: several files in one call, --json; --report says too few r
   assert.equal(codeCmd(['card', '--report'], { out: s => out.push(s), err: s => err.push(s), where }), 1);
   assert.match(out.join('\n'), /too few runs: card 0, control 0 \(15 each needed\)/);
   assert.equal(codeCmd(['card'], { out: () => {}, err: s => err.push(s), where }), 2);
+});
+
+test('the same report over the warn-on-edit marks: groups warn / control; `norn code warn --report` prints them', () => {
+  const w = world(), items = {}, dir = path.join(w.state, 'code', 'warn');
+  fs.mkdirSync(dir, { recursive: true });
+  for (let n = 1; n <= 30; n++) { const id = `RUN-a-${n}`; items[id] = { id, kind: 'run', state: 'exited', data: {}, end: { outcome: 'done' } }; fs.writeFileSync(path.join(dir, `${id}.txt`), `ab ${n % 2 ? 'control' : 'warn'}\n`); }
+  const r = cardReport({ state: w.state, items, marks: warnMarks(w.state), names: ['warn', 'control'], usageOf: () => ({ total: 1e6 }), readsOf: () => 5 });
+  assert.equal(r.ok, true); assert.deepEqual(Object.keys(r.groups), ['warn', 'control']); assert.deepEqual([r.groups.warn.runs, r.groups.control.runs], [15, 15]);
+  const lines = reportLines(r, 'the warn line');
+  assert.match(lines[1], /^warn {5}/); assert.match(lines.at(-1), /whether the warn line stays/);
+  const out = [], err = [], where = () => ({ project: null, state: w.state });
+  // the records hold no run: every mark is unmatched -> too few
+  assert.equal(codeCmd(['warn', '--report'], { out: s => out.push(s), err: s => err.push(s), where }), 1);
+  assert.match(out.join('\n'), /too few runs: warn 0, control 0 \(15 each needed\)/);
+  assert.equal(codeCmd(['warn'], { out: () => {}, err: s => err.push(s), where }), 2);
+  assert.match(err.join('\n'), /norn code warn --report/);
 });
