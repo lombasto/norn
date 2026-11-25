@@ -49,14 +49,20 @@ test('depsOf: package.json and lock packages, TOML dependency sections and array
   assert.deepEqual(depsOf('package.json', '{ "dependencies": { "a": "1.0" }, "devDependencies": { "b": "^2" } }'), ['a@1.0', 'b@^2']);
   assert.deepEqual(depsOf('x/package-lock.json', '{ "packages": { "": {}, "node_modules/c": { "version": "3.1" } } }'), ['c@3.1']);
   assert.deepEqual(depsOf('pyproject.toml', '[project]\nname = "g"\ndependencies = [\n  "numpy>=2",\n  "ruff",\n]\n[tool.ruff]\nline = 1\n'), ['numpy>=2', 'ruff']);
-  assert.deepEqual(depsOf('Cargo.toml', '[package]\nname = "g"\nversion = "1"\n[dependencies]\nserde = "1.0"\n'), ['g@1', 'serde = "1.0"']);
-  assert.deepEqual(depsOf('Cargo.lock', '[[package]]\nname = "a"\nversion = "0.1"\n[[package]]\nname = "b"\nversion = "2"\n'), ['a@0.1', 'b@2']);
+  assert.deepEqual(depsOf('Cargo.toml', '[package]\nname = "g"\nversion = "1"\n[dependencies]\nserde = "1.0"\n'), ['serde = "1.0"']);
+  assert.deepEqual(depsOf('Cargo.lock', '[[package]]\nname = "a"\nversion = "0.1"\nsource = "registry+https://example.invalid/index"\n[[package]]\nname = "b"\nversion = "2"\nsource = "git+https://example.invalid/b#1"\n'), ['a@0.1', 'b@2']);
   assert.deepEqual(depsOf('requirements.txt', 'numpy==2  # pinned\n\nruff\n'), ['numpy==2', 'ruff']);
   assert.deepEqual(depsOf('package.json', '{ nope'), ['(unparsable) package.json']);
   // slop-langs S3 (SPEC 4, the three measured gaps): a multi-line optional extra, PEP 735's dependency groups, a Cargo table of one dependency
   assert.deepEqual(depsOf('pyproject.toml', '[project]\nname = "g"\n[project.optional-dependencies]\ngui = [\n  "pyside6>=6",\n  "pillow",\n]\ndev = ["pytest"]\n'), ['pyside6>=6', 'pillow', 'pytest']);
   assert.deepEqual(depsOf('pyproject.toml', '[dependency-groups]\ndev = [\n  "ruff==0.15",\n]\nlint = ["mypy"]\n[tool.uv]\npackage = true\n'), ['ruff==0.15', 'mypy']);
-  assert.deepEqual(depsOf('Cargo.toml', '[dependencies.glam]\nversion = "0.30"\nfeatures = ["serde"]\n[dev-dependencies]\nrand = "0.9"\n'), ['glam.version = "0.30"', 'glam.features = ["serde"]', 'rand = "0.9"']);
+  assert.deepEqual(depsOf('Cargo.toml', '[dependencies.glam]\nversion = "0.30"\nfeatures = ["serde"]\n[dev-dependencies]\nrand = "0.9"\n'), ['glam = { version = "0.30", features = ["serde"] }', 'rand = "0.9"']);
+  // S4F (S4-NOTES fix 5): own code is no dependency - a path dependency (inline, table or multi-line) and a Cargo package with no
+  // source (the crate's own [package], a workspace member in the lock); a multi-line inline table is read whole, as one entry
+  assert.deepEqual(depsOf('Cargo.toml', '[package]\nname = "g"\nversion = "0.0.0"\n[dependencies]\nown = { path = "../own" }\nwin = { version = "0.58", features = [\n  "Win32_Foundation",\n  "Win32_System",\n] }\nmine = {\n  path = "../mine",\n}\nserde = "1.0"\n[dependencies.local]\npath = "../local"\nversion = "0.1"\n'),
+    ['win = { version = "0.58", features = [ "Win32_Foundation", "Win32_System", ] }', 'serde = "1.0"']);
+  assert.deepEqual(depsOf('Cargo.lock', '[[package]]\nname = "own"\nversion = "0.0.0"\ndependencies = [\n "half",\n]\n\n[[package]]\nname = "half"\nversion = "2.4.1"\nsource = "registry+https://example.invalid/index"\nchecksum = "ab"\n'), ['half@2.4.1']);
+  assert.deepEqual(depsOf('uv.lock', '[[package]]\nname = "numpy"\nversion = "2.1"\n'), ['numpy@2.1'], 'a Python lock keeps its packages');
 });
 
 test('finding shape: value and base_value; key: match fingerprints the token tree-wide; a shadow rule is recorded, never held', () => {
@@ -127,7 +133,7 @@ const fxRepo = ({ base, head }) => {
 const AST = effectiveRules().filter(r => r.kind === 'ast');
 test('ast-grep: K2 and K19 find their lines in Python, Rust and TypeScript (shadow); the JS hits stay held; one scan per side, ids <rule>.<pack>.<n>.<language>', () => {
   const want = { K2: { 'src/io.mjs': [1, 2, 4, 6], 'src/io.py': [4, 11, 18], 'src/io.rs': [2, 7, 11], 'src/io.ts': [1, 2, 4] },
-    K19: { 'src/a.mjs': [1, 2, 4], 'src/a.py': [4, 12, 19], 'src/a.rs': [4, 11, 18], 'src/a.ts': [1, 2, 4] } };
+    K19: { 'src/a.mjs': [1, 2, 4], 'src/a.py': [4, 12, 20], 'src/a.rs': [4, 11, 18], 'src/a.ts': [1, 2, 4] } };
   for (const rule of AST.filter(r => want[r.id])) {
     const fx = rule.fixture.hit, runs = [], tool = (run, side) => { runs.push([side, run]); return fx.recorded[side] === undefined ? null : JSON.stringify(fx.recorded[side]); };
     const r = slopCheck({ repo: fxRepo(fx), base: 'main', rules: [rule], tool }), got = {};

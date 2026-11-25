@@ -11,7 +11,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
   "shadow_langs": ["py","rs","ts"],
-  "exclude": ["**/vendor/**"],
+  "exclude": ["**/vendor/**","**/third_party/**"],
   "reason": ["ignore","ignored","ok","okay","best effort","nothing","noop","no-op","empty","todo","fine","whatever","swallow"],
   "match": {
     "js": [
@@ -104,14 +104,7 @@
           {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":1,"column":48,"endLine":1,"text":"catch { /* ignore */ }"},
           {"file":"src/io.mjs","ruleId":"K2.js.1.JavaScript","line":2,"column":35,"endLine":2,"text":"() => {}"},
           {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":4,"column":16,"endLine":4,"text":"catch (e) {}"},
-          {
-            "file": "src/io.mjs",
-            "ruleId": "K2.js.0.JavaScript",
-            "line": 6,
-            "column": 40,
-            "endLine": 6,
-            "text": "catch { /* best effort, it is fine */ }"
-          },
+          {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":6,"column":40,"endLine":6,"text":"catch { /* best effort, it is fine */ }"},
           {"file":"src/io.py","ruleId":"K2.py.0.Python","line":4,"column":5,"endLine":5,"text":"except OSError:\n        pass"},
           {"file":"src/io.py","ruleId":"K2.py.0.Python","line":11,"column":5,"endLine":12,"text":"except Exception:\n        ..."},
           {"file":"src/io.py","ruleId":"K2.py.0.Python","line":18,"column":5,"endLine":19,"text":"except:\n        pass"},
@@ -128,6 +121,8 @@
     "miss": {
       "base": {"src/io.mjs":"export function old(f) {\n  try { f(); } catch (e) {}\n}\n"},
       "head": {
+        "web/third_party/lib/x.mjs": "export const read = f => { try { return f(); } catch (e) {} };\n",
+        "pkg/third_party/lib/x.py": "def read(f):\n    try:\n        f()\n    except OSError:\n        pass\n",
         "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\nexport const read = f => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = p => p.catch(e => { throw e; });\nexport const text = 'try { f(); } catch (e) {}';\n",
         "src/io.py": "def read(f):\n    try:\n        return f()\n    except OSError as e:\n        raise RuntimeError(\"read failed\") from e\n\n\nDOC = \"try: f()\\nexcept: pass\"\n",
         "src/io.rs": "pub fn a(x: Result<u8, E>) {\n    if let Err(e) = &x { log(e); }\n    if let Err(_) = x { /* gone: the file was removed meanwhile, nothing left to read */ }\n    let s = \"if let Err(_) = x {}\";\n    let v = x.ok();\n}\n",
@@ -136,32 +131,13 @@
       "recorded": {
         "head": [
           {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":2,"column":16,"endLine":2,"text":"catch (e) {}"},
-          {
-            "file": "src/io.mjs",
-            "ruleId": "K2.js.0.JavaScript",
-            "line": 4,
-            "column": 48,
-            "endLine": 4,
-            "text": "catch { /* gone: the file was removed meanwhile, nothing left to read */ }"
-          },
-          {
-            "file": "src/io.rs",
-            "ruleId": "K2.rs.0.Rust",
-            "line": 3,
-            "column": 5,
-            "endLine": 3,
-            "text": "if let Err(_) = x { /* gone: the file was removed meanwhile, nothing left to read */ }"
-          },
-          {
-            "file": "src/io.ts",
-            "ruleId": "K2.ts.0.TypeScript",
-            "line": 1,
-            "column": 64,
-            "endLine": 1,
-            "text": "catch { /* gone: the file was removed meanwhile, nothing left to read */ }"
-          }
+          {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":4,"column":48,"endLine":4,"text":"catch { /* gone: the file was removed meanwhile, nothing left to read */ }"},
+          {"file":"src/io.rs","ruleId":"K2.rs.0.Rust","line":3,"column":5,"endLine":3,"text":"if let Err(_) = x { /* gone: the file was removed meanwhile, nothing left to read */ }"},
+          {"file":"src/io.ts","ruleId":"K2.ts.0.TypeScript","line":1,"column":64,"endLine":1,"text":"catch { /* gone: the file was removed meanwhile, nothing left to read */ }"}
         ],
-        "base": [{"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":2,"column":16,"endLine":2,"text":"catch (e) {}"}]
+        "base": [
+          {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":2,"column":16,"endLine":2,"text":"catch (e) {}"}
+        ]
       }
     }
   }

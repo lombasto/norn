@@ -12,7 +12,7 @@
   "note": "2026-11-18: WARN for one week of its own numbers, then BLOCK - the level change is a record (RM-45), not a timer",
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
   "shadow_langs": ["py","rs","ts"],
-  "exclude": ["**/vendor/**"],
+  "exclude": ["**/vendor/**","**/third_party/**"],
   "reason": ["ignore","ignored","ok","okay","best effort","nothing","noop","no-op","empty","todo","fine","whatever","swallow"],
   "match": {
     "js": [
@@ -71,19 +71,40 @@
       {
         "rule": {
           "kind": "except_clause",
-          "has": {
-            "kind": "block",
-            "all": [
-              {
-                "has": {
-                  "nthChild": 1,
-                  "any": [{"kind":"return_statement"},{"kind":"continue_statement"},{"kind":"expression_statement","has":{"kind":"assignment"}}]
+          "all": [
+            {
+              "any": [
+                {"not":{"has":{"field":"value","regex":"."}}},
+                {"has":{"field":"value","regex":"^(?:Exception|BaseException)$"}},
+                {"has":{"field":"value","kind":"as_pattern","has":{"nthChild":1,"regex":"^(?:Exception|BaseException)$"}}}
+              ]
+            },
+            {
+              "has": {
+                "kind": "block",
+                "all": [
+                  {
+                    "has": {
+                      "nthChild": 1,
+                      "any": [{"kind":"return_statement"},{"kind":"continue_statement"},{"kind":"expression_statement","has":{"kind":"assignment"}}]
+                    }
+                  },
+                  {"not":{"has":{"nthChild":2,"not":{"kind":"comment"}}}}
+                ]
+              }
+            },
+            {
+              "any": [
+                {"not":{"has":{"field":"value","kind":"as_pattern"}}},
+                {
+                  "all": [
+                    {"has":{"field":"value","kind":"as_pattern","has":{"kind":"as_pattern_target","has":{"kind":"identifier","pattern":"$E"}}}},
+                    {"not":{"has":{"kind":"block","has":{"kind":"identifier","pattern":"$E","stopBy":"end"}}}}
+                  ]
                 }
-              },
-              {"not":{"has":{"nthChild":2,"not":{"kind":"comment"}}}},
-              {"not":{"has":{"kind":"identifier","regex":"^(?:e|err|error|ex)$","stopBy":"end"}}}
-            ]
-          }
+              ]
+            }
+          ]
         },
         "message": "except drops the error and goes on with a default: say in a comment what failed and what happens next, or let it raise"
       }
@@ -116,7 +137,7 @@
       "base": {"src/a.mjs":"export const a = 1;\n"},
       "head": {
         "src/a.mjs": "export const read = f => { try { return f(); } catch { return null; } };\nexport function all(fs) { for (const f of fs) { try { f(); } catch (e) { continue; } } }\nexport let v = 0;\nexport const set = f => { try { v = f(); } catch { v = -1; } };\n",
-        "src/a.py": "def read(f):\n    try:\n        return f()\n    except OSError:\n        return None\n\n\ndef all_of(fs):\n    for f in fs:\n        try:\n            f()\n        except Exception:\n            continue\n\n\ndef put(f):\n    try:\n        v = f()\n    except ValueError:\n        v = -1\n    return v\n",
+        "src/a.py": "def read(f):\n    try:\n        return f()\n    except:\n        return None\n\n\ndef all_of(fs):\n    for f in fs:\n        try:\n            f()\n        except Exception:\n            continue\n\n\ndef put(f):\n    err = None\n    try:\n        f()\n    except BaseException as exc:\n        err = \"failed\"\n    return err\n",
         "src/a.rs": "pub fn a(x: Result<u8, E>) -> Option<u8> {\n    match x {\n        Ok(v) => Some(v),\n        Err(_) => None,\n    }\n}\npub fn b(xs: &[Result<u8, E>]) {\n    for x in xs {\n        match x {\n            Ok(v) => use_it(*v),\n            Err(_) => continue,\n        }\n    }\n}\npub fn c(x: Result<u8, E>) -> u8 {\n    match x {\n        Ok(v) => v,\n        Err(_e) => return 0,\n    }\n}\n",
         "src/a.ts": "export const read = (f: () => string) => { try { return f(); } catch { return null; } };\nexport function all(fs: Array<() => void>) { for (const f of fs) { try { f(); } catch (e) { continue; } } }\nexport let v = 0;\nexport const set = (f: () => number) => { try { v = f(); } catch { v = -1; } };\n"
       },
@@ -125,9 +146,9 @@
           {"file":"src/a.mjs","ruleId":"K19.js.0.JavaScript","line":1,"column":48,"endLine":1,"text":"catch { return null; }"},
           {"file":"src/a.mjs","ruleId":"K19.js.0.JavaScript","line":2,"column":62,"endLine":2,"text":"catch (e) { continue; }"},
           {"file":"src/a.mjs","ruleId":"K19.js.0.JavaScript","line":4,"column":44,"endLine":4,"text":"catch { v = -1; }"},
-          {"file":"src/a.py","ruleId":"K19.py.0.Python","line":4,"column":5,"endLine":5,"text":"except OSError:\n        return None"},
+          {"file":"src/a.py","ruleId":"K19.py.0.Python","line":4,"column":5,"endLine":5,"text":"except:\n        return None"},
           {"file":"src/a.py","ruleId":"K19.py.0.Python","line":12,"column":9,"endLine":13,"text":"except Exception:\n            continue"},
-          {"file":"src/a.py","ruleId":"K19.py.0.Python","line":19,"column":5,"endLine":20,"text":"except ValueError:\n        v = -1"},
+          {"file":"src/a.py","ruleId":"K19.py.0.Python","line":20,"column":5,"endLine":21,"text":"except BaseException as exc:\n        err = \"failed\""},
           {"file":"src/a.rs","ruleId":"K19.rs.0.Rust","line":4,"column":9,"endLine":4,"text":"Err(_) => None,"},
           {"file":"src/a.rs","ruleId":"K19.rs.0.Rust","line":11,"column":13,"endLine":11,"text":"Err(_) => continue,"},
           {"file":"src/a.rs","ruleId":"K19.rs.0.Rust","line":18,"column":9,"endLine":18,"text":"Err(_e) => return 0,"},
@@ -141,8 +162,10 @@
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
       "head": {
+        "web/third_party/lib/x.mjs": "export const read = f => { try { return f(); } catch { return null; } };\n",
+        "pkg/third_party/lib/x.py": "def read(f):\n    try:\n        return f()\n    except Exception:\n        return None\n",
         "src/a.mjs": "export const r1 = f => { try { return f(); } catch (e) { if (e.code !== 'ENOENT') throw e; return null; } };\nexport const r2 = f => { try { return f(); } catch { return null; } }; // gone: the file was removed meanwhile, the caller makes a new one\nexport const r3 = f => { try { return f(); } catch (err) { return { error: err.message }; } };\n",
-        "src/a.py": "def read(f):\n    try:\n        return f()\n    except OSError as e:\n        if e.errno != 2:\n            raise\n        return None\n",
+        "src/a.py": "def read(f):\n    try:\n        return f()\n    except OSError as e:\n        if e.errno != 2:\n            raise\n        return None\n\n\ndef named(f):\n    try:\n        return f()\n    except OSError:\n        return None\n\n\ndef used(f):\n    try:\n        return f()\n    except Exception as refusal:\n        return refusal.args\n",
         "src/a.rs": "pub fn a(x: Result<u8, E>) -> Option<u8> {\n    match x {\n        Ok(v) => Some(v),\n        Err(e) => { log(e); None }\n    }\n}\npub fn b(x: Result<u8, E>) -> Option<u8> {\n    match x {\n        Ok(v) => Some(v),\n        Err(_) => None, // gone: the file was removed meanwhile, the caller makes a new one\n    }\n}\n",
         "src/a.ts": "export const r1 = (f: () => string) => { try { return f(); } catch (e) { if ((e as { code?: string }).code !== 'ENOENT') throw e; return null; } };\nexport const r2 = (f: () => string) => { try { return f(); } catch { return null; } }; // gone: the file was removed meanwhile, the caller makes a new one\n"
       },

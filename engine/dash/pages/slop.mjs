@@ -158,6 +158,14 @@ function meterGauge(m) {
     <span class="smbar" aria-hidden="true">${seg}<u style="left:${Math.max(0, Math.min(100, m.score))}%"></u></span></summary>
     <div class="smdrawer">${groups}${trend}${top ? `<ol class="smtop" id="slop-meter-top">${top}</ol>` : ''}</div></details>`;
 }
+// RM-a-65: the top refactoring targets `norn code targets` stored (guardOf's targets part: T.list, already cut to TARGET_LIMITS.page);
+// each copies as the brief a lane runs (index.html's copy-path action). It proposes; nothing here edits. Nothing stored: no card.
+function targetsCard(T) {
+  if (!T?.list?.length) return '';
+  const row = t => `<li class="tgt"><div class="tgthead"><b>${esc(t.title)}</b> <button class="ghost" data-act="copy-path" data-copy="${esc(t.text)}" aria-label="Copy as brief" title="Copy as brief">⧉</button></div>
+    <div class="small mute">${chip('idle', t.kind)} fix first ${t.rank === null || t.rank === undefined ? 'n/a' : esc(t.rank)} · Scope: <span class="mono">${esc(t.scope.join(', '))}</span></div></li>`;
+  return `<section class="card" id="slop-targets"><h2>Refactor targets <span class="mute small">ranked by fix first, from <span class="mono">norn code targets</span> at ${esc(T.stamp?.graph ?? 'n/a')}${T.rank_na ? ` · fix first n/a: ${esc(T.rank_na)}` : ''}</span></h2><ol class="tgts">${T.list.map(row).join('')}</ol></section>`;
+}
 // META-UX-BUILD S2: the sub-view pattern (subviews.mjs): To fix / Per type / Rules / By age, the chosen part; the lead holds only what
 // is acted on (the errors, Fix all, the sent line, the fixer's cards). d = the summary (guardparts.mjs) + d[d.sub] once its part is here.
 // META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays). ui-spend-slop: no banner, no counter row, no footer.
@@ -169,7 +177,7 @@ export function slopPage(d) {
   const sentLine = sentL.length ? `<div class="small" id="slop-sent">${sentL.map(fixerWords).join(' · ')}. The engine starts the fixer by code; its card is where you apply. ${offer ? 'Fix all offers only the rest.' : 'Nothing else to send.'}</div>` : '';
   const cards = fxSection((d.fixcards || []).map(c => [c, d.project]), 'slop-fixcards', 'card');
   const P = d[d.sub];
-  const body = !P ? '' : d.sub === 'fix' ? `<div id="slop-rows">${slopFix(P, d, labels)}</div>`
+  const body = !P ? '' : d.sub === 'fix' ? `<div id="slop-rows">${slopFix(P, d, labels)}</div>${targetsCard(d.targets)}`
     : d.sub === 'types' ? slopTypes(P, total, fresh)
     : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
     <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}

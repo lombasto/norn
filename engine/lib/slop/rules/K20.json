@@ -9,7 +9,7 @@
     "fix": "Use a Node built-in or write the small piece yourself. If the dependency is needed, ask the owner; the approval is the waiver. Give a vendored file its row in VENDOR.md."
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts"],
-  "exclude": ["tests/fixtures/**"],
+  "exclude": ["tests/fixtures/**","**/third_party/**"],
   "bare": ["^node:"],
   "manifests": [
     "**/package.json",
@@ -38,8 +38,11 @@
       }
     },
     "miss": {
-      "base": {"src/a.mjs":"import fs from 'node:fs';\nexport const a = fs;\n","web/vendor/VENDOR.md":"| file | version | sha256 |\n"},
+      "base": {"src/a.mjs":"import fs from 'node:fs';\nexport const a = fs;\n","web/vendor/VENDOR.md":"| file | version | sha256 |\n","crates/own/Cargo.toml":"[package]\nname = \"own\"\nversion = \"0.0.0\"\n[dependencies]\nserde = \"1.0\"\n","Cargo.lock":"[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid/index\"\n"},
       "head": {
+        "crates/own/Cargo.toml": "[package]\nname = \"own\"\nversion = \"0.0.0\"\n[dependencies]\nserde = \"1.0\"\nown-b = { path = \"../own-b\" }\nown-d = {\n  path = \"../own-d\",\n  features = [\"x\"],\n}\n[dependencies.own-c]\npath = \"../own-c\"\nversion = \"0.1\"\n",
+        "Cargo.lock": "[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid/index\"\n\n[[package]]\nname = \"own-b\"\nversion = \"0.0.0\"\ndependencies = [\n \"serde\",\n]\n",
+        "crates/third_party/wgpu/Cargo.toml": "[package]\nname = \"wgpu\"\nversion = \"1.0.0\"\n[dependencies]\nbitflags = \"2\"\n[dependencies.ash]\nversion = \"0.38\"\n",
         "src/a.mjs": "import fs from 'node:fs';\nimport { DatabaseSync } from 'node:sqlite';\nimport pad from './lodash.mjs';\nexport const a = [fs, DatabaseSync, pad];\nexport const doc = `\nimport y from 'lodash';\n`;\n",
         "src/lodash.mjs": "export default 1;\n",
         "web/vendor/VENDOR.md": "| file | version | sha256 |\n| lib.js | 2.1 | def |\n",

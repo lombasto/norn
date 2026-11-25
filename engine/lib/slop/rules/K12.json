@@ -10,7 +10,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.rs"],
   "shadow_langs": ["ts","rs"],
-  "exclude": ["**/vendor/**"],
+  "exclude": ["**/vendor/**","**/third_party/**"],
   "in": ["comment"],
   "patterns": {
     "js": ["(?<=^|\\n)[ \\t]*//[ \\t]*(?:(?:const|let|var)[ \\t]+[\\w$]+[ \\t]*=.*;|(?:return|await|throw)\\b.*;|import\\b.*\\bfrom[ \\t]+['\"]|export[ \\t]+(?:const|let|function|default)\\b.*[;{]|(?:if|for|while)[ \\t]*\\(.*\\)[ \\t]*\\{|[\\w$.]+\\([^)]*\\);|[\\w$.\\[\\]]+[ \\t]*=[ \\t]*[^=\\s].*;|\\}[ \\t]*(?:else[ \\t]*\\{)?)[ \\t]*(?=\\r?\\n|$)"],
@@ -24,7 +24,9 @@
     },
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n","src/b.ts":"export const b = 1;\n","src/c.rs":"pub const A: u8 = 1;\n"},
-      "head": {"src/a.mjs":"// a is one: the tests read it\n// see go(a) in b.mjs for the caller; it returns null when the file is gone\nexport const t = '// const x = 1;';\nexport const a = 1; // set once\n","src/b.ts":"// b is one: the tests read it\nexport const t: string = '// const x: number = 1;';\nexport const b = 1;\n","src/c.rs":"// A is one: the tests read it\n// see go(a) in b.rs for the caller; it returns None when the file is gone\npub const T: &str = \"// let x = 1;\";\npub const R: &str = r#\"// let y = 2;\"#;\n/// let doc = 1; is how a doc example starts\npub const A: u8 = 1; // set once\n"}
+      "head": {"web/third_party/lib/x.mjs":"// const a = f(1);\nexport const a = 1;\n",
+        "crates/vendored/third_party/x/src/lib.rs":"// let a = f(1);\npub const A: u8 = 1;\n",
+        "src/a.mjs":"// a is one: the tests read it\n// see go(a) in b.mjs for the caller; it returns null when the file is gone\nexport const t = '// const x = 1;';\nexport const a = 1; // set once\n","src/b.ts":"// b is one: the tests read it\nexport const t: string = '// const x: number = 1;';\nexport const b = 1;\n","src/c.rs":"// A is one: the tests read it\n// see go(a) in b.rs for the caller; it returns None when the file is gone\npub const T: &str = \"// let x = 1;\";\npub const R: &str = r#\"// let y = 2;\"#;\n/// let doc = 1; is how a doc example starts\npub const A: u8 = 1; // set once\n"}
     }
   }
 }
