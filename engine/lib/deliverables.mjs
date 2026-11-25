@@ -14,8 +14,7 @@ import { whyNotMerged } from './dlvwhy.mjs';
 import { loadMqWhy, loadFillWhy } from './mqwhy.mjs';
 import { queueOf } from './runs.mjs';
 import { readJsonS } from './fsnap.mjs';
-import { testsFor, IMPACT_FILE } from './testtimes.mjs';
-import { classify } from './testscli.mjs';
+import { testsFor, classify, IMPACT_FILE } from './testtimes.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
