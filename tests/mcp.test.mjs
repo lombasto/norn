@@ -449,3 +449,31 @@ test('norn_code_card: off by default; ab lists it for even worker runs only and 
   assert.deepEqual(r.structuredContent.cards.map(c => c.file), ['a.mjs', 'b.mjs']);
   assert.match(r.content[0].text, /^a\.mjs · .*\n {2}used by: not indexed/);
 });
+
+// RM-a-64: norn_code_symbol is one worker tool under policy.code.symbol (off by default, on = every worker run); it reads the server's
+// folder (the worker's worktree). Its schema's standing-context cost is pinned (NOTES carries the number).
+test('norn_code_symbol: off by default; on lists it for worker runs and reads one symbol from the worktree', async () => {
+  const { handle, context } = await import('../engine/lib/mcp.mjs');
+  const { ensurePart } = await import('../engine/lib/rustbin.mjs');
+  const s = tmp(), repo = path.join(s, 'repo'), call = (ctx, method, params) => handle({ jsonrpc: '2.0', id: 1, method, params }, ctx).result;
+  const ctxOf = policy => context({ state: path.join(s, 'state'), project: policy ? { name: 'kestrel', root: s, policy } : null, profile: 'worker', client: 'test', env: { META_RUN_ID: 'RUN-a-3' }, cli: () => 0 });
+  const names = ctx => call(ctx, 'tools/list').tools.map(t => t.name);
+  assert.ok(!names(ctxOf(null)).includes('norn_code_symbol'), 'off by default');
+  assert.ok(!names(ctxOf({ code: { symbol: 'off' } })).includes('norn_code_symbol'));
+  const on = ctxOf({ code: { symbol: 'on' } }), t = call(on, 'tools/list').tools.find(x => x.name === 'norn_code_symbol');
+  assert.ok(t, 'on lists it'); const cost = Math.ceil(JSON.stringify(t).length / 4);
+  assert.ok(cost <= 100, `the schema costs ~${cost} tokens`);
+  assert.equal(call(ctxOf(null), 'tools/call', { name: 'norn_code_symbol', arguments: { symbols: ['a.mjs::f'] } }).isError, true, 'off cannot call it');
+  const b = ensurePart('code', { err: () => {} }); assert.ok(b.ok, b.why);
+  fs.mkdirSync(repo, { recursive: true }); fs.writeFileSync(path.join(repo, 'a.mjs'), 'export function f(x) {\n  return x;\n}\n');
+  const git = (...a) => assert.equal(spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', ...a], { cwd: repo, windowsHide: true }).status, 0);
+  git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'fixture');
+  const here = process.cwd(); process.chdir(repo);
+  try {
+    const r = call(on, 'tools/call', { name: 'norn_code_symbol', arguments: { symbols: ['a.mjs::f'] } });
+    assert.ok(!r.isError, JSON.stringify(r));
+    assert.equal(r.structuredContent.results[0].status, 'current');
+    assert.match(r.content[0].text, /^a\.mjs::f {2}function .* lines 1\.\.3 .*current\nexport function f\(x\) \{/);
+    assert.equal(call(on, 'tools/call', { name: 'norn_code_symbol', arguments: { symbols: ['a.mjs'] } }).isError, true, 'file::name or an error');
+  } finally { process.chdir(here); }
+});
