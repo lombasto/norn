@@ -1,9 +1,9 @@
 // SloppaChoppa 2 S3 (SPEC 3.3, 4.5, 7 S3): the Rust pack - module and crate edges (the kind `imports`), `#[allow]` / `#[expect]`
 // suppressions, the `#[cfg(test)]` regions loc.mjs counts as tests, and clippy as the lint tool LR. Choppa never runs clippy
 // (a build takes minutes; a project's quiet and time-budget rules): LR reads the log the head's own gate wrote, `{git}/norn/clippy/<head>*.log`.
-import fs from 'node:fs';
 import path from 'node:path';
 import { lineAt, norm, tomlTables } from '../scan.mjs';
+import { logFiles } from './logs.mjs';
 
 const P = path.posix;
 /** the folder a module's children live in: lib.rs / main.rs / mod.rs own their folder, a.rs owns a/ */
@@ -72,15 +72,11 @@ export function testRegions(file, text, at) {
 }
 
 // ---------- clippy (LR): read from the head's gate log, never run ----------
-/** the head's clippy logs (rule.log: path templates, `{git}` the repo's common git folder, `{head}` the head sha, `*` in the name) -> text | null */
+/** the head's clippy logs (rule.log: path templates, lang/logs.mjs) -> text | null */
 function run(rule, side) {
   if (side !== 'head') return null;   // main is clean by construction (-D warnings in CI): a diagnostic on a touched file is new
-  const texts = (rule.log || []).flatMap(t => {
-    const p = t.replace('{git}', rule.git).replace('{head}', rule.head), dir = path.dirname(p), re = new RegExp(`^${path.basename(p).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
-    let names = []; try { names = fs.readdirSync(dir).filter(n => re.test(n)).sort(); } catch { names = []; }   // no folder: no log for this head
-    return names.map(n => fs.readFileSync(path.join(dir, n), 'utf8'));
-  });
-  return texts.length ? texts.join('\n') : null;
+  const logs = logFiles(rule.log, rule.git, rule.head);
+  return logs.length ? logs.map(l => l.text).join('\n') : null;
 }
 /** clippy's human output -> [{ file (a touched file the path names: equal, or its tail), rule (clippy::x, or the rustc lint), line, msg }] */
 function parse(raw, touched = []) {
