@@ -10,7 +10,7 @@ import { endCheck } from '../engine/lib/slop/runend.mjs';
 import { slopResumes } from '../engine/lib/slop/daily.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { slopChecks, slopHolds } from '../engine/lib/slop/host.mjs';
-import { binOf, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
+import { binOf, sourceHash, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
 import { doneSlop } from '../engine/bin/norn.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -89,14 +89,15 @@ function codePart(root) {
   fs.mkdirSync(path.join(src, 'src'), { recursive: true }); fs.writeFileSync(path.join(src, 'Cargo.toml'), '[package]\nname = "x"\n'); fs.writeFileSync(path.join(src, 'src', 'main.rs'), 'fn main() {}\n');
   return [{ p: 'code', src, store, exe: binOf('code', { src, store }) }];
 }
-const says = () => ({ status: 0, stdout: JSON.stringify({ ok: true, store_schema: CODE_STORE_SCHEMA }) + '\n' });
+// the fake binary answers `version` as a built one does (NORN-PART-PROOF): the hash of the sources it was built from
+const says = exe => ({ status: 0, stdout: fs.readFileSync(exe, 'utf8') + '\n' });
 const graphFixture = () => { const fx = fixture(); fs.mkdirSync(path.join(fx.wt, 'engine')); fs.writeFileSync(path.join(fx.wt, 'engine', 'a.mjs'), 'export const a = 1;\n'); git(fx.wt, 'add', '-A'); git(fx.wt, 'commit', '-q', '-m', 'engine'); return fx; };
 
 test('norn done, the check reads the graph: norn-code is built first, said in one line, then the check runs and is stored', async () => {
   const fx = graphFixture(), parts = codePart(fx.root), outs = [], calls = [];
   const cargo = async args => {
     assert.equal(slopChecks(fx.state).length, 0, 'built before the check');
-    calls.push(args); const t = args[args.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(t, 'release'), { recursive: true }); fs.writeFileSync(path.join(t, 'release', 'norn-code' + EXE), 'bin'); return { status: 0 };
+    calls.push(args); const t = args[args.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(t, 'release'), { recursive: true }); fs.writeFileSync(path.join(t, 'release', 'norn-code' + EXE), JSON.stringify({ crate: '0.1.0', store_schema: CODE_STORE_SCHEMA, source: sourceHash(parts[0].src) })); return { status: 0 };
   };
   await doneSlop(fx.state, 'RUN-1', s => outs.push(s), s => outs.push(s), { parts, rust: { cargo, cc: () => null, run: says } });
   assert.deepEqual(calls.map(a => a[0]), ['clean', 'build'], 'the package cleaned, then built (rustbin.mjs plan)');
