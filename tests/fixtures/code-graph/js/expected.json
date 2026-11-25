@@ -67,7 +67,7 @@
       {"id":"src/calls.mjs#src/calls.mjs#Walker#0","name":"Walker","qual":"src/calls.mjs#Walker","kind":"class","line":10,"end_line":18,"col":1,"exported":false},
       {"id":"src/calls.mjs#src/calls.mjs#Walker.step#0","name":"step","qual":"src/calls.mjs#Walker.step","kind":"method","line":11,"end_line":13,"col":3,"exported":false},
       {"id":"src/calls.mjs#src/calls.mjs#Walker.walk#0","name":"walk","qual":"src/calls.mjs#Walker.walk","kind":"method","line":14,"end_line":17,"col":3,"exported":false},
-      {"id":"src/calls.mjs#src/calls.mjs#main#0","name":"main","qual":"src/calls.mjs#main","kind":"function","line":20,"end_line":30,"col":8,"exported":true}
+      {"id":"src/calls.mjs#src/calls.mjs#main#0","name":"main","qual":"src/calls.mjs#main","kind":"function","line":20,"end_line":32,"col":8,"exported":true}
     ],
     "src/dual.ts": [
       {"id":"src/dual.ts#src/dual.ts#d#0","name":"d","qual":"src/dual.ts#d","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
@@ -125,7 +125,8 @@
       {"line":26,"col":6,"name":"readFileSync","how":"external","candidates":0,"targets":[]},
       {"line":27,"col":8,"name":"stringify","how":"external","candidates":0,"targets":[]},
       {"line":28,"col":3,"name":"ghost","how":"unresolved","candidates":0,"targets":[]},
-      {"line":29,"col":14,"name":"Walker","how":"local","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker#0"]}
+      {"line":30,"col":7,"name":"walk","how":"method-unique","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker.walk#0"]},
+      {"line":31,"col":14,"name":"Walker","how":"local","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker#0"]}
     ]
   }
 }

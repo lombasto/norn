@@ -1469,7 +1469,8 @@ impl Graph {
                 let Some(r) = recv else {
                     return self.by_method_name(lang, name);
                 };
-                if matches!(r, "self" | "this" | "cls") {
+                // the receiver words per language: a JS `self` / `cls` or a Python `this` is an ordinary name
+                if matches!((lang, r), ("js", "this") | ("py", "self" | "cls")) {
                     let Some(c) = self.class_of(file, inn) else {
                         return Res::Unresolved(format!("{r} outside a class"));
                     };

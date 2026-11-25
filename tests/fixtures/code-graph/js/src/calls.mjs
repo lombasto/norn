@@ -26,5 +26,7 @@ export function main(x) {
   fs.readFileSync('a');
   JSON.stringify(x);
   ghost();
+  const cls = x;
+  cls.walk();
   return new Walker(1);
 }
