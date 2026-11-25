@@ -6,9 +6,9 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PARSE } from './tools.mjs';
-import { LINTERS, packOf } from './lang/index.mjs';
+import { LINTERS, packOf, masked, commentsIn } from './lang/index.mjs';
 import { readSignals } from '../codesignals.mjs';
-import { CODE, classify, commentsIn, exportsOf, helpers, isJs, isReason, lineAt, lineText, masked, norm, usesOf } from './scan.mjs';
+import { CODE, classify, exportsOf, helpers, isJs, isReason, lineAt, lineText, norm, usesOf } from './scan.mjs';
 
 const SIDE_KEY = { head: 'path', base: 'old' };
 /** the diff's entries a rule reads on one side: [{ e, file (that side's path), text }] */
@@ -31,7 +31,7 @@ function lintSide(ctx, side, tool, own = null) {
     if (!texts.size) return (memo[side] = new Map());
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
     const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...rules.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null) }
-      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, base: ctx.base, log: rules.find(r => r.log)?.log, scan: rules.find(r => r.scan)?.scan, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
+      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, base: ctx.base, log: rules.find(r => r.log)?.log, scan: rules.find(r => r.scan)?.scan, select: [...new Set(rules.flatMap(r => r.select || []))], configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
     const raw = ctx.tool(run, side, { texts, dir: ctx.repo }), by = new Map();
     if (raw === null) return (memo[side] = null);
     for (const y of t.parse(raw, [...names.keys()])) { const x = { ...y, file: names.get(y.file) }; if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x); }
@@ -102,7 +102,7 @@ export function ast(rule, ctx) {
     if (by === null) return null;
     return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
       const [, id, pack, n] = AST_ID.exec(x.ruleId) || [], m = id === rule.id && rule.match[pack]?.[n];
-      if (!m || (rule.reason && isReason(commentsIn(text, x.line, x.endLine), rule.reason).ok)) return [];
+      if (!m || (rule.reason && isReason(commentsIn(text, x.line, x.endLine, e.path), rule.reason).ok)) return [];
       const tok = rule.key === 'match' && new RegExp(rule.token || '[\\s\\S]+').exec(x.text);
       if (rule.key === 'match' && !tok) return [];
       return [{ file: e.path, line: x.line, snippet: `${lineText(text, x.line)} ${rule.id}: ${m.message}`, msg: m.message, ...(tok ? { token: tok[1] ?? tok[0] } : {}),
@@ -194,13 +194,20 @@ export function depsOf(file, text) {
   }
   const lines = text.split(/\r?\n/), out = [];
   if (/\.toml$|\.lock$/.test(base) && !/^yarn\.lock$/.test(base)) {
-    let sec = '', pkg = null, list = false;   // list: inside a `dependencies = [ ... ]` array (pyproject)
+    // list: inside a `dependencies = [ ... ]` array (pyproject); groups: a table of such arrays by name ([project.optional-dependencies],
+    // PEP 735's [dependency-groups]); one: Cargo's table of one dependency ([dependencies.glam]), whose keys name it (slop-langs SPEC 4)
+    let sec = '', pkg = null, list = false, groups = false, one = null;
     for (const l of lines) {
       const h = !list && /^\s*\[\[?([^\]]+)\]\]?\s*$/.exec(l);
-      if (h) { sec = h[1].trim(); pkg = sec === 'package' ? {} : null; continue; }
+      if (h) {
+        sec = h[1].trim(); pkg = sec === 'package' ? {} : null;
+        groups = /^(?:project\.optional-dependencies|dependency-groups)$/.test(sec); one = /(?:^|\.)(?:[\w-]*-)?dependencies\.(["']?)([\w.-]+)\1$/.exec(sec)?.[2] || null;
+        continue;
+      }
       if (pkg) { const kv = /^\s*(name|version)\s*=\s*"([^"]*)"/.exec(l); if (kv) { pkg[kv[1]] = kv[2]; if (pkg.name && pkg.version) { out.push(`${pkg.name}@${pkg.version}`); pkg = {}; } } continue; }
-      const open = /^\s*(?:dependencies|[\w-]*-dependencies|requires)\s*=\s*\[/.test(l);
+      const open = /^\s*(?:dependencies|[\w-]*-dependencies|requires)\s*=\s*\[/.test(l) || (groups && /^\s*["']?[\w.-]+["']?\s*=\s*\[/.test(l));
       if (open || list) { out.push(...[...l.matchAll(/"([^"]+)"/g)].map(m => m[1])); list = (open || list) && !/\]\s*(?:#.*)?$/.test(l); }
+      else if (one) { const kv = /^\s*([\w-]+)\s*=\s*(.+?)\s*$/.exec(l); if (kv) out.push(norm(`${one}.${kv[1]} = ${kv[2]}`)); }
       else if (/dependencies/.test(sec) && /^\s*[\w.-]+\s*=/.test(l)) out.push(norm(l));
     }
     return out;
