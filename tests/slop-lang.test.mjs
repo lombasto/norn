@@ -6,8 +6,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadRules, slopCheck } from '../engine/lib/slop/check.mjs';
+import { loadRules, effectiveRules, slopCheck } from '../engine/lib/slop/check.mjs';
 import { testRegions } from '../engine/lib/slop/lang/rs.mjs';
+import * as rs from '../engine/lib/slop/lang/rs.mjs';
+import * as py from '../engine/lib/slop/lang/py.mjs';
+import { ruffArgs } from '../engine/lib/slop/lang/py.mjs';
+import { CODE, COMMENT, STRING, QUOTE } from '../engine/lib/slop/scan.mjs';
 import { snapshot } from '../engine/lib/slop/loc.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -64,4 +68,66 @@ test('loc: a Rust file\'s #[cfg(test)] lines count as tests, its other lines as 
   assert.deepEqual([s.totals.code, s.totals.tests], [4, 9]);
   assert.deepEqual(s.areas['c/src'], { code: 4, tests: 9 });
   assert.deepEqual(s.languages.Rust, { code: 4, tests: 9 });
+});
+
+// ---------- slop-langs S3 (SPEC 4, 7 S3): the Python and Rust lexers, the plain-pattern rules over them, LP's select, K10's new files ----------
+const RULES = loadRules(), rule = id => RULES.find(r => r.id === id);
+const clsAt = (classify, t) => s => classify(t)[t.indexOf(s)];
+test('py lexer: # comments, prefixed and triple-quoted strings (a docstring is a string), an f-string field is code and {{ text; a quote in a comment', () => {
+  const t = 'def f(x):\n    """the # here is text\n    over two lines"""\n    a = rb\'\\\'# no\'  # a "cited" note\n    return f"{x["k"]!r:>4} {{y}} #"\n';
+  const at = clsAt(py.classify, t);
+  assert.equal(at('def f'), CODE);
+  assert.equal(at('the # here'), STRING); assert.equal(at('over two'), STRING);
+  assert.equal(at('rb'), CODE); assert.equal(at('# no'), STRING, 'an escaped quote does not end the string');
+  assert.equal(at('# a '), COMMENT); assert.equal(at('"cited"'), QUOTE);
+  assert.equal(at('x["k"]'), CODE, 'an f-string field is code'); assert.equal(at('k"]'), STRING, 'a string inside the field');
+  assert.equal(at('{{y}}'), STRING); assert.equal(at(' #"'), STRING, 'a # inside a string is no comment');
+});
+test('rs lexer: // /// //! and nested /* */ comments, escapes, raw / byte strings, a char vs a lifetime', () => {
+  const t = 'fn f<\'a>(s: &\'a str) -> char { // one\n    /* outer /* inner */ still */ let r = r#"a "// x" b"#; let b = b"\\"//"; \'"\' }\n//! crate doc\n';
+  const at = clsAt(rs.classify, t);
+  assert.equal(at('fn f'), CODE); assert.equal(at("'a str"), CODE, 'a lifetime is code');
+  assert.equal(at('// one'), COMMENT); assert.equal(at('still */'), COMMENT, 'a nested block comment ends at its own */');
+  assert.equal(at('let r'), CODE); assert.equal(at('// x'), STRING, 'a raw string holds its quotes');
+  assert.equal(at('//"; '), STRING, 'an escaped quote in a byte string');
+  assert.equal(at('\'"\''.slice(1)), STRING, 'a char literal'); assert.equal(at(' }\n//!'), CODE);
+  assert.equal(at('//! crate'), COMMENT);
+});
+test('K22 over Python: `# for now` in a comment is one (shadow) finding; the same text in a string is not a comment', () => {
+  const head = { 'src/a.py': 'X = "# for now"\n# for now the retry is off\nA = 1\n' };
+  const r = slopCheck({ repo: repoOf({ 'src/a.py': 'A = 1\n' }, head), base: 'main', rules: [rule('K22')] });
+  assert.deepEqual(r.findings.filter(f => f.new).map(f => [f.rule, f.line, f.shadow]), [['K22', 1, true], ['K22', 2, true]], 'K22 reads strings (SPEC 4: comment + string text); py is shadow');
+  const comments = slopCheck({ repo: repoOf({ 'src/a.py': 'A = 1\n' }, head), base: 'main', rules: [{ ...rule('K22'), in: ['comment'] }] });
+  assert.deepEqual(comments.findings.filter(f => f.new).map(f => f.line), [2], 'the string holding `# for now` is no comment: only line 2');
+  assert.deepEqual(comments.blocks, [], 'shadow: recorded, never held');
+});
+test('K12 over Rust: a raw string holding `// let x = 1;` is no finding, the same line as a comment is one; a pattern rule keyed by an unknown pack does not load', () => {
+  const r = slopCheck({ repo: repoOf({ 'src/a.rs': 'pub const A: u8 = 1;\n' }, { 'src/a.rs': 'pub const A: u8 = 1;\npub const R: &str = r#"\n// let x = 1;\n"#;\n// let x = 1;\n' }), base: 'main', rules: [rule('K12')] });
+  assert.deepEqual(r.findings.filter(f => f.new).map(f => [f.rule, f.line, f.shadow]), [['K12', 5, true]]);
+  const py = slopCheck({ repo: repoOf({ 'src/a.py': 'A = 1\n' }, { 'src/a.py': 'A = 1\n# B = A + 1\n' }), base: 'main', rules: [{ ...rule('K12'), files: ['**/*.py'] }] });
+  assert.deepEqual(py.findings, [], 'no py patterns: Python is ruff ERA001 through LP');
+  const dir = mkTmp('meta-slop-lang-rules-'), bad = { ...rule('K12'), id: 'P-bad', patterns: { go: ['x'] } };
+  fs.mkdirSync(path.join(dir, 'rules', 'slop'), { recursive: true }); fs.writeFileSync(path.join(dir, 'rules', 'slop', 'P-bad.json'), JSON.stringify(bad));
+  assert.throws(() => effectiveRules({ projectDir: dir }), /patterns are a list of regexes, or lists by pack id/);
+});
+test('LP selects ERA001 beside the project\'s own ruff config (which does not select it): the run carries it, ruff gets --extend-select, its finding is LP/ERA001 in shadow', () => {
+  const cfg = '[project]\nname = "pkg"\n\n[tool.ruff.lint]\nselect = ["F"]\n', runs = [];
+  const head = [{ code: 'ERA001', filename: 'pkg/src/pkg/a.py', location: { row: 2, column: 1 }, end_location: { row: 2, column: 12 }, message: 'Found commented-out code' }];
+  const tool = (run, side) => { runs.push(run); return JSON.stringify(side === 'head' ? head : []); };
+  const r = slopCheck({ repo: repoOf({ 'pkg/pyproject.toml': cfg, 'pkg/src/pkg/a.py': 'X = 1\n' }, { 'pkg/src/pkg/a.py': 'X = 1\n# Y = X + 1\n' }), base: 'main', rules: [rule('LP')], tool });
+  assert.ok(runs.length && runs.every(x => x.select.join() === 'ERA001'), 'every ruff run carries LP\'s select');
+  assert.deepEqual(r.findings.filter(f => f.new).map(f => [f.rule, f.line, f.level, f.shadow]), [['LP/ERA001', 2, 'BLOCK', true]]);
+  assert.deepEqual(r.blocks, []);
+  assert.deepEqual(ruffArgs(['a.py'], ['ERA001']), ['ruff', 'check', '--output-format', 'json', '--no-cache', '--force-exclude', '--extend-select', 'ERA001', 'a.py']);
+  assert.ok(!ruffArgs(['a.py']).includes('--extend-select'), 'no select: the project\'s config alone');
+});
+test('K10 over Python and TypeScript: a two-module Python import cycle and a TS cycle through ./x.js specifiers are findings', () => {
+  const base = { 'engine/e/pyproject.toml': '[project]\nname = "e"\n', 'engine/e/src/eng/__init__.py': '', 'engine/e/src/eng/a.py': 'X = 1\n', 'engine/e/src/eng/b.py': 'from eng import a\nY = a.X\n',
+    'engine/t/a.ts': 'export const a = 1;\n', 'engine/t/b.ts': "import { a } from './a.js';\nexport const b = a;\n" };
+  const head = { 'engine/e/src/eng/a.py': 'from eng import b\nX = 1\n', 'engine/t/a.ts': "import { b } from './b.js';\nexport const a = 1;\nexport const c = () => b;\n" };
+  const r = slopCheck({ repo: repoOf(base, head), base: 'main', rules: [rule('K10')] });
+  assert.deepEqual(r.blocks.map(b => [b.file, b.msg]).sort(), [
+    ['engine/e/src/eng/a.py', 'import cycle: engine/e/src/eng/a.py -> engine/e/src/eng/b.py'],
+    ['engine/t/a.ts', 'import cycle: engine/t/a.ts -> engine/t/b.ts'],
+  ]);
 });

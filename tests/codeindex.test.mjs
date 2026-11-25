@@ -90,7 +90,8 @@ test('codecli: history writes <state>/code/index.json; codeAt serves the summary
   const one = await at('&part=file&file=engine/a.mjs');
   assert.equal(one.file.lines, 5); assert.equal(one.file.days.length, 26); assert.equal(one.file.last[0].subject, 'three: grow a');
   assert.equal((await at('&part=file&file=nope.mjs')).file, null);
-  assert.deepEqual(await at('&part=map'), { map: null });
+  const mp = (await at('&part=map')).map;   // history redraws the import-graph map: drawn, or n/a with the reason (no graph tool)
+  assert.ok(mp && (mp.sha || mp.na), 'the map part is the import-graph map history drew');
   const none = { name: 'empty', state: path.join(path.dirname(state), 'empty') };
   assert.deepEqual((await codeAt(none, new URL('http://x/api/code'))).index, null);
   assert.deepEqual(await codeAt(none, new URL('http://x/api/code?part=files')), { list: null });
@@ -115,15 +116,15 @@ test('codeIndex fan_in for every graph language (.mjs, .py, .rs, Cargo.toml) wit
   assert.deepEqual([none['web/b.mjs'].fan_in, none['web/b.mjs'].fan_in_why], [null, 'norn-code is not built (x)'], 'no graph: n/a, never a guess');
 });
 
-test('tickCode: starts `norn code history` (and, with no map yet, the first code map) detached when the sha moved, not again within 10 minutes, not when the index is at HEAD', () => {
+test('tickCode: starts `norn code history` (which redraws the map too) detached when the sha moved, not again within 10 minutes, not when the index is at HEAD', () => {
   const { repo, state, g } = world(), calls = [], spawnFn = (exe, args) => { calls.push(args); return { pid: 7 }; };
   const p = { file: path.join(repo, 'kestrel.json'), root: repo };
-  assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW }), 'code history: started pid 7; code map: first map started pid 7');
-  assert.deepEqual(calls.map(a => a.slice(1, 4)), [['code', 'history', '--project'], ['code', 'map', '--refresh']]);
+  assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW }), 'code history: started pid 7');
+  assert.deepEqual(calls.map(a => a.slice(1, 4)), [['code', 'history', '--project']], 'no separate map start: history draws it');
   assert.deepEqual(calls[0], ['norn.mjs', 'code', 'history', '--project', p.file, '--state', state]);
   assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW + 5 * 60e3 }), null, 'one started 5 min ago');
   fs.mkdirSync(path.join(state, 'code'), { recursive: true });
   fs.writeFileSync(path.join(state, 'code', 'index.json'), JSON.stringify({ sha: g(['rev-parse', '--short=12', 'HEAD']).trim(), files: [] }));
   assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW + 60 * 60e3 }), null, 'the index is at HEAD');
-  assert.equal(calls.length, 2, 'history once, first map once');
+  assert.equal(calls.length, 1, 'history once');
 });

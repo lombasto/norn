@@ -75,23 +75,18 @@ test('K4 Outliers: size, growth and churn charts; the oversized fixture file is 
   assert.doesNotMatch(h, /class="wobar out" data-act="code-file" data-id="engine\/m\d\.mjs"/);
 });
 
-test('K3 Map: the drawn map in an iframe sandboxed to scripts only on /code-map/; none drawn: the not-built text and no iframe', () => {
+test('K3 Map: the import-graph map in an iframe sandboxed to scripts only on /code-map/; none drawn: the not-built text and no iframe; n/a: the reason', () => {
   const h = code(base({ sub: 'map', map: null }));
-  assert.match(h, /id="code-map"[^]*not built yet[^]*norn code map/);
+  assert.match(h, /id="code-map"[^]*not built yet[^]*norn code history[^]*norn code map/);
   assert.doesNotMatch(h, /<iframe/);
-  const map = { at: '2026-11-24T10:00:00Z', sha: 'abc123def456', tool: '0.11.0', workflow: 'refresh', calls: 2, pct: 0.008, bytes: 2900000, skipped: null };
+  const map = { at: '2026-11-24T10:00:00Z', sha: 'abc123def456', commit: 'abc123def456'.padEnd(40, '0'), files: 783, areas: 21, bands: 60, edges: 2400, na: null };
   const m = code(base({ sub: 'map', map }));
-  assert.match(m, /<iframe id="code-map-frame" class="cmap" sandbox="allow-scripts" src="\/code-map\/\?project=kestrel" title="Architecture map \(Floorplan\)" loading="lazy" referrerpolicy="no-referrer"><\/iframe>/);
-  assert.match(m, /id="code-map"[^]*abc123def456[^]*Floorplan 0\.11\.0/);
-  assert.doesNotMatch(m, /allow-same-origin/);
-  assert.match(m, /id="code-graphmap"[^]*not built yet[^]*norn code history/, 'RM-a-66: no graph map yet says what draws it');
-  const gm = { at: '2026-11-24T10:00:00Z', sha: 'abc123def456', commit: 'abc123def456'.padEnd(40, '0'), files: 783, areas: 21, bands: 60, edges: 2400, na: null };
-  const g = code(base({ sub: 'map', map, graphmap: gm }));
-  assert.match(g, /<iframe id="code-graphmap-frame" class="cmap" sandbox="allow-scripts" src="\/code-map\/\?project=kestrel&amp;map=graph" title="Code map \(import graph\)" loading="lazy" referrerpolicy="no-referrer"><\/iframe>/);
-  assert.match(g, /id="code-graphmap"[^]*abc123def456[^]*783 files[^]*21 areas[^]*no model[^]*id="code-map"/, 'the graph map first, then the Floorplan map');
-  assert.match(code(base({ sub: 'map', map: null, graphmap: { ...gm, sha: null, na: 'norn-code not built' } })), /id="code-graphmap"[^]*n\/a: norn-code not built/);
-  const s = code(base({ sub: 'map', map: { ...map, skipped: { at: '2026-11-24T12:00:00Z', sha: 'fff000fff000', why: '~0.06 % > 0.05 % of plan (10 model jobs)' } } }));
-  assert.match(s, /refresh skipped at fff000fff000[^]*0\.06 % &gt; 0\.05 %[^]*norn code map/);
+  assert.match(m, /<iframe id="code-map-frame" class="cmap" sandbox="allow-scripts" src="\/code-map\/\?project=kestrel" title="Code map \(import graph\)" loading="lazy" referrerpolicy="no-referrer"><\/iframe>/);
+  assert.match(m, /id="code-map"[^]*abc123def456[^]*783 files[^]*21 areas[^]*no model/);
+  assert.doesNotMatch(m, /allow-same-origin|&amp;map=/);
+  assert.equal(m.match(/<iframe/g).length, 1, 'one map');
+  const n = code(base({ sub: 'map', map: { ...map, sha: null, na: 'norn-code not built' } }));
+  assert.match(n, /id="code-map"[^]*n\/a: norn-code not built/); assert.doesNotMatch(n, /<iframe/);
 });
 
 test('codeLoad: the summary, the open view\'s part (Files: cap, sort, folder) and, with a file open, its part and its source', async () => {
@@ -103,7 +98,7 @@ test('codeLoad: the summary, the open view\'s part (Files: cap, sort, folder) an
   asked.length = 0; const e = await codeLoad('kestrel', async u => { asked.push(u); if (u.startsWith('/api/source')) throw new Error('Not a text file'); return {}; }, { sub: 'bogus', file: 'x.bin' });
   assert.equal(e.sub, 'files'); assert.equal(e.source.error, 'Not a text file');
   asked.length = 0; await codeLoad('kestrel', async u => { asked.push(u); return {}; }, { sub: 'map' });
-  assert.deepEqual(asked, ['/api/code?project=kestrel', '/api/code?project=kestrel&part=map', '/api/code?project=kestrel&part=graphmap'], 'Map: the lines of both maps');
+  assert.deepEqual(asked, ['/api/code?project=kestrel', '/api/code?project=kestrel&part=map'], 'Map: the map line, its own part');
 });
 
 test('RM-a-70 Files: the rank check line above the table (fix first and importance, as the signals word it); none stored says not built', () => {

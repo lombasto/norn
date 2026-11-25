@@ -7,7 +7,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { effectiveRules, pairFindings, fingerprint, slopCheck, RULES_DIR } from '../engine/lib/slop/check.mjs';
 import { checkBranch } from '../engine/lib/slop/runend.mjs';
-import { classify, masked, CODE, COMMENT, STRING, QUOTE, helpers, exportsOf, usesOf, commentsIn, isReason } from '../engine/lib/slop/scan.mjs';
+import { classify, CODE, COMMENT, STRING, QUOTE, helpers, exportsOf, usesOf, isReason } from '../engine/lib/slop/scan.mjs';
+import { masked, commentsIn } from '../engine/lib/slop/lang/index.mjs';
 import { depsOf } from '../engine/lib/slop/kinds.mjs';
 import { eslintConfig, astGrepOut } from '../engine/lib/slop/tools.mjs';
 import { record } from '../engine/lib/records.mjs';
@@ -37,7 +38,9 @@ test('helpers, exports and the reason test: the pieces dup (K9), exports (K4) an
   assert.deepEqual(helpers(t).map(h => [h.name, h.body, h.line]), [['fwd', "p => String(p).replace(/a/g, 'b')", 1], ['iso', 'd => new Date(d).toISOString()', 2]]);
   assert.deepEqual(exportsOf(t), [{ name: 'fwd', line: 1 }, { name: 'Box', line: 4 }]);
   assert.equal(usesOf('a$b + a$b + xa$b', 'a$b'), 2, 'a $ in the name is literal, words only');
-  assert.equal(commentsIn('a; // one\nb; /* two */\nc;\n', 1, 2), 'one two');
+  assert.equal(commentsIn('a; // one\nb; /* two */\nc;\n', 1, 2, 'a.mjs'), 'one two');
+  assert.equal(commentsIn('try:\n    go()\nexcept OSError:  # the cache is optional: a miss rebuilds it\n    pass\n', 3, 4, 'a.py'), 'the cache is optional: a miss rebuilds it', 'a Python reason comment (K2 / K19)');
+  assert.equal(commentsIn('let s = "// no"; // gone: the caller retries\n', 1, 1, 'a.rs'), 'gone: the caller retries');
   assert.equal(isReason('gone: the caller retries', ['ignore']).ok, true);
   assert.equal(isReason('ignore: it is fine', ['ignore']).ok, false);
 });
@@ -50,6 +53,10 @@ test('depsOf: package.json and lock packages, TOML dependency sections and array
   assert.deepEqual(depsOf('Cargo.lock', '[[package]]\nname = "a"\nversion = "0.1"\n[[package]]\nname = "b"\nversion = "2"\n'), ['a@0.1', 'b@2']);
   assert.deepEqual(depsOf('requirements.txt', 'numpy==2  # pinned\n\nruff\n'), ['numpy==2', 'ruff']);
   assert.deepEqual(depsOf('package.json', '{ nope'), ['(unparsable) package.json']);
+  // slop-langs S3 (SPEC 4, the three measured gaps): a multi-line optional extra, PEP 735's dependency groups, a Cargo table of one dependency
+  assert.deepEqual(depsOf('pyproject.toml', '[project]\nname = "g"\n[project.optional-dependencies]\ngui = [\n  "pyside6>=6",\n  "pillow",\n]\ndev = ["pytest"]\n'), ['pyside6>=6', 'pillow', 'pytest']);
+  assert.deepEqual(depsOf('pyproject.toml', '[dependency-groups]\ndev = [\n  "ruff==0.15",\n]\nlint = ["mypy"]\n[tool.uv]\npackage = true\n'), ['ruff==0.15', 'mypy']);
+  assert.deepEqual(depsOf('Cargo.toml', '[dependencies.glam]\nversion = "0.30"\nfeatures = ["serde"]\n[dev-dependencies]\nrand = "0.9"\n'), ['glam.version = "0.30"', 'glam.features = ["serde"]', 'rand = "0.9"']);
 });
 
 test('finding shape: value and base_value; key: match fingerprints the token tree-wide; a shadow rule is recorded, never held', () => {
