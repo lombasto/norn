@@ -1,4 +1,4 @@
-/* The Runs page (stage RUNS): one table of every run (a card per row under 700 px, no sideways scroll), its time bars, and the
+/* The Runs page (stage RUNS): one table of every run (a card per row under 700 px, no sideways scroll), its age bars, and the
    run document in the drawer a row opens: 4 views on its head (one section shown; Activity and Feed hide parts of the one live
    section), a full sheet on a phone with the [x] top right. */
 .runs-filters{gap:6px 10px;margin:0 0 8px}.runs-filters input[type=search]{width:9em;min-width:0}
@@ -25,10 +25,16 @@
 .rline{overflow-wrap:anywhere}.rline.warn{color:var(--warn)}.rline.bad{color:var(--bad)}
 .rrow.ended{color:var(--mute)}.rrow.ended .aname{color:var(--mute)}
 .rtime{font-variant-numeric:tabular-nums;white-space:nowrap}
-.tbar{position:relative;display:inline-block;width:120px;height:6px;background:var(--bar);vertical-align:middle}
-.tbar>i{position:absolute;inset:0 auto 0 0;max-width:100%;background:var(--run)}.tbar.over>i{background:var(--warn)}
-.tbar>u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink)}.tbar>u.tb-med{width:0;border-left:2px dotted var(--mute);background:none}
-.tbar.wide{width:100%;max-width:520px;height:8px}
+/* the age bar (widgets ageBar): track = 2x the budget, the 1x tick, the fill neutral / amber past 1x / red near 2x, hand-off dividers;
+   one shared axis in the age head, every track on its scale (.atrack: the same width in the head and the rows) */
+.rage-bar{display:flex;align-items:center;gap:8px}.atrack{position:relative;display:inline-block;width:120px;flex:none}
+.abar{position:relative;display:block;height:8px;background:var(--bar);border-radius:2px}
+.abar>i{position:absolute;inset:0 auto 0 0;max-width:100%;background:var(--mute);border-radius:2px 0 0 2px}.abar.over>i{background:var(--warn)}.abar.stop>i{background:var(--bad)}
+.abar>u.ab-1x{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--ink)}.abar>b.ab-cut{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--panel)}
+.abar.wide{width:100%;max-width:520px;height:10px}.rd-tline>.abar.wide{flex:1 1 200px}
+.aaxis{position:relative;display:block;height:14px;margin-top:2px;border-top:1px solid var(--line);font-size:10px;font-weight:400;color:var(--mute)}
+.aaxis>span{position:absolute;top:1px;transform:translateX(-50%);white-space:nowrap}.aaxis>span:first-child{transform:none}.aaxis>span:last-child{transform:translateX(-100%)}
+.rtime.short{font-size:11px}
 .ritems{display:inline-flex;gap:6px;align-items:center;white-space:nowrap}.segs{display:inline-flex;gap:2px}.segs i{width:12px;height:6px;background:var(--bar)}.segs i.on{background:var(--ok)}
 .rd-title{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}.rd-title h2{margin:0;font-size:16px;font-weight:600;overflow-wrap:anywhere}.rd-title h2 .id{font-size:14px}
 .rd-sub{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;overflow-wrap:anywhere}.rd-acts{display:flex;flex-wrap:wrap;gap:6px}
@@ -60,3 +66,4 @@
 @media (max-width:700px){.fl,.fl-x>summary{grid-template-columns:56px minmax(0,72px) minmax(0,1fr) auto;gap:6px}}
 /* the feed head inside the run document: its words need a gap; the executor line repeats the document head, so it goes */
 #feed-head .fh-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center}#feed-head .fh-ex{display:none}
+.runtab .raxis td{padding-top:0;padding-bottom:2px}

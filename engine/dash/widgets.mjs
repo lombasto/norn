@@ -1,6 +1,7 @@
 // META-TEND (REPORT s.5.3): the shared chart widgets, built once - `meter` (one value against a max), `bars` (a ranked list, one horizontal bar each), `columns` (one
 // value over time, a column per point), `stack` (one bar split into its parts + a legend), `capStrip` (the Claude worker pool per
-// project), `poolLine` (the header's machine-wide worker pool), `timeChart` / `nornChart` (a zoomable time series; the <norn-chart>
+// project), `poolLine` (the header's machine-wide worker pool), `ageBar` / `ageAxis` (a run's
+// time against its budget, on one shared axis), `timeChart` / `nornChart` (a zoomable time series; the <norn-chart>
 // element at the end) and `outliers` (a ranked top N + a log dot strip). Pure: data -> HTML on the palette's CSS variables (css/base.css
 // .wbars / .wcols / .wstack / .wcap / .tchart / .wout); every chart carries its numbers as text and an aria-label.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -64,6 +65,28 @@ export function poolLine(p, r) {
 export function meter(v, max, mark, cls = '') {
   if (!fin(v) || !fin(max) || max <= 0) return '<span class="mute">-</span>';
   return `<div class="bar ${esc(cls)}" title="${esc(v)} of ${esc(max)}"><i style="width:${Math.min(100, 100 * v / max).toFixed(1)}%"></i>${fin(mark) ? `<u style="left:${Math.min(100, 100 * mark / max).toFixed(1)}%"></u>` : ''}</div>`;
+}
+
+/** minutes in the short form a narrow cell or an axis label reads: "56m", "3h", "1h40" */
+export const fmtShort = m => { if (!fin(m)) return '-'; m = Math.max(0, Math.round(m)); const h = Math.floor(m / 60), r = m % 60; return !h ? `${r}m` : r ? `${h}h${String(r).padStart(2, '0')}` : `${h}h`; };
+const pc = (x, top) => (100 * Math.max(0, Math.min(x, top)) / top).toFixed(1);
+/**
+ * A run's age as one bar (owner 11-24): the track is 2x the budget (the stop line), a tick at 1x; the fill is the time ran (amber past
+ * 1x, red from 1.75x); cuts = the minutes where a resumed session began (a thin divider each). top = the shared axis's end (the track's
+ * width on it); tip = the status, on hover and for a screen reader. No ran or no budget: ''.
+ */
+export function ageBar({ ran, budget, top = null, cuts = [], tip = '', cls = '' }) {
+  if (!fin(ran) || !fin(budget) || budget <= 0) return '';
+  const end = 2 * budget, r = ran / budget, k = `abar${r > 1 ? ' over' : ''}${r >= 1.75 ? ' stop' : ''}${cls ? ` ${cls}` : ''}`;
+  return `<span class="${esc(k)}" role="img" aria-label="${esc(tip)}" title="${esc(tip)}" style="width:${pc(end, fin(top) && top >= end ? top : end)}%"><i style="width:${pc(ran, end)}%"></i>${cuts.filter(c => fin(c) && c > 0 && c < Math.min(ran, end)).map(c => `<b class="ab-cut" style="left:${pc(c, end)}%"></b>`).join('')}<u class="ab-1x" style="left:50%"></u></span>`;
+}
+const AX_STEPS = [5, 10, 15, 30, 60, 120, 180, 240, 360, 480, 720, 1440];
+/** the shared time axis above a column of age bars, 0..top minutes: at most 5 round labels (minutes, then hours) */
+export function ageAxis(top) {
+  if (!fin(top) || top <= 0) return '';
+  const step = AX_STEPS.find(s => top / s <= 4) ?? Math.ceil(top / 4 / 1440) * 1440, ticks = [];
+  for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
+  return `<span class="aaxis" aria-hidden="true">${ticks.map(v => `<span style="left:${pc(v, top)}%">${v ? fmtShort(v) : '0'}</span>`).join('')}</span>`;
 }
 
 // UX review 6: every time chart says what it plots and over what - the y axis starts at a labelled 0 (the baseline) and its top is the
