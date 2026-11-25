@@ -13,6 +13,9 @@ import { sameRepo, repoScanner, judge, mergeLatch, stateWord, lastEv, fwd } from
 import { whyNotMerged } from './dlvwhy.mjs';
 import { loadMqWhy, loadFillWhy } from './mqwhy.mjs';
 import { queueOf } from './runs.mjs';
+import { readJsonS } from './fsnap.mjs';
+import { testsFor, IMPACT_FILE } from './testtimes.mjs';
+import { classify } from './testscli.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
   receipt_keys: ['main_merge', 'main_pins_changelog', 'source_head'], receipt_re: '\\bmain\\s+([0-9a-f]{7,40})\\b',
@@ -510,6 +513,13 @@ export function resolveDeliverable(stateDir, id, { project = {}, nowMs = Date.no
   const brief = fwd(path.join(resolveDir(stateDir), `${id}-${tag}.md`)), notes = fwd(path.join(resolveDir(stateDir), `${id}-${tag}-NOTES.md`));
   const files = row.rehearsal && !row.rehearsal.clean ? row.rehearsal.files : [];
   const R = cfg.remote, M = cfg.main, B = row.branch;
+  // MAIL-a-253: the Ready lines policy.dod.ready = refuse asks for. Scope = the branch's changes + the rehearsal's conflicts; Tests = what the
+  // impact map says covers them, else the changed test files, else `none` (the form parseReady takes for a brief with no tests)
+  const diff = git(row.repo, ['diff', '--name-only', `${M}...${row.tip}`], { allowFail: true });
+  if (diff === null) return { refused: `${id} ${B}: git diff --name-only ${M}...${String(row.tip).slice(0, 9)} failed: no Scope for the resolve brief` };
+  const scope = [...new Set([...diff.split(/\r?\n/).map(fwd).filter(Boolean), ...files])];
+  const mapped = testsFor(readJsonS(path.join(stateDir, 'tests', IMPACT_FILE)), scope).tests;
+  const tests = mapped.length ? mapped : scope.filter(f => classify(f) === 'test');
   const text = [
     `# task RESOLVE ${id} - bring ${B} up to ${M} (${row.resolve.why})`, '',
     `Deliverable ${id}: ${row.delivers}`,
@@ -523,7 +533,10 @@ export function resolveDeliverable(stateDir, id, { project = {}, nowMs = Date.no
     "   A conflict that needs a design choice outside the branch's own change: stop (`norn done --outcome stopped --why \"<why>\"`) with the paths and both sides.",
     "4. Run the covering tests of the touched files under the repo's CLAUDE.md / AGENTS.md rules; a new red is a stop, never a loosened test.",
     `5. Commit the merge (\`merge: ${M} into ${B} (resolve ${id})\`), push \`${R} ${B}\` - no force-push. Do not merge to ${M}; touch no other branch.`,
-    `NOTES ${notes}: what conflicted, how each path was resolved, the tests run. End with \`norn done\` (or \`--outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).`, ''].join('\n');
+    `NOTES ${notes}: what conflicted, how each path was resolved, the tests run. End with \`norn done\` (or \`--outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).`, '',
+    `Scope: ${scope.join(', ')}`,
+    `Tests: ${tests.length ? tests.join(', ') : 'none - no test covers the changed files and the branch changed no test file'}`,
+    `Done: ${M} merged into the branch ${B} with no conflict markers left, the covering tests green, the merge commit pushed.`, ''].join('\n');
   fs.writeFileSync(brief, text);
   const run = ['run', '--executor', executor, '--lane', lane, '--brief', brief, '--worktree', wt.path, '--notes', notes, '--stage', 'resolve', '--queue'];
   return { id, why: row.resolve.why, brief, notes, worktree: wt.path, create_worktree: wt.exists ? null : { repo: row.repo, branch: B, remote: R }, run };
