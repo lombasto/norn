@@ -36,7 +36,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   for the content read the run's notes (its log) / the Codex final. Do not read code, diffs or logs.
 - done: the stage is finished. Next stage = the next item in the lane's plan / brief "next" line.
 - stopped (end.why): rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
-  record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`. If it is owner-only, record
+  record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`.
+  A ruling that governs code takes `--paths` with the repo-relative files or folders it governs (`--paths engine/lib/digest.mjs,engine/prompts`);
+  a process ruling (queue order, dispatch, "count done", a re-run, "no second stage") takes none. If it is owner-only, record
   `META rec add question --lane L --title T --body-file F --option "a|..|cost" --recommend "<key>|<why>" --class <i-v> --blocks L`
   (the lane is parked by it). Options: list every real alternative - 3-4 where they exist; never trim to the default plus one, never
   pad with a fake one. A Q built from a plan / notes / brief section: `--from-source "<file>#<section>"` copies every alternative it

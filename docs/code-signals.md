@@ -183,3 +183,34 @@ Thresholds (`SUSPECT_LIMITS` in engine/lib/codesuspects.mjs, the one place):
 | `common_share` | 0.5 | a word matching more than this share of the candidates is dropped ... |
 | `common_min` | 4 | ... judged from this many candidates up |
 | `types` | feat fix docs style refactor perf test build ci chore revert | commit types: never a symptom word |
+
+## A consumer: warn-on-edit (RM-a-67)
+
+The first time a run edits a risky file, the worker sees one short line about it, e.g.
+`engine/x.py: 41 files import this; 6 fixes in 90 days; changes with engine/y.py (5 of 9 landings) (measured at 1a2b3c4d5e6f)`.
+No model, no Node and no git on the tool call (engine/lib/codewarn.mjs, the hook engine/hook-rs).
+
+- **The table**: `norn code history` (the index refresh) writes `<state>/code/warn.json` beside the signals: `{ sha, at, basis: 'measured',
+  limits, files: { <file>: <line> } }`, only the files over a threshold, each with its line ready to print, stamped with the indexed
+  commit. Without stored signals the table is removed. A file's dependents are its `fan_in`, its fixes `fixes.n_90d`, its partner the
+  first of `partners`.
+- **The line**: dependents, fixes, then the top partner; a part that is 0 or missing is left out. Over the token cap the partner goes
+  first, then the path keeps its tail (`...`).
+- **The hook**: on an Edit / Write / NotebookEdit, norn-hook (the PostToolUse hook) reads the run spec, the switch and the table, and
+  prints the edited file's line once per file per run as the hook's `additionalContext` (the channel mail reaches the worker by). A file
+  not in the table, no table, or the switch off: nothing. Only claude runs have the Norn hook; codex, cli and fake runs get no line.
+- **The switch** `policy.code.warn` (per project, read live from the project file): `off` (default), `on` (every run), `ab` (even run
+  numbers warn, odd ones are the control group and see nothing).
+- **The run record**: the hook marks the run in `<state>/code/warn/<RUN>.txt` (`<mode> <group>`, then one `shown <file>` per line shown);
+  the run's end record carries `code_warn: { mode, group, shown }` (`shown` = lines shown).
+- **The measurement**: `norn code warn --report [--json]` compares the finished runs of the groups `warn` and `control` as
+  `norn code card --report` does (tokens, files read and the done rate per run; refused under 15 runs per group, exit 1).
+
+Thresholds (`WARN_LIMITS` in engine/lib/codewarn.mjs, the one place; copied into the table as `limits`):
+
+| key | value | meaning |
+|---|---|---|
+| `dependents` | 10 | in the table from this many importing files ... |
+| `fixes` | 3 | ... or this many fix landings in the short window (`fix_short_days`) |
+| `tokens` | 60 | the line's cap |
+| `chars_per_token` | 4 | tokens are estimated as characters / this |

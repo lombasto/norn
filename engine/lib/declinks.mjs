@@ -26,6 +26,24 @@ const H = 3600e3, SHA = 12, short = s => s.slice(0, SHA);
 const fileOf = state => path.join(state, 'code', LINKS_FILE);
 /** a path as the index keys it: forward slashes, no leading ./ */
 export const normPath = p => String(p).trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '');
+/** RM-a-58 decision-paths: the repo paths a ruling's text names, in text order - a token counts only when it IS a tracked file (`files`
+ *  = git ls-files at HEAD) or a folder holding one (it has a /); never a guess from the look of a word (x.md, a/b, n/a are none) */
+export function namedPaths(text, files) {
+  const set = new Set(files), dirs = new Set(files.flatMap(f => f.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/')))), got = [];
+  for (const raw of String(text ?? '').split(/[^A-Za-z0-9_./\\-]+/)) {
+    const p = normPath(raw).replace(/[./]+$/, '');   // a sentence's full stop, a folder's trailing /
+    if (p && !got.includes(p) && (set.has(p) || (p.includes('/') && dirs.has(p)))) got.push(p);
+  }
+  return got;
+}
+/** `norn rec add decision|directive`: the one warning line when its text names tracked repo paths and it states none (no --paths; a
+ *  decision: no --on-runs either, whose runs' files link it), else null. Read-only and advisory: a repo git cannot list = no line */
+export function pathsWarning(id, data, repo, git = makeGit()) {
+  if (data.paths?.length || data.on_runs?.length) return null;
+  const text = [data.question, data.choice, data.why, data.text].filter(Boolean).join('\n');
+  const out = repo && git(repo, ['ls-files', '-z'], { allowFail: true }), got = out ? namedPaths(text, out.split('\0').filter(Boolean)) : [];
+  return got.length ? `warning: ${id} names repo paths ${got.join(', ')} but states none: if it governs them, record it with --paths ${got.join(',')} (a process ruling takes none)` : null;
+}
 const LANDING_RE = /\bnorn\/(?:[a-z][a-z0-9]{0,15}\/)?([A-Za-z0-9][A-Za-z0-9_.-]*)'?\s*$/;
 const laneOf = l => String(l ?? '').replace(/^L:/, '').split('/').pop();
 const governs = i => (i.kind === 'decision' && i.state === 'in-force') || (i.kind === 'directive' && i.state === 'active');
