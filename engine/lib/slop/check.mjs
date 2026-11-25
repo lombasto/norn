@@ -14,6 +14,7 @@ import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
 import { packOf, LINTERS } from './lang/index.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
+import { importGraph, cycles } from './graph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -203,32 +204,9 @@ export function shimFindings(rule, text, file) {
 }
 
 // the edges of the files under the roots, each read by its language pack (S3: JS, Python, Rust); a target is any file of the tree
-function importGraph(rule, ctx, side) {
-  const tree = ctx.tree(side), has = new Set(tree), files = tree.filter(f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && packOf(f));
-  const texts = ctx.texts(side, files), at = { has: f => has.has(f), tree, memo: {} };
-  return new Map(files.map((f, k) => [f, packOf(f).imports(f, texts[k] || '', at)]));
-}
-// Tarjan's strongly connected components; a component of 2+ files (or a self-import) is a cycle. A layer-only edge (order: false,
-// Rust's `use` inside a crate) is no load order
-function cycles(edges) {
-  let n = 0; const idx = new Map(), low = new Map(), on = new Set(), stack = [], out = [];
-  const visit = v => {
-    idx.set(v, n); low.set(v, n); n++; stack.push(v); on.add(v);
-    for (const { to } of (edges.get(v) || []).filter(e => e.order !== false && edges.has(e.to))) {
-      if (!idx.has(to)) { visit(to); low.set(v, Math.min(low.get(v), low.get(to))); }
-      else if (on.has(to)) low.set(v, Math.min(low.get(v), idx.get(to)));
-    }
-    if (low.get(v) === idx.get(v)) {
-      const c = []; let w;
-      do { w = stack.pop(); on.delete(w); c.push(w); } while (w !== v);
-      if (c.length > 1 || (edges.get(v) || []).some(e => e.to === v)) out.push(c.sort());
-    }
-  };
-  for (const v of edges.keys()) if (!idx.has(v)) visit(v);
-  return out;
-}
+const ruleGraph = (rule, ctx, side) => { const tree = ctx.tree(side), files = tree.filter(f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && packOf(f)); return importGraph(files, ctx.texts(side, files), tree); };
 function layering(rule, ctx, side) {
-  const edges = importGraph(rule, ctx, side), out = [];
+  const edges = ruleGraph(rule, ctx, side), out = [];
   for (const [f, es] of edges) for (const e of es) for (const fb of rule.forbid) {
     if (matchAny([fb.from], f) && matchAny(fb.to, e.to)) out.push({ file: f, line: e.line, msg: `${f} must not import ${e.to} (${fb.from} -> ${fb.to.join(' | ')})`, snippet: e.text });
   }
