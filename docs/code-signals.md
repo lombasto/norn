@@ -145,3 +145,31 @@ Thresholds (`SUSPECT_LIMITS` in engine/lib/codesuspects.mjs, the one place):
 | `common_share` | 0.5 | a word matching more than this share of the candidates is dropped ... |
 | `common_min` | 4 | ... judged from this many candidates up |
 | `types` | feat fix docs style refactor perf test build ci chore revert | commit types: never a symptom word |
+
+## A consumer: `norn code risk` (RM-a-68)
+
+`norn code risk <base>..<head> [--project P | --state D] [--repo DIR] [--json]` says where a diff stands against the repo's own recent
+landings, from git and the stored signals (`readSignals`), no model (engine/lib/coderisk.mjs). The second voice spends a short day's
+reads by it (engine/lib/slop/rules/README.md, "The second voice"); the run-end check and the PR body carry its line.
+
+- **The diff**: `git diff` from the merge base of base and head to head (paths relative to `--repo`, the project folder).
+- **The pool**: the last `landings` first-parent landings ending at that merge base, each its diff against its first parent.
+- **The numbers** of the diff and of every landing alike: lines changed (added + deleted), files changed, the `fixes.n_365d` of its
+  files summed, the highest `fix_first` of its files, and the companions it leaves out (the `partners` of its files that it does not
+  change and that are indexed). The fix numbers need a typed history: with `fixes.status` n/a they are null, left out of the rank,
+  and the line says why. Files and lines are measured from git; the other three are the signals at their `sha`, applied to every
+  landing the same way.
+- **The rank**: per number the Borda count over the pool and the diff (ties half), summed; the percentile = the landings with a lower
+  sum plus half the equal ones, of all landings: "riskier than 87 % of the last 100 landings". The "why" = the `why` numbers whose own
+  percentile stands highest, each with its value. No absolute score anywhere.
+- **n/a** with the reason, never a guess: no stored signals, or fewer than `min_landings` landings.
+- `--json`: `{ base, head, sha, basis, numbers: { files, lines, fixes, fix_first, companions }, left_out: [{ file, partner, shared,
+  landings }], landings, pct | null, why: [{ key, label, value, pct }], na, line }`.
+
+Thresholds (`RISK_LIMITS` in engine/lib/coderisk.mjs, the one place):
+
+| key | value | meaning |
+|---|---|---|
+| `landings` | 100 | the pool: this many landings before the merge base |
+| `min_landings` | 10 | under this many the rank is n/a |
+| `why` | 3 | the numbers named in the line |
