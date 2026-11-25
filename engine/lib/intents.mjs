@@ -75,7 +75,7 @@ function treeFacts(wt, ref, ttlMs = 0) {
   const f = worktreeFacts(wt, { main: ref.ref, ttlMs });
   return f && { branch: f.branch, tip: f.tip, touched: f.touched, commits: f.commits };
 }
-const onMain = (repo, tip, ref) => !!tip && !!ref.sha && isAncestorOf(repo, commonOf(repo), tip, ref.sha);
+export const onMain = (repo, tip, ref) => !!tip && !!ref.sha && isAncestorOf(repo, commonOf(repo), tip, ref.sha);
 // each tip's commits ahead of main, from ONE `git rev-list --parents` of all tips (the DAG walked here): a merge-base per pair cost the
 // door a git child per other lane for every new tip (SPEC 4.2 cost, 8 live lanes)
 function aheadSets(repo, tips, ref) {
@@ -214,3 +214,43 @@ export function itemStages(events) {
  *  wide: [other homes' claims of the whole repo] } */
 export const collideFile = state => path.join(state, 'collide.json');
 export const readCollide = state => { try { return JSON.parse(fs.readFileSync(collideFile(state), 'utf8')) || {}; } catch (e) { if (e.code === 'ENOENT') return {}; throw e; } };
+
+// ---------- S3 (SPEC 4A.6): the case as the report reads it, and the git facts of its outcome and of the replay ----------
+const SIDE_KEYS = ['home', 'lane', 'run', 'state', 'branch', 'tip'];
+const sideView = x => ({ ...Object.fromEntries(SIDE_KEYS.map(k => [k, x?.[k] ?? null])), ...(x?.dlv ? { dlv: x.dlv } : {}) });
+/** caseView(c) -> the case with every field of 4A.6 (absent ones null): its sides, its actions (each with before, dec and as_recommended)
+ *  and its undos ({ at, by, action (the undone action's name), i (its history index), why }) */
+export function caseView(c) {
+  const d = c.data || {}, acts = actionsOf(c);
+  return { id: c.id, state: c.state, key: d.key ?? null, kind: d.kind ?? null, grade: d.grade ?? null, verdict: d.verdict ?? null, door: d.door ?? null, a: sideView(d.a), b: sideView(d.b),
+    item: d.item ?? null, files: d.files || [], files_n: d.files_n ?? (d.files || []).length, resource: d.resource ?? null, recommended: d.recommended ?? null, why: d.why ?? null, pair: d.pair ?? null,
+    actions: acts.map(a => ({ at: a.at, action: a.action, by: a.by, auto: !!a.auto, args: a.args ?? null, before: a.args?.before ?? null, dec: a.args?.dec ?? null,
+      as_recommended: !a.auto && !!d.recommended && a.action === d.recommended.remedy, undone: a.undone, i: a.i, ...(a.why ? { why: a.why } : {}) })),
+    undone: c.history.filter(h => h.ev === 'undo').map(h => ({ at: h.ts, by: h.by, action: c.history[h.data.action]?.data?.action ?? null, i: h.data.action, why: h.data.why ?? null })),
+    outcome: c.outcome ?? null };
+}
+/** the commit a first-parent walk from sha finds before ms (main as it was then) | null */
+export const firstParentBefore = (repo, sha, ms) => (sha && Number.isFinite(ms) ? gitOut(repo, ['rev-list', '-1', '--first-parent', `--before=${new Date(ms - 1000).toISOString()}`, sha]) || null : null);
+const PORT = /^merge:?\s+(?:origin\/)?main\s+into\b/i;
+/** ownWork(repo, tip, base) -> { files (the first-parent non-merge commits' changed files), from (ms: the first of them), ports: [{ at, files }]
+ *  (each first-parent "merge: main into" commit and the files it brought onto the branch) } - a branch's own work since base */
+export function ownWork(repo, tip, base) {
+  if (!tip || !base) return { files: [], from: null, ports: [] };
+  const own = gitOut(repo, ['log', '--first-parent', '--no-merges', '--name-only', '--format=@%ct', `${base}..${tip}`]) ?? '', files = new Set(), at = [];
+  for (const l of lines(own)) if (l.startsWith('@')) at.push(Number(l.slice(1)) * 1000); else files.add(l);
+  const ports = lines(gitOut(repo, ['log', '--first-parent', '--merges', '--format=%H%x09%ct%x09%s', `${base}..${tip}`]) ?? '').map(l => l.split('\t')).filter(([, , s]) => PORT.test(s ?? ''))
+    .map(([h, t]) => ({ at: Number(t) * 1000, files: lines(gitOut(repo, ['diff', '--name-only', `${h}^1`, h]) ?? '') }));
+  return { files: [...files].sort(), from: at.length ? Math.min(...at) : null, ports };
+}
+/** historySides(state, repo, { since, main, remote }) -> one side per deliverable merged at or after since (ms): { lane, dlv, pr, merged_at (ms),
+ *  tip, files, from, ports } - its own work against main just before it merged (the merge commit's first parent, else main by date) */
+export function historySides(state, repo, { since = 0, main = 'main', remote = 'origin' } = {}) {
+  const ref = mainRef(repo, { main, remote }), out = [];
+  for (const x of Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items)) {
+    const m = (x.history || []).filter(h => h.ev === 'merged').at(-1), at = Date.parse(m?.data?.merged_at ?? m?.ts ?? '');
+    if (!m || !(at >= since)) continue;
+    const tip = m.data.tip ?? x.data?.tip, base = m.data.merge_commit ? gitOut(repo, ['rev-parse', '--verify', '--quiet', `${m.data.merge_commit}^1`]) || null : firstParentBefore(repo, ref.sha, at);
+    out.push({ lane: x.data?.lane ?? null, dlv: x.id, pr: (x.history || []).filter(h => h.ev === 'pr').at(-1)?.data?.number ?? null, merged_at: at, tip, ...ownWork(repo, tip, base) });
+  }
+  return out;
+}
