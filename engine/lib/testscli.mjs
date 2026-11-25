@@ -1,8 +1,9 @@
-// `norn tests` - history | check | for | index | run. Code only, no model. Writes <state>/tests/ only: git-history.json (tests vs code per day
+// `norn tests` - history | check | for | index | run | output-replay. Code only, no model. Writes <state>/tests/ only: git-history.json (tests vs code per day
 //   over git: `history`, which the tick starts once a day), advisories.json (`check`: the merge-time copy-paste advisory of the changed
 //   test files) and cases.json + impact.json + times.json (`index`, testindex.mjs: the tick starts it when impact.json is not at HEAD).
 //   `for` answers from impact.json. testsView + testsPart read them (and the machine's per-case log) for the dash's Tests tab.
 // `run`: a run's node tests, through the machine's result cache (testcache.mjs) under policy.tests (testpolicy.mjs).
+// `output-replay` (outreplay.mjs): what trimming command logs would have saved on the project's recorded runs, and the gate; writes <state>/trim/replay.json.
 import fs from 'node:fs';
 import path from 'node:path';
 import { readJsonS } from './fsnap.mjs';
@@ -13,12 +14,15 @@ import { suiteKind, testsFor, IMPACT_FILE } from './testtimes.mjs';
 import { repoIndex, runCached, cacheDir, cacheDirOf, cacheLog, caseLog, casesFile, prune } from './testcache.mjs';
 import { buildIndex, writeIndex, median, CASES_FILE } from './testindex.mjs';
 import { testsPolicy, pickInRepo, policyWords, BROWSER_SKIP_ENV } from './testpolicy.mjs';
+import { outputReplay, replayLines } from './outreplay.mjs';
+import { defaultProjectsDir } from './billing.mjs';
 
-export const TESTS_USAGE = 'usage: norn tests history [--points N] | check --base REF | for FILE... | index | run [FILE...] [--changed [--base REF]] [-- node flags]    '
+export const TESTS_USAGE = 'usage: norn tests history [--points N] | check --base REF | for FILE... | index | run [FILE...] [--changed [--base REF]] [-- node flags] | output-replay [--since YYYY-MM-DD]    '
   + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time copy-paste advisory of the changed test files, exit 0; for = the test files that cover each FILE, from impact.json; '
   + 'index = cases.json, impact.json and times.json: every test case, what each test file reaches, the median time per file; '
-  + 'run = node test files through the machine\'s result cache under policy.tests, --changed adds the files policy.tests.mode picks for the change; exit 1 = a red)';
-const FLAGS = { history: ['points'], check: ['base'], for: [], index: [], run: ['changed!', 'base'] };
+  + 'run = node test files through the machine\'s result cache under policy.tests, --changed adds the files policy.tests.mode picks for the change; exit 1 = a red; '
+  + 'output-replay = what trimming command logs would have saved on the project\'s recorded runs since a day (default 31 days back) and the S2 gate, into <state>/trim/replay.json)';
+const FLAGS = { history: ['points'], check: ['base'], for: [], index: [], run: ['changed!', 'base'], 'output-replay': ['since'] };
 const POSITIONAL = new Set(['for', 'run']);   // for: the files to look up; run: the test files
 const fwd = s => s.split('\\').join('/');
 const TEST_GLOB = /^tests\/[^/]+\.test\.mjs$/;
@@ -121,6 +125,13 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
   catch (e) { err('error: ' + e.message); err(TESTS_USAGE); return 2; }
   let w;
   try { w = where(f); } catch (e) { err('error: ' + e.message); return 2; }
+  if (verb === 'output-replay') {   // reads the run logs + transcripts only: no repo, no test suite
+    if (f.since && !/^\d{4}-\d\d-\d\d$/.test(f.since)) { err('error: --since needs a day YYYY-MM-DD'); return 2; }
+    const r = outputReplay({ state: w.state, projectsDir: defaultProjectsDir(env), since: f.since });
+    writeJson(path.join(w.state, 'trim', 'replay.json'), r);
+    (f.json ? [JSON.stringify(r, null, 1)] : replayLines(r)).forEach(l => out(l));
+    return 0;
+  }
   const dir = path.join(w.state, 'tests');
   // gap #7: a monorepo project (project.subdir; not with an explicit --repo) reads its own folder: its tests/, its history
   // `run` tests the checkout it is called in (a worker's worktree, not the project's main checkout); the other verbs the project's

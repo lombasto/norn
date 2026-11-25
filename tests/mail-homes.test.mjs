@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { sendMail, checkMail, listMail, qualify } from '../engine/lib/mail.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -82,4 +83,26 @@ test('a body_file over 2 KB: kept as a path for this home, refused for another h
   fs.writeFileSync(f, 'x'.repeat(3000));
   assert.equal(sendMail(a, { by: 'controller', to: 'role:controller', subject: 'S', body_file: f }).data.body_file, f);
   assert.throws(() => sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'S', body_file: f }), /another home carries its body inline/);
+});
+
+// HOME-MAIL S1: a list row says where the mail is (the sender reads the addressee home's seen.json copy) and carries body + age_min
+test('mail list rows carry body, where and age_min; where: sent / at b from the receipt of b, the state once b took it, the state for local mail', () => {
+  const { a, b, sync } = homes();
+  const m = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'S', body: 'the body' });
+  const local = sendMail(a, { by: 'controller', to: 'role:controller', subject: 'L', body: 'mine' });
+  const now = Date.parse(m.ts) + 7 * 60000 + 5000;
+  let rows = listMail(a, { now });
+  assert.deepEqual(rows.map(r => [r.id, r.body, r.where, r.age_min]), [[m.id, 'the body', 'sent, b unknown', 7], [local.id, 'mine', 'queued', 7]]);
+  fs.mkdirSync(path.join(a, 'homes', 'b'), { recursive: true });
+  const seen = held => fs.writeFileSync(path.join(a, 'homes', 'b', 'seen.json'), JSON.stringify({ polled_at: '2026-11-20T10:05:00Z', held: { a: { 'mail.jsonl': held } } }));
+  seen(m.seq - 1);
+  assert.equal(listMail(a, { now })[0].where, 'sent, b last polled 2026-11-20T10:05:00Z');
+  seen(m.seq);
+  assert.equal(listMail(a, { now })[0].where, 'at b, b last polled 2026-11-20T10:05:00Z');
+  sync(); checkMail(b, { by: 'controller', to: 'role:controller', via: 'cli' }); sync();
+  assert.equal(listMail(a, { now })[0].where, 'delivered');
+  const r = spawnSync(process.execPath, [path.resolve('engine/bin/norn.mjs'), 'mail', 'list', '--state', a, '--json'], { env: { ...process.env, META_RUN_ID: '' }, encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout)[0];
+  assert.equal(j.body, 'the body'); assert.equal(j.where, 'delivered'); assert.ok(Number.isInteger(j.age_min), r.stdout);
 });
