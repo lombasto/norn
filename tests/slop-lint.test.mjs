@@ -51,7 +51,7 @@ test('LJ: both sides lint with the merge base\'s config; a branch that edits it 
 test('LJ: a file that does not parse is LJ/parse (BLOCK); a tool that cannot run is one BLOCK of LJ', () => {
   const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = );\n' });
   const bad = { ruleId: null, fatal: true, severity: 2, message: 'Parsing error: Unexpected token )', line: 1, column: 18 };
-  const rules = loadRules().filter(r => r.kind === 'lint' || r.kind === 'ast');
+  const rules = loadRules().filter(r => (r.kind === 'lint' || r.kind === 'ast') && !r.scan);   // LS runs its scanner, not this recorded ESLint output (slop-secrets.test.mjs)
   assert.deepEqual(slopCheck({ repo, base: 'main', rules, tool: recorded({ head: [{ filePath: 'a.mjs', messages: [bad] }] }) }).blocks.map(b => [b.rule, b.line]), [['LJ/parse', 1]]);
   const down = slopCheck({ repo, base: 'main', rules: [LJ], tool: () => { throw new Error('npm ci failed (lock 0123)'); } });
   assert.deepEqual(down.blocks.map(b => [b.rule, b.level, b.msg]), [['LJ', 'BLOCK', 'could not run: npm ci failed (lock 0123)']]);
