@@ -319,6 +319,7 @@ export const SECTION_RULES=[
   [/^policy\.instructions\./,'agents/rounds'],
   [/^policy\.done_lanes\./,'agents/rounds'],
   [/^policy\.idle_lanes\./,'agents/rounds'],
+  [/^policy\.code\./,'agents/rounds'],   // triage-card: the worker card A/B switch
   [/^policy\.slop\./,'voice/onoff'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
