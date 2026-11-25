@@ -18,7 +18,7 @@ import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
 import { drawGraphMap, graphMapAt } from './codemapgraph.mjs';
-import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
+import { codeSignals, writeSignals, readSignals, checkLine } from './codesignals.mjs';
 import { graphAt, graphStatus, dependencies, dependents, cycles, reach, symbols, references, ALL_KINDS, LIMITS } from './codegraph.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
@@ -79,7 +79,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'card') return cardCmd(f, w.state, dir, { out, err, now });
   let ix, sig, graph;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
-  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
+  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now(), state: w.state }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
   const gm = drawGraphMap({ state: w.state, graph });   // the import-graph map from the same graph (n/a stored as n/a)
   writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks
@@ -315,7 +315,8 @@ export async function codeAt(p, url) {
     if (!rows) return { list: null };
     const sort = CODE_SORTS.includes(q('sort')) ? q('sort') : 'importance', folder = String(q('folder') ?? '').replace(/\/+$/, ''), lim = Number(q('limit'));
     const hit = sorted(rows.filter(r => !folder || r.file.startsWith(`${folder}/`)), sort), shown = hit.slice(0, Number.isInteger(lim) && lim > 0 ? lim : CODE_CAP);
-    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null } };
+    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null,
+      checks: ['fix_first', 'importance'].map(k => ({ rank: k, status: sig?.check?.status === 'measured' ? sig.check[k].status : sig?.check?.status ?? null, line: checkLine(sig?.check ?? null, k) })) } };
   }
   if (part === 'growth') {
     if (!rows) return { days: [], areas: [], fastest: [] };
