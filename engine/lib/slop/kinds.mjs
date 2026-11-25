@@ -217,7 +217,7 @@ export function companion(rule, ctx) {
   if (!s) throw new Error('no code signals stored yet (`norn code history` writes them)');
   const inDiff = new Set(ctx.entries.flatMap(e => [e.path, e.old]).filter(Boolean)), atHead = new Set(ctx.tree('head'));
   const head = ctx.entries.filter(e => e.status !== 'D' && ctx.inFiles(rule, e.path)).flatMap(e => {
-    const x = s.files[e.path] ?? (e.old && s.files[e.old]);   // a renamed file: its history is under the old name
+    const x = s.files[e.path] ?? (e.old && s.files[e.old]);   // a moved file: the signals know it by its base path
     return (x?.partners || []).filter(p => p.shared >= rule.min_shared && p.share >= rule.min_share && !inDiff.has(p.file) && atHead.has(p.file) && !ctx.match(rule.partners_exclude, p.file))
       .map(p => ({ file: e.path, line: 0, value: p.share, snippet: `companion ${p.file}`,
         msg: `${e.path} usually changes with ${p.file} (${p.shared} of ${x.landings} landings); ${p.file} is not in this branch (${s.basis} from git at ${s.sha})` }));
