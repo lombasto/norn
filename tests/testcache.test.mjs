@@ -104,10 +104,10 @@ const READER = `// reads a workflow: its header declares it
 // reads: .github/workflows/*.yml
 import test from 'node:test';
 import fs from 'node:fs';
-test('yml', () => { fs.appendFileSync(process.env.COUNT_FILE, 'x\n'); fs.readFileSync('.github/workflows/pr.yml', 'utf8'); });
+test('yml', () => { fs.appendFileSync(process.env.COUNT_FILE, 'x\\n'); fs.readFileSync('.github/workflows/pr.yml', 'utf8'); });
 `;
 test('readsOf: only the leading comment block counts; several reads lines add up, split on commas, backslashes made forward', () => {
-  assert.deepEqual(readsOf('#!/usr/bin/env node\n// x\n// reads: a/*.yml, b\c.md\n\n// reads: d/**\nimport x from "y";\n// reads: late.md\n'), ['a/*.yml', 'b/c.md', 'd/**']);
+  assert.deepEqual(readsOf('#!/usr/bin/env node\n// x\n// reads: a/*.yml, b\\c.md\n\n// reads: d/**\nimport x from "y";\n// reads: late.md\n'), ['a/*.yml', 'b/c.md', 'd/**']);
   assert.deepEqual(readsOf('import x from "y";\n// reads: late.md\n'), [], 'a reads line after the first code line is no header');
   assert.deepEqual([readsMatch(['.github/workflows/*.yml'], '.github/workflows/pr.yml'), readsMatch(['.github/workflows/*.yml'], '.github/workflows/sub/x.yml'), readsMatch(['**'], 'a/b/c.md')], [true, false, true]);
 });
