@@ -12,7 +12,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
   "shadow_langs": ["py","rs","ts"],
-  "exclude": ["tests/**","**/vendor/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/tests_*.rs","**/test_*.py","**/vendor/**"],
   "token": "([A-Z][A-Z0-9_]+)['\"]?\\]?$",
   "allow": {"token":"^NORN_","listed_in":"engine/lib/slop/env.md"},
   "match": {
@@ -69,6 +69,7 @@
         "rule": {
           "kind": "string_literal",
           "regex": "^\"[A-Z][A-Z0-9_]+\"$",
+          "not": {"regex":"^\"CARGO_"},
           "nthChild": 1,
           "inside": {"kind":"arguments","inside":{"kind":"call_expression","has":{"field":"function","regex":"^(?:std::)?env::var(?:_os)?$"}}}
         },
@@ -78,6 +79,7 @@
         "rule": {
           "kind": "string_literal",
           "regex": "^\"[A-Z][A-Z0-9_]+\"$",
+          "not": {"regex":"^\"CARGO_"},
           "inside": {"kind":"token_tree","inside":{"kind":"macro_invocation","has":{"field":"macro","regex":"^(?:option_)?env$"}}}
         },
         "message": "a new build-time environment switch (env!): name it NORN_* and give it a row in the env table (engine/lib/slop/env.md)"
@@ -145,6 +147,12 @@
     "miss": {
       "base": {"engine/lib/a.mjs":"export const t = process.env.META_OLD;\n","engine/lib/slop/env.md":"| name | what |\n"},
       "head": {
+        "crates/core/src/tests_env.rs": "pub fn t() -> Option<String> { std::env::var(\"META_RS_TEST\").ok() }\n",
+        "crates/core/tests/it.rs": "#[test]\nfn it() { let _ = std::env::var(\"META_RS_TEST\"); }\n",
+        "crates/core/src/env_tests.rs": "pub fn t() -> Option<String> { std::env::var(\"META_RS_TEST\").ok() }\n",
+        "games/g/tests/test_a.py": "import os\n\nT = os.environ.get(\"META_PY_TEST\")\n",
+        "pkg/test_b.py": "import os\n\nT = os.environ.get(\"META_PY_TEST\")\n",
+        "crates/core/build.rs": "fn main() {\n    let os = std::env::var(\"CARGO_CFG_TARGET_OS\").unwrap_or_default();\n    let v = env!(\"CARGO_PKG_VERSION\");\n    println!(\"{os} {v}\");\n}\n",
         "engine/lib/a.mjs": "export const t = Number(process.env.META_OLD) || 0;\nexport const n = process.env.NORN_LISTED;\nexport const k = (env, key) => env[key];\n",
         "tests/a.test.mjs": "export const p = process.env.META_TEST_ONLY;\n",
         "engine/lib/slop/env.md": "| name | what |\n| NORN_LISTED | x |\n",
@@ -160,7 +168,9 @@
           {"file":"engine/lib/a.rs","ruleId":"K21.rs.0.Rust","line":2,"column":46,"endLine":2,"text":"\"NORN_LISTED\""},
           {"file":"engine/lib/a.ts","ruleId":"K21.ts.0.TypeScript","line":2,"column":38,"endLine":2,"text":"process.env.NORN_LISTED"}
         ],
-        "base": [{"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":1,"column":18,"endLine":1,"text":"process.env.META_OLD"}]
+        "base": [
+          {"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":1,"column":18,"endLine":1,"text":"process.env.META_OLD"}
+        ]
       }
     }
   }
