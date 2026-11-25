@@ -110,12 +110,27 @@ export function ackMail(state, { by, run = null, id }) {
   return record(state, { kind: 'mail', ev: 'ack', id, by, data: {} }, { run });
 }
 
-/** rows for `norn mail list`: { id, state, from, to, subject, urgent, created, delivered_to, nudged } */
-export function listMail(state, { to, open } = {}) {
-  const want = to ? qualify(to, homeOf(state)?.id) : null;
+// HOME-MAIL S1 (REPORT 3.1): where a queued mail this home sent to another home is, from that home's receipt (its seen.json, copied to
+// homes/<h>/seen.json): "sent" (not held there yet) or "at <h>", each with when <h> last polled; no receipt (a home on an older version) =
+// "unknown". Any other mail - local, received, or taken by its reader (delivered / acked) - is where its state says.
+function whereOf(state, home, m, seenOf) {
+  const dest = home ? addrHome(stored(state, m), home.bare_home) : null;
+  if (m.state !== 'queued' || !dest || dest === home.id || homeOfId(m.id, home.bare_home) !== home.id) return m.state;
+  const seen = seenOf(dest);
+  if (!seen) return `sent, ${dest} unknown`;
+  const held = seen.held?.[home.id]?.['mail.jsonl'], seq = m.history?.[0]?.seq, polled = `${dest} last polled ${seen.polled_at ?? 'unknown'}`;
+  return Number.isInteger(held) && Number.isInteger(seq) && held >= seq ? `at ${dest}, ${polled}` : `sent, ${polled}`;
+}
+const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+
+/** rows for `norn mail list`: { id, state, from, to, subject, urgent, created, delivered_to, nudged, body, where, age_min (at now, ms) } */
+export function listMail(state, { to, open, now = Date.now() } = {}) {
+  const home = homeOf(state), want = to ? qualify(to, home?.id) : null, seen = new Map();
+  const seenOf = h => { if (!seen.has(h)) seen.set(h, readJson(path.join(state, 'homes', h, 'seen.json'))); return seen.get(h); };
   return Object.values(loadMail(state)).filter(m => (!want || stored(state, m) === want) && (!open || m.state !== 'acked')).sort(byId)
     .map(m => ({ id: m.id, state: m.state, from: m.data.from, to: m.data.to, subject: m.data.subject, urgent: !!m.data.urgent, created: m.created,
-      ...(m.deliver?.run ? { delivered_to: m.deliver.run } : {}), ...(m.nudge ? { nudged: m.nudge.run } : {}) }));
+      ...(m.deliver?.run ? { delivered_to: m.deliver.run } : {}), ...(m.nudge ? { nudged: m.nudge.run } : {}),
+      body: bodyOf(m), where: whereOf(state, home, m, seenOf), age_min: Math.max(0, Math.floor((now - Date.parse(m.created)) / 60000)) }));
 }
 
 export const formatMail = m => `${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n${String(m.text ?? bodyOf(m)).replace(/\s+$/, '')}\n(ack it: norn mail ack ${m.id}, or norn_mail ack)`;
