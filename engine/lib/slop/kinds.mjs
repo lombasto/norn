@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { PARSE } from './tools.mjs';
 import { LINTERS, packOf, masked, commentsIn } from './lang/index.mjs';
 import { readSignals } from '../codesignals.mjs';
+import { graphAt, symbols, references } from '../codegraph.mjs';
 import { CODE, classify, exportsOf, helpers, isJs, isReason, lineAt, lineText, norm, usesOf } from './scan.mjs';
 
 const SIDE_KEY = { head: 'path', base: 'old' };
@@ -111,14 +112,30 @@ export function ast(rule, ctx) {
   });
 }
 
+// ---------- the code graph's symbols (slop-langs S6): K4 / K9 in Python, Rust and TypeScript read docs/code-graph.md's reader, never a
+// second parser; JavaScript keeps its own scan (parity). No graph or no answer: the rule could not run (thrown), never a guess ----------
+const viaGraph = f => ['py', 'rs', 'ts'].includes(packOf(f)?.ID);
+const shadowOf = (rule, f) => ((rule.shadow_langs || []).includes(packOf(f)?.ID) ? { shadow: true } : {});
+const sure = r => { if (r.ok === false) throw new Error(`code graph: ${r.why}`); return r; };
+const atOf = (ctx, side) => (side === 'head' ? ctx.head : ctx.base);
+const defsOf = (ctx, side, file) => sure(symbols({ state: ctx.state || null, repo: ctx.repo, file, at: atOf(ctx, side) })).defs;
+/** the files of a list the side's graph holds as first-party code (a language, not excluded as vendored / generated) */
+function graphFiles(ctx, side, files) {
+  if (!files.length) return [];
+  const g = sure(graphAt({ state: ctx.state || null, repo: ctx.repo, at: atOf(ctx, side) }));
+  return files.filter(f => g.files.get(f)?.lang && !g.files.get(f).excluded);
+}
+
 // ---------- dup (K9): a new one-statement helper whose body another module of the same group already has ----------
+// py / rs / ts: a function or method of at most max_lines lines and min_tokens leaf tokens whose normalised body hash (the graph's
+// Def.hash: comments, layout and its own name left out) a definition of another file of the group has; the pool is read only for a candidate
 export function dup(rule, ctx) {
   const min = rule.min_chars ?? 20, inRoots = f => rule.roots.some(r => f.startsWith(r));
   const group = f => (rule.groups || []).findIndex(g => ctx.match(g, f));
-  return both(side => {
-    const mine = sideFiles(rule, ctx, side, e => inRoots(e.path));
+  const js = both(side => {
+    const mine = sideFiles(rule, ctx, side, e => inRoots(e.path) && !viaGraph(e.path));
     if (!mine.length) return [];
-    const pool = ctx.tree(side).filter(f => inRoots(f) && ctx.inFiles(rule, f)), texts = ctx.texts(side, pool), bodies = new Map();
+    const pool = ctx.tree(side).filter(f => inRoots(f) && !viaGraph(f) && ctx.inFiles(rule, f)), texts = ctx.texts(side, pool), bodies = new Map();
     pool.forEach((f, k) => { for (const h of helpers(texts[k] || '')) if (h.body.length >= min) (bodies.get(h.body) || bodies.set(h.body, []).get(h.body)).push({ file: f, name: h.name }); });
     return mine.flatMap(({ e, file, text }) => helpers(text).filter(h => h.body.length >= min).flatMap(h => {
       const others = (bodies.get(h.body) || []).filter(o => o.file !== file && group(o.file) === group(file));
@@ -126,23 +143,56 @@ export function dup(rule, ctx) {
         msg: `${h.name} is a copy of ${others[0].name} in ${others[0].file}${others.length > 1 ? ` (+${others.length - 1} more)` : ''}: import that one` }] : [];
     }));
   });
+  const helper = d => ['function', 'method'].includes(d.kind) && d.tokens >= (rule.min_tokens ?? 12) && d.end_line - d.line + 1 <= (rule.max_lines ?? 3);
+  const graph = side => {
+    const mine = sideFiles(rule, ctx, side, e => inRoots(e.path) && viaGraph(e.path)), known = graphFiles(ctx, side, mine.map(x => x.file));
+    const cands = mine.filter(x => known.includes(x.file)).flatMap(x => defsOf(ctx, side, x.file).filter(helper).map(d => ({ ...x, d })));
+    if (!cands.length) return [];
+    const groups = new Set(cands.map(c => group(c.file))), hashes = new Set(cands.map(c => c.d.hash)), bodies = new Map();
+    const pool = graphFiles(ctx, side, ctx.tree(side).filter(f => inRoots(f) && viaGraph(f) && ctx.inFiles(rule, f) && groups.has(group(f))));
+    for (const f of pool) for (const d of defsOf(ctx, side, f)) if (hashes.has(d.hash)) (bodies.get(d.hash) || bodies.set(d.hash, []).get(d.hash)).push({ file: f, name: d.name });
+    return cands.flatMap(({ e, file, text, d }) => {
+      const others = (bodies.get(d.hash) || []).filter(o => o.file !== file && group(o.file) === group(file));
+      return others.length ? [{ file: e.path, line: d.line, value: others.length, snippet: `${d.name}: ${norm(lineText(text, d.line))}`, ...shadowOf(rule, e.path),
+        msg: `${d.name} is a copy of ${others[0].name} in ${others[0].file}${others.length > 1 ? ` (+${others.length - 1} more)` : ''}: import that one` }] : [];
+    });
+  };
+  const head = graph('head');   // the base side only tells an old copy from a new one: not read when the head has none
+  return { head: [...js.head, ...head], base: [...js.base, ...(head.length ? graph('base') : [])] };
 }
 
 // ---------- exports (K4): a new export nobody references (BLOCK) or only tests reference (tests_level) ----------
+// py / rs / ts: a top-level definition the graph marks exported (Rust plain pub, Python public / in __all__, TS export) whose name no
+// identifier of the search folders names (the graph's references); a use in its own file counts, as in JavaScript
+const TOP_KINDS = ['function', 'class', 'struct', 'enum', 'trait', 'const'];
 export function exportsKind(rule, ctx) {
-  return both(side => {
-    const mine = sideFiles(rule, ctx, side, e => rule.roots.some(r => e.path.startsWith(r)));
+  const verdict = (file, name, users, line, extra = {}) => {
+    const others = users.filter(f => f !== file);
+    if (!others.length) return [{ file, line, snippet: `export ${name}`, ...extra, msg: `export ${name} is referenced nowhere: delete it (an entry loaded by path goes in the rule's entry list)` }];
+    if (others.every(f => ctx.match(rule.tests, f))) return [{ file, line, snippet: `export ${name}`, ...extra, level: rule.tests_level, msg: `export ${name} is used by tests only` }];
+    return [];
+  };
+  const entry = (file, name) => (rule.entry || []).some(n => n === name || n === `${file}:${name}`);
+  const js = both(side => {
+    const mine = sideFiles(rule, ctx, side, e => rule.roots.some(r => e.path.startsWith(r)) && !viaGraph(e.path));
     const cands = mine.flatMap(({ e, file, text }) => exportsOf(text).filter(x => usesOf(text, x.name) < 2   // used in its own file: no finding
-      && !(rule.entry || []).some(n => n === x.name || n === `${e.path}:${x.name}`)).map(x => ({ ...x, e, file })));
+      && !entry(e.path, x.name)).map(x => ({ ...x, e, file })));
     if (!cands.length) return [];
     const users = ctx.grepWords(side, [...new Set(cands.map(c => c.name))], rule.search);
-    return cands.flatMap(({ name, line, e, file }) => {
-      const others = (users.get(name) || []).filter(f => f !== file);
-      if (!others.length) return [{ file: e.path, line, snippet: `export ${name}`, msg: `export ${name} is referenced nowhere: delete it (an entry loaded by path goes in the rule's entry list)` }];
-      if (others.every(f => ctx.match(rule.tests, f))) return [{ file: e.path, line, snippet: `export ${name}`, level: rule.tests_level, msg: `export ${name} is used by tests only` }];
-      return [];
-    });
+    return cands.flatMap(({ name, line, e, file }) => verdict(file, name, users.get(name) || [], line).map(f => ({ ...f, file: e.path })));
   });
+  const inSearch = f => !rule.search || rule.search.some(s => f === s || f.startsWith(`${s}/`));
+  const graph = (side, only = null) => {
+    const mine = sideFiles(rule, ctx, side, e => rule.roots.some(r => e.path.startsWith(r)) && viaGraph(e.path)), known = graphFiles(ctx, side, mine.map(x => x.file));
+    return mine.filter(x => known.includes(x.file)).flatMap(({ e, file }) => defsOf(ctx, side, file)
+      .filter(d => d.exported && TOP_KINDS.includes(d.kind) && !entry(e.path, d.name) && (!only || only.has(`${e.path}\0export ${d.name}`)))
+      .flatMap(d => {
+        const users = sure(references({ state: ctx.state || null, repo: ctx.repo, name: d.name, at: atOf(ctx, side) })).rows.map(x => x.file);
+        return users.includes(file) ? [] : verdict(file, d.name, users.filter(inSearch), d.line, shadowOf(rule, e.path)).map(f => ({ ...f, file: e.path }));
+      }));
+  };
+  const head = graph('head');   // the base side asks only the names the head found: an old unused export is no new finding
+  return { head: [...js.head, ...head], base: [...js.base, ...(head.length ? graph('base', new Set(head.map(f => `${f.file}\0${f.snippet}`))) : [])] };
 }
 
 // ---------- refs (R2): a `norn <verb> [<sub-verb>]` or a repo path that does not exist at that side ----------

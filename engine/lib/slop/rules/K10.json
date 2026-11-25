@@ -9,20 +9,32 @@
     "fix": "Move the shared code down into engine/lib, or pass the value in as a parameter, so that the import goes one way only."
   },
   "roots": ["engine/"],
-  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.rs"],
+  "shadow_langs": ["rs"],
   "forbid": [{"from":"engine/lib/**","to":["engine/dash/**","engine/bin/**"]}],
   "fixture": {
     "hit": {
-      "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/bin/x.mjs":"export const x = 1;\n"},
-      "head": {"engine/lib/a.mjs":"import { x } from '../bin/x.mjs';\nexport const a = x;\n","engine/bin/x.mjs":"export const x = 1;\n"}
+      "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/bin/x.mjs":"export const x = 1;\n","engine/bin/tool.py":"X = 1\n","engine/bin/y.ts":"export const y = 1;\n","engine/bin/Cargo.toml":"[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n","engine/bin/src/lib.rs":"pub fn twice(n: u8) -> u8 { n * 2 }\n","engine/lib/Cargo.toml":"[package]\nname = \"base_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n","engine/lib/src/lib.rs":"pub fn four() -> u8 { 4 }\n"},
+      "head": {"engine/lib/a.mjs":"import { x } from '../bin/x.mjs';\nexport const a = x;\n","engine/bin/x.mjs":"export const x = 1;\n","engine/lib/pa.py":"from engine.bin import tool\nA = tool.X\n","engine/bin/tool.py":"X = 1\n","engine/lib/ta.ts":"import { y } from '../bin/y.ts';\nexport const ta = y;\n","engine/bin/y.ts":"export const y = 1;\n","engine/bin/Cargo.toml":"[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n","engine/bin/src/lib.rs":"pub fn twice(n: u8) -> u8 { n * 2 }\n","engine/lib/Cargo.toml":"[package]\nname = \"base_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntool = { path = \"../bin\" }\n","engine/lib/src/lib.rs":"use tool::twice;\npub fn four() -> u8 { twice(2) }\n"}
     },
     "miss": {
-      "base": {"engine/lib/a.mjs":"import { b } from './b.mjs';\nexport const a = () => b;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nexport const b = () => a;\n"},
+      "base": {"engine/lib/a.mjs":"import { b } from './b.mjs';\nexport const a = () => b;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nexport const b = () => a;\n","engine/lib/pa.py":"from engine.lib import pb\nA = 1\n","engine/lib/pb.py":"from engine.lib import pa\nB = 2\n"},
       "head": {
         "engine/lib/a.mjs": "import { b } from './b.mjs';\nexport const a = () => b();\n",
         "engine/lib/b.mjs": "import { a } from './a.mjs';\nexport const b = () => a;\n",
         "engine/bin/x.mjs": "import { a } from '../lib/a.mjs';\nexport const x = a;\n",
-        "engine/lib/c.mjs": "export const c = () => import('../bin/x.mjs');\n"
+        "engine/lib/c.mjs": "export const c = () => import('../bin/x.mjs');\n",
+        "engine/lib/pa.py": "from engine.lib import pb\nA = 1\n",
+        "engine/lib/pb.py": "from engine.lib import pa\nB = 2\n",
+        "engine/lib/pc.py": "def late():\n    from engine.bin import tool\n    return tool.X\n",
+        "engine/bin/tool.py": "from engine.lib import pc\nX = 1\n",
+        "engine/lib/ta.ts": "export const ta = () => import('../bin/y.ts');\n",
+        "engine/bin/y.ts": "import { tb } from '../lib/tb.ts';\nexport const y = tb;\n",
+        "engine/lib/tb.ts": "export const tb = 1;\n",
+        "engine/lib/Cargo.toml": "[package]\nname = \"base_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "engine/lib/src/lib.rs": "pub fn four() -> u8 { 4 }\n",
+        "engine/bin/Cargo.toml": "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nbase_core = { path = \"../lib\" }\n",
+        "engine/bin/src/lib.rs": "use base_core::four;\npub fn eight() -> u8 { four() * 2 }\n"
       }
     }
   }
