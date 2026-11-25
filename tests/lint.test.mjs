@@ -1,6 +1,7 @@
 // S3 literal-path / secret lint over tracked files (META-GENERAL-DESIGN 8): no user home path or key-shaped string is tracked.
 // LEGACY = the pre-engine controller files that S4-S9 replace (they hold today's literals); the list only shrinks and is empty
 // after the S9 cut-over. tests/fixtures/migration/ are anonymised copies of the live files (S2; shape byte-exact), i.e. data, not code.
+// reads: **
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

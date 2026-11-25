@@ -1,6 +1,26 @@
 // META-GTP-CI 1: the CI suite judge (GT-PARITY-PLAN 2.11). tests/KNOWN-REDS.txt lists the reds CI tolerates, one per line:
 // `<file> :: <test name or name prefix>`; the run fails only on a red that no line names. Pure: the runner is engine/bin/ci-suite.mjs.
+import { globToRe } from './dlvgit.mjs';
+
 const fwd = s => s.split('\\').join('/');
+
+// task-NORN-TEST-READS (DEC-a-648): a test file declares the non-JS repo files it reads (a workflow, a doc, a data file) in its leading
+// comment block, `// reads: .github/workflows/*.yml, docs/x.md` (repo-relative globs, globToRe: ** = any directories, * = one segment,
+// ? = one character). A pass made on main's pr.yml was reused for a changed pr.yml: no key and no pick saw the read. The ONE parser and
+// matcher of it: testcache keyOf (the key), pickTests + testpolicy pickRun (the picks), testindex impactOf (`norn tests for`).
+const READS = /^\s*\/\/\s*reads:(.*)$/;
+/** the globs of a test file's `// reads:` lines: the comment lines (and blanks, a #! line) before its first code line only */
+export function readsOf(text) {
+  const out = [];
+  for (const l of String(text ?? '').split(/\r?\n/)) {
+    if (!/^\s*(\/\/|#!|$)/.test(l)) break;
+    const m = READS.exec(l);
+    if (m) out.push(...m[1].split(',').map(g => fwd(g.trim())).filter(Boolean));
+  }
+  return out;
+}
+/** does a repo-relative file match one of the globs (readsOf) */
+export const readsMatch = (globs, file) => globs.some(g => globToRe(g).test(fwd(file)));
 
 /** Parse KNOWN-REDS text -> [{ file, name }]; `#` comments and blank lines are skipped; a line without ` :: ` throws. */
 export function parseKnown(text) {
@@ -55,7 +75,8 @@ export const suiteEnv = env => {
 // One import level only, and no basename search: through tests/helpers/tmp.mjs nearly every file reaches runs.mjs, and ~90 files
 // name norn.mjs or server.mjs - a closure or a name search picks the whole suite (measured on PRs #11-#17: 79-157 files).
 // Even one level picks 60-120 files when a PR touches a hub (server.mjs, records.mjs, policy.mjs), so the importers are capped
-// (max): (1), (3) and (4) always run; the importers run most-changed-imports first, and the rest is named as left to the full suite.
+// (max): (1), (3), (4) and (5) - a test whose `// reads:` header matches a changed file: it asserts on that file's content - always
+// run; the importers run most-changed-imports first, and the rest is named as left to the full suite.
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g;
 // META-CI-WORKCLASS R4 + test-diet S1: a browser (page) test file is one that imports norn shot's launcher or the CDP helper; ci-suite
 // warms a browser for it, and policy.tests.browser = ci skips its browser tests in a lane run (tests/helpers/cdp.mjs skipWhy)
@@ -80,6 +101,8 @@ export function pickTests(changed, tests, read, max = Infinity) {
     const text = read(t);
     if (text == null) continue;
     if (fx.some(k => text.includes(k))) { close.push(t); continue; }
+    const rd = readsOf(text);
+    if (rd.length && [...ch].some(f => readsMatch(rd, f))) { close.push(t); continue; }
     const n = importsOf(t, text).filter(f => ch.has(f)).length;
     if (n) importers.push({ t, n });
   }

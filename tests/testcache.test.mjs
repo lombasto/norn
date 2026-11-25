@@ -5,8 +5,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { repoIndex, keyOf, runCached, cacheLog, caseLog, caseIds, freshPass } from '../engine/lib/testcache.mjs';
+import { readsOf, readsMatch } from '../engine/lib/cisuite.mjs';
 
 const SLOW = `import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,4 +96,56 @@ test('caseIds: subtests end before their parent; each gets its title path', () =
   const rows = [{ name: 'one', nesting: 0, line: 2, ms: 1, ok: true }, { name: 'deep', nesting: 2, line: 4, ms: 1, ok: false }, { name: 'two', nesting: 1, line: 3, ms: 1, ok: true },
     { name: 'three', nesting: 1, line: 5, ms: 1, ok: true }, { name: 'outer', nesting: 0, line: 3, ms: 3, ok: false }];
   assert.deepEqual(caseIds('tests/a.test.mjs', rows).map(c => c.id.split('::').slice(1).join('::')), ['one', 'outer::two::deep', 'outer::two', 'outer::three', 'outer']);
+});
+
+// task-NORN-TEST-READS (DEC-a-648): a test that reads a non-JS repo file with fs declares it in its leading comment, `// reads: <globs>`;
+// a pass made on main's pr.yml was reused in a worktree whose pr.yml had changed (the file was in no key). Here: in a folder that is no
+// git repo (the walk), the declared files are in the key; an undeclared read is not - that is the contract.
+const READER = `// reads a workflow: its header declares it
+// reads: .github/workflows/*.yml
+import test from 'node:test';
+import fs from 'node:fs';
+test('yml', () => { fs.appendFileSync(process.env.COUNT_FILE, 'x\\n'); fs.readFileSync('.github/workflows/pr.yml', 'utf8'); });
+`;
+test('readsOf: only the leading comment block counts; several reads lines add up, split on commas, backslashes made forward', () => {
+  assert.deepEqual(readsOf('#!/usr/bin/env node\n// x\n// reads: a/*.yml, b\\c.md\n\n// reads: d/**\nimport x from "y";\n// reads: late.md\n'), ['a/*.yml', 'b/c.md', 'd/**']);
+  assert.deepEqual(readsOf('import x from "y";\n// reads: late.md\n'), [], 'a reads line after the first code line is no header');
+  assert.deepEqual([readsMatch(['.github/workflows/*.yml'], '.github/workflows/pr.yml'), readsMatch(['.github/workflows/*.yml'], '.github/workflows/sub/x.yml'), readsMatch(['**'], 'a/b/c.md')], [true, false, true]);
+});
+test('a // reads: header puts the matched files in the key: changed, added or deleted -> a new key; an unmatched file or an undeclared read changes nothing; a pass is not reused past a changed yml', async () => {
+  const w = world(), wf = f => path.join(w.root, '.github', 'workflows', f), k = (f = 'tests/r.test.mjs') => keyOf(f, repoIndex(w.root)).key;
+  fs.mkdirSync(path.dirname(wf('x')), { recursive: true }); fs.writeFileSync(wf('pr.yml'), 'on: pull_request\n');
+  fs.writeFileSync(path.join(w.root, 'tests', 'r.test.mjs'), READER); fs.writeFileSync(path.join(w.root, 'tests', 'u.test.mjs'), READER.split('\n').slice(2).join('\n'));
+  fs.mkdirSync(path.join(w.root, 'state', 'wt', '.github', 'workflows'), { recursive: true });
+  const k0 = k(), u0 = k('tests/u.test.mjs');
+  assert.equal(k(), k0, 'the key is stable');
+  fs.writeFileSync(wf('pr.yml'), 'on: push\n'); const k1 = k();
+  assert.notEqual(k1, k0, 'a matched file changed');
+  fs.writeFileSync(wf('nightly.yml'), 'on: schedule\n'); const k2 = k();
+  assert.notEqual(k2, k1, 'a matched file added');
+  fs.writeFileSync(wf('notes.md'), 'x\n'); fs.writeFileSync(path.join(w.root, 'state', 'wt', '.github', 'workflows', 'pr.yml'), 'x\n');
+  assert.equal(k(), k2, 'an unmatched file (and anything under state/) changes nothing');
+  fs.rmSync(wf('nightly.yml')); assert.notEqual(k(), k2, 'a matched file deleted');
+  assert.equal(k('tests/u.test.mjs'), u0, 'the same test WITHOUT the header keeps its key: an undeclared read is in no key');
+  const go = run => runCached('tests/r.test.mjs', { ix: repoIndex(w.root), dir: w.dir, run, childEnv: { COUNT_FILE: path.join(w.root, '..', 'count.txt') }, pollMs: 100 });
+  assert.deepEqual([(await go('RUN-1')).how, (await go('RUN-2')).how, w.starts()], ['ran', 'reused', 1]);
+  fs.writeFileSync(wf('pr.yml'), 'on: [push, pull_request]\n');
+  const r3 = await go('RUN-3');
+  assert.deepEqual([r3.how, r3.ok, w.starts()], ['ran', true, 2], 'the yml changed: it runs, it is not reused');
+});
+// S2: in a git repo the files git lists are the set as listed - a vendored file this repo tracks (engine/dash/vendor/) is in a `**`
+// key (lint and layout read every tracked file); git's ignore rules decide the rest; only the top-level state/ is dropped either way.
+test('in a git repo a `**` reads key sees a vendor/ file git lists; a git-ignored file and the top-level state/ (ignored or not) change nothing', () => {
+  const w = world(), put = (rel, t) => { fs.mkdirSync(path.dirname(path.join(w.root, rel)), { recursive: true }); fs.writeFileSync(path.join(w.root, rel), t); };
+  execFileSync('git', ['init', '-q'], { cwd: w.root, stdio: 'ignore', windowsHide: true });
+  put('tests/all.test.mjs', "// reads: **\nimport test from 'node:test';\ntest('all', () => {});\n");
+  put('engine/dash/vendor/x.js', 'export const x = 1;\n'); put('ignored/y.txt', 'y\n'); put('state/wt/z.md', 'z\n');
+  const k = () => keyOf('tests/all.test.mjs', repoIndex(w.root)).key;
+  for (const ignore of ['ignored/\nstate/\n', 'ignored/\n']) {
+    put('.gitignore', ignore); const k0 = k();
+    put('engine/dash/vendor/x.js', `export const x = ${ignore.length};\n`); const k1 = k();
+    assert.notEqual(k1, k0, 'a file under vendor/ that git lists changed: a new key');
+    put('ignored/y.txt', ignore); assert.equal(k(), k1, 'a git-ignored file changes nothing');
+    put('state/wt/z.md', ignore); assert.equal(k(), k1, `a file under the top-level state/ changes nothing (state/ ${ignore.includes('state') ? '' : 'NOT '}ignored)`);
+  }
 });

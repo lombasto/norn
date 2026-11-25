@@ -53,6 +53,12 @@ rounds); the scope hook enforces it at each test command and the run-end Done ch
   cache: a file another run already passed on the same content (the file, everything it imports, the node version) in the last
   day is reused, and one running now in another run is waited for, never started twice. A direct `node --test` or
   `ci-suite --changed` is refused with the `norn tests run` command to use.
+- **A test that reads a repo file it does not import declares it.** The cache key holds only the file and the modules it reaches,
+  so a test that asserts on a workflow, a doc or a data file it reads with fs would be reused on a stale pass when that file
+  changes (and no pick would run it). Declare such files in the test file's leading comment, before its first code line:
+  `// reads: .github/workflows/*.yml, docs/TESTING.md` (repo-relative globs split on commas: `**` any directories, `*` within
+  one segment, `?` one character; several lines add up). The matched files join the key, `--changed` and the PR pick run the
+  test when one changes, and `norn tests for <file>` names it.
 - This replaces TEST-GOVERNANCE S3's share budget (25 % warn / 50 % stop of the run's wall time, budgets.jsonl).
 
 ## Load reds and reruns

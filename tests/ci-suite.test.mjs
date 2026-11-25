@@ -186,6 +186,13 @@ test('pickTests max: the close picks always run; importers run most-changed-impo
   assert.deepEqual(pickTests(['engine/lib/x.mjs'], Object.keys(src), f => src[f], 0), { run: ['tests/x.test.mjs'], left: ['tests/i1.test.mjs', 'tests/i2.test.mjs'] });
 });
 
+test('pickTests: a test whose // reads: header matches a changed file is a close pick, never under the importers\' cap (task-NORN-TEST-READS)', () => {
+  const src = { 'tests/ci.test.mjs': "// reads: .github/workflows/*.yml\nimport '../engine/lib/z.mjs';", 'tests/slop-pr.test.mjs': '// slop on a PR\n// reads: .github/workflows/pr.yml, engine/lib/slop/rules/README.md\n',
+    'tests/i1.test.mjs': "import '../engine/lib/x.mjs';", 'tests/other.test.mjs': "import test from 'node:test';" };
+  assert.deepEqual(pickTests(['.github/workflows/pr.yml', 'engine/lib/x.mjs'], Object.keys(src), f => src[f], 0), { run: ['tests/ci.test.mjs', 'tests/slop-pr.test.mjs'], left: ['tests/i1.test.mjs'] });
+  assert.deepEqual(pickTests(['engine/lib/slop/rules/README.md'], Object.keys(src), f => src[f]).run, ['tests/slop-pr.test.mjs']);
+});
+
 test('ci-suite --changed BASE: runs only the picked files of BASE...HEAD; nothing picked -> exit 0 without a run; usage errors exit 2', () => {
   const t = mkTmp('meta-ci-changed-'), g = (...a) => spawnSync('git', ['-C', t, ...a], { encoding: 'utf8' });
   const w = (f, s) => { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.writeFileSync(path.join(t, f), s); };

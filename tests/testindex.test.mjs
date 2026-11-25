@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { scanCases, buildIndex } from '../engine/lib/testindex.mjs';
+import { scanCases, buildIndex, impactOf } from '../engine/lib/testindex.mjs';
 import { repoIndex, depsOf, cacheDirOf } from '../engine/lib/testcache.mjs';
 import { testsPart, tickTests } from '../engine/lib/testscli.mjs';
 import { pickInRepo } from '../engine/lib/testpolicy.mjs';
@@ -166,4 +166,23 @@ test('T7 runtime part: per case its median and max over the last 7 days, for out
 test('scanCases: describe and it make a title path; a title with ${} has no static id', () => {
   const cs = scanCases('tests/x.test.mjs', "describe('d', () => {\n  it('x', () => {});\n  for (const n of [1]) test(`n ${n}`, () => { it('in', () => {}); });\n});\n");
   assert.deepEqual(cs.map(c => [c.name, c.line, c.lines]), [['d::x', 2, 1]]);
+});
+
+// task-NORN-TEST-READS (DEC-a-648): a `// reads:` header is an edge from a non-code file to the test that declares it - `norn tests for`
+// names the test - but no coverage of code: a `**` header changes neither a module's covering tests nor `uncovered`
+test('impact: a non-code file a // reads: header matches names its declaring tests; a ** header leaves code coverage and uncovered unchanged', () => {
+  const w = world(), put = (f, t) => { fs.mkdirSync(path.dirname(path.join(w.repo, f)), { recursive: true }); fs.writeFileSync(path.join(w.repo, f), t); };
+  put('.github/workflows/pr.yml', 'on: pull_request\n'); put('docs/x.md', '# x\n');
+  put('tests/ci.test.mjs', "// the workflows\n// reads: .github/workflows/*.yml\nimport test from 'node:test';\ntest('ci', () => {});\n");
+  put('tests/lint.test.mjs', "// reads: **\nimport test from 'node:test';\ntest('lint', () => {});\n");
+  const base = ['tests/one.test.mjs', 'tests/three.test.mjs', 'tests/two.test.mjs'], code = ['engine/a.mjs', 'engine/b.mjs', 'engine/c.mjs', 'engine/d.mjs'];
+  const before = impactOf(repoIndex(w.repo), base, code), after = impactOf(repoIndex(w.repo), [...base, 'tests/ci.test.mjs', 'tests/lint.test.mjs'], code);
+  assert.deepEqual([after.sources['.github/workflows/pr.yml'], after.sources['docs/x.md']], [['tests/ci.test.mjs', 'tests/lint.test.mjs'], ['tests/lint.test.mjs']]);
+  assert.deepEqual(Object.fromEntries(code.filter(f => f in after.sources).map(f => [f, after.sources[f]])), before.sources, 'a module\'s covering tests: the same');
+  assert.deepEqual(after.uncovered, before.uncovered, 'uncovered: the same (engine/d.mjs)');
+  assert.ok(!Object.keys(after.sources).some(f => f.startsWith('tests/')), 'tests/ files are no sources');
+  assert.equal(w.norn('index').status, 0);
+  const r = w.norn('for', '.github/workflows/pr.yml');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /\.github\/workflows\/pr\.yml: tests\/ci\.test\.mjs tests\/lint\.test\.mjs/);
 });

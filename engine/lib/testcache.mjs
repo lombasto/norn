@@ -2,7 +2,9 @@
 // overlapping test files at once on one CPU, each paying its own process starts and browser launches. `norn tests run` runs every node
 // test file of a run through this cache:
 //   key      (test file, sha256 of the file + every module it reaches - relative imports, transitively; a script it names (`'norn.mjs'`,
-//            a unique engine/ or tests/helpers basename: a test that spawns the CLI depends on all of it); a tests/fixtures/<dir> it names -
+//            a unique engine/ or tests/helpers basename: a test that spawns the CLI depends on all of it); a tests/fixtures/<dir> it names;
+//            every repo file its `// reads:` header matches (DEC-a-648: the non-JS files it reads - a workflow, a doc - path + content,
+//            a gone one as missing; a glob matches the files git lists as listed, vendored ones too, never the top-level state/: readsFiles) -
 //            the node version, `extra`: the browser mode and extra node flags). keyOf.
 //   result   <dir>/<key>.json { ok, ms, at, run, file, counts }: a PASS younger than a day is reused - the file does not run again. A fail
 //            is never reused (a load red gets its one rerun, docs/TESTING.md).
@@ -21,7 +23,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { importsOf, suiteEnv } from './cisuite.mjs';
+import { importsOf, suiteEnv, readsOf, readsMatch } from './cisuite.mjs';
+import { boundedSync } from './bounded.mjs';
 import { holderGone } from './gatelock.mjs';
 import { metaRoot, fwd } from './config.mjs';
 import { testCounts } from './progress.mjs';
@@ -35,18 +38,39 @@ export const logFile = dir => path.join(dir, 'log.jsonl'), casesFile = dir => pa
 const CASE_REPORTER = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'casereport.mjs')).href;
 
 // ---------- the key ----------
+// a walk never enters these; nor the repo's top state/ (every lane's worktree: whole copies of the repo), which a reads glob must not see
 const SKIP = new Set(['node_modules', 'vendor', 'target', '.git']);
+const skipped = rel => { const p = rel.split('/'); return p[0] === 'state' || p.some(s => SKIP.has(s)); };
 function walk(root, rel, out) {
   let es; try { es = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { return out; }
-  for (const e of es) { const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(root, r, out); } else out.push(r); }
+  for (const e of es) { const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (!skipped(r)) walk(root, r, out); } else out.push(r); }
   return out;
 }
-/** the files a test can reach in a repo: o.read(rel) -> text | null (cached per call of keyOf's caller), the module index by basename */
+/** every file of the repo a reads glob may match: the files git lists (tracked, plus untracked and not ignored) as listed - a tracked
+ *  vendor/ file too (engine/dash/vendor/: lint and layout read every tracked file) - but the top-level state/; in a folder that is no
+ *  git repo (the tests' temp repos) a walk, which skips state/, node_modules, vendor, target and .git */
+function repoFiles(root) {
+  const r = boundedSync('git', ['-C', root, 'ls-files', '-co', '--exclude-standard', '-z'], { timeout: 60000 });   // windowsHide: boundedSync sets it
+  const listed = !r.error && r.status === 0 ? String(r.stdout).split('\0').filter(Boolean).map(fwd).filter(f => !f.startsWith('state/')) : walk(root, '', []).filter(f => !skipped(f));
+  return [...new Set(listed)].sort();
+}
+/** the files a test can reach in a repo: o.read(rel) -> text | null (cached per call of keyOf's caller), the module index by basename,
+ *  o.files() -> the repo's files (repoFiles, listed once per index: only a reads header asks for it) */
 export function repoIndex(root) {
   const mods = new Map();
   for (const f of [...walk(root, 'engine', []), ...walk(root, 'tests/helpers', [])].filter(f => /\.[cm]?js$/.test(f))) { const b = f.split('/').pop(); mods.set(b, mods.has(b) ? null : f); }
   const text = new Map();
-  return { root, mods, read: rel => { if (!text.has(rel)) { let t = null; try { t = fs.readFileSync(path.join(root, rel), 'utf8'); } catch { /* gone: hashed as missing */ } text.set(rel, t); } return text.get(rel); } };
+  let files = null;
+  return { root, mods, files: () => (files ??= repoFiles(root)),
+    read: rel => { if (!text.has(rel)) { let t = null; try { t = fs.readFileSync(path.join(root, rel), 'utf8'); } catch { /* gone: hashed as missing */ } text.set(rel, t); } return text.get(rel); } };
+}
+/** the repo files test file `file` declares in its `// reads:` header (cisuite readsOf), sorted: a glob without a wildcard is its path
+ *  (hashed as missing when gone), a glob is matched against ix.files() */
+export function readsFiles(file, ix) {
+  const globs = readsOf(ix.read(fwd(file)));
+  if (!globs.length) return [];
+  const lit = globs.filter(g => !/[*?]/.test(g)), wild = globs.filter(g => /[*?]/.test(g));
+  return [...new Set([...lit, ...(wild.length ? ix.files().filter(f => readsMatch(wild, f)) : [])])].sort();
 }
 const SCRIPT = /['"`]([\w.-]+\.mjs)['"`]/g, FIXTURE = /fixtures\/([\w.-]+)/g;
 /** the files `file` (repo-relative) depends on, itself included, sorted: imports, named scripts and fixtures, transitively */
@@ -64,12 +88,13 @@ export function depsOf(file, ix) {
   }
   return [...seen].sort();
 }
-/** the cache key of test file `file` in repo index ix: { key, deps (count) } */
+/** the cache key of test file `file` in repo index ix: { key, deps (count), reads (count: the files its reads header matches) } */
 export function keyOf(file, ix, extra = '') {
-  const deps = depsOf(file, ix), h = crypto.createHash('sha256');
+  const deps = depsOf(file, ix), reads = readsFiles(file, ix), h = crypto.createHash('sha256');
   for (const f of deps) h.update(`${f}\0${ix.read(f) ?? '<missing>'}\0`);
+  for (const f of reads) h.update(`reads\0${f}\0${ix.read(f) ?? '<missing>'}\0`);
   h.update(`${process.version}\0${extra}`);
-  return { key: h.digest('hex').slice(0, 40), deps: deps.length };
+  return { key: h.digest('hex').slice(0, 40), deps: deps.length, reads: reads.length };
 }
 
 // ---------- results, locks, the log ----------

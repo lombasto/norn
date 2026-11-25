@@ -2,6 +2,7 @@
 // A `slop` job on every pull request runs `norn slop check --ci --diff <merge base>..HEAD` (rules that read this machine's state are
 // not run, by their data flag); merge-land refuses a held branch and writes the stored check's WARN list into the PR body; the daily
 // lists every first-parent landing on main that has no stored check, with its findings ("landed unchecked"). Synthetic repos only.
+// reads: .github/workflows/pr.yml, .github/workflows/slop.yml, engine/lib/slop/rules/README.md, engine/lib/slop/rules/*.json, docs/TESTING.md
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
