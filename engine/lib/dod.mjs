@@ -14,6 +14,9 @@ import { suiteMode } from './mergebrief.mjs';
 import { classify } from './testcmd.mjs';
 import { testsPolicy, policyWords, pickInRepo, BROWSER_SKIP_ENV } from './testpolicy.mjs';
 import { repoIndex, runCached, cacheDir } from './testcache.mjs';
+import { pickGraph } from './testimpact.mjs';
+import { IMPACT_FILE } from './testtimes.mjs';
+import { readJsonS } from './fsnap.mjs';
 
 // The paths CI's ci.yml ignores (its push paths-ignore; tests/dod.test.mjs pins the lists equal): a change only here is docs.
 export const DOCS_ONLY = ['**/*.md', 'docs/**', '**/docs/**', '**/*.png', '**/*.html'];
@@ -78,9 +81,10 @@ function lightJobs(tests, worktree, testCmd, changed, state) {
     for (const w of words.filter(w => NODE_TEST.test(w))) files.add(w);
     if (other.length && testCmd) cmds.push(testCmd.includes('{files}') ? testCmd.replace('{files}', other.join(' ')) : `${testCmd} ${other.join(' ')}`);
   }
-  const pick = pickInRepo(worktree, state, 'light', changed);
+  const pick = pickInRepo(worktree, state, 'light', changed), gp = pickGraph(readJsonS(state ? path.join(state, 'tests', IMPACT_FILE) : null), changed);
   for (const f of pick.run) files.add(f);
-  return { files: [...files].filter(exists).sort(), cmds, uncovered: pick.none };
+  for (const g of gp.groups) cmds.push({ cmd: g.cmd, dir: g.dir === '.' ? undefined : g.dir });   // RM-a-55: the nearest inferred pytest / cargo tests, by their runner
+  return { files: [...files].filter(exists).sort(), cmds, uncovered: [...new Set([...pick.none, ...gp.none])] };
 }
 
 // NORN-DOD-GATE-FAST (test governance #73, DIR-23: never the full suite in a worker run): the Done check's gate follows the project's
@@ -163,7 +167,7 @@ export async function doneCheck({ worktree, dod, logDir, run, locksDir, state = 
         ...(r.how === 'ran' ? {} : { by: r.by, saved_ms: r.saved_ms }), ...(r.timed_out ? { timed_out: true, timeout_min: dod.timeout_min ?? 20 } : {}) });
     }
   }
-  const jobs = [...(t.cmds || []).map((cmd, i) => ({ name: t.cmds.length > 1 ? `tests-${i + 1}` : 'tests', cmd, timeout_min: dod.timeout_min ?? 20, heavy: false })),
+  const jobs = [...(t.cmds || []).map((c, i) => ({ name: t.cmds.length > 1 ? `tests-${i + 1}` : 'tests', ...(typeof c === 'string' ? { cmd: c } : c), timeout_min: dod.timeout_min ?? 20, heavy: false })),
     ...(g?.cmd ? [{ name: 'gate', cmd: g.cmd, mode: g.mode, dir: dod.gate.dir, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20, heavy: true }] : [])];
   for (const j of jobs) {
     if (spent()) { left.push(j.cmd); continue; }
