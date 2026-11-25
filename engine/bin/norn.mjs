@@ -75,7 +75,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag, qualify, CHECKIN_TAKE_MIN } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -90,6 +90,7 @@ import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { codeCmd } from '../lib/codecli.mjs';
+import { normPath } from '../lib/declinks.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
@@ -103,8 +104,8 @@ import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--from-source "<file>#<section>"] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]    (list every real alternative - 3-4 where they exist; never trim to two, never pad with a fake one. --from-source copies every alternative the section lists, verbatim, and records the file + section; an --option next to it is marked "added by <you>")',
-  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
-  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
+  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--paths a/b.mjs,c] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
+  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--paths a/b.mjs,c] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO] [--q Q-n]    (owner / controller: a slop finding that may stay; a check-in only with --q, the answered Q whose ruling is the waiver)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage STAGE] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
@@ -129,8 +130,8 @@ const USAGE = {
 const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'from-source', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
-  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
-  'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
+  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'paths', 'approach-review'],
+  'add directive': ['text', 'via', 'scope', 'paths', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until', 'q'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], say: ['text', 'via'], reply: ['text', 'option*', 'recommend', 'propose'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
@@ -167,6 +168,7 @@ function parse(cmd, argv) {
 }
 
 const csv = v => v === undefined ? undefined : v.split(',').map(s => s.trim()).filter(Boolean);
+const repoCsv = v => csv(v)?.map(normPath);   // RM-a-58: --paths as declinks.mjs keys them (a\b, ./a -> a/b, a)
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
 const optionsOf = (f, cmd) => (f.option || []).map(o => {
@@ -194,8 +196,8 @@ function addData(what, f, cmd, by) {
     const body = f['body-file'] !== undefined ? fs.readFileSync(f['body-file'], 'utf8') : f.body;
     return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source, origin, owner_only: f['owner-only'] ? true : undefined });
   }
-  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
-  if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
+  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), paths: repoCsv(f.paths), approach_review: f['approach-review'] });
+  if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), paths: repoCsv(f.paths), expires_utc: f.expires });
   if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until, q: f.q });
   if (what === 'lane') return drop({ name: f.name, worktree: f.worktree, notes: f.notes, branch: f.branch, brief_dir: f['brief-dir'], stage: f.stage, round_estimate: f['round-estimate'], executor_hint: f['executor-hint'] });
   throw new Usage(`unknown kind ${what}`, cmd);
@@ -3107,8 +3109,9 @@ function scopeCmd(argv, env, out, err) {
 }
 
 const MAIL_USAGE = 'norn mail send --to RUN-n|lane:L|role:checkin|role:controller --subject S (--body B (<= 2 KB) | --body-file F) [--urgent] [--as checkin|controller]'
-  + '  |  norn mail check [--inject] (--run RUN-n (your own run) | --to role:controller)  |  norn mail ack MAIL-n  |  norn mail list [--to X] [--open] [--json]'
-  + '    [--project project.json | --state D]    (a run speaks as itself: META_RUN_ID; --inject = the PostToolUse hook output, always exit 0)';
+  + '  |  norn mail check [--inject] [--run RUN-n (your own run) | --to role:controller]  |  norn mail ack MAIL-n  |  norn mail list [--to X] [--open] [--json]'
+  + '    [--project project.json | --state D]    (a run speaks as itself: META_RUN_ID; --inject = the PostToolUse hook output, always exit 0;'
+  + ' check with no --run / --to reads your own box: a run its run, else this home\'s controller; a check-in takes controller mail older than policy.mail.checkin_take_min, 15 min)';
 const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'as', 'run', 'urgent!', 'inject!', 'open!', 'json!'];
 function mailCmd(argv, env, out, err) {
   const [sub, ...rest] = argv;
@@ -3128,7 +3131,7 @@ function mailCmd(argv, env, out, err) {
     if (!['send', 'check', 'ack', 'list'].includes(sub)) throw new RunError(sub ? `unknown mail subcommand ${sub}` : 'missing subcommand');
     if (pos.length > (sub === 'ack' ? 1 : 0) || (sub === 'ack' && !pos.length)) throw new RunError(sub === 'ack' ? 'ack needs one MAIL-n' : `unexpected ${pos[0]}`);
     if (flags.as !== undefined && !['checkin', 'controller'].includes(flags.as)) throw new RunError('--as must be checkin | controller');
-    const { state } = where(flags, env);
+    const { state, project } = where(flags, env);
     const by = mailRole(state, env, flags.as);
     if (flags.as && env.META_RUN_ID) throw new RunError(`--as: a run (META_RUN_ID=${env.META_RUN_ID}) speaks as itself`);
     const run = env.META_RUN_ID || null;
@@ -3142,15 +3145,23 @@ function mailCmd(argv, env, out, err) {
     }
     if (sub === 'check') {
       // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
-      const reader = flags.run !== undefined && !RUN_ID_RE.test(flags.run) && run ? run : flags.run;
-      if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
+      // HOME-MAIL S2: no --run / --to = the reader's own box (a run's, else the controller's); a bare role address is this home's
+      const reader = flags.run !== undefined && !RUN_ID_RE.test(flags.run) && run ? run : flags.run ?? (flags.to === undefined && run ? run : undefined);
+      if (inject && !reader) throw new RunError('--inject is the hook of a run: it needs --run RUN-n');
+      if (reader && flags.to !== undefined) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
-      if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
+      const to = reader ? undefined : qualify(flags.to ?? 'role:controller', homeOf(state)?.id), ctl = roleAddr('controller', state);
+      if (to && to !== ctl && !(to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${ctl} (a run reads with --run)`);
+      // DEC-a-581: a check-in (the only thing that runs unattended on each home) takes controller mail once it waited past the take age
+      const takeMin = to === ctl && by === 'checkin' ? (project?.policy?.mail?.checkin_take_min ?? CHECKIN_TAKE_MIN) : null, now = Date.now();
       if (inject && reader) clearFlag(state, reader);   // hook-fast S1: down before the read (mail.mjs flagFile): a mail that lands meanwhile raises it again
-      const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
+      const got = checkMail(state, { by, run: reader || null, to, via: inject ? 'hook' : 'cli', ...(takeMin !== null ? { before: now - takeMin * 60000, now } : {}) });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }
+      const left = takeMin !== null ? got.left : [];
+      if (!got.length && left.length) throw new RunError(`${left.map(l => `${l.id} is ${l.age_min} min old`).join(', ')}: a check-in takes controller mail after ${takeMin} min (DEC-a-581); the controller reads it first`);
       out(got.length ? got.map(formatMail).join('\n\n') : 'no new mail');
+      if (left.length) out(`left for the controller: ${left.map(l => `${l.id} (${l.age_min} min)`).join(', ')}`);
       return 0;
     }
     if (sub === 'ack') { ackMail(state, { by, run, id: pos[0] }); out(`${pos[0]} acked`); return 0; }
@@ -3287,7 +3298,7 @@ function syncCmd(argv, env, out, err) {
   if (!['status', 'publish', 'fetch', 'watch', 'ring', 'reconcile'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
-    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const machine = fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, cfg = ledgerConfig(machine, { metaRoot: root, machineFile: mf });
     const id = cfg && homeIdOf(cfg);
     if (!id) { err('error: sync is off (it needs machine.json ledger.remote and a synced project: a state dir with home.json)'); return 1; }
     if (sub === 'status') {
@@ -3328,7 +3339,10 @@ function syncCmd(argv, env, out, err) {
     if (r.error) { err(`error: fetch failed, the last copies stay: ${r.error}`); return 1; }
     out(`fetched ${r.homes.length} home${r.homes.length === 1 ? '' : 's'} (${r.homes.join(' ') || '-'}), ${r.written.length} copies written`);
     if (r.gone.length) out(`gone (copies kept): ${r.gone.join(' ')}`);
-    return 0;
+    // HOME-MAIL S2: an urgent arrival for this home's controller reaches the owner at once (class alert); a failed send is a line, never a failed fetch
+    if (!r.notices.length) return 0;
+    return import('../lib/notify.mjs').then(({ notify }) => Promise.all(r.notices.map(n => notify({ title: n.title, body: n.body, cls: 'alert', machine, state: path.join(cfg.state_root, n.project), env })
+      .then(() => out(`urgent mail ${n.id}: owner notified`), e => out(`urgent mail ${n.id}: notice not sent (${e.message})`))))).then(() => 0);
   } catch (e) {
     err('error: ' + e.message);
     return e instanceof ConfigError ? 2 : 1;

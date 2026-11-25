@@ -3,6 +3,9 @@
 import { parseEslint } from '../tools.mjs';
 import { classify, COMMENT, lineAt } from '../scan.mjs';
 
+/** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads (slop-langs SPEC 3.4) */
+export const ID = 'js', astLang = () => 'JavaScript';
+
 // ESLint's inline switches; the reason is ESLint's own `-- description`
 const SUPPRESS_RE = /(?:\/\/|\/\*)\s*eslint-disable(?:-next-line|-line)?\b(?:(?!--|\*\/).)*(?:--(.*?))?(?:\*\/|$)/gm;
 /** the suppressions of a text: [{ line, reason }] (inside a comment only) */

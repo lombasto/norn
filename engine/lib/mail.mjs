@@ -91,12 +91,14 @@ const bodyOf = m => {
 /**
  * Deliver every queued mail of the reader's box, oldest first: one deliver event per mail. A mail another reader took between
  * the read and the write is refused by the state machine (queued -> delivered happens once) and is not this reader's: it was
- * delivered there. Returns the mails this call delivered, with their text.
+ * delivered there. Returns the mails this call delivered, with their text. before (ms, HOME-MAIL S2): only mail created before it (a
+ * check-in's take of controller mail); got.left = the queued mail of the box it left, { id, age_min } at now.
  */
-export function checkMail(state, { by, run = null, to, via }) {
+export function checkMail(state, { by, run = null, to, via, before = Infinity, now = Date.now() }) {
   const box = boxOf(state, { run, to });
-  const got = [];
-  for (const m of Object.values(loadMail(state)).filter(x => x.state === 'queued' && box.has(stored(state, x))).sort(byId)) {
+  const got = [], queued = Object.values(loadMail(state)).filter(x => x.state === 'queued' && box.has(stored(state, x))).sort(byId);
+  got.left = queued.filter(m => !(Date.parse(m.created) < before)).map(m => ({ id: m.id, age_min: ageMin(m, now) }));
+  for (const m of queued.filter(x => Date.parse(x.created) < before)) {
     try { record(state, { kind: 'mail', ev: 'deliver', id: m.id, by, data: drop({ run, via }) }, { run }); }
     catch (e) {
       if (e instanceof RecordError && e.code === 2 && loadMail(state)[m.id]?.state !== 'queued') continue;   // taken by another reader
@@ -130,7 +132,34 @@ export function listMail(state, { to, open, now = Date.now() } = {}) {
   return Object.values(loadMail(state)).filter(m => (!want || stored(state, m) === want) && (!open || m.state !== 'acked')).sort(byId)
     .map(m => ({ id: m.id, state: m.state, from: m.data.from, to: m.data.to, subject: m.data.subject, urgent: !!m.data.urgent, created: m.created,
       ...(m.deliver?.run ? { delivered_to: m.deliver.run } : {}), ...(m.nudge ? { nudged: m.nudge.run } : {}),
-      body: bodyOf(m), where: whereOf(state, home, m, seenOf), age_min: Math.max(0, Math.floor((now - Date.parse(m.created)) / 60000)) }));
+      body: bodyOf(m), where: whereOf(state, home, m, seenOf), age_min: ageMin(m, now) }));
+}
+const ageMin = (m, now) => Math.max(0, Math.floor((now - Date.parse(m.created)) / 60000));
+
+// ---------- HOME-MAIL S2 (REPORT 3.2): pickup - mail for this home's controller is put in front of a reader ----------
+export const CHECKIN_TAKE_MIN = 15;   // policy mail.checkin_take_min (DEC-a-581): a check-in takes controller mail older than this
+/** the digest's rows: each mail for this home's controller not acked yet, oldest first: { id, state, from, subject, urgent, age_min } */
+export function controllerMail(state, { now = Date.now() } = {}) {
+  const box = boxOf(state, { to: 'role:controller' });
+  return Object.values(loadMail(state)).filter(m => m.state !== 'acked' && box.has(stored(state, m))).sort(byId)
+    .map(m => ({ id: m.id, state: m.state, from: m.data.from, subject: m.data.subject, urgent: !!m.data.urgent, age_min: ageMin(m, now) }));
+}
+// <state>/mail/noticed.json = the ids of the urgent arrivals already told to the owner; holds only mail still queued (a taken one never
+// returns to queued), so the file stays small. Written only when it changes.
+const noticedFile = state => path.join(state, 'mail', 'noticed.json');
+/**
+ * The fetch's arrival step: each urgent mail another home sent this home's controller, still queued and not told yet, is one notice
+ * { title, body } (the caller sends it: notify, class alert); a later call never returns it again. A solo dir has no arrivals: [].
+ */
+export function arrivalNotices(state) {
+  const home = homeOf(state);
+  if (!home) return [];
+  const box = boxOf(state, { to: 'role:controller' }), had = readJsonS(noticedFile(state)) || [];
+  const urgent = Object.values(loadMail(state)).filter(m => m.state === 'queued' && m.data.urgent === true && box.has(stored(state, m)) && homeOfId(m.id, home.bare_home) !== home.id).sort(byId);
+  const fresh = urgent.filter(m => !had.includes(m.id)), keep = urgent.map(m => m.id);
+  if (JSON.stringify(keep) !== JSON.stringify(had)) { fs.mkdirSync(path.dirname(noticedFile(state)), { recursive: true }); fs.writeFileSync(noticedFile(state), JSON.stringify(keep)); }
+  return fresh.map(m => ({ id: m.id, title: `URGENT mail ${m.id} for ${roleAddr('controller', state)} from ${m.data.from}`,
+    body: `${m.data.subject}\n${String(bodyOf(m)).slice(0, 400)}\n(read it: norn mail check, then norn mail ack ${m.id})` }));
 }
 
 export const formatMail = m => `${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n${String(m.text ?? bodyOf(m)).replace(/\s+$/, '')}\n(ack it: norn mail ack ${m.id}, or norn_mail ack)`;

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { record, recordsFile } from '../engine/lib/records.mjs';
 import { digest, tryDigest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
+import { sendMail, checkMail, ackMail } from '../engine/lib/mail.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -228,4 +229,24 @@ test('digest collisions: each open row carries the real command - the remedy whe
   assert.deepEqual(dos({}), ['META collide narrow COL-1 --as checkin --why W', 'META collide ask COL-2 --want narrow --as checkin --why W',
     'META collide ask COL-3 --want fold --as checkin --why W', 'META collide part COL-4 --as checkin --why W']);
   assert.equal(dos({ policy: { collide: { apply_by: { exclusive: { narrow: 'checkin' } } } } })[1], 'META collide narrow COL-2 --as checkin --why W', 'apply_by lowers the cell');
+});
+
+// HOME-MAIL S2 (REPORT 3.2): mail waiting for this home's controller is a row with its age until the ack
+test('digest mail: each unacked mail for role:controller@<own home> is a row with its age; it stays at the delivery and leaves at the ack', () => {
+  const t = tmp('meta-digest-mail-'), dir = id => { const s = path.join(t, id); fs.mkdirSync(s, { recursive: true }); fs.writeFileSync(path.join(s, 'home.json'), JSON.stringify({ id, bare_home: 'a' })); return s; };
+  const a = dir('a'), b = dir('b');
+  const sync = () => { fs.mkdirSync(path.join(b, 'homes', 'a'), { recursive: true }); fs.copyFileSync(path.join(a, 'mail.jsonl'), path.join(b, 'homes', 'a', 'mail.jsonl')); };
+  const m = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'for b', body: 'x', urgent: true });
+  sendMail(a, { by: 'controller', to: 'role:checkin@b', subject: 'not the controller', body: 'y' });
+  sync();
+  const now = Date.parse(m.ts) + 12 * 60000 + 3000, mailRows = () => digest(b, {}, { now, git: fakeGit(), dlv: [] }).sections.mail;
+  assert.deepEqual(mailRows().map(r => [r.id, r.state, r.age_min, r.urgent, r.from]), [[m.id, 'queued', 12, true, 'role:controller@a']]);
+  assert.equal(digest(a, {}, { now, git: fakeGit(), dlv: [] }).sections.mail, undefined, 'not a row on the sending home');
+  const out = renderDigest(digest(b, {}, { now, git: fakeGit(), dlv: [] }));
+  assert.match(out, /Mail for role:controller@b \(1\)/);
+  assert.ok(out.includes(`- ${m.id} queued URGENT from role:controller@a (12 min): for b - norn mail check`), out);
+  checkMail(b, { by: 'controller', to: 'role:controller', via: 'cli' });
+  assert.deepEqual(mailRows().map(r => [r.id, r.state]), [[m.id, 'delivered']], 'delivered, not acked: still a row');
+  ackMail(b, { by: 'controller', id: m.id });
+  assert.equal(mailRows(), undefined, 'the row leaves at the ack');
 });

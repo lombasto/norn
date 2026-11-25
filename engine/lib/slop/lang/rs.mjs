@@ -5,6 +5,9 @@ import path from 'node:path';
 import { lineAt, tomlTables } from '../scan.mjs';
 import { logFiles } from './logs.mjs';
 
+/** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads: Cargo.toml is the pack's, but no Rust source */
+export const ID = 'rs', astLang = f => (f.endsWith('.rs') ? 'Rust' : null);
+
 const P = path.posix;
 /** the folder a module's children live in: lib.rs / main.rs / mod.rs own their folder, a.rs owns a/ */
 const modDir = f => (/^(?:lib|main|mod)\.rs$/.test(P.basename(f)) ? P.dirname(f) : f.slice(0, -3));

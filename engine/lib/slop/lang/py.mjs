@@ -10,6 +10,8 @@ import { which } from '../../paths.mjs';
 import { lineAt, tomlTables } from '../scan.mjs';
 
 const P = path.posix;
+/** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads (slop-langs SPEC 3.4) */
+export const ID = 'py', astLang = () => 'Python';
 // the reason is what follows the suppression on its line (`# noqa: F401  # re-exported for the plugin API`)
 const SUPPRESS_RE = /#\s*(?:noqa\b(?::?[ \t]*[A-Z]+\d+(?:[ \t]*,[ \t]*[A-Z]+\d+)*)?|type:\s*ignore(?:\[[^\]\n]*\])?|pyright:\s*ignore(?:\[[^\]\n]*\])?)[ \t]*#?(.*)$/gm;
 export const suppressions = text => [...text.matchAll(SUPPRESS_RE)].map(m => ({ line: lineAt(text, m.index), reason: m[1] }));
