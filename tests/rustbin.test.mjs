@@ -60,7 +60,7 @@ test('ensurePartAsync: a missing part is built into the store\'s target dir and 
   assert.match(partProblem('hook', { src, exe }), /^norn-hook is not built for its source \(/);
   const r = await ensurePartAsync('hook', { src, store, cargo: fakeCargo('norn-hook', calls) });
   assert.deepEqual(r, { ok: true, built: true });
-  assert.deepEqual(calls, ['clean', 'build'].map(c => [c, ...(c === 'clean' ? ['-p', 'norn-hook', '--release'] : ['--release', '--locked']), '--target-dir', targetOf('hook', store), '--manifest-path', path.join(src, 'Cargo.toml')]),
+  assert.deepEqual(calls, ['clean', 'build'].map(c => [c, ...(c === 'clean' ? ['-p', 'norn-hook', '--release', '--locked'] : ['--release', '--locked']), '--target-dir', targetOf('hook', store), '--manifest-path', path.join(src, 'Cargo.toml')]),
     'the clean of the package by cargo itself, then the build: no layout of the target dir assumed');
   assert.equal(fs.readFileSync(exe, 'utf8'), 'bin');
   assert.equal(partProblem('hook', { src, exe }), null);
@@ -83,7 +83,7 @@ test('ensurePartAsync: cargo absent, a failed build and no C compiler are each O
   assert.match(errs.join('\n'), /Access is denied/, 'cargo\'s own output goes to err');
   assert.equal(fs.existsSync(binOf('hook', { src, store })), false, 'a failed build stores nothing');
   const unclean = await ensurePartAsync('hook', { src, store, cargo: async a => a[0] === 'clean' ? { status: 101, stdout: '', stderr: 'error: x is locked\n' } : assert.fail('no build after a failed clean') });
-  assert.match(unclean.why, /^norn-hook \(.*\) did not build \(cargo clean exit 101: error: x is locked\); clean command: cargo clean -p norn-hook --release --target-dir "[^"]+\/target\/hook" --manifest-path "[^"]+\/hook-rs\/Cargo\.toml"; /);
+  assert.match(unclean.why, /^norn-hook \(.*\) did not build \(cargo clean exit 101: error: x is locked\); clean command: cargo clean -p norn-hook --release --locked --target-dir "[^"]+\/target\/hook" --manifest-path "[^"]+\/hook-rs\/Cargo\.toml"; /);
   assert.match(unclean.why, cmd, 'a failed clean is the ONE reason, like a failed build');
   const csrc = path.join(eng, 'code-rs');
   const noCc = await ensurePartAsync('code', { src: csrc, store, cc: () => 'no C compiler found (x): install y', cargo: () => assert.fail('no cargo without a C compiler') });
@@ -224,11 +224,13 @@ test('real cargo: two sources of one part into one store - A B A; A B, A\'s entr
   assert.equal(spawnSync('cargo', ['--version'], { windowsHide: true }).error?.code, undefined, 'cargo is not on PATH: install Rust (https://rustup.rs)');
   RUST_PARTS.tiny = { dir: 'tiny-rs', bin: 'norn-tiny', why: 'a test crate', cc: false };
   t.after(() => { delete RUST_PARTS.tiny; });
-  const d = mkTmp('rbc-'), src = n => path.join(d, n, 'engine', 'tiny-rs');
+  // a lock without cargo's header comment: a cargo call that may write it (a clean without --locked) adds the header, so the source
+  // changes and its binary is looked for under another name
+  const d = mkTmp('rbc-'), src = n => path.join(d, n, 'engine', 'tiny-rs'), lock = 'version = 4\n\n[[package]]\nname = "norn-tiny"\nversion = "0.1.0"\n';
   for (const n of ['a', 'b']) {
     fs.mkdirSync(path.join(src(n), 'src'), { recursive: true });
     fs.writeFileSync(path.join(src(n), 'Cargo.toml'), '[package]\nname = "norn-tiny"\nversion = "0.1.0"\nedition = "2021"\n');
-    fs.writeFileSync(path.join(src(n), 'Cargo.lock'), 'version = 4\n\n[[package]]\nname = "norn-tiny"\nversion = "0.1.0"\n');
+    fs.writeFileSync(path.join(src(n), 'Cargo.lock'), lock);
     fs.writeFileSync(path.join(src(n), 'src', 'main.rs'), `fn main() { print!("${n}"); }\n`);
   }
   const answers = (n, store) => spawnSync(binOf('tiny', { src: src(n), store }), [], { encoding: 'utf8', windowsHide: true }).stdout;
@@ -245,4 +247,5 @@ test('real cargo: two sources of one part into one store - A B A; A B, A\'s entr
   const s2 = path.join(d, 't'), both = await Promise.all(['a', 'b'].map(n => ensurePartAsync('tiny', { src: src(n), store: s2, err })));
   assert.deepEqual(both, [{ ok: true, built: true }, { ok: true, built: true }], both.map(r => r.why).join('; '));
   assert.equal(answers('a', s2), 'a'); assert.equal(answers('b', s2), 'b');
+  for (const n of ['a', 'b']) assert.equal(fs.readFileSync(path.join(src(n), 'Cargo.lock'), 'utf8'), lock, 'no cargo call wrote the source\'s Cargo.lock');
 });

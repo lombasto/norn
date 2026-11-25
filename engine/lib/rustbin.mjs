@@ -80,9 +80,10 @@ export const binOf = (p, { src = srcOf(p), store: st = store() } = {}) => path.j
 /** the command a BLOCK names: the build ensurePart runs (it then copies target/release/<bin> to binOf) */
 export const buildOf = (p, { src = srcOf(p), store: st = store() } = {}) =>
   `cargo build --release --locked --target-dir "${fwd(targetOf(p, st))}" --manifest-path "${fwd(path.join(src, 'Cargo.toml'))}"`;
-/** the clean ensurePart runs before that build (its package is named as its bin) */
+/** the clean ensurePart runs before that build (its package is named as its bin). --locked: without it cargo clean rewrites a
+ *  Cargo.lock it would format otherwise (measured: it added cargo's header) - a changed source, so another binary name */
 export const cleanOf = (p, { src = srcOf(p), store: st = store() } = {}) =>
-  `cargo clean -p ${part(p).bin} --release --target-dir "${fwd(targetOf(p, st))}" --manifest-path "${fwd(path.join(src, 'Cargo.toml'))}"`;
+  `cargo clean -p ${part(p).bin} --release --locked --target-dir "${fwd(targetOf(p, st))}" --manifest-path "${fwd(path.join(src, 'Cargo.toml'))}"`;
 
 /** the --settings hook entry of `sub` (mail | scope): Claude Code's exec form (command + args, spawned with no shell - seen on 2.1.329;
  *  Git Bash costs ~220 ms more per call on this machine). norn-hook reads the run from META_RUN_ID (the run's env); node + norn.mjs are
@@ -131,7 +132,7 @@ function plan(p, o) {
   const noCc = needsCc ? o.cc() : null;
   if (noCc) return { done: { ok: false, built: false, part: p, why: `${bin} (${why}) cannot build: ${noCc}; build command: ${buildOf(p, o)}` } };
   const at = ['--target-dir', targetOf(p, o.store), '--manifest-path', path.join(o.src, 'Cargo.toml')];
-  return { clean: ['clean', '-p', bin, '--release', ...at], build: ['build', '--release', '--locked', ...at] };
+  return { clean: ['clean', '-p', bin, '--release', '--locked', ...at], build: ['build', '--release', '--locked', ...at] };
 }
 const lastError = s => { const ls = String(s ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean); return ls.find(l => /^error\b/.test(l)) ?? ls.at(-1) ?? ''; };
 function failed(p, r, o, step) {

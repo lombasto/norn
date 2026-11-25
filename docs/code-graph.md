@@ -329,9 +329,10 @@ No class is below the bar. The fixtures grade 100 % in every class (tests/code-g
 - The clean before each build: cargo names a package's build state in the shared target dir without the crate's path, so a build
   of one checkout's sources can be called fresh after another checkout's build of the same package, and that checkout's binary
   copied out under this source's hash (measured with a two-source crate on cargo 1.90, 1.96 and 1.100: B built after A is "fresh"
-  and runs as A). So a part with no binary for its sources runs cargo's own `cargo clean -p <bin> --release --target-dir <target>
-  --manifest-path <this source's Cargo.toml>` (rustbin.mjs `cleanOf`; the package is named as its bin), then the build: this crate
-  always compiles, its dependencies stay built. Norn assumes no layout of cargo's target dir (cargo 1.100 keeps a package's state
+  and runs as A). So a part with no binary for its sources runs cargo's own `cargo clean -p <bin> --release --locked --target-dir
+  <target> --manifest-path <this source's Cargo.toml>` (rustbin.mjs `cleanOf`; the package is named as its bin), then the build:
+  this crate always compiles, its dependencies stay built. `--locked` because a clean without it may rewrite the source's Cargo.lock
+  (measured: it added cargo's header to a lock without one), which changes the source and so its binary's name. Norn assumes no layout of cargo's target dir (cargo 1.100 keeps a package's state
   under `release/build/<package>/<hash>/` and has no `release/.fingerprint`, which 1.90 and 1.96 have); the clean is cargo's to do,
   and it gave each source its own binary on all three. A failed clean is the ONE reason, like a failed build (`... did not build
   (cargo clean exit N: ...); clean command: ...; build command: ...`). tests/rustbin.test.mjs proves it with real cargo. Measured
