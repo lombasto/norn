@@ -79,19 +79,20 @@ async function wiring(file, { read, o, deps }) {
   const s = read.symbols({ ...o, file });
   if (s.ok === false) return s;
   const U = unitsOf(s.defs), qs = s.defs.filter(d => CALLED.has(d.kind) || d.kind === 'const').map(d => ({ verb: d.kind === 'const' ? 'references' : 'callers', arg: d.kind === 'const' ? d.name : d.id, file, def: d }));
-  const answers = await askAll(read, o, qs), edges = new Map(), users = new Map(), calls = new Map();
+  const answers = await askAll(read, o, qs), edges = new Map(), users = new Map(), calls = new Map(), ext = [];   // ext: the uses from other files, by site (a cycle's cut checks what its movers import)
   const add = (a, b, w) => { if (!a || !b || a === b) return; const k = a < b ? `${a}|${b}` : `${b}|${a}`; edges.set(k, (edges.get(k) || 0) + w); (calls.get(a) || calls.set(a, new Set()).get(a)).add(b); };
   const use = (u, f) => (users.get(u) || users.set(u, new Set()).get(u)).add(f);
   for (let i = 0; i < qs.length; i++) {
     const a = answers[i], to = U.unitOf(qs[i].def.id);
     if (!a || a.ok === false) return { ok: false, why: `${qs[i].verb} of ${qs[i].def.name}: ${a?.why ?? 'no answer'}` };
     for (const r of a.rows) {
+      if (r.file !== file) ext.push({ file: r.file, id: r.caller?.id ?? null, line: r.line });
       if (qs[i].verb === 'references') { if (r.file === file) add(U.unitAtLine(r.line), to, 1); else if (deps.has(r.file)) use(to, r.file); continue; }
       if (r.file === file) add(r.caller ? U.unitOf(r.caller.id) ?? U.unitAtLine(r.line) : U.unitAtLine(r.line), to, 1 / Math.max(1, r.candidates));
       else if (r.candidates === 1) use(to, r.file);
     }
   }
-  return { ok: true, ...U, edges, users, calls };
+  return { ok: true, ...U, edges, users, calls, ext };
 }
 
 // ---------- greedy modularity (Clauset, Newman, Moore 2004): merge the pair of groups with the largest gain until none gains ----------
@@ -154,14 +155,17 @@ async function cycleOf(c, ctx) {
   const rows = edges.map(e => {
     const w = wires.get(e.to), S = w.units.filter(u => w.users.get(u.id)?.has(e.from)).map(u => u.id);
     const T = new Set(S); for (let grew = true; grew;) { grew = false; for (const id of [...T]) for (const n of w.calls.get(id) || []) if (!T.has(n)) { T.add(n); grew = true; } }
-    return { e, w, S, T, n: e.kind === 'reexport' ? Infinity : T.size };   // what crosses once cut: the symbols used and what they call in their file
+    // the cycle files the movers use: wherever they go they import those again, so a cut that drags one (bar `from`, when they move into it) is no cut
+    const drags = c.cycle.filter(f => f !== e.to && wires.get(f).ext.some(x => x.file === e.to && T.has((x.id && w.unitOf(x.id)) ?? w.unitAtLine(x.line))));
+    const usedInTo = [...T].some(id => [...w.calls].some(([from, tos]) => !T.has(from) && tos.has(id)));
+    const others = [...new Set([...T].flatMap(id => [...(w.users.get(id) || [])]))].filter(f => f !== e.from && f !== e.to).sort(byPath);
+    const into = !usedInTo && !others.length, keeps = drags.some(f => f !== e.from || !into);
+    return { e, w, S, T, usedInTo, others, into, n: e.kind === 'reexport' || keeps ? Infinity : T.size, keeps };   // what crosses once cut: the symbols used and what they call in their file
   }).sort((a, b) => a.n - b.n || a.S.length - b.S.length || byPath(a.e.from + a.e.to, b.e.from + b.e.to));
   const best = rows[0];
-  if (!best || best.n === Infinity) return { na: 'every edge of the cycle is a re-export: the symbols crossing are not counted' };
-  const { e, w, S, T } = best, unit = new Map(w.units.map(u => [u.id, u])), names = ids => [...ids].map(id => nameOf(unit.get(id)));
-  const usedInTo = [...T].some(id => [...w.calls].some(([from, tos]) => !T.has(from) && tos.has(id)));
-  const others = [...new Set([...T].flatMap(id => [...(w.users.get(id) || [])]))].filter(f => f !== e.from && f !== e.to).sort(byPath);
-  const into = !usedInTo && !others.length, to = into ? e.from : newFile(e.to, names(S)[0] ?? 'shared');
+  if (!best || best.n === Infinity) return { na: rows.some(x => x.keeps) ? 'no single import cut breaks the cycle: the symbols that would move use another file of it' : 'every edge of the cycle is a re-export: the symbols crossing are not counted' };
+  const { e, w, S, T, others, into } = best, unit = new Map(w.units.map(u => [u.id, u])), names = ids => [...ids].map(id => nameOf(unit.get(id)));
+  const to = into ? e.from : newFile(e.to, names(S)[0] ?? 'shared');
   return { kind: 'cycle', file: ctx.rel(e.to), cycle: c.cycle.map(ctx.rel), edge: { from: ctx.rel(e.from), to: ctx.rel(e.to), line: e.line, kind: e.kind }, symbols: names(S),
     move: { to: ctx.rel(to), symbols: names(T), new_file: !into }, users: others.map(ctx.rel), edges: edges.length };
 }

@@ -359,6 +359,8 @@ the code signals' reader (`readSignals`, docs/code-signals.md) and the tests ind
   `max_cut` of its edges crossing. Each moving group names its symbols, a proposed new file and the files that would change their import.
 - **Break cycle**: an import cycle (`cycles`). The edge to cut is the one with the fewest symbols that would have to move: the symbols of
   `to` that `from` uses plus what they call inside `to`. They move into `from` when nothing else uses them, else into a proposed new file.
+  A cut whose movers use another file of the cycle (or `from` itself, when they go to a new file) is no cut: they would import it again.
+  When no edge is left the cycle reads n/a with that reason.
 - **Extract function**: a function over the function ratchet (`CAPS`). JS gets the measure numbers and its largest nested block; Python and
   Rust get only the line count from the Def bounds and the block reads n/a ("the measure run is JS only").
 - **Rank**: the fix-first rank of the target's file (a cycle: the highest of its files). With no signals every rank reads n/a with the

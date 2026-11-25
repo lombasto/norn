@@ -125,6 +125,28 @@ test('a cycle is cut where the fewest symbols move: the ones used and what they 
   assert.deepEqual([cy.edge.from, cy.edge.to], [Y, X]); assert.deepEqual(cy.move.symbols, ['h', 'useY']); assert.equal(cy.move.to, Y, 'nothing else in x uses h or useY: both move into y');
 });
 
+test('a cut whose moving symbols use another file of the cycle is not a cut: the cycle would close again through them', async () => {
+  // x -> y -> z -> x. z -> x moves only h (the cheapest), but h calls y.g: wherever h goes it imports y again, so the cycle stays
+  const w = world(), X = 'lib/x.mjs', Y = 'lib/y.mjs', Z = 'lib/z.mjs', B = 'lib/big.mjs', U = 'lib/user.mjs', base = { ...w.read };
+  const site = (file, caller, line) => ({ file, line, col: 3, how: 'local', candidates: 1, caller: def(file, caller, 0, 0), depth: 1, trust: 'unmeasured' });
+  const zd = [def(Z, 'k', 1, 3), def(Z, 'm', 4, 6), def(Z, 'useX', 7, 10)], zc = { k: [site(Y, 'useX', 10)], m: [site(Y, 'useX', 11)], useX: [] };
+  w.read.symbols = q => (q.file === Z ? { stamp: { commit: SHA }, file: Z, defs: zd } : base.symbols(q));
+  w.read.callers = q => {
+    const z = zd.find(d => d.id === q.symbol); if (z) return { stamp: { commit: SHA }, symbol: z, rows: zc[z.name], truncated: 0 };
+    const r = base.callers(q);
+    return r.symbol.file === X && r.symbol.name === 'h' ? { ...r, rows: [site(Z, 'useX', 8)] } : r.symbol.file === Y && r.symbol.name === 'g' ? { ...r, rows: [...r.rows, site(X, 'h', 3)] } : r;
+  };
+  w.graph.files.set(Z, { lang: 'javascript', excluded: null }); w.graph.edges = [edge(X, Y), edge(Y, Z), edge(Z, X), edge(U, B)]; w.signals.files[Z] = { fix_first: 55 };
+  const text = w.text; w.text = f => (f === Z ? code(10) : text(f));
+  const cy = (await run(w, { top: 10 })).targets.find(t => t.kind === 'cycle');
+  assert.deepEqual([cy.edge.from, cy.edge.to], [X, Y], 'z -> x is passed over'); assert.deepEqual(cy.move.symbols, ['f', 'g']);
+  // every edge drags a cycle file: no cut, said with the reason
+  zc.k = [...zc.k, site(Y, 'f', 3)];   // y.f calls z.k: moving f drags z
+  w.read.callers = (c => q => { const r = c(q); return r.symbol?.file === X && r.symbol.name === 'useY' ? { ...r, rows: [site(Z, 'k', 2)] } : r; })(w.read.callers);   // z.k calls x.useY: moving k drags x
+  const r = await run(w, { top: 10 });
+  assert.ok(!r.targets.some(t => t.kind === 'cycle')); assert.match(r.na.find(x => x.kind === 'cycle').why, /no single import cut breaks the cycle/);
+});
+
 test('groupsOf: greedy modularity keeps tight groups apart and leaves units with no edge where they are', () => {
   const g = groupsOf(['a', 'b', 'c', 'd', 'e', 'f', 'lone'], [['a', 'b', 1], ['b', 'c', 1], ['c', 'a', 1], ['d', 'e', 1], ['e', 'f', 1], ['f', 'd', 1], ['c', 'd', 1]]);
   assert.deepEqual(g.map(x => [...x].sort()), [['a', 'b', 'c'], ['d', 'e', 'f'], ['lone']]);
