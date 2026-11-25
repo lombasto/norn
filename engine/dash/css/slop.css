@@ -1,5 +1,6 @@
 /* The Slop page (pages/slop.mjs): the row a link named (&finding=<id>, e.g. Context's "in Slop") - highlighted where it stands in its
    open batch; index.html scrolls it into view once. */
+.gage{color:var(--mute);font-size:12px;white-space:nowrap;margin-left:6px}
 .glist .grow.hit{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent);padding-left:8px;scroll-margin:80px}
 /* slop-meter S1: the gauge above the views (a details: the summary is the gauge, the body the drawer) - the number, the band word, the
    7-day change, then the five band segments with the needle; it wraps on a phone, never wider than the page. */

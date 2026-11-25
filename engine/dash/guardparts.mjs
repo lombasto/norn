@@ -24,15 +24,16 @@ function fnv(s) {
 const ruleRows = g => (g.rows || []).filter(r => r.type === 'rules');
 
 const SEV = { high: 0, medium: 1, low: 2, count: 3 };
-/** rows (ranked) -> batches [{ key, title, kind, ways, action, n, new, warn, severity (the worst), rows }], kinds in order, then warn, new, size */
+/** rows (ranked) -> batches [{ key, title, kind, ways, action, n, new, warn, severity (the worst), oldest (the earliest first_seen | null), rows }], kinds in order, then warn, new, size */
 export function batchesOf(rows) {
   const m = new Map();
   for (const r of rows) {
     const k = r.batch ?? `${r.type}|${r.kind ?? 'drafts'}`;
-    if (!m.has(k)) m.set(k, { key: k, title: r.title ?? r.surface ?? k, kind: r.kind ?? 'drafts', ...(r.ways ? { ways: r.ways } : {}), action: r.action ?? null, n: 0, new: 0, warn: 0, severity: r.severity, rows: [] });
+    if (!m.has(k)) m.set(k, { key: k, title: r.title ?? r.surface ?? k, kind: r.kind ?? 'drafts', ...(r.ways ? { ways: r.ways } : {}), action: r.action ?? null, n: 0, new: 0, warn: 0, severity: r.severity, oldest: null, rows: [] });
     const b = m.get(k);
     b.n++; b.rows.push(r);
     if (r.new) b.new++;
+    if (r.first_seen && (!b.oldest || r.first_seen < b.oldest)) b.oldest = r.first_seen;
     if (WARN(r.severity)) b.warn++;
     if (SEV[r.severity] < SEV[b.severity]) b.severity = r.severity;
   }
