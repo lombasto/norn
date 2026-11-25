@@ -12,11 +12,12 @@ import { metaRoot } from '../config.mjs';
 import { askVoice } from './voice.mjs';
 import { RUFF } from './lang/py.mjs';
 import { CLIPPY } from './lang/rs.mjs';   // not lang/index.mjs: lang/js.mjs imports this module (a cycle)
+import { SARIF } from './lang/sarif.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOOL_SETS = path.join(HERE, '..', '..', '..', 'tools');
-/** the project's own lint tools (S3): each pack runs it (ruff in the project's venv) or reads its log (clippy); never pinned here */
-const PROJECT_TOOLS = { ruff: RUFF, clippy: CLIPPY };
+/** the project's own lint tools (S3): each pack runs it (ruff in the project's venv) or reads its log (clippy, a SARIF file); never pinned here */
+const PROJECT_TOOLS = { ruff: RUFF, clippy: CLIPPY, sarif: SARIF };
 export const TOOLS = { eslint: { set: 'lint', bin: ['node_modules', 'eslint', 'bin', 'eslint.js'] }, 'ast-grep': { set: 'ast' } };
 const JS_FILES = ['**/*.mjs', '**/*.js', '**/*.cjs'];
 /**

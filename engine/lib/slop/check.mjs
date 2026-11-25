@@ -35,10 +35,13 @@ const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'lint'];
 // RM-27: every rule, built-in or a project's own, carries its explanation beside its parameters - what was found, why the rule
 // exists, what to do - so the CLI, the resume prompt and the Slop page say the same thing; a rule without all three does not load.
 export const EXPLAIN = ['what', 'why', 'fix'];
+// a rule read from a file a project tool wrote (sarif): source log and its path templates
+const readsLog = r => r.source === 'log' && Array.isArray(r.log) && r.log.length > 0 && r.log.every(t => typeof t === 'string');
 function checkRule(r, f) {
   if (!r.id || !LEVELS.includes(r.level) || !DETECT[r.kind]) throw new Error(`${f}: a rule needs an id, a level (${LEVELS.join(' | ')}) and a known kind`);
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
   if (r.kind === 'lint' && (!LINTERS[r.tool] || (r.tool === 'eslint' && !r.rules) || Object.keys(r.rules || {}).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
+  if (r.kind === 'lint' && r.tool === 'sarif' && !readsLog(r)) throw new Error(`${f}: a sarif rule reads the file a project tool wrote: source "log" and log (path templates, {git} / {head})`);
   if (r.kind === 'ast' && !astData(r)) throw new Error(`${f}: an ast rule is ast-grep match data (tool ast-grep): see rules/README.md`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
@@ -108,7 +111,7 @@ export function explainOf(id, projectDir = null) {
   const [base, sub] = String(id).split(/\/(.*)/s), f = base.startsWith('P-') && projectDir && path.join(projectDir, 'rules', 'slop', `${base}.json`);
   const r = base.startsWith('P-') ? (f && existsS(f) ? readRule(f) : null) : (shipped ||= new Map(loadRules().map(x => [x.id, x]))).get(base);
   if (!r || !sub) return r?.explain ?? null;
-  const { rules = {}, ...own } = r.explain, e = { ...own, ...rules[sub] }, doc = ![PARSE, 'config-changed', 'no-evidence'].includes(sub) && LINTERS[r.tool]?.doc;
+  const { rules = {}, ...own } = r.explain, e = { ...own, ...rules[sub] }, doc = ![PARSE, 'config-changed', 'no-evidence', 'no-base'].includes(sub) && LINTERS[r.tool]?.doc;
   return { what: e.what, why: e.why, fix: doc ? `${e.fix} (${doc(sub)})` : e.fix };
 }
 

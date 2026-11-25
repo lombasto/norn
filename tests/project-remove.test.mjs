@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
-import { hookReady } from './helpers/hook.mjs';
+import { rustReady } from './helpers/rust.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { projectRemove } from '../engine/lib/setup.mjs';
 import { ROLE_AGENTS } from '../engine/lib/policy.mjs';
@@ -20,7 +20,7 @@ const GIT_DIR = path.dirname(which('git'));
 const fwd = p => p.split(path.sep).join('/');
 
 function sandbox() {
-  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
+  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-prm-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg') };
   for (const x of [d.root, d.home, d.bin, d.cfg]) fs.mkdirSync(x, { recursive: true });

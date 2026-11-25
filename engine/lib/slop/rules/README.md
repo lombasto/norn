@@ -31,7 +31,7 @@ those of the rule file.
 | `pattern` | `patterns` (regexes), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked), `unless`, `cite` | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
 | `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
-| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy is read from the head's log, never run; none is `<id>/no-evidence`), `levels` (per sub-rule, `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
+| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
 | `ast` | `tool: ast-grep`, `match` by language pack (`js`, `ts`, `py`, `rs`): a list of `{ rule, constraints?, message }` (ast-grep rule data; its `regex` is Rust regex), `shadow_langs` (packs whose findings are shadow, the rule id kept), `reason`, `files`, `exclude`; the old ESLint `selectors` form does not load | yes |
@@ -50,6 +50,60 @@ not run when it exits other than 0 (8: a rule that does not parse), prints an `E
 JSON: each `ast` rule is then one BLOCK "could not run".
 ruff and clippy are the project's own tools, never pinned here: ruff runs as `uv run --no-sync --project <the config's folder in the
 main checkout> ruff` (VIRTUAL_ENV unset, never `uv sync`) on the touched files in a temp folder; clippy is never started (a build).
+
+## SARIF (`tool: sarif`)
+
+Any analyzer that writes SARIF 2.1.0 plugs into the kind `lint` with no parser of its own (`engine/lib/slop/lang/sarif.mjs`). Choppa
+never runs it: the project's own gate writes the file, and the rule's `log` templates name it (`{git}` the repo's common git
+folder, `{head}` the commit, `*` in the file name; several files are read as one log). No built-in rule uses it; a project adds one.
+
+- **The head** reads the templates with `{head}` = the head's sha. No file is `<id>/no-evidence` (give it a `levels` entry: `WARN`).
+- **The merge base** reads the same templates with `{head}` = the merge base's sha, so the gate that writes the file at each commit
+  of main gives the base side. A result the base file has on the same line text is not new (the line may move). With no file for
+  the merge base (a runner in CI never has one), every result on a touched file counts as new, and the check adds one finding
+  `<id>/no-base` that says so.
+- **A finding** per result of kind `fail` (absent = fail; `pass`, `open`, `review`, `informational`, `notApplicable` are none)
+  whose first physical location names a file the branch touches (the uri, through `originalUriBaseIds`; equal, or the file is its
+  tail): rule `<id>/<ruleId>` (`ruleId`, `rule.id` or the descriptor `ruleIndex` names), line `region.startLine` (0: the whole
+  file), the message (`text`, or `messageStrings` / `globalMessageStrings` by `id`, `{n}` filled from `arguments`). Its level
+  is `levels[<ruleId>]`, else `levels[<SARIF level>]`, else `levels["*"]`, else the rule's; the SARIF level is the result's, else
+  `none` for a kind other than fail, else the invocation's `ruleConfigurationOverrides`, the descriptor's
+  `defaultConfiguration.level`, `warning` (SARIF 3.27.10). A result with no file names nothing the branch touched.
+- **Not SARIF 2.1.0** (not JSON, `version` other than `"2.1.0"`, `runs` or a run's `results` not an array - null means the tool's
+  results are unknown -, a result with no message or no rule, a level or kind outside the spec's lists, a `startLine` under 1): the
+  rule's fail-closed BLOCK "could not run", as any tool that fails.
+- In-file `suppressions` are not honoured (as ESLint's inline comments are off): a result that must stay needs a waiver for `<id>/<ruleId>`.
+
+A worked example, `<project folder>/rules/slop/P-scan.json`: the project's gate writes its scanner's SARIF to
+`$(git rev-parse --git-common-dir)/norn/sarif/$(git rev-parse HEAD).sarif` at each head and each commit of main.
+
+```json
+{ "id": "P-scan", "level": "WARN", "kind": "lint", "tool": "sarif", "source": "log", "log": ["{git}/norn/sarif/{head}*.sarif"],
+  "title": "a new result of the project scanner on a file the branch touches",
+  "explain": { "what": "The project scanner reports something new on a file the branch touches (P-scan/<its rule>).",
+               "why": "The scanner knows what it looks for; only what the branch adds counts.", "fix": "Fix what the message says, or waive P-scan/<rule>." },
+  "files": ["**/*.py", "**/*.mjs"],
+  "levels": { "error": "BLOCK", "warning": "WARN", "note": "WARN", "none": "TREND", "no-evidence": "WARN", "no-base": "WARN" },
+  "fixture": {
+    "hit":  { "base": { "src/a.py": "X = 1\n" }, "head": { "src/a.py": "X = 1\nTOKEN = \"t0k\"\n" },
+              "recorded": { "base": { "version": "2.1.0", "runs": [{ "tool": { "driver": { "name": "scan" } }, "results": [] }] },
+                            "head": { "version": "2.1.0", "runs": [{ "tool": { "driver": { "name": "scan" } }, "results": [
+                              { "ruleId": "hardcoded-token", "level": "error", "message": { "text": "a token is written in the code" },
+                                "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/a.py" }, "region": { "startLine": 2 } } }] }] }] } } },
+    "miss": { "base": { "src/a.py": "TOKEN = \"t0k\"\n", "src/b.py": "Y = 1\n" }, "head": { "src/a.py": "# moved down a line\nTOKEN = \"t0k\"\n", "src/b.py": "Y = 1\n" },
+              "recorded": { "base": { "version": "2.1.0", "runs": [{ "tool": { "driver": { "name": "scan" } }, "results": [
+                              { "ruleId": "hardcoded-token", "level": "error", "message": { "text": "a token is written in the code" },
+                                "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/a.py" }, "region": { "startLine": 1 } } }] }] }] },
+                            "head": { "version": "2.1.0", "runs": [{ "tool": { "driver": { "name": "scan" } }, "results": [
+                              { "ruleId": "hardcoded-token", "level": "error", "message": { "text": "a token is written in the code" },
+                                "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/a.py" }, "region": { "startLine": 2 } } }] },
+                              { "ruleId": "hardcoded-token", "level": "error", "message": { "text": "a token is written in the code" },
+                                "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/b.py" }, "region": { "startLine": 1 } } }] }] }] } } } } }
+```
+
+The hit is one BLOCK finding P-scan/hardcoded-token on line 2. The near-miss reports nothing: the result on the touched file is old
+(the base had it on the same line text, one line up), and the other file is not touched. `tests/slop-sarif.test.mjs` runs this rule
+and its fixture.
 
 ## The second voice (`model`)
 

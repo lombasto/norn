@@ -1,0 +1,2 @@
+{ "name": "app", "type": "module", "workspaces": ["packages/*"],
+  "imports": { "#util/*": "./src/util/*.js", "#cfg": { "import": "./src/cfg.mjs", "default": "./src/cfg.cjs" } } }
