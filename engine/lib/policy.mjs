@@ -67,10 +67,11 @@ export const POLICY_DEFAULTS={
   dod:{ready:'off',scope:'off',critique:'off',critique_filter:'',test_cmd:'',timeout_min:20},   // META-DOD 1 (DIR-68): the Ready gate of norn run (off | warn | refuse) + the Done check's test runner (dod.mjs); META-DOD 2: the scope guard (off | on, scope.mjs); META-DOD 3: the plan review (off | on, critique.mjs)
   slop:{enabled:true,voice_reads_per_day:15},   // META-BETA-PREP (DIR-52): ONE switch for all of SloppaChoppa (slopOn); the second voice's daily cap (voice.mjs voiceRoute)
   // lane-collide S1b (SPEC 4.3): the collision door's verdict per kind (off | shadow | warn | hold | refuse), the commons, and the automatic
-  // reactions (collide.mjs collidePolicy); Settings rows come in S5
+  // reactions (collide.mjs collidePolicy); S3: demote = an automatic class with `undone` of its last `of` actions undone goes back to a card; Settings rows come in S5
   collide:{enabled:true,kinds:{item:'warn',lead:'warn',goal:'shadow',territory:'warn',exclusive:'hold',resource:'hold',order:'hold',order_named:'warn',stale:'warn'},
     commons:['tests/**','docs/**'],narrow_files:25,recent_days:3,
-    auto:{hold_exclusive:true,land_early:true,order_after:true,stale_fix:true,tell_worker:true,land_wait_min:45,remedies:[]}},
+    auto:{hold_exclusive:true,land_early:true,order_after:true,stale_fix:true,tell_worker:true,land_wait_min:45,remedies:[]},
+    demote:{undone:2,of:10}},
   overlap:{enabled:true},   // GAP-12: the overlap check of running lanes against the remote's branches and open PRs (overlap.mjs overlapOn)
   voice:{popups:'off',daily_cap:3},   // META-TEND P6 (DEC-264, DIR-36): SloppaChoppa's pop-ups ship OFF until the owner's 11-21 review; the badge works from day one
   launch:{roles:{worker:'full',merge:'full',checkin:'full',chat:'full'},profiles:{}},
