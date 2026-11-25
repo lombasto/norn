@@ -84,6 +84,69 @@ watcher never exits and outlives your run. If you need one, bound it (`timeout N
 | The tests that directly cover the files your branch changed (node; policy.tests.mode picks them) | `norn tests run --changed` |
 | One pytest file | `python -m pytest tests/test_<module>.py -q -p no:cacheprovider` |
 | The measured battery: never-failing, duplicate and slowest tests | `norn tests lean` |
+| What trimming command logs would save on a project's recorded runs, and the output-trim gate (below, "Output replay") | `norn tests output-replay --project P` |
 
 Project-specific details (the interpreter, META_ROOT, the temp-folder helpers) live in the project's CLAUDE.md or RULES.md, which
 point back here.
+
+## Output replay (output-trim S1)
+
+`norn tests output-replay [--project P | --state D] [--since YYYY-MM-DD] [--json]` measures what trimming command logs before the
+agent reads them WOULD have saved on a project's recorded runs, and says whether that crosses the gate that releases building the
+trim (stages S2-S5 of the output-trim plan). It only measures: it reads the run logs and transcripts, changes no hook and calls no
+model. Code: `engine/lib/outreplay.mjs`. It writes `<state>/trim/replay.json` (the printed numbers, as JSON).
+
+### What it reads
+
+- **Claude runs.** Each run's final JSON, `<state>/logs/<lane>-<YYYYMMDD>-<HHMMSS>-<id>.json`, gives the `session_id`, the usage and
+  `total_cost_usd`. The tool output is in the session transcript, `<claude projects>/<slug>/<session_id>.jsonl` (the projects folder:
+  `CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`). Every Bash / PowerShell call and its result is read.
+- **Codex runs.** A `.log` with no `.json` beside it whose banner reads `OpenAI Codex v...` is a `codex exec` log; its `exec` blocks
+  and their results are paired in order, and the shell wrapper Codex logs (`powershell.exe -Command '...'`, `bash -lc '...'`) is
+  removed before the family is matched. A Codex log has no per-call token use and no cost, so Codex calls appear in the family table
+  only, never in the saving or the gate.
+- Check-in runs (`checkin-*`) are not worker runs and are left out. A run whose final JSON is unreadable, names no `session_id` or
+  whose transcript is missing is listed as `n/a` with the reason, and its usage is not counted.
+
+### What it prints
+
+1. Per harness and command family (pytest, cargo, maturin, install, git, other): results, how many the agent already cut itself
+   (piped to `tail` / `grep` / ..., `-q`, or sent to a log file), characters, and p50 / p90 / max characters per result.
+2. The saving per option, as cache-read tokens saved, their share of the runs' cache reads, dollars and their share of spend:
+   - `strict`: the filters' listed noise lines dropped (every line that names a failure, error or warning is kept: `KEEP`);
+   - `collapse`: strict plus repeated git CRLF warnings kept once;
+   - `crlf_all`: the CRLF collapse on every shell result;
+   - `ceiling`: test / build / install output cut to its KEEP lines plus 400 characters (no real filter does better);
+   - `ceiling_git`: the same over every named family, git diff / show / log included (not acceptable: that is content);
+   - `excluded_strict`, `excluded_ceiling`: the strict and ceiling cuts on the calls the wrap would skip (not reachable);
+   - `all_shell`: all shell output, for scale.
+3. The saving range (strict to ceiling), the re-run signal, and the gate verdict.
+
+Only calls the wrap would take count in strict / collapse / crlf_all / ceiling / ceiling_git (DEC-a-582): a call of a filtered family
+(git: fetch / pull / push / clone only) whose output the agent left whole. Piped, redirected, quiet, heredoc and background calls are
+counted by reason (`skipped`) and their cuts reported in the `excluded_*` rows.
+
+### How a saving is counted
+
+Tokens are characters / 4: an **estimate**, good to about +-25 %, with no tokenizer. A cut token saves one 1 h cache write when it
+enters the context, and one cache read for each later API call of its session (the transcript's distinct assistant messages after the
+call). Dollars are that weighted share of the run's recorded `total_cost_usd`, using the price weights in `cost.mjs` `WEIGHTS`. It is an
+upper bound: it assumes the session never compacted.
+
+### Thresholds (`REPLAY` in outreplay.mjs, the one place)
+
+| Key | Value | Meaning |
+|---|---|---|
+| `chars_per_token` | 4 | the token estimate |
+| `gate_share` | 0.01 | gate: the `ceiling` saving is >= 1 % of the runs' cache reads |
+| `rerun_window` | 3 | re-run signal: the same command (before its first pipe), cut, run again with another cut within 3 shell calls |
+| `ceiling_extra` | 400 | characters the ceiling keeps on top of the KEEP lines |
+| `since_days` | 31 | the default window |
+| `w_write`, `w_read` | `WEIGHTS.cache_create_1h`, `WEIGHTS.cache_read` | the weights of a cache write and a cache read |
+
+### The gate
+
+Build past S1 only when a project's `ceiling` (wrap-eligible test / build / install calls) reaches `gate_share` of its cache reads.
+The re-run signal is reported but does not release the gate (DEC-a-582): the wrap skips the cut calls it measures. With no Claude run
+with recorded cache reads in the window, the gate reads `n/a` with the reason. Re-measure: a check-in runs this once a month per
+project, or when a new project or harness joins.

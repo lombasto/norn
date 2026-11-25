@@ -281,8 +281,15 @@ function nextNum(st, kind, home) {
 // ---------- read ----------
 export function readEvents(file) {   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs): a lookup inside a primed dash request
   const raw = readText(file);
-  return raw === null ? [] : parseEvents(file, raw);
+  if (raw === null) return [];
+  if (!inFlight(file, raw)) return parseEvents(file, raw);
+  return withLock(lockOf(file), () => { forget(file); return parseEvents(file, readText(file) ?? ''); });
 }
+// An unlocked read can see another process's append half-copied (Linux copies a write page by page): a torn last line is read
+// again once the writer's lock is free (record() appends + fsyncs under it). Torn under the lock, or under our own: a real integrity error.
+const lockOf = file => file.replace(/\.jsonl$/, '.lock');
+const heldLocks = new Set();   // the lock files this process holds now (withLock is not re-entrant)
+const inFlight = (file, raw) => raw !== '' && !raw.endsWith('\n') && file.endsWith('.jsonl') && !heldLocks.has(lockOf(file));
 /** the jsonl text of one records file -> its events (pure; the sync and the async reader share it) */
 export function parseEvents(file, raw) {
   if (raw === '') return [];
@@ -294,7 +301,9 @@ export function parseEvents(file, raw) {
 /** META-DASH-ASYNC R1: readEvents on fs.promises (the dash server's request paths never block the event loop on a records read) */
 export async function readEventsAsync(file) {
   const raw = await readTextA(file);   // lands in the request snapshot: a readEvents of the same file is a lookup
-  return raw === null ? [] : parseEvents(file, raw);
+  if (raw === null) return [];
+  if (!inFlight(file, raw)) return parseEvents(file, raw);
+  return withLockAsync(lockOf(file), async () => { forget(file); return parseEvents(file, (await readTextA(file)) ?? ''); });
 }
 
 // ---------- fold (pure) ----------
@@ -470,7 +479,8 @@ export function withLock(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutM
       sleepMs(retryMs);
     }
   }
-  try { return fn(); } finally { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } }
+  heldLocks.add(lockFile);
+  try { return fn(); } finally { heldLocks.delete(lockFile); try { fs.unlinkSync(lockFile); } catch { /* already gone */ } }
 }
 /** withLock on fs.promises (the dash server's writes): the same lock file, retry, stale break and timeout; the wait is a timer */
 export async function withLockAsync(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutMs = 60000 } = {}) {
@@ -486,7 +496,8 @@ export async function withLockAsync(lockFile, fn, { retryMs = 25, staleMs = 1000
       await new Promise(r => setTimeout(r, retryMs));
     }
   }
-  try { return await fn(); } finally { try { await fp.unlink(lockFile); } catch { /* already gone */ } }
+  heldLocks.add(lockFile);
+  try { return await fn(); } finally { heldLocks.delete(lockFile); try { await fp.unlink(lockFile); } catch { /* already gone */ } }
 }
 
 // ---------- validation ----------
