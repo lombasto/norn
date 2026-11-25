@@ -13,6 +13,7 @@ import { mkTmp } from './helpers/tmp.mjs';
 import { binOf } from '../engine/lib/rustbin.mjs';
 import { fwd } from '../engine/lib/config.mjs';
 import { waitMail, MAIL_WAIT_POLL_S } from '../engine/lib/mail.mjs';
+import { waitFetch, mailWait } from '../engine/lib/mailwait.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 
@@ -519,4 +520,52 @@ test('norn mail ack with several ids: each in order, one line each; a bad id in 
   assert.deepEqual(Object.values(mails(s)).map(m => m.state), Array(5).fill('acked'));
   const again = meta(['mail', 'ack', 'MAIL-1', '--state', s]);
   assert.equal(again.status, 2, 'one id behaves as before: refusal + usage'); assert.match(again.stderr, /usage: /);
+});
+
+// ---------- NORN-MAIL-WAIT S2: the wait's real fetch (mailwait.mjs waitFetch / mailWait), with fakes: no git, no network, no sleep ----------
+const fetchFakes = (results, { reject = false } = {}) => {
+  const f = { errs: [], sent: [], calls: 0 };
+  f.tickFetch = (cfg, o) => { f.calls++; f.min = o.min; const r = results.shift() ?? null; if (r instanceof Error) throw r; return r; };
+  f.notify = async n => { f.sent.push(n); if (reject) throw new Error('no backend'); };
+  f.err = l => f.errs.push(l);
+  return f;
+};
+const notice = (id, project = 'p1') => ({ id, project, title: `urgent mail ${id}`, body: 'from a' });
+
+test('waitFetch: a fresh home (tickFetch returns null) sends nothing and says nothing; the policy fetch_min goes to tickFetch', async () => {
+  const f = fetchFakes([null, null]), fetch = waitFetch({ cfg: { state_root: tmp() }, fetchMin: 7, env: {}, err: f.err, tickFetch: f.tickFetch, notify: f.notify });
+  await fetch(); await fetch();
+  assert.deepEqual([f.calls, f.min, f.sent.length, f.errs.length], [2, 7, 0, 0]);
+});
+
+test('waitFetch: the same error twice is reported once, a different one again (a thrown error too)', async () => {
+  const f = fetchFakes([{ error: 'remote down' }, { error: 'remote down' }, new Error('git gone'), { error: 'remote down' }]);
+  const fetch = waitFetch({ cfg: { state_root: tmp() }, fetchMin: 5, env: {}, err: f.err, tickFetch: f.tickFetch, notify: f.notify });
+  for (let i = 0; i < 4; i++) await fetch();
+  assert.deepEqual(f.errs, ['fetch failed, the last copies stay: remote down', 'fetch failed, the last copies stay: git gone']);
+});
+
+test('waitFetch: two urgent-arrival notices are sent, each as class alert with its project state', async () => {
+  const root = tmp(), f = fetchFakes([{ notices: [notice('MAIL-1@a'), notice('MAIL-2@a', 'p2')] }]);
+  await waitFetch({ cfg: { state_root: root }, machine: { m: 1 }, fetchMin: 5, env: { E: 1 }, err: f.err, tickFetch: f.tickFetch, notify: f.notify })();
+  assert.deepEqual(f.sent.map(n => [n.title, n.cls, n.state]), [['urgent mail MAIL-1@a', 'alert', path.join(root, 'p1')], ['urgent mail MAIL-2@a', 'alert', path.join(root, 'p2')]]);
+  assert.deepEqual(f.sent[0].machine, { m: 1 }); assert.deepEqual(f.errs, []);
+});
+
+test('waitFetch: a notify that rejects is reported, never thrown, and the wait goes on to the mail', async () => {
+  const s = tmp(), r = startRun(s), c = clock(), f = fetchFakes([{ notices: [notice('MAIL-9@a')] }, null], { reject: true });
+  const fetch = waitFetch({ cfg: { state_root: tmp() }, fetchMin: 5, env: {}, err: f.err, tickFetch: f.tickFetch, notify: f.notify });
+  const sleep = async ms => { await c.sleep(ms); if (c.sleeps === 2) toCtl(s, r, 'after'); };
+  const got = await waitMail(s, { by: 'controller', to: 'role:controller', timeoutMin: 5, now: c.now, sleep, fetch });
+  assert.deepEqual(got.map(m => m.data.subject), ['after']);
+  assert.deepEqual(f.errs, ['urgent mail MAIL-9@a: notice not sent (no backend)']);
+  assert.equal(f.calls, 2);
+});
+
+test('mailWait: a home with no sync (no machine ledger) gets no fetch at all; the timeout prints the no-mail line', async () => {
+  const s = tmp(), c = clock(), f = fetchFakes([]), out = [];
+  const code = await mailWait(s, { by: 'controller', run: null, timeoutMin: '1', env: { META_ROOT: tmp() }, out: l => out.push(l), err: f.err, tickFetch: f.tickFetch, notify: f.notify, now: c.now, sleep: c.sleep });
+  assert.equal(code, 0);
+  assert.deepEqual(out, ['no new mail in 1 min']);
+  assert.equal(c.sleeps, 60 / MAIL_WAIT_POLL_S); assert.equal(f.calls, 0); assert.deepEqual(f.errs, []);
 });
