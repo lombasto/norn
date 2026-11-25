@@ -139,6 +139,16 @@ questions, the rule hits and the brief's Scope lines. A docs-only branch is not 
 quote, so new-only and waivers work as for every rule. At most 10 findings. With no route (the doors, `norn slop check`) each
 model rule is a WARN finding "could not run": the voice is advisory and holds nothing.
 
+**The risk rank decides which diffs a short day's reads go to** (RM-a-68; `voiceGate`, `engine/lib/slop/voice.mjs`). At each run end
+`left` = the cap minus today's reads, and `expected` = the run-end checks (stored checks with a run) a day over the last 7 full UTC
+days (`VOICE_GATE.history_days`) times the share of the UTC day still left, rounded up, at least 1 (this diff included). When `left
+>= expected` the diff is read. When `left < expected`, the diff is read only when its risk percentile (`norn code risk`,
+`engine/lib/coderisk.mjs`: where it stands against the last 100 landings) is at least the bar `100 x (1 - left / expected)`; under
+it each model rule is the WARN "could not run: skipped by the risk rank: riskier than p % of the last n landings (...), under the bar
+b % (l reads left, ~e diffs expected today)", and no read is spent. A rank that is n/a (no code signals stored, fewer than 10
+landings) reads in arrival order with the reason said: the cap alone decides, as before. The check line carries the one-line rank
+(`risk`), the run-end log line and the PR body (merge-land) print it.
+
 The `M*` rules ship `shadow: true`. A thumb on a model finding in the Guard records a rating (`<state>/slop/ratings.jsonl`, the
 last one counts); Slop › Rules shows each rule's precision. At 90 % over 20 rated a rule may go to `BLOCK`, under 50 % (over 20
 rated) to `TREND`: the owner or the controller records that in `overrides.json`; nothing changes a level by itself.
