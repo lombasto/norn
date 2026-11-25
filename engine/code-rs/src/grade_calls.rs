@@ -159,7 +159,8 @@ impl Texts<'_> {
 /// the decoded SCIP documents -> the grader's definitions and its answer at each sampled call site
 fn scip_truth(docs: &[scip::Doc], sites: &[(u64, &Site)], texts: &mut Texts) -> Truth {
     let mut t = Truth::default();
-    let mut global: HashMap<&str, Target> = HashMap::new();
+    // a global symbol -> its definitions: rust-analyzer gives two same-named items nested in sibling fns one symbol, two places
+    let mut global: HashMap<&str, Vec<Target>> = HashMap::new();
     let mut local: HashMap<(&str, &str), Target> = HashMap::new();
     for d in docs {
         t.covered.insert(d.path.clone());
@@ -176,7 +177,10 @@ fn scip_truth(docs: &[scip::Doc], sites: &[(u64, &Site)], texts: &mut Texts) -> 
             if scip::is_local(&o.sym) {
                 local.entry((d.path.as_str(), o.sym.as_str())).or_insert(at);
             } else {
-                global.entry(o.sym.as_str()).or_insert(at);
+                let v = global.entry(o.sym.as_str()).or_default();
+                if !v.contains(&at) {
+                    v.push(at);
+                }
             }
             t.defs.entry(d.path.clone()).or_default().push(GDef {
                 file: d.path.clone(),
@@ -207,12 +211,17 @@ fn scip_truth(docs: &[scip::Doc], sites: &[(u64, &Site)], texts: &mut Texts) -> 
             None => SiteT::Na("the grader has no occurrence at the call site".into()),
             Some(o) => {
                 let to = if scip::is_local(&o.sym) {
-                    local.get(&(d.path.as_str(), o.sym.as_str()))
+                    local
+                        .get(&(d.path.as_str(), o.sym.as_str()))
+                        .map(|x| vec![x.clone()])
                 } else {
-                    global.get(o.sym.as_str())
+                    global.get(o.sym.as_str()).cloned()
                 };
                 match to {
-                    Some(x) => SiteT::At(vec![x.clone()], 0),
+                    Some(x) if x.len() > 1 => SiteT::Na(
+                        "the grader's symbol has several definitions (same-named items in sibling fns): no one target".into(),
+                    ),
+                    Some(x) => SiteT::At(x, 0),
                     None => SiteT::At(vec![], 1),
                 }
             }
@@ -360,11 +369,32 @@ fn grade_rs(
         .cloned()
         .collect();
     let ws = workspaces(root, &manifests);
+    let t0 = Instant::now();
+    // rust-analyzer runs cargo, which writes a Cargo.lock into every lockless workspace: it indexes a copy of the commit's files
+    // under each package folder (a path dependency is a package too), never the checkout
+    let copy = tmp.join("rs-copy");
+    let dirs: Vec<&str> = manifests
+        .iter()
+        .map(|m| &m[..m.len() - "Cargo.toml".len()])
+        .collect();
+    for f in tree
+        .iter()
+        .filter(|f| dirs.iter().any(|d| f.starts_with(d)))
+    {
+        let to = copy.join(f);
+        let made = to.parent().map_or(Ok(()), std::fs::create_dir_all);
+        if let Err(e) = made.and_then(|_| std::fs::copy(Path::new(root).join(f), &to)) {
+            return Truth {
+                na: Some(format!("copying {f} for rust-analyzer: {e}")),
+                ..Default::default()
+            };
+        }
+    }
+    let copied_ms = ms(t0);
     let abs: Vec<String> = ws
         .iter()
-        .map(|w| Path::new(root).join(w).to_string_lossy().replace('\\', "/"))
+        .map(|w| copy.join(w).to_string_lossy().replace('\\', "/"))
         .collect();
-    let t0 = Instant::now();
     let mut cmd = Command::new("node");
     cmd.arg(g.join("scip-rust.mjs"));
     let fail = |why: String| Truth {
@@ -412,6 +442,7 @@ fn grade_rs(
         )),
     );
     t.cost.insert("wall_ms".into(), json!(ms(t0)));
+    t.cost.insert("copy_ms".into(), json!(copied_ms));
     t.cost.insert("workspaces".into(), json!(runs));
     if !nas.is_empty() {
         t.cost.insert("failed".into(), json!(nas));

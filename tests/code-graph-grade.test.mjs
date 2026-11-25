@@ -117,3 +117,19 @@ for (const [fx, langs] of Object.entries(LANGS)) {
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), stored);
   });
 }
+
+// S6: rust-analyzer gives two same-named fns nested in sibling fns ONE symbol (the grader then names the first for every call of
+// either): such a site is n/a with the reason, not a wrong edge. A closure shadowing an import is no import edge. cargo, run by
+// rust-analyzer, writes a Cargo.lock into a lockless workspace: grade calls indexes a copy, the checkout stays as committed.
+test('grade calls on Rust: a symbol of several definitions is n/a, a shadowed import no wrong edge, no Cargo.lock written into the repo', () => {
+  const lib = ['mod shape {', '    pub fn surface() -> f64 {', '        1.0', '    }', '}', 'use shape::surface;', '',
+    'pub fn bed(a: f64) -> f64 {', '    let surface = |q: f64| q * 2.0;', '    surface(a)', '}', '', 'pub fn top() -> f64 {', '    surface()', '}', '',
+    'pub fn first() -> u32 {', '    fn calls(n: u32) -> u32 {', '        if n == 0 { 0 } else { calls(n - 1) }', '    }', '    calls(3)', '}', '',
+    'pub fn second() -> u32 {', '    fn calls(n: u32) -> u32 {', '        if n == 0 { 1 } else { calls(n - 1) }', '    }', '    calls(2)', '}', ''].join('\n');
+  const r = repoOf(null, { 'Cargo.toml': '[package]\nname = "shadow"\nversion = "0.1.0"\nedition = "2021"\n', 'src/lib.rs': lib }), g = gradeAt('calls', r), C = g.langs.rust.calls.classes;
+  for (const [how, c] of Object.entries(C)) if (c.graded !== undefined) assert.equal(c.fp, 0, `rust/call/${how}: ${JSON.stringify(g.langs.rust.calls.disagreements)}`);
+  assert.equal(C.local.na["the grader's symbol has several definitions (same-named items in sibling fns): no one target"], 4);
+  assert.equal(C.import.tp, 1);
+  assert.equal(fs.existsSync(path.join(r.repo, 'Cargo.lock')), false, 'no Cargo.lock in the checkout');
+  assert.equal(git(r.repo, 'status', '--porcelain'), '');
+});
