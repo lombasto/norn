@@ -1,16 +1,15 @@
 // `norn code history`'s index (SPEC dash-owner-1123 s.7): per tracked text file of a repo folder its size, age, change and importance.
 // Deterministic: git and the tree at HEAD, no model. Sizes are HEAD's blobs (one `git cat-file --batch`); the 26-week growth is rebuilt
 // backwards from them through the first-parent numstat (each newer commit undone: lines -= added - deleted), so a week's size is the
-// file at the last first-parent commit on or before that week's end - what `git show <rev>:<file>` counts. fan_in = the JS files that
-// import it (cisuite importsOf; other languages n/a). importance = the Borda count over fan_in and churn_90d (rank aggregation needs no
-// invented weights), scaled 0-100. rel_churn = churn / lines (Nagappan & Ball 2005, relative code churn).
-// Paths are relative to the folder (a monorepo project indexes its own folder: ls-tree lists it, log --relative keeps to it).
+// file at the last first-parent commit on or before that week's end - what `git show <rev>:<file>` counts. fan_in = the files that
+// import it, from the code graph (codegraph.mjs fans: JS / TS, Python, Rust; any other file n/a with fan_in_why). importance = the
+// Borda count over fan_in and churn_90d (rank aggregation needs no invented weights), scaled 0-100. rel_churn = churn / lines (Nagappan & Ball 2005, relative code churn).
+// Paths are relative to the folder (a monorepo project indexes its own folder: ls-tree lists it, log --relative keeps to it); the graph's
+// are relative to the repo root, so a file here is the graph's prefix + file. The graph's exclusion rule (vendored, generated) drops files.
 import { execFileSync } from 'node:child_process';
-import { importsOf } from './cisuite.mjs';
+import { fans, excluded } from './codegraph.mjs';
 
 const DAY = 86400e3, LAST = 5;
-const SKIP = /(^|\/)(vendor|node_modules)\//;
-const JS = /\.(mjs|cjs|js|jsx)$/i;
 const LANG = { mjs: 'javascript', cjs: 'javascript', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', json: 'json', md: 'markdown',
   rs: 'rust', go: 'go', cs: 'csharp', java: 'java', rb: 'ruby', sh: 'shell', ps1: 'powershell', yml: 'yaml', yaml: 'yaml', toml: 'toml', c: 'c', h: 'c', cpp: 'cpp',
   html: 'html', css: 'css', txt: 'text' };
@@ -21,10 +20,10 @@ export const lineCount = buf => { let n = 0; for (let i = buf.indexOf(10); i !==
 // git's own test: a NUL in the first 8000 bytes is a binary
 const isBinary = buf => buf.subarray(0, 8000).includes(0);
 
-/** HEAD's blobs under dir -> [{ file, buf }], text files only, vendor/ and node_modules/ dropped */
-function headBlobs(dir) {
+/** HEAD's blobs under dir -> [{ file, buf }], text files only, the ones skip(file) names dropped */
+function headBlobs(dir, skip) {
   const ents = git(dir, ['ls-tree', '-r', '-z', 'HEAD']).toString('utf8').split('\0').filter(Boolean).map(l => { const t = l.indexOf('\t'), [, type, sha] = l.slice(0, t).split(' '); return { type, sha, file: l.slice(t + 1) }; })
-    .filter(e => e.type === 'blob' && !SKIP.test(e.file));
+    .filter(e => e.type === 'blob' && !skip(e.file));
   if (!ents.length) return [];
   const out = git(dir, ['cat-file', '--batch'], ents.map(e => e.sha).join('\n') + '\n'), blobs = [];
   let at = 0;
@@ -49,9 +48,12 @@ export function borda(vals) {
   return vals.map(v => { if (!m.has(v)) { const a = lo(v), b = hi(v); m.set(v, a + (b - a - 1) / 2); } return m.get(v); });
 }
 
-/** dir: a git work tree folder; o.weeks (26), o.now (ms) -> { at, sha, weeks: [week-end days], added_30d, files: [...] } */
-export function codeIndex(dir, { weeks = 26, now = Date.now() } = {}) {
-  const sha = git(dir, ['rev-parse', '--short=12', 'HEAD']).toString().trim(), blobs = headBlobs(dir), commits = history(dir);
+/** dir: a git work tree folder; o.graph: codegraph.mjs graphAt of dir at HEAD, or its { ok: false, why } (none: every fan_in
+ *  n/a, "no code graph asked for"); o.weeks (26), o.now (ms)
+ *  -> { at, sha, weeks: [week-end days], added_30d, files: [...] } */
+export function codeIndex(dir, { graph = { ok: false, why: 'no code graph asked for' }, weeks = 26, now = Date.now() } = {}) {
+  const gp = f => (graph.prefix || '') + f, skip = f => Boolean(graph.ok && excluded(graph, gp(f)));
+  const sha = git(dir, ['rev-parse', '--short=12', 'HEAD']).toString().trim(), blobs = headBlobs(dir, skip), commits = history(dir);
   const F = new Map(blobs.map(b => [b.file, { file: b.file, lines: lineCount(b.buf), bytes: b.buf.length, lang: langOf(b.file), born: null, commits_90d: 0, churn_90d: 0, last: [] }]));
   const since90 = now - 90 * DAY, since30 = now - 30 * DAY;
   let added30 = 0;
@@ -69,10 +71,10 @@ export function codeIndex(dir, { weeks = 26, now = Date.now() } = {}) {
     for (; j < commits.length && commits[j].t > ends[w]; j++) for (const [f, a, d] of commits[j].stat) if (size.has(f)) size.set(f, size.get(f) - a + d);
     for (const [f, n] of size) grow.get(f)[w] = Math.max(0, n);
   }
-  const fan = new Map();
-  for (const b of blobs) if (JS.test(b.file)) { fan.set(b.file, fan.get(b.file) ?? 0); for (const t of importsOf(b.file, b.buf.toString('utf8'))) if (t !== b.file && JS.test(t) && F.has(t)) fan.set(t, (fan.get(t) ?? 0) + 1); }
+  // fan_in: the graph's for every file it knows; another file is no graph language; no graph at all: its reason, never a guess
+  const fm = graph.ok ? fans(graph) : null, fan = new Map([...F.keys()].map(f => [f, fm ? (fm.has(gp(f)) ? { n: fm.get(gp(f)).in } : { why: 'not a graph language' }) : { why: graph.why }]));
   const files = [...F.values()].sort((a, b) => (a.file < b.file ? -1 : 1)), n = files.length;
-  const pf = borda(files.map(x => fan.get(x.file) ?? 0)), pc = borda(files.map(x => x.churn_90d));
+  const pf = borda(files.map(x => fan.get(x.file).n ?? 0)), pc = borda(files.map(x => x.churn_90d));
   return { at: new Date(now).toISOString(), sha, weeks: ends.map(t => new Date(t).toISOString().slice(0, 10)), added_30d: added30, files: files.map((x, i) => ({ ...x, rel_churn: x.lines ? Math.round(1000 * x.churn_90d / x.lines) / 1000 : null,
-    growth: grow.get(x.file), fan_in: fan.has(x.file) ? fan.get(x.file) : null, importance: n > 1 ? Math.round(100 * (pf[i] + pc[i]) / (2 * (n - 1))) : 100 })) };
+    growth: grow.get(x.file), fan_in: fan.get(x.file).n ?? null, ...(fan.get(x.file).why ? { fan_in_why: fan.get(x.file).why } : {}), importance: n > 1 ? Math.round(100 * (pf[i] + pc[i]) / (2 * (n - 1))) : 100 })) };
 }
