@@ -104,10 +104,10 @@ test('a batch merge is expanded into its member branches; a merge of main into t
 test('--trace: the files a trace names first, then the signals\' partners of those, then words; reasons in words', () => {
   // the stored signals and the trace are this test's own writes: a state dir of its own, the shared repo only read
   const { repo, L, head } = world(), t = mkTmp('meta-sus-trace-'), state = path.join(t, 'state', 'kestrel'), tr = path.join(t, 'trace.txt');
-  fs.writeFileSync(tr, 'TypeError: cannot read properties of undefined\n    at lex (C:\\work\\kestrel\\src\\lexer.mjs:12:3)\n    at file:///home/u/kestrel/src/missing.mjs:4:1\n');
+  fs.writeFileSync(tr, 'TypeError: cannot read properties of undefined\n    at lex (C:\\work\\kestrel\\src\\lexer.mjs:12:3)\n    at file:///srv/kestrel/src/missing.mjs:4:1\n');
   storeSignals(state, head, { 'src/lexer.mjs': sig([{ file: 'src/tokens.mjs', shared: 3, share: 0.75, landings: 4 }]) });
   const r = suspects({ dir: repo, state, trace: tr, words: 'sky', now: NOW });
-  assert.deepEqual(r.trace.files, ['src/lexer.mjs']); assert.deepEqual(r.trace.unmatched, ['/home/u/kestrel/src/missing.mjs']);
+  assert.deepEqual(r.trace.files, ['src/lexer.mjs']); assert.deepEqual(r.trace.unmatched, ['/srv/kestrel/src/missing.mjs']);
   assert.deepEqual(r.suspects.map(s => s.landing), [L.parser, L.tokens, L.sky]);
   assert.deepEqual(r.suspects.map(s => s.score), [{ trace: 1, partners: 0, words: 0 }, { trace: 0, partners: 1, words: 0 }, { trace: 0, partners: 0, words: 1 }]);
   assert.match(r.suspects[0].reasons[0], /changed src\/lexer\.mjs, named in the trace/);
