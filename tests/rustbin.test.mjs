@@ -4,8 +4,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { storeOf, sourceHash, binOf, partsOf, partProblem, ensurePart, ensurePartAsync, ensureParts, targetOf, lockOf, graphReads, BUILD_MS, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
+import { RUST_PARTS, storeOf, sourceHash, binOf, partsOf, partProblem, ensurePart, ensurePartAsync, ensureParts, targetOf, lockOf, graphReads, BUILD_MS, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
@@ -208,4 +209,35 @@ test('a dead holder does not block: a lock older than any build can hold it is b
   dead();
   assert.deepEqual(await ensurePartAsync('hook', { src: B, store, cargo: async a => sharedCargo()(a) }), { ok: true, built: true });
   assert.equal(holds(A), '// a\n'); assert.equal(holds(B), '// b\n'); assert.equal(fs.existsSync(lock), false);
+});
+
+// NORN-DONE-FRESH S3: REAL cargo, because a fake models a layout and cargo's changes (1.100 keeps a package's fingerprint under
+// <target>/release/build/<package>/<hash>/, one dir for every source path, and called another source's build fresh). A tiny crate with
+// no dependencies (its `fn main` prints one letter), in two source dirs that differ in that letter, registered as a part for this test
+// only; after each step the stored file is RUN and must answer its own source's letter. A short temp folder (docs/code-graph.md)
+test('real cargo: two sources of one part into one store - A B A; A B, A\'s entry deleted, A; A and B at once - each stored file answers its own source', async t => {
+  assert.equal(spawnSync('cargo', ['--version'], { windowsHide: true }).error?.code, undefined, 'cargo is not on PATH: install Rust (https://rustup.rs)');
+  RUST_PARTS.tiny = { dir: 'tiny-rs', bin: 'norn-tiny', why: 'a test crate', cc: false };
+  t.after(() => { delete RUST_PARTS.tiny; });
+  const d = mkTmp('rbc-'), src = n => path.join(d, n, 'engine', 'tiny-rs');
+  for (const n of ['a', 'b']) {
+    fs.mkdirSync(path.join(src(n), 'src'), { recursive: true });
+    fs.writeFileSync(path.join(src(n), 'Cargo.toml'), '[package]\nname = "norn-tiny"\nversion = "0.1.0"\nedition = "2021"\n');
+    fs.writeFileSync(path.join(src(n), 'Cargo.lock'), 'version = 4\n\n[[package]]\nname = "norn-tiny"\nversion = "0.1.0"\n');
+    fs.writeFileSync(path.join(src(n), 'src', 'main.rs'), `fn main() { print!("${n}"); }\n`);
+  }
+  const answers = (n, store) => spawnSync(binOf('tiny', { src: src(n), store }), [], { encoding: 'utf8', windowsHide: true }).stdout;
+  const err = s => process.stderr.write(s + '\n'), s1 = path.join(d, 's');
+  for (const [n, built] of [['a', true], ['b', true], ['a', false]]) {
+    const r = ensurePart('tiny', { src: src(n), store: s1, err });
+    assert.deepEqual(r, { ok: true, built }, r.why);
+    assert.equal(answers(n, s1), n, `after ${n}: its stored file answers its own source`);
+  }
+  fs.rmSync(binOf('tiny', { src: src('a'), store: s1 }));
+  assert.deepEqual(ensurePart('tiny', { src: src('a'), store: s1, err }), { ok: true, built: true });
+  assert.equal(answers('a', s1), 'a', 'A rebuilt after B: A\'s, never B\'s called fresh');
+  assert.equal(answers('b', s1), 'b');
+  const s2 = path.join(d, 't'), both = await Promise.all(['a', 'b'].map(n => ensurePartAsync('tiny', { src: src(n), store: s2, err })));
+  assert.deepEqual(both, [{ ok: true, built: true }, { ok: true, built: true }], both.map(r => r.why).join('; '));
+  assert.equal(answers('a', s2), 'a'); assert.equal(answers('b', s2), 'b');
 });
