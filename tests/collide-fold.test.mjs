@@ -14,6 +14,8 @@ import { record, loadState, laneId } from '../engine/lib/records.mjs';
 import { casesOf, actionsOf, foldLines } from '../engine/lib/intents.mjs';
 import { foldedSources, foldRefusal, pairKey } from '../engine/lib/collide.mjs';
 import { foldPass } from '../engine/lib/lifecycle.mjs';
+import { startRun } from '../engine/lib/runs.mjs';
+import { settled } from './helpers/settled.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_TERMINAL_PROMPT: '0' };
@@ -168,4 +170,24 @@ test('fold behind a live run: pending, the run is not stopped; --pause sends the
   record(f.state, { kind: 'lane', ev: 'archive', id: laneId('web-nav', f.state), by: 'checkin', data: { why: 'old' } });
   const three = f.case('item', { key: 'item:y' });
   refused(f.norn(['fold', three, '--into', 'web-nav', '--as', 'controller', '--why', 'x']), /lane web-nav is archived/);
+});
+
+test('a run started on the kept lane after a fold has the fold line in its prompt; once it ended DONE the next one does not', async () => {
+  const f = fixture(), nav = f.nav(); f.runs();
+  const col = f.case('item');
+  ok(f.norn(['fold', col, '--into', 'web-nav', '--as', 'checkin', '--why', 'one lane']));
+  for (const q of f.onLane('web-nav', 'queued')) record(f.state, { kind: 'run', ev: 'withdraw', id: q.id, by: 'owner', data: { why: 'not this test' } });   // the moved run would go first
+  const opts = o => ({ state: f.state, locksDir: path.join(f.t, 'state', 'locks'), executor: 'fake', lane: 'web-nav', worktree: nav.wt, notes: nav.notes, hbMs: 150, staleMs: 60000,
+    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 4 }, tick: null, brief: f.brief('nav2', '# web-nav NAV2\nScope: web/nav.mjs\nTests: t\nDone: d\nmode: done\n'), ...o });
+  const spec = id => JSON.parse(fs.readFileSync(path.join(f.state, 'runs', `${id}.spec.json`), 'utf8'));
+  const r = startRun(opts({ stage: 'NAV2' }));
+  assert.ok(r.run && !r.queued, 'started');
+  assert.match(spec(r.run).promptText, new RegExp(`\\n\\nLane web-runs was folded into this lane \\(${col}\\)\\. Read FOLDED-web-runs\\.md first\\.`));
+  const t0 = performance.now();
+  while (!settled(f.items()[r.run])) { if (performance.now() - t0 > 30000) throw new Error('timeout waiting'); await new Promise(res => setImmediate(res)); }
+  assert.deepEqual(foldLines(f.state, 'web-nav'), [], 'a run on the kept lane ended DONE: the line ends');
+  const r2 = startRun(opts({ stage: 'NAV3' }));
+  assert.doesNotMatch(spec(r2.run).promptText ?? '', /FOLDED-web-runs/);
+  const t1 = performance.now();
+  while (!settled(f.items()[r2.run])) { if (performance.now() - t1 > 30000) throw new Error('timeout waiting'); await new Promise(res => setImmediate(res)); }
 });
