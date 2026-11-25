@@ -111,3 +111,17 @@ test('pickRun: light = the changed tests plus ONE direct test per changed module
   assert.deepEqual([...ch.run].sort(), ['tests/also-gamma.test.mjs', 'tests/uses-gamma.test.mjs']);
   assert.deepEqual(ch.none, []);
 });
+
+// task-NORN-TEST-READS (DEC-a-648): a test's `// reads:` header picks it when a file it declares changed, in both modes
+test('pickRun: a test whose // reads: header matches a changed file runs (light: besides the per pick; changed: a close pick); a header-only file is not in none', () => {
+  const src = {
+    'tests/alpha.test.mjs': "import { a } from '../engine/lib/alpha.mjs';",
+    'tests/ci.test.mjs': "// the workflows\n// reads: .github/workflows/*.yml\nimport test from 'node:test';",
+    'tests/lint.test.mjs': "// reads: **\nimport test from 'node:test';",
+    'tests/late.test.mjs': "import test from 'node:test';\n// reads: .github/workflows/*.yml",
+  };
+  const tests = Object.keys(src), read = f => src[f] ?? null;
+  assert.deepEqual(pickRun({ mode: 'light', changed: ['.github/workflows/pr.yml'], tests, read }), { run: ['tests/ci.test.mjs', 'tests/lint.test.mjs'], none: [], left: [] }, 'not the test whose reads line is past its first code line');
+  assert.deepEqual(pickRun({ mode: 'light', changed: ['engine/lib/alpha.mjs'], tests, read }).run, ['tests/alpha.test.mjs', 'tests/lint.test.mjs'], 'the per pick and every header that matches');
+  assert.deepEqual(pickRun({ mode: 'changed', changed: ['.github/workflows/pr.yml'], tests, read }), { run: ['tests/ci.test.mjs', 'tests/lint.test.mjs'], none: [], left: [] });
+});
