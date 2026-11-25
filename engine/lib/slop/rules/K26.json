@@ -1,0 +1,22 @@
+{
+  "id": "K26",
+  "level": "WARN",
+  "kind": "register",
+  "title": "a new rule sentence with no register row: say how it is checked (a row in register.json), or mark it unchecked",
+  "explain": {
+    "what": "A rule file (CLAUDE.md, AGENTS.md or a source of the project's rule register) gained a sentence that no row of the register covers.",
+    "why": "A rule nobody checks drifts: it is read, then forgotten. A row names its check, or says out loud that nothing checks it (SPEC 4.5).",
+    "fix": "Add a row to <project folder>/rules/slop/register.json: the quoted sentence, its class (mechanical, proxy, voice, unchecked), its home and checks. A sentence that states no rule goes in the register's prose list."
+  },
+  "files": ["**/CLAUDE.md", "**/AGENTS.md"],
+  "fixture": {
+    "hit": {
+      "base": {"CLAUDE.md": "# Rules\n\n- Never use the shared list.\n"},
+      "head": {"CLAUDE.md": "# Rules\n\n- Never use the shared list.\n- Always say why a step is skipped.\n"}
+    },
+    "miss": {
+      "base": {"CLAUDE.md": "# Rules\n\n- Never use the shared list.\n", "README.md": "Read me first.\n"},
+      "head": {"CLAUDE.md": "# Rules and notes\n\n- Never use the shared list.\n\n```\nnorn tests run a b c\n```\n", "README.md": "Read me first. A new sentence lives here.\n"}
+    }
+  }
+}

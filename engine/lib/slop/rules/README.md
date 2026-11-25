@@ -14,6 +14,7 @@ fixed or waived (`norn rec add waiver`).
 | `engine/lib/slop/rules/<ID>.json` | built-in rules (ids `K*`, `T*`, `R*`; `M*` the second voice's questions) |
 | `<project folder>/rules/slop/P-<name>.json` | a project's own rule; its id is its file name |
 | `<project folder>/rules/slop/overrides.json` | a sparse patch of built-in or project rules, keyed by id |
+| `<project folder>/rules/slop/register.json` | the project's rule register (below): one row per rule sentence of its rule files |
 
 `overrides.json` may set `enabled`, `level`, `shadow` and `params` (only the parameters listed for that kind in
 `KIND_PARAMS`, `engine/lib/slop/check.mjs`). It never replaces a rule's text: patterns, selectors, lint rules and fixtures stay
@@ -35,6 +36,7 @@ those of the rule file.
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
 | `ast` | `selectors`: `{ selector, message, text? }`, ESLint `no-restricted-syntax` through the pinned ESLint; `reason` | yes |
 | `model` | `question` (plain words), `files`, `on` (`code` / `tests`: which branch it reads), `hits` (rule ids whose findings it is sent), `context` (quality files) | no |
+| `register` | `files` (the rule files beside the register's repo sources): K26, a new sentence no register row covers | no |
 | `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
 
 A rule file never loads code: the engine writes the ESLint config from the rule's data and the merge base's `eslint.config.mjs`
@@ -79,6 +81,31 @@ rule (it is not in the summary's `ran:` list); every other check runs it. The fl
   that ran and could not; an empty range says `nothing to check`; `a...b` is a usage error (exit 2).
 - `shadow: true` runs the rule and records its findings; they never hold a merge.
 - `value` / `base_value` carry a measured number at head and at base (a finding of `dup` carries the count of copies).
+
+## The rule register
+
+`register.json` (SPEC 4.5, `engine/lib/slop/register.mjs`) writes down how each rule sentence of a project's rule files is checked:
+
+```json
+{ "sources": { "repo": ["CLAUDE.md"], "project": ["rules/team-rules.txt"] },
+  "prose": { "CLAUDE.md": ["This file is read by every worker."] },
+  "rows": [{ "id": "D-no-shims", "source": "CLAUDE.md", "text": "Never keep old or deprecated behaviour alive through ...",
+             "class": "mechanical", "home": "slop", "checks": ["K11A", "K16", "K11"], "how": "the shapes by K11A and K16, the words by K11" }] }
+```
+
+- `sources`: the rule files, `repo` from the repo's top (read at main's tip), `project` from the project folder. A sentence is a
+  sentence of prose or of a list item; headings, code fences, HTML comments and tables are no rule text.
+- A row's `text` quotes its source: it covers every sentence it holds, and a quote ending in `...` covers the sentence it starts.
+  `prose` quotes the sentences that state no rule.
+- `class`: `mechanical` (a deterministic check says yes or no), `proxy` (a signal that often goes with a breach; it never blocks
+  alone), `voice` (only a reader can tell), `unchecked` (nothing checks it: said out loud). `home`: `slop`, `hook` (what an agent
+  does in a run), `tests`, `ci`. `checks`: the rule ids whose findings are its breaches. A row without a class does not load.
+- The daily report's "Rule register" section: `rules with no check: n` (rows of class `unchecked` + sentences with no row, each
+  listed), the rotten rows (a quote no longer in its source), the rows with no home, the breaches per row in 7 days (the new
+  findings of the week's stored checks, one per fingerprint) and the deferrals that came due: a K22 deferral in the tree whose
+  cited record is done or dropped, each with its brief "do the deferred removal". The digest line ends `rules with no check: n`.
+- K26 (WARN) on a diff: a new sentence in a `CLAUDE.md`, an `AGENTS.md` or a repo source that no row covers. Say how it is checked
+  (a row), or mark it unchecked. With no register every new sentence is one; the register's rows enter the rule-set hash.
 
 ## Fixed by code (`fix`)
 

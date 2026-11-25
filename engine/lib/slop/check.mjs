@@ -14,6 +14,7 @@ import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
 import { packOf, LINTERS } from './lang/index.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
+import { registerKind, loadRegister } from './register.mjs';
 import { importGraph, cycles } from './graph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
@@ -21,13 +22,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RULES_DIR = path.join(HERE, 'rules');
 export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // RM-45 (audit REPORT sec. 6): the parameters a project may patch per kind (overrides.json), and the kinds a project rule
-// (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, command, dup, exports, refs) are code over the whole tree, and
+// (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, command, dup, exports, refs, register) are code over the whole tree, and
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
   'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
   ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
-  model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'],
+  model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'], register: ['files'],
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'lint'];
 
@@ -82,7 +83,9 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
       of.set(id, { ...r, ...p.params, ...(p.params?.levels ? { levels: { ...r.levels, ...p.params.levels } } : {}), ...(p.level ? { level: p.level } : {}), ...('shadow' in p ? { shadow: !!p.shadow } : {}), ...('enabled' in p ? { enabled: !!p.enabled } : {}) });
     }
   }
-  return [...of.values()].filter(r => r.enabled !== false);
+  // S7: K26 reads the project's rule register (its rows enter the rule-set hash: an edited register makes a stored check stale)
+  const reg = loadRegister(projectDir);
+  return [...of.values()].filter(r => r.enabled !== false).map(r => (r.kind === 'register' && reg ? { ...r, register: reg } : r));
 }
 
 /** the rule-set hash every stored check carries (audit 6): an edited rule (its text or its `rev`) makes "checked clean at head X" stale */
@@ -234,6 +237,7 @@ const DETECT = {
   exports: exportsKind,
   refs,
   model,
+  register: registerKind,
   // K10 (roots + forbid: layers and cycles) and K20 (bare / manifests / vendor: the dependency lock), each part when its params are set
   imports: (rule, ctx) => {
     const touched = rule.roots && ctx.entries.some(e => rule.roots.some(r => (e.path || '').startsWith(r) || (e.old || '').startsWith(r)));
