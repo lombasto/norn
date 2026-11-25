@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { PARSE } from './tools.mjs';
 import { LINTERS, packOf, masked, commentsIn } from './lang/index.mjs';
 import { readSignals } from '../codesignals.mjs';
-import { graphAt, symbols, references } from '../codegraph.mjs';
+import { graphAt, symbols, defsByHash, references } from '../codegraph.mjs';
 import { CODE, classify, exportsOf, helpers, isJs, isReason, lineAt, lineText, norm, usesOf } from './scan.mjs';
 
 const SIDE_KEY = { head: 'path', base: 'old' };
@@ -118,7 +118,12 @@ const viaGraph = f => ['py', 'rs', 'ts'].includes(packOf(f)?.ID);
 const shadowOf = (rule, f) => ((rule.shadow_langs || []).includes(packOf(f)?.ID) ? { shadow: true } : {});
 const sure = r => { if (r.ok === false) throw new Error(`code graph: ${r.why}`); return r; };
 const atOf = (ctx, side) => (side === 'head' ? ctx.head : ctx.base);
-const defsOf = (ctx, side, file) => sure(symbols({ state: ctx.state || null, repo: ctx.repo, file, at: atOf(ctx, side) })).defs;
+/** file -> Def[] of the side for many files in ONE norn-code run (symbols({ files })); a file the graph cannot answer is the rule's error */
+function defsOf(ctx, side, files) {
+  if (!files.length) return new Map();
+  const rows = sure(symbols({ state: ctx.state || null, repo: ctx.repo, files, at: atOf(ctx, side) })).files;
+  return new Map(files.map(f => [f, sure(rows[f] || { ok: false, why: `no answer for ${f}` }).defs]));
+}
 /** the files of a list the side's graph holds as first-party code (a language, not excluded as vendored / generated) */
 function graphFiles(ctx, side, files) {
   if (!files.length) return [];
@@ -146,11 +151,14 @@ export function dup(rule, ctx) {
   const helper = d => ['function', 'method'].includes(d.kind) && d.tokens >= (rule.min_tokens ?? 12) && d.end_line - d.line + 1 <= (rule.max_lines ?? 3);
   const graph = side => {
     const mine = sideFiles(rule, ctx, side, e => inRoots(e.path) && viaGraph(e.path)), known = graphFiles(ctx, side, mine.map(x => x.file));
-    const cands = mine.filter(x => known.includes(x.file)).flatMap(x => defsOf(ctx, side, x.file).filter(helper).map(d => ({ ...x, d })));
+    const defs = defsOf(ctx, side, known), cands = mine.filter(x => defs.has(x.file)).flatMap(x => defs.get(x.file).filter(helper).map(d => ({ ...x, d })));
     if (!cands.length) return [];
-    const groups = new Set(cands.map(c => group(c.file))), hashes = new Set(cands.map(c => c.d.hash)), bodies = new Map();
-    const pool = graphFiles(ctx, side, ctx.tree(side).filter(f => inRoots(f) && viaGraph(f) && ctx.inFiles(rule, f) && groups.has(group(f))));
-    for (const f of pool) for (const d of defsOf(ctx, side, f)) if (hashes.has(d.hash)) (bodies.get(d.hash) || bodies.set(d.hash, []).get(d.hash)).push({ file: f, name: d.name });
+    // the pool: every definition of the tree sharing a candidate's hash (ONE defsByHash run), kept when its file is a pool file of the
+    // candidates' groups; a capped answer could hide the copy, so it is the rule's error, not a guess
+    const groups = new Set(cands.map(c => group(c.file))), inPool = f => inRoots(f) && viaGraph(f) && ctx.inFiles(rule, f) && groups.has(group(f));
+    const r = sure(defsByHash({ state: ctx.state || null, repo: ctx.repo, hashes: [...new Set(cands.map(c => c.d.hash))], at: atOf(ctx, side) }));
+    if (r.truncated) throw new Error(`code graph: defsByHash cut ${r.truncated} definitions`);
+    const bodies = new Map(Object.entries(r.defs).map(([h, ds]) => [h, ds.filter(d => inPool(d.file)).map(d => ({ file: d.file, name: d.name }))]));
     return cands.flatMap(({ e, file, text, d }) => {
       const others = (bodies.get(d.hash) || []).filter(o => o.file !== file && group(o.file) === group(file));
       return others.length ? [{ file: e.path, line: d.line, value: others.length, snippet: `${d.name}: ${norm(lineText(text, d.line))}`, ...shadowOf(rule, e.path),
@@ -184,7 +192,8 @@ export function exportsKind(rule, ctx) {
   const inSearch = f => !rule.search || rule.search.some(s => f === s || f.startsWith(`${s}/`));
   const graph = (side, only = null) => {
     const mine = sideFiles(rule, ctx, side, e => rule.roots.some(r => e.path.startsWith(r)) && viaGraph(e.path)), known = graphFiles(ctx, side, mine.map(x => x.file));
-    return mine.filter(x => known.includes(x.file)).flatMap(({ e, file }) => defsOf(ctx, side, file)
+    const defs = defsOf(ctx, side, known);
+    return mine.filter(x => defs.has(x.file)).flatMap(({ e, file }) => defs.get(file)
       .filter(d => d.exported && TOP_KINDS.includes(d.kind) && !entry(e.path, d.name) && (!only || only.has(`${e.path}\0export ${d.name}`)))
       .flatMap(d => {
         const users = sure(references({ state: ctx.state || null, repo: ctx.repo, name: d.name, at: atOf(ctx, side) })).rows.map(x => x.file);
