@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { repoIndex, keyOf, runCached, cacheLog, caseLog, caseIds, freshPass } from '../engine/lib/testcache.mjs';
 import { readsOf, readsMatch } from '../engine/lib/cisuite.mjs';
@@ -131,4 +132,20 @@ test('a // reads: header puts the matched files in the key: changed, added or de
   fs.writeFileSync(wf('pr.yml'), 'on: [push, pull_request]\n');
   const r3 = await go('RUN-3');
   assert.deepEqual([r3.how, r3.ok, w.starts()], ['ran', true, 2], 'the yml changed: it runs, it is not reused');
+});
+// S2: in a git repo the files git lists are the set as listed - a vendored file this repo tracks (engine/dash/vendor/) is in a `**`
+// key (lint and layout read every tracked file); git's ignore rules decide the rest; only the top-level state/ is dropped either way.
+test('in a git repo a `**` reads key sees a vendor/ file git lists; a git-ignored file and the top-level state/ (ignored or not) change nothing', () => {
+  const w = world(), put = (rel, t) => { fs.mkdirSync(path.dirname(path.join(w.root, rel)), { recursive: true }); fs.writeFileSync(path.join(w.root, rel), t); };
+  execFileSync('git', ['init', '-q'], { cwd: w.root, stdio: 'ignore', windowsHide: true });
+  put('tests/all.test.mjs', "// reads: **\nimport test from 'node:test';\ntest('all', () => {});\n");
+  put('engine/dash/vendor/x.js', 'export const x = 1;\n'); put('ignored/y.txt', 'y\n'); put('state/wt/z.md', 'z\n');
+  const k = () => keyOf('tests/all.test.mjs', repoIndex(w.root)).key;
+  for (const ignore of ['ignored/\nstate/\n', 'ignored/\n']) {
+    put('.gitignore', ignore); const k0 = k();
+    put('engine/dash/vendor/x.js', `export const x = ${ignore.length};\n`); const k1 = k();
+    assert.notEqual(k1, k0, 'a file under vendor/ that git lists changed: a new key');
+    put('ignored/y.txt', ignore); assert.equal(k(), k1, 'a git-ignored file changes nothing');
+    put('state/wt/z.md', ignore); assert.equal(k(), k1, `a file under the top-level state/ changes nothing (state/ ${ignore.includes('state') ? '' : 'NOT '}ignored)`);
+  }
 });
