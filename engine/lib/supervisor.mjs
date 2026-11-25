@@ -44,6 +44,7 @@ import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
 import { cutoffOf } from './laneout.mjs';
 import { postRunAsks } from './runasks.mjs';
+import { ensureParts, partsOf, graphReads } from './rustbin.mjs';
 import { warnsOf } from './codewarn.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
@@ -149,6 +150,13 @@ if (spec.dod?.ready && spec.worktree && !spec.dod_since) {
   if (h.status === 0 && /^[0-9a-f]{40}$/.test(h.stdout.trim())) spec.dod_since = h.stdout.trim();
 }
 logLine(`start ${run} executor=${spec.executor} model=${spec.model ?? '-'} effort=${spec.effort ?? '-'} resumes=${spec.resumes || 0} brief=${spec.brief}`);
+// NORN-RUST-FRESH: the Rust parts this run reads are built when missing (rustbin.mjs; cargo off the event loop, the heartbeat beats on)
+// before the executor starts; one that cannot be had is the run's ONE reason, and the executor is not spawned
+let rustBlock = null;
+if (cmd) {
+  const r = await rustReady(rustParts({ hook: !!spec.mail_hook, code: graphRead(), worktree: true }));
+  if (!r.ok) { rustBlock = r.why; cmd = null; finish(null, null, `the run did not start: ${r.why}`); }
+}
 const fds = [];
 const open = (f, m) => { const fd = fs.openSync(f, m); fds.push(fd); return fd; };
 let child;
@@ -247,6 +255,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (limit) outcome = 'limit';
   if (nudging) { outcome = 'nudged'; limit = null; auth = null; }   // stopped by the nudge: whatever the killed tree exited with
   if (ctxForced) { outcome = 'handoff'; limit = null; auth = null; }   // ended at the hard max: a HANDOFF whatever the killed tree exited with
+  if (rustBlock) outcome = 'stopped';   // NORN-RUST-FRESH: never started, on a Rust part that cannot be had (data.why names it)
   // the result counts unless the outcome is the exit's (a forced hand-off's result is Norn's own: its HANDOFF.md feeds the resume)
   const fromResult = !!byResult && (!byExit || !!ctxForced);
   const outcomeSource = fromResult ? 'result' : byExit ? 'exit' : 'none';
@@ -254,6 +263,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
   if (outcome === 'stopped') data.why = byResult?.why;
+  if (rustBlock) Object.assign(data, { why: `the run did not start: ${rustBlock}`, rust: rustBlock });
   if (nudging) data.nudge = nudging.mail.id;
   if (ctxForced) data.ctx_forced = ctxForced;
   // RM-a-67: how many warn-on-edit lines norn-hook showed this run (its mark), and its A/B group
@@ -286,8 +296,17 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
       }
     } catch { /* no projects dir */ }
   }
-  // RM-44 D1: every lane run end that leaves commits is checked (stopped and hand-off too) - slop before the Done check
-  let slopOpen = slopEnd();
+  // RM-44 D1: every lane run end that leaves commits is checked (stopped and hand-off too) - slop before the Done check.
+  // NORN-RUST-FRESH: the norn-code the check's graph rules read is built first (the Done check builds the worktree's own before its
+  // tests: dod.mjs); one that cannot be had holds the branch "could not check" with that ONE reason, and the check does not run
+  let slopOpen = [];
+  if (!rustBlock && slopRuns()) {
+    const hb = setInterval(beat, spec.hbMs);
+    let r;
+    try { r = graphRead() ? await rustReady(rustParts({ code: true })) : { ok: true }; } finally { clearInterval(hb); }
+    if (r.ok) slopOpen = slopEnd();
+    else { try { const p = couldNotCheck(spec.worktree, r.why); if (p) hostWrite(state, { ...p, lane: spec.lane, run }); } catch (e) { logLine(`slop: the could-not-check hold was not stored: ${e.message.split('\n')[0]}`); } }
+  }
   if (slopFix) data.autofix = { from: slopFix.from, to: slopFix.to, subject: slopFix.subject };
   // WORK-SIZING S1: the session's size on its end record, so the run stays judged after its transcript is gone (sizing.mjs)
   if (data.transcript && cmd?.parse === 'claude') {
@@ -480,8 +499,9 @@ function autoResume(handoff) {
 // META-SLOP-A (REVIEW-FABLE 3) + RM-44 D1: the run-end check. Every lane run end whose branch has commits past main is checked on its
 // diff, whatever the outcome (an unchecked end read as clean and let PR #11's cycle through); the check is stored (checks.jsonl) and
 // its open BLOCK findings (no waiver) hold the branch's merge. -> the open findings ([] = none, or not checked)
+function slopRuns() { return !(spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()); }
 function slopEnd() {
-  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
+  if (!slopRuns()) return [];
   // RM-43: the model rules read once here, on the voice route the launch picked (policy.slop.voice), with the brief's lines
   let brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch (e) { logLine(`slop: brief unreadable (${e.code}): the model rules read without it`); }
@@ -571,6 +591,27 @@ function critiqueEnd() {
   logLine(`critique: ${`${r.stdout || ''}${r.stderr || ''}`.trim().split(/\r?\n/)[0] || `exit ${r.status ?? r.error?.message}`}`);
 }
 
+// NORN-RUST-FRESH: the parts a run reads - norn-hook when its executor runs the hooks, norn-code when the end check's rules read the
+// code graph, and every part of the lane worktree's own engine (a checkout of Norn: its tests import that engine; a work run only)
+function rustParts({ hook = false, code = false, worktree = false }) {
+  const work = worktree && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly;
+  return partsOf({ parts: [...(hook ? ['hook'] : []), ...(code ? ['code'] : [])], worktree: work ? spec.worktree : null });
+}
+// the end check reads the code graph when it runs and its rules read it (rustbin graphReads: the one condition, `norn done`'s too)
+function graphRead() {
+  if (!slopRuns()) return false;
+  try { return graphReads(projectSlop({ projectDir: spec.policy?.slop?.project_dir }).rules, spec.worktree); }
+  catch (e) { logLine(`rust: the slop rules did not load (${e.message.split('\n')[0]}): the check names it`); return false; }
+}
+/** ensureParts with the run log: what was built, cargo's own error output, the ONE reason -> its result (a throw is that reason too) */
+async function rustReady(list) {
+  let r;
+  try { r = await ensureParts(list, { err: s => logLine(`cargo:\n${s.split(/\r?\n/).slice(-30).join('\n')}`) }); }
+  catch (e) { r = { ok: false, built: [], why: `the Rust parts could not be checked: ${e.message.split('\n')[0]}` }; }
+  if (r.built.length) logLine(`rust: built ${r.built.join(', ')}`);
+  if (!r.ok) logLine(`rust: ${r.why}`);
+  return r;
+}
 // META-DOD 1: the Done check applies to a lane work run whose brief passed the Ready gate (spec.dod.ready, norn run)
 function dodOn() {
   return !!spec.dod?.ready && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly && !killedByMeta();

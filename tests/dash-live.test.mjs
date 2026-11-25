@@ -13,6 +13,9 @@ import { which } from '../engine/lib/paths.mjs';
 import { dashFile, readDash, dashRows, isDashCmd } from '../engine/lib/dashlive.mjs';
 import { renderMergeBrief, renderBatchBrief } from '../engine/lib/mergebrief.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
+
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
 
 test.after(cleanTmp);
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');

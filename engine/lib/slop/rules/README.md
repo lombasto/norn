@@ -30,7 +30,7 @@ those of the rule file.
 |---|---|---|
 | `pattern` | `patterns` (regexes: one list for every language, or lists by pack id `js` / `ts` / `py` / `rs`, a file whose pack has none is not read), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked by the file's pack lexer; a file with no pack, a doc or data file, is all prose), `unless`, `cite`, `shadow_langs` (packs whose findings are shadow) | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
-| `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
+| `imports` | `roots` + `forbid` (layers, cycles: the edges of the code graph's reader, [docs/code-graph.md](../../../../docs/code-graph.md), every language it has); `bare`, `manifests`, `vendor` (the dependency lock); `shadow_langs` (packs whose layer / cycle findings are shadow) | yes |
 | `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`; or `scan`: a pinned scanner Norn runs, below), `quote` (`false`: a finding never quotes its line), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `select` (ruff only: rules Norn adds to the project's own, as `--extend-select`; LP selects ERA001, K12's Python route), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
@@ -39,6 +39,15 @@ those of the rule file.
 | `register` | `files` (the rule files beside the register's repo sources): K26, a new sentence no register row covers | no |
 | `companion` | `min_shared`, `min_share` (the rule's threshold, at or over the signals' own), `partners_exclude` (lock and generated files), `files`, `exclude`: a changed file whose usual partner in the code signals is not in the branch (K27) | no |
 | `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
+
+`dup` (K9) and `exports` (K4) read JavaScript with their own scan and TypeScript, Python and Rust through the code graph's reader
+(`symbols()` / `references()`, [docs/code-graph.md](../../../../docs/code-graph.md) "Symbols"), never a second parser; no graph is "could not run".
+- `exports`: a top-level definition the graph marks `exported` (function, class, struct, enum, trait, const) whose name no identifier
+  in `search` names; a use in its own file counts. `shadow_langs` (packs whose findings are shadow).
+- `dup`: a function or method of at most `max_lines` lines (3) and `min_tokens` leaf tokens (12) whose normalised body hash a
+  definition of another file of its group has (`min_chars` stays JavaScript's). `shadow_langs` as above. The pool (one `defsByHash()`
+  of the candidates' hashes, kept to the group's files; a capped answer makes the rule fail, not guess) is read only when the diff
+  has a candidate, and the base only when the head has a finding.
 
 K27 (`companion`, WARN, `shadow`, `machine`) reads the project's code signals through their one reader (`readSignals(state)`,
 [docs/code-signals.md](../../../../docs/code-signals.md)): for each file the branch changes, each partner with `shared >= min_shared`
@@ -279,7 +288,27 @@ may have an effect). A file the worktree changed since HEAD is not edited.
 ## Proving a rule
 
 Each rule's fixtures run in `tests/slop.test.mjs` (tool rules from their recorded output); `norn slop fixtures` runs the real tools on
-them. Before a rule blocks, replay it over recent merged branches: a rule that fires on many of them is noise, not a gate.
+them. Before a rule or a language of it blocks, it meets the false-positive budget on a replay of the last 50 merges of main.
+
+The budget is `PROVE` in `check.mjs`, the one place it lives:
+
+| level | merges of the window with a finding | findings rated real |
+|---|---|---|
+| BLOCK | at most 2 % (1 of 50) | at least 90 % |
+| WARN | at most 10 % (5 of 50) | - |
+
+More than that stays shadow, or the rule's data is fixed.
+
+- `norn slop replay <R> --as <R> --last 50 --budget [--ratings FILE] [--json]` runs the real check (every filter) on each merge's
+  branch and prints one line per rule x language: `K2 py: merges 1 of 50 (2 %), real 1 of 1 (100 %): BLOCK pass, WARN pass`.
+  The languages are the rule's packs (`match`, `patterns` by pack, `shadow_langs`) and any a finding has; a sub-rule is its own row
+  (`--as LP/ERA001`).
+- A replay cannot rate. The real share comes from the ratings file, a person's: JSON `{ "<fingerprint>": "real" | "wrong" }`.
+  Each unrated finding is listed under its row as `rate <fingerprint> <file>:<line> <snippet>`, and BLOCK reads
+  `n/a: k of n findings not rated` until every finding is rated. A rule with no finding meets both.
+- A merge the rule could not run on makes the row `n/a: could not run on k of n merges`, never a pass.
+- Nothing promotes itself. When a rule x language meets the budget on BOTH projects, the controller writes `overrides.json` (drops
+  the language from `shadow_langs`, or the sub-rule from `shadow_rules`) with a record that cites the replay. The owner may veto.
 
 ## On a pull request
 

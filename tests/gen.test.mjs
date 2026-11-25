@@ -13,6 +13,9 @@ import { installProject, genCheck } from '../engine/lib/setup.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { ADAPTERS } from '../engine/lib/harness/index.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
+
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const META_CLI = path.join(REPO, 'engine', 'bin', 'norn.mjs');

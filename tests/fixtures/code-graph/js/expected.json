@@ -3,6 +3,7 @@
     {"from":"packages/widgets/src/button.js","to":"packages/widgets/src/index.js","line":1,"col":1,"kind":"import","how":"config","spec":"@fx/widgets"},
     {"from":"src/b.ts","to":"src/types.ts","line":1,"col":1,"kind":"type","how":"probed","spec":"./types"},
     {"from":"src/b.ts","to":"src/dual.ts","line":2,"col":1,"kind":"import","how":"probed","spec":"./dual.js"},
+    {"from":"src/calls.mjs","to":"src/shapes.mjs","line":2,"col":1,"kind":"import","how":"exact","spec":"./shapes.mjs"},
     {"from":"src/legacy.cjs","to":"src/a.mjs","line":1,"col":11,"kind":"require","how":"exact","spec":"./a.mjs"},
     {"from":"src/main.mjs","to":"src/a.mjs","line":1,"col":1,"kind":"import","how":"exact","spec":"./a.mjs"},
     {"from":"src/main.mjs","to":"src/b.ts","line":2,"col":1,"kind":"import","how":"probed","spec":"./b"},
@@ -17,6 +18,7 @@
     {"from":"src/main.mjs","to":"src/lazy.js","line":14,"col":20,"kind":"dynamic","how":"exact","spec":"./lazy.js"}
   ],
   "unresolved": [
+    {"from":"src/calls.mjs","line":4,"kind":"import","how":"external","spec":"node:fs","package":"fs"},
     {"from":"src/legacy.cjs","line":2,"kind":"require","how":"external","spec":"path","package":"path"},
     {"from":"src/main.mjs","line":8,"kind":"import","how":"external","spec":"node:fs","package":"fs"},
     {"from":"src/main.mjs","line":9,"kind":"import","how":"external","spec":"lodash/fp","package":"lodash"},
@@ -32,6 +34,7 @@
     "src/b.ts": {"lang":"js"},
     "src/both.js": {"lang":"js"},
     "src/both.ts": {"lang":"js"},
+    "src/calls.mjs": {"lang":"js"},
     "src/cfg.cjs": {"lang":"js"},
     "src/cfg.mjs": {"lang":"js"},
     "src/dual.ts": {"lang":"js"},
@@ -58,6 +61,13 @@
     ],
     "src/b.ts": [
       {"id":"src/b.ts#src/b.ts#b#0","name":"b","qual":"src/b.ts#b","kind":"function","line":3,"end_line":3,"col":16,"exported":true}
+    ],
+    "src/calls.mjs": [
+      {"id":"src/calls.mjs#src/calls.mjs#near#0","name":"near","qual":"src/calls.mjs#near","kind":"function","line":6,"end_line":8,"col":1,"exported":false},
+      {"id":"src/calls.mjs#src/calls.mjs#Walker#0","name":"Walker","qual":"src/calls.mjs#Walker","kind":"class","line":10,"end_line":18,"col":1,"exported":false},
+      {"id":"src/calls.mjs#src/calls.mjs#Walker.step#0","name":"step","qual":"src/calls.mjs#Walker.step","kind":"method","line":11,"end_line":13,"col":3,"exported":false},
+      {"id":"src/calls.mjs#src/calls.mjs#Walker.walk#0","name":"walk","qual":"src/calls.mjs#Walker.walk","kind":"method","line":14,"end_line":17,"col":3,"exported":false},
+      {"id":"src/calls.mjs#src/calls.mjs#main#0","name":"main","qual":"src/calls.mjs#main","kind":"function","line":20,"end_line":32,"col":8,"exported":true}
     ],
     "src/dual.ts": [
       {"id":"src/dual.ts#src/dual.ts#d#0","name":"d","qual":"src/dual.ts#d","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
@@ -100,6 +110,23 @@
     ],
     "src/util/str.js": [
       {"id":"src/util/str.js#src/util/str.js#u#0","name":"u","qual":"src/util/str.js#u","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ]
+  },
+  "calls": {
+    "src/calls.mjs": [
+      {"line":12,"col":12,"name":"near","how":"local","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#near#0"]},
+      {"line":15,"col":10,"name":"step","how":"self","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker.step#0"]},
+      {"line":16,"col":17,"name":"area","how":"self","candidates":1,"targets":["src/shapes.mjs#src/shapes.mjs#Shape.area#0"]},
+      {"line":21,"col":3,"name":"helper","how":"import","candidates":1,"targets":["src/shapes.mjs#src/shapes.mjs#helper#0"]},
+      {"line":22,"col":10,"name":"copy","how":"qualified","candidates":1,"targets":["src/shapes.mjs#src/shapes.mjs#copy#0"]},
+      {"line":23,"col":9,"name":"of","how":"qualified","candidates":1,"targets":["src/shapes.mjs#src/shapes.mjs#Shape.of#0"]},
+      {"line":24,"col":5,"name":"walk","how":"method-unique","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker.walk#0"]},
+      {"line":25,"col":5,"name":"area","how":"ambiguous","candidates":2,"targets":["src/shapes.mjs#src/shapes.mjs#Shape.area#0","src/shapes.mjs#src/shapes.mjs#Square.area#0"]},
+      {"line":26,"col":6,"name":"readFileSync","how":"external","candidates":0,"targets":[]},
+      {"line":27,"col":8,"name":"stringify","how":"external","candidates":0,"targets":[]},
+      {"line":28,"col":3,"name":"ghost","how":"unresolved","candidates":0,"targets":[]},
+      {"line":30,"col":7,"name":"walk","how":"method-unique","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker.walk#0"]},
+      {"line":31,"col":14,"name":"Walker","how":"local","candidates":1,"targets":["src/calls.mjs#src/calls.mjs#Walker#0"]}
     ]
   }
 }

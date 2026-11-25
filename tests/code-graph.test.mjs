@@ -1,7 +1,8 @@
 // code-graph S1b (SPEC code-graph 7.1-7.3, the contract docs/code-graph.md): the one reader engine/lib/codegraph.mjs over the
 // synthetic fixtures tests/fixtures/code-graph/{js,py,rs}, each committed into a fresh repo with its own store: the stamp, the walks
 // (dependencies / dependents / reach), cycles over LOAD_KINDS, fans, excluded, the { ok: false, why } answers, --no-index, and the
-// `norn code graph` verbs' exit codes and --json shapes. S2: symbols() / references() and the symbols / refs verbs.
+// `norn code graph` verbs' exit codes and --json shapes. S2: symbols() / references() and the symbols / refs verbs. S3: callers() and the callers verb.
+// S5: symbols({ files }) and defsByHash(), the symbols <file>... and hash verbs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { ensurePart } from '../engine/lib/rustbin.mjs';
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, ALL_KINDS, TRUST } from '../engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, defsByHash, references, callers, ALL_KINDS, CALL_HOWS, TRUST } from '../engine/lib/codegraph.mjs';
 import { codeCmd } from '../engine/lib/codecli.mjs';
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'code-graph');
@@ -28,7 +29,7 @@ const run = (argv, state) => { const o = [], e = []; const code = codeCmd(['grap
 
 test('norn-code is built (every test below reads its snapshots)', () => assert.ok(built.ok, built.why));
 
-test('graphAt: a Graph of the commit asked, its stamp exact; typed files, trust "unmeasured"; a second call reads the store', () => {
+test('graphAt: a Graph of the commit asked, its stamp exact; typed files, each edge its class\'s trust; a second call reads the store', () => {
   const r = repoOf('js'), head = git(r.repo, 'rev-parse', 'HEAD'), g = graphAt({ state: r.state, repo: r.repo });
   assert.equal(g.ok, true, g.why);
   assert.deepEqual(Object.keys(g.stamp).sort(), ['age_s', 'asked', 'commit', 'exact', 'indexed_at', 'tree', 'worktree']);
@@ -37,7 +38,9 @@ test('graphAt: a Graph of the commit asked, its stamp exact; typed files, trust 
   assert.equal(g.prefix, ''); assert.ok(g.indexed && g.indexed.parsed > 0);
   assert.equal(g.files.get('src/b.ts').lang, 'typescript'); assert.equal(g.files.get('src/a.mjs').lang, 'javascript');
   assert.equal(g.files.get('src/vendored.js').excluded, 'vendored'); assert.equal(g.files.get('src/gen.js').excluded, 'generated');
-  assert.ok(g.edges.every(e => e.trust === 'unmeasured')); assert.ok(Object.values(TRUST).every(t => t === 'unmeasured'));
+  assert.ok(g.edges.every(e => e.trust === TRUST[`${g.files.get(e.from).lang}/file/${e.how}`]));
+  assert.equal(g.edges.find(e => e.from === 'src/main.mjs' && e.to === 'src/a.mjs').trust, 1);   // S4a: measured
+  assert.equal(TRUST['javascript/file/name'], 'unmeasured'); assert.ok(Object.values(TRUST).every(t => t === 'unmeasured' || t === 'below bar' || (t >= 0 && t <= 1)));
   const again = graphAt({ state: r.state, repo: r.repo });
   assert.equal(again.indexed, null); assert.equal(again.edges.length, g.edges.length);
   assert.equal(graphAt({ state: r.state, repo: path.join(r.repo, 'src') }).prefix, 'src/');
@@ -137,4 +140,60 @@ test('norn code graph symbols / refs: the --json shapes, the text lines with bou
   assert.equal(text.code, 0); assert.match(text.out, /^function +fx\.core\.later {2}src\/fx\/core\.py:15\.\.17 {2}exported$/m);
   assert.equal(run(['refs', ...at], r.state).code, 2); assert.equal(run(['symbols', 'src/fx/core.py', '--no-index', ...at], r.state).code, 2);
   assert.equal(run(['refs', 'nosuch', ...at], r.state).code, 3);
+});
+
+const COPIES = { 'pkg/a.py': 'def twice(x):\n    return x * 2 + 1\n', 'pkg/b.py': 'def double(x):\n    # the same body\n    return x * 2 + 1\n\ndef other(x):\n    return x * 3\n',
+  'vendor/v.py': 'def twice(x):\n    return x * 2 + 1\n' };
+test('symbols({ files }) / defsByHash (S5): many files in one run, each its defs or its own n/a; defs by body hash over first-party sources only', () => {
+  const r = repoOf('copies', COPIES), o = { state: r.state, repo: r.repo };
+  const m = symbols({ ...o, files: ['pkg/a.py', 'pkg/b.py', 'nope.py', 'vendor/v.py'] });
+  assert.equal(m.stamp.commit, git(r.repo, 'rev-parse', 'HEAD')); assert.deepEqual(Object.keys(m.files).sort(), ['nope.py', 'pkg/a.py', 'pkg/b.py', 'vendor/v.py']);
+  assert.deepEqual(m.files['pkg/b.py'].defs.map(d => d.name), ['double', 'other']); assert.deepEqual(m.files['pkg/a.py'].defs, symbols({ ...o, file: 'pkg/a.py' }).defs);
+  assert.match(m.files['nope.py'].why, /unknown file nope\.py/); assert.equal(m.files['nope.py'].ok, false); assert.match(m.files['vendor/v.py'].why, /excluded/);
+  const h = m.files['pkg/a.py'].defs[0].hash;
+  assert.equal(h, m.files['pkg/b.py'].defs[0].hash); assert.notEqual(h, m.files['pkg/b.py'].defs[1].hash);
+  const x = defsByHash({ ...o, hashes: [h, '0000000000000000'] });
+  assert.equal(x.stamp.exact, true); assert.equal(x.truncated, 0);
+  assert.deepEqual(x.defs[h].map(d => [d.file, d.name]), [['pkg/a.py', 'twice'], ['pkg/b.py', 'double']]); assert.deepEqual(x.defs['0000000000000000'], []);
+  assert.equal(symbols({ ...o, file: 'pkg/a.py', files: ['pkg/b.py'] }).ok, false); assert.equal(symbols({ ...o, files: [] }).ok, false); assert.equal(defsByHash(o).ok, false);
+});
+
+test('norn code graph symbols <file>... / hash <hash>...: the --json shapes, the text lines, 2 on usage', () => {
+  const r = repoOf('copies', COPIES), at = ['--repo', r.repo, '--json'];
+  const s = run(['symbols', 'pkg/a.py', 'pkg/b.py', ...at], r.state), sj = JSON.parse(s.out);
+  assert.equal(s.code, 0, s.err); assert.deepEqual(Object.keys(sj).sort(), ['files', 'stamp']);
+  const h = sj.files['pkg/a.py'].defs[0].hash, x = run(['hash', h, ...at], r.state), xj = JSON.parse(x.out);
+  assert.equal(x.code, 0, x.err); assert.deepEqual(Object.keys(xj).sort(), ['defs', 'stamp', 'truncated']); assert.equal(xj.defs[h].length, 2);
+  const text = run(['hash', h, '--repo', r.repo], r.state);
+  assert.equal(text.code, 0); assert.match(text.out, new RegExp(`^${h}$`, 'm')); assert.match(text.out, /^ {2}function +\S+ {2}pkg\/b\.py:1\.\.3/m);
+  assert.match(run(['symbols', 'pkg/a.py', 'nope.py', '--repo', r.repo], r.state).out, /^nope\.py {2}n\/a: unknown file/m);
+  assert.equal(run(['hash', ...at], r.state).code, 2); assert.equal(run(['hash', h, '--no-index', ...at], r.state).code, 2);
+});
+
+const AREA = 'src/shapes.mjs#src/shapes.mjs#Shape.area#0';
+test('callers (S3): each call site whose candidates hold the def, with its how; an ambiguous one keeps its count and list; depth walks on', () => {
+  const r = repoOf('js'), c = callers({ state: r.state, repo: r.repo, symbol: AREA });
+  assert.equal(c.stamp.exact, true); assert.equal(c.symbol.id, AREA); assert.equal(c.truncated, 0);
+  assert.deepEqual(c.rows.map(x => [x.file, x.line, x.col, x.how, x.candidates, x.caller?.qual ?? null, x.depth, x.trust]), [
+    ['src/calls.mjs', 16, 17, 'self', 1, 'src/calls.mjs#Walker.walk', 1, 1],
+    ['src/calls.mjs', 25, 5, 'ambiguous', 2, 'src/calls.mjs#main', 1, 'unmeasured']]);
+  assert.deepEqual(c.rows[1].targets, [AREA, 'src/shapes.mjs#src/shapes.mjs#Square.area#0']);
+  const d2 = callers({ state: r.state, repo: r.repo, symbol: AREA, depth: 2 });
+  assert.deepEqual(d2.rows.slice(2).map(x => [x.line, x.name, x.how, x.depth]), [[24, 'walk', 'method-unique', 2], [30, 'walk', 'method-unique', 2]]);
+  assert.deepEqual(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:helper' }).rows.map(x => [x.line, x.how]), [[21, 'import']]);
+  assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:area' }).why, /defines 2 named area; name one by id/);
+  assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/nope.mjs#x#0' }).why, /no definition has the id/);
+  assert.equal(callers({ state: r.state, repo: r.repo }).ok, false);
+  assert.equal(TRUST['javascript/call/method-unique'], 'below bar'); assert.deepEqual(CALL_HOWS.filter(h => TRUST[`python/call/${h}`] === 'unmeasured'), ['ambiguous', 'external', 'unresolved']);
+});
+
+test('norn code graph callers: the --json shape, the text line with its how, 2 on usage, 3 n/a', () => {
+  const r = repoOf('js'), at = ['--repo', r.repo, '--json'];
+  const j = run(['callers', AREA, ...at], r.state), o = JSON.parse(j.out);
+  assert.equal(j.code, 0, j.err); assert.deepEqual(Object.keys(o).sort(), ['rows', 'stamp', 'symbol', 'truncated']);
+  assert.deepEqual(Object.keys(o.rows[0]).sort(), ['caller', 'candidates', 'col', 'depth', 'file', 'how', 'line', 'name', 'targets', 'trust']);
+  const text = run(['callers', AREA, '--repo', r.repo], r.state);
+  assert.equal(text.code, 0); assert.match(text.out, /^ {2}1 {2}src\/calls\.mjs:25:5 {2}ambiguous of 2: .*Square\.area#0 {2}in src\/calls\.mjs#main$/m);
+  assert.equal(run(['callers', ...at], r.state).code, 2); assert.equal(run(['callers', AREA, '--no-index', ...at], r.state).code, 2);
+  assert.equal(run(['callers', 'src/shapes.mjs:area', ...at], r.state).code, 3);
 });

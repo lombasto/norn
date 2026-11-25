@@ -2,12 +2,19 @@
 // [--worktree] [--exclude GLOB]... [--python-root DIR]...` parses each blob of the commit's tree that the store does not hold yet
 // (tree-sitter, in parallel), resolves imports over the whole tree, and writes the tree's snapshot; it prints one JSON line with
 // the commit, the tree, what it parsed and reused and where the time went. `--worktree` resolves uncommitted work over HEAD's tree
-// in memory and prints the snapshot instead of storing it. `norn-code version` prints { crate, store_schema }.
+// in memory and prints the snapshot instead of storing it. `norn-code query` answers symbols (one file or many), defs by body hash, refs, calls and callers over a commit
+// (calls.rs resolves the call sites). `norn-code grade files` grades the file-level edges against each language's own toolchain
+// (grade.rs); `norn-code grade calls` the definitions and call edges against compiler-grade indexers (grade_calls.rs, scip.rs).
+// `norn-code version` prints { crate, store_schema }.
+mod calls;
 mod exclude;
 mod git;
+mod grade;
+mod grade_calls;
 mod lang;
 mod limits;
 mod paths;
+mod scip;
 mod store;
 mod symbols;
 
@@ -372,26 +379,40 @@ fn defs_of(file: &str, row: &Value, facts: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// `norn-code query symbols --file F` (the file's definitions) | `query refs --name N` (the definitions named N and every other
-/// occurrence of the name, found through the tree's name index), both over the asked commit's tree (indexed first when needed)
-fn query(verb: &str, a: &Args, target: &str) -> Result<Value, String> {
-    let b = index(a)?;
-    let st = Store::new(&a.state);
-    let files = match b.files {
+/// the asked commit's tree opened for a query (indexed first when the store lacks it): its index run, each path's blob sha, and
+/// the answer's head (ok, commit, tree, worktree, changed)
+struct Opened {
+    b: Built,
+    files: HashMap<String, String>,
+    st: Store,
+    res: Value,
+}
+fn open(a: &Args) -> Result<Opened, String> {
+    let mut b = index(a)?;
+    let files = match b.files.take() {
         Some(f) => f,
         None => git::ls_tree(&a.repo, a.at.as_deref().unwrap_or("HEAD"))?,
-    };
-    let rows = &b.snap["files"];
-    let facts_of = |f: &str| -> Result<Value, String> {
-        let sha = files.get(f).ok_or(format!("unknown file {f}"))?;
-        Store::read(&st.blob_path(sha)).ok_or(format!("{f}: its blob facts are not in the store"))
     };
     let mut res = json!({ "ok": true, "commit": b.out["commit"], "tree": b.out["tree"], "worktree": a.worktree });
     if a.worktree {
         res["changed"] = b.out["changed"].clone();
     }
-    if verb == "symbols" {
-        let row = rows.get(target).ok_or(format!(
+    Ok(Opened {
+        b,
+        files,
+        st: Store::new(&a.state),
+        res,
+    })
+}
+impl Opened {
+    fn facts_of(&self, f: &str) -> Result<Value, String> {
+        let sha = self.files.get(f).ok_or(format!("unknown file {f}"))?;
+        Store::read(&self.st.blob_path(sha))
+            .ok_or(format!("{f}: its blob facts are not in the store"))
+    }
+    /// the definitions of one file of the tree, or why it has none to give (unknown, excluded, not a graph language)
+    fn symbols(&self, target: &str) -> Result<Vec<Value>, String> {
+        let row = self.b.snap["files"].get(target).ok_or(format!(
             "unknown file {target} (not in the graph; paths are relative to the repo root)"
         ))?;
         if let Some(w) = row["excluded"].as_str() {
@@ -402,8 +423,101 @@ fn query(verb: &str, a: &Args, target: &str) -> Result<Value, String> {
         if lang_of(target).is_none() {
             return Err(format!("{target}: not a graph language"));
         }
+        Ok(defs_of(target, row, &self.facts_of(target)?))
+    }
+    /// the tree's first-party source files (a graph language, not excluded)
+    fn sources(&self) -> Vec<&String> {
+        self.b.snap["files"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(p, r)| {
+                lang_of(p).is_some() && r["excluded"].is_null() && self.files.contains_key(*p)
+            })
+            .map(|(p, _)| p)
+            .collect()
+    }
+}
+
+/// the non-empty lines of stdin, trimmed (a batch query's files or hashes: a list too long for a command line)
+fn stdin_lines() -> Result<Vec<String>, String> {
+    let mut s = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+        .map_err(|e| format!("stdin: {e}"))?;
+    Ok(s.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// `norn-code query symbols --stdin`: the definitions of every file named on stdin (one per line) in one run -> files: { F: { defs } |
+/// { ok: false, why } } (one file's n/a does not fail the others)
+fn query_symbols_many(a: &Args, targets: &[String]) -> Result<Value, String> {
+    let o = open(a)?;
+    let per: Vec<(String, Value)> = targets
+        .par_iter()
+        .map(|f| {
+            let v = match o.symbols(f) {
+                Ok(d) => json!({ "defs": d }),
+                Err(why) => json!({ "ok": false, "why": why }),
+            };
+            (f.clone(), v)
+        })
+        .collect();
+    let mut res = o.res;
+    res["files"] = Value::Object(per.into_iter().collect());
+    Ok(res)
+}
+
+/// `norn-code query hash --stdin`: the definitions of the tree's first-party sources whose normalised body hash is one named on
+/// stdin -> defs: { H: Def[] } (every asked hash a key; a hash no definition has: []), each list in file then source order
+fn query_hash(a: &Args, hashes: &[String]) -> Result<Value, String> {
+    let o = open(a)?;
+    let want: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+    let mut srcs = o.sources();
+    srcs.sort();
+    let found: Vec<Vec<Value>> = srcs
+        .par_iter()
+        .map(|f| {
+            let facts = o.facts_of(f)?;
+            let wanted = |d: &Value| d["hash"].as_str().is_some_and(|h| want.contains(h));
+            Ok(
+                if facts["defs"]
+                    .as_array()
+                    .is_some_and(|ds| ds.iter().any(wanted))
+                {
+                    defs_of(f, &o.b.snap["files"][f.as_str()], &facts)
+                        .into_iter()
+                        .filter(|d| wanted(d))
+                        .collect()
+                } else {
+                    vec![]
+                },
+            )
+        })
+        .collect::<Result<_, String>>()?;
+    let mut by: Map<String, Value> = hashes.iter().map(|h| (h.clone(), json!([]))).collect();
+    for d in found.into_iter().flatten() {
+        if let Some(Value::Array(l)) = d["hash"].as_str().and_then(|h| by.get_mut(h)) {
+            l.push(d);
+        }
+    }
+    let mut res = o.res;
+    res["defs"] = Value::Object(by);
+    Ok(res)
+}
+
+/// `norn-code query symbols --file F` (the file's definitions) | `query refs --name N` (the definitions named N and every other
+/// occurrence of the name, found through the tree's name index), both over the asked commit's tree (indexed first when needed)
+fn query(verb: &str, a: &Args, target: &str) -> Result<Value, String> {
+    let o = open(a)?;
+    let (b, files, rows) = (&o.b, &o.files, &o.b.snap["files"]);
+    let facts_of = |f: &str| o.facts_of(f);
+    let mut res = o.res.clone();
+    if verb == "symbols" {
         res["file"] = json!(target);
-        res["defs"] = json!(defs_of(target, row, &facts_of(target)?));
+        res["defs"] = json!(o.symbols(target)?);
         return Ok(res);
     }
     let holders: Vec<String> = b.snap["names"][target]
@@ -470,10 +584,130 @@ fn query(verb: &str, a: &Args, target: &str) -> Result<Value, String> {
     Ok(res)
 }
 
+/// the call graph of the asked commit's tree: every first-party source file's facts and defs, read from the store
+fn graph_of(a: &Args) -> Result<(Value, calls::Graph), String> {
+    let o = open(a)?;
+    let facts: HashMap<String, (Value, Vec<Value>)> = o
+        .sources()
+        .par_iter()
+        .map(|p| {
+            let f = o.facts_of(p)?;
+            let d = defs_of(p, &o.b.snap["files"][p.as_str()], &f);
+            Ok(((*p).clone(), (f, d)))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok((o.res, calls::Graph::new(&o.b.snap, facts)))
+}
+
+/// `query calls --file F` (each call site of F, resolved) | `query calls --all` (the count of call sites per language and how)
+fn query_calls(a: &Args, target: &str) -> Result<Value, String> {
+    let (mut res, g) = graph_of(a)?;
+    if target != "--all" {
+        if !g.files.contains_key(target) {
+            return Err(format!(
+                "unknown file {target} (not a first-party source of the graph)"
+            ));
+        }
+        res["file"] = json!(target);
+        res["calls"] = json!(g.sites(target).into_iter().map(|x| x.0).collect::<Vec<_>>());
+        return Ok(res);
+    }
+    let mut counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let all: Vec<(String, Vec<String>)> = g
+        .files
+        .par_iter()
+        .map(|(p, f)| {
+            (
+                f.lang.clone(),
+                g.sites(p)
+                    .into_iter()
+                    .map(|x| x.0["how"].as_str().unwrap_or("").to_string())
+                    .collect(),
+            )
+        })
+        .collect();
+    for (l, hows) in all {
+        for h in hows {
+            *counts.entry(l.clone()).or_default().entry(h).or_default() += 1;
+        }
+    }
+    res["counts"] = json!(counts);
+    Ok(res)
+}
+
+/// `query callers --symbol <id | file:name> [--depth N]`: every call site whose candidates hold the def; depth > 1 walks on to the
+/// callers of each calling def (each row once, at its first depth)
+fn query_callers(a: &Args, symbol: &str, depth: usize) -> Result<Value, String> {
+    let (mut res, g) = graph_of(a)?;
+    let d = if symbol.contains('#') {
+        g.def_by_id(symbol)
+            .ok_or(format!("no definition has the id {symbol}"))?
+    } else {
+        let (file, name) = symbol
+            .rsplit_once(':')
+            .ok_or(format!("{symbol}: name a symbol id or file:name"))?;
+        let f = g.files.get(file).ok_or(format!(
+            "unknown file {file} (not a first-party source of the graph)"
+        ))?;
+        let hits: Vec<usize> = (0..f.defs.len())
+            .filter(|&i| f.defs[i]["name"] == json!(name))
+            .collect();
+        match hits.as_slice() {
+            [i] => (file.to_string(), *i),
+            [] => return Err(format!("{file} defines no {name}")),
+            _ => {
+                let ids: Vec<&str> = hits
+                    .iter()
+                    .filter_map(|&i| f.defs[i]["id"].as_str())
+                    .collect();
+                return Err(format!(
+                    "{file} defines {} named {name}; name one by id: {}",
+                    hits.len(),
+                    ids.join(", ")
+                ));
+            }
+        }
+    };
+    let mut paths: Vec<&String> = g.files.keys().collect();
+    paths.sort();
+    let sites: Vec<(Value, Vec<(String, usize)>)> =
+        paths.par_iter().flat_map_iter(|p| g.sites(p)).collect();
+    let (mut rows, mut seen, mut frontier) = (vec![], HashSet::new(), vec![d.clone()]);
+    for level in 1..=depth.max(1) {
+        let mut next = vec![];
+        for (row, targets) in &sites {
+            if !targets.iter().any(|t| frontier.contains(t))
+                || !seen.insert((row["file"].clone(), row["line"].clone(), row["col"].clone()))
+            {
+                continue;
+            }
+            let mut r = row.clone();
+            let caller = row["caller"].as_str().and_then(|id| g.def_by_id(id));
+            r["caller"] = caller.as_ref().map_or(Value::Null, |c| g.def_value(c));
+            r["depth"] = json!(level);
+            if let Some(c) = caller {
+                next.push(c);
+            }
+            rows.push(r);
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    res["symbol"] = g.def_value(&d);
+    res["callers"] = json!(rows);
+    Ok(res)
+}
+
+const QUERY_USAGE: &str = "usage: norn-code query symbols --file F | symbols --stdin (files, one per line) | hash --stdin (body hashes, one per line) | refs --name N | calls --file F | calls --all | callers --symbol <id | file:name> [--depth N], then the index arguments";
+
+const GRADE_USAGE: &str = "usage: norn-code grade files | calls [--seed N] [--per-lang N] [--graders <norn>/tools/grade], then the index arguments";
+
 fn main() {
     let v: Vec<String> = std::env::args().skip(1).collect();
     let r = match v.first().map(String::as_str) {
-        Some("version") => Ok(json!({ "crate": env!("CARGO_PKG_VERSION"), "store_schema": limits::STORE_SCHEMA })),
+        Some("version") => Ok(json!({ "crate": env!("CARGO_PKG_VERSION"), "store_schema": limits::STORE_SCHEMA, "source": env!("NORN_SOURCE") })),
         Some("index") => args(&v[1..]).and_then(|a| index(&a)).map(|b| {
             let mut o = b.out;
             if o["worktree"] == json!(true) {
@@ -481,12 +715,31 @@ fn main() {
             }
             o
         }),
+        Some("grade") => match v.get(1).map(String::as_str) {
+            Some("files") => grade::opts(&v[2..]).and_then(|(o, rest)| args(&rest).and_then(|a| grade::files(&a, &o))),
+            Some("calls") => grade::opts(&v[2..]).and_then(|(o, rest)| args(&rest).and_then(|a| grade_calls::calls(&a, &o))),
+            _ => Err(GRADE_USAGE.into()),
+        },
         Some("query") => match (v.get(1).map(String::as_str), v.get(2).map(String::as_str), v.get(3)) {
             (Some("symbols"), Some("--file"), Some(t)) => args(&v[4..]).and_then(|a| query("symbols", &a, t)),
+            (Some("symbols"), Some("--stdin"), _) => args(&v[3..]).and_then(|a| stdin_lines().and_then(|l| query_symbols_many(&a, &l))),
+            (Some("hash"), Some("--stdin"), _) => args(&v[3..]).and_then(|a| stdin_lines().and_then(|l| query_hash(&a, &l))),
             (Some("refs"), Some("--name"), Some(t)) => args(&v[4..]).and_then(|a| query("refs", &a, t)),
-            _ => Err("usage: norn-code query symbols --file F | query refs --name N, then the index arguments".into()),
+            (Some("calls"), Some("--file"), Some(t)) => args(&v[4..]).and_then(|a| query_calls(&a, t)),
+            (Some("calls"), Some("--all"), _) => args(&v[3..]).and_then(|a| query_calls(&a, "--all")),
+            (Some("callers"), Some("--symbol"), Some(t)) => {
+                let (depth, rest) = match v.get(4).map(String::as_str) {
+                    Some("--depth") => match v.get(5).and_then(|n| n.parse::<usize>().ok()) {
+                        Some(n) if n >= 1 => (Ok(n), &v[6..]),
+                        _ => (Err("--depth needs a whole number >= 1".to_string()), &v[6.min(v.len())..]),
+                    },
+                    _ => (Ok(1), &v[4..]),
+                };
+                depth.and_then(|d| args(rest).and_then(|a| query_callers(&a, t, d)))
+            }
+            _ => Err(QUERY_USAGE.into()),
         },
-        _ => Err("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  norn-code query symbols --file F | refs --name N <index arguments>  |  norn-code version".into()),
+        _ => Err(format!("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  {QUERY_USAGE}  |  {GRADE_USAGE}  |  norn-code version")),
     };
     match r {
         Ok(j) => println!("{j}"),

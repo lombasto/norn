@@ -15,6 +15,8 @@ import { loadMachine, loadProject } from '../engine/lib/config.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { createDashboard } from '../engine/dash/server.mjs';
 
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META = path.join(HERE, '..', 'engine', 'bin', 'norn.mjs');
 const ADOPT_LIB = pathToFileURL(path.join(HERE, '..', 'engine', 'lib', 'adopt.mjs')).href;
@@ -24,7 +26,6 @@ const GIT_DIR = path.dirname(which('git'));
 
 /** a fresh machine: temp META_ROOT / HOME / config dir, a fake claude on PATH (+ git, node), no machine.json yet */
 function sandbox(extra = {}) {
-  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-adopt-e2e-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });

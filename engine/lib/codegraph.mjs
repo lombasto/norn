@@ -18,8 +18,21 @@ export const LOAD_KINDS = ['import', 'reexport', 'require', 'mod', 'cargo-dep'];
 export const FAN_KINDS = ALL_KINDS.filter(k => k !== 'package-init');
 export const LANGS = ['javascript', 'typescript', 'python', 'rust'];
 export const HOWS = ['exact', 'probed', 'config', 'name', 'ambiguous'];
-/** the precision of each (language, level, how) class, `<lang>/file/<how>`: measured by stage S4 of RM-a-53, "unmeasured" before (never a made-up number) */
-export const TRUST = Object.fromEntries(LANGS.flatMap(l => HOWS.map(h => [`${l}/file/${h}`, 'unmeasured'])));
+/** the how classes of a call site (docs/code-graph.md "Call edges"); `unresolved` carries its why */
+export const CALL_HOWS = ['local', 'import', 'qualified', 'self', 'method-unique', 'ambiguous', 'external', 'unresolved'];
+/** the file-level precision measured by `norn-code grade files` (S4a; docs/code-graph.md "Trust" has the intervals, commits and dates):
+ *  JavaScript / TypeScript on Norn @ 67f997cb, Python and Rust on a private project (prism) @ 4c3b5e24 (Python `ambiguous` on Norn's fixture rows) */
+const FILE_MEASURED = { 'javascript/file/exact': 1, 'javascript/file/probed': 1, 'javascript/file/config': 1, 'javascript/file/ambiguous': 1, 'typescript/file/probed': 1,
+  'python/file/exact': 1, 'python/file/probed': 1, 'python/file/ambiguous': 1, 'rust/file/exact': 1, 'rust/file/probed': 1, 'rust/file/config': 1 };
+/** the call-edge precision measured by `norn-code grade calls` (S4b; docs/code-graph.md "Trust" > "Call edges" has the intervals, commits and
+ *  dates): JavaScript on Norn @ dcade05c (method-unique regraded @ cbb4d12d, S6), Python and Rust on a private project (prism) @ 7e39ea91 (Rust regraded S6); ambiguous / external / unresolved choose
+ *  no target, so they have no precision (unmeasured; their misses are in the recall); TypeScript had no call site to grade */
+const CALL_MEASURED = { 'javascript/call/local': 1, 'javascript/call/import': 1, 'javascript/call/qualified': 1, 'javascript/call/self': 1, 'javascript/call/method-unique': 'below bar',
+  'python/call/local': 1, 'python/call/import': 1, 'python/call/qualified': 1, 'python/call/self': 1, 'python/call/method-unique': 1,
+  'rust/call/local': 1, 'rust/call/import': 1, 'rust/call/qualified': 1, 'rust/call/self': 1, 'rust/call/method-unique': 1 };
+/** the precision of each (language, level, how) class, `<lang>/file/<how>` and `<lang>/call/<how>`: measured by stages S4a / S4b of RM-a-53
+ *  (a number in 0..1; "below bar" when under SPEC 5's bar: consumers drop it), "unmeasured" when no graded row (never a made-up number) */
+export const TRUST = Object.fromEntries(LANGS.flatMap(l => [...HOWS.map(h => [`${l}/file/${h}`, FILE_MEASURED[`${l}/file/${h}`] ?? 'unmeasured']), ...CALL_HOWS.map(h => [`${l}/call/${h}`, CALL_MEASURED[`${l}/call/${h}`] ?? 'unmeasured'])]));
 /** the reader's thresholds, the one named place: rows = the most rows an answer holds (the rest is counted in `truncated`);
  *  index_ms = the wait for one norn-code index run (SPEC 6's hard cap of a cold index is 20 s) */
 export const LIMITS = { rows: 500, index_ms: 120000 };
@@ -33,9 +46,9 @@ const treeFile = (store, tree) => path.join(store, 'trees', `v${STORE_SCHEMA}`, 
 const stateOf = ({ state, repo }) => { if (state) return state; const common = git(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']); return common && path.join(common, 'norn'); };
 const headOf = store => { try { return fs.readFileSync(path.join(store, 'HEAD'), 'utf8').trim(); } catch { return null; } };
 
-/** norn-code <args> -> its JSON line | { ok: false, why } (its own why when it printed one: an unknown file, a name no def has) */
-function code(args) {
-  const r = spawnSync(binOf('code'), args, { encoding: 'utf8', windowsHide: true, timeout: LIMITS.index_ms, maxBuffer: 1 << 30 });
+/** norn-code <args> [stdin lines] -> its JSON line | { ok: false, why } (its own why when it printed one: an unknown file, a name no def has) */
+function code(args, lines = null) {
+  const r = spawnSync(binOf('code'), args, { encoding: 'utf8', windowsHide: true, timeout: LIMITS.index_ms, maxBuffer: 1 << 30, ...(lines ? { input: lines.join('\n') } : {}) });
   let j = null; try { j = JSON.parse(r.stdout); } catch { /* no JSON: said below */ }
   if (j && (r.status === 0 || j.ok === false)) return j;
   return no(`norn-code ${args[0]} failed (${r.error?.code || `exit ${r.status}`}): ${String(r.stderr || '').trim().split('\n').slice(-2).join(' ') || 'printed no JSON'}`);
@@ -100,23 +113,53 @@ export function graphAt({ state = null, repo, at = 'HEAD', worktree = false, noI
   return graphOf(snap, stamp(commit, tree, fs.statSync(f).mtimeMs), root, prefix, indexed);
 }
 
-/** norn-code query <verb> over the asked commit (indexed first when the store lacks it) -> { stamp, ...its answer } | { ok: false, why } */
-function query(verb, flag, target, { state = null, repo, at = 'HEAD', worktree = false }) {
+/** norn-code query <verb> <flag> [target] over the asked commit (indexed first when the store lacks it); lines: its stdin (a batch's
+ *  files or hashes) -> { stamp, ...its answer } | { ok: false, why } */
+function query(q, { state = null, repo, at = 'HEAD', worktree = false }, extra = [], lines = null) {
   const w = locate({ state, repo, at, worktree, noIndex: false });
   if (!w.ok) return w;
-  const r = code(['query', verb, flag, target, '--repo', w.root, '--state', w.st, ...(worktree ? ['--worktree'] : at === 'HEAD' ? [] : ['--at', w.commit])]);
+  const r = code(['query', ...q, ...extra, '--repo', w.root, '--state', w.st, ...(worktree ? ['--worktree'] : at === 'HEAD' ? [] : ['--at', w.commit])], lines);
   if (!r.ok) return r;
   const { ok, commit, tree, worktree: _w, changed, ...answer } = r;
   return { stamp: w.stamp(commit, tree, worktree ? Date.now() : fs.statSync(treeFile(w.store, tree)).mtimeMs, worktree ? { dirty: changed } : {}), ...answer };
 }
-/** the definitions of `file` (repo-root-relative) at `at`, in source order -> { stamp, file, defs: Def[] } | { ok: false, why } */
-export const symbols = ({ state = null, repo, file, at = 'HEAD', worktree = false } = {}) => (file ? query('symbols', '--file', file, { state, repo, at, worktree }) : no('no file given'));
+/** the definitions of `file` (repo-root-relative) at `at`, in source order -> { stamp, file, defs: Def[] } | { ok: false, why }; with
+ *  `files` instead, many files in ONE norn-code run -> { stamp, files: { [file]: { defs: Def[] } | { ok: false, why } } } (one file's n/a
+ *  is its own row, the others still answered) */
+export function symbols({ state = null, repo, file, files, at = 'HEAD', worktree = false } = {}) {
+  const o = { state, repo, at, worktree };
+  if (file && files) return no('give file or files, not both');
+  if (files) return files.length ? query(['symbols', '--stdin'], o, [], files) : no('no files given');
+  return file ? query(['symbols', '--file', file], o) : no('no file given');
+}
+/** the definitions of the tree's first-party sources whose normalised body hash (Def.hash) is one of `hashes`, in one norn-code run ->
+ *  { stamp, defs: { [hash]: Def[] }, truncated } | { ok: false, why }: every asked hash a key ([] when no definition has it), each list
+ *  in file then source order and capped at LIMITS.rows (the cut ones counted in `truncated`, over all hashes) */
+export function defsByHash({ state = null, repo, hashes, at = 'HEAD', worktree = false } = {}) {
+  if (!hashes?.length) return no('no hashes given');
+  const r = query(['hash', '--stdin'], { state, repo, at, worktree }, [], hashes);
+  if (r.ok === false) return r;
+  const defs = Object.fromEntries(Object.entries(r.defs).map(([h, ds]) => [h, ds.slice(0, LIMITS.rows)]));
+  return { stamp: r.stamp, defs, truncated: Object.values(r.defs).reduce((n, ds) => n + Math.max(0, ds.length - LIMITS.rows), 0) };
+}
 /** the definitions named `name` and every other occurrence of the identifier, found through the tree's name index ->
  *  { stamp, name, defs: Def[], rows: Ref[], truncated } | { ok: false, why } (a name no definition has is n/a) */
 export function references({ state = null, repo, name, at = 'HEAD', worktree = false } = {}) {
   if (!name) return no('no name given');
-  const r = query('refs', '--name', name, { state, repo, at, worktree });
+  const r = query(['refs', '--name', name], { state, repo, at, worktree });
   return r.ok === false ? r : { stamp: r.stamp, name: r.name, defs: r.defs, ...capped(r.refs) };
+}
+
+const langOf = f => (TS.test(f) ? 'typescript' : LANG[path.extname(f).slice(1)] || 'javascript');
+/** the call sites whose candidates hold `symbol` (a Def id, or `<file>:<name>` when the file has one def of that name), and with depth > 1
+ *  the callers of each calling def in turn -> { stamp, symbol: Def, rows: Caller[], truncated } | { ok: false, why }. An ambiguous site is
+ *  listed under every candidate, with its count and list; no candidate is ever picked for it */
+export function callers({ state = null, repo, symbol, depth = 1, at = 'HEAD', worktree = false } = {}) {
+  if (!symbol) return no('no symbol given');
+  const r = query(['callers', '--symbol', symbol], { state, repo, at, worktree }, depth > 1 ? ['--depth', String(depth)] : []);
+  if (r.ok === false) return r;
+  const rows = r.callers.map(c => ({ ...c, trust: TRUST[`${langOf(c.file)}/call/${c.how}`] }));
+  return { stamp: r.stamp, symbol: r.symbol, ...capped(rows) };
 }
 
 const kindsOf = kinds => new Set(kinds);

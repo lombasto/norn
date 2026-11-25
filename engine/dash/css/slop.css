@@ -21,3 +21,8 @@
 .lint-levels{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 8px;margin:6px 0;align-items:baseline}
 .lint-levels dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .lint-cnr{margin:4px 0;padding-left:18px}
+/* RM-a-65: To fix's Refactor targets card - a title with its copy-as-brief button, then the kind, the rank and the Scope, which wrap
+   anywhere (long paths), so nothing scrolls sideways at 390 px. */
+.tgts{margin:0;padding-left:22px;display:grid;gap:8px;min-width:0}
+.tgt{min-width:0;overflow-wrap:anywhere}
+.tgthead{display:flex;align-items:baseline;gap:6px;justify-content:space-between;min-width:0}

@@ -1,0 +1,12 @@
+{
+  "version": "2026-11-23",
+  "licence": "MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE at tag 2026-11-23, commit 37721d141370e0904033f7fc3a3abe11c446c4c1)",
+  "url": "https://github.com/rust-lang/rust-analyzer/releases/download/{version}/{file}",
+  "assets": {
+    "win32-x64": { "file": "rust-analyzer-x86_64-pc-windows-msvc.zip", "sha256": "6d0c3835155bb1fbee9d93d1eca4270251e08cb9a4621dbcadaf7450a6a4add2", "bin": "rust-analyzer.exe" },
+    "linux-x64": { "file": "rust-analyzer-x86_64-unknown-linux-gnu.gz", "sha256": "99748126069cc1360e2729e45ae7b563a2b885def41c0d600de8e5977a7adf13", "bin": "rust-analyzer" },
+    "linux-arm64": { "file": "rust-analyzer-aarch64-unknown-linux-gnu.gz", "sha256": "cf7e9c2cd34540da92473d47f0866c9515425da01116e7aaca988c9b19408285", "bin": "rust-analyzer" },
+    "darwin-x64": { "file": "rust-analyzer-x86_64-apple-darwin.gz", "sha256": "4673e51749f937567b77813ef12621b6e11e6ba9c1b591c58f8a98fbbc9f5bac", "bin": "rust-analyzer" },
+    "darwin-arm64": { "file": "rust-analyzer-aarch64-apple-darwin.gz", "sha256": "9d996784c9bc811642edd9d993c8c85e12c7111463a8e426d5e74c27da1bc0a5", "bin": "rust-analyzer" }
+  }
+}

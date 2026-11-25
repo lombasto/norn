@@ -9,6 +9,7 @@
 // `norn code risk <base>..<head>` ranks a diff against the last 100 landings (coderisk.mjs, RM-a-68).
 // `norn code card <file>..` prints each file's triage card, `--report` the A/B comparison of policy.code.card (codecard.mjs, RM-a-57).
 // `norn code symbol <file>::<name>..` prints one symbol's source and exact lines, checked against the worktree file (codesymbol.mjs, RM-a-64).
+// `norn code targets [--top N]` prints the refactoring targets as briefs and stores them for the Slop page (codetargets.mjs, RM-a-65).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -18,7 +19,7 @@ import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawGraphMap, graphMapAt } from './codemapgraph.mjs';
 import { codeSignals, writeSignals, readSignals, checkLine } from './codesignals.mjs';
-import { graphAt, graphStatus, dependencies, dependents, cycles, reach, symbols, references, ALL_KINDS, LIMITS } from './codegraph.mjs';
+import { graphAt, graphStatus, dependencies, dependents, cycles, reach, symbols, defsByHash, references, callers, ALL_KINDS, LIMITS } from './codegraph.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
@@ -27,6 +28,7 @@ import { cards, cardReport, reportLines, ageOf } from './codecard.mjs';
 import { writeWarnTable, warnMarks } from './codewarn.mjs';
 import { loadState } from './records.mjs';
 import { readSymbols, symbolLines, symbolExit } from './codesymbol.mjs';
+import { refactorTargets, targetLines, writeTargets, TARGET_LIMITS } from './codetargets.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
@@ -49,10 +51,12 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code symbol <file>::<name>.. [--project P | --state D] [--repo DIR] [--json]   (one symbol\'s source with its exact line range, the indexed '
   + 'commit and its age; a file changed since the index re-locates it from the worktree file or says "moved since the index"; an unknown name lists the file\'s '
   + 'symbols; paths relative to the repo root; exit 0 all shown, 1 one moved / unknown, 3 n/a; docs/code-graph.md)\n'
-  + 'usage: norn code graph index|deps|dependents|cycles|reach|symbols|refs|status ...   (the code graph: the file imports and definitions of JS / TS, Python and Rust; '
+  + 'usage: norn code targets [--top N] [--project P | --state D] [--repo DIR] [--json]   (the refactoring targets as briefs, ranked by the fix-first rank of their files: '
+  + 'split a file over the file ratchet, break an import cycle, extract from a function over the function ratchet; proposed, never edited; stored for the Slop page)\n'
+  + 'usage: norn code graph index|deps|dependents|cycles|reach|symbols|hash|refs|callers|status ...   (the code graph: the file imports and definitions of JS / TS, Python and Rust; '
   + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: [], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'], symbol: [], warn: ['report!'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: [], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'], symbol: [], warn: ['report!'], targets: ['top'] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
@@ -84,6 +88,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'card') return cardCmd(f, w.state, dir, { out, err, now });
   if (verb === 'warn') return warnCmd(f, w.state, { out, err });
   if (verb === 'symbol') return symbolCmd(f, w.state, dir, { out, err });
+  if (verb === 'targets') return targetsCmd(f, w.state, dir, { out, err });
   let ix, sig, graph;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
   try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now(), state: w.state }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
@@ -157,6 +162,17 @@ function riskCmd(f, state, dir, { out, err }) {
   for (const x of r.left_out) out(`  left out: ${x.partner} (changes with ${x.file}: ${x.shared} of ${x.landings} landings)`);
   return 0;
 }
+/** `norn code targets [--top N]`: codetargets.mjs's ranked briefs, stored for the Slop page (at least its page's count) -> exit code (3 = no graph) */
+async function targetsCmd(f, state, dir, { out, err }) {
+  const top = f.top === undefined ? TARGET_LIMITS.top : Number(f.top);
+  if (!Number.isInteger(top) || top < 1) { err('error: code targets: --top needs a whole number from 1'); err(CODE_USAGE); return 2; }
+  const r = await refactorTargets({ state, repo: dir, top: Math.max(top, TARGET_LIMITS.page) });
+  if (r.ok === false) { if (f.json) out(JSON.stringify(r)); else err(`n/a: ${r.why}`); return 3; }
+  writeTargets(state, r);
+  const shown = { ...r, targets: r.targets.slice(0, top) };
+  out(f.json ? JSON.stringify(shown) : targetLines(shown).join('\n'));
+  return 0;
+}
 // symbol, like graph: no --project / --state and none found = the repo's own store (<git common dir>/norn), not an error
 const whereOr = (where, f) => { try { return where(f); } catch { return { project: null, state: null }; } };
 /** `norn code symbol <file>::<name>..`: codesymbol.mjs's reads -> exit code (0 all shown, 1 one moved / unknown, 2 usage, 3 n/a) */
@@ -200,10 +216,10 @@ function mapCmd(f, state, repo, { out }) {
 
 // ---- `norn code graph <verb>`: the code graph's reader (codegraph.mjs, docs/code-graph.md) on the command line ----
 export const GRAPH_USAGE = 'usage: norn code graph index | deps <file> [--depth N] [--kinds K,..] | dependents <file> [--depth N] [--kinds K,..] | cycles [--within GLOB]... [--kinds K,..]'
-  + ' | reach <file>... [--forward] [--to GLOB]... | symbols <file> | refs <name> | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
+  + ' | reach <file>... [--forward] [--to GLOB]... | symbols <file>... | hash <body hash>... | refs <name> | callers <symbol id | file:name> [--depth N] | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
   + '   (paths are relative to the repo root; exit 0 answer, 2 usage, 3 n/a; docs/code-graph.md)';
-const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], symbols: [], refs: [], status: [] };
-const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], symbols: [1, 1], refs: [1, 1], status: [0, 0] };
+const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], symbols: [], hash: [], refs: [], callers: ['depth'], status: [] };
+const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], symbols: [1, Infinity], hash: [1, Infinity], refs: [1, 1], callers: [1, 1], status: [0, 0] };
 function graphArgs(verb, argv) {
   const spec = [...GRAPH_FLAGS[verb], 'project', 'state', 'repo', 'at', 'worktree!', 'no-index!', 'json!'], f = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -215,8 +231,8 @@ function graphArgs(verb, argv) {
     if (s.endsWith('*')) (f[k] ||= []).push(argv[++i]); else f[k] = argv[++i];
   }
   const [lo, hi] = GRAPH_ARGS[verb];
-  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${verb === 'refs' ? 'one name' : hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
-  if ((verb === 'symbols' || verb === 'refs') && f['no-index']) throw new Error(`${verb} indexes the asked commit when needed: no --no-index`);
+  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${verb === 'refs' ? 'one name' : verb === 'callers' ? 'one symbol' : verb === 'hash' ? 'one or more body hashes' : hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
+  if (['symbols', 'hash', 'refs', 'callers'].includes(verb) && f['no-index']) throw new Error(`${verb} indexes the asked commit when needed: no --no-index`);
   if (f.depth !== undefined && !(Number.isInteger(Number(f.depth)) && Number(f.depth) > 0)) throw new Error('--depth needs a whole number over 0');
   const bad = f.kinds?.split(',').filter(k => !ALL_KINDS.includes(k));
   if (bad?.length) throw new Error(`unknown kind ${bad.join(', ')} (kinds: ${ALL_KINDS.join(', ')})`);
@@ -225,6 +241,7 @@ function graphArgs(verb, argv) {
 const stampLine = s => `at ${s.commit.slice(0, 12)} (${ageOf(s.age_s)}), ${s.exact ? 'exact' : `asked ${s.asked}`}${s.worktree ? `, worktree (${s.dirty.length} changed)` : ''}`;
 const statusLines = s => [`norn-code: ${s.built ? 'built' : `not usable: ${s.why}`} (${s.binary}), store schema ${s.store_schema} at ${s.store}`, `head: ${s.head ?? 'none indexed'}`,
   ...s.indexed.map(e => `  ${e.commit.slice(0, 12)} ${e.indexed_at.slice(0, 16)} ${e.counts?.files ?? '?'} files, ${e.counts?.edges ?? '?'} edges, parsed ${e.parsed}, ${e.ms} ms`)].join('\n');
+const callerLine = x => `${String(x.depth).padStart(3)}  ${x.file}:${x.line}:${x.col}  ${x.how}${x.candidates > 1 ? ` of ${x.candidates}: ${x.targets.join(', ')}${x.more ? ` +${x.more} more` : ''}` : ''}  in ${x.caller ? x.caller.qual : '(top level)'}`;
 /** `norn code graph <verb>` -> exit code (0 answer, 2 usage, 3 n/a) */
 function graphCmd(argv, { out, err, where }) {
   const verb = argv[0];
@@ -237,14 +254,18 @@ function graphCmd(argv, { out, err, where }) {
   } catch (e) { err('error: ' + e.message); err(GRAPH_USAGE); return 2; }
   const repo = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), na = why => { if (f.json) out(JSON.stringify({ ok: false, why })); else err(`n/a: ${why}`); return 3; };
   if (verb === 'status') { const s = graphStatus({ state: w.state, repo }); if (s.ok === false) return na(s.why); out(f.json ? JSON.stringify(s) : statusLines(s)); return 0; }
-  if (verb === 'symbols' || verb === 'refs') {   // through norn-code query: no file-level Graph needed
+  if (['symbols', 'hash', 'refs', 'callers'].includes(verb)) {   // through norn-code query: no file-level Graph needed
     const o = { state: w.state, repo, at: f.at || 'HEAD', worktree: Boolean(f.worktree) };
-    const r = verb === 'symbols' ? symbols({ ...o, file: f._[0] }) : references({ ...o, name: f._[0] });
+    const r = verb === 'symbols' ? symbols({ ...o, ...(f._.length > 1 ? { files: f._ } : { file: f._[0] }) }) : verb === 'hash' ? defsByHash({ ...o, hashes: f._ }) : verb === 'refs' ? references({ ...o, name: f._[0] }) : callers({ ...o, symbol: f._[0], depth: f.depth === undefined ? 1 : Number(f.depth) });
     if (r.ok === false) return na(r.why);
     if (f.json) { out(JSON.stringify(r)); return 0; }
     out(stampLine(r.stamp));
     const def = d => `${d.kind.padEnd(8)} ${d.qual}  ${d.file}:${d.line}..${d.end_line}${d.exported ? '  exported' : ''}`;
+    const defLines = ds => { if (!ds.length) out('  none'); for (const d of ds) out(`  ${def(d)}`); };
+    if (verb === 'symbols' && r.files) { for (const [file, x] of Object.entries(r.files)) { out(x.ok === false ? `${file}  n/a: ${x.why}` : file); if (x.defs) defLines(x.defs); } return 0; }
+    if (verb === 'hash') { for (const [h, ds] of Object.entries(r.defs)) { out(h); defLines(ds); } if (r.truncated) out(`+${r.truncated} more`); return 0; }
     if (verb === 'symbols') { if (!r.defs.length) out('no definitions'); for (const d of r.defs.slice(0, LIMITS.rows)) out(def(d)); if (r.defs.length > LIMITS.rows) out(`+${r.defs.length - LIMITS.rows} more`); return 0; }
+    if (verb === 'callers') { out(`callers of ${def(r.symbol)}`); if (!r.rows.length) out('none'); for (const x of r.rows) out(callerLine(x)); if (r.truncated) out(`+${r.truncated} more`); return 0; }
     for (const d of r.defs) out(`def ${def(d)}`);
     for (const x of r.rows) out(`${x.file}:${x.line}:${x.col}${x.def_ids ? `  -> ${x.def_ids.join(', ')} (${x.how})` : ''}`);
     if (r.truncated) out(`+${r.truncated} more`);

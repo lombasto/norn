@@ -13,6 +13,9 @@ import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/bounded.m
 import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustPart, rustInto } from './helpers/rust.mjs';
+
+test.before(() => rustPart('hook'));   // the run-start test's stored part is the real norn-hook: a cold build runs here (seconds), never in a step; norn-code is not read, so not built
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function waitFor(fn, ms = 30000) {
@@ -346,4 +349,32 @@ test('a slow start-time probe: the supervisor beats first - no lost sweep before
   const end = it.history.find(h => h.ev === 'end')?.data;
   assert.equal(end?.outcome, 'done', JSON.stringify(it.history.map(h => h.ev)));
   assert.ok(Number.isFinite(end.supervisor_started), 'the end waits for the start time and names it');
+});
+
+// NORN-RUST-FRESH: the Rust parts a run reads are built before the executor starts. The worktree is a Norn checkout with this engine's
+// engine/hook-rs sources and the supervisor's PATH has no cargo, so no real cargo runs: a missing part is the run's ONE reason and the
+// executor is never spawned; a part already in the store costs no build and the run goes ahead. That stored part is this store's real
+// norn-hook (rustInto): the supervisor asks it its `version` and it answers the worktree's source hash, which a placeholder cannot.
+// It is built in the file's test.before, never inside the step
+test('run start: a missing Rust part with no cargo = stopped on ONE reason, no executor; a stored part = no build, the run goes', async () => {
+  const { partsOf, srcOf } = await import('../engine/lib/rustbin.mjs');
+  const d = sandbox(), policy = { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } };
+  fs.cpSync(srcOf('hook'), srcOf('hook', path.join(d.wt, 'engine')), { recursive: true, filter: f => path.basename(f) !== 'target' });
+  const [part] = partsOf({ parts: [], worktree: d.wt });
+  const sep = process.platform === 'win32' ? ';' : ':', old = process.env.PATH;
+  const hasCargo = dir => ['cargo', 'cargo.exe'].some(n => fs.existsSync(path.join(dir.replace(/"/g, ''), n)));
+  let id;
+  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); id = d.run('mode: done\n', { policy }); } finally { process.env.PATH = old; }
+  const e = (await d.end(id)).data;
+  assert.equal(e.outcome, 'stopped');
+  assert.match(e.why, /^the run did not start: norn-hook \(the per-tool-call hooks of every claude run\) cannot build: cargo is not on PATH \(install Rust: https:\/\/rustup\.rs\); build command: cargo build --release --locked /);
+  assert.equal(e.rust, e.why.replace('the run did not start: ', ''));
+  assert.equal(e.pid, null, 'the executor was never spawned');
+  rustInto(path.join(d.wt, 'engine'), ['hook']);
+  assert.ok(fs.existsSync(part.exe), 'the worktree sources equal this engine\'s: this store\'s norn-hook is under the worktree part\'s name');
+  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); id = d.run('mode: done\n', { policy }); } finally { process.env.PATH = old; }
+  const ok = (await d.end(id)).data;
+  assert.equal(ok.outcome, 'done', JSON.stringify(ok));
+  assert.equal(ok.rust, undefined);
+  assert.ok(Number.isInteger(ok.pid), 'the executor ran');
 });

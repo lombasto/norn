@@ -1,0 +1,5 @@
+{
+  "description": "The Python the code graph graders run on, by uv: py_find.py (S4a, stdlib only: importlib.machinery.PathFinder, ast) as uv run --no-project --python <python> python py_find.py; py_jedi.py (S4b) with jedi from jedi.lock.txt (hashes, uv verifies them) as uv run --no-project --python <python> --with-requirements jedi.lock.txt python py_jedi.py.",
+  "python": "3.13",
+  "jedi": "0.20.1"
+}

@@ -10,6 +10,8 @@ import { endCheck } from '../engine/lib/slop/runend.mjs';
 import { slopResumes } from '../engine/lib/slop/daily.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { slopChecks, slopHolds } from '../engine/lib/slop/host.mjs';
+import { binOf, sourceHash, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
+import { doneSlop } from '../engine/bin/norn.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -75,4 +77,45 @@ test('slopResumes: the daily report counts the run ends resumed with slop BLOCK 
     record(state, { kind: 'run', ev: 'resume', id, by: 'launcher', data: { next: 'RUN-9', slop: 2 } }, { now: () => new Date(at) });
   }
   assert.equal(slopResumes(state, now), 1, 'the one inside the week');
+});
+
+// NORN-DONE-FRESH: `norn done` is the engine on PATH; its stored check reads the code graph (K10) when the worktree holds an imports
+// root (rustbin graphReads, the supervisor's condition too). Then norn-code of THIS engine is ensured first, a build announced in one
+// line; a part that cannot be had refuses the DONE with rustbin's ONE reason and stores no check. A fake code part in a temp store and
+// an injected cargo: no real cargo runs here
+const EXE = process.platform === 'win32' ? '.exe' : '';
+function codePart(root) {
+  const src = path.join(root, 'eng', 'code-rs'), store = path.join(root, 'store');
+  fs.mkdirSync(path.join(src, 'src'), { recursive: true }); fs.writeFileSync(path.join(src, 'Cargo.toml'), '[package]\nname = "x"\n'); fs.writeFileSync(path.join(src, 'src', 'main.rs'), 'fn main() {}\n');
+  return [{ p: 'code', src, store, exe: binOf('code', { src, store }) }];
+}
+// the fake binary answers `version` as a built one does (NORN-PART-PROOF): the hash of the sources it was built from
+const says = exe => ({ status: 0, stdout: fs.readFileSync(exe, 'utf8') + '\n' });
+const graphFixture = () => { const fx = fixture(); fs.mkdirSync(path.join(fx.wt, 'engine')); fs.writeFileSync(path.join(fx.wt, 'engine', 'a.mjs'), 'export const a = 1;\n'); git(fx.wt, 'add', '-A'); git(fx.wt, 'commit', '-q', '-m', 'engine'); return fx; };
+
+test('norn done, the check reads the graph: norn-code is built first, said in one line, then the check runs and is stored', async () => {
+  const fx = graphFixture(), parts = codePart(fx.root), outs = [], calls = [];
+  const cargo = async args => {
+    assert.equal(slopChecks(fx.state).length, 0, 'built before the check');
+    calls.push(args); const t = args[args.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(t, 'release'), { recursive: true }); fs.writeFileSync(path.join(t, 'release', 'norn-code' + EXE), JSON.stringify({ crate: '0.1.0', store_schema: CODE_STORE_SCHEMA, source: sourceHash(parts[0].src) })); return { status: 0 };
+  };
+  await doneSlop(fx.state, 'RUN-1', s => outs.push(s), s => outs.push(s), { parts, rust: { cargo, cc: () => null, run: says } });
+  assert.deepEqual(calls.map(a => a[0]), ['clean', 'build'], 'the package cleaned, then built (rustbin.mjs plan)');
+  assert.match(outs[0], /^norn done: building norn-code \(the code graph .*\) for this engine's sources before the branch check/);
+  assert.equal(slopChecks(fx.state).length, 1, 'the check ran and is stored');
+});
+
+test('norn done: a check that does not read the graph builds nothing; a part that cannot be had refuses the DONE with the ONE reason and stores no check', async () => {
+  const fx = fixture(), outs = [];
+  assert.equal(await doneSlop(fx.state, 'RUN-1', s => outs.push(s), s => outs.push(s), { parts: codePart(fx.root), rust: { cargo: () => assert.fail('no graph read: no build'), cc: () => null } }), true, 'K15 still refuses');
+  assert.doesNotMatch(outs.join('\n'), /building norn-code/);
+  assert.equal(slopChecks(fx.state).length, 1);
+  const gx = graphFixture(), gouts = [];
+  const refused = await doneSlop(gx.state, 'RUN-1', s => gouts.push(s), s => gouts.push(s), { parts: codePart(gx.root), rust: { cc: () => null, cargo: async a => a[0] === 'clean' ? { status: 0 } : ({ status: 101, stdout: '', stderr: 'error: linker `cc` not found\n' }) } });
+  assert.equal(refused, true);
+  const all = gouts.join('\n');
+  assert.match(all, /norn-code \(the code graph .*\) did not build \(cargo exit 101: error: linker `cc` not found\); build command: cargo build --release --locked /);
+  assert.match(all, /RUN-1 DONE refused: the branch check cannot run/);
+  assert.doesNotMatch(all, /K10/, 'not a K10 finding');
+  assert.equal(slopChecks(gx.state).length, 0, 'no check stored'); assert.equal(slopHolds(gx.state)['feat/x'], undefined);
 });

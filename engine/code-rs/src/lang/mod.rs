@@ -75,9 +75,14 @@ pub fn parse(l: &dyn Lang, path: &str, src: &[u8]) -> Value {
     let mut facts = with_tree(l, path, src, |q, tq, tree| {
         let mut f = l.extract(q, tree, src);
         f.insert("parse_error".into(), json!(tree.root_node().has_error()));
-        let (defs, names) = crate::symbols::facts(l.name(), tq, tree, src);
+        let (defs, names, ex) = crate::symbols::facts(l.name(), tq, tree, src);
         f.insert("defs".into(), defs);
         f.insert("names".into(), names);
+        f.insert("calls".into(), ex.calls);
+        f.insert("binds".into(), ex.binds);
+        if let Some(d) = ex.default {
+            f.insert("default".into(), json!(d));
+        }
         f
     })
     .unwrap_or_else(|| {
@@ -85,6 +90,8 @@ pub fn parse(l: &dyn Lang, path: &str, src: &[u8]) -> Value {
             ("imports".to_string(), json!([])),
             ("defs".to_string(), json!([])),
             ("names".to_string(), json!([])),
+            ("calls".to_string(), json!([])),
+            ("binds".to_string(), json!([])),
             ("parse_failed".to_string(), json!(true)),
         ])
     });
