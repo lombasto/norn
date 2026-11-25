@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, loadState, readEvents, fold, RecordError } from '../engine/lib/records.mjs';
+import { record, loadState, readEvents, recordsFile, fold, RecordError } from '../engine/lib/records.mjs';
 import { loadRoadmap, foldRoadmap, childrenOf, derive, worldOf, detect, unplacedOf, goneLinks, buildTree, renderTree, renderRoadmapView,
   ROADMAP_HEADER, writeRoadmapView, checkLinks, RoadmapError, linkForm } from '../engine/lib/roadmap.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -488,4 +488,28 @@ test("ROAD-LINK-FORM: a lane link stores one form - the item home's typing; an u
   const w = worldOf({ now: NOW, home: 'a', items: byId([runRec('RUN-a-1', 'x', { state: 'running', start: 0.2 })]) });
   assert.deepEqual(unplacedOf([node([])], w).map(u => u.id), ['L:a/x']);
   for (const typed of ['lane:a/x', 'lane:x']) assert.deepEqual(unplacedOf([node([linkForm(typed, 'RM-a-2', A)])], w), [], typed + ' places lane x');
+});
+
+test('ROAD-LINK-FORM: norn road link / add / apply store the one form - lane:a/x on home a bare, a foreign lane:b/x kept', () => {
+  const s = mkTmp('rlf-cli-');
+  fs.writeFileSync(path.join(s, 'home.json'), JSON.stringify({ id: 'a', bare_home: 'a' }));
+  record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'x' } }, { views: false });
+  const r = (...a) => meta(['road', ...a, '--state', s, '--as', 'controller']);
+  const t = r('add', '--title', 'T', '--kind', 'theme');
+  assert.equal(t.code, 0, t.err);
+  const linksOf = id => readEvents(recordsFile(s, 'item')).filter(e => e.id === id && e.data?.links).map(e => e.data.links);
+  const add = r('add', '--title', 'I', '--theme', t.out, '--links', 'lane:a/x');
+  assert.equal(add.code, 0, add.err);
+  assert.deepEqual(linksOf(add.out), [['lane:x']], 'road add: own prefix stored bare');
+  let o = r('link', add.out, 'lane:a/x', 'lane:b/x');
+  assert.equal(o.code, 0, o.err);
+  assert.deepEqual(linksOf(add.out).at(-1), ['lane:x', 'lane:b/x'], "road link: own prefix bare, another home's lane kept");
+  o = r('unlink', add.out, 'lane:a/x');
+  assert.equal(o.code, 0, o.err);
+  assert.deepEqual(linksOf(add.out).at(-1), ['lane:x'], 'road unlink matches the stored form');
+  const plan = path.join(s, 'plan.json');
+  fs.writeFileSync(plan, JSON.stringify({ themes: [{ title: 'P', items: [{ title: 'Q', links: ['lane:a/x', 'lane:b/x'] }] }] }));
+  o = r('apply', plan);
+  assert.equal(o.code, 0, o.err);
+  assert.deepEqual(readEvents(recordsFile(s, 'item')).filter(e => e.data?.title === 'Q').map(e => e.data.links), [['lane:x', 'lane:b/x']], 'road apply: the same form');
 });
