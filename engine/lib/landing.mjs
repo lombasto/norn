@@ -15,6 +15,7 @@ import { openProjectPrs, fwd, s7 } from './mergeland.mjs';
 import { checkinPolicy } from './checkins.mjs';
 import { gateText, subdirOf } from './monorepo.mjs';
 import { fileURLToPath } from 'node:url';
+import { landedMerge } from './intents.mjs';
 
 export const landDir = stateDir => path.join(stateDir, 'mq', 'land');
 const landFile = (stateDir, id) => path.join(landDir(stateDir), `${id}.json`);
@@ -24,11 +25,19 @@ const saveLand = (stateDir, id, o) => {
   const was = loadLand(stateDir, id), conflicts = [...(was?.conflicts || []), ...(was?.status === 'conflict' && was.tip !== o.tip ? [{ tip: was.tip, at: was.at, queued: was.queued ?? null }] : [])];
   fs.mkdirSync(landDir(stateDir), { recursive: true }); fs.writeFileSync(landFile(stateDir, id), JSON.stringify({ ...o, ...(conflicts.length ? { conflicts } : {}) }, null, 1));
 };
-/** lane-collide S3 (SPEC 4A.6 merge, resolve_runs): how a deliverable's mechanical landing went -> { merge: conflict (any try met one) | clean (it
- *  merged: landed, or a red check / a refused PR after a clean merge) | none (never tried), queued: [the MERGE / resolve runs its conflicts queued] } */
+/** lane-collide S3 (SPEC 4A.6 merge, resolve_runs): how a deliverable's landing went -> { merge, queued }. merge: conflict (a mechanical try met
+ *  one, or git shows a resolved conflict in its landing: intents landedMerge) | clean (it merged with no conflict; or a mechanical try merged
+ *  cleanly before a red check / a refused PR) | unknown (it merged, git cannot tell how) | none (never landed nor tried). queued: the MERGE /
+ *  resolve runs its conflicts queued, and the lane's landing runs between the deliverable's creation and its merge */
 export function landOutcome(stateDir, id) {
   const l = id ? loadLand(stateDir, id) : null, cs = [...(l?.conflicts || []), ...(l?.status === 'conflict' ? [l] : [])];
-  return { merge: cs.length ? 'conflict' : l ? 'clean' : 'none', queued: [...new Set(cs.map(c => c.queued).filter(Boolean))] };
+  const x = id ? fold(readEvents(recordsFile(stateDir, 'deliverable'))).items[id] : null, m = (x?.history || []).filter(h => h.ev === 'merged').at(-1);
+  const g = m ? landedMerge(x.data?.repo, { tip: m.data?.tip ?? x.data?.tip, merge_commit: m.data?.merge_commit }).merge : null;
+  const merge = cs.length || g === 'conflict' ? 'conflict' : l || g === 'clean' ? 'clean' : m ? 'unknown' : 'none';
+  const t0 = Date.parse(x?.history?.[0]?.ts ?? ''), t1 = m ? Date.parse(m.ts) : Infinity;
+  const lands = x ? Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items).filter(r => r.kind === 'run' && r.data?.lane === x.data?.lane && isLandingStage(r.data?.stage)
+    && Date.parse(r.created) >= t0 && Date.parse(r.created) <= t1).map(r => r.id) : [];
+  return { merge, queued: [...new Set([...cs.map(c => c.queued).filter(Boolean), ...lands])] };
 }
 // a failed landing's status (<state>/mq/land/<DLV>.json) in the words and the kind of its skip (mqwhy.mjs)
 const LAND_WORDS = { conflict: 'merge conflict', red: 'quick check red', slop: 'slop BLOCK', pr: 'PR refused' };

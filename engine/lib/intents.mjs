@@ -6,7 +6,8 @@
 // git-perf S1: every git fact comes from gitfacts.mjs (HEAD and refs from the files, sha-keyed answers memoized, bounded children).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, fold, idNum, record, NID } from './records.mjs';
+import { readEvents, recordsFile, fold, idNum, record, NID, homeOfId } from './records.mjs';
+import { boundedSync } from './bounded.mjs';
 import { parseReady } from './ready.mjs';
 import { readScope, ahead, caseKey, pairKey, foldLine } from './collide.mjs';
 import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines, memo } from './gitfacts.mjs';
@@ -121,10 +122,12 @@ export function gatherIntents({ state, repo, main = 'main', remote = 'origin', n
       scope: b.scope, scope_why: b.why, exclusive: b.exclusive, touched: g?.touched || [], commits: g?.commits || 0, branch: g?.branch ?? null, tip: g?.tip ?? null,
       dlv: null, stacked_on: [], names: b.names, tests: b.tests, done: b.done, brief: d.brief ?? null, worktree: d.worktree ?? null };
   };
-  const all = Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane).sort((a, b) => idNum(a.id) - idNum(b.id));
+  // only this home's work is a live side (a record of another home is its copy: that home judges it; lifecycle laneRules, #252)
+  const mine = x => !home || homeOfId(x.id, home) === home;
+  const all = Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane && mine(r)).sort((a, b) => idNum(a.id) - idNum(b.id));
   for (const r of all) if (LIVE[r.state] && !(out.get(r.data.lane)?.state === 'running')) out.set(r.data.lane, intentOf(r, LIVE[r.state]));
   // an open deliverable not on main: the lane's unlanded work (a live run on the lane carries its DLV id)
-  for (const x of Object.values(dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state) && x.data?.lane)) {
+  for (const x of Object.values(dlvs).filter(x => x.kind === 'deliverable' && ['open', 'parked'].includes(x.state) && x.data?.lane && mine(x))) {
     const h = [...(x.history || [])].reverse().find(e => ['merged', 'done', 'create'].includes(e.ev)), d = x.data, tip = x.history?.filter(e => e.data?.tip).at(-1)?.data.tip ?? d.tip;
     if (h?.ev === 'merged' || (ref && onMain(repo, tip, ref))) continue;
     const live = out.get(d.lane);
@@ -133,10 +136,13 @@ export function gatherIntents({ state, repo, main = 'main', remote = 'origin', n
     out.set(d.lane, { ...base, state: 'unlanded', since: Date.parse(d.done_utc ?? '') || base.since, dlv: x.id, branch: d.branch ?? null, tip, ...(ref ? tipFacts(repo, tip, ref) : { touched: [], commits: 0 }) });
   }
   // a lane branch ahead of main whose last run ended within recent_days (paused work with commits)
-  const last = new Map();
+  // - not a lane whose deliverable merged after that run ended: its branch is landed work (a worker's own-branch merge left it "ahead")
+  const last = new Map(), mergedAt = new Map();
   for (const r of all) last.set(r.data.lane, r);
+  for (const x of Object.values(dlvs)) for (const e of x.kind === 'deliverable' && x.data?.lane ? x.history || [] : []) if (e.ev === 'merged')
+    mergedAt.set(x.data.lane, Math.max(mergedAt.get(x.data.lane) ?? 0, Date.parse(e.ts) || 0));
   for (const [lane, r] of last) {
-    if (out.has(lane) || LIVE[r.state] || now - endOf(r) > recent_days * 864e5 || !ref) continue;
+    if (out.has(lane) || LIVE[r.state] || now - endOf(r) > recent_days * 864e5 || !ref || (mergedAt.get(lane) ?? -1) >= endOf(r)) continue;
     const g = treeFacts(r.data.worktree, ref, ttlMs);
     if (g?.commits) out.set(lane, { ...intentOf(r, 'unlanded'), ...g, since: endOf(r) });
   }
@@ -231,7 +237,33 @@ export function caseView(c) {
 }
 /** the commit a first-parent walk from sha finds before ms (main as it was then) | null */
 export const firstParentBefore = (repo, sha, ms) => (sha && Number.isFinite(ms) ? gitOut(repo, ['rev-list', '-1', '--first-parent', `--before=${new Date(ms - 1000).toISOString()}`, sha]) || null : null);
-const PORT = /^merge:?\s+(?:origin\/)?main\s+into\b/i;
+// a port: a worker's "merge: main into ..." or git's own "Merge (remote-tracking) branch 'origin/main' into ..."
+const PORT = /^(?:merge:?\s+(?:origin\/)?main|merge (?:remote-tracking )?branch '(?:origin\/)?main')\s+into\b/i;
+/** git merge-tree of two commits -> clean | conflict | unknown (git failed); --quiet: the exit only, no objects kept */
+const replayMerge = (repo, x, y) => { const r = boundedSync('git', ['-C', repo, 'merge-tree', '--write-tree', '--quiet', x, y], { timeout: 60000 }); return r.status === 0 ? 'clean' : r.status === 1 ? 'conflict' : 'unknown'; };
+/**
+ * landedMerge(repo, { tip, merge_commit }) -> { merge: clean | conflict | unknown, base } - how a merged branch landed, from git alone (SPEC 4A.6
+ * merge for the landings that are not mechanical: a PR, a check-in's git merge). The landing merge is merge_commit, else the first merge on
+ * main's ancestry path from tip with tip as a parent; base = its first parent (main just before). Each two-parent merge on the branch's
+ * first parent since base (the ports) and the landing merge are replayed with merge-tree: one conflict = conflict (someone resolved it).
+ * No landing merge found (a fast-forward, a rebase) or git unable to answer: unknown, never guessed. Memoized per repo, tip and merge commit.
+ */
+const LANDED = new Map();
+export function landedMerge(repo, { tip, merge_commit = null } = {}) {
+  const k = `${repo}|${tip}|${merge_commit}`;
+  if (!LANDED.has(k)) LANDED.set(k, landedOnce(repo, tip, merge_commit));
+  return LANDED.get(k);
+}
+function landedOnce(repo, tip, merge_commit) {
+  if (!tip || !repo || !fs.existsSync(repo) || gitOut(repo, ['cat-file', '-e', `${tip}^{commit}`]) === null) return { merge: 'unknown', base: null };
+  const parents = h => (gitOut(repo, ['rev-list', '--parents', '-n', '1', h]) ?? '').split(' ').slice(1);
+  let M = merge_commit && merge_commit !== tip && parents(merge_commit).includes(tip) ? merge_commit : null;
+  if (!M) { const ref = mainRef(repo); M = ref.sha ? lines(gitOut(repo, ['rev-list', '--merges', '--ancestry-path', '--reverse', '--parents', `${tip}..${ref.sha}`]) ?? '').map(l => l.split(' ')).find(([, ...p]) => p.includes(tip))?.[0] ?? null : null; }
+  if (!M) return { merge: 'unknown', base: null };
+  const base = parents(M)[0] ?? null, ports = lines(gitOut(repo, ['rev-list', '--first-parent', '--merges', '--parents', `${base}..${tip}`]) ?? '').map(l => l.split(' ').slice(1)).filter(p => p.length === 2);
+  const got = [...ports, parents(M).slice(0, 2)].map(([x, y]) => replayMerge(repo, x, y));
+  return { merge: got.includes('conflict') ? 'conflict' : got.includes('unknown') ? 'unknown' : 'clean', base };
+}
 /** ownWork(repo, tip, base) -> { files (the first-parent non-merge commits' changed files), from (ms: the first of them), ports: [{ at, files }]
  *  (each first-parent "merge: main into" commit and the files it brought onto the branch) } - a branch's own work since base */
 export function ownWork(repo, tip, base) {
@@ -243,13 +275,13 @@ export function ownWork(repo, tip, base) {
   return { files: [...files].sort(), from: at.length ? Math.min(...at) : null, ports };
 }
 /** historySides(state, repo, { since, main, remote }) -> one side per deliverable merged at or after since (ms): { lane, dlv, pr, merged_at (ms),
- *  tip, files, from, ports } - its own work against main just before it merged (the merge commit's first parent, else main by date) */
+ *  tip, files, from, ports } - its own work against main just before it merged (the landing merge's first parent: landedMerge, else main by date) */
 export function historySides(state, repo, { since = 0, main = 'main', remote = 'origin' } = {}) {
   const ref = mainRef(repo, { main, remote }), out = [];
   for (const x of Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items)) {
     const m = (x.history || []).filter(h => h.ev === 'merged').at(-1), at = Date.parse(m?.data?.merged_at ?? m?.ts ?? '');
     if (!m || !(at >= since)) continue;
-    const tip = m.data.tip ?? x.data?.tip, base = m.data.merge_commit ? gitOut(repo, ['rev-parse', '--verify', '--quiet', `${m.data.merge_commit}^1`]) || null : firstParentBefore(repo, ref.sha, at);
+    const tip = m.data.tip ?? x.data?.tip, base = landedMerge(repo, { tip, merge_commit: m.data.merge_commit }).base ?? firstParentBefore(repo, ref.sha, at);
     out.push({ lane: x.data?.lane ?? null, dlv: x.id, pr: (x.history || []).filter(h => h.ev === 'pr').at(-1)?.data?.number ?? null, merged_at: at, tip, ...ownWork(repo, tip, base) });
   }
   return out;
