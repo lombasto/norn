@@ -18,7 +18,7 @@ import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawGraphMap, graphMapAt } from './codemapgraph.mjs';
 import { codeSignals, writeSignals, readSignals, checkLine } from './codesignals.mjs';
-import { graphAt, graphStatus, dependencies, dependents, cycles, reach, symbols, references, ALL_KINDS, LIMITS } from './codegraph.mjs';
+import { graphAt, graphStatus, dependencies, dependents, cycles, reach, symbols, references, callers, ALL_KINDS, LIMITS } from './codegraph.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
@@ -189,10 +189,10 @@ function mapCmd(f, state, repo, { out }) {
 
 // ---- `norn code graph <verb>`: the code graph's reader (codegraph.mjs, docs/code-graph.md) on the command line ----
 export const GRAPH_USAGE = 'usage: norn code graph index | deps <file> [--depth N] [--kinds K,..] | dependents <file> [--depth N] [--kinds K,..] | cycles [--within GLOB]... [--kinds K,..]'
-  + ' | reach <file>... [--forward] [--to GLOB]... | symbols <file> | refs <name> | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
+  + ' | reach <file>... [--forward] [--to GLOB]... | symbols <file> | refs <name> | callers <symbol id | file:name> [--depth N] | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
   + '   (paths are relative to the repo root; exit 0 answer, 2 usage, 3 n/a; docs/code-graph.md)';
-const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], symbols: [], refs: [], status: [] };
-const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], symbols: [1, 1], refs: [1, 1], status: [0, 0] };
+const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], symbols: [], refs: [], callers: ['depth'], status: [] };
+const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], symbols: [1, 1], refs: [1, 1], callers: [1, 1], status: [0, 0] };
 function graphArgs(verb, argv) {
   const spec = [...GRAPH_FLAGS[verb], 'project', 'state', 'repo', 'at', 'worktree!', 'no-index!', 'json!'], f = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -204,8 +204,8 @@ function graphArgs(verb, argv) {
     if (s.endsWith('*')) (f[k] ||= []).push(argv[++i]); else f[k] = argv[++i];
   }
   const [lo, hi] = GRAPH_ARGS[verb];
-  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${verb === 'refs' ? 'one name' : hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
-  if ((verb === 'symbols' || verb === 'refs') && f['no-index']) throw new Error(`${verb} indexes the asked commit when needed: no --no-index`);
+  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${verb === 'refs' ? 'one name' : verb === 'callers' ? 'one symbol' : hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
+  if (['symbols', 'refs', 'callers'].includes(verb) && f['no-index']) throw new Error(`${verb} indexes the asked commit when needed: no --no-index`);
   if (f.depth !== undefined && !(Number.isInteger(Number(f.depth)) && Number(f.depth) > 0)) throw new Error('--depth needs a whole number over 0');
   const bad = f.kinds?.split(',').filter(k => !ALL_KINDS.includes(k));
   if (bad?.length) throw new Error(`unknown kind ${bad.join(', ')} (kinds: ${ALL_KINDS.join(', ')})`);
@@ -214,6 +214,7 @@ function graphArgs(verb, argv) {
 const stampLine = s => `at ${s.commit.slice(0, 12)} (${ageOf(s.age_s)}), ${s.exact ? 'exact' : `asked ${s.asked}`}${s.worktree ? `, worktree (${s.dirty.length} changed)` : ''}`;
 const statusLines = s => [`norn-code: ${s.built ? 'built' : `not usable: ${s.why}`} (${s.binary}), store schema ${s.store_schema} at ${s.store}`, `head: ${s.head ?? 'none indexed'}`,
   ...s.indexed.map(e => `  ${e.commit.slice(0, 12)} ${e.indexed_at.slice(0, 16)} ${e.counts?.files ?? '?'} files, ${e.counts?.edges ?? '?'} edges, parsed ${e.parsed}, ${e.ms} ms`)].join('\n');
+const callerLine = x => `${String(x.depth).padStart(3)}  ${x.file}:${x.line}:${x.col}  ${x.how}${x.candidates > 1 ? ` of ${x.candidates}: ${x.targets.join(', ')}${x.more ? ` +${x.more} more` : ''}` : ''}  in ${x.caller ? x.caller.qual : '(top level)'}`;
 /** `norn code graph <verb>` -> exit code (0 answer, 2 usage, 3 n/a) */
 function graphCmd(argv, { out, err, where }) {
   const verb = argv[0];
@@ -226,14 +227,15 @@ function graphCmd(argv, { out, err, where }) {
   } catch (e) { err('error: ' + e.message); err(GRAPH_USAGE); return 2; }
   const repo = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), na = why => { if (f.json) out(JSON.stringify({ ok: false, why })); else err(`n/a: ${why}`); return 3; };
   if (verb === 'status') { const s = graphStatus({ state: w.state, repo }); if (s.ok === false) return na(s.why); out(f.json ? JSON.stringify(s) : statusLines(s)); return 0; }
-  if (verb === 'symbols' || verb === 'refs') {   // through norn-code query: no file-level Graph needed
+  if (['symbols', 'refs', 'callers'].includes(verb)) {   // through norn-code query: no file-level Graph needed
     const o = { state: w.state, repo, at: f.at || 'HEAD', worktree: Boolean(f.worktree) };
-    const r = verb === 'symbols' ? symbols({ ...o, file: f._[0] }) : references({ ...o, name: f._[0] });
+    const r = verb === 'symbols' ? symbols({ ...o, file: f._[0] }) : verb === 'refs' ? references({ ...o, name: f._[0] }) : callers({ ...o, symbol: f._[0], depth: f.depth === undefined ? 1 : Number(f.depth) });
     if (r.ok === false) return na(r.why);
     if (f.json) { out(JSON.stringify(r)); return 0; }
     out(stampLine(r.stamp));
     const def = d => `${d.kind.padEnd(8)} ${d.qual}  ${d.file}:${d.line}..${d.end_line}${d.exported ? '  exported' : ''}`;
     if (verb === 'symbols') { if (!r.defs.length) out('no definitions'); for (const d of r.defs.slice(0, LIMITS.rows)) out(def(d)); if (r.defs.length > LIMITS.rows) out(`+${r.defs.length - LIMITS.rows} more`); return 0; }
+    if (verb === 'callers') { out(`callers of ${def(r.symbol)}`); if (!r.rows.length) out('none'); for (const x of r.rows) out(callerLine(x)); if (r.truncated) out(`+${r.truncated} more`); return 0; }
     for (const d of r.defs) out(`def ${def(d)}`);
     for (const x of r.rows) out(`${x.file}:${x.line}:${x.col}${x.def_ids ? `  -> ${x.def_ids.join(', ')} (${x.how})` : ''}`);
     if (r.truncated) out(`+${r.truncated} more`);
