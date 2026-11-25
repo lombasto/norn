@@ -2,64 +2,166 @@
   "id": "K2",
   "level": "BLOCK",
   "kind": "ast",
-  "tool": "eslint",
+  "tool": "ast-grep",
   "title": "a new empty or comment-only catch with no reason",
   "explain": {
     "what": "A new catch block is empty, or holds only a comment that does not say what happens next.",
     "why": "An empty catch hides the error. The code goes on as if the step worked, and the real fault shows up later, far from its cause.",
     "fix": "Handle the error, rethrow it, or let it go up. If it is safe to drop, write a comment that says why and what happens next (two words or more, not \"ignore\" or \"ok\")."
   },
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
+  "shadow_langs": ["py","rs","ts"],
   "exclude": ["**/vendor/**"],
   "reason": ["ignore","ignored","ok","okay","best effort","nothing","noop","no-op","empty","todo","fine","whatever","swallow"],
-  "selectors": [
-    {"selector":"CatchClause[body.body.length=0]","message":"empty catch: say what happens next, or let it throw"},
-    {"selector":"CallExpression[callee.property.name='catch'] > ArrowFunctionExpression[body.type='BlockStatement'][body.body.length=0]","message":"empty .catch(() => {}): say what happens next, or let it throw"}
-  ],
+  "match": {
+    "js": [
+      {
+        "rule": {"kind":"catch_clause","has":{"field":"body","kind":"statement_block","regex":"^\\{(?:\\s|//[^\\n]*|/\\*[\\s\\S]*?\\*/)*\\}$"}},
+        "message": "empty catch: say what happens next, or let it throw"
+      },
+      {
+        "rule": {
+          "kind": "arrow_function",
+          "has": {"field":"body","kind":"statement_block","regex":"^\\{(?:\\s|//[^\\n]*|/\\*[\\s\\S]*?\\*/)*\\}$"},
+          "inside": {
+            "kind": "arguments",
+            "inside": {"kind":"call_expression","has":{"field":"function","kind":"member_expression","has":{"field":"property","regex":"^catch$"}}}
+          }
+        },
+        "message": "empty .catch(() => {}): say what happens next, or let it throw"
+      }
+    ],
+    "py": [
+      {
+        "rule": {
+          "kind": "except_clause",
+          "has": {
+            "kind": "block",
+            "all": [
+              {"has":{"any":[{"kind":"pass_statement"},{"kind":"expression_statement","has":{"kind":"ellipsis"}}]}},
+              {"not":{"has":{"nthChild":2,"not":{"kind":"comment"}}}}
+            ]
+          }
+        },
+        "message": "empty except: say what happens next, or let it raise"
+      }
+    ],
+    "rs": [
+      {
+        "rule": {
+          "kind": "if_expression",
+          "has": {"field":"condition","kind":"let_condition","has":{"field":"pattern","regex":"^Err\\(_\\w*\\)$"}},
+          "all": [{"has":{"field":"consequence","kind":"block","regex":"^\\{(?:\\s|//[^\\n]*|/\\*[\\s\\S]*?\\*/)*\\}$"}}]
+        },
+        "message": "an empty if let Err(_): say what happens next, or let it propagate"
+      },
+      {
+        "rule": {
+          "kind": "match_arm",
+          "has": {"field":"pattern","regex":"^Err\\(_\\w*\\)$"},
+          "all": [
+            {
+              "has": {"field":"value","any":[{"kind":"block","regex":"^\\{(?:\\s|//[^\\n]*|/\\*[\\s\\S]*?\\*/)*\\}$"},{"kind":"unit_expression"}]}
+            }
+          ]
+        },
+        "message": "an empty Err(_) arm: say what happens next, or let it propagate"
+      },
+      {
+        "rule": {"kind":"expression_statement","pattern":"$E.ok();"},
+        "message": "a Result dropped with .ok(): say what happens next, or let it propagate"
+      }
+    ],
+    "ts": [
+      {
+        "rule": {"kind":"catch_clause","has":{"field":"body","kind":"statement_block","regex":"^\\{(?:\\s|//[^\\n]*|/\\*[\\s\\S]*?\\*/)*\\}$"}},
+        "message": "empty catch: say what happens next, or let it throw"
+      },
+      {
+        "rule": {
+          "kind": "arrow_function",
+          "has": {"field":"body","kind":"statement_block","regex":"^\\{(?:\\s|//[^\\n]*|/\\*[\\s\\S]*?\\*/)*\\}$"},
+          "inside": {
+            "kind": "arguments",
+            "inside": {"kind":"call_expression","has":{"field":"function","kind":"member_expression","has":{"field":"property","regex":"^catch$"}}}
+          }
+        },
+        "message": "empty .catch(() => {}): say what happens next, or let it throw"
+      }
+    ]
+  },
   "fixture": {
     "hit": {
       "base": {"src/io.mjs":"export const read = f => f();\n"},
       "head": {
-        "src/io.mjs": "export const read = f => { try { return f(); } catch { /* ignore */ } };\nexport const quiet = p => p.catch(() => {});\nexport function last(f) {\n  try { f(); } catch (e) {}\n}\nexport const meh = f => { try { f(); } catch { /* best effort, it is fine */ } };\n"
+        "src/io.mjs": "export const read = f => { try { return f(); } catch { /* ignore */ } };\nexport const quiet = p => p.catch(() => {});\nexport function last(f) {\n  try { f(); } catch (e) {}\n}\nexport const meh = f => { try { f(); } catch { /* best effort, it is fine */ } };\n",
+        "src/io.py": "def read(f):\n    try:\n        return f()\n    except OSError:\n        pass\n\n\ndef quiet(f):\n    try:\n        f()\n    except Exception:\n        ...\n\n\ndef last(f):\n    try:\n        f()\n    except:\n        pass\n",
+        "src/io.rs": "pub fn a(x: Result<u8, E>) {\n    if let Err(_) = x {}\n}\npub fn b(x: Result<u8, E>) {\n    match x {\n        Ok(v) => use_it(v),\n        Err(_e) => {}\n    }\n}\npub fn c(f: impl Fn() -> Result<(), E>) {\n    f().ok();\n}\n",
+        "src/io.ts": "export const read = (f: () => string): string | undefined => { try { return f(); } catch { /* ignore */ } };\nexport const quiet = (p: Promise<void>) => p.catch(() => {});\nexport function last(f: () => void): void {\n  try { f(); } catch (e: unknown) {}\n}\n"
       },
       "recorded": {
         "head": [
+          {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":1,"column":48,"endLine":1,"text":"catch { /* ignore */ }"},
+          {"file":"src/io.mjs","ruleId":"K2.js.1.JavaScript","line":2,"column":35,"endLine":2,"text":"() => {}"},
+          {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":4,"column":16,"endLine":4,"text":"catch (e) {}"},
           {
-            "filePath": "src/io.mjs",
-            "messages": [
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":1,"column":48,"endLine":1,"endColumn":70},
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty .catch(() => {}): say what happens next, or let it throw","line":2,"column":35,"endLine":2,"endColumn":43},
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":4,"column":16,"endLine":4,"endColumn":28},
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":6,"column":40,"endLine":6,"endColumn":79}
-            ]
-          }
+            "file": "src/io.mjs",
+            "ruleId": "K2.js.0.JavaScript",
+            "line": 6,
+            "column": 40,
+            "endLine": 6,
+            "text": "catch { /* best effort, it is fine */ }"
+          },
+          {"file":"src/io.py","ruleId":"K2.py.0.Python","line":4,"column":5,"endLine":5,"text":"except OSError:\n        pass"},
+          {"file":"src/io.py","ruleId":"K2.py.0.Python","line":11,"column":5,"endLine":12,"text":"except Exception:\n        ..."},
+          {"file":"src/io.py","ruleId":"K2.py.0.Python","line":18,"column":5,"endLine":19,"text":"except:\n        pass"},
+          {"file":"src/io.rs","ruleId":"K2.rs.0.Rust","line":2,"column":5,"endLine":2,"text":"if let Err(_) = x {}"},
+          {"file":"src/io.rs","ruleId":"K2.rs.1.Rust","line":7,"column":9,"endLine":7,"text":"Err(_e) => {}"},
+          {"file":"src/io.rs","ruleId":"K2.rs.2.Rust","line":11,"column":5,"endLine":11,"text":"f().ok();"},
+          {"file":"src/io.ts","ruleId":"K2.ts.0.TypeScript","line":1,"column":84,"endLine":1,"text":"catch { /* ignore */ }"},
+          {"file":"src/io.ts","ruleId":"K2.ts.1.TypeScript","line":2,"column":52,"endLine":2,"text":"() => {}"},
+          {"file":"src/io.ts","ruleId":"K2.ts.0.TypeScript","line":4,"column":16,"endLine":4,"text":"catch (e: unknown) {}"}
         ],
-        "base": [{"filePath":"src/io.mjs","messages":[]}]
+        "base": []
       }
     },
     "miss": {
       "base": {"src/io.mjs":"export function old(f) {\n  try { f(); } catch (e) {}\n}\n"},
       "head": {
-        "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\nexport const read = f => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = p => p.catch(e => { throw e; });\nexport const text = 'try { f(); } catch (e) {}';\n"
+        "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\nexport const read = f => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = p => p.catch(e => { throw e; });\nexport const text = 'try { f(); } catch (e) {}';\n",
+        "src/io.py": "def read(f):\n    try:\n        return f()\n    except OSError as e:\n        raise RuntimeError(\"read failed\") from e\n\n\nDOC = \"try: f()\\nexcept: pass\"\n",
+        "src/io.rs": "pub fn a(x: Result<u8, E>) {\n    if let Err(e) = &x { log(e); }\n    if let Err(_) = x { /* gone: the file was removed meanwhile, nothing left to read */ }\n    let s = \"if let Err(_) = x {}\";\n    let v = x.ok();\n}\n",
+        "src/io.ts": "export const read = (f: () => string) => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = (p: Promise<void>) => p.catch((e: unknown) => { throw e; });\n"
       },
       "recorded": {
         "head": [
+          {"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":2,"column":16,"endLine":2,"text":"catch (e) {}"},
           {
-            "filePath": "src/io.mjs",
-            "messages": [
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":2,"column":16,"endLine":2,"endColumn":28},
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":4,"column":48,"endLine":4,"endColumn":122}
-            ]
+            "file": "src/io.mjs",
+            "ruleId": "K2.js.0.JavaScript",
+            "line": 4,
+            "column": 48,
+            "endLine": 4,
+            "text": "catch { /* gone: the file was removed meanwhile, nothing left to read */ }"
+          },
+          {
+            "file": "src/io.rs",
+            "ruleId": "K2.rs.0.Rust",
+            "line": 3,
+            "column": 5,
+            "endLine": 3,
+            "text": "if let Err(_) = x { /* gone: the file was removed meanwhile, nothing left to read */ }"
+          },
+          {
+            "file": "src/io.ts",
+            "ruleId": "K2.ts.0.TypeScript",
+            "line": 1,
+            "column": 64,
+            "endLine": 1,
+            "text": "catch { /* gone: the file was removed meanwhile, nothing left to read */ }"
           }
         ],
-        "base": [
-          {
-            "filePath": "src/io.mjs",
-            "messages": [
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K2: empty catch: say what happens next, or let it throw","line":2,"column":16,"endLine":2,"endColumn":28}
-            ]
-          }
-        ]
+        "base": [{"file":"src/io.mjs","ruleId":"K2.js.0.JavaScript","line":2,"column":16,"endLine":2,"text":"catch (e) {}"}]
       }
     }
   }

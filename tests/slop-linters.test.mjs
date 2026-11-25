@@ -17,7 +17,7 @@ const ROWS = () => guardRows({ holds: [hold([
 
 test('lintersView (S1): the real rules dir lists eslint 10.15.0 from tools/lint with a lock hash and LJ\'s levels', () => {
   const [t, ...more] = lintersView([]).tools;
-  assert.deepEqual(more.map(m => m.tool), ['gitleaks'], 'the one tool set of TOOLS, then the pinned scanners (slop-secrets.test.mjs)');
+  assert.deepEqual(more.map(m => m.tool), ['ast-grep', 'gitleaks'], 'the tool sets of TOOLS, then the pinned scanners (slop-secrets.test.mjs)');
   assert.deepEqual([t.tool, t.set, t.version, t.rules], ['eslint', 'lint', '10.15.0', ['LJ']]);
   assert.match(t.lock, /^[0-9a-f]{12}$/);
   for (const r of ['no-unused-vars', 'no-duplicate-imports', 'no-debugger', 'no-console', 'no-warning-comments', 'no-restricted-properties']) assert.ok(t.levels.BLOCK.includes(r), r);
