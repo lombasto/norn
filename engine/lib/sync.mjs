@@ -13,7 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync, spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore, HOME_RE } from './records.mjs';
+import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore, HOME_RE, homeOfId } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger, ledgerConfig } from './ledger.mjs';
 import { rgit, fetchRefs, under, fedOf, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { readJsonS } from './fsnap.mjs';
@@ -24,7 +24,8 @@ import { ghSlug } from './mergeland.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
 import { setPause, clearPause } from './pause.mjs';
 import { boundedAsync } from './bounded.mjs';
-import { arrivalNotices } from './mail.mjs';
+import { arrivalNotices, listMail } from './mail.mjs';
+import { withDefaults } from './policy.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const COPIED = ['run', 'deliverable'];
@@ -75,6 +76,7 @@ const idle = (m, files, stat) => (!!m && same(m.files || {}, stat) && m.pushed =
 // of the other homes' shared logs, written by the fetch only when its bytes change. A publish whose only change is a seen.json whose held part
 // is the one last committed (polled_at moved) is a heartbeat: pushed, but it rings no doorbell (the manifest keeps the held part per file).
 const SEEN_LOGS = logsOf(SHARED_KINDS), POLL_ROUND_MS = 5 * 60000;
+const isoS = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const heldOf = abs => { try { return JSON.stringify(JSON.parse(fs.readFileSync(abs, 'utf8')).held ?? null); } catch { return null; } };
 // the last seq of a log copy: a home appends its own log in seq order, so the last line that parses holds the highest
 function lastSeq(f) {
@@ -148,7 +150,7 @@ export function publishHome(cfg0, o = {}) {
       const r = rgit(f, ['push', '-q', '--porcelain', cfg.remote, `${head}:${ref}`], { ok: [0, 1, 128] });
       if (r.status === 0) {
         rgit(f, ['update-ref', `refs/sync/home/${cfg.home_id}`, head]);
-        writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: head, files: stat, held }));
+        writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: head, files: stat, held, pushed_at: now }));
         return { ...(sha ? { sha } : {}), pushed: true, ...(beat ? { heartbeat: true } : {}) };
       }
       const bad = r.out.split('\n').find(l => l.startsWith('!'));
@@ -191,8 +193,10 @@ export function fetchHomes(cfg0, o = {}) {
     return { error: why };
   }
   try {
-    const tips = Object.fromEntries(rgit(f, ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/sync/home/']).out.split('\n').filter(Boolean)
-      .map(l => l.split(' ')).map(([r, sha]) => [r.slice('refs/sync/home/'.length), sha]).filter(([h]) => HOME_RE.test(h) && h !== cfg.home_id));
+    // HOME-MAIL S3: the commit time of each tip is that home's last push (sync status reads it from sync-fetch.json, no git)
+    const refs = rgit(f, ['for-each-ref', '--format=%(refname) %(objectname) %(committerdate:iso-strict)', 'refs/sync/home/']).out.split('\n').filter(Boolean)
+      .map(l => l.split(' ')).map(([r, sha, d]) => [r.slice('refs/sync/home/'.length), sha, d]).filter(([h]) => HOME_RE.test(h) && h !== cfg.home_id);
+    const tips = Object.fromEntries(refs.map(([h, sha]) => [h, sha])), pushed_at = Object.fromEntries(refs.map(([h, , d]) => [h, d ? isoS(Date.parse(d)) : null]));
     const homes = Object.keys(tips).sort(), mine = projects(cfg), written = [];
     const noted = Object.fromEntries(mine.map(p => [p, readJsonS(notesOf(cfg, p)) || []])), noted0 = JSON.stringify(noted);
     for (const h of homes) {
@@ -231,7 +235,7 @@ export function fetchHomes(cfg0, o = {}) {
     const notices = mine.flatMap(p => { try { return arrivalNotices(path.join(cfg.state_root, p)).map(n => ({ ...n, project: p })); }
       catch (e) { logTo(cfg, `arrival step failed for ${p} (the next pass retries): ${e.message}`); return []; } });
     const gone = mine.flatMap(p => ls(path.join(cfg.state_root, p, 'homes')).filter(d => d.isDirectory() && !tips[d.name]).map(d => `${p}/${d.name}`)).sort();
-    writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone }));
+    writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone, pushed_at }));
     writeAtomic(at(cfg, 'names'), JSON.stringify(homeNames(f)));
     return { homes, written, gone, relayed, refused, notices };
   } catch (e) { logTo(cfg, `copies failed: ${e.message}`); return { error: e.message }; }
@@ -287,14 +291,94 @@ export function relayPass(stateDir, o = {}) {
   return out;
 }
 
-/** what the sync files say (no git, no network): { off } | { error } | { home, remote, head, pushed, stopped, fetched_at, fetch_error, failed_at, gone } */
-export function syncStatus(cfg0) {
+/** what the sync files say (no git, no network): { off } | { error } | { home, remote, head, pushed, stopped, fetched_at, fetch_error, failed_at, gone,
+ * projects: [{ project, homes, broken }] (homesStatus, o.policyOf(project) = its limits), broken: [every project's] } */
+export function syncStatus(cfg0, o = {}) {
   let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
   if (!cfg) return { off: true };
   const m = readJsonS(at(cfg, 'manifest')) || {}, ft = readJsonS(at(cfg, 'fetch')) || {};
   let stopped = null; try { stopped = fs.readFileSync(at(cfg, 'stopped'), 'utf8').trim(); } catch { /* no stop file: publishing runs, stopped stays null */ }
   return { home: cfg.home_id, remote: cfg.remote ? 'set' : null, head: m.head ?? null, pushed: m.pushed ?? null, stopped,
-    fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, gone: ft.gone || [] };
+    fetched_at: ft.fetched_at ?? null, fetch_error: ft.fetch_error ?? null, failed_at: ft.failed_at ?? null, gone: ft.gone || [], ...homesOfCfg(cfg, m, ft, o) };
+}
+function homesOfCfg(cfg, m, ft, o) {
+  // an unreadable log (an integrity error) costs that project its rows, never the status
+  const projects = syncedDirs(cfg).map(({ project, state }) => { try { return { project, ...homesStatus(state, { now: o.now, polledAt: ft.fetched_at ?? null, pushedAt: ft.pushed_at || {},
+    ownPushedAt: m.pushed_at ?? null, gone: (ft.gone || []).filter(g => g.startsWith(project + '/')).map(g => g.slice(project.length + 1)), limits: alertLimits(o.policyOf?.(project)) }) }; }
+    catch (e) { return { project, homes: [], broken: [], error: e.message.split('\n')[0] }; } });
+  return { projects, broken: projects.flatMap(p => p.broken.map(b => ({ project: p.project, ...b }))) };
+}
+
+// ---------- HOME-MAIL S3 (REPORT 3.3): one status row per home, the alerts, the tick's own fetch ----------
+// A home's heartbeat is the polled_at of its receipt (seen.json, rounded down to 5 min) as this home last fetched it; this home's own is
+// its last fetch. A home on an older version publishes no receipt: its poll reads "unknown" and breaks no rule. Limits from policy.
+/** { unacked_min, urgent_min, heartbeat_min, fetch_min } from a project policy (defaults: 30, 10, 15, 2) */
+export const alertLimits = pol => { const P = withDefaults({ policy: pol || {} }).policy;
+  return { unacked_min: P.mail.unacked_alert_min, urgent_min: P.mail.urgent_alert_min, heartbeat_min: P.sync.heartbeat_min, fetch_min: P.sync.tick_fetch_min }; };
+const minsSince = (iso, now) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 60000)) : null; };
+const oldest = rows => rows.length ? { count: rows.length, oldest_min: Math.max(...rows.map(r => r.age_min)) } : { count: 0, oldest_min: null };
+// why a mail is not acked yet, from the sender's side (listMail's where: S1 receipts)
+function mailWhy(r, dest) {
+  if (r.state === 'delivered') return `delivered at ${dest}${r.delivered_to ? ` (${r.delivered_to})` : ''}, not acked`;
+  if (/^at /.test(r.where)) return `${dest} holds it; nobody there has read it (${r.where}): its controller runs norn mail check`;
+  if (/ unknown$/.test(r.where)) return `${dest} sends no receipts (an older Norn there): not known whether it arrived`;
+  return `${dest} has not fetched it yet (${r.where})`;
+}
+/**
+ * homesStatus(state, { now, polledAt?, pushedAt?: { h: iso }, ownPushedAt?, gone?: [h], limits? }): per home of this synced dir (own first)
+ * { home, own, last_push, last_poll, heartbeat_min, holds (of our shared logs, by log), ours (our last seq, by log), unread_there, waiting_here, gone }
+ * and broken: [{ rule: heartbeat | mail, home, id?, age_min, what (one line), why }]. polledAt = this home's last fetch (else its own seen.json). Solo: none.
+ */
+export function homesStatus(state, o = {}) {
+  const home = homeOf(state), out = { homes: [], broken: [] };
+  if (!home) return out;
+  const now = o.now ?? Date.now(), L = o.limits || alertLimits(), gone = o.gone || [], bare = home.bare_home;
+  const others = ls(path.join(state, 'homes')).filter(d => d.isDirectory() && HOME_RE.test(d.name) && d.name !== home.id).map(d => d.name).sort();
+  const mails = listMail(state, { open: true, now }), ours = Object.fromEntries(SEEN_LOGS.map(l => [l, lastSeq(path.join(state, l))]).filter(([, s]) => s !== null));
+  const destOf = r => primaryOf({ kind: 'mail', data: { to: r.to } }, bare), mine = r => homeOfId(r.id, bare) === home.id;
+  const ownPoll = o.polledAt ?? readJsonS(path.join(state, 'seen.json'))?.polled_at ?? null;
+  out.homes.push({ home: home.id, own: true, last_push: o.ownPushedAt ?? null, last_poll: ownPoll, heartbeat_min: minsSince(ownPoll, now) });
+  const late = (age, lim) => age !== null && age > lim;
+  if (late(minsSince(ownPoll, now), L.heartbeat_min)) out.broken.push({ rule: 'heartbeat', home: home.id, age_min: minsSince(ownPoll, now), what: `home ${home.id}: heartbeat ${minsSince(ownPoll, now)} min old`, why: `home ${home.id}: heartbeat ${minsSince(ownPoll, now)} min old (this home last fetched ${ownPoll}; limit ${L.heartbeat_min}): is its dashboard or norn sync watch running?` });
+  for (const h of others) {
+    const seen = readJsonS(path.join(state, 'homes', h, 'seen.json')), poll = seen?.polled_at ?? null, age = minsSince(poll, now), isGone = gone.includes(h);
+    const there = mails.filter(r => mine(r) && destOf(r) === h), here = mails.filter(r => !mine(r) && homeOfId(r.id, bare) === h && destOf(r) === home.id);
+    out.homes.push({ home: h, own: false, last_push: o.pushedAt?.[h] ?? null, last_poll: poll, heartbeat_min: age, holds: seen?.held?.[home.id] ?? null, ours,
+      unread_there: oldest(there), waiting_here: oldest(here), gone: isGone });
+    if (isGone) continue;
+    if (late(age, L.heartbeat_min)) out.broken.push({ rule: 'heartbeat', home: h, age_min: age, what: `home ${h}: heartbeat ${age} min old`, why: `home ${h}: heartbeat ${age} min old (last polled ${poll}; limit ${L.heartbeat_min}): it fetches nothing, so it reads no mail` });
+    for (const r of there) {
+      const lim = r.urgent ? L.urgent_min : L.unacked_min;
+      if (r.age_min > lim) out.broken.push({ rule: 'mail', home: h, id: r.id, age_min: r.age_min, what: `${r.id} to ${qualifyTo(r.to, bare)} unacked ${r.age_min} min`, why: `${r.id} to ${qualifyTo(r.to, bare)}${r.urgent ? ' URGENT' : ''} unacked ${r.age_min} min (limit ${lim}): ${mailWhy(r, h)}` });
+    }
+  }
+  return out;
+}
+const qualifyTo = (to, bare) => /^role:[a-z]+$/.test(to) ? `${to}@${bare}` : to;
+// <state>/sync/alerted.json { mail: [ids told, still unacked], homes: [homes told, still stale] }: a mail is told once, a stale home once per episode
+const alertedFile = state => path.join(state, 'sync', 'alerted.json');
+/** the tick's alerts: each new broken rule of homesStatus is one notice { title, body } (the caller sends it, class alert); told once */
+export function syncAlerts(state, o = {}) {
+  const { broken } = homesStatus(state, o);
+  if (!homeOf(state)) return [];
+  const had = readJsonS(alertedFile(state)) || {}, key = b => b.rule === 'mail' ? b.id : b.home;
+  const cur = { mail: broken.filter(b => b.rule === 'mail').map(key), homes: broken.filter(b => b.rule === 'heartbeat').map(key) };
+  const fresh = broken.filter(b => !(b.rule === 'mail' ? had.mail || [] : had.homes || []).includes(key(b)));
+  // an id stays while its rule is broken: an acked mail never breaks it again; a home fresh again ends its episode
+  const keep = { mail: cur.mail.sort(), homes: cur.homes.sort() };
+  if (JSON.stringify(keep) !== JSON.stringify({ mail: had.mail || [], homes: had.homes || [] })) writeAtomic(alertedFile(state), JSON.stringify(keep));
+  return fresh.map(b => ({ title: b.what, body: `${b.why}\n(norn sync status shows every home)` }));
+}
+/** this home's last good fetch (sync-fetch.json fetched_at) or null (sync off, never fetched) */
+export const lastFetch = cfg0 => { try { const cfg = synced(cfg0); return cfg ? readJsonS(at(cfg, 'fetch'))?.fetched_at ?? null : null; } catch { return null; } };
+/** the tick's fetch: when this home's own poll (sync-fetch.json fetched_at) is older than min (2) or missing, one pass (o.pass: tests);
+ * sync off or fresh -> null. A dead dashboard no longer makes a home deaf (REPORT F3). */
+export function tickFetch(cfg0, o = {}) {
+  let cfg; try { cfg = synced(cfg0); } catch { return null; }
+  if (!cfg) return null;
+  const age = minsSince(lastFetch(cfg), o.now ?? Date.now()), min = o.min ?? alertLimits().fetch_min;
+  if (age !== null && age < min) return null;
+  return (o.pass ?? syncPass)(cfg0, { now: o.now });
 }
 
 /** the publish step of the tick's ledger step and of a run end: never throws; a one-line note or null (off / no-op). A push rings the
