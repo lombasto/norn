@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fromUsage, transcriptUsage, usageOfRun, costRollup, weekStart, WEIGHTS } from '../engine/lib/cost.mjs';
+import { fromUsage, transcriptUsage, usageOfRun, costRollup, runsTotal, weekStart, WEIGHTS } from '../engine/lib/cost.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const tmp = () => mkTmp('meta-cost-');
@@ -73,6 +73,19 @@ test('usageOfRun: Claude ended = final usage, running = live transcript; Codex t
     assert.deepEqual(usageOfRun(run('RUN-6', 2, { kind: 'worker', executor: 'grok', lane: 'r' }, { outcome: 'done' }), o), { family: 'grok', src: null, tokens: null, total: null });
     assert.deepEqual(usageOfRun(run('RUN-7', 2, { kind: 'worker', executor: 'claude', lane: 'r', session_id: 'nope' }, { outcome: 'done' }), o),
       { family: 'claude', src: null, tokens: null, total: null });
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+// lane-collide S3 (SPEC 4A.6 resolve_tokens, duplicate_tokens): the totals of a set of runs - tokens (subagents included) and minutes
+test('runsTotal: tokens and minutes over a set of runs; a run with no measure is counted, not guessed', () => {
+  const d = tmp();
+  try {
+    const o = { projectsDir: path.join(d, 'projects'), codexDir: path.join(d, 'codex'), cache: new Map() };
+    const t = runsTotal([run('RUN-1', 3, { kind: 'worker', executor: 'claude', lane: 'gen' }, { usage: u(1000, 100, 10, 50) }, 'exited', 600),
+      run('RUN-2', 3, { kind: 'codex', executor: 'codex-sol', lane: 'gen' }, { tokens: 7000 }, 'exited', 300),
+      run('RUN-3', 3, { kind: 'worker', executor: 'claude', lane: 'gen', session_id: 'nope' }, { outcome: 'done' }, 'exited', 60)], o);
+    assert.deepEqual(t, { runs: 3, tokens: 1160 + 7000, min: 16, unmeasured: 1 });
+    assert.deepEqual(runsTotal([], o), { runs: 0, tokens: 0, min: 0, unmeasured: 0 });
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
 
