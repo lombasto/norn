@@ -20,6 +20,13 @@ const QUERY: &str = r#"
 (function_item) @fn
 (macro_invocation macro: (identifier) @m (#match? @m "^include(_str|_bytes)?$")) @inc
 "#;
+/// our definition patterns (SPEC 4.2): impl blocks, const / static items, trait method signatures
+const DEFS: &str = r#"
+(impl_item) @definition.impl
+(const_item name: (identifier) @name) @definition.constant
+(static_item name: (identifier) @name) @definition.constant
+(function_signature_item name: (identifier) @name) @definition.method
+"#;
 const DEP_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
 
 /// the attribute items right before an item
@@ -123,6 +130,13 @@ impl Lang for Rs {
     }
     fn import_query(&self) -> &'static str {
         QUERY
+    }
+    fn tags(&self, _: &str) -> String {
+        format!(
+            "{}
+{DEFS}",
+            tree_sitter_rust::TAGS_QUERY
+        )
     }
     fn extract(&self, q: &Query, tree: &Tree, src: &[u8]) -> Map<String, Value> {
         let (mut imports, mut pymodules) = (vec![], vec![]);

@@ -18,6 +18,8 @@ pub trait Lang: Sync {
     /// (grammar key, grammar) for a file extension: one language may hold several grammars (JS, TS, TSX)
     fn grammar(&self, ext: &str) -> (&'static str, Language);
     fn import_query(&self) -> &'static str;
+    /// the definitions query of a grammar key: the grammar's TAGS_QUERY plus our patterns for the kinds it lacks (SPEC 4.2)
+    fn tags(&self, key: &str) -> String;
     /// this blob's facts from the import query's matches: { imports: [...], ... }
     fn extract(&self, q: &Query, tree: &Tree, src: &[u8]) -> Map<String, Value>;
     /// every edge and unresolved import of this language's files in the tree
@@ -42,33 +44,49 @@ pub fn lang_of(path: &str) -> Option<&'static dyn Lang> {
 
 thread_local! {
     // compiled once per thread, never per rayon split (SPEC section 6: per split made the same parse 3.0 s instead of 1.1 s)
-    static TOOLS: RefCell<HashMap<&'static str, (Parser, Query)>> = RefCell::new(HashMap::new());
+    static TOOLS: RefCell<HashMap<&'static str, (Parser, Query, Query)>> = RefCell::new(HashMap::new());
 }
 
-/// parse one blob -> its stored facts { lang, generated, parse_error, imports, ... }
-pub fn parse(l: &dyn Lang, path: &str, src: &[u8]) -> Value {
+/// parse one blob with this thread's parser of its grammar -> f(import query, tags query, tree), None when tree-sitter gives up
+pub fn with_tree<R>(
+    l: &dyn Lang,
+    path: &str,
+    src: &[u8],
+    f: impl FnOnce(&Query, &Query, &Tree) -> R,
+) -> Option<R> {
     let (key, lang) = l.grammar(crate::paths::ext(path));
-    let mut facts = TOOLS.with(|t| {
+    TOOLS.with(|t| {
         let mut t = t.borrow_mut();
-        let (p, q) = t.entry(key).or_insert_with(|| {
+        let (p, q, tq) = t.entry(key).or_insert_with(|| {
             let mut p = Parser::new();
             p.set_language(&lang).expect("grammar ABI");
             (
                 p,
                 Query::new(&lang, l.import_query()).expect("import query"),
+                Query::new(&lang, &l.tags(key)).expect("tags query"),
             )
         });
-        match p.parse(src, None) {
-            Some(tree) => {
-                let mut f = l.extract(q, &tree, src);
-                f.insert("parse_error".into(), json!(tree.root_node().has_error()));
-                f
-            }
-            None => Map::from_iter([
-                ("imports".to_string(), json!([])),
-                ("parse_failed".to_string(), json!(true)),
-            ]),
-        }
+        p.parse(src, None).map(|tree| f(q, tq, &tree))
+    })
+}
+
+/// parse one blob -> its stored facts { lang, generated, parse_error, imports, defs, names, ... }
+pub fn parse(l: &dyn Lang, path: &str, src: &[u8]) -> Value {
+    let mut facts = with_tree(l, path, src, |q, tq, tree| {
+        let mut f = l.extract(q, tree, src);
+        f.insert("parse_error".into(), json!(tree.root_node().has_error()));
+        let (defs, names) = crate::symbols::facts(l.name(), tq, tree, src);
+        f.insert("defs".into(), defs);
+        f.insert("names".into(), names);
+        f
+    })
+    .unwrap_or_else(|| {
+        Map::from_iter([
+            ("imports".to_string(), json!([])),
+            ("defs".to_string(), json!([])),
+            ("names".to_string(), json!([])),
+            ("parse_failed".to_string(), json!(true)),
+        ])
     });
     facts.insert("lang".into(), json!(l.name()));
     facts.insert("generated".into(), json!(crate::exclude::generated(src)));

@@ -1,7 +1,8 @@
-// code-graph S1a (SPEC code-graph section 9): norn-code (engine/code-rs) built by rustbin.mjs, its file-level extraction for
+// code-graph S1a / S2 (SPEC code-graph section 9): norn-code (engine/code-rs) built by rustbin.mjs, its file-level extraction for
 // JavaScript / TypeScript, Python and Rust, and the store. Each fixture under tests/fixtures/code-graph/<lang>/ is committed into a
 // fresh repo; `norn-code index` must write a tree snapshot whose edges, unresolved imports and files equal its expected.json, `how`
 // and `kind` included. A second commit that changes one file parses exactly that one blob. rustbin's checks run on a fake crate dir.
+// S2: `query symbols` per file equals expected.json defs (bounds, qual, exported); the body hash matches a renamed copy.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -89,4 +90,22 @@ test('rustbin names a missing, a stale and a wrong-schema norn-code, and a build
   assert.match(r.why, /^norn-code \(the code graph \(docs\/code-graph\.md\)\) cannot build: no C compiler found .*then run cargo build --release --locked /);
   assert.match(ccProblem({ env: { PATH: '' }, platform: 'linux', osRelease: 'ID=ubuntu\n' }), /install sudo apt-get install build-essential$/);
   assert.equal(ccProblem({ env: { PATH: '', CC: 'zig cc' }, platform: 'linux' }), null);
+});
+
+for (const lang of ['js', 'py', 'rs']) {
+  test(`norn-code query symbols on fixture ${lang}: each file's definitions, exact line..end_line, equal expected.json defs`, () => {
+    const r = repoOf(lang), want = JSON.parse(fs.readFileSync(path.join(FIX, lang, 'expected.json'), 'utf8')).defs;
+    for (const [file, defs] of Object.entries(want)) {
+      const got = code('query', 'symbols', '--file', file, '--repo', r.repo, '--state', r.state);
+      assert.equal(got.file, file);
+      assert.deepEqual(got.defs.map(({ id, name, qual, kind, line, end_line, col, exported }) => ({ id, name, qual, kind, line, end_line, col, exported })), defs, file);
+      assert.ok(got.defs.every(d => d.file === file && /^[0-9a-f]{16}$/.test(d.hash) && d.tokens > 0), file);
+    }
+  });
+}
+
+test('the body hash leaves out comments and the def\'s own name: helper and its renamed copy share it, a different body does not', () => {
+  const r = repoOf('js'), defs = code('query', 'symbols', '--file', 'src/shapes.mjs', '--repo', r.repo, '--state', r.state).defs, by = n => defs.find(d => d.name === n);
+  assert.equal(by('helper').hash, by('copy').hash);
+  assert.notEqual(by('helper').hash, by('twice').hash);
 });

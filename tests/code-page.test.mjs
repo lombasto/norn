@@ -100,3 +100,12 @@ test('codeLoad: the summary, the open view\'s part (Files: cap, sort, folder) an
   asked.length = 0; await codeLoad('kestrel', async u => { asked.push(u); return {}; }, { sub: 'map' });
   assert.deepEqual(asked, ['/api/code?project=kestrel', '/api/code?project=kestrel&part=map'], 'Map: the map line, its own part');
 });
+
+test('RM-a-70 Files: the rank check line above the table (fix first and importance, as the signals word it); none stored says not built', () => {
+  const checks = [{ rank: 'fix_first', status: 'measured', line: '12 of the top 20 fix-first files got a fix in the last 90 days; baseline 9 % of files' },
+    { rank: 'importance', status: 'measured', line: '2 of the top 20 importance files got a fix in the last 90 days; baseline 9 % of files: at or under the baseline, the ranking predicted nothing' }];
+  const h = code(base({ sub: 'files', list: { ...LIST, checks } }));
+  assert.match(h, /<p class="small" id="code-check">rank check: 12 of the top 20 fix-first files got a fix in the last 90 days; baseline 9 % of files · 2 of the top 20 importance files[^<]*at or under the baseline, the ranking predicted nothing<\/p>[^]*id="code-rows"/);
+  const na = code(base({ sub: 'files', list: { ...LIST, checks: [{ rank: 'fix_first', status: 'n/a', line: 'fix-first check: n/a (the history starts 2026-06-01: under 180 days)' }] } }));
+  assert.match(na, /id="code-check">rank check: fix-first check: n\/a \(the history starts 2026-06-01: under 180 days\)</);
+});

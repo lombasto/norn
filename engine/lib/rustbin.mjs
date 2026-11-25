@@ -19,7 +19,7 @@ export const RUST_PARTS = {
   code: { dir: 'code-rs', bin: 'norn-code', why: 'the code graph (docs/code-graph.md)', cc: true },
 };
 /** the store schema this engine reads; `norn-code version` must print the same, or the binary is not this engine's */
-export const CODE_STORE_SCHEMA = 1;
+export const CODE_STORE_SCHEMA = 2;
 
 const part = p => { const x = RUST_PARTS[p]; if (!x) throw new Error(`unknown Rust part ${p}`); return x; };
 export const srcOf = p => path.join(ENGINE, part(p).dir);

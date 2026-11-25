@@ -33,11 +33,27 @@ const treeFile = (store, tree) => path.join(store, 'trees', `v${STORE_SCHEMA}`, 
 const stateOf = ({ state, repo }) => { if (state) return state; const common = git(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']); return common && path.join(common, 'norn'); };
 const headOf = store => { try { return fs.readFileSync(path.join(store, 'HEAD'), 'utf8').trim(); } catch { return null; } };
 
-/** norn-code index (args) -> its JSON line | { ok: false, why } */
-function index(args) {
-  const r = spawnSync(binOf('code'), ['index', ...args], { encoding: 'utf8', windowsHide: true, timeout: LIMITS.index_ms, maxBuffer: 1 << 30 });
-  if (r.error || r.status !== 0) return no(`norn-code index failed (${r.error?.code || `exit ${r.status}`}): ${String(r.stderr || '').trim().split('\n').slice(-2).join(' ')}`);
-  try { return JSON.parse(r.stdout); } catch { return no('norn-code index printed no JSON'); }
+/** norn-code <args> -> its JSON line | { ok: false, why } (its own why when it printed one: an unknown file, a name no def has) */
+function code(args) {
+  const r = spawnSync(binOf('code'), args, { encoding: 'utf8', windowsHide: true, timeout: LIMITS.index_ms, maxBuffer: 1 << 30 });
+  let j = null; try { j = JSON.parse(r.stdout); } catch { /* no JSON: said below */ }
+  if (j && (r.status === 0 || j.ok === false)) return j;
+  return no(`norn-code ${args[0]} failed (${r.error?.code || `exit ${r.status}`}): ${String(r.stderr || '').trim().split('\n').slice(-2).join(' ') || 'printed no JSON'}`);
+}
+const index = args => code(['index', ...args]);
+/** the repo root, its prefix, the store and the asked commit -> { root, prefix, st, store, commit, tree, stamp(c, t, ms, extra) } | { ok: false, why } */
+function locate({ state, repo, at, worktree, noIndex }) {
+  if (!repo) return no('no repo folder given');
+  const root = git(repo, ['rev-parse', '--show-toplevel']);
+  if (root === null) return no(`not a git work tree: ${repo}`);
+  const prefix = git(repo, ['rev-parse', '--show-prefix']) ?? '', st = stateOf({ state, repo: root }), store = path.join(st, 'code', 'graph');
+  if (worktree && at !== 'HEAD') return no('--worktree resolves uncommitted work over HEAD: no other rev');
+  const commit = git(root, ['rev-parse', '--verify', '--quiet', `${at}^{commit}`]), tree = commit && git(root, ['rev-parse', `${commit}^{tree}`]);
+  if (!commit) return no(`unknown rev ${at} in ${root}`);
+  const bad = noIndex && !worktree ? null : partProblem('code');
+  if (bad) return no(`${bad}: run norn setup (${buildOf('code')})`);
+  const stamp = (c, t, ms, extra = {}) => ({ commit: c, tree: t, indexed_at: new Date(ms).toISOString(), age_s: Math.max(0, Math.round((Date.now() - ms) / 1000)), asked: at, exact: c === commit, worktree, ...extra });
+  return { ok: true, root, prefix, st, store, commit, tree, stamp };
 }
 /** a snapshot -> Graph (the rows typed per docs/code-graph.md; trust joined from TRUST) */
 function graphOf(snap, stamp, root, prefix, indexed) {
@@ -57,16 +73,9 @@ function graphOf(snap, stamp, root, prefix, indexed) {
  * Graph.indexed: what the norn-code run this call made did ({ parsed, reused, ms }), null when the store already held the snapshot.
  */
 export function graphAt({ state = null, repo, at = 'HEAD', worktree = false, noIndex = false } = {}) {
-  if (!repo) return no('no repo folder given');
-  const root = git(repo, ['rev-parse', '--show-toplevel']);
-  if (root === null) return no(`not a git work tree: ${repo}`);
-  const prefix = git(repo, ['rev-parse', '--show-prefix']) ?? '', st = stateOf({ state, repo: root }), store = path.join(st, 'code', 'graph');
-  if (worktree && at !== 'HEAD') return no('--worktree resolves uncommitted work over HEAD: no other rev');
-  const commit = git(root, ['rev-parse', '--verify', '--quiet', `${at}^{commit}`]), tree = commit && git(root, ['rev-parse', `${commit}^{tree}`]);
-  if (!commit) return no(`unknown rev ${at} in ${root}`);
-  const bad = noIndex && !worktree ? null : partProblem('code');
-  if (bad) return no(`${bad}: run norn setup (${buildOf('code')})`);
-  const stamp = (c, t, ms, extra = {}) => ({ commit: c, tree: t, indexed_at: new Date(ms).toISOString(), age_s: Math.max(0, Math.round((Date.now() - ms) / 1000)), asked: at, exact: c === commit, worktree, ...extra });
+  const w = locate({ state, repo, at, worktree, noIndex });
+  if (!w.ok) return w;
+  const { root, prefix, st, store, commit, tree, stamp } = w;
   const ran = r => ({ parsed: r.parsed, reused: r.reused ?? null, ms: r.ms });
   if (worktree) {
     const r = index(['--repo', root, '--state', st, '--worktree']);
@@ -89,6 +98,25 @@ export function graphAt({ state = null, repo, at = 'HEAD', worktree = false, noI
   const snap = readJsonS(f);
   if (!snap || snap.schema !== STORE_SCHEMA) return no(`unreadable snapshot ${f}`);
   return graphOf(snap, stamp(commit, tree, fs.statSync(f).mtimeMs), root, prefix, indexed);
+}
+
+/** norn-code query <verb> over the asked commit (indexed first when the store lacks it) -> { stamp, ...its answer } | { ok: false, why } */
+function query(verb, flag, target, { state = null, repo, at = 'HEAD', worktree = false }) {
+  const w = locate({ state, repo, at, worktree, noIndex: false });
+  if (!w.ok) return w;
+  const r = code(['query', verb, flag, target, '--repo', w.root, '--state', w.st, ...(worktree ? ['--worktree'] : at === 'HEAD' ? [] : ['--at', w.commit])]);
+  if (!r.ok) return r;
+  const { ok, commit, tree, worktree: _w, changed, ...answer } = r;
+  return { stamp: w.stamp(commit, tree, worktree ? Date.now() : fs.statSync(treeFile(w.store, tree)).mtimeMs, worktree ? { dirty: changed } : {}), ...answer };
+}
+/** the definitions of `file` (repo-root-relative) at `at`, in source order -> { stamp, file, defs: Def[] } | { ok: false, why } */
+export const symbols = ({ state = null, repo, file, at = 'HEAD', worktree = false } = {}) => (file ? query('symbols', '--file', file, { state, repo, at, worktree }) : no('no file given'));
+/** the definitions named `name` and every other occurrence of the identifier, found through the tree's name index ->
+ *  { stamp, name, defs: Def[], rows: Ref[], truncated } | { ok: false, why } (a name no definition has is n/a) */
+export function references({ state = null, repo, name, at = 'HEAD', worktree = false } = {}) {
+  if (!name) return no('no name given');
+  const r = query('refs', '--name', name, { state, repo, at, worktree });
+  return r.ok === false ? r : { stamp: r.stamp, name: r.name, defs: r.defs, ...capped(r.refs) };
 }
 
 const kindsOf = kinds => new Set(kinds);
