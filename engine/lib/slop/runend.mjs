@@ -49,7 +49,7 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
   const bb = base ? { branch: branchBase(repo)?.branch ?? null, base } : branchBase(repo);
   if (!bb) return null;
   const ps = projectSlop({ state, projectDir });
-  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules, brief, machine }) };
+  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules, brief, machine, state }) };
 }
 
 /** SloppaChoppa 2 S2: a run's branch check, once per (branch, head, rule set) - `norn done` runs it in the worker's session, the run end

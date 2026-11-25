@@ -34,7 +34,7 @@ const K15 = loadRules().find(r => r.id === 'K15');
 const WARN = { id: 'W9', level: 'WARN', kind: 'pattern', title: 'a hack marker', files: ['**/*.txt'], patterns: ['\\bHACK\\b'], fixture: { hit: {}, miss: {} } };
 
 test('the machine flag is rule data: K14 carries it, and a check with machine off skips every rule that has it, whatever its id', () => {
-  assert.deepEqual(loadRules().filter(r => r.machine).map(r => r.id), ['K14'], 'K14 reads the machine (norn gen --check): the one machine rule');
+  assert.deepEqual(loadRules().filter(r => r.machine).map(r => r.id), ['K14', 'K27'], 'K14 reads the machine (norn gen --check), K27 its code signals: the machine rules');
   const repo = repoWith(); git(repo, 'checkout', '-q', '-b', 'feat/x'); commit(repo, { 'x.orig': 'junk\n' }, 'x');
   const machineRule = { id: 'X7', level: 'BLOCK', kind: 'command', machine: true, argv: ['gen', '--check'], line: '^PROBLEM (?<file>\\S+): (?<msg>.*) \\[source (?<source>.+)\\]$', fixture: { hit: {}, miss: {} } };
   const called = [], tool = (rule, side) => { called.push(rule.id); return noTool(rule, side); };

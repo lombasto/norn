@@ -1,10 +1,11 @@
 // SloppaChoppa stage C (RM-45; audit REPORT sec. 3 rows 1, 3, 4, 7 and sec. 6): the engine-only detectors - dup (K9), exports
-// (K4), refs (R2), the dependency lock of `imports` (K20) - and the ONE ESLint run behind the kinds lint and ast. Each is
+// (K4), refs (R2), the dependency lock of `imports` (K20), companion (K27) - and the ONE ESLint run behind the kinds lint and ast. Each is
 // (rule, ctx) -> { head: [finding], base: [finding] | null } as check.mjs's DETECT table; ctx carries git, the texts, the trees
 // and the file filter, so this module imports nothing of check.mjs.
 import path from 'node:path';
 import { PARSE } from './tools.mjs';
 import { LINTERS } from './lang/index.mjs';
+import { readSignals } from '../codesignals.mjs';
 import { CODE, classify, commentsIn, exportsOf, helpers, isJs, isReason, lineAt, lineText, masked, norm, usesOf } from './scan.mjs';
 
 const SIDE_KEY = { head: 'path', base: 'old' };
@@ -204,4 +205,22 @@ export function depLock(rule, ctx) {
     }
     return out;
   });
+}
+
+// ---------- companion (K27, RM-a-62): a changed file whose usual partner (the code signals, docs/code-signals.md) is not in the branch ----------
+// Read through the contract's one reader only. The thresholds are the rule's data (min_shared, min_share: at or over the signals' own,
+// which already dropped the weaker pairs); partners_exclude drops the lock and generated files a partner list carries. The base side
+// has no finding: the merge base's own branch is not this one, so every finding is the branch's.
+export function companion(rule, ctx) {
+  if (!ctx.state) throw new Error('no project state: the code signals are read from <state>/code/signals.json');
+  const s = readSignals(ctx.state);
+  if (!s) throw new Error('no code signals stored yet (`norn code history` writes them)');
+  const inDiff = new Set(ctx.entries.flatMap(e => [e.path, e.old]).filter(Boolean)), atHead = new Set(ctx.tree('head'));
+  const head = ctx.entries.filter(e => e.status !== 'D' && ctx.inFiles(rule, e.path)).flatMap(e => {
+    const x = s.files[e.path] ?? (e.old && s.files[e.old]);   // a moved file: the signals know it by its base path
+    return (x?.partners || []).filter(p => p.shared >= rule.min_shared && p.share >= rule.min_share && !inDiff.has(p.file) && atHead.has(p.file) && !ctx.match(rule.partners_exclude, p.file))
+      .map(p => ({ file: e.path, line: 0, value: p.share, snippet: `companion ${p.file}`,
+        msg: `${e.path} usually changes with ${p.file} (${p.shared} of ${x.landings} landings); ${p.file} is not in this branch (${s.basis} from git at ${s.sha})` }));
+  });
+  return { head, base: [] };
 }

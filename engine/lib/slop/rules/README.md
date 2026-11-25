@@ -37,7 +37,14 @@ those of the rule file.
 | `ast` | `selectors`: `{ selector, message, text? }`, ESLint `no-restricted-syntax` through the pinned ESLint; `reason` | yes |
 | `model` | `question` (plain words), `files`, `on` (`code` / `tests`: which branch it reads), `hits` (rule ids whose findings it is sent), `context` (quality files) | no |
 | `register` | `files` (the rule files beside the register's repo sources): K26, a new sentence no register row covers | no |
+| `companion` | `min_shared`, `min_share` (the rule's threshold, at or over the signals' own), `partners_exclude` (lock and generated files), `files`, `exclude`: a changed file whose usual partner in the code signals is not in the branch (K27) | no |
 | `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
+
+K27 (`companion`, WARN, `shadow`, `machine`) reads the project's code signals through their one reader (`readSignals(state)`,
+[docs/code-signals.md](../../../../docs/code-signals.md)): for each file the branch changes, each partner with `shared >= min_shared`
+and `share >= min_share` that is at head and not in the diff (a rename's old path counts as in it) is one finding, "A usually
+changes with B (n of m landings); B is not in this branch (measured from git at <sha>)". With no state or no stored signals it is
+"could not run" (shadow: recorded, never held); `--ci` does not run it (a runner has no signals).
 
 R2 (`refs`) excludes changelogs (`**/CHANGELOG*.md`): a changelog line naming a path deleted later is history, not a broken reference.
 
