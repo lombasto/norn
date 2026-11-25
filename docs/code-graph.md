@@ -156,7 +156,7 @@ The git-tracked blobs at the commit, minus (and each listed in `files` with `exc
 - **Rust**: crates from every Cargo.toml (workspace members, package and `[lib] name`, `package =` renames, the targets src/lib.rs,
   src/main.rs, src/bin/*.rs, tests/*.rs, examples/, benches/, build.rs, explicit `path =`). The mod tree from each target root
   (`exact`, inline `mod a { mod b; }` and `#[path]` included); `use` trees expanded (groups, globs), `crate` / `self` / `super`
-  inside the crate, a path or workspace dependency's lib name to that crate's root (`config`), the longest module prefix to its
+  inside the crate (in an inline `mod`, `self` / `super` start at that module: each Rust binding's facts carry its `mod`), a path or workspace dependency's lib name to that crate's root (`config`), the longest module prefix to its
   file; Cargo path dependencies as `cargo-dep`. Limits: modules that macros generate are invisible, and `cfg` is not evaluated.
 
 ## Symbols
@@ -378,13 +378,13 @@ from it.
 | python calls (language) | prism | 221 | 100 % [98.3, 100] | 81.8 % [76.5, 86.1] | |
 | python calls (language) | Norn (fixture) | 31 | 100 % [89.0, 100] | 100 % [89.0, 100] | |
 | rust/call/local | prism (S6) | 49 of 20,666 (1 n/a) | 100 % [92.7, 100] | - | 1 |
-| rust/call/import | prism (S6) | 50 of 5,956 | 98.0 % [89.5, 99.7] | - | 0.98 |
-| rust/call/qualified | prism | 49 of 6,862 | 100 % [92.7, 100] | 49 of 49 | 1 |
+| rust/call/import | prism (S7) | 50 of 6,565 | 100 % [92.9, 100] | 50 of 50 | 1 |
+| rust/call/qualified | prism (S7) | 49 of 6,616 | 100 % [92.7, 100] | 49 of 49 | 1 |
 | rust/call/self | prism | 49 of 3,070 | 100 % [92.7, 100] | 49 of 49 | 1 |
 | rust/call/method-unique | prism | 19 of 28,940 (29 outside, 2 n/a) | 100 % [83.2, 100] | 19 of 19 | 1 |
 | rust/call/ambiguous | prism | 50 sampled of 44,074 | - | 0 of 12 (contains 12) | unmeasured |
-| rust/call/unresolved | prism | 50 sampled of 11,818 | - | 0 of 7 | unmeasured |
-| rust calls (language) | prism | 214 | 98.8 % [96.3, 99.6] | 78.3 % [72.6, 83.1] | |
+| rust/call/unresolved | prism (S7) | 50 sampled of 11,504 | - | 0 of 5 | unmeasured |
+| rust calls (language) | prism (S7) | 216 | 100 % [98.3, 100] | 80.1 % [74.5, 84.8] | |
 | rust calls (language) | Norn | 223 | 100 % [98.3, 100] | 98.2 % [95.5, 99.3] | |
 
 Below the bar: `javascript/call/method-unique`. At dcade05c each graded `x.close()` / `x.at()` / `x.start()` site resolved by name
@@ -393,9 +393,9 @@ class shrinks from 1,005 to 421 sites, but of 66 drawn only 2 have an in-repo gr
 property chain, whose value no local binding tells); 37 of the 66 resolve outside the repo. It stays "below bar" in `TRUST`. Rust on
 prism after S6: the `local` miss of S4b was the grader's (rust-analyzer gives two same-named fns nested in sibling fns one SCIP
 symbol, so its target named the first for every call of either; such a site is now n/a "several definitions"); the closure that
-shadowed an import (seabed.rs:1427 class) is `unresolved` (a local variable). One `import` miss remains: `use super::*` inside an
-inline `mod tests` is read against the file's parent module, not the file's own, so a fn of the file loses to a same-named module
-(follow-up). The grader indexes a copy of the Cargo packages (2.7 s on prism), never the checkout. No definition is wrong; on prism the grader's start
+shadowed an import (seabed.rs:1427 class) is `unresolved` (a local variable). S7: the last `import` miss (deposit.rs:929, `use super::*` inside an
+inline `mod tests` read against the file's parent module, so a fn of the file lost to a same-named module) is gone: a Rust binding
+records its inline `mod`, and `self` / `super` (in a `use` or a call path) start there. The grader indexes a copy of the Cargo packages (2.7 s on prism), never the checkout. No definition is wrong; on prism the grader's start
 sits on an attribute or doc comment above ours for 24 to 49 of each Rust kind's 50 (`exact_past_attributes`). The fixtures grade
 with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.test.mjs).
 
@@ -403,15 +403,15 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
 
 ```
 <state>/code/graph/
-  blobs/v4/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs (with bases), names, calls, binds; shared by every commit and worktree
-  trees/v4/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
+  blobs/v5/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs (with bases), names, calls, binds; shared by every commit and worktree
+  trees/v5/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
   commits.json                    the newest 200 indexed commits: { commit, tree, indexed_at (unix s), ms, parsed, reused, counts }
   HEAD                            the newest indexed commit
 ```
 
 - A snapshot is keyed by the root tree's sha: two commits with the same content share it, and an unchanged blob is never parsed
   again. Lane worktrees share the repo's objects, so a branch at main + 3 commits parses only the blobs those commits changed.
-- `v4` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
+- `v5` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
   never read.
 - Writes are atomic (tmp then rename); a tree has a lock, and a second writer waits for it, then reads the snapshot.
 - `--worktree` answers are resolved in memory and never stored as a tree.
@@ -484,7 +484,7 @@ norn-code's, in engine/code-rs/src/limits.rs:
 
 | name | value | meaning |
 |---|---|---|
-| `STORE_SCHEMA` | 4 | the store's extractor schema |
+| `STORE_SCHEMA` | 5 | the store's extractor schema |
 | `SPEC_MAX` | 120 | an edge's `spec` keeps at most this many characters |
 | `GENERATED_LINES` | 5 | the header lines exclusion rule (c) reads |
 | `LOCK_WAIT_MS` | 30000 | a second writer of a tree waits this long for the first one's lock |
