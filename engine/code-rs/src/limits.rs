@@ -19,3 +19,12 @@ pub const FILE_PRECISION_BAR: f64 = 0.99;
 pub const FILE_RECALL_BAR: f64 = 0.98;
 /// the Wilson score interval's z (95 %)
 pub const WILSON_Z: f64 = 1.96;
+/// `grade calls` (S4b): the definition-bounds bars of SPEC section 5, exact `line..end_line` per (language, kind) class, recall per language
+pub const DEF_PRECISION_BAR: f64 = 0.99;
+pub const DEF_RECALL_BAR: f64 = 0.99;
+/// the call-edge bars of SPEC section 5, JavaScript / TypeScript / Python: precision per (language, how) class, recall per language
+pub const CALL_PRECISION_BAR: f64 = 0.90;
+pub const CALL_RECALL_BAR: f64 = 0.70;
+/// the call-edge bars for Rust (traits, generics and macros)
+pub const CALL_PRECISION_BAR_RUST: f64 = 0.85;
+pub const CALL_RECALL_BAR_RUST: f64 = 0.60;
