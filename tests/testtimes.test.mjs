@@ -103,7 +103,7 @@ test('testsFor + norn tests for: a source file -> the test files that cover it (
   fs.mkdirSync(path.join(st, 'tests'), { recursive: true }); fs.writeFileSync(path.join(st, 'tests', 'impact.json'), JSON.stringify(IMPACT));
   r = norn('engine/x.mjs', 'engine/nope.mjs');
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /engine\/x\.mjs: tests\/a\.test\.mjs tests\/b\.test\.mjs/); assert.match(r.stdout, /engine\/nope\.mjs: not in the impact map's coverage/);
-  assert.match(r.stdout, /2 test file\(s\) to run \(the impact map at abc123/);
+  assert.match(r.stdout, /2 test file\(s\) to run, inferred \(the impact map at abc123/);
   assert.equal(norn().status, 2);
 });
 
