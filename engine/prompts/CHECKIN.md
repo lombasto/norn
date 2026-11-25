@@ -27,6 +27,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   before you start: dispatch no new lane and no new build / plan stage (hand-off and crash resumes, CI-red fixes and landing runs
   still go). The clean ones land by mergeq (`META mergeq`); for each listed DLV with a conflict or no landing yet, queue its MERGE
   (`META merge-brief`) or `META deliverables resolve DLV-n`. Ledger: `backlog <n>: landing <ids>`. The row leaves when the backlog is at max or below.
+- Mail for role:controller (digest row 14, DEC-a-581): every pass, `META mail check --to role:controller` takes the
+  controller's mail older than policy.mail.checkin_take_min (15 min; younger mail is refused, left for the controller). Act on each
+  within these rules (a ruling, a reply by `META mail send --to <its from>`, an owner question), then `META mail ack MAIL-n`.
 
 ## 2. For each run `META runs --unreviewed` lists (exited / lost / killed; any executor)
 - The run's outcome is already recorded (its `norn done` result: end.outcome, end.why, end.summary, end.handoff = its HANDOFF.md);
