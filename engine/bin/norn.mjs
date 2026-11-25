@@ -90,7 +90,7 @@ import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { codeCmd } from '../lib/codecli.mjs';
-import { normPath } from '../lib/declinks.mjs';
+import { normPath, pathsWarning } from '../lib/declinks.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
@@ -1647,6 +1647,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     out(cmd.startsWith('add ') ? e.id : `${e.id} ${loadState(state).items[e.id].state}`);
     if (cmd === 'add decision' && ev.data.answers && ev.data.owner_words) out(`${ev.data.answers} ${loadState(state).items[ev.data.answers]?.state}`);   // META-Q-RECONCILE R1
     warnViews(views, err);
+    if (cmd === 'add decision' || cmd === 'add directive') { const w = pathsWarning(e.id, ev.data, project?.root ? projectHome(project) : process.cwd()); if (w) err(w); }   // RM-a-58: names files, states none
     return 0;
   } catch (e) {
     if (e instanceof Usage || (e instanceof RecordError && e.code === 2)) {
