@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num, MAIL_BODY_MAX, homeOfId } from './records.mjs';
-import { hookEntry } from './hookbin.mjs';
+import { hookEntry } from './rustbin.mjs';
 const fwd = p => String(p).replace(/\\/g, '/');
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
@@ -59,7 +59,7 @@ function inlineBody(body, body_file, remote) {
 }
 
 // ---------- hook-fast S1 (Q-b-46 ruling "flag"): <state>/mail/flag/<RUN-n> = the mail hook has something for the run (a queued mail, a
-// context order). norn-hook (hookbin.mjs) starts Node only while it exists. Raised AFTER the record is written: a crash between the
+// context order). norn-hook (rustbin.mjs) starts Node only while it exists. Raised AFTER the record is written: a crash between the
 // two leaves a record with no flag, and the run's supervisor raises it at its next beat (mailWaiting). The hook clears it BEFORE it
 // reads (norn mail check --inject), so a mail that lands during the read raises it again and is not left waiting. ----------
 export const flagFile = (state, run) => path.join(state, 'mail', 'flag', run);

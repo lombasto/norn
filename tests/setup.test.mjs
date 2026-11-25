@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
-import { hookReady } from './helpers/hook.mjs';
+import { rustReady } from './helpers/rust.mjs';
 import { buildStatus } from '../engine/lib/status.mjs';
 import { policyLine } from '../engine/lib/tick.mjs';
 import { generatedLines, REQUIRED_CAPS, WORK_CLASSES, BASIC_KEYS, STARTER_CAPS, ROLE_AGENTS, settingsView } from '../engine/lib/policy.mjs';
@@ -19,7 +19,7 @@ const WIN = process.platform === 'win32';
 const fwd = p => p.replace(/\\/g, '/');
 
 function sandbox({ claude = true, git = true } = {}) {
-  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
+  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-setup-');
   const dirs = { root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
@@ -243,6 +243,7 @@ test('doctor: ok after setup; reports drift, a stale source, a missing target an
   const sb = sandbox(); const f = project(sb);
   assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
   let r = sb.run('doctor'); assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, /^doctor: ok/m);
+  assert.match(r.out, /^ok norn-hook \S/m); assert.match(r.out, /^ok norn-code \S/m);   // both Rust parts, each on its own line
   fs.writeFileSync(path.join(sb.cfg, 'agents', 'demo-impl.md'), '# impl edited by hand\n');
   fs.writeFileSync(path.join(sb.root, 'projects', 'demo', 'skills', 'demo-s', 'SKILL.md'), '# skill v2\n');
   r = sb.run('doctor'); assert.equal(r.code, 1);
