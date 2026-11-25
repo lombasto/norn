@@ -10,8 +10,8 @@
     "why": "A change that always travels with its partner (a module and its test, a format and its reader, a rule and its doc) is often unfinished without it, and the repair lands a few days later.",
     "fix": "Look at the partner: change it too if this work needs it, or leave it when this change really stands alone."
   },
-  "min_shared": 3,
-  "min_share": 0.5,
+  "min_shared": 5,
+  "min_share": 0.7,
   "partners_exclude": ["**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/*.lock", "**/*.min.js", "**/*.generated.*", "**/generated/**", "**/dist/**"],
   "fixture": {
     "hit": {
