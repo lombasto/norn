@@ -14,7 +14,7 @@ import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
 import { packOf, LINTERS } from './lang/index.mjs';
 import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
 import { model } from './voice.mjs';
-import { registerKind, loadRegister } from './register.mjs';
+import { registerKind, loadRegister, registerFile } from './register.mjs';
 import { importGraph, cycles } from './graph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
@@ -55,7 +55,8 @@ export function loadRules(dir = RULES_DIR) {
 export async function primeRules(projectDir = null, dir = RULES_DIR) {
   const own = projectDir ? path.join(projectDir, 'rules', 'slop') : null;
   await prime({ dirs: [dir, ...(own ? [own] : [])], stats: own ? [own] : [] });
-  await prime({ files: [...jsonNames(dir).map(f => path.join(dir, f)), ...(own ? jsonNames(own).map(f => path.join(own, f)) : [])] });
+  // S7: the register too - a project without one primes its miss, so loadRegister needs no sync read either way
+  await prime({ files: [...jsonNames(dir).map(f => path.join(dir, f)), ...(own ? [...new Set([...jsonNames(own).map(f => path.join(own, f)), registerFile(projectDir)])] : [])] });
 }
 
 /**
