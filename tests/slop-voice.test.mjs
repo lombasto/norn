@@ -1,6 +1,6 @@
 // SloppaChoppa stage F (RM-43): the second voice - the `model` rule kind. Temp git repos; the model is the fake executor (FAKE_RESULT =
 // the canned answer) or a recorded answer: no real model call. The quote check, the docs / test-only skips, the ranked budget, the
-// routing, the ratings and the Guard rows.
+// routing, the ratings and the Guard rows; RM-a-68: the risk gate that spends short reads on the riskiest diffs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck, fingerprint, matchAny } from '../engine/lib/slop/check.mjs';
 import { makeTool } from '../engine/lib/slop/tools.mjs';
-import { VOICE, voicePrompt, parseHunks, voiceRoute, voiceCall, askVoice, branchClass } from '../engine/lib/slop/voice.mjs';
+import { VOICE, voicePrompt, parseHunks, voiceRoute, voiceCall, askVoice, branchClass, voiceGate, VOICE_GATE } from '../engine/lib/slop/voice.mjs';
+import { codeIndex } from '../engine/lib/codeindex.mjs';
+import { codeSignals, writeSignals } from '../engine/lib/codesignals.mjs';
 import { SETTINGS, applySettings, sectionOf } from '../engine/lib/policy.mjs';
 import { hostWrite, voiceFindings, voicePrecision, voiceReadsToday, RATING } from '../engine/lib/slop/host.mjs';
 import { endCheck } from '../engine/lib/slop/runend.mjs';
@@ -24,6 +26,7 @@ function repoOf(base, head) {
   return dir;
 }
 const MODEL = loadRules().filter(r => r.kind === 'model');
+const isModel = f => MODEL.some(m => m.id === f.rule);
 const answer = findings => JSON.stringify({ findings });
 // a tool that records the model prompts it got and answers with `text`
 const asking = text => { const asked = []; const tool = (rule, _side) => { if (rule.kind !== 'model') return null; asked.push(rule); return text; }; tool.asked = asked; return tool; };
@@ -179,14 +182,65 @@ test('the daily cap: the reads of the day are counted from the stored checks; ov
   process.env.FAKE_RESULT = ans;
   try {
     const one = endCheck({ repo, state, voice: route });
-    assert.ok(!one.result.findings.some(f => f.unrun), 'under the cap: read');
+    assert.ok(!one.result.findings.some(f => f.unrun && isModel(f)), 'under the cap: read');   // the model rules: K27 (no signals here) is not the voice
     assert.equal(one.check.voice_reads, 1);
     assert.equal(voiceReadsToday(state), 2);
     git(repo, 'commit', '-q', '--allow-empty', '-m', 'again');
-    const over = endCheck({ repo, state, voice: route }), unrun = over.result.findings.filter(f => f.unrun);
+    const over = endCheck({ repo, state, voice: route }), unrun = over.result.findings.filter(f => f.unrun && isModel(f));
     assert.deepEqual(unrun.map(f => [f.rule, f.level, f.msg]), MODEL.map(m => [m.id, 'WARN', 'could not run: daily cap 2 reached']));
     assert.equal(over.check.voice_reads, undefined, 'no call: no read counted');
     assert.deepEqual(over.result.blocks, []);
+  } finally { if (was === undefined) delete process.env.FAKE_RESULT; else process.env.FAKE_RESULT = was; }
+});
+
+// ---------- RM-a-68: the risk gate (coderisk.mjs's percentile decides which diffs a short day's reads go to) ----------
+const DAY = 864e5, NOON = Date.parse('2026-11-20T12:00:00Z');
+const runChecks = (perDay, now) => Array.from({ length: perDay * VOICE_GATE.history_days }, (_, i) => ({ run: `RUN-${i}`, at: new Date(Math.floor(now / DAY) * DAY - (1 + (i % VOICE_GATE.history_days)) * DAY + 36e5).toISOString() }));
+test('the gate: enough reads left -> read; fewer than the diffs expected -> only a diff at or over the bar 100 x (1 - left / expected); n/a reads in arrival order', () => {
+  const checks = [...runChecks(10, NOON), { at: new Date(NOON - DAY).toISOString() }, { run: 'RUN-old', at: new Date(NOON - 30 * DAY).toISOString() }];   // a door check (no run) and an old one count for nothing
+  const hi = { pct: 90, line: 'riskier than 90 % of the last 100 landings (x)' }, lo = { pct: 10, line: 'riskier than 10 % of the last 100 landings (y)' };
+  assert.deepEqual(voiceGate({ risk: lo, cap: 15, used: 0, checks, now: NOON }), { read: true, left: 15, expected: 5, bar: null, why: '15 reads left, ~5 diffs expected today: read' }, '10 a day, half the day left');
+  const short = voiceGate({ risk: lo, cap: 15, used: 13, checks, now: NOON });
+  assert.deepEqual([short.read, short.left, short.expected, short.bar], [false, 2, 5, 60]);
+  assert.equal(short.why, 'skipped by the risk rank: riskier than 10 % of the last 100 landings (y), under the bar 60 % (2 reads left, ~5 diffs expected today)');
+  const read = voiceGate({ risk: hi, cap: 15, used: 13, checks, now: NOON });
+  assert.deepEqual([read.read, read.bar], [true, 60]);
+  assert.match(read.why, /riskier than 90 % .*, at or over the bar 60 %: read$/);
+  const na = voiceGate({ risk: { pct: null, line: 'risk rank n/a: no code signals stored yet' }, cap: 15, used: 13, checks, now: NOON });
+  assert.deepEqual([na.read, na.why], [true, '2 reads left, ~5 diffs expected today; risk rank n/a: no code signals stored yet: read in arrival order']);
+  assert.equal(voiceGate({ risk: lo, cap: 15, used: 15, checks, now: NOON }).read, true, 'at the cap the cap itself refuses (makeTool)');
+  assert.equal(voiceGate({ risk: lo, cap: null, used: 99, checks, now: NOON }).read, true, 'no cap: always read');
+  assert.equal(voiceGate({ risk: lo, cap: 1, used: 0, checks: [], now: NOON }).expected, 1, 'no history: this diff is the one expected');
+});
+
+test('the run end: a low-rank diff on a short day is skipped with the gate\'s words and no call; a high-rank one is read; the run end says the rank line', () => {
+  const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'x.txt': 'x\n' }), state = mkTmp('slop-voice-gate-'), ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');
+  fs.writeFileSync(ans, answer([]));
+  git(repo, 'checkout', '-q', 'main');
+  for (let i = 0; i < 12; i++) { fs.writeFileSync(path.join(repo, `n${i}.md`), 'one\ntwo\nthree\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', `docs: note ${i}`); }
+  writeSignals(state, codeSignals(repo, codeIndex(repo, { now: NOON }), { now: NOON }));
+  const branch = (name, text) => { git(repo, 'checkout', '-q', '-b', name, 'main'); fs.writeFileSync(path.join(repo, 'src/a.mjs'), text); git(repo, 'commit', '-q', '-am', `feat: ${name}`); };
+  for (const c of runChecks(10, NOON)) hostWrite(state, { type: 'check', branch: 'feat/old', lane: 'old', run: c.run, base: 'b'.repeat(40), head: 'o'.repeat(40), hash: 'x', blocks: [], findings: [], at: c.at });
+  const route = { ...voiceRoute({ project: { policy: { slop: { voice_reader: 'fake' } } }, author: 'claude' }), cap: 2 };
+  const was = process.env.FAKE_RESULT;
+  process.env.FAKE_RESULT = ans;
+  try {
+    branch('feat/low', 'export const a = 2;\n');
+    const low = endCheck({ repo, state, voice: route, now: NOON }), unrun = low.result.findings.filter(f => f.unrun && isModel(f));
+    assert.equal(low.gate.read, false, low.gate.why);
+    assert.deepEqual([low.gate.left, low.gate.expected, low.gate.bar], [2, 5, 60]);
+    assert.deepEqual(unrun.map(f => [f.rule, f.level]), MODEL.map(m => [m.id, 'WARN']));
+    assert.equal(unrun[0].msg, `could not run: ${low.gate.why}`);
+    assert.match(low.gate.why, /^skipped by the risk rank: riskier than \d+ % of the last 13 landings \(.*\), under the bar 60 % \(2 reads left, ~5 diffs expected today\)$/);
+    assert.equal(low.check.voice_reads, undefined, 'skipped: no read spent');
+    assert.match(low.risk, /^riskier than \d+ % of the last 13 landings/);
+    branch('feat/high', Array.from({ length: 60 }, (_, i) => `export const a${i} = ${i};\n`).join(''));
+    const high = endCheck({ repo, state, voice: route, now: NOON });
+    assert.equal(high.gate.read, true, high.gate.why);
+    assert.ok(!high.result.findings.some(f => f.unrun && isModel(f)), 'read');
+    assert.equal(high.check.voice_reads, 1);
+    assert.match(high.risk, /^riskier than \d+ % of the last 13 landings/);
+    assert.equal(endCheck({ repo, state, voice: route, now: NOON }).risk, high.risk, 'the stored check reused: the rank line still said');
   } finally { if (was === undefined) delete process.env.FAKE_RESULT; else process.env.FAKE_RESULT = was; }
 });
 

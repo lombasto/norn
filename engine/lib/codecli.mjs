@@ -1,11 +1,14 @@
 // `norn code history` (SPEC dash-owner-1123 s.7): writes <state>/code/index.json, codeindex.mjs's per-file index of the project folder
 // (git only, no model). tickCode is the tick's hook: it starts the verb detached when HEAD moved past the index. codeAt answers the dash's
-// /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map), read from that one file.
+// /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map | graphmap), read from that one file.
 // `norn code map [--refresh]` draws the Floorplan map (codemap.mjs); the same hook starts its metered refresh when HEAD moved past it.
+// RM-a-66: history also redraws the import-graph map from the graph it read (codemapgraph.mjs, no model); `norn code map --graph` draws only that.
 // history also stores the code signals (codesignals.mjs, docs/code-signals.md); `norn code signals` prints them, the Files part joins them.
 // RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
 // prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
 // `norn code suspects` ranks the recent landings against a trace or symptom words (codesuspects.mjs, RM-a-61).
+// `norn code risk <base>..<head>` ranks a diff against the last 100 landings (coderisk.mjs, RM-a-68).
+// `norn code card <file>..` prints each file's triage card, `--report` the A/B comparison of policy.code.card (codecard.mjs, RM-a-57).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -14,16 +17,21 @@ import { atomicWrite } from './policy.mjs';
 import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
+import { drawGraphMap, graphMapAt } from './codemapgraph.mjs';
 import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
 import { graphAt, graphStatus, dependencies, dependents, cycles, reach, ALL_KINDS } from './codegraph.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
+import { codeRisk } from './coderisk.mjs';
+import { cards, cardReport, reportLines, ageOf } from './codecard.mjs';
+import { loadState } from './records.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
-  + 'usage: norn code map [--refresh] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
-  + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan)\n'
+  + 'usage: norn code map [--refresh] [--graph] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
+  + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan; --graph = only the '
+  + 'import-graph map, <state>/code/graphmap, drawn from the code graph with no model; history redraws it too)\n'
   + 'usage: norn code signals <file>.. | --top N [--project P | --state D] [--json]   (signals = <state>/code/signals.json, stored by history: the files '
   + 'that change together with a file, its fix history and the fix-first rank, from git; docs/code-signals.md)\n'
   + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
@@ -31,16 +39,21 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)\n'
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
   + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)\n'
+  + 'usage: norn code risk <base>..<head> [--project P | --state D] [--repo DIR] [--json]   (where the diff stands against the last 100 landings before '
+  + 'its merge base: a percentile, with the numbers that put it there; engine/lib/slop/rules/README.md)\n'
+  + 'usage: norn code card <file>.. | --report [--project P | --state D] [--repo DIR] [--json]   (card = per file in at most ~400 tokens: language and lines, '
+  + 'its dependents, the files that change with it, its fixes, its tests and the indexed commits; a part not indexed says so. --report = the policy.code.card '
+  + 'A/B groups compared: tokens, files read and done rate per run, refused under 15 runs per group; docs/code-graph.md)\n'
   + 'usage: norn code graph index|deps|dependents|cycles|reach|status ...   (the code graph: the file imports of JS / TS, Python and Rust; '
   + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!', 'graph!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = verb === 'signals' || verb === 'suspects' ? { _: [] } : {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = ['signals', 'suspects', 'risk', 'card'].includes(verb) ? { _: [] } : {};
   for (let i = 0; i < argv.length; i++) {
-    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words
+    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals, card: the files named; suspects: the symptom words; risk: the range
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
     if (!s && verb === 'why' && f.file === undefined && !argv[i].startsWith('--')) { f.file = argv[i]; continue; }   // why's one operand
     if (!s) throw new Error(`unexpected ${argv[i]}`);
@@ -62,13 +75,16 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'signals') return signalsCmd(f, w.state, { out, err });
   if (verb === 'links' || verb === 'why') return linksCmd(verb, f, w, dir, { out, err, now });
   if (verb === 'suspects') return suspectsCmd(f, w.state, dir, { out, err, now });
-  let ix, sig;
+  if (verb === 'risk') return riskCmd(f, w.state, dir, { out, err });
+  if (verb === 'card') return cardCmd(f, w.state, dir, { out, err, now });
+  let ix, sig, graph;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
-  try { ix = codeIndex(dir, { now: now ?? Date.now(), graph: graphAt({ state: w.state, repo: dir }) }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
+  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
+  const gm = drawGraphMap({ state: w.state, graph });   // the import-graph map from the same graph (n/a stored as n/a)
   writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks
   if (f.json) out(JSON.stringify({ files: ix.files.length, lines, sha: ix.sha, ms }));
-  else out(`code history: ${ix.files.length} files, ${lines} lines at ${ix.sha} in ${(ms / 1000).toFixed(1)} s -> ${file}; signals: fixes ${sig.fixes.status}, ${sig.landings} landings`);
+  else out(`code history: ${ix.files.length} files, ${lines} lines at ${ix.sha} in ${(ms / 1000).toFixed(1)} s -> ${file}; signals: fixes ${sig.fixes.status}, ${sig.landings} landings; graph map: ${gm.drawn ? `drawn at ${gm.sha}` : `n/a: ${gm.why}`}`);
   return 0;
 }
 
@@ -121,6 +137,27 @@ function suspectsCmd(f, state, dir, { out, err, now }) {
   if (f.json) out(JSON.stringify(r)); else suspectsLines(r).forEach(l => out(l));
   return r.found ? 0 : 1;
 }
+/** `norn code risk <base>..<head>`: coderisk.mjs's rank -> exit code (0 also when n/a: the line says why; 2 = no such range) */
+function riskCmd(f, state, dir, { out, err }) {
+  const m = f._.length === 1 && /^(.+?)\.\.(.+)$/.exec(f._[0]);
+  if (!m) { err('error: code risk: one range <base>..<head>'); err(CODE_USAGE); return 2; }
+  let r;
+  try { r = codeRisk({ dir, state, base: m[1], head: m[2] }); } catch (e) { err(`error: code risk: ${String(e.stderr || e.message).trim().split('\n')[0]}`); return 2; }
+  if (f.json) { out(JSON.stringify(r)); return 0; }
+  out(r.line);
+  const n = r.numbers;
+  out(`  ${n.files} files, ${n.lines} lines${n.fixes === undefined ? '' : `; fixes 365 d ${n.fixes ?? 'n/a'}, top fix first ${n.fix_first ?? 'n/a'}, companions left out ${n.companions}`}`);
+  for (const x of r.left_out) out(`  left out: ${x.partner} (changes with ${x.file}: ${x.shared} of ${x.landings} landings)`);
+  return 0;
+}
+/** `norn code card <file>.. | --report`: codecard.mjs's cards, or its A/B report -> exit code (1 = the report has too few runs) */
+function cardCmd(f, state, dir, { out, err, now }) {
+  if (Boolean(f.report) === Boolean(f._.length)) { err('error: code card: name files, or --report'); err(CODE_USAGE); return 2; }
+  if (f.report) { const r = cardReport({ state, items: loadState(state).items }); if (f.json) out(JSON.stringify(r)); else reportLines(r).forEach(l => out(l)); return r.ok ? 0 : 1; }
+  const r = cards({ state, repo: dir, files: f._, now: now ?? Date.now() });
+  if (f.json) out(JSON.stringify(r)); else out(r.cards.map(c => c.text).join('\n'));
+  return 0;
+}
 /** one file's signals in words: the rank line, the fixes line, the partners line */
 function fileLines(file, s, na) {
   const x = s.files[file];
@@ -133,6 +170,8 @@ function fileLines(file, s, na) {
 
 /** `norn code map`: draw (the first map, or the owner's unmetered update) or --refresh (metered) -> exit code (a skipped refresh is 0) */
 async function mapCmd(f, state, repo, { out, err }) {
+  if (f.graph && f.refresh) { err('error: code map: --graph and --refresh are two maps; give one'); return 2; }
+  if (f.graph) { const g = drawGraphMap({ state, repo }); if (f.json) out(JSON.stringify(g)); else out(g.drawn ? `code map: graph map at ${g.sha} -> ${g.file}` : `code map: graph map n/a: ${g.why}`); return g.drawn ? 0 : 3; }
   let r;
   try { r = await drawMap({ state, repo, refresh: Boolean(f.refresh) }); } catch (e) { err(`error: code map: ${String(e.stderr || e.message).trim()}`); return 2; }
   if (f.json) out(JSON.stringify(r));
@@ -163,7 +202,6 @@ function graphArgs(verb, argv) {
   if (bad?.length) throw new Error(`unknown kind ${bad.join(', ')} (kinds: ${ALL_KINDS.join(', ')})`);
   return f;
 }
-const ageOf = s => (s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`);
 const stampLine = s => `at ${s.commit.slice(0, 12)} (${ageOf(s.age_s)}), ${s.exact ? 'exact' : `asked ${s.asked}`}${s.worktree ? `, worktree (${s.dirty.length} changed)` : ''}`;
 const statusLines = s => [`norn-code: ${s.built ? 'built' : `not usable: ${s.why}`} (${s.binary}), store schema ${s.store_schema} at ${s.store}`, `head: ${s.head ?? 'none indexed'}`,
   ...s.indexed.map(e => `  ${e.commit.slice(0, 12)} ${e.indexed_at.slice(0, 16)} ${e.counts?.files ?? '?'} files, ${e.counts?.edges ?? '?'} edges, parsed ${e.parsed}, ${e.ms} ms`)].join('\n');
@@ -255,6 +293,7 @@ export async function codeAt(p, url) {
     return { project: p.name, index: { at: ix.at, sha: ix.sha }, total: { files: ix.files.length, lines: ix.files.reduce((n, x) => n + x.lines, 0), added_30d: ix.added_30d, hotspot: top?.file ?? null }, commands: { history: 'norn code history' } };
   }
   if (part === 'map') return { map: mapAt(p.state) };
+  if (part === 'graphmap') return { graphmap: graphMapAt(p.state) };   // RM-a-66: the import-graph map's line (codemapgraph.mjs)
   let sig = part === 'files' || part === 'file' ? readSignals(p.state) : null;
   if (sig?.sha !== ix?.sha) sig = null;   // signals of another commit say nothing about this index
   const rows = ix ? ix.files.map(x => rowOf(x, sig?.files[x.file])) : null;
