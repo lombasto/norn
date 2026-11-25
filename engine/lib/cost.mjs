@@ -103,6 +103,19 @@ export function parseReset(value) {
 }
 const endTs = r => { const h = (r.history || []).findLast?.(x => x.ev === 'end' || x.ev === 'kill' || x.ev === 'lost'); return h ? Date.parse(h.ts) : NaN; };
 
+/** lane-collide S3 (SPEC 4A.6 resolve_tokens, duplicate_tokens): the totals of a set of runs (records fold items) -> { runs, tokens (usageOfRun
+ *  totals: a Claude transcript with its subagents), min (start to end; a running run to o.now), unmeasured (no measure: counted, never guessed) } */
+export function runsTotal(runs, o = {}) {
+  const t = { runs: 0, tokens: 0, min: 0, unmeasured: 0 }, now = o.now ?? Date.now();
+  for (const r of runs) {
+    const u = usageOfRun(r, o), s = Date.parse(r.history?.find(h => h.ev === 'start')?.ts ?? r.created), e = r.state === 'running' ? now : endTs(r);
+    t.runs++; if (u.total === null) t.unmeasured++; else t.tokens += u.total;
+    if (Number.isFinite(s) && Number.isFinite(e)) t.min += Math.max(0, e - s) / 60000;
+  }
+  t.min = Math.round(t.min);
+  return t;
+}
+
 /**
  * The roll-up: o { now, days (rolling window), resetAt (budget weekly reset: the headline window is last reset -> now), cacheRPerPct (budget calibration), project, projectsDir, codexDir, cache, memo }.
  * rows: one per (day of start, lane, stage, executor) with runs / running / tokens by type / weighted / pct (Claude only).

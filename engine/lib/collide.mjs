@@ -9,6 +9,7 @@
 // from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix. S2a: the remedy menu and who may apply
 // it (APPLY_BY, policy.collide.apply_by), the judge reads a recorded wait and part, narrowScope for norn collide narrow.
 // S2b: fold - foldRefusal, the FOLDED-<lane>.md text (foldedText; foldedSources reads its exact bytes back) and the kept lane's prompt line.
+// S3: the outcome (closeCause, realOf), the demotion of an automatic class, the replay's pairs and the report (tick.mjs and norn.mjs gather their facts).
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -45,7 +46,9 @@ export const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true
 
 // ---------- policy (S1b: policy.collide, POLICY_DEFAULTS in policy.mjs) ----------
 const D = POLICY_DEFAULTS.collide;
-const pol = p => ({ ...D, ...(p || {}), kinds: { ...D.kinds, ...(p?.kinds || {}) }, auto: { ...D.auto, ...(p?.auto || {}) } });
+// S3: policy.collide.demote (SPEC 4.3) - its POLICY_DEFAULTS row and its Settings row come with S5 (policy.mjs is not this stage's)
+const DEMOTE = { undone: 2, of: 10 };
+const pol = p => ({ ...D, ...(p || {}), kinds: { ...D.kinds, ...(p?.kinds || {}) }, auto: { ...D.auto, ...(p?.auto || {}) }, demote: { ...DEMOTE, ...(D.demote || {}), ...(p?.demote || {}) } });
 /** a project's policy (the whole policy object) -> its policy.collide with the defaults filled in */
 export const collidePolicy = policy => pol(policy?.collide);
 
@@ -380,3 +383,114 @@ export function foldedSources(md) {
 /** the prompt line of every start on the kept lane until a run there ended DONE (SPEC 4A.4 fold step 4) */
 export const foldLine = ({ lane, col, branch, commits = 0 }) => `Lane ${lane} was folded into this lane (${col}). Read FOLDED-${lane}.md first.`
   + (commits ? ` Branch ${branch} has ${commits} commit${commits === 1 ? ' that is' : 's that are'} not on main: merge it into your branch first (\`git merge\`, a merge commit).` : '');
+
+// ---------- S3 (SPEC 4A.6): the outcome, the demotion, the replay and the report ----------
+const DAY_MS = 864e5;
+const undoneIx = c => new Set((c.history || []).filter(h => h.ev === 'undo').map(h => h.data?.action));
+/** the actions of a case (history entries) that were not undone */
+const liveActs = c => { const u = undoneIx(c); return (c.history || []).flatMap((h, i) => (h.ev === 'action' && !u.has(i) ? [h] : [])); };
+/**
+ * closeCause(c, sides, now) -> null while the case stays open, else why it closes: folded | allowed | merged | archived | ended | stale.
+ * sides: { a, b: { settled (no live run, no unmerged work), how: merged | archived | ended } }. A stale case has no two sides: it closes a
+ * day after its last correction or undo (the handled lines' day, the time to undo it); with none it stays open, its card the reaction.
+ */
+export function closeCause(c, sides, now) {
+  if (c.data?.kind === 'stale') {
+    const ts = (c.history || []).filter(h => h.ev === 'action' || h.ev === 'undo').map(h => Date.parse(h.ts));
+    return ts.length && now - Math.max(...ts) >= DAY_MS ? 'stale' : null;
+  }
+  if (!sides.a?.settled || !sides.b?.settled) return null;
+  const acts = liveActs(c).map(h => h.data.action), how = [sides.a.how, sides.b.how];
+  if (acts.includes('fold')) return 'folded';
+  if (acts.includes('allow')) return 'allowed';
+  return how.every(x => x === 'merged') ? 'merged' : how.includes('archived') ? 'archived' : 'ended';
+}
+/** realOf(c, f) -> yes | no | unruled (SPEC 4A.6 real): a remedy other than allow = yes; an allow = no; an automatic action: yes when the two
+ *  sides shared a changed file at the merge (f.shared_files_at_merge) or the base merged first (f.base_first); no reaction = unruled */
+export function realOf(c, f = {}) {
+  const acts = liveActs(c).map(h => h.data).filter(a => a.action !== 'ask');
+  if (acts.some(a => !a.auto && REMEDIES.includes(a.action) && a.action !== 'allow')) return 'yes';
+  if (acts.some(a => a.action === 'allow')) return 'no';
+  if (acts.some(a => a.auto)) return f.shared_files_at_merge?.length || f.base_first ? 'yes' : 'no';
+  return 'unruled';
+}
+/** demotedClasses(acts, policy) -> [{ cls: 'kind:action', undone, of }] - the automatic classes with policy.collide.demote.undone (2) undone
+ *  among their last demote.of (10) automatic actions (SPEC 4A.6 demotion): back to a card. acts: [{ kind, action, auto, undone, at }] */
+export function demotedClasses(acts, policy) {
+  const { undone: n, of } = pol(policy?.collide).demote, by = new Map();
+  for (const a of acts.filter(x => x.auto).sort((x, y) => String(x.at).localeCompare(String(y.at)))) { const k = `${a.kind}:${a.action}`; by.set(k, [...(by.get(k) || []), a]); }
+  return [...by].map(([cls, xs]) => ({ cls, undone: xs.slice(-of).filter(a => a.undone).length, of })).filter(x => x.undone >= n);
+}
+/** the digest's one line for a demoted class */
+export const demotedWhy = d => { const [k, a] = d.cls.split(':');
+  return `${k} (${a}): ${d.undone} of the last ${d.of} automatic actions were undone - Norn no longer does it by itself, each case is a card; a person switches it on again in Settings`; };
+
+/**
+ * replayPairs(sides, { cases, policy }) -> the pairs of merged work that collided (SPEC 4A.6 baseline): A merged first, B's own work began
+ * before that, both changed a file outside the commons, and B then needed a port (a "merge: main into" commit on a shared file after A
+ * merged) or its landing met a conflict. reaction: the first live action of a case on the pair, else none (the baseline's rows).
+ * sides: [{ lane, dlv, pr, merged_at (ms), from (ms: B's first own commit), files: [own changed files], ports: [{ at, files }], conflict }]
+ */
+export function replayPairs(sides, { cases = {}, policy } = {}) {
+  const P = pol(policy?.collide), react = new Map();
+  for (const c of Object.values(cases)) { const a = liveActs(c)[0]; if (a) react.set(c.data.pair ?? pairKey(c.data.a?.lane, c.data.b?.lane), a.data.action); }
+  const out = [], who = x => ({ lane: x.lane, dlv: x.dlv ?? null, pr: x.pr ?? null, merged_at: new Date(x.merged_at).toISOString() });
+  for (const a of sides) for (const b of sides) {
+    if (a.lane === b.lane || !(a.merged_at < b.merged_at) || !(b.from < a.merged_at)) continue;
+    const shared = files(a.files, P).filter(f => b.files.includes(f));
+    const ports = shared.length ? b.ports.filter(x => x.at >= a.merged_at && x.files.some(f => shared.includes(f))).length : 0;
+    if (!ports && !(shared.length && b.conflict)) continue;
+    out.push({ day: new Date(a.merged_at).toISOString().slice(0, 10), kind: 'territory', a: who(a), b: who(b), shared, ports, conflict: !!b.conflict, reaction: react.get(pairKey(a.lane, b.lane)) ?? 'none' });
+  }
+  return out.sort((x, y) => x.b.merged_at.localeCompare(y.b.merged_at) || x.a.lane.localeCompare(y.a.lane));
+}
+/** a replay pair in one line */
+export const replayLine = x => `${x.day} ${x.kind} ${x.a.lane}${x.a.pr ? ` (#${x.a.pr})` : ''} > ${x.b.lane}${x.b.pr ? ` (#${x.b.pr})` : ''}: ${says(x.shared.length, 'shared file')} (${few(x.shared, 4)}), `
+  + `${says(x.ports, 'port commit')}${x.conflict ? ', a landing conflict' : ''}${x.resolve_tokens ? `, ${x.resolve_tokens} resolve tokens` : ''} - ${x.reaction === 'none' ? 'collided, no reaction' : `reaction ${x.reaction}`}`;
+
+const median = v => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const weekOf = t => { const d = new Date(t), day = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10); };
+const HOLDS = ['hold', 'after', 'wait'];
+/**
+ * collideReport(cases, { since, now, baseline }) -> { since, rows, weeks, baseline } (SPEC 4A.6 `norn collide report`). rows: per kind and
+ * reaction (the case's first action, or none) - cases; automatic; confirmed as recommended, changed (the first remedy a person applied is
+ * or is not SloppaChoppa's pick); undone; held minutes (median); merges clean and in conflict; resolve tokens; duplicate run minutes and
+ * tokens. weeks (sec. 7 targets): port commits on a pair Norn held or made wait (target 0), owner cards outside `lead` (at most 1), the
+ * check-in's cards. baseline: the replay's pairs with no reaction.
+ */
+export function collideReport(cases, { since = 0, now = Date.now(), baseline = [] } = {}) {
+  const xs = Object.values(cases).filter(c => { const t = Date.parse(c.history?.[0]?.ts ?? c.created ?? ''); return t >= since && t <= now; }), rows = new Map(), weeks = new Map();
+  for (const c of xs) {
+    const acts = (c.history || []).filter(h => h.ev === 'action').map(h => h.data), first = acts.find(a => a.action !== 'ask'), o = c.outcome || {}, d = c.data || {};
+    const k = `${d.kind}|${first?.action ?? 'none'}`, man = acts.find(a => !a.auto && REMEDIES.includes(a.action));
+    const r = rows.get(k) ?? { kind: d.kind, reaction: first?.action ?? 'none', cases: 0, automatic: 0, confirmed: 0, changed: 0, undone: 0, held: [], clean: 0, conflict: 0, resolve_tokens: 0, duplicate_min: 0, duplicate_tokens: 0 };
+    r.cases++; if (first?.auto) r.automatic++;
+    if (man) r[man.action === d.recommended?.remedy ? 'confirmed' : 'changed']++;
+    if ((c.history || []).some(h => h.ev === 'undo')) r.undone++;
+    if (Number.isFinite(o.held_min)) r.held.push(o.held_min);
+    if (o.merge === 'clean' || o.merge === 'conflict') r[o.merge]++;
+    r.resolve_tokens += o.resolve_tokens || 0; r.duplicate_min += o.duplicate_min || 0; r.duplicate_tokens += o.duplicate_tokens || 0;
+    rows.set(k, r);
+    const w = weekOf(Date.parse(c.history[0].ts)), x = weeks.get(w) ?? { week: w, cases: 0, held_port_commits: 0, owner_cards: 0, checkin_cards: 0 };
+    x.cases++;
+    if (acts.some(a => HOLDS.includes(a.action))) x.held_port_commits += o.port_commits || 0;
+    if (d.kind !== 'lead' && acts.some(a => a.action === 'ask' && a.args?.role === 'owner')) x.owner_cards++;
+    if (!first?.auto && d.verdict !== 'shadow') x.checkin_cards++;
+    weeks.set(w, x);
+  }
+  const none = baseline.filter(p => p.reaction === 'none');
+  return { since: new Date(since).toISOString(), rows: [...rows.values()].map(({ held, ...r }) => ({ ...r, held_med: median(held) })).sort((a, b) => a.kind.localeCompare(b.kind) || b.cases - a.cases),
+    weeks: [...weeks.values()].sort((a, b) => a.week.localeCompare(b.week)),
+    baseline: { pairs: none.length, port_commits: none.reduce((s, p) => s + p.ports, 0), conflicts: none.filter(p => p.conflict).length, resolve_tokens: none.reduce((s, p) => s + (p.resolve_tokens || 0), 0), rows: none } };
+}
+/** the report in lines */
+export function reportLines(rep) {
+  const out = [`collide report since ${rep.since.slice(0, 10)}: ${says(rep.rows.reduce((s, r) => s + r.cases, 0), 'case')}`];
+  if (rep.rows.length) out.push('kind / reaction: cases, automatic, as recommended, changed, undone; held min (median); merges clean / conflict; resolve tokens; duplicate min');
+  for (const r of rep.rows) out.push(`  ${r.kind} / ${r.reaction}: ${r.cases}, ${r.automatic} auto, ${r.confirmed} as recommended, ${r.changed} changed, ${r.undone} undone; held ${r.held_med ?? '-'}; ${r.clean} clean / ${r.conflict} conflict; ${r.resolve_tokens} resolve tokens; ${r.duplicate_min} duplicate min`);
+  for (const w of rep.weeks) out.push(`week of ${w.week}: ${says(w.cases, 'case')}; port commits on held pairs ${w.held_port_commits} (target 0); owner cards outside lead ${w.owner_cards} (target at most 1); check-in cards ${w.checkin_cards}`);
+  const b = rep.baseline;
+  out.push(`baseline (replay since ${rep.since.slice(0, 10)}): ${says(b.pairs, 'pair')} collided with no reaction, ${says(b.port_commits, 'port commit')}, ${says(b.conflicts, 'landing conflict')}, ${b.resolve_tokens} resolve tokens`);
+  for (const p of b.rows) out.push(`  ${replayLine(p)}`);
+  return out;
+}

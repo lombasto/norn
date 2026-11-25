@@ -13,7 +13,7 @@ import { loadMqWhy } from '../engine/lib/mqwhy.mjs';
 import { laneNow } from '../engine/lib/laneout.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 import { mergeqRun } from '../engine/lib/mergeq.mjs';
-import { loadLand, landGate } from '../engine/lib/landing.mjs';
+import { loadLand, landGate, landOutcome } from '../engine/lib/landing.mjs';
 import { mergeConfig } from '../engine/lib/mergecfg.mjs';
 import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { briefMarker } from '../engine/lib/mergebrief.mjs';
@@ -142,6 +142,25 @@ test('a conflict with main queues the MERGE naming the files', async () => {
   const run = x.calls.find(c => c[0] === 'run');
   assert.match(fs.readFileSync(run[run.indexOf('--brief') + 1], 'utf8'), /Merge conflict: merging feat\/c [0-9a-f]{7} into main conflicts in README\.md/);
   assert.match(loadMqWhy(f.state)['feat/c'].why, /^merge conflict at [0-9a-f]{7}: merging feat\/c .* conflicts in README\.md; its MERGE RUN-90 is queued$/);
+});
+
+// lane-collide S3 (SPEC 4A.6 merge): the conflict path is kept when the fixed tip lands later - the outcome reads it with the run it queued
+test('landOutcome: a conflict, then the fixed tip lands clean - the deliverable still took the conflict path, with its queued MERGE', async () => {
+  const f = fixture([['feat/c', { 'README.md': 'lane\n' }]], { mainEdit: ['README.md', 'main\n'] }), x = { ...fakeCli(), ...fakeGh() };
+  assert.deepEqual(landOutcome(f.state, 'DLV-1'), { merge: 'none', queued: [] }, 'not tried yet');
+  await pass(f, x);
+  assert.deepEqual(landOutcome(f.state, 'DLV-1'), { merge: 'conflict', queued: ['RUN-90'] });
+  const wt = path.join(f.t, 'wt-c');
+  g(wt, 'fetch', '-q', 'origin');
+  try { g(wt, 'merge', '-q', '--no-edit', 'origin/main'); } catch { /* the conflict: resolved below */ }
+  fs.writeFileSync(path.join(wt, 'README.md'), 'main\nlane\n'); g(wt, 'add', 'README.md'); g(wt, 'commit', '-q', '--no-edit');
+  const tip = g(wt, 'rev-parse', 'HEAD'); g(wt, 'push', '-q', 'origin', 'feat/c');
+  record(f.state, { kind: 'deliverable', ev: 'done', id: 'DLV-1', by: 'launcher', data: { tip, done_utc: new Date().toISOString() } }, { views: false });
+  const r = await pass(f, x);
+  assert.deepEqual(r.land.landed, ['DLV-1'], r.why);
+  assert.equal(loadLand(f.state, 'DLV-1').status, 'landed');
+  assert.deepEqual(landOutcome(f.state, 'DLV-1'), { merge: 'conflict', queued: ['RUN-90'] }, 'the landing at the new tip keeps the earlier conflict');
+  assert.deepEqual(landOutcome(f.state, 'DLV-9'), { merge: 'none', queued: [] });
 });
 
 // merge-slot: on a home that is not the merge leader the MERGE queue is refused (exit 3): the conflicting branch gets its resolve run

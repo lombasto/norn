@@ -27,8 +27,9 @@ import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, readyWords } from '../lib/after.mjs';
 import { loadRoadmap, setCaveat, setLink, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
-import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, applyRefusal, applyNeed, needsDecision, menuOf, REMEDIES, partRefusal, narrowScope, takenBy, namesDropped, collidePolicy, pairKey, foldRefusal } from '../lib/collide.mjs';
-import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction } from '../lib/intents.mjs';
+import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, applyRefusal, applyNeed, needsDecision, menuOf, REMEDIES, partRefusal, narrowScope, takenBy, namesDropped, collidePolicy, pairKey, foldRefusal, replayPairs, replayLine, collideReport, reportLines } from '../lib/collide.mjs';
+import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction, caseView, historySides } from '../lib/intents.mjs';
+import { landOutcome } from '../lib/landing.mjs';
 import { proposalsOf, openStage, queueArgv, laterItem, pickDecision, renderProposals, PICKS } from '../lib/proposals.mjs';
 import { scanAsks } from '../lib/runasks.mjs';
 import { lookItemsFor, lookBriefRefusal } from '../lib/look.mjs';
@@ -42,7 +43,7 @@ import { capsMatrix, formatCapsMatrix } from '../lib/harness/index.mjs';
 import { openLimits, limitKey } from '../lib/limitgate.mjs';
 import { runProbe } from '../lib/probe.mjs';
 import { writeStatus, weeklyEstimate, accountCacheR, crTotal } from '../lib/status.mjs';
-import { weekStart, parseReset } from '../lib/cost.mjs';
+import { weekStart, parseReset, runsTotal } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
 import { running } from '../lib/procs.mjs';
 import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
@@ -2165,7 +2166,7 @@ function stuckCmd(argv, env, out, err) {
 // ---------- lane-collide S1a: norn collide plan (collide.mjs judges the intents intents.mjs gathers; read-only) ----------
 const COLLIDE_USAGE = 'norn collide plan [--lane L --brief F [--item RM-n] [--stage NAME] [--role helper]] [--json]    [--project F | --state D]    (read-only: what a run would meet now, or every pair of open lanes, the stale caveats and the free items; SloppaChoppa\'s pick per collision; starts and writes nothing)'
   + ' | list [--all] [--for checkin|controller|owner] [--json] | show COL-n [--json] | allow (COL-n | <lane a> <lane b>) [--kind K] | wait COL-n | narrow COL-n [--scope "<globs>"] | part COL-n [--of <lead lane>] | fold COL-n --into <kept lane> [--pause]'
-  + ' | ask COL-n --want part|narrow|fold|wait|allow | undo COL-n [--action N]    (every write: --as checkin|controller|owner|dashboard --why W; who may apply what: SPEC 4A.3, policy.collide.apply_by)';
+  + ' | ask COL-n --want part|narrow|fold|wait|allow | undo COL-n [--action N] | replay [--since D] [--json] | report [--since D] [--json]    (every write: --as checkin|controller|owner|dashboard --why W; who may apply what: SPEC 4A.3, policy.collide.apply_by)';
 function collideCmd(argv, env, out, err) {
   try {
     const flags = {}, pos = [];
@@ -2174,11 +2175,12 @@ function collideCmd(argv, env, out, err) {
       if (!a.startsWith('--')) { pos.push(a); continue; }
       const k = a.slice(2);
       if (k === 'json' || k === 'all' || k === 'pause') { flags[k] = true; continue; }
-      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want', 'for', 'into'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      if (!['project', 'state', 'lane', 'brief', 'item', 'stage', 'role', 'as', 'why', 'kind', 'action', 'scope', 'of', 'want', 'for', 'into', 'since'].includes(k)) throw new RunError(`unknown flag ${a}`);
       flags[k] = argv[++i];
     }
     if (['list', 'show', 'allow', 'undo', 'wait', 'narrow', 'part', 'ask', 'fold'].includes(pos[0])) return collideCase(pos, flags, env, out);
-    if (pos[0] !== 'plan') throw new RunError(`${pos[0] ? `unknown verb ${pos[0]}` : 'collide needs a verb'} (plan, list, show, allow, wait, narrow, part, ask, fold, undo)`);
+    if (['replay', 'report'].includes(pos[0])) return collideHistory(pos, flags, env, out);
+    if (pos[0] !== 'plan') throw new RunError(`${pos[0] ? `unknown verb ${pos[0]}` : 'collide needs a verb'} (plan, list, show, allow, wait, narrow, part, ask, fold, undo, replay, report)`);
     if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
     if (!!flags.lane !== !!flags.brief) throw new RunError('--lane and --brief go together');
     const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), now = Date.now(), home = homeOf(state)?.id ?? null;
@@ -2215,6 +2217,29 @@ function collideCmd(argv, env, out, err) {
     throw e;
   }
 }
+// lane-collide S3 (SPEC 4A.6): replay - the merged work since D whose pairs collided (the baseline: no reaction); report - the cases since D
+// counted per kind and reaction, the weekly targets and that baseline. Read-only; since defaults to 14 days back.
+function collideHistory(pos, flags, env, out) {
+  if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
+  const since = flags.since ? Date.parse(flags.since) : Date.now() - 14 * 864e5;
+  if (!Number.isFinite(since)) throw new RunError(`--since takes a date (${flags.since})`);
+  const { project, state } = where(flags, env), P = project || {}, cfg = deliverableConfig(P), repo = cfg.repo || P.root, cases = casesOf(state);
+  const runs = loadState(state).items, sides = historySides(state, repo, { since, main: cfg.main, remote: cfg.remote }).map(x => {
+    const l = landOutcome(state, x.dlv), t = runsTotal(l.queued.map(id => runs[id]).filter(Boolean));
+    return { ...x, conflict: l.merge === 'conflict', resolve_tokens: t.tokens };
+  });
+  const pairs = replayPairs(sides, { cases, policy: P.policy }).map(x => ({ ...x, resolve_tokens: sides.find(s => s.dlv === x.b.dlv)?.resolve_tokens ?? 0 }));
+  if (pos[0] === 'replay') {
+    if (flags.json) { out(JSON.stringify({ since: new Date(since).toISOString(), pairs }, null, 1)); return 0; }
+    if (!pairs.length) out(`no pair of merged work collided since ${new Date(since).toISOString().slice(0, 10)}`);
+    for (const x of pairs) out(replayLine(x));
+    return 0;
+  }
+  const rep = collideReport(cases, { since, baseline: pairs });
+  if (flags.json) { out(JSON.stringify(rep, null, 1)); return 0; }
+  for (const l of reportLines(rep)) out(l);
+  return 0;
+}
 // lane-collide S1b: the cases (COL-n) - list, show, and the two writes of S1b: allow (the pair ruling that releases a hold; SPEC 4A.3 says
 // who may) and undo (a hold, an after or a told is nobody's choice - it ends by itself, or by an allow). S2a: wait, narrow, part, ask,
 // each checked against policy.collide.apply_by, and their undo; S2b: fold (lifecycle.mjs does its steps). A worker run applies nothing (META_RUN_ID set and no check-in /
@@ -2223,7 +2248,7 @@ const caseLine = c => { const a = actionsOf(c), d = c.data; return `${c.id} ${c.
 const STRICTEST = { territory: 'exclusive' };   // an allow of a whole kind with no case behind it is judged at the kind's strictest grade
 function collideCase(pos, flags, env, out) {
   const { state } = where(flags, env), cases = casesOf(state), [verb, ...args] = pos;
-  const json = c => ({ id: c.id, state: c.state, ...c.data, actions: actionsOf(c) });
+  const json = caseView;
   if (verb === 'list') {
     if (flags.for && !['checkin', 'controller', 'owner'].includes(flags.for)) throw new RunError('--for takes checkin, controller or owner');
     // --for R: the cases marked for R by their last live ask; a case nobody asked about is the check-in's (it walks the open cases)

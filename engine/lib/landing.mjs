@@ -19,7 +19,17 @@ import { fileURLToPath } from 'node:url';
 export const landDir = stateDir => path.join(stateDir, 'mq', 'land');
 const landFile = (stateDir, id) => path.join(landDir(stateDir), `${id}.json`);
 export const loadLand = (stateDir, id) => { try { return JSON.parse(fs.readFileSync(landFile(stateDir, id), 'utf8')); } catch { return null; } };
-const saveLand = (stateDir, id, o) => { fs.mkdirSync(landDir(stateDir), { recursive: true }); fs.writeFileSync(landFile(stateDir, id), JSON.stringify(o, null, 1)); };
+// a conflict is kept when a later tip is saved (lane-collide S3: the outcome asks whether the landing took the conflict path, not how the last try went)
+const saveLand = (stateDir, id, o) => {
+  const was = loadLand(stateDir, id), conflicts = [...(was?.conflicts || []), ...(was?.status === 'conflict' && was.tip !== o.tip ? [{ tip: was.tip, at: was.at, queued: was.queued ?? null }] : [])];
+  fs.mkdirSync(landDir(stateDir), { recursive: true }); fs.writeFileSync(landFile(stateDir, id), JSON.stringify({ ...o, ...(conflicts.length ? { conflicts } : {}) }, null, 1));
+};
+/** lane-collide S3 (SPEC 4A.6 merge, resolve_runs): how a deliverable's mechanical landing went -> { merge: conflict (any try met one) | clean (it
+ *  merged: landed, or a red check / a refused PR after a clean merge) | none (never tried), queued: [the MERGE / resolve runs its conflicts queued] } */
+export function landOutcome(stateDir, id) {
+  const l = id ? loadLand(stateDir, id) : null, cs = [...(l?.conflicts || []), ...(l?.status === 'conflict' ? [l] : [])];
+  return { merge: cs.length ? 'conflict' : l ? 'clean' : 'none', queued: [...new Set(cs.map(c => c.queued).filter(Boolean))] };
+}
 // a failed landing's status (<state>/mq/land/<DLV>.json) in the words and the kind of its skip (mqwhy.mjs)
 const LAND_WORDS = { conflict: 'merge conflict', red: 'quick check red', slop: 'slop BLOCK', pr: 'PR refused' };
 const LAND_KIND = { conflict: 'conflict', red: 'gate', slop: 'slop', pr: 'failed' };

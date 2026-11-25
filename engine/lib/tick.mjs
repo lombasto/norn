@@ -35,8 +35,11 @@ import { tickBranches } from './branches.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
 import { projectOverlap, laneConflicts } from './overlap.mjs';
-import { gatherIntents, casesOf, actionsOf, rulingsOf, openCase, caseAction, itemStages, collideFile } from './intents.mjs';
-import { collisions, collidePolicy, staleCaveats, caveatSuffix, laneAlive, ahead, wholeRepo } from './collide.mjs';
+import { gatherIntents, casesOf, actionsOf, rulingsOf, openCase, caseAction, itemStages, collideFile, readCollide, roleOf, mainRef, firstParentBefore, ownWork } from './intents.mjs';
+import { landOutcome } from './landing.mjs';
+import { runsTotal } from './cost.mjs';
+import { refusals } from './scope.mjs';
+import { collisions, collidePolicy, staleCaveats, caveatSuffix, laneAlive, ahead, wholeRepo, closeCause, realOf, demotedClasses } from './collide.mjs';
 import { sendMail } from './mail.mjs';
 import { gitOut } from './gitfacts.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
@@ -320,8 +323,8 @@ const tellBody = (h, o) => `Lane ${o.lane} (${o.run ?? o.state}${o.branch ? `, b
  * successor's run or a lane with uncommitted work.
  */
 export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTree } = {}) {
-  const P = collidePolicy(p.policy), out = { at: new Date(now).toISOString(), rows: [], handled: [], wide: [], told: [], caveats: [], released: [] };
-  const save = () => { const f = collideFile(state), t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify({ at: out.at, rows: out.rows, handled: out.handled, wide: out.wide })); fs.renameSync(t, f); return out; };
+  const P = collidePolicy(p.policy), out = { at: new Date(now).toISOString(), rows: [], handled: [], wide: [], told: [], caveats: [], released: [], demoted: [], closed: [] };
+  const save = () => { const f = collideFile(state), t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify({ at: out.at, rows: out.rows, handled: out.handled, wide: out.wide, demoted: out.demoted })); fs.renameSync(t, f); return out; };
   if (P.enabled === false) return save();
   const cfg = deliverableConfig(p), repo = cfg.repo || p.root, home = homeOf(state)?.id ?? null;
   const g = gatherIntents({ state, repo, main: cfg.main, remote: cfg.remote, now, recent_days: P.recent_days, home });
@@ -329,6 +332,10 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
   for (let i = 0; i < X.length; i++) for (let j = i + 1; j < X.length; j++) if (X[i].tip && X[j].tip && X[i].tip !== X[j].tip && X[i].touched.some(f => X[j].touched.includes(f))) pairs.push([X[i].tip, X[j].tip]);
   const conflicts = pairs.length && repo ? laneConflicts(state, repo, pairs, { now, ...(mergeTree ? { mergeTree } : {}) }) : {};
   const ctx = { policy: p.policy?.collide, tracked: g.tracked, items: itemStages(g.itemEvents), rulings: rulingsOf(cases), conflicts, now };
+  // S3 demotion (SPEC 4A.6): an automatic class with too many undone among its last actions is back to a card; the day it was first seen is kept
+  const was0 = new Map((readCollide(state).demoted || []).map(x => [x.cls, x.since]));
+  out.demoted = demotedClasses(Object.values(cases).flatMap(c => actionsOf(c).map(a => ({ ...a, kind: c.data.kind }))), p.policy).map(x => ({ ...x, since: was0.get(x.cls) ?? out.at }));
+  const demoted = cls => out.demoted.some(x => x.cls === cls);
   // each pair once, from the later side: first come, and between two running lanes the later start; an unlanded side (DONE work) is
   // always the earlier, though its since (done_utc) may be later than a running run's start
   const done = y => y.state === 'unlanded';
@@ -356,6 +363,8 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
       const lane = g.runs[s.run]?.data?.lane ?? s.item, text = s.text + caveatSuffix(s.dead, now);
       const col = was.find(c => c.state === 'open')?.id ?? record(state, { kind: 'collision', ev: 'open', by: 'tick', data: { key, kind: 'stale', grade: 'caveat', verdict: s.verdict, door: 'tick',
         a: { lane, run: s.run }, b: { lane }, item: s.item, files: [], files_n: 0, why: s.why, recommended: s.pick } }).id;
+      if (demoted('stale:caveat')) { out.rows.push({ col, kind: 'stale', grade: 'caveat', verdict: s.verdict, lane, run: s.run, state: null, other: lane, other_run: s.run, other_state: null, other_dlv: null,
+        why: s.why, files: [], files_n: 0, after: null, land: null, pick: s.pick ?? null }); continue; }   // demoted: a card, no correction
       setCaveat(state, s.item, text, 'tick');
       caseAction(state, col, 'caveat', { by: 'tick', auto: true, args: { item: s.item, run: s.run, before: s.text, after: text }, why: s.why });
       out.caveats.push(col);
@@ -386,7 +395,65 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
   }
   for (const c of Object.values(casesOf(state))) for (const a of actionsOf(c)) if (a.auto && !a.undone && AUTO_ACTS.includes(a.action) && now - Date.parse(a.at) < HANDLED_MS)
     out.handled.push({ col: c.id, kind: c.data.kind, grade: c.data.grade ?? null, action: a.action, at: a.at, lane: c.data.b?.lane ?? null, why: c.data.why, undo: a.action === 'caveat' });
+  out.closed = outcomePass(state, p, { now });
   return save();
+}
+
+// ---------- lane-collide S3 (SPEC 4A.6): the outcome loop ----------
+const LIVE_RUN = ['running', 'queued', 'claimed'];
+const HOLD_ACTS = ['hold', 'after', 'wait'];
+const msOf = t => Date.parse(t ?? '');
+const startOf = r => msOf(r.history?.find(h => h.ev === 'start')?.ts ?? r.created);
+const endedAt = r => (LIVE_RUN.includes(r.state) ? Infinity : msOf(r.history?.at(-1)?.ts));
+const mergedEv = x => { const h = [...(x.history || [])].reverse().find(e => ['merged', 'done', 'create'].includes(e.ev)); return h?.ev === 'merged' ? h : null; };
+const tipOf = x => mergedEv(x)?.data?.tip ?? x.history?.filter(e => e.data?.tip).at(-1)?.data.tip ?? x.data?.tip ?? null;
+/** one side of a case: { lane, runs, dlv (the lane's newest deliverable of the case), settled, how: merged | archived | ended, merged_at, tip } */
+function sideOf(lane, opened, { runs, dlvs, items, state }) {
+  const rs = runs.filter(r => r.data?.lane === lane), ds = dlvs.filter(x => x.data?.lane === lane && ((['open', 'parked'].includes(x.state) && !mergedEv(x)) || msOf(x.updated) >= opened));
+  const live = rs.some(r => LIVE_RUN.includes(r.state)), open = ds.some(x => ['open', 'parked'].includes(x.state) && !mergedEv(x)), archived = items[laneId(lane, state)]?.state === 'archived';
+  const m = ds.filter(mergedEv).sort((x, y) => msOf(mergedEv(x).data?.merged_at ?? mergedEv(x).ts) - msOf(mergedEv(y).data?.merged_at ?? mergedEv(y).ts)).at(-1), dlv = m ?? ds.at(-1) ?? null;
+  return { lane, runs: rs, dlv, settled: archived || (!live && !open), how: archived ? 'archived' : m ? 'merged' : 'ended', merged_at: m ? msOf(mergedEv(m).data?.merged_at ?? mergedEv(m).ts) : null, tip: dlv ? tipOf(dlv) : null };
+}
+/**
+ * outcomePass(state, p, { now, usage }) -> [COL ids closed] - each open case whose two sides have merged, ended or been archived (closeCause) gets
+ * its outcome (SPEC 4A.6): held_min, merge (the later side's landing path), resolve runs / tokens / minutes, the files the two sides both changed
+ * against main as it was at the opening, the port commits on them, the duplicate run time of the side that did not merge, the scope guard's
+ * refusals of a dropped file after a narrow, and real. usage: runsTotal's options (the transcript cache). Written once: the case closes.
+ */
+export function outcomePass(state, p, { now = Date.now(), usage = {} } = {}) {
+  const open = Object.values(casesOf(state)).filter(c => c.state === 'open');
+  if (!open.length) return [];
+  const cfg = deliverableConfig(p), repo = cfg.repo || p.root, ref = repo && fs.existsSync(repo) ? mainRef(repo, { main: cfg.main, remote: cfg.remote }) : null;
+  const all = loadState(state).items, runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items).filter(r => r.kind === 'run');
+  const dlvs = Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(x => x.kind === 'deliverable'), F = { runs, dlvs, items: all, state }, out = [];
+  const total = rs => runsTotal(rs, { now, ...usage }), byId = new Map(runs.map(r => [r.id, r]));
+  for (const c of open) {
+    const d = c.data || {}, opened = msOf(c.history[0].ts), stale = d.kind === 'stale';
+    const a = stale ? null : sideOf(d.a?.lane, opened, F), b = stale ? null : sideOf(d.b?.lane, opened, F), cause = closeCause(c, { a, b }, now);
+    if (!cause) continue;
+    const acts = actionsOf(c).filter(x => !x.undone), o = { cause, closed_at: new Date(now).toISOString(), held_min: null, merge: 'none', resolve_runs: 0, resolve_tokens: 0, resolve_min: 0,
+      shared_files_at_merge: [], port_commits: 0, duplicate_min: 0, duplicate_tokens: 0, scope_refusals: 0, real: 'unruled' };
+    if (!stale) {
+      const h = acts.find(x => HOLD_ACTS.includes(x.action)), t0 = h ? msOf(h.at) : null;
+      if (h) { const s = b.runs.map(startOf).filter(t => t >= t0).sort((x, y) => x - y)[0]; o.held_min = Math.round((((s ?? now) - t0) / 60000) * 10) / 10; }
+      const la = landOutcome(state, a.dlv?.id), lb = landOutcome(state, b.dlv?.id);
+      o.merge = lb.merge;
+      const resolve = [...new Set([...la.queued, ...lb.queued].map(id => byId.get(id)).filter(Boolean).concat([...a.runs, ...b.runs].filter(r => roleOf(r.data) === 'landing' && startOf(r) >= opened)))];
+      const R = total(resolve); o.resolve_runs = R.runs; o.resolve_tokens = R.tokens; o.resolve_min = R.min;
+      const base = ref ? firstParentBefore(repo, ref.sha, opened) : null, A = ref ? ownWork(repo, a.tip, base) : { files: [] }, B = ref ? ownWork(repo, b.tip, base) : { files: [], ports: [] };
+      o.shared_files_at_merge = A.files.filter(f => B.files.includes(f)).sort();
+      const meet = new Set([...o.shared_files_at_merge, ...(d.files || [])]);
+      o.port_commits = B.ports.filter(x => x.files.some(f => meet.has(f))).length;
+      const fold0 = acts.find(x => x.action === 'fold')?.args?.lane, dup = fold0 ? [a, b].find(s => s.lane === fold0) : a.how === 'merged' && b.how !== 'merged' ? b : b.how === 'merged' && a.how !== 'merged' ? a : null;
+      if (dup) { const D = total(dup.runs.filter(r => endedAt(r) >= opened)); o.duplicate_min = D.min; o.duplicate_tokens = D.tokens; }
+      const nw = acts.find(x => x.action === 'narrow'), dropped = nw?.args?.dropped || [];
+      if (nw && dropped.length) o.scope_refusals = refusals(state, { since: msOf(nw.at) }).filter(r => r.lane === b.lane && dropped.some(f => String(r.target ?? '').includes(f))).length;
+      o.real = realOf(c, { shared_files_at_merge: o.shared_files_at_merge, base_first: d.kind === 'order' && a.merged_at != null && (b.merged_at == null || a.merged_at < b.merged_at) });
+    } else o.real = realOf(c, {});
+    record(state, { kind: 'collision', ev: 'outcome', id: c.id, by: 'tick', data: o });
+    out.push(c.id);
+  }
+  return out;
 }
 
 // GAP-1 (holds.mjs): the hold episode of ALL queued work, from the dry fill walk after the fill (the PAUSED exit too); never fails the tick
@@ -466,7 +533,7 @@ function tickPass(o, g = {}) {
     // lane-collide S1c: this home's collisions into collide.json (the digest reads it), the told mails, the stale corrections - after the
     // merge latch and the lane archive (a merged or archived lane is no open work), before the digest; never fails the tick
     if (o.collide !== false && (!o.dry || o.collide)) try { const c = collidePass(state, p, { ledger: o.ledger, ...(o.now ? { now: o.now().getTime() } : {}) });
-      for (const l of [...c.told.map(id => `${id}: the later run told`), ...c.caveats.map(id => `${id}: a stale caveat gained the fact`), ...c.released.map(k => `claim ${k} released (no open work)`)]) tickLog(state, `${tag}: collide ${l}`); }
+      for (const l of [...c.told.map(id => `${id}: the later run told`), ...c.caveats.map(id => `${id}: a stale caveat gained the fact`), ...c.released.map(k => `claim ${k} released (no open work)`), ...c.closed.map(id => `${id}: closed with its outcome`)]) tickLog(state, `${tag}: collide ${l}`); }
     catch (e) { tickLog(state, `${tag}: collide: ${e.message}`); }
     // lane-collide S2b: a fold that waited for a live run is applied once that run ended; never fails the tick
     if (!o.dry) try { for (const x of foldPass(state, { project: p })) tickLog(state, x.refused ? `${tag}: collide ${x.col}: the pending fold is refused: ${x.refused}` : `${tag}: collide ${x.col}: lane ${x.lane} folded into lane ${x.into}`); }
