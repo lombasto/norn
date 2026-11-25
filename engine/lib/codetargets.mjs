@@ -73,12 +73,13 @@ function unitsOf(defs) {
 }
 const nameOf = u => u.names[0] ?? '(impl)';
 
-/** a file's call and name edges through the reader -> { units, unitOf, edges: Map('a|b' -> weight), users: Map(unit -> Set(other files)), calls: Map(unit -> Set(unit)) } | { ok: false, why } */
+/** a file's call and name edges through the reader -> { units, unitOf, edges: Map('a|b' -> weight), users: Map(unit -> Set(other files)), calls: Map(unit -> Set(unit)),
+ *  trust: { [Caller.trust]: call sites } } | { ok: false, why } */
 async function wiring(file, { read, o, deps }) {
   const s = read.symbols({ ...o, file });
   if (s.ok === false) return s;
   const U = unitsOf(s.defs), qs = s.defs.filter(d => CALLED.has(d.kind) || d.kind === 'const').map(d => ({ verb: d.kind === 'const' ? 'references' : 'callers', arg: d.kind === 'const' ? d.name : d.id, file, def: d }));
-  const answers = await askAll(read, o, qs), edges = new Map(), users = new Map(), calls = new Map(), ext = [];   // ext: the uses from other files, by site (a cycle's cut checks what its movers import)
+  const answers = await askAll(read, o, qs), edges = new Map(), users = new Map(), calls = new Map(), ext = [], trust = {};   // ext: the uses from other files, by site (a cycle's cut checks what its movers import)
   const add = (a, b, w) => { if (!a || !b || a === b) return; const k = a < b ? `${a}|${b}` : `${b}|${a}`; edges.set(k, (edges.get(k) || 0) + w); (calls.get(a) || calls.set(a, new Set()).get(a)).add(b); };
   const use = (u, f) => (users.get(u) || users.set(u, new Set()).get(u)).add(f);
   for (let i = 0; i < qs.length; i++) {
@@ -87,11 +88,12 @@ async function wiring(file, { read, o, deps }) {
     for (const r of a.rows) {
       if (r.file !== file) ext.push({ file: r.file, id: r.caller?.id ?? null, line: r.line });
       if (qs[i].verb === 'references') { if (r.file === file) add(U.unitAtLine(r.line), to, 1); else if (deps.has(r.file)) use(to, r.file); continue; }
+      trust[r.trust] = (trust[r.trust] || 0) + 1;
       if (r.file === file) add(r.caller ? U.unitOf(r.caller.id) ?? U.unitAtLine(r.line) : U.unitAtLine(r.line), to, 1 / Math.max(1, r.candidates));
       else if (r.candidates === 1) use(to, r.file);
     }
   }
-  return { ok: true, ...U, edges, users, calls, ext };
+  return { ok: true, ...U, edges, users, calls, ext, trust };
 }
 
 // ---------- greedy modularity (Clauset, Newman, Moore 2004): merge the pair of groups with the largest gain until none gains ----------
@@ -146,7 +148,7 @@ async function splitOf(c, ctx) {
     return { symbols: g.ms.map(id => nameOf(unit.get(id))), lines: g.lines, to: ctx.rel(newFile(c.file, nameOf(unit.get(big)))), importers: [...new Set(g.ms.flatMap(id => [...(w.users.get(id) || [])]))].map(ctx.rel).sort(byPath), cut: r1(cut[g.i]) };
   });
   const rest = w.units.filter(u => !moved.has(u.id)), cross = links.filter(([a, b]) => gOf.get(a) !== gOf.get(b)).reduce((s, l) => s + l[2], 0);
-  return { kind: 'split', file: ctx.rel(c.file), lines: c.lines, groups: out, stays: { symbols: rest.map(nameOf), lines: rest.reduce((s, u) => s + u.lines, 0) }, cut: { edges: r1(cross), total: r1(total) }, units: ids.length };
+  return { kind: 'split', file: ctx.rel(c.file), lines: c.lines, groups: out, stays: { symbols: rest.map(nameOf), lines: rest.reduce((s, u) => s + u.lines, 0) }, cut: { edges: r1(cross), total: r1(total) }, units: ids.length, trust: w.trust };
 }
 
 /** break-cycle: the edge inside the cycle the fewest symbols cross, and where they move | { na } */
@@ -170,7 +172,7 @@ async function cycleOf(c, ctx) {
   const { e, w, S, T, others, into } = best, unit = new Map(w.units.map(u => [u.id, u])), names = ids => [...ids].map(id => nameOf(unit.get(id)));
   const to = into ? e.from : newFile(e.to, names(S)[0] ?? 'shared');
   return { kind: 'cycle', file: ctx.rel(e.to), cycle: c.cycle.map(ctx.rel), edge: { from: ctx.rel(e.from), to: ctx.rel(e.to), line: e.line, kind: e.kind }, symbols: names(S),
-    move: { to: ctx.rel(to), symbols: names(T), new_file: !into }, users: others.map(ctx.rel), edges: edges.length };
+    move: { to: ctx.rel(to), symbols: names(T), new_file: !into }, users: others.map(ctx.rel), edges: edges.length, trust: addTrust([...wires.values()].map(x => x.trust)) };
 }
 
 /** extract-function: every function of the file over a cap -> [target] | { na } */
@@ -198,11 +200,17 @@ function testsWords(tests, scope) {
   const named = tests.filter(x => stems.some(s => base(x).startsWith(`${s}.`) || base(x).startsWith(`${s}-`))).slice(0, TARGET_LIMITS.tests);
   return `${named.length ? `${join(named)} ` : ''}+${tests.length - named.length} more (\`norn tests for ${scope.join(' ')}\` lists all ${tests.length})`;
 }
+const addTrust = ts => ts.reduce((o, t) => { for (const [k, n] of Object.entries(t)) o[k] = (o[k] || 0) + n; return o; }, {});
+// the call edges a target was weighed on, by their Caller.trust (docs/code-graph.md "Trust"): most first, a number as "trust 0.98"
+const trustWords = tr => {
+  const e = Object.entries(tr || {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])), n = e.reduce((s, [, x]) => s + x, 0);
+  return n ? `call edges inferred: ${n} weighed, ${e.map(([k, x]) => `${x} ${Number.isNaN(Number(k)) ? k : `trust ${k}`}`).join(', ')}` : 'no call edge weighed';
+};
 const rankWords = t => (t.rank === null ? `fix first n/a (${t.rank_na})` : `fix first ${t.rank}`);
 function briefOf(t, ctx) {
   const tests = ctx.im ? testsFor(ctx.im, t.scope).tests : null;
   const testsLine = !ctx.im ? `n/a (${ctx.testsNa})` : tests.length ? testsWords(tests, t.scope) : 'none known (the tests index covers no file of the Scope: write the covering test first)';
-  const head = `## ${t.title} (${rankWords(t)})`, tail = [`Proposed by \`norn code targets\` from the code graph at ${ctx.stamp.graph} (call edges inferred, trust unmeasured): nothing is edited.`, `Scope: ${join(t.scope)}`, `Tests: ${testsLine}`, `Done: ${t.done}`];
+  const head = `## ${t.title} (${rankWords(t)})`, tail = [`Proposed by \`norn code targets\` from the code graph at ${ctx.stamp.graph} (${trustWords(t.trust)}): nothing is edited.`, `Scope: ${join(t.scope)}`, `Tests: ${testsLine}`, `Done: ${t.done}`];
   return { tests: tests ?? [], text: [head, ...t.body, ...tail].join('\n') };
 }
 function dress(t, ctx) {
