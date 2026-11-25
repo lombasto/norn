@@ -9,6 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { record } from '../engine/lib/records.mjs';
 import { scanRepo, makeGit } from '../engine/lib/dlvgit.mjs';
 import { deliverablesView, deliverableConfig, formatDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
+import { parseReady } from '../engine/lib/ready.mjs';
+import { readyGate } from '../engine/lib/dod.mjs';
 import { renderDeliverable } from '../engine/dash/ui.mjs';
 import { main } from '../engine/bin/norn.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
@@ -145,6 +147,44 @@ test('resolve: refuses native (door work), clean + current, merged; writes a rea
   assert.ok(!r.worktree.toLowerCase().startsWith(f.repo.toLowerCase() + path.sep), 'its own worktree, not the main checkout');
   g(f.repo, 'merge', '-q', '--no-ff', '-m', 'merge d', 'feat/d');
   assert.match(resolveDeliverable(state, 'DLV-2', { project: p, nowMs: NOW }).refused, /merged/);
+});
+
+test('resolve: the written Ready lines cover changed and conflicting files and pass the refuse gate', () => {
+  const f = fixture(), state = stateWith(f), calls = [], realGit = makeGit();
+  fs.mkdirSync(path.join(state, 'tests'));
+  fs.writeFileSync(path.join(state, 'tests', 'impact.json'), JSON.stringify({ sources: {
+    'engine/a.mjs': ['tests/a.test.mjs', 'tests/shared.test.mjs'],
+    'README.md': ['tests/docs.test.mjs', 'tests/shared.test.mjs']
+  } }));
+  // only the resolve's own branch diff (main...<tip>); the view's merged / native checks keep the real git
+  const ours = args => args[0] === 'diff' && String(args[2]).startsWith('main...');
+  const git = (repo, args, opts) => {
+    if (!ours(args)) return realGit(repo, args, opts);
+    calls.push({ repo, args });
+    return 'engine/a.mjs\nREADME.md\ntests/new.test.mjs\n';
+  };
+  const r = resolveDeliverable(state, 'DLV-1', { project: project(f.repo), nowMs: NOW, git });
+  assert.equal(r.refused, undefined);
+  const text = fs.readFileSync(r.brief, 'utf8'), ready = parseReady(text);
+  assert.match(text, /^Scope: engine\/a.mjs, README.md, tests\/new.test.mjs$/m);
+  assert.match(text, /^Tests: tests\/a.test.mjs, tests\/docs.test.mjs, tests\/shared.test.mjs$/m);
+  assert.match(text, /^Done: .*main.*merged.*branch.*no conflict markers.*covering tests green.*merge commit pushed\.$/m);
+  assert.deepEqual(ready.missing, []);
+  const gate = readyGate({ brief: r.brief, policy: { dod: { ready: 'refuse' } }, stage: 'resolve' });
+  assert.equal(gate.refused, null);
+  assert.equal(gate.dod.ok, true);
+  assert.deepEqual(calls, [{ repo: f.repo.replace(/\\/g, '/'), args: ['diff', '--name-only', `main...${f.tips['feat/c']}`] }]);
+  // An absent or empty map uses changed tests, including tests outside tests/ (pytest / cargo).
+  for (const impact of [null, { sources: {} }]) {
+    if (impact) fs.writeFileSync(path.join(state, 'tests', 'impact.json'), JSON.stringify(impact));
+    else fs.unlinkSync(path.join(state, 'tests', 'impact.json'));
+    const changedGit = (repo, args, opts) => ours(args) ? 'engine/a.mjs\ntests/new.test.mjs\npkg/test_a.py\n' : realGit(repo, args, opts);
+    const next = resolveDeliverable(state, 'DLV-1', { project: project(f.repo), nowMs: NOW, git: changedGit });
+    const parsed = parseReady(fs.readFileSync(next.brief, 'utf8'));
+    assert.deepEqual(parsed.scope, ['engine/a.mjs', 'tests/new.test.mjs', 'pkg/test_a.py', 'README.md']);
+    assert.equal(parsed.tests, 'tests/new.test.mjs, pkg/test_a.py');
+    assert.deepEqual(parsed.missing, []);
+  }
 });
 
 test('resolve: one live resolve run per deliverable (a running / queued one refuses a second)', () => {

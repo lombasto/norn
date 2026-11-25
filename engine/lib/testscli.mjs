@@ -10,7 +10,7 @@ import { readJsonS } from './fsnap.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { advisory, crossings } from './advisory.mjs';
 import { subdirOf, inDir, projectHome } from './monorepo.mjs';
-import { suiteKind, testsFor, IMPACT_FILE } from './testtimes.mjs';
+import { suiteKind, testsFor, classify, IMPACT_FILE } from './testtimes.mjs';
 import { repoIndex, runCached, cacheDir, cacheDirOf, cacheLog, caseLog, casesFile, prune } from './testcache.mjs';
 import { buildIndex, writeIndex, median, CASES_FILE } from './testindex.mjs';
 import { graphIndex, testGroups, groupLine, pickGraph, IMPACT_LIMITS, PYTEST_FILE, RUNNERS } from './testimpact.mjs';
@@ -49,15 +49,6 @@ const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true })
 const changedTests = (repo, base) => git(repo, ['diff', '--name-only', '--relative', '--diff-filter=AMD', base, '--', 'tests']).split('\n').map(fwd).filter(f => TEST_GLOB.test(f));
 
 // ---------- history: tests vs code over git (the Tests tab's charts) ----------
-const CODE_EXT = /\.(mjs|cjs|js|jsx|ts|tsx|py|rs|go|cs|java|kt|c|cc|cpp|h|hpp|swift|rb)$/i;
-const SKIP = /(^|\/)(node_modules|vendor|third_party|dist|build|target|\.venv)\//i;
-const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(py|go|rs)$/i;
-/** 'test' | 'code' | null (not source) */
-export function classify(p) {
-  const f = fwd(p);
-  if (!CODE_EXT.test(f) || SKIP.test(f)) return null;
-  return TEST_PATH.test(f) ? 'test' : 'code';
-}
 // one test case per match: node:test / mocha / jest test( it(, pytest def test_, Rust #[test], Go func TestX(
 const TEST_CASE = String.raw`^\s*((test|it)(\.(only|skip|todo))?\s*\(|(async\s+)?def\s+test_|#\[(\w+::)?test\]|func\s+Test\w*\()`;
 const grepCounts = (repo, sha, pattern) => {

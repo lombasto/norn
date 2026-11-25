@@ -8,8 +8,8 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
-import { suiteKind, testsFor, repoFile } from '../engine/lib/testtimes.mjs';
-import { classify, gitHistory, copyPaste, tickTests } from '../engine/lib/testscli.mjs';
+import { suiteKind, testsFor, repoFile, classify } from '../engine/lib/testtimes.mjs';
+import { gitHistory, copyPaste, tickTests } from '../engine/lib/testscli.mjs';
 process.env.TZ = 'UTC';   // the dash prints local time (cells.mjs fmtTime): pin the zone these expectations are written in
 
 test.after(cleanTmp);

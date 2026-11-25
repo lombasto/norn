@@ -1,5 +1,5 @@
 // The Tests tab's file helpers: which suite a folder holds, the answer of `norn tests for` over impact.json (source file -> the test
-// files that cover it) and the code viewer's path guard. testpolicy.mjs reads times.json and impact.json for its picks. Node built-ins only.
+// files that cover it) and the code viewer's path guard, and classify (source vs test). testpolicy.mjs reads times.json and impact.json for its picks. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -24,6 +24,17 @@ export function testsFor(impact, files) {
   const src = impact?.sources ?? {}, testFiles = new Set(Object.values(src).flat());
   const rows = files.map(fwd).map(f => (testFiles.has(f) ? { file: f, tests: [f], known: true } : { file: f, tests: src[f] ?? [], known: f in src }));
   return { rows, tests: [...new Set(rows.flatMap(r => r.tests))].sort() };
+}
+
+// ---------- source vs test: the Tests tab's history and a resolve brief's Tests line ----------
+const CODE_EXT = /\.(mjs|cjs|js|jsx|ts|tsx|py|rs|go|cs|java|kt|c|cc|cpp|h|hpp|swift|rb)$/i;
+const SKIP = /(^|\/)(node_modules|vendor|third_party|dist|build|target|\.venv)\//i;
+const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(py|go|rs)$/i;
+/** 'test' | 'code' | null (not source) */
+export function classify(p) {
+  const f = fwd(p);
+  if (!CODE_EXT.test(f) || SKIP.test(f)) return null;
+  return TEST_PATH.test(f) ? 'test' : 'code';
 }
 
 // ---------- the code viewer's path guard ----------
