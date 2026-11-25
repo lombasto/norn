@@ -9,6 +9,7 @@
 // `norn code suspects` ranks the recent landings against a trace or symptom words (codesuspects.mjs, RM-a-61).
 // `norn code risk <base>..<head>` ranks a diff against the last 100 landings (coderisk.mjs, RM-a-68).
 // `norn code card <file>..` prints each file's triage card, `--report` the A/B comparison of policy.code.card (codecard.mjs, RM-a-57).
+// `norn code symbol <file>::<name>..` prints one symbol's source and exact lines, checked against the worktree file (codesymbol.mjs, RM-a-64).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -26,6 +27,7 @@ import { suspects, suspectsLines } from './codesuspects.mjs';
 import { codeRisk } from './coderisk.mjs';
 import { cards, cardReport, reportLines, ageOf } from './codecard.mjs';
 import { loadState } from './records.mjs';
+import { readSymbols, symbolLines, symbolExit } from './codesymbol.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
@@ -44,14 +46,17 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code card <file>.. | --report [--project P | --state D] [--repo DIR] [--json]   (card = per file in at most ~400 tokens: language and lines, '
   + 'its dependents, the files that change with it, its fixes, its tests and the indexed commits; a part not indexed says so. --report = the policy.code.card '
   + 'A/B groups compared: tokens, files read and done rate per run, refused under 15 runs per group; docs/code-graph.md)\n'
+  + 'usage: norn code symbol <file>::<name>.. [--project P | --state D] [--repo DIR] [--json]   (one symbol\'s source with its exact line range, the indexed '
+  + 'commit and its age; a file changed since the index re-locates it from the worktree file or says "moved since the index"; an unknown name lists the file\'s '
+  + 'symbols; paths relative to the repo root; exit 0 all shown, 1 one moved / unknown, 3 n/a; docs/code-graph.md)\n'
   + 'usage: norn code graph index|deps|dependents|cycles|reach|symbols|refs|status ...   (the code graph: the file imports and definitions of JS / TS, Python and Rust; '
   + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!', 'graph!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!', 'graph!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'], symbol: [] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = ['signals', 'suspects', 'risk', 'card'].includes(verb) ? { _: [] } : {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = ['signals', 'suspects', 'risk', 'card', 'symbol'].includes(verb) ? { _: [] } : {};
   for (let i = 0; i < argv.length; i++) {
     if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals, card: the files named; suspects: the symptom words; risk: the range
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
@@ -68,7 +73,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   const verb = argv[0];
   if (verb === 'graph') return graphCmd(argv.slice(1), { out, err, where });
   let f, w;
-  try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); w = where(f); }
+  try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); w = verb === 'symbol' && !f.project && !f.state ? whereOr(where, f) : where(f); }
   catch (e) { err('error: ' + e.message); err(CODE_USAGE); return 2; }
   const dir = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), t0 = Date.now();
   if (verb === 'map') return mapCmd(f, w.state, dir, { out, err });
@@ -77,6 +82,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'suspects') return suspectsCmd(f, w.state, dir, { out, err, now });
   if (verb === 'risk') return riskCmd(f, w.state, dir, { out, err });
   if (verb === 'card') return cardCmd(f, w.state, dir, { out, err, now });
+  if (verb === 'symbol') return symbolCmd(f, w.state, dir, { out, err });
   let ix, sig, graph;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
   try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now(), state: w.state }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
@@ -149,6 +155,15 @@ function riskCmd(f, state, dir, { out, err }) {
   out(`  ${n.files} files, ${n.lines} lines${n.fixes === undefined ? '' : `; fixes 365 d ${n.fixes ?? 'n/a'}, top fix first ${n.fix_first ?? 'n/a'}, companions left out ${n.companions}`}`);
   for (const x of r.left_out) out(`  left out: ${x.partner} (changes with ${x.file}: ${x.shared} of ${x.landings} landings)`);
   return 0;
+}
+// symbol, like graph: no --project / --state and none found = the repo's own store (<git common dir>/norn), not an error
+const whereOr = (where, f) => { try { return where(f); } catch { return { project: null, state: null }; } };
+/** `norn code symbol <file>::<name>..`: codesymbol.mjs's reads -> exit code (0 all shown, 1 one moved / unknown, 2 usage, 3 n/a) */
+function symbolCmd(f, state, dir, { out, err }) {
+  let r;
+  try { if (!f._.length) throw new Error('name one or more symbols as <file>::<name>'); r = readSymbols({ state, repo: dir, specs: f._ }); } catch (e) { err(`error: code symbol: ${e.message}`); err(CODE_USAGE); return 2; }
+  if (f.json) out(JSON.stringify(r)); else symbolLines(r).forEach(l => out(l));
+  return symbolExit(r);
 }
 /** `norn code card <file>.. | --report`: codecard.mjs's cards, or its A/B report -> exit code (1 = the report has too few runs) */
 function cardCmd(f, state, dir, { out, err, now }) {
