@@ -12,7 +12,7 @@ import { hostWrite, slopHolds, slopChecks, slopDir } from '../engine/lib/slop/ho
 import { doorCheck, doorWhy, storedCheck } from '../engine/lib/slop/door.mjs';
 import { projectSlop } from '../engine/lib/slop/runend.mjs';
 import { sweep } from '../engine/lib/slop/sweep.mjs';
-import { tickSlop, digestRow } from '../engine/lib/slop/daily.mjs';
+import { tickSlop, digestRow, renderDaily, blindSpots } from '../engine/lib/slop/daily.mjs';
 import { pickBatch, batchSlop } from '../engine/lib/mergeq.mjs';
 import { openPrs } from '../engine/lib/mergeland.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
@@ -369,4 +369,26 @@ test('L-16: a waiver and a roadmap item written on another home count here (waiv
   for (const f of ['waivers.jsonl', 'roadmap.jsonl']) fs.copyFileSync(path.join(b, f), path.join(a, 'homes', 'b', f));   // the fetch, simulated
   assert.deepEqual(doorCheck({ state: a, repo, branch: 'feat/x', head, tool: noTool }).open, [], 'the waiver from home b covers the block');
   assert.equal(projectSlop({ state: a }).resolve(rm), 'open', `K22 resolves ${rm} from home b`);
+});
+
+// the daily says what the gate could NOT see in the week's run-end checks: a voice that could not run, Rust with no clippy log; door checks (no run) do not count
+test('daily: the digest line and the report name the run ends the voice could not read and the Rust heads with no clippy log, each only when k > 0', () => {
+  const state = mkTmp('meta-slop-blind-'), now = Date.parse('2026-11-09T06:00:00Z'), at = d => new Date(now - d * 864e5).toISOString();
+  const unrun = why => ({ rule: 'M1', level: 'WARN', file: '*', line: 0, msg: `could not run: ${why}`, snippet: 'could-not-run', fp: 'a'.repeat(16) });
+  const rust = { rule: 'LR/no-evidence', level: 'WARN', file: '*', line: 0, msg: 'no clippy evidence for this head', snippet: 'no-evidence', fp: 'b'.repeat(16) };
+  const put = (run, d, findings) => hostWrite(state, { type: 'check', branch: null, run, base: 'b', head: 'h', hash: 'x', blocks: [], findings, at: at(d) });
+  put('RUN-1', 1, [unrun('no route'), rust]); put('RUN-2', 2, [unrun('no route')]); put('RUN-3', 3, [unrun('quota')]); put('RUN-4', 4, []);
+  put(null, 1, [unrun('no route'), rust]);   // a door check: no voice by design
+  put('RUN-0', 9, [unrun('old'), rust]);      // outside the 7 days
+  const b = blindSpots(slopChecks(state), now);
+  assert.deepEqual(b, { n: 4, voice: { k: 3, why: 'no route' }, rust: { k: 1 } });
+  const loc = { ref: 'main', head: 'abcdef0123', totals: { code: 1, tests: 0, docs: 0, config: 0 }, apart: { generated: 0, vendored: 0, fixtures: 0 }, areas: {}, series: [], landings: [] };
+  const sw = { real: [], empty: [], dead: [], at_risk: [], remote_merged: [], unrelated: [] };
+  const { markdown, line } = renderDaily(loc, sw, { day: '2026-11-09', blind: b });
+  assert.match(line, /; second voice: could not run 3 of 4 \(no route\); Rust unchecked: 1 of 4 run ends touched \*\.rs with no clippy log$/);
+  assert.match(markdown, /^## What the gate could not see in 7 d\n\n- second voice: could not run 3 of 4 \(no route\)\n- Rust unchecked: 1 of 4 run ends touched \*\.rs with no clippy log$/m);
+  const none = renderDaily(loc, sw, { day: '2026-11-09', blind: { n: 4, voice: { k: 0, why: null }, rust: { k: 0 } } });
+  assert.doesNotMatch(none.line, /second voice|Rust unchecked/); assert.doesNotMatch(none.markdown, /could not see/);
+  const voiceOnly = renderDaily(loc, sw, { day: '2026-11-09', blind: { ...b, rust: { k: 0 } } });
+  assert.match(voiceOnly.line, /second voice: could not run 3 of 4/); assert.doesNotMatch(voiceOnly.line, /Rust unchecked/);
 });
