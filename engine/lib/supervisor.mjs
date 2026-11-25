@@ -151,11 +151,15 @@ if (spec.dod?.ready && spec.worktree && !spec.dod_since) {
 }
 logLine(`start ${run} executor=${spec.executor} model=${spec.model ?? '-'} effort=${spec.effort ?? '-'} resumes=${spec.resumes || 0} brief=${spec.brief}`);
 // NORN-RUST-FRESH: the Rust parts this run reads are built when missing (rustbin.mjs; cargo off the event loop, the heartbeat beats on)
-// before the executor starts; one that cannot be had is the run's ONE reason, and the executor is not spawned
+// before the executor starts; one of this engine's own that cannot be had is the run's ONE reason, and the executor is not spawned.
+// NORN-PART-START: the lane worktree's own parts are built too, but they are that branch's business: a branch behind main's part
+// contract (its `version` answers no source, an older store schema) or a build error is logged and the run starts, so its first
+// step (merging main) can run; the Done check re-checks them at the end (dod.mjs), after the run has merged main
 let rustBlock = null;
 if (cmd) {
-  const r = await rustReady(rustParts({ hook: !!spec.mail_hook, code: graphRead(), worktree: true }));
+  const r = await rustReady(rustParts({ hook: !!spec.mail_hook, code: graphRead() }));
   if (!r.ok) { rustBlock = r.why; cmd = null; finish(null, null, `the run did not start: ${r.why}`); }
+  else if (!(await rustReady(rustParts({ worktree: true }))).ok) logLine('rust: the run starts without that worktree part: the Done check re-checks it');
 }
 const fds = [];
 const open = (f, m) => { const fd = fs.openSync(f, m); fds.push(fd); return fd; };
@@ -592,7 +596,8 @@ function critiqueEnd() {
 }
 
 // NORN-RUST-FRESH: the parts a run reads - norn-hook when its executor runs the hooks, norn-code when the end check's rules read the
-// code graph, and every part of the lane worktree's own engine (a checkout of Norn: its tests import that engine; a work run only)
+// code graph (this engine's own), and with worktree every part of the lane worktree's own engine (a checkout of Norn: its tests
+// import that engine; a work run only)
 function rustParts({ hook = false, code = false, worktree = false }) {
   const work = worktree && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly;
   return partsOf({ parts: [...(hook ? ['hook'] : []), ...(code ? ['code'] : [])], worktree: work ? spec.worktree : null });
