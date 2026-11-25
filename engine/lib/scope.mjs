@@ -18,7 +18,7 @@ import { readText } from './fsnap.mjs';
 import { spawnSync } from 'node:child_process';
 import { parseReady, inScope } from './ready.mjs';
 import { feedFiles, oneLine } from './harness/common.mjs';
-import { hookEntry } from './hookbin.mjs';
+import { hookEntry } from './rustbin.mjs';
 import { isTest } from './testcmd.mjs';
 import { testsPolicy, testsFree, testsCheck, readTestMs } from './testpolicy.mjs';
 import { specPolicy } from './ctxlimit.mjs';

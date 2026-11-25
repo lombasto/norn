@@ -1,0 +1,1 @@
+{ "name": "@fx/widgets", "exports": { ".": "./src/index.js", "./button": "./src/button.js" } }

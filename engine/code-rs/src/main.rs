@@ -1,0 +1,311 @@
+// norn-code: the code graph's indexer (SPEC code-graph, docs/code-graph.md). `norn-code index --repo D --state S [--at REV]
+// [--worktree] [--exclude GLOB]... [--python-root DIR]...` parses each blob of the commit's tree that the store does not hold yet
+// (tree-sitter, in parallel), resolves imports over the whole tree, and writes the tree's snapshot; it prints one JSON line with
+// the commit, the tree, what it parsed and reused and where the time went. `--worktree` resolves uncommitted work over HEAD's tree
+// in memory and prints the snapshot instead of storing it. `norn-code version` prints { crate, store_schema }.
+mod exclude;
+mod git;
+mod lang;
+mod limits;
+mod paths;
+mod store;
+
+use lang::{lang_of, Ctx, Out, LANGS, MANIFESTS};
+use rayon::prelude::*;
+use serde_json::{json, Map, Value};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::Instant;
+use store::Store;
+
+struct Args {
+    repo: PathBuf,
+    state: PathBuf,
+    at: Option<String>,
+    worktree: bool,
+    exclude: Vec<String>,
+    python_roots: Vec<String>,
+}
+
+fn args(v: &[String]) -> Result<Args, String> {
+    let (mut repo, mut state, mut at, mut worktree, mut exclude, mut python_roots) =
+        (None, None, None, false, vec![], vec![]);
+    let mut it = v.iter();
+    while let Some(a) = it.next() {
+        let mut val = || it.next().cloned().ok_or(format!("{a} needs a value"));
+        match a.as_str() {
+            "--repo" => repo = Some(PathBuf::from(val()?)),
+            "--state" => state = Some(PathBuf::from(val()?)),
+            "--at" => at = Some(val()?),
+            "--worktree" => worktree = true,
+            "--exclude" => exclude.push(val()?),
+            "--python-root" => python_roots.push(val()?.trim_matches('/').to_string()),
+            x => return Err(format!("unknown argument {x}")),
+        }
+    }
+    if worktree && at.is_some() {
+        return Err("--worktree resolves the working tree over HEAD: no --at".into());
+    }
+    Ok(Args {
+        repo: repo.ok_or("--repo D is required")?,
+        state: state.ok_or("--state S is required")?,
+        at,
+        worktree,
+        exclude,
+        python_roots,
+    })
+}
+
+fn ms(t: Instant) -> u64 {
+    t.elapsed().as_millis() as u64
+}
+
+/// what one index run builds: the snapshot plus its counts
+fn index(a: &Args) -> Result<Value, String> {
+    let t0 = Instant::now();
+    let st = Store::new(&a.state);
+    let rev = a.at.clone().unwrap_or("HEAD".into());
+    let (commit, tree) = git::rev(&a.repo, &rev)?;
+    let entry = |parsed: usize, reused: usize, counts: Value| json!({ "tree": tree, "indexed_at": store::now_s(), "ms": ms(t0), "parsed": parsed, "reused": reused, "counts": counts });
+    let mut _lock = None;
+    if !a.worktree {
+        if let Some(s) = Store::read(&st.tree_path(&tree)) {
+            let e = entry(
+                0,
+                s["files"].as_object().map_or(0, |f| f.len()),
+                s["counts"].clone(),
+            );
+            st.record(&commit, e.clone(), a.at.is_none())?;
+            return Ok(
+                json!({ "ok": true, "commit": commit, "tree": tree, "cached": true, "parsed": 0, "ms": ms(t0), "counts": s["counts"] }),
+            );
+        }
+        _lock = st.lock(&tree)?;
+        if _lock.is_none() {
+            let s = Store::read(&st.tree_path(&tree)).ok_or(format!(
+                "tree {tree}: another indexer held the lock past the wait and wrote no snapshot"
+            ))?;
+            return Ok(
+                json!({ "ok": true, "commit": commit, "tree": tree, "cached": true, "parsed": 0, "ms": ms(t0), "counts": s["counts"] }),
+            );
+        }
+    }
+    let mut phases = Map::new();
+    let t = Instant::now();
+    let mut files = git::ls_tree(&a.repo, &rev)?;
+    // --worktree: changed and untracked files are hashed as they are on disk; their bytes come from disk, not the object store
+    let mut on_disk: HashMap<String, String> = HashMap::new();
+    let mut changed = vec![];
+    if a.worktree {
+        let (ch, del) = git::status(&a.repo)?;
+        for d in &del {
+            files.remove(d);
+        }
+        let ch: Vec<String> = ch
+            .into_iter()
+            .filter(|p| a.repo.join(p).is_file())
+            .collect();
+        for (p, sha) in ch.iter().zip(git::hash_paths(&a.repo, &ch)?) {
+            files.insert(p.clone(), sha.clone());
+            on_disk.insert(sha, p.clone());
+        }
+        changed = ch;
+        changed.extend(del);
+    }
+    phases.insert("ls_tree_ms".into(), json!(ms(t)));
+
+    let attrs: Vec<String> = files
+        .keys()
+        .filter(|p| paths::basename(p) == ".gitattributes")
+        .cloned()
+        .collect();
+    let manifests: Vec<String> = files
+        .keys()
+        .filter(|p| MANIFESTS.contains(&paths::basename(p)))
+        .cloned()
+        .collect();
+    let mut excluded: HashMap<String, String> = HashMap::new();
+    let mut sources: Vec<(String, String)> = vec![];
+    let t = Instant::now();
+    let read = |shas: &[String]| -> Result<HashMap<String, Vec<u8>>, String> {
+        let (disk, odb): (Vec<&String>, Vec<&String>) =
+            shas.iter().partition(|s| on_disk.contains_key(*s));
+        let mut m = git::cat_blobs(&a.repo, &odb.into_iter().cloned().collect::<Vec<_>>())?;
+        for s in disk {
+            m.insert(
+                s.clone(),
+                std::fs::read(a.repo.join(&on_disk[s]))
+                    .map_err(|e| format!("{}: {e}", on_disk[s]))?,
+            );
+        }
+        Ok(m)
+    };
+    let meta_shas: Vec<String> = attrs
+        .iter()
+        .chain(&manifests)
+        .map(|p| files[p].clone())
+        .collect();
+    let meta = read(&meta_shas)?;
+    let text_of = |p: &String| {
+        String::from_utf8_lossy(&meta[&files[p]])
+            .trim_start_matches('\u{feff}')
+            .to_string()
+    };
+    let ex = exclude::Exclude::new(
+        &attrs
+            .iter()
+            .map(|p| (p.clone(), text_of(p)))
+            .collect::<Vec<_>>(),
+        &a.exclude,
+    );
+    for p in files.keys() {
+        if let Some(w) = ex.why(p) {
+            excluded.insert(p.clone(), w);
+        } else if lang_of(p).is_some() {
+            sources.push((p.clone(), files[p].clone()));
+        }
+    }
+    let text: HashMap<String, String> = manifests.iter().map(|p| (p.clone(), text_of(p))).collect();
+
+    // blobs: the stored facts are reused; the rest is read in one cat-file batch and parsed in parallel
+    type Pairs = Vec<(String, String)>;
+    let (have, need): (Pairs, Pairs) = sources
+        .par_iter()
+        .cloned()
+        .partition(|(_, sha)| st.blob_path(sha).is_file());
+    let mut facts: HashMap<String, Value> = have
+        .par_iter()
+        .filter_map(|(p, sha)| Store::read(&st.blob_path(sha)).map(|f| (p.clone(), f)))
+        .collect();
+    let need: Vec<(String, String)> = need
+        .into_iter()
+        .chain(have.into_iter().filter(|(p, _)| !facts.contains_key(p)))
+        .collect();
+    let mut uniq: Vec<String> = need.iter().map(|(_, s)| s.clone()).collect();
+    uniq.sort();
+    uniq.dedup();
+    let bytes = read(&uniq)?;
+    phases.insert("read_ms".into(), json!(ms(t)));
+    let t = Instant::now();
+    let parsed: Vec<(String, String, Value)> = need
+        .par_iter()
+        .map(|(p, sha)| {
+            let l = lang_of(p).expect("a source file has a language");
+            (p.clone(), sha.clone(), lang::parse(l, p, &bytes[sha]))
+        })
+        .collect();
+    phases.insert("parse_ms".into(), json!(ms(t)));
+    let t = Instant::now();
+    let mut written = std::collections::HashSet::new();
+    for (p, sha, f) in parsed {
+        if written.insert(sha.clone()) {
+            Store::write(&st.blob_path(&sha), &f)?;
+        }
+        facts.insert(p, f);
+    }
+    phases.insert("blob_write_ms".into(), json!(ms(t)));
+    for (p, f) in &facts {
+        if f["generated"] == json!(true) {
+            excluded.insert(p.clone(), "generated header".into());
+        }
+    }
+    let first_party: HashMap<String, Value> = facts
+        .iter()
+        .filter(|(p, _)| !excluded.contains_key(*p))
+        .map(|(p, f)| (p.clone(), f.clone()))
+        .collect();
+
+    let t = Instant::now();
+    let ctx = Ctx::new(&files, &first_party, &text, &a.python_roots);
+    let mut out = Out::default();
+    for l in LANGS {
+        l.resolve(&ctx, &mut out);
+    }
+    let mut fm = Map::new();
+    let mut paths_all: Vec<&String> = files
+        .keys()
+        .filter(|p| {
+            lang_of(p).is_some()
+                || MANIFESTS.contains(&paths::basename(p))
+                || excluded.contains_key(*p)
+        })
+        .collect();
+    paths_all.sort();
+    for p in paths_all {
+        let mut e = out.info.remove(p).unwrap_or_default();
+        e.insert(
+            "lang".into(),
+            json!(lang_of(p).map_or("manifest", |l| l.name())),
+        );
+        if lang_of(p).is_none() && !MANIFESTS.contains(&paths::basename(p)) {
+            e.insert("lang".into(), Value::Null);
+        }
+        if let Some(w) = excluded.get(p) {
+            e.insert("excluded".into(), json!(w));
+        }
+        if first_party
+            .get(p)
+            .is_some_and(|f| f["parse_error"] == json!(true))
+        {
+            e.insert("parse_error".into(), json!(true));
+        }
+        fm.insert(p.clone(), Value::Object(e));
+    }
+    for e in &mut out.edges {
+        let to = e["to"].as_str().unwrap_or("").to_string();
+        if excluded.contains_key(&to) {
+            e["to_kind"] = json!("excluded");
+        } else if ctx.is_dir(&to) && !ctx.is_file(&to) {
+            e["to_kind"] = json!("namespace");
+        } else if !fm.contains_key(&to) {
+            fm.insert(to.clone(), json!({ "lang": Value::Null }));
+        }
+    }
+    let key = |e: &Value| {
+        (
+            e["from"].as_str().unwrap_or("").to_string(),
+            e["line"].as_u64(),
+            e["to"].as_str().unwrap_or("").to_string(),
+            e["kind"].as_str().unwrap_or("").to_string(),
+            e["spec"].as_str().unwrap_or("").to_string(),
+        )
+    };
+    out.edges.sort_by_key(key);
+    out.unresolved.sort_by_key(key);
+    phases.insert("resolve_ms".into(), json!(ms(t)));
+    let counts = json!({ "files": fm.len(), "sources": sources.len(), "excluded": excluded.len(), "edges": out.edges.len(), "unresolved": out.unresolved.len() });
+    let reused = sources.len() - need.len();
+    let snap = json!({ "schema": limits::STORE_SCHEMA, "commit": commit, "tree": tree, "worktree": a.worktree, "files": fm, "edges": out.edges, "unresolved": out.unresolved, "counts": counts });
+    if a.worktree {
+        return Ok(
+            json!({ "ok": true, "commit": commit, "tree": tree, "worktree": true, "changed": changed, "parsed": need.len(), "reused": reused, "ms": ms(t0), "phases": phases, "snapshot": snap }),
+        );
+    }
+    let t = Instant::now();
+    Store::write(&st.tree_path(&tree), &snap)?;
+    st.record(
+        &commit,
+        entry(need.len(), reused, counts.clone()),
+        a.at.is_none(),
+    )?;
+    phases.insert("write_ms".into(), json!(ms(t)));
+    Ok(
+        json!({ "ok": true, "commit": commit, "tree": tree, "cached": false, "parsed": need.len(), "reused": reused, "ms": ms(t0), "phases": phases, "counts": counts }),
+    )
+}
+
+fn main() {
+    let v: Vec<String> = std::env::args().skip(1).collect();
+    let r = match v.first().map(String::as_str) {
+        Some("version") => Ok(json!({ "crate": env!("CARGO_PKG_VERSION"), "store_schema": limits::STORE_SCHEMA })),
+        Some("index") => args(&v[1..]).and_then(|a| index(&a)),
+        _ => Err("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  norn-code version".into()),
+    };
+    match r {
+        Ok(j) => println!("{j}"),
+        Err(e) => {
+            println!("{}", json!({ "ok": false, "why": e }));
+            std::process::exit(1);
+        }
+    }
+}
