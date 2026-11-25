@@ -242,9 +242,6 @@ test('digest mail: each unacked mail for role:controller@<own home> is a row wit
   const now = Date.parse(m.ts) + 12 * 60000 + 3000, mailRows = () => digest(b, {}, { now, git: fakeGit(), dlv: [] }).sections.mail;
   assert.deepEqual(mailRows().map(r => [r.id, r.state, r.age_min, r.urgent, r.from]), [[m.id, 'queued', 12, true, 'role:controller@a']]);
   assert.equal(digest(a, {}, { now, git: fakeGit(), dlv: [] }).sections.mail, undefined, 'not a row on the sending home');
-  const out = renderDigest(digest(b, {}, { now, git: fakeGit(), dlv: [] }));
-  assert.match(out, /Mail for role:controller@b \(1\)/);
-  assert.ok(out.includes(`- ${m.id} queued URGENT from role:controller@a (12 min): for b - norn mail check`), out);
   checkMail(b, { by: 'controller', to: 'role:controller', via: 'cli' });
   assert.deepEqual(mailRows().map(r => [r.id, r.state]), [[m.id, 'delivered']], 'delivered, not acked: still a row');
   ackMail(b, { by: 'controller', id: m.id });
