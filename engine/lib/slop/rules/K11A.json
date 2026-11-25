@@ -11,7 +11,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
   "shadow_langs": ["py","rs","ts"],
-  "exclude": ["tests/**","**/vendor/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/test_*.py","**/vendor/**"],
   "match": {
     "js": [
       {
@@ -134,32 +134,11 @@
           {"file":"src/a.mjs","ruleId":"K11A.js.1.JavaScript","line":3,"column":25,"endLine":3,"text":"p.label ?? p.oldLabel"},
           {"file":"src/a.py","ruleId":"K11A.py.0.Python","line":1,"column":1,"endLine":1,"text":"TAB_ALIAS = {\"agents\": \"runs\"}"},
           {"file":"src/a.py","ruleId":"K11A.py.1.Python","line":9,"column":12,"endLine":9,"text":"p.label or p.old_label"},
-          {
-            "file": "src/a.py",
-            "ruleId": "K11A.py.1.Python",
-            "line": 13,
-            "column": 12,
-            "endLine": 13,
-            "text": "p.get(\"label\") or p.get(\"old_label\")"
-          },
-          {
-            "file": "src/a.rs",
-            "ruleId": "K11A.rs.0.Rust",
-            "line": 2,
-            "column": 1,
-            "endLine": 2,
-            "text": "pub const TAB_ALIAS: &[(&str, &str)] = &[(\"agents\", \"runs\")];"
-          },
+          {"file":"src/a.py","ruleId":"K11A.py.1.Python","line":13,"column":12,"endLine":13,"text":"p.get(\"label\") or p.get(\"old_label\")"},
+          {"file":"src/a.rs","ruleId":"K11A.rs.0.Rust","line":2,"column":1,"endLine":2,"text":"pub const TAB_ALIAS: &[(&str, &str)] = &[(\"agents\", \"runs\")];"},
           {"file":"src/a.rs","ruleId":"K11A.rs.1.Rust","line":3,"column":45,"endLine":3,"text":"p.label.or(p.old_label)"},
           {"file":"src/a.rs","ruleId":"K11A.rs.1.Rust","line":4,"column":46,"endLine":4,"text":"p.label.or_else(|| p.old_label)"},
-          {
-            "file": "src/a.ts",
-            "ruleId": "K11A.ts.0.TypeScript",
-            "line": 1,
-            "column": 7,
-            "endLine": 1,
-            "text": "TAB_ALIAS: Record<string, string> = { agents: 'runs' }"
-          },
+          {"file":"src/a.ts","ruleId":"K11A.ts.0.TypeScript","line":1,"column":7,"endLine":1,"text":"TAB_ALIAS: Record<string, string> = { agents: 'runs' }"},
           {"file":"src/a.ts","ruleId":"K11A.ts.1.TypeScript","line":3,"column":86,"endLine":3,"text":"p.label ?? p.oldLabel"}
         ],
         "base": []
@@ -168,12 +147,19 @@
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
       "head": {
+        "crates/core/tests/it.rs": "pub struct P { pub label: Option<&'static str>, pub old_label: Option<&'static str> }\npub fn end(p: &P) -> Option<&'static str> { p.label.or(p.old_label) }\n",
+        "crates/core/src/end_tests.rs": "pub struct P { pub label: Option<&'static str>, pub old_label: Option<&'static str> }\npub fn end(p: &P) -> Option<&'static str> { p.label.or(p.old_label) }\n",
+        "games/g/tests/test_a.py": "def end(p):\n    return p.label or p.old_label\n",
+        "pkg/test_b.py": "def end(p):\n    return p.label or p.old_label\n",
         "src/a.mjs": "const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.oldX;\nexport const w = o => o.width ?? o.size;\nexport const OLD_LIMIT = 3;\n",
         "src/a.py": "TABS = {\"runs\": \"Runs\"}\n\n\ndef pick(a, b):\n    return a.x or b.old_x\n\n\ndef w(o):\n    return o.width or o.size or o.bold\n\n\nOLD_LIMIT = 3\n",
         "src/a.rs": "pub struct P { pub x: Option<u8>, pub old_x: Option<u8>, pub width: Option<u8>, pub size: Option<u8> }\npub const TABS: &[(&str, &str)] = &[(\"runs\", \"Runs\")];\npub fn pick(a: &P, b: &P) -> Option<u8> { a.x.or(b.old_x) }\npub fn w(o: &P) -> Option<u8> { o.width.or(o.size) }\npub const OLD_LIMIT: u8 = 3;\n",
         "src/a.ts": "const TABS: Record<string, string> = { runs: 'Runs' };\nexport const label = (id: string): string => TABS[id];\nexport const pick = (a: { x?: number }, b: { oldX?: number }): number | undefined => a.x ?? b.oldX;\nexport const w = (o: { width?: number; size?: number }): number | undefined => o.width ?? o.size;\nexport const OLD_LIMIT: number = 3;\n"
       },
-      "recorded": {"head":[],"base":[]}
+      "recorded": {
+        "head": [],
+        "base": []
+      }
     }
   }
 }
