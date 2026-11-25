@@ -1,8 +1,8 @@
-// SloppaChoppa 2 S3 (SPEC 3.3, 4.5, 7 S3): the Rust pack - module and crate edges (the kind `imports`), `#[allow]` / `#[expect]`
+// SloppaChoppa 2 S3 (SPEC 3.3, 4.5, 7 S3): the Rust pack - `#[allow]` / `#[expect]`
 // suppressions, the `#[cfg(test)]` regions loc.mjs counts as tests, and clippy as the lint tool LR. Choppa never runs clippy
 // (a build takes minutes; a project's quiet and time-budget rules): LR reads the log the head's own gate wrote, `{git}/norn/clippy/<head>*.log`.
 import path from 'node:path';
-import { lineAt, norm, tomlTables } from '../scan.mjs';
+import { lineAt, tomlTables } from '../scan.mjs';
 import { logFiles } from './logs.mjs';
 
 /** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads: Cargo.toml is the pack's, but no Rust source */
@@ -12,35 +12,6 @@ const P = path.posix;
 /** the folder a module's children live in: lib.rs / main.rs / mod.rs own their folder, a.rs owns a/ */
 const modDir = f => (/^(?:lib|main|mod)\.rs$/.test(P.basename(f)) ? P.dirname(f) : f.slice(0, -3));
 const modFile = (dir, segs, at) => { for (let k = segs.length; k > 0; k--) { const b = `${dir}/${segs.slice(0, k).join('/')}`; const hit = [`${b}.rs`, `${b}/mod.rs`].find(x => at.has(x)); if (hit) return hit; } return null; };
-const MOD_RE = /^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;/gm;
-const USE_RE = /^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?use[ \t]+((?:crate|self|super)(?:::\w+)*)/gm;
-const DEP_TABLE = t => /(?:^|\.)(?:dev-|build-)?dependencies(?:\.|$)/.test(t);
-/**
- * the edges of a Rust file or a Cargo.toml to files of the tree: [{ to, line, text, order? }]. `mod x;` and a Cargo path dependency
- * are real edges; a `use crate::` / `super::` path is a layer edge only (order: false): modules of one crate may name each other.
- */
-export function imports(file, text, at) {
-  const out = [];
-  if (P.basename(file) === 'Cargo.toml') {
-    let on = false;
-    for (const [i, l] of text.split(/\r?\n/).entries()) {
-      const h = /^\s*\[([^\]]+)\]/.exec(l); if (h) on = DEP_TABLE(h[1].trim());
-      const p = on && /\bpath\s*=\s*"([^"]+)"/.exec(l), to = p && P.normalize(`${P.dirname(file)}/${p[1]}/Cargo.toml`);
-      if (to && at.has(to)) out.push({ to, line: i + 1, text: norm(l) });
-    }
-    return out;
-  }
-  for (const m of text.matchAll(MOD_RE)) { const to = modFile(modDir(file), [m[1]], at); if (to) out.push({ to, line: lineAt(text, m.index), text: norm(m[0]) }); }
-  const src = file.includes('/src/') ? file.slice(0, file.lastIndexOf('/src/') + 4) : P.dirname(file);
-  for (const m of text.matchAll(USE_RE)) {
-    const segs = m[1].split('::'), first = segs.shift(); let dir = first === 'crate' ? src : first === 'super' ? P.dirname(modDir(file)) : modDir(file);
-    while (segs[0] === 'super') { dir = P.dirname(dir); segs.shift(); }
-    const to = segs.length ? modFile(dir, segs, at) : null;
-    if (to && to !== file) out.push({ to, line: lineAt(text, m.index), text: norm(m[0]), order: false });
-  }
-  return out;
-}
-
 // `#[allow(x)] // reason` or Rust's own `#[allow(x, reason = "...")]`
 const SUPPRESS_RE = /#!?\[(?:allow|expect)\((?:[^\]\n]*?\breason\s*=\s*"([^"\n]*)")?[^\]\n]*\)\][ \t]*(?:\/\/+)?(.*)$/gm;
 export const suppressions = text => [...text.matchAll(SUPPRESS_RE)].map(m => ({ line: lineAt(text, m.index), reason: m[1] || m[2] }));
