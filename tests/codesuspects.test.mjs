@@ -2,7 +2,7 @@
 // candidates, a batch merge (an integration branch merging member branches, or an octopus) expanded into one candidate per member branch (a
 // merge of main into a branch is no member), ranked by trace files, then the signals' partners of those, then symptom words, each row with
 // its score and its reasons; a word in most landings dropped with the reason; nothing matched = no suspect found. Sandbox only (mkTmp).
-import test from 'node:test';
+import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,15 +13,30 @@ import { codeCmd } from '../engine/lib/codecli.mjs';
 
 test.after(cleanTmp);
 const NOW = Date.parse('2026-11-20T12:00:00Z');
-function world() {
+// The fixture repo is built ONCE for the file (before) and only read by every test: suspects() runs git read-only. It is one
+// `git fast-import` stream, not ~40 porcelain calls per test (S2: the file took 180-270 s, the whole run's test budget). The history
+// is the one a hand-built repo has: the same commits, parents, dates, messages and files; a merge's tree is the union of its parents'
+// (no fixture merge conflicts; the newer write of a file wins, as git's merge of main into the batch takes main's tokens.mjs).
+function build() {
   const d = mkTmp('meta-sus-'), repo = path.join(d, 'repo'), state = path.join(d, 'state', 'kestrel');
-  let k = 0;
-  const w = f => { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), `// ${f}\nexport const v${k++} = 1;\n`); };
-  const g = (args, at) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, env: { ...process.env, ...(at ? { GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } : {}) } }).trim();
-  const commit = (files, msg, at) => { files.forEach(w); g(['add', '-A']); g(['commit', '-q', '-m', msg], at); return g(['rev-parse', '--short=12', 'HEAD']); };
-  const merge = (branches, msg, at) => { g(['merge', '-q', '--no-ff', '-m', msg, ...branches], at); return g(['rev-parse', '--short=12', 'HEAD']); };
-  const co = (args) => g(['checkout', '-q', ...args]);
-  fs.mkdirSync(repo, { recursive: true }); g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']); g(['config', 'core.autocrlf', 'false']);
+  const ts = at => Math.floor(Date.parse(at) / 1000);
+  let k = 0, m = 0, out = '';
+  const tip = {}, tree = {}, data = s => `data ${Buffer.byteLength(s)}\n${s}\n`;
+  let on = 'main';
+  // a commit on branch `on`: its parents' merged file map plus the new writes, listed in full (deleteall + M) so no tree is implied
+  const emit = (parents, writes, msg, at) => {
+    const files = {};
+    for (const p of parents) for (const [f, v] of Object.entries(tree[p])) if (!files[f] || files[f].n < v.n) files[f] = v;
+    for (const f of writes) { const blob = ++m; out += `blob\nmark :${blob}\n${data(`// ${f}\nexport const v${k++} = 1;\n`)}`; files[f] = { mark: blob, n: blob }; }
+    const c = ++m, who = `t <t@t> ${ts(at)} +0000`;
+    out += `commit refs/heads/${on}\nmark :${c}\nauthor ${who}\ncommitter ${who}\n${data(msg + '\n')}`;
+    if (parents.length) out += `from :${parents[0]}\n` + parents.slice(1).map(p => `merge :${p}\n`).join('');
+    out += 'deleteall\n' + Object.entries(files).map(([f, v]) => `M 100644 :${v.mark} ${f}\n`).join('');
+    tree[c] = files; tip[on] = c; return c;
+  };
+  const commit = (files, msg, at) => emit(tip[on] ? [tip[on]] : [], files, msg, at);
+  const merge = (branches, msg, at) => emit([tip[on], ...branches.map(b => tip[b])], [], msg, at);
+  const co = (args) => { if (args[0] === '-b') tip[args[1]] = tip[on]; on = args.at(-1); };
   const L = {};
   L.old = commit(['src/old.mjs', 'src/tokens.mjs'], 'feat(old): the first parser', '2026-09-01T10:00:00Z');   // past the 30-day window
   co(['-b', 'feat/parser']); commit(['src/parser.mjs'], 'feat(parser): read the grammar', '2026-10-25T10:00:00Z'); commit(['src/lexer.mjs'], 'feat(parser): split the input', '2026-10-25T11:00:00Z');
@@ -40,8 +55,18 @@ function world() {
   co(['-b', 'feat/x']); commit(['src/x.mjs'], 'feat(x): the compass', '2026-11-05T10:00:00Z');
   co(['main']); co(['-b', 'feat/y']); commit(['src/y.mjs'], 'feat(y): the weather vane', '2026-11-05T11:00:00Z');
   co(['main']); L.octo = merge(['feat/x', 'feat/y'], "Merge branches 'feat/x' and 'feat/y'", '2026-11-06T10:00:00Z');
-  return { repo, state, L, head: g(['rev-parse', '--short=12', 'HEAD']) };
+  const g = (args, input) => execFileSync('git', ['-C', repo, '-c', 'core.autocrlf=false', ...args], { encoding: 'utf8', windowsHide: true, input }).trim();
+  fs.mkdirSync(repo, { recursive: true }); g(['init', '-q', '-b', 'main']);
+  const marks = path.join(d, 'marks');
+  g(['fast-import', '--quiet', `--export-marks=${marks}`], out + 'done\n');
+  const sha = Object.fromEntries(fs.readFileSync(marks, 'utf8').trim().split('\n').map(l => l.slice(1).split(' ')));
+  g(['reset', '-q', '--hard', 'main']);   // the index and work tree of main: suspects reads `git ls-files`
+  for (const n of Object.keys(L)) L[n] = sha[L[n]].slice(0, 12);
+  return { repo, state, L, head: L.octo };
 }
+let fixture;
+before(() => { fixture = build(); });
+const world = () => fixture;
 /** the stored signals as docs/code-signals.md defines them: only what a consumer reads */
 function storeSignals(state, sha, files) {
   fs.mkdirSync(path.join(state, 'code'), { recursive: true });
@@ -77,7 +102,8 @@ test('a batch merge is expanded into its member branches; a merge of main into t
 });
 
 test('--trace: the files a trace names first, then the signals\' partners of those, then words; reasons in words', () => {
-  const { repo, state, L, head } = world(), tr = path.join(path.dirname(repo), 'trace.txt');
+  // the stored signals and the trace are this test's own writes: a state dir of its own, the shared repo only read
+  const { repo, L, head } = world(), t = mkTmp('meta-sus-trace-'), state = path.join(t, 'state', 'kestrel'), tr = path.join(t, 'trace.txt');
   fs.writeFileSync(tr, 'TypeError: cannot read properties of undefined\n    at lex (C:\\work\\kestrel\\src\\lexer.mjs:12:3)\n    at file:///home/u/kestrel/src/missing.mjs:4:1\n');
   storeSignals(state, head, { 'src/lexer.mjs': sig([{ file: 'src/tokens.mjs', shared: 3, share: 0.75, landings: 4 }]) });
   const r = suspects({ dir: repo, state, trace: tr, words: 'sky', now: NOW });

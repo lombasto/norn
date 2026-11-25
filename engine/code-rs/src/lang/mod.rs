@@ -177,7 +177,10 @@ pub fn clip(s: &str) -> String {
 }
 impl Out {
     /// one edge per (from, to, kind): the first occurrence keeps its line; no edge from a file to itself
-    #[allow(clippy::too_many_arguments, reason = "an edge record is these eight fields; a struct built at every call site would only restate them")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "an edge record is these eight fields; a struct built at every call site would only restate them"
+    )]
     pub fn edge(
         &mut self,
         from: &str,
