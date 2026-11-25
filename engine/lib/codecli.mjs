@@ -2,6 +2,7 @@
 // (git only, no model). tickCode is the tick's hook: it starts the verb detached when HEAD moved past the index. codeAt answers the dash's
 // /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map), read from that one file.
 // `norn code map [--refresh]` draws the Floorplan map (codemap.mjs); the same hook starts its metered refresh when HEAD moved past it.
+// history also stores the code signals (codesignals.mjs, docs/code-signals.md); `norn code signals` prints them, the Files part joins them.
 // RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
 // prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ import { atomicWrite } from './policy.mjs';
 import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
+import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 
@@ -19,16 +21,19 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
   + 'usage: norn code map [--refresh] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
   + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan)\n'
+  + 'usage: norn code signals <file>.. | --top N [--project P | --state D] [--json]   (signals = <state>/code/signals.json, stored by history: the files '
+  + 'that change together with a file, its fix history and the fix-first rank, from git; docs/code-signals.md)\n'
   + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
   + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and whether one changed on main since)\n'
   + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)';
-export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!'], links: [], why: [] }, START_GAP_MS = 10 * 60e3;
+export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
+const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = verb === 'signals' ? { _: [] } : {};
   for (let i = 0; i < argv.length; i++) {
+    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
     if (!s && verb === 'why' && f.file === undefined && !argv[i].startsWith('--')) { f.file = argv[i]; continue; }   // why's one operand
     if (!s) throw new Error(`unexpected ${argv[i]}`);
@@ -46,13 +51,14 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   catch (e) { err('error: ' + e.message); err(CODE_USAGE); return 2; }
   const dir = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), t0 = Date.now();
   if (verb === 'map') return mapCmd(f, w.state, dir, { out, err });
+  if (verb === 'signals') return signalsCmd(f, w.state, { out, err });
   if (verb === 'links' || verb === 'why') return linksCmd(verb, f, w, dir, { out, err, now });
-  let ix;
-  try { ix = codeIndex(dir, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
+  let ix, sig;
+  try { ix = codeIndex(dir, { now: now ?? Date.now() }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
-  fs.mkdirSync(path.dirname(file), { recursive: true }); atomicWrite(file, JSON.stringify(ix));
+  writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks
   if (f.json) out(JSON.stringify({ files: ix.files.length, lines, sha: ix.sha, ms }));
-  else out(`code history: ${ix.files.length} files, ${lines} lines at ${ix.sha} in ${(ms / 1000).toFixed(1)} s -> ${file}`);
+  else out(`code history: ${ix.files.length} files, ${lines} lines at ${ix.sha} in ${(ms / 1000).toFixed(1)} s -> ${file}; signals: fixes ${sig.fixes.status}, ${sig.landings} landings`);
   return 0;
 }
 
@@ -72,6 +78,38 @@ function linksCmd(verb, f, w, repo, { out, err, now = Date.now() }) {
   out([`code why ${y.file}: ${y.matched} records at ${y.sha} (${how})${y.matched > y.rows.length ? `, newest ${y.rows.length} shown` : ''}`,
     ...y.rows.map(x => `  ${x.id}  ${x.age_d} d  ${x.source}${x.from.length ? ` (${x.from.join(', ')})` : ''}  ${x.stale ? `STALE: changed in ${x.stale.sha} ${x.stale.at}` : 'current'}  ${x.title}`)].join('\n'));
   return 0;
+}
+
+/** `norn code signals <file>.. | --top N`: the stored signals (readSignals) printed -> exit code (1 = a named file is not in the index) */
+function signalsCmd(f, state, { out, err }) {
+  const top = f.top === undefined ? null : Number(f.top);
+  if (top === null ? !f._.length : f._.length || !(Number.isInteger(top) && top > 0)) { err('error: code signals: name files, or --top N (N > 0)'); err(CODE_USAGE); return 2; }
+  let s;
+  try { s = readSignals(state); } catch (e) { err(`error: code signals: ${e.message}`); return 2; }
+  if (!s) { err('error: code signals: none stored yet (`norn code history` writes them; the tick starts it when the sha moves)'); return 2; }
+  const head = { sha: s.sha, at: s.at, basis: s.basis, window: s.window, fixes: s.fixes }, na = s.fixes.status === 'measured' ? null : `n/a (${s.fixes.reason})`;
+  const stamp = `${s.basis} from git at ${s.sha}, ${s.at.slice(0, 16)} · window ${s.window.days} days (${s.window.from} to ${s.window.to}) · ${s.landings} landings, ${s.batches_skipped} batches skipped`;
+  if (top) {
+    const rows = Object.entries(s.files).filter(([, x]) => x.fix_first !== null).sort(([a, x], [b, y]) => y.fix_first - x.fix_first || y.importance - x.importance || (a < b ? -1 : 1)).slice(0, top);
+    if (f.json) { out(JSON.stringify({ ...head, files: rows.map(([file, x]) => ({ file, ...x })) })); return 0; }
+    if (na) out(`fix first: ${na}`);
+    else { out('fix first  fixes 365 d  churn 90 d  importance  file'); for (const [file, x] of rows) out(`${String(x.fix_first).padStart(9)}  ${String(x.fixes.n_365d).padStart(11)}  ${String(x.churn_90d).padStart(10)}  ${String(x.importance).padStart(10)}  ${file}`); }
+    out(stamp); return 0;
+  }
+  const pick = f._.map(x => x.replace(/\\/g, '/').replace(/^\.\//, '')), miss = pick.filter(x => !s.files[x]).length;
+  if (f.json) { out(JSON.stringify({ ...head, files: pick.map(file => (s.files[file] ? { file, ...s.files[file] } : { file, missing: 'not in the index' })) })); return miss ? 1 : 0; }
+  for (const file of pick) fileLines(file, s, na).forEach(l => out(l));
+  out(stamp);
+  return miss ? 1 : 0;
+}
+/** one file's signals in words: the rank line, the fixes line, the partners line */
+function fileLines(file, s, na) {
+  const x = s.files[file];
+  if (!x) return [`${file}: not in the index (new, removed, or the index is older than it)`];
+  const fx = x.fixes, last = fx?.last[0];
+  return [`${file} · fix first ${x.fix_first ?? 'n/a'} · importance ${x.importance}`,
+    `  fixes: ${na ?? `${fx.n_90d} in ${s.limits.fix_short_days} days, ${fx.n_365d} in ${s.window.days} days${last ? `; last ${last.day} ${last.sha.slice(0, 8)} ${last.subject}` : ''}`}`,
+    `  changes with: ${x.partners.length ? x.partners.map(p => `${p.file} ${p.shared} shared (${Math.round(100 * p.share)} % of ${x.landings} landings; it has ${p.landings})`).join(', ') : `none over the thresholds (${x.landings} landings)`}`];
 }
 
 /** `norn code map`: draw (the first map, or the owner's unmetered update) or --refresh (metered) -> exit code (a skipped refresh is 0) */
@@ -119,9 +157,10 @@ function tickLinks(p, state, { metaCmd, spawnFn, now }) {
 
 // ---- the Code tab's parts ----
 const areaOf = f => (f.includes('/') ? f.split('/')[0] : '.');
-const rowOf = x => { const g = x.growth, d = g.at(-1) - g[0];
-  return { file: x.file, lines: x.lines, lang: x.lang, growth: g, delta: d, pct: g[0] ? Math.round(100 * d / g[0]) : null, churn_90d: x.churn_90d, rel_churn: x.rel_churn, commits_90d: x.commits_90d, fan_in: x.fan_in, importance: x.importance }; };
-const SORT = { importance: (a, b) => b.importance - a.importance || b.churn_90d - a.churn_90d, lines: (a, b) => b.lines - a.lines, growth: (a, b) => b.delta - a.delta,
+const rowOf = (x, sg) => { const g = x.growth, d = g.at(-1) - g[0];   // sg: the file's signals (none stored for this index: null)
+  return { file: x.file, lines: x.lines, lang: x.lang, growth: g, delta: d, pct: g[0] ? Math.round(100 * d / g[0]) : null, churn_90d: x.churn_90d, rel_churn: x.rel_churn, commits_90d: x.commits_90d, fan_in: x.fan_in, importance: x.importance,
+    fix_first: sg?.fix_first ?? null, fixes_365d: sg?.fixes?.n_365d ?? null }; };
+const SORT = { importance: (a, b) => b.importance - a.importance || b.churn_90d - a.churn_90d, fix_first: (a, b) => (b.fix_first ?? -1) - (a.fix_first ?? -1) || b.importance - a.importance, lines: (a, b) => b.lines - a.lines, growth: (a, b) => b.delta - a.delta,
   churn: (a, b) => b.churn_90d - a.churn_90d, fan_in: (a, b) => (b.fan_in ?? -1) - (a.fan_in ?? -1), file: () => 0 };
 const sorted = (rows, k) => [...rows].sort((a, b) => SORT[k](a, b) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 /** the folders a filter offers: every directory one or two levels deep, with its file count -> [[folder, n]] by name */
@@ -139,12 +178,14 @@ export async function codeAt(p, url) {
     return { project: p.name, index: { at: ix.at, sha: ix.sha }, total: { files: ix.files.length, lines: ix.files.reduce((n, x) => n + x.lines, 0), added_30d: ix.added_30d, hotspot: top?.file ?? null }, commands: { history: 'norn code history' } };
   }
   if (part === 'map') return { map: mapAt(p.state) };
-  const rows = ix ? ix.files.map(rowOf) : null;
+  let sig = part === 'files' || part === 'file' ? readSignals(p.state) : null;
+  if (sig?.sha !== ix?.sha) sig = null;   // signals of another commit say nothing about this index
+  const rows = ix ? ix.files.map(x => rowOf(x, sig?.files[x.file])) : null;
   if (part === 'files') {
     if (!rows) return { list: null };
     const sort = CODE_SORTS.includes(q('sort')) ? q('sort') : 'importance', folder = String(q('folder') ?? '').replace(/\/+$/, ''), lim = Number(q('limit'));
     const hit = sorted(rows.filter(r => !folder || r.file.startsWith(`${folder}/`)), sort), shown = hit.slice(0, Number.isInteger(lim) && lim > 0 ? lim : CODE_CAP);
-    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown } };
+    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null } };
   }
   if (part === 'growth') {
     if (!rows) return { days: [], areas: [], fastest: [] };
@@ -160,7 +201,9 @@ export async function codeAt(p, url) {
   }
   if (part === 'file') {
     const x = ix?.files.find(f => f.file === q('file'));
-    return { file: x ? { ...rowOf(x), born: x.born, bytes: x.bytes, last: x.last, days: ix.weeks } : null };
+    const sg = x && sig?.files[x.file];
+    return { file: x ? { ...rowOf(x, sg), born: x.born, bytes: x.bytes, last: x.last, days: ix.weeks, signals: sig ? sig.sha : null, partners: sg ? sg.partners : null, fixes: sg?.fixes ?? null,
+      fixes_na: sig && sig.fixes.status !== 'measured' ? sig.fixes.reason : null } : null };
   }
   throw new Error(`unknown code part ${part}`);
 }

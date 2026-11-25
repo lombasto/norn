@@ -1,4 +1,4 @@
-// SPEC dash-owner-1123 s.7 (K3, K4, page side): pages/code.mjs rendered in node from synthetic parts - the summary (<= 4 numbers), Files
+// SPEC dash-owner-1123 s.7 (K3, K4, page side; RM-a-60: the fix-first sort and columns, the drawer's partners and fixes): pages/code.mjs rendered in node from synthetic parts - the summary (<= 4 numbers), Files
 // (fileTable, sorts, the folder filter, show more), the file drawer (growth chart, last commits, the viewer), Growth (timeChart + the
 // fastest), Outliers (the oversized file past the fence), Map (the drawn map in a sandboxed iframe on /code-map/; none drawn: the
 // not-built text, no iframe) - and its loader's requests. The 390 px
@@ -9,7 +9,7 @@ import { code, codeLoad, CODE_SUBS } from '../engine/dash/pages/code.mjs';
 
 const WEEKS = Array.from({ length: 26 }, (_, i) => new Date(Date.parse('2026-05-29T12:00:00Z') + i * 7 * 86400e3).toISOString().slice(0, 10));
 const ramp = (a, b) => WEEKS.map((_, i) => Math.round(a + (b - a) * i / 25));
-const row = (file, o) => ({ file, lines: 100, lang: 'javascript', growth: ramp(80, 100), delta: 20, pct: 25, churn_90d: 300, rel_churn: 3, commits_90d: 4, fan_in: 2, importance: 50, ...o });
+const row = (file, o) => ({ file, lines: 100, lang: 'javascript', growth: ramp(80, 100), delta: 20, pct: 25, churn_90d: 300, rel_churn: 3, commits_90d: 4, fan_in: 2, importance: 50, fix_first: 60, fixes_365d: 3, ...o });
 const base = o => ({ project: 'kestrel', index: { at: '2026-11-20T12:00:00Z', sha: 'abc123def456' }, total: { files: 783, lines: 98400, added_30d: 6100, hotspot: 'engine/dash/server.mjs' }, ...o });
 const LIST = { sort: 'importance', folder: '', folders: [['engine', 300], ['engine/dash', 40], ['tests', 252]], limit: 2, matched: 783, shown: 2,
   rows: [row('engine/dash/server.mjs', { lines: 2180, delta: 640, pct: 41, churn_90d: 3900, importance: 98 }), row('docs/notes.md', { lang: 'markdown', fan_in: null, importance: 97 })] };
@@ -19,9 +19,13 @@ test('K3 the summary and Files: at most 4 numbers; the table with growth sparkli
   assert.deepEqual(CODE_SUBS.map(([k]) => k), ['files', 'growth', 'outliers', 'map']);
   assert.equal((h.match(/class="subnum/g) || []).length, 4);
   assert.match(h, /id="code-sum"[^]*783[^]*files[^]*98,400[^]*lines[^]*\+6,100[^]*lines added in 30 days[^]*server\.mjs[^]*top hotspot/);
-  assert.match(h, /<tr data-act="code-file" data-id="engine\/dash\/server\.mjs" tabindex="0"><td data-label="file"><span class="mono small">engine\/dash\/server\.mjs<\/span><\/td><td data-label="lines" class="num">2,180<\/td><td data-label="26 w" class="num"><span class="mono cspark" aria-hidden="true">[▁-█]{26}<\/span> \+41 %<\/td><td data-label="churn 90 d" class="num">3,900<\/td><td data-label="fan-in" class="num">2<\/td><td data-label="importance" class="num">98<\/td><\/tr>/);
+  assert.match(h, /<tr data-act="code-file" data-id="engine\/dash\/server\.mjs" tabindex="0"><td data-label="file"><span class="mono small">engine\/dash\/server\.mjs<\/span><\/td><td data-label="lines" class="num">2,180<\/td><td data-label="26 w" class="num"><span class="mono cspark" aria-hidden="true">[▁-█]{26}<\/span> \+41 %<\/td><td data-label="churn 90 d" class="num">3,900<\/td><td data-label="fan-in" class="num">2<\/td><td data-label="importance" class="num">98<\/td><td data-label="fixes 365 d" class="num">3<\/td><td data-label="fix first" class="num">60<\/td><\/tr>/);
   assert.match(h, /data-id="docs\/notes\.md"[^]*?<td data-label="fan-in" class="num"><span class="mute">n\/a<\/span><\/td>/, 'fan-in is JS only');
-  assert.match(h, /data-act="code-sort" data-sort="importance" aria-pressed="true"[^]*data-sort="lines" aria-pressed="false"/);
+  assert.match(h, /data-act="code-sort" data-sort="importance" aria-pressed="true"[^]*data-sort="fix_first" aria-pressed="false">fix first<[^]*data-sort="lines" aria-pressed="false"/);
+  assert.match(code(base({ sub: 'files', list: { ...LIST, sort: 'fix_first' } })), /data-sort="fix_first" aria-pressed="true"/);
+  assert.match(h, /fix first = of churn, fan-in and fixes \(not built yet/, 'no signals stored: says so');
+  const na = code(base({ sub: 'files', list: { ...LIST, fixes: { status: 'n/a', reason: '0 of 9 commits carry a type' }, rows: [row('a.mjs', { fix_first: null, fixes_365d: null })] } }));
+  assert.match(na, /\(n\/a: 0 of 9 commits carry a type\)[^]*<td data-label="fixes 365 d" class="num"><span class="mute">n\/a<\/span><\/td><td data-label="fix first" class="num"><span class="mute">n\/a<\/span><\/td>/);
   assert.match(h, /<select id="code-folder" data-act="code-folder" aria-label="folder"><option value="" selected>all<\/option><option value="engine">engine \(300\)<\/option><option value="engine\/dash">engine\/dash \(40\)<\/option>/);
   assert.match(code(base({ sub: 'files', list: { ...LIST, folder: 'tests' } })), /<option value="tests" selected>/);
   assert.match(h, /showing 2 of 783 · <button class="lnk" data-act="code-more" data-limit="42">show more<\/button>/);
@@ -38,6 +42,19 @@ test('the file drawer: its growth chart, its last commits, the code viewer over 
   assert.match(h, /id="code-file"[^]*class="codeview" id="srcview-code"[^]*<tr id="srcl-1">/);
   assert.match(code(base({ sub: 'files', list: LIST, file_id: 'x.bin', file: { ...file, file: 'x.bin' }, source: { error: 'Not a text file' } })), /id="code-file"[^]*Not a text file/);
   assert.match(code(base({ sub: 'files', list: LIST, file_id: 'gone.mjs', file: null })), /id="code-file"[^]*not in the index/);
+  assert.match(h, /id="code-file-partners"[^]*not built yet/, 'no signals stored');
+});
+
+test('the file drawer: the files that change together with it and its last fixes; an untyped history reads n/a with the reason', () => {
+  const file = { ...row('engine/a.mjs', { lines: 3, fix_first: 71 }), born: '2026-07-01', bytes: 80, days: WEEKS, last: [], signals: 'abc123def456',
+    partners: [{ file: 'engine/b.mjs', shared: 4, share: 0.67, landings: 5 }], fixes: { n_90d: 1, n_365d: 2, last: [{ sha: 'fed321cba654', day: '2026-10-20', subject: 'fix(a): off by one', type: 'fix' }] }, fixes_na: null };
+  const h = code(base({ sub: 'files', list: LIST, file_id: 'engine/a.mjs', file, source: { file: 'engine/a.mjs', text: 'x\n' } }));
+  assert.match(h, /fix first 71/);
+  assert.match(h, /Changes together with[^]*id="code-file-partners"[^]*engine\/b\.mjs[^]*4 shared landings · 67 % of this file's · it has 5/);
+  assert.match(h, /Last fixes[^]*1 in 90 days, 2 in 365 days[^]*id="code-file-fixes"[^]*fed321cb[^]*2026-10-20[^]*fix\(a\): off by one/);
+  assert.match(code(base({ sub: 'files', list: LIST, file_id: 'engine/a.mjs', file: { ...file, partners: [] } })), /id="code-file-partners">no file over the thresholds/);
+  const na = code(base({ sub: 'files', list: LIST, file_id: 'engine/a.mjs', file: { ...file, fix_first: null, fixes: null, fixes_na: '0 of 9 commits carry a type' } }));
+  assert.match(na, /fix first n\/a[^]*id="code-file-fixes">n\/a: 0 of 9 commits carry a type/);
 });
 
 test('K3 Growth: lines per top-level area over 26 weeks and the 10 fastest-growing files', () => {
