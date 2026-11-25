@@ -49,6 +49,11 @@ export function writeWarnTable(state, sig) {
   return t;
 }
 
+/** every marked run -> [{ run, group }] (the A/B report's input, codecard.mjs cardReport) */
+export function warnMarks(state) {
+  const d = path.join(state, 'code', 'warn');
+  return fs.existsSync(d) ? fs.readdirSync(d).filter(f => f.endsWith('.txt')).map(f => { const run = f.slice(0, -4); return { run, group: warnsOf(state, run)?.group }; }) : [];
+}
 /** the run's record of lines shown -> { mode, group, shown, files } (group 'warn' or 'control'), or null when the hook never marked it */
 export function warnsOf(state, run) {
   let t;
