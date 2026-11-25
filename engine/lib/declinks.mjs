@@ -5,18 +5,22 @@
 //   landings - the files its lane's landings changed on main (a DIR: its scope lanes), within LINKS.landing_before_h before to
 //              LINKS.landing_after_h after the record; a landing = a first-parent merge on main whose subject names norn/[<home>/]<lane>   inferred
 // A source that cannot be read says why in `na` (a run not on this machine, a head git no longer has) - never a guess.
-// Stale: a governed path changed on main (first-parent, diffed against the first parent) after the record, by a commit that is not
-// one of its own sources (the named runs' commits and their landing merge; its lane's landings in the window - the lane carrying the
-// ruling out is not undoing it). <state>/code/declinks.json holds the index with the main sha it was built at; `norn code links`
+// Stale: only a link whose source is in LINKS.stale_sources (stated, runs - the two measured or near it: S1 measured 2 of 2 runs links
+// right, 7 of 18 landings links) is ever marked stale; a landings link pulls in its lane's hot files, so it stays a link (`norn code why`
+// prints it as inferred) but never makes a record stale nor a digest row. A link is stale when a governed path changed on main
+// (first-parent, diffed against the first parent) after the record, by a commit that is not one of its own sources (the named runs'
+// commits and their landing merge; its lane's landings in the window - the lane carrying the ruling out is not undoing it).
+// <state>/code/declinks.json holds the index with the main sha and stale_sources it was built at; `norn code links`
 // (and the tick, when main or the records moved) refreshes it, `norn code why <file>` answers from it, the digest reads it only.
-// Thresholds: LINKS below (the ONE place) - landing window -48 h / +168 h, why cap 10, digest cap 10; the digest window is the digest's own WINDOW_H, passed in.
+// Thresholds: LINKS below (the ONE place) - landing window -48 h / +168 h, why cap 10, digest cap 10, stale sources stated + runs;
+// the digest window is the digest's own WINDOW_H, passed in.
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadState } from './records.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { atomicWrite } from './policy.mjs';
 
-export const LINKS = { landing_before_h: 48, landing_after_h: 168, why_cap: 10, digest_cap: 10 };
+export const LINKS = { landing_before_h: 48, landing_after_h: 168, why_cap: 10, digest_cap: 10, stale_sources: ['stated', 'runs'] };
 export const LINKS_FILE = 'declinks.json';
 const H = 3600e3, SHA = 12, short = s => s.slice(0, SHA);
 const fileOf = state => path.join(state, 'code', LINKS_FILE);
@@ -74,20 +78,20 @@ export function buildLinks({ state, repo, main = 'main', now = Date.now(), git =
       else na.push(lanes.length ? `lane ${lanes.join(', ')}: no landing on ${main} from -${LINKS.landing_before_h} h to +${LINKS.landing_after_h} h` : 'no lane to follow');
     }
     const links = [...new Set(paths)].sort().map(p => {
-      const c = log.find(x => x.t > t && !exclude.has(x.sha) && x.files.includes(p));
+      const c = LINKS.stale_sources.includes(source) ? log.find(x => x.t > t && !exclude.has(x.sha) && x.files.includes(p)) : null;
       return { path: p, source, inferred: source !== 'stated', from, stale: c ? { sha: short(c.sha), at: new Date(c.t).toISOString().replace('.000Z', 'Z') } : null };
     });
     const st = links.map(l => l.stale?.at).filter(Boolean).sort()[0] ?? null;
     return { id: i.id, kind: i.kind, title: titleOf(i), created: i.created, lanes, na, links, stale_at: st };
   });
-  return { at: new Date(now).toISOString(), main, sha: log.length ? short(log.at(-1).sha) : null, sig: sigOf(all), window: { before_h: LINKS.landing_before_h, after_h: LINKS.landing_after_h }, records };
+  return { at: new Date(now).toISOString(), main, sha: log.length ? short(log.at(-1).sha) : null, sig: sigOf(all), stale_sources: LINKS.stale_sources, window: { before_h: LINKS.landing_before_h, after_h: LINKS.landing_after_h }, records };
 }
 
 export const readLinks = state => { try { return JSON.parse(fs.readFileSync(fileOf(state), 'utf8')); } catch { return null; } };
-/** is the stored index at main's tip and the records' current state? -> { fresh, head, governing } (head null: no git / no main; governing = rulings to link) */
+/** is the stored index at main's tip, the records' current state and today's LINKS.stale_sources? -> { fresh, head, governing } (head null: no git / no main; governing = rulings to link) */
 export function linksFresh({ state, repo, main = 'main', git = makeGit() }) {
   const head = git(repo, ['rev-parse', main], { allowFail: true })?.trim() ?? null, ix = readLinks(state), items = Object.values(loadState(state).items);
-  return { fresh: Boolean(ix && head && ix.sha === short(head) && ix.sig === sigOf(items)), head, governing: items.filter(governs).length };
+  return { fresh: Boolean(ix && head && ix.sha === short(head) && ix.sig === sigOf(items) && String(ix.stale_sources) === String(LINKS.stale_sources)), head, governing: items.filter(governs).length };
 }
 /** rebuild <state>/code/declinks.json when main or the records moved -> { built, ix, file } */
 export function refreshLinks(o) {
@@ -98,15 +102,17 @@ export function refreshLinks(o) {
   return { built: true, ix, file: f };
 }
 
-/** the records governing one file, newest first, capped -> { file, sha, matched, rows: [{ id, kind, title, created, age_d, source, inferred, from, stale }] } */
+/** the records governing one file, newest first, capped -> { file, sha, matched, rows: [{ id, kind, title, created, age_d, source, inferred, from, stale, status }] }
+ *  status: 'inferred' (a source outside LINKS.stale_sources: never marked stale), else 'stale' / 'current' */
 export function whyOf(ix, file, now = Date.now(), { cap = LINKS.why_cap } = {}) {
   const p = normPath(file), hit = ix.records.flatMap(r => r.links.filter(l => l.path === p).map(l => ({ id: r.id, kind: r.kind, title: r.title, created: r.created,
-    age_d: +((now - Date.parse(r.created)) / (24 * H)).toFixed(1), source: l.source, inferred: l.inferred, from: l.from, stale: l.stale })))
+    age_d: +((now - Date.parse(r.created)) / (24 * H)).toFixed(1), source: l.source, inferred: l.inferred, from: l.from, stale: l.stale,
+    status: LINKS.stale_sources.includes(l.source) ? (l.stale ? 'stale' : 'current') : 'inferred' })))
     .sort((a, b) => b.created.localeCompare(a.created) || b.id.localeCompare(a.id));
   return { file: p, sha: ix.sha, main: ix.main, matched: hit.length, rows: hit.slice(0, cap) };
 }
 
-/** the digest's rows: decisions whose first stale change is inside the window, newest first, capped (level-triggered: they leave with the window) */
+/** the digest's rows: decisions whose first stale change (stale_sources links only: buildLinks marks no other) is inside the window, newest first, capped (level-triggered: they leave with the window) */
 export function staleRows(ix, now = Date.now(), { window_h, cap = LINKS.digest_cap }) {
   return ix.records.filter(r => r.kind === 'decision' && r.stale_at && now - Date.parse(r.stale_at) <= window_h * H && Date.parse(r.stale_at) <= now)
     .sort((a, b) => b.stale_at.localeCompare(a.stale_at) || b.id.localeCompare(a.id)).slice(0, cap).map(r => {
