@@ -13,6 +13,8 @@ import { subdirOf, inDir, projectHome } from './monorepo.mjs';
 import { suiteKind, testsFor, IMPACT_FILE } from './testtimes.mjs';
 import { repoIndex, runCached, cacheDir, cacheDirOf, cacheLog, caseLog, casesFile, prune } from './testcache.mjs';
 import { buildIndex, writeIndex, median, CASES_FILE } from './testindex.mjs';
+import { graphIndex, testGroups, groupLine, pickGraph, IMPACT_LIMITS, PYTEST_FILE, RUNNERS } from './testimpact.mjs';
+import { graphAt } from './codegraph.mjs';
 import { testsPolicy, pickInRepo, policyWords, BROWSER_SKIP_ENV } from './testpolicy.mjs';
 import { outputReplay, replayLines } from './outreplay.mjs';
 import { defaultProjectsDir } from './billing.mjs';
@@ -141,24 +143,30 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
   const print = (v, text) => (f.json ? out(JSON.stringify(v, null, 1)) : text.forEach(l => out(l)));
 
   const kind = suiteKind(repo);
-  if (verb === 'run') return kind === 'node:test' ? testsRun(f, { repo, state: w.state, project: w.project, rest, out, err, env, print })
-    : (err(`error: tests run: runs node:test files (tests/*.test.mjs); this project's suite is ${kind ?? 'neither node:test nor pytest'} - run its test files with their own runner, one at a time`), 2);
+  if (verb === 'run') {
+    if (kind === 'node:test') return testsRun(f, { repo, state: w.state, project: w.project, rest, out, err, env, print });
+    if (f.changed && !f._.length) return graphChanged(f, { repo, state: w.state, project: w.project, out, err, print });
+    err(`error: tests run: runs node:test files (tests/*.test.mjs); this project's suite is ${kind ?? 'neither node:test nor pytest'} - run its test files with their own runner, one at a time (--changed names them with their commands)`); return 2;
+  }
   if (verb === 'for') {
     if (!f._.length) { err('error: tests for needs one or more files (paths relative to the project folder)'); return 2; }
     const im = readJson(path.join(dir, IMPACT_FILE));
     if (!im) { err(`error: no impact map (${fwd(path.join(dir, IMPACT_FILE))} does not exist)`); return 2; }
-    const a = testsFor(im, f._);
-    print({ ...a, at: im.at, sha: im.sha }, [...a.rows.map(r => `${r.file}: ${r.tests.length ? r.tests.join(' ') : r.known ? 'no test covers it' : 'not in the impact map\'s coverage'}`),
-      `${a.tests.length} test file(s) to run (the impact map at ${im.sha ?? '?'}, ${im.at})`]);
+    const a = testsFor(im, f._), groups = testGroups(im, a.tests);
+    print({ ...a, groups, basis: 'inferred', at: im.at, sha: im.sha, graph: im.graph ?? null }, [...a.rows.map(r => `${r.file}: ${r.tests.length ? r.tests.join(' ') : r.known ? 'no test covers it' : 'not in the impact map\'s coverage'}`),
+      ...groups.map(groupLine), `${a.tests.length} test file(s) to run, inferred (the impact map at ${im.sha ?? '?'}, ${im.at}${im.graph?.na ? `; the code graph n/a: ${im.graph.na}` : ''})`]);
     return 0;
   }
   if (verb === 'index') {
-    if (kind !== 'node:test') { err(`error: tests index: indexes node:test suites (tests/*.test.mjs); this project's suite is ${kind ?? 'neither node:test nor pytest'} (${repo})`); return 2; }
-    const tests = fs.readdirSync(path.join(repo, 'tests')).filter(x => x.endsWith('.test.mjs')).map(x => `tests/${x}`), code = git(repo, ['ls-files']).split('\n').map(fwd).filter(x => classify(x) === 'code');
-    const idx = buildIndex({ ix: repoIndex(repo), tests, code, log: cacheLog(cacheDirOf(w.state)), sha: sha() });
+    const tests = kind === 'node:test' ? fs.readdirSync(path.join(repo, 'tests')).filter(x => x.endsWith('.test.mjs')).map(x => `tests/${x}`) : [];
+    const code = tests.length ? git(repo, ['ls-files']).split('\n').map(fwd).filter(x => classify(x) === 'code') : [], graph = graphPart(repo, w.state);
+    if (!tests.length && !graph) { err(`error: tests index: no test suite in ${repo}: no node:test files (tests/*.test.mjs), no pytest file and no .rs file`); return 2; }
+    if (!tests.length && graph.na) { err(`error: tests index: no node:test suite (tests/*.test.mjs) in ${repo}, and the pytest / cargo index needs the code graph: n/a: ${graph.na}`); return 3; }
+    const idx = buildIndex({ ix: repoIndex(repo), tests, code, log: cacheLog(cacheDirOf(w.state)), sha: sha(), graph });
     writeIndex(dir, idx);
-    print({ cases: idx.cases.cases.length, files: tests.length, covered: Object.keys(idx.impact.sources).length, uncovered: idx.impact.uncovered.length, timed: idx.times.files.length, sha: idx.cases.sha },
-      [`tests index: ${idx.cases.cases.length} test cases in ${tests.length} files; ${Object.keys(idx.impact.sources).length} source files covered, ${idx.impact.uncovered.length} not; ${idx.times.files.length} files timed (at ${idx.cases.sha})`]);
+    const n = Object.keys(idx.cases.files).length, by = RUNNERS.map(r => [r, idx.cases.cases.filter(c => c.runner === r)]).filter(([, cs]) => cs.length).map(([r, cs]) => `${cs.length} ${r}`).join(', ');
+    print({ cases: idx.cases.cases.length, files: n, covered: Object.keys(idx.impact.sources).length, uncovered: idx.impact.uncovered.length, timed: idx.times.files.length, sha: idx.cases.sha, suite: idx.impact.suite, graph: idx.impact.graph ?? null },
+      [`tests index: ${idx.cases.cases.length} test cases in ${n} files; ${Object.keys(idx.impact.sources).length} source files covered, ${idx.impact.uncovered.length} not; ${idx.times.files.length} files timed (at ${idx.cases.sha}); by runner: ${by || 'none'}${graph?.na ? `; pytest / cargo n/a: ${graph.na}` : ''}`]);
     return 0;
   }
   if (verb === 'history') {
@@ -191,6 +199,27 @@ const sec = ms => `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
 /** the branch's changed files against the merge base with base (committed, uncommitted, untracked), repo-relative */
 export const changedFiles = (repo, base) => { const mb = git(repo, ['merge-base', base, 'HEAD']);
   return [...new Set([...git(repo, ['diff', '--name-only', '--relative', mb]).split('\n'), ...git(repo, ['ls-files', '--others', '--exclude-standard']).split('\n')].map(fwd).filter(Boolean))]; };
+// RM-a-55: the pytest + cargo part of `index`: the code graph at HEAD (codegraph.mjs graphAt) -> graphIndex's part | { na: why } | null
+// (null: the repo tracks no pytest file and no .rs file, so no graph is built for it)
+function graphPart(repo, state) {
+  const root = fwd(git(repo, ['rev-parse', '--show-toplevel'])), tracked = git(root, ['ls-files']).split('\n').map(fwd).filter(Boolean);
+  if (!tracked.some(x => PYTEST_FILE.test(x) || x.endsWith('.rs'))) return null;
+  const g = graphAt({ state, repo });
+  if (!g.ok) return { na: g.why };
+  return graphIndex(g, { tracked, read: x => { try { return fs.readFileSync(path.join(root, x), 'utf8'); } catch { return null; } } });
+}
+// `run --changed` of a project with no node:test suite: the pytest / cargo tests impact.json infers for the change, per group with its
+// runner command; it runs none of them (norn tests run runs node:test files only)
+function graphChanged(f, { repo, state, project, out, err, print }) {
+  const t = testsPolicy(project?.policy), base = f.base || 'origin/main', im = readJson(path.join(state, 'tests', IMPACT_FILE));
+  if (!im) { err(`error: tests run --changed: no impact map (${fwd(path.join(state, 'tests', IMPACT_FILE))}): run norn tests index`); return 2; }
+  let changed;
+  try { changed = changedFiles(repo, base); } catch (e) { err(`error: tests run --changed: no diff against ${base} (${String(e.stderr || e.message).trim().split('\n')[0]})`); return 2; }
+  const p = pickGraph(im, changed, { per: t.mode === 'changed' ? Infinity : IMPACT_LIMITS.light_per });
+  print({ policy: t, changed, basis: 'inferred', sha: im.sha, ...p }, [`tests run: ${changed.length} file(s) changed since ${base}: ${p.tests.length} test file(s) inferred by policy.tests.mode = ${t.mode} (the impact map at ${im.sha ?? '?'})${p.none.length ? `; no test reaches ${p.none.join(' ')}` : ''} - run them with their runner:`,
+    ...p.groups.map(g => `  ${groupLine(g)}`)]);
+  return 0;
+}
 async function testsRun(f, { repo, state, project, rest, out, err, env, print }) {
   const t = testsPolicy(project?.policy), run = env.META_RUN_ID || null;
   if (run && t.mode === 'off') { err('error: tests run: policy.tests.mode = off - tests do not run in a run of this project; CI runs them on the PR'); return 2; }
@@ -202,6 +231,8 @@ async function testsRun(f, { repo, state, project, rest, out, err, env, print })
     picked = pickInRepo(repo, state, t.mode, changed);
     if (!f.json) out(`tests run: ${changed.length} file(s) changed since ${base}: ${picked.run.length} test file(s) by policy.tests.mode = ${t.mode}${picked.none.length ? `; no test covers ${picked.none.join(' ')} directly (left to CI)` : ''}${picked.left.length ? `; ${picked.left.length} more importers left to CI` : ''}`);
     files = [...new Set([...files, ...picked.run])];
+    const gp = pickGraph(readJson(path.join(state, 'tests', IMPACT_FILE)), changed, { per: t.mode === 'changed' ? Infinity : IMPACT_LIMITS.light_per });
+    if (!f.json && gp.tests.length) for (const g of gp.groups) out(`tests run: not run here (its own runner), inferred: ${groupLine(g)}`);
   }
   if (!files.length) { print({ files: [], picked }, ['tests run: no test file to run']); return 0; }
   const gone = files.filter(x => !fs.existsSync(path.join(repo, x)));
@@ -240,7 +271,8 @@ export function tickTests(p, state, { metaCmd, spawnFn, now = Date.now() } = {})
   if (!at || day(at) !== day(now)) said.push(start('history', 30 * 60e3));
   const home = p.root ? projectHome(p) : null, have = readJson(path.join(state, 'tests', IMPACT_FILE))?.sha;
   const head = () => { try { return git(home, ['rev-parse', '--short=12', 'HEAD']); } catch { return null; /* no git repo: no map to index */ } };
-  if (home && suiteKind(home) === 'node:test') { const h = head(); if (h && h !== have) said.push(start('index', 10 * 60e3)); }
+  // a pytest / cargo index (no node:test suite), once made by hand, is kept at HEAD too
+  if (home && (suiteKind(home) === 'node:test' || have)) { const h = head(); if (h && h !== have) said.push(start('index', 10 * 60e3)); }
   return said.filter(Boolean).join('; ') || null;
 }
 
