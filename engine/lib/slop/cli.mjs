@@ -15,8 +15,8 @@ import { dailyReport } from './daily.mjs';
 import { measureDiff } from './measure.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
-export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | fix [--lane L] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures'
-  + ' | replay <rule> --as <ids,...> [--main REF] [--last N] [--config FILE] [--budget [--ratings FILE]] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
+export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | fix [--lane L] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures | replay <rule>'   // R2 reads the verbs from this first line
+  + ' --as <ids,...> [--main REF] [--last N] [--config FILE] [--budget [--ratings FILE]] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
   + ' --ci skips the rules that read the machine state; fix: applies the fix lists of the rules to the open findings in the worktree, commits nothing; meter: how slopified main is, 0-100 and a band; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2; --budget: pass / fail per rule x language against PROVE, the real share from --ratings { fp: real | wrong })';
 const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], fix: ['lane'], loc: ['since', 'json!'], sweep: ['json!'], meter: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'budget!', 'ratings', 'json!'] };
 
