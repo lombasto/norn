@@ -12,7 +12,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
   "shadow_langs": ["py","rs","ts"],
-  "exclude": ["**/tests/**","**/*_tests.rs","**/test_*.py","**/vendor/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/tests_*.rs","**/test_*.py","**/vendor/**"],
   "token": "([A-Z][A-Z0-9_]+)['\"]?\\]?$",
   "allow": {"token":"^NORN_","listed_in":"engine/lib/slop/env.md"},
   "match": {
@@ -147,6 +147,7 @@
     "miss": {
       "base": {"engine/lib/a.mjs":"export const t = process.env.META_OLD;\n","engine/lib/slop/env.md":"| name | what |\n"},
       "head": {
+        "crates/core/src/tests_env.rs": "pub fn t() -> Option<String> { std::env::var(\"META_RS_TEST\").ok() }\n",
         "crates/core/tests/it.rs": "#[test]\nfn it() { let _ = std::env::var(\"META_RS_TEST\"); }\n",
         "crates/core/src/env_tests.rs": "pub fn t() -> Option<String> { std::env::var(\"META_RS_TEST\").ok() }\n",
         "games/g/tests/test_a.py": "import os\n\nT = os.environ.get(\"META_PY_TEST\")\n",

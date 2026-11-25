@@ -10,7 +10,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.pyi","**/*.rs"],
   "shadow_langs": ["ts","py","rs"],
-  "exclude": ["**/tests/**","**/*_tests.rs","**/test_*.py","**/vendor/**","**/third_party/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/tests_*.rs","**/test_*.py","**/vendor/**","**/third_party/**"],
   "in": ["comment","string"],
   "patterns": ["\\b(?:[Oo]ld names?|keeps? resolving|still accepted|for old links|folds? into|falls? back to)\\b"],
   "fixture": {
@@ -23,7 +23,8 @@
     },
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"web/third_party/lib/x.mjs":"// the old name keeps resolving: falls back to the new one\nexport const a = 1;\n",
+      "head": {"crates/core/src/tests_env.rs":"// falls back to the old name when the new one is gone\npub const A: u8 = 1;\n",
+        "web/third_party/lib/x.mjs":"// the old name keeps resolving: falls back to the new one\nexport const a = 1;\n",
         "crates/core/tests/it.rs":"// falls back to the old name when the new one is gone\n#[test]\nfn it() {}\n",
         "crates/core/src/env_tests.rs":"// falls back to the old name when the new one is gone\npub const A: u8 = 1;\n",
         "games/g/tests/test_a.py":"# falls back to the old name when the new one is gone\nA = 1\n",

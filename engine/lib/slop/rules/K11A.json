@@ -11,7 +11,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
   "shadow_langs": ["py","rs","ts"],
-  "exclude": ["**/tests/**","**/*_tests.rs","**/test_*.py","**/vendor/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/tests_*.rs","**/test_*.py","**/vendor/**"],
   "match": {
     "js": [
       {
@@ -147,6 +147,7 @@
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
       "head": {
+        "crates/core/src/tests_end.rs": "pub struct P { pub label: Option<&'static str>, pub old_label: Option<&'static str> }\npub fn end(p: &P) -> Option<&'static str> { p.label.or(p.old_label) }\n",
         "crates/core/tests/it.rs": "pub struct P { pub label: Option<&'static str>, pub old_label: Option<&'static str> }\npub fn end(p: &P) -> Option<&'static str> { p.label.or(p.old_label) }\n",
         "crates/core/src/end_tests.rs": "pub struct P { pub label: Option<&'static str>, pub old_label: Option<&'static str> }\npub fn end(p: &P) -> Option<&'static str> { p.label.or(p.old_label) }\n",
         "games/g/tests/test_a.py": "def end(p):\n    return p.label or p.old_label\n",
