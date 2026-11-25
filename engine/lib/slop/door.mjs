@@ -21,7 +21,7 @@ export function doorCheck({ state, repo, branch, head, base = null, projectDir =
   if (!check) {
     const B = base || mainBase(repo, H, { main, remote });
     if (!B) throw new Error(`slop: no ${main} with a common history to diff ${branch} ${H.slice(0, 7)} against`);
-    const r = slopCheck({ repo, base: B, head: H, rules: set, tool, resolve: ps.resolve });
+    const r = slopCheck({ repo, base: B, head: H, rules: set, tool, resolve: ps.resolve, state });
     check = hostWrite(state, { type: 'check', branch, lane, run, base: r.base, head: r.head, hash: r.hash, blocks: r.blocks, findings: r.findings }).check;
     ran = true;
   }
