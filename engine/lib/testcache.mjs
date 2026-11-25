@@ -4,7 +4,7 @@
 //   key      (test file, sha256 of the file + every module it reaches - relative imports, transitively; a script it names (`'norn.mjs'`,
 //            a unique engine/ or tests/helpers basename: a test that spawns the CLI depends on all of it); a tests/fixtures/<dir> it names;
 //            every repo file its `// reads:` header matches (DEC-a-648: the non-JS files it reads - a workflow, a doc - path + content,
-//            a gone one as missing; a glob matches the files git lists, never state/: readsFiles) -
+//            a gone one as missing; a glob matches the files git lists as listed, vendored ones too, never the top-level state/: readsFiles) -
 //            the node version, `extra`: the browser mode and extra node flags). keyOf.
 //   result   <dir>/<key>.json { ok, ms, at, run, file, counts }: a PASS younger than a day is reused - the file does not run again. A fail
 //            is never reused (a load red gets its one rerun, docs/TESTING.md).
@@ -46,12 +46,13 @@ function walk(root, rel, out) {
   for (const e of es) { const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (!skipped(r)) walk(root, r, out); } else out.push(r); }
   return out;
 }
-/** every file of the repo a reads glob may match: the files git lists (tracked, plus untracked and not ignored); in a folder that is no
- *  git repo (the tests' temp repos) a walk - both without state/, node_modules, vendor, target and .git */
+/** every file of the repo a reads glob may match: the files git lists (tracked, plus untracked and not ignored) as listed - a tracked
+ *  vendor/ file too (engine/dash/vendor/: lint and layout read every tracked file) - but the top-level state/; in a folder that is no
+ *  git repo (the tests' temp repos) a walk, which skips state/, node_modules, vendor, target and .git */
 function repoFiles(root) {
   const r = boundedSync('git', ['-C', root, 'ls-files', '-co', '--exclude-standard', '-z'], { timeout: 60000 });   // windowsHide: boundedSync sets it
-  const listed = !r.error && r.status === 0 ? String(r.stdout).split('\0').filter(Boolean).map(fwd) : walk(root, '', []);
-  return [...new Set(listed)].filter(f => !skipped(f)).sort();
+  const listed = !r.error && r.status === 0 ? String(r.stdout).split('\0').filter(Boolean).map(fwd).filter(f => !f.startsWith('state/')) : walk(root, '', []).filter(f => !skipped(f));
+  return [...new Set(listed)].sort();
 }
 /** the files a test can reach in a repo: o.read(rel) -> text | null (cached per call of keyOf's caller), the module index by basename,
  *  o.files() -> the repo's files (repoFiles, listed once per index: only a reads header asks for it) */
