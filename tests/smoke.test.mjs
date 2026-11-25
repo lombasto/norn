@@ -8,6 +8,9 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
+
+test.before(rustReady);   // norn smoke builds norn-hook and norn-code in this store: a cold build runs here, never inside the smoke step's time limit
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const META = path.join(REPO, 'engine', 'bin', 'norn.mjs');
