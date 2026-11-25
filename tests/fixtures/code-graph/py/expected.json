@@ -23,21 +23,47 @@
   "files": {
     "accel/Cargo.toml": {"lang":"manifest"},
     "accel/src/lib.rs": {"crate":"accel","module":"crate","target":"accel/src/lib.rs","lang":"rs"},
-    "lib/common.py": {"lang":"py"},
-    "lib/extra/__init__.py": {"lang":"py"},
-    "lib/extra/tools.py": {"lang":"py"},
+    "lib/common.py": {"module":"common","lang":"py"},
+    "lib/extra/__init__.py": {"module":"extra","lang":"py"},
+    "lib/extra/tools.py": {"module":"extra.tools","lang":"py"},
     "native/Cargo.toml": {"lang":"manifest"},
     "native/pyproject.toml": {"lang":"manifest"},
-    "native/python/fx_native/__init__.py": {"lang":"py"},
+    "native/python/fx_native/__init__.py": {"module":"fx_native","lang":"py"},
     "native/src/lib.rs": {"crate":"fx-native","module":"crate","target":"native/src/lib.rs","lang":"rs"},
     "pyproject.toml": {"lang":"manifest"},
-    "src/common.py": {"lang":"py"},
-    "src/fx/__init__.py": {"lang":"py"},
-    "src/fx/core.py": {"lang":"py"},
-    "src/fx/helpers.py": {"lang":"py"},
-    "src/fx/models.py": {"lang":"py"},
-    "tests/conftest.py": {"lang":"py"},
-    "tests/helpers_t.py": {"lang":"py"},
-    "tests/test_core.py": {"lang":"py"}
+    "src/common.py": {"module":"common","lang":"py"},
+    "src/fx/__init__.py": {"module":"fx","lang":"py"},
+    "src/fx/core.py": {"module":"fx.core","lang":"py"},
+    "src/fx/helpers.py": {"module":"fx.helpers","lang":"py"},
+    "src/fx/models.py": {"module":"fx.models","lang":"py"},
+    "src/fx/shapes.py": {"module":"fx.shapes","lang":"py"},
+    "tests/conftest.py": {"module":"conftest","lang":"py"},
+    "tests/helpers_t.py": {"module":"helpers_t","lang":"py"},
+    "tests/test_core.py": {"module":"test_core","lang":"py"}
+  },
+  "defs": {
+    "accel/src/lib.rs": [
+      {"id":"accel/src/lib.rs#crate::_accel#0","name":"_accel","qual":"crate::_accel","kind":"function","line":2,"end_line":2,"col":1,"exported":false}
+    ],
+    "native/src/lib.rs": [
+      {"id":"native/src/lib.rs#crate::_fast#0","name":"_fast","qual":"crate::_fast","kind":"function","line":2,"end_line":2,"col":1,"exported":false}
+    ],
+    "src/fx/core.py": [
+      {"id":"src/fx/core.py#fx.core.later#0","name":"later","qual":"fx.core.later","kind":"function","line":15,"end_line":17,"col":1,"exported":true}
+    ],
+    "src/fx/models.py": [
+      {"id":"src/fx/models.py#fx.models.Model#0","name":"Model","qual":"fx.models.Model","kind":"class","line":1,"end_line":1,"col":1,"exported":true}
+    ],
+    "src/fx/shapes.py": [
+      {"id":"src/fx/shapes.py#fx.shapes.LIMIT#0","name":"LIMIT","qual":"fx.shapes.LIMIT","kind":"const","line":3,"end_line":3,"col":1,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.Shape#0","name":"Shape","qual":"fx.shapes.Shape","kind":"class","line":6,"end_line":17,"col":1,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.Shape.__init__#0","name":"__init__","qual":"fx.shapes.Shape.__init__","kind":"method","line":9,"end_line":10,"col":5,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.Shape.area#0","name":"area","qual":"fx.shapes.Shape.area","kind":"method","line":13,"end_line":14,"col":5,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.Shape._hidden#0","name":"_hidden","qual":"fx.shapes.Shape._hidden","kind":"method","line":16,"end_line":17,"col":5,"exported":false},
+      {"id":"src/fx/shapes.py#fx.shapes.helper#0","name":"helper","qual":"fx.shapes.helper","kind":"function","line":20,"end_line":22,"col":1,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.copy#0","name":"copy","qual":"fx.shapes.copy","kind":"function","line":25,"end_line":26,"col":1,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.outer#0","name":"outer","qual":"fx.shapes.outer","kind":"function","line":29,"end_line":33,"col":1,"exported":true},
+      {"id":"src/fx/shapes.py#fx.shapes.outer.inner#0","name":"inner","qual":"fx.shapes.outer.inner","kind":"function","line":30,"end_line":31,"col":5,"exported":false}
+    ]
   }
 }

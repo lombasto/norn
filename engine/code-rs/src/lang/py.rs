@@ -40,6 +40,26 @@ fn dotted(n: Node, src: &[u8]) -> Option<String> {
     }
 }
 
+/// a Python file's dotted module name under the longest of its roots that holds it (`src/fx/core.py` under `src` -> fx.core;
+/// a package's `__init__.py` is the package)
+fn module_of(file: &str, roots: &[String]) -> String {
+    let root = roots
+        .iter()
+        .filter(|r| r.is_empty() || under(file, r))
+        .max_by_key(|r| r.len())
+        .map_or("", |r| r.as_str());
+    let rel = if root.is_empty() {
+        file
+    } else {
+        &file[root.len() + 1..]
+    };
+    let rel = rel.rsplit_once('.').map_or(rel, |(a, _)| a);
+    let rel = rel
+        .strip_suffix("/__init__")
+        .unwrap_or(if rel == "__init__" { "" } else { rel });
+    rel.replace('/', ".")
+}
+
 impl Lang for Py {
     fn name(&self) -> &'static str {
         "py"
@@ -52,6 +72,9 @@ impl Lang for Py {
     }
     fn import_query(&self) -> &'static str {
         QUERY
+    }
+    fn tags(&self, _: &str) -> String {
+        tree_sitter_python::TAGS_QUERY.to_string()
     }
     fn extract(&self, q: &Query, tree: &Tree, src: &[u8]) -> Map<String, Value> {
         let mut imports = vec![];
@@ -105,6 +128,10 @@ impl Lang for Py {
         let r = Resolver::new(ctx);
         for (from, facts) in ctx.sources("py") {
             let roots = r.roots_for(from);
+            out.info
+                .entry(from.clone())
+                .or_default()
+                .insert("module".into(), json!(module_of(from, &roots)));
             for i in facts["imports"].as_array().into_iter().flatten() {
                 let (line, col) = lc(i);
                 let kind = i["kind"].as_str().unwrap_or("import");
@@ -404,7 +431,10 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments, reason = "a relative import needs its level, module and names apart from the shared site tuple")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a relative import needs its level, module and names apart from the shared site tuple"
+    )]
     fn relative(
         &self,
         from: &str,
