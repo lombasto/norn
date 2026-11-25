@@ -1,6 +1,7 @@
 // The JavaScript / TypeScript file-edge grader of the code graph (SPEC code-graph section 5, stage S4a): Node's own resolver, run from
 // each importing file. `norn-code grade files` starts it as `node --experimental-import-meta-resolve node-resolve.mjs <in> <out>`
-// (the flag makes import.meta.resolve take a parent URL). In: { root, sites: [{ id, from, spec, kind }] }; out: { results: [{ id,
+// (the flag makes import.meta.resolve take a parent URL). In: { root, sites: [{ id, from, spec, kind }], manifests: [the tree's
+// package.json files] }; out: { results: [{ id,
 // targets: [repo-relative file] } | { id, na }] }, targets empty when the import loads nothing inside the repo (a builtin, a
 // registry package, a missing file).
 // - ESM (`import`, `reexport`): import.meta.resolve(spec, the file's URL), the result kept only when it is a file on disk.
@@ -18,7 +19,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const [inFile, outFile] = process.argv.slice(2);
-const { root, sites } = JSON.parse(fs.readFileSync(inFile, 'utf8'));
+const { root, sites, manifests } = JSON.parse(fs.readFileSync(inFile, 'utf8'));
 const TS_FILE = /\.(?:ts|tsx|mts|cts)$/i, isFile = f => { try { return fs.statSync(f).isFile(); } catch { return false; } };
 const abs = rel => path.join(root, rel);
 /** an absolute path -> repo-relative with '/' (null outside the repo) */
@@ -56,12 +57,13 @@ async function viaTs(spec, file) {
   return { targets: r && !r.isExternalLibraryImport ? inRepo(r.resolvedFileName) : [] };
 }
 
-// the workspace packages (every package.json `workspaces` glob in the repo) linked under a scratch node_modules
+// the workspace packages (each tracked package.json's `workspaces` globs over the tracked package.json folders: `manifests`, from
+// norn-code) linked under a scratch node_modules
 const workspaces = new Map();
-for (const pj of fs.globSync('**/package.json', { cwd: root, exclude: d => path.basename(d) === 'node_modules' || path.basename(d) === '.git' })) {
+for (const pj of manifests) {
   let ws; try { ws = JSON.parse(fs.readFileSync(abs(pj), 'utf8')).workspaces; } catch { continue; }
   const globs = Array.isArray(ws) ? ws : ws?.packages || [];
-  for (const g of globs) for (const d of fs.globSync(path.posix.join(path.posix.dirname(pj), g), { cwd: root })) {
+  for (const g of globs) for (const d of manifests.map(m => path.posix.dirname(m)).filter(d => path.matchesGlob(d, path.posix.join(path.posix.dirname(pj), g)))) {
     try { const name = JSON.parse(fs.readFileSync(path.join(abs(d), 'package.json'), 'utf8')).name; if (name) workspaces.set(name, abs(d)); } catch { /* not a package */ }
   }
 }

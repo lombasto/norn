@@ -165,11 +165,16 @@ fn run_grader(
         .map_err(|e| format!("could not start the {name} grader: {e}"))?;
     if !r.status.success() {
         let err = String::from_utf8_lossy(&r.stderr);
-        let tail: Vec<&str> = err.trim().lines().rev().take(2).collect();
+        // the error's own line (a stack trace ends with the runtime's version, which says nothing)
+        let line = err
+            .lines()
+            .find(|l| l.contains("Error"))
+            .or(err.trim().lines().last())
+            .unwrap_or("");
         return Err(format!(
             "the {name} grader failed ({}): {}",
             r.status,
-            tail.join(" ")
+            line.trim()
         ));
     }
     let out: Value = serde_json::from_slice(
@@ -204,6 +209,7 @@ fn grade_js(
     root: &str,
     graders: Option<&Path>,
     tmp: &Path,
+    manifests: &[&String],
 ) -> HashMap<u64, Truth> {
     let na = |why: String| {
         rows.iter()
@@ -224,7 +230,7 @@ fn grade_js(
         &mut cmd,
         tmp,
         "node",
-        json!({ "root": root, "sites": sites }),
+        json!({ "root": root, "sites": sites, "manifests": manifests }),
     ) {
         Err(e) => na(e),
         Ok(m) => rows
@@ -485,25 +491,28 @@ fn rust_truth(root: &str, manifests: &[String], tmp: &Path) -> RustTruth {
         .par_iter()
         .enumerate()
         .map(|(i, (pi, src, name, ed, feats))| {
-            let d = tmp.join(format!("rs-{i}.d"));
-            let mut c = Command::new("rustc");
-            c.current_dir(root)
-                .args([
-                    "--edition",
-                    ed,
-                    "--crate-type",
-                    "lib",
-                    "--crate-name",
-                    name,
-                    "--cfg",
-                    "test",
-                ])
-                .arg(format!("--emit=dep-info={}", d.display()));
-            for f in feats {
-                c.arg("--cfg").arg(format!("feature=\"{f}\""));
+            // twice: as a library (cfg(not(test)) code) and as its test harness (`--test` keeps the #[test] functions, whose
+            // bodies' include_str! / mod are then expanded); the union is what the crate compiles under either
+            let mut set: Option<HashSet<String>> = None;
+            for (k, mode) in [&["--crate-type", "lib"][..], &["--test"][..]]
+                .iter()
+                .enumerate()
+            {
+                let d = tmp.join(format!("rs-{i}-{k}.d"));
+                let mut c = Command::new("rustc");
+                c.current_dir(root)
+                    .args(["--edition", ed, "--crate-name", name])
+                    .args(*mode)
+                    .arg(format!("--emit=dep-info={}", d.display()));
+                for f in feats {
+                    c.arg("--cfg").arg(format!("feature=\"{f}\""));
+                }
+                let _ = c.arg(src).output();
+                if let Ok(t) = std::fs::read_to_string(&d) {
+                    set.get_or_insert_with(HashSet::new)
+                        .extend(dep_info(&t, root));
+                }
             }
-            let _ = c.arg(src).output();
-            let set = std::fs::read_to_string(&d).ok().map(|s| dep_info(&s, root));
             (*pi, set)
         })
         .collect();
@@ -770,7 +779,11 @@ pub fn files(a: &Args, o: &Opts) -> Result<Value, String> {
             .collect()
     };
     let g = o.graders.as_deref();
-    let mut truth = grade_js(&by(&["javascript", "typescript"]), &root, g, &tmp);
+    let pjs: Vec<&String> = files
+        .keys()
+        .filter(|p| basename(p) == "package.json")
+        .collect();
+    let mut truth = grade_js(&by(&["javascript", "typescript"]), &root, g, &tmp, &pjs);
     let py = by(&["python"]);
     if !py.is_empty() {
         let tree_files = git::ls_tree(&a.repo, "HEAD")?;
@@ -928,4 +941,47 @@ pub fn files(a: &Args, o: &Opts) -> Result<Value, String> {
     let mut o2 = out;
     o2["file"] = json!(f.to_string_lossy().replace('\\', "/"));
     Ok(o2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wilson_interval_and_allocation() {
+        // n = 400 at p = 0.9: about +-3 pp (SPEC section 5)
+        let w = wilson(360.0, 400.0, 400);
+        assert_eq!(
+            (w["lo"].as_f64(), w["hi"].as_f64()),
+            (Some(0.8667), Some(0.9257))
+        );
+        assert_eq!(wilson(0.0, 0.0, 0)["p"], Value::Null);
+        let sizes: BTreeMap<String, usize> = [("a", 1), ("b", 50), ("c", 3)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect();
+        let got: Vec<usize> = allocate(&sizes, 12).into_values().collect();
+        assert_eq!(got, vec![1, 8, 3]);
+    }
+
+    #[test]
+    fn dep_info_sources_repo_relative() {
+        let root = "C:/w/repo";
+        let d = r"C:/t/x.d: src/lib.rs src\a.rs src/my\ dir/b.rs src\../assets/s.wgsl C:/w/repo/src/c.rs C:/other/d.rs
+src/lib.rs:";
+        let mut got: Vec<String> = dep_info(d, root).into_iter().collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "assets/s.wgsl",
+                "src/a.rs",
+                "src/c.rs",
+                "src/lib.rs",
+                "src/my dir/b.rs"
+            ]
+        );
+        assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso(1_795_651_200), "2026-11-26T00:00:00Z");
+    }
 }
