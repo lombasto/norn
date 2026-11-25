@@ -100,7 +100,7 @@ row names its `runner` (`node:test`, `pytest`, `cargo`). engine/lib/testimpact.m
 - **Impact.** A test covers a source file when the test's file reaches it through the code graph's import edges
   (docs/code-graph.md, its reader only); a pytest file also through the `conftest.py` files above it. A Rust `mod` edge is taken only
   down the test file's own module tree: a crate root it reaches (`lib.rs`) does not pull in every module of the crate. A Python
-  package `__init__.py` reached only by its implicit `package-init` edge (a test imports `pkg.a`, so `pkg/__init__.py` runs) is covered
+  package `__init__.py` reached only by its implicit `package-init` edge (a test imports `pkg.a`, so the package's `__init__.py` runs) is covered
   but is a leaf: what it re-exports is not pulled in. One a test imports itself (`from pkg import B`) is walked as usual. Each source
   lists its tests nearest first. Every test row says `basis: 'inferred'` (static imports); `measured` is kept for a coverage report,
   not built. impact.json carries the graph's commit (`graph`), or `graph: { na: why }` when the graph cannot be had.
