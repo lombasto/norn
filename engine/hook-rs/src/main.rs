@@ -9,6 +9,10 @@
 //                                                         from <S>/runs/<run>.scope.json, written at launch) exit 0 here; every
 //                                                         other call goes to `norn scope check` unchanged. This binary never
 //                                                         refuses on its own: a refusal, its reason and its record stay Node's.
+//   norn-hook version                             { crate, store_schema: null, source }: source = the hash of the sources it was
+//                                                         built from (build.rs, NORN-PART-PROOF; rustbin.mjs partProblem checks it
+//                                                         against its store name). store_schema null: norn-hook keeps no store, and
+//                                                         every part answers the one shape
 // std only (Cargo.toml). Exit code and stdout of a delegated call are Node's, passed through.
 use std::env;
 use std::fs;
@@ -220,7 +224,7 @@ struct Args {
 fn args() -> Args {
     let a: Vec<String> = env::args().skip(1).collect();
     let usage = || -> ! {
-        eprintln!("usage: norn-hook mail|scope --state D --node <node> --norn <norn.mjs>    (the run: META_RUN_ID)");
+        eprintln!("usage: norn-hook mail|scope --state D --node <node> --norn <norn.mjs>    (the run: META_RUN_ID)  |  norn-hook version");
         exit(2)
     };
     if a.is_empty() || (a[0] != "mail" && a[0] != "scope") {
@@ -303,7 +307,7 @@ fn node(a: &Args, words: &[&str], run: Option<&str>, input: Option<&[u8]>) -> ! 
 // ---------- mail (+ the warn line) ----------
 fn mail(a: &Args) -> ! {
     let run = the_run();
-    let flag = run.as_ref().map_or(true, |r| {
+    let flag = run.as_ref().is_none_or(|r| {
         Path::new(&a.state)
             .join("mail")
             .join("flag")
@@ -751,6 +755,14 @@ fn scope(a: &Args) -> ! {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("version") {
+        println!(
+            "{{\"crate\":\"{}\",\"store_schema\":null,\"source\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION"),
+            env!("NORN_SOURCE")
+        );
+        return;
+    }
     let a = args();
     if a.sub == "mail" {
         mail(&a)
