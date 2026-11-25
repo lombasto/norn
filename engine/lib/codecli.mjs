@@ -1,8 +1,7 @@
 // `norn code history` (SPEC dash-owner-1123 s.7): writes <state>/code/index.json, codeindex.mjs's per-file index of the project folder
 // (git only, no model). tickCode is the tick's hook: it starts the verb detached when HEAD moved past the index. codeAt answers the dash's
-// /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map | graphmap), read from that one file.
-// `norn code map [--refresh]` draws the Floorplan map (codemap.mjs); the same hook starts its metered refresh when HEAD moved past it.
-// RM-a-66: history also redraws the import-graph map from the graph it read (codemapgraph.mjs, no model); `norn code map --graph` draws only that.
+// /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map), read from that one file.
+// RM-a-66: history also redraws the import-graph map (Code > Map) from the graph it read (codemapgraph.mjs, no model); `norn code map` draws only that.
 // history also stores the code signals (codesignals.mjs, docs/code-signals.md); `norn code signals` prints them, the Files part joins them.
 // RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
 // prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
@@ -16,7 +15,6 @@ import { readJsonS } from './fsnap.mjs';
 import { atomicWrite } from './policy.mjs';
 import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
-import { drawMap, tickMap, mapAt } from './codemap.mjs';
 import { drawGraphMap, graphMapAt } from './codemapgraph.mjs';
 import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
 import { graphAt, graphStatus, dependencies, dependents, cycles, reach, ALL_KINDS } from './codegraph.mjs';
@@ -29,9 +27,8 @@ import { loadState } from './records.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
-  + 'usage: norn code map [--refresh] [--graph] [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/map: the Floorplan map from the pinned '
-  + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan; --graph = only the '
-  + 'import-graph map, <state>/code/graphmap, drawn from the code graph with no model; history redraws it too)\n'
+  + 'usage: norn code map [--project P | --state D] [--repo DIR] [--json]   (map = <state>/code/graphmap: the import-graph map (Code > Map), '
+  + 'drawn from the code graph with no model; history redraws it too)\n'
   + 'usage: norn code signals <file>.. | --top N [--project P | --state D] [--json]   (signals = <state>/code/signals.json, stored by history: the files '
   + 'that change together with a file, its fix history and the fix-first rank, from git; docs/code-signals.md)\n'
   + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
@@ -47,7 +44,7 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code graph index|deps|dependents|cycles|reach|status ...   (the code graph: the file imports of JS / TS, Python and Rust; '
   + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!', 'graph!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: [], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
@@ -168,15 +165,11 @@ function fileLines(file, s, na) {
     `  changes with: ${x.partners.length ? x.partners.map(p => `${p.file} ${p.shared} shared (${Math.round(100 * p.share)} % of ${x.landings} landings; it has ${p.landings})`).join(', ') : `none over the thresholds (${x.landings} landings)`}`];
 }
 
-/** `norn code map`: draw (the first map, or the owner's unmetered update) or --refresh (metered) -> exit code (a skipped refresh is 0) */
-async function mapCmd(f, state, repo, { out, err }) {
-  if (f.graph && f.refresh) { err('error: code map: --graph and --refresh are two maps; give one'); return 2; }
-  if (f.graph) { const g = drawGraphMap({ state, repo }); if (f.json) out(JSON.stringify(g)); else out(g.drawn ? `code map: graph map at ${g.sha} -> ${g.file}` : `code map: graph map n/a: ${g.why}`); return g.drawn ? 0 : 3; }
-  let r;
-  try { r = await drawMap({ state, repo, refresh: Boolean(f.refresh) }); } catch (e) { err(`error: code map: ${String(e.stderr || e.message).trim()}`); return 2; }
-  if (f.json) out(JSON.stringify(r));
-  else out(r.drawn ? `code map: drew ${r.workflow} at ${r.sha} (${r.calls} model jobs${r.pct === null ? '' : `, ~${r.pct.toFixed(3)} % of plan`}) -> ${r.file}` : `code map: ${r.skipped ? `refresh skipped: ${r.skipped}` : r.why}`);
-  return r.drawn || r.skipped || r.sha ? 0 : 2;
+/** `norn code map`: draw the import-graph map from the code graph (no model) -> exit code (3: the graph is n/a, stored as n/a) */
+function mapCmd(f, state, repo, { out }) {
+  const g = drawGraphMap({ state, repo });
+  if (f.json) out(JSON.stringify(g)); else out(g.drawn ? `code map: graph map at ${g.sha} -> ${g.file}` : `code map: graph map n/a: ${g.why}`);
+  return g.drawn ? 0 : 3;
 }
 
 // ---- `norn code graph <verb>`: the code graph's reader (codegraph.mjs, docs/code-graph.md) on the command line ----
@@ -237,12 +230,12 @@ function graphCmd(argv, { out, err, where }) {
 }
 
 /** the tick's hook: `norn code history` detached when HEAD is not the index's sha (not while one started in the last 10 min; the mark is
- *  the start time), and the map's metered refresh (codemap.mjs tickMap) -> the tick-log words | null */
+ *  the start time; history redraws the map too), and `norn code links` when main or the records moved -> the tick-log words | null */
 export function tickCode(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
   if (!p?.file || !p.root) return null;
   let head;
   try { head = execFileSync('git', ['-C', projectHome(p), 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; /* no git repo: nothing to index */ }
-  const said = [tickHistory(p, state, { metaCmd, spawnFn, now, head }), tickMap(p, state, { metaCmd, spawnFn, now, head }), tickLinks(p, state, { metaCmd, spawnFn, now })].filter(Boolean);
+  const said = [tickHistory(p, state, { metaCmd, spawnFn, now, head }), tickLinks(p, state, { metaCmd, spawnFn, now })].filter(Boolean);
   return said.length ? said.join('; ') : null;
 }
 function tickHistory(p, state, { metaCmd, spawnFn, now, head }) {
@@ -292,8 +285,7 @@ export async function codeAt(p, url) {
     const top = sorted(ix.files.map(rowOf), 'importance')[0];
     return { project: p.name, index: { at: ix.at, sha: ix.sha }, total: { files: ix.files.length, lines: ix.files.reduce((n, x) => n + x.lines, 0), added_30d: ix.added_30d, hotspot: top?.file ?? null }, commands: { history: 'norn code history' } };
   }
-  if (part === 'map') return { map: mapAt(p.state) };
-  if (part === 'graphmap') return { graphmap: graphMapAt(p.state) };   // RM-a-66: the import-graph map's line (codemapgraph.mjs)
+  if (part === 'map') return { map: graphMapAt(p.state) };   // RM-a-66: the import-graph map's line (codemapgraph.mjs)
   let sig = part === 'files' || part === 'file' ? readSignals(p.state) : null;
   if (sig?.sha !== ix?.sha) sig = null;   // signals of another commit say nothing about this index
   const rows = ix ? ix.files.map(x => rowOf(x, sig?.files[x.file])) : null;
