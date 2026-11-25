@@ -39,6 +39,8 @@ those of the rule file.
 | `register` | `files` (the rule files beside the register's repo sources): K26, a new sentence no register row covers | no |
 | `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
 
+R2 (`refs`) excludes changelogs (`**/CHANGELOG*.md`): a changelog line naming a path deleted later is history, not a broken reference.
+
 A rule file never loads code: the engine writes the ESLint config from the rule's data and the merge base's `eslint.config.mjs`
 (plain data, core rules only), with inline config comments off. ESLint is the locked tool set in `tools/lint`, installed by
 `npm ci --ignore-scripts` into `<meta root>/state/tools/lint/<lock hash>`; a tool that cannot install or run is a BLOCK "could not run".
@@ -149,3 +151,6 @@ pr.yml has no path filter on purpose: a required status whose workflow a filter 
 - An admin merge or a direct push cannot be stopped from here. The daily report lists every first-parent landing on main since
   the last report that has no stored check, with its findings ("Landed unchecked"); its digest line carries
   `LANDED UNCHECKED n`.
+- What the gate could not see: over the last 7 days of run-end checks (a stored check with `run`; door and `norn slop check` checks
+  have no voice by design) the daily report and its digest line say `second voice: could not run k of n (<the commonest why>)` and
+  `Rust unchecked: k of n run ends touched *.rs with no clippy log` (LR/no-evidence), each only when its k > 0.
