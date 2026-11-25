@@ -5,6 +5,8 @@ import { gitRun, slopCheck, effectiveRules, fingerprint, rulesHash } from './che
 import { loadState, loadShared } from '../records.mjs';
 import { makeTool } from './tools.mjs';
 import { findingLine, explainLines, hostWrite, slopChecks, unwaived, voiceReadsToday } from './host.mjs';
+import { voiceGate } from './voice.mjs';
+import { codeRisk } from '../coderisk.mjs';
 
 /** main's sha: the remote's main first (it is the fresher), else the local branch, else null */
 export function mainTip(repo, { main = 'main', remote = 'origin' } = {}) {
@@ -54,14 +56,21 @@ export function checkBranch({ repo, state = null, base = null, head = 'HEAD', ru
 
 /** SloppaChoppa 2 S2: a run's branch check, once per (branch, head, rule set) - `norn done` runs it in the worker's session, the run end
  * reads the check stored at that head instead of running it again. -> null (no lane branch, or no commits past main) |
- * { branch, check (the stored line), open (its BLOCKs no waiver covers), result (slopCheck's; null = read from the store) }. Throws as checkBranch. */
-export function endCheck({ repo, state, projectDir = null, voice = null, brief = null, lane = null, run = null }) {
+ * { branch, check (the stored line), open (its BLOCKs no waiver covers), result (slopCheck's; null = read from the store), risk (the
+ * one-line risk rank, coderisk.mjs), gate (voiceGate's answer; null = no voice) }. The voice reads only when the gate says read: a
+ * skipped diff's model rules are the WARN "could not run: skipped by the risk rank: ..." with the gate's words. Throws as checkBranch. */
+export function endCheck({ repo, state, projectDir = null, voice = null, brief = null, lane = null, run = null, now = Date.now() }) {
   const bb = branchBase(repo), head = bb && gitRun(repo, ['rev-parse', 'HEAD']).trim();
   if (!bb || bb.base === head) return null;
   const rules = projectSlop({ projectDir }).rules, hash = rulesHash(rules), had = slopChecks(state).findLast(c => c.branch === bb.branch && c.head === head && c.hash === hash);
-  if (had) return { branch: bb.branch, check: had, open: unwaived(state, had.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), result: null };
-  const tool = makeTool({ voice, used: voice ? voiceReadsToday(state) : 0 }), c = checkBranch({ repo, state, base: bb.base, rules, projectDir, tool, brief });   // the voice's daily cap: today's reads so far
-  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, voice_reads: tool.reads }), result: c.result };
+  let rk;
+  try { rk = codeRisk({ dir: repo, state, base: bb.base, head }); } catch (e) { const w = String(e.stderr || e.message).trim().split('\n')[0]; rk = { pct: null, na: w, line: `risk rank n/a: ${w}` }; }
+  const risk = rk.line;
+  if (had) return { branch: bb.branch, check: had, open: unwaived(state, had.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), result: null, risk, gate: null };
+  const used = voice ? voiceReadsToday(state, now) : 0, gate = voice ? voiceGate({ risk: rk, cap: voice.cap, used, checks: slopChecks(state), now }) : null;
+  const t = makeTool({ voice, used }), tool = gate && !gate.read ? Object.assign((rule, ...a) => { if (rule.kind === 'model') throw new Error(gate.why); return t(rule, ...a); }, { reads: 0 }) : t;   // the voice's daily cap: today's reads so far
+  const c = checkBranch({ repo, state, base: bb.base, rules, projectDir, tool, brief });
+  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, voice_reads: tool.reads }), result: c.result, risk, gate };
 }
 
 /** SPEC 1.3 F7: the hold of a run-end check that threw - one BLOCK "could not check" on the branch, stored under a hash no rule set has

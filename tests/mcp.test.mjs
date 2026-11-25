@@ -426,3 +426,26 @@ test('norn_collide: list and show the cases, a remedy goes through the CLI with 
   assert.equal((await w.tool('norn_status', { view: 'ledger' })).isError, true, 'the ledger is not a worker’s');
   await w.close();
 });
+
+// RM-a-57: norn_code_card is one worker tool, offered only to the card group of policy.code.card ab (even run numbers); off by default.
+// Its schema's standing-context cost is pinned (NOTES carries the number).
+test('norn_code_card: off by default; ab lists it for even worker runs only and marks each run\'s group', async () => {
+  const { handle, context } = await import('../engine/lib/mcp.mjs');
+  const s = tmp(), call = (ctx, method, params) => handle({ jsonrpc: '2.0', id: 1, method, params }, ctx).result;
+  const ctxOf = (policy, run) => context({ state: s, project: policy ? { name: 'kestrel', root: s, policy } : null, profile: 'worker', client: 'test', env: { META_RUN_ID: run }, cli: () => 0 });
+  const names = ctx => call(ctx, 'tools/list').tools.map(t => t.name);
+  assert.ok(!names(ctxOf(null, 'RUN-a-2')).includes('norn_code_card'), 'off by default');
+  assert.ok(!names(ctxOf({ code: { card: 'off' } }, 'RUN-a-2')).includes('norn_code_card'));
+  const card = ctxOf({ code: { card: 'ab' } }, 'RUN-a-2'), control = ctxOf({ code: { card: 'ab' } }, 'RUN-a-3');
+  const on = call(card, 'tools/list').tools, off = names(control);
+  assert.deepEqual(on.map(t => t.name).sort(), ['norn_code_card', 'norn_mail', 'norn_run_show', 'norn_status']);
+  assert.deepEqual(off.sort(), ['norn_mail', 'norn_run_show', 'norn_status']);
+  const t = on.find(x => x.name === 'norn_code_card'), cost = Math.ceil(JSON.stringify(t).length / 4);
+  assert.ok(cost <= 100, `the schema costs ~${cost} tokens`);
+  for (const [run, group] of [['RUN-a-2', 'card'], ['RUN-a-3', 'control']]) assert.equal(JSON.parse(fs.readFileSync(path.join(s, 'code', 'card', `${run}.json`), 'utf8')).group, group);
+  assert.equal(call(control, 'tools/call', { name: 'norn_code_card', arguments: { files: ['a.mjs'] } }).isError, true, 'the control group cannot call it');
+  const r = call(card, 'tools/call', { name: 'norn_code_card', arguments: { files: ['a.mjs', 'b.mjs'] } });
+  assert.ok(!r.isError, JSON.stringify(r));
+  assert.deepEqual(r.structuredContent.cards.map(c => c.file), ['a.mjs', 'b.mjs']);
+  assert.match(r.content[0].text, /^a\.mjs · .*\n {2}used by: not indexed/);
+});

@@ -5,7 +5,8 @@
 //              files that change with it, its last fixes, its last commits and the code viewer (/api/source).
 //   Growth   - lines per top-level area over 26 weeks (widgets timeChart) and the 10 fastest-growing files
 //   Outliers - widgets outliers() over size, growth and churn (Tukey fences)
-//   Map      - the Floorplan map (`norn code map`, lib/codemap.mjs) in an iframe sandboxed to scripts only on GET /code-map/ (its own CSP);
+//   Map      - the import-graph map (lib/codemapgraph.mjs, no model; GET /code-map/?map=graph), then the Floorplan map (`norn code map`,
+//              lib/codemap.mjs), each in an iframe sandboxed to scripts only on GET /code-map/ (its own CSP);
 //              none drawn: the not-built text, no iframe. A skipped refresh (over the meter) says so above it.
 // No index yet: the parts say what writes it, never a number. Click handlers are data-act names (SHELL wires them).
 import { esc, fin, int, chip, filterChips } from '../cells.mjs';
@@ -91,7 +92,19 @@ function codeOutliers(d) {
 }
 
 // ---- Map: the drawn Floorplan file on its own route (own CSP), framed with scripts only: an opaque origin, no dashboard cookie or API ----
+// RM-a-66: the map drawn from the code graph (lib/codemapgraph.mjs, no model) above the Floorplan one, on the same route and CSP
+// (?map=graph); the owner picks which stays
+function codeGraphMap(d) {
+  const g = d.graphmap;
+  if (!g) return '<div class="card" id="code-graphmap"><p class="small mute" style="padding:0 12px"><span class="chip idle">not built yet</span> the import-graph map <span class="mute">(`norn code history` draws it from the code graph; the tick starts it when HEAD moves)</span></p></div>';
+  if (!g.sha) return `<div class="card" id="code-graphmap"><p class="small mute" style="padding:0 12px">import-graph map: n/a: ${esc(g.na)}</p></div>`;
+  return `<div class="card" id="code-graphmap"><p class="small mute" style="padding:0 12px">import-graph map at <span class="mono">${esc(g.sha)}</span>, ${esc(String(g.at).slice(0, 16))} · ${int(g.files)} files in ${int(g.areas)} areas · drawn from the code graph, no model · click a file: what depends on it</p>
+    <iframe id="code-graphmap-frame" class="cmap" sandbox="allow-scripts" src="/code-map/?project=${esc(encodeURIComponent(d.project))}&amp;map=graph" title="Code map (import graph)" loading="lazy" referrerpolicy="no-referrer"></iframe></div>`;
+}
 function codeMap(d) {
+  return codeGraphMap(d) + codeFloorplan(d);
+}
+function codeFloorplan(d) {
   const m = d.map;
   if (!m) return '<div class="card" id="code-map"><p class="small mute" style="padding:0 12px"><span class="chip idle">not built yet</span> the architecture map <span class="mute">(`norn code map` draws it with the pinned Floorplan; the tick refreshes it after a merge)</span></p></div>';
   const skip = m.skipped ? ` · ${chip('warn', `refresh skipped at ${m.skipped.sha}`)} ${esc(m.skipped.why)}; <span class="mono">norn code map</span> draws it` : '';
@@ -110,7 +123,7 @@ export function code(d) {
 export async function codeLoad(project, get, ctx = {}) {
   const q = `project=${encodeURIComponent(project)}`, sub = pickSub(CODE_SUBS, ctx.sub), limit = ctx.limit || CODE_CAP, f = ctx.file ? encodeURIComponent(ctx.file) : null;
   const list = sub === 'files' ? `&limit=${limit}&sort=${encodeURIComponent(ctx.sort || 'importance')}${ctx.folder ? `&folder=${encodeURIComponent(ctx.folder)}` : ''}` : '';
-  const [d, part, one, source] = await Promise.all([get(`/api/code?${q}`), get(`/api/code?${q}&part=${sub}${list}`), f ? get(`/api/code?${q}&part=file&file=${f}`) : null,
-    f ? Promise.resolve(get(`/api/source?${q}&file=${f}`)).catch(e => ({ error: String(e?.message ?? e) })) : null]);
-  return { ...d, ...part, sub, limit, ...(f ? { file_id: ctx.file, file: one?.file ?? null, source } : {}) };
+  const [d, part, one, source, gm] = await Promise.all([get(`/api/code?${q}`), get(`/api/code?${q}&part=${sub}${list}`), f ? get(`/api/code?${q}&part=file&file=${f}`) : null,
+    f ? Promise.resolve(get(`/api/source?${q}&file=${f}`)).catch(e => ({ error: String(e?.message ?? e) })) : null, sub === 'map' ? get(`/api/code?${q}&part=graphmap`) : null]);
+  return { ...d, ...part, ...gm, sub, limit, ...(f ? { file_id: ctx.file, file: one?.file ?? null, source } : {}) };
 }
