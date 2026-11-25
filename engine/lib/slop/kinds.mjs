@@ -1,10 +1,11 @@
 // SloppaChoppa stage C (RM-45; audit REPORT sec. 3 rows 1, 3, 4, 7 and sec. 6): the engine-only detectors - dup (K9), exports
-// (K4), refs (R2), the dependency lock of `imports` (K20) - and the ONE ESLint run behind the kinds lint and ast. Each is
+// (K4), refs (R2), the dependency lock of `imports` (K20) - the ONE lint run per tool behind the kind lint, and the ONE ast-grep scan
+// behind the kind ast (slop-langs SPEC 3.4). Each is
 // (rule, ctx) -> { head: [finding], base: [finding] | null } as check.mjs's DETECT table; ctx carries git, the texts, the trees
 // and the file filter, so this module imports nothing of check.mjs.
 import path from 'node:path';
 import { PARSE } from './tools.mjs';
-import { LINTERS } from './lang/index.mjs';
+import { LINTERS, packOf } from './lang/index.mjs';
 import { CODE, classify, commentsIn, exportsOf, helpers, isJs, isReason, lineAt, lineText, masked, norm, usesOf } from './scan.mjs';
 
 const SIDE_KEY = { head: 'path', base: 'old' };
@@ -16,38 +17,22 @@ function sideFiles(rule, ctx, side, keep = () => true) {
 }
 const both = fn => ({ head: fn('head'), base: fn('base') });
 
-// ---------- lint + ast: one run per tool and side over the touched files of every such rule of the check ----------
+// ---------- lint: one run per tool and side over the touched files of every lint rule of the check ----------
 function lintSide(ctx, side, tool) {
   const memo = ((ctx.lint ||= {})[tool] ||= {});
   if (side in memo) { if (memo[side] instanceof Error) throw memo[side]; return memo[side]; }
   try {
-    const rules = ctx.lintRules.filter(r => r.tool === tool), texts = new Map(), held = rules.filter(r => r.kind === 'lint'), cfg = held.find(r => r.config)?.config, t = LINTERS[tool];
+    const rules = ctx.lintRules.filter(r => r.tool === tool), texts = new Map(), cfg = rules.find(r => r.config)?.config, t = LINTERS[tool];
     for (const r of rules) for (const x of sideFiles(r, ctx, side)) texts.set(x.e.path, x.text);
     if (!texts.size) return (memo[side] = new Map());
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
-    const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...held.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null),
-      selectors: rules.filter(r => r.kind === 'ast').flatMap(r => r.selectors.map(s => ({ selector: s.selector, message: `${r.id}: ${s.message}` }))) }
-      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, log: held.find(r => r.log)?.log, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
+    const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...rules.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null) }
+      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, log: rules.find(r => r.log)?.log, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
     const raw = ctx.tool(run, side, { texts, dir: ctx.repo }), by = new Map();
     if (raw === null) return (memo[side] = null);
     for (const x of t.parse(raw, [...texts.keys()])) if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x);
     return (memo[side] = by);
   } catch (e) { memo[side] = e; throw e; }
-}
-/** the source text of a reported node (ESLint: 1-based lines and columns, the end column exclusive) */
-function nodeText(text, x) {
-  const lines = text.split('\n'), at = (l, c) => lines.slice(0, l - 1).reduce((a, s) => a + s.length + 1, 0) + c - 1;
-  return text.slice(at(x.line, x.column), at(x.endLine, x.endColumn));
-}
-function astHit(rule, x, text) {
-  const sel = x.rule === 'no-restricted-syntax' && rule.selectors.find(s => x.msg === `${rule.id}: ${s.message}`);
-  if (!sel) return null;
-  const src = nodeText(text, x);
-  if (sel.text && !new RegExp(sel.text).test(src)) return null;
-  if (rule.reason && isReason(commentsIn(text, x.line, x.endLine), rule.reason).ok) return null;   // K2's test: the comment says what happens next
-  if (rule.key !== 'match') return { msg: sel.message };
-  const m = new RegExp(rule.token || '[\\s\\S]+').exec(src);
-  return m && { msg: sel.message, token: m[1] ?? m[0] };
 }
 /** a lint rule's sub-rule -> { sub, level, shadow }: levels by name, `*` for the rest; shadow_rules by name, `*` = every one levels does not name */
 const subLevel = (rule, sub) => ({ sub, level: rule.levels?.[sub] ?? rule.levels?.['*'] ?? rule.level,
@@ -59,17 +44,60 @@ export function lint(rule, ctx) {
     if (by === null) return side === 'head' && rule.source === 'log' ? [{ file: '*', line: 0, snippet: 'no-evidence', msg: `no ${rule.tool} evidence for this head (no log at ${rule.log.join(', ')})`, ...subLevel(rule, 'no-evidence') }] : null;
     return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
       // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6, 3.4: LJ/parse)
-      const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK', ...(rule.kind === 'lint' ? { sub: PARSE } : {}) } : null)
-        : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule) }) : astHit(rule, x, text);
+      const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK', sub: PARSE } : null)
+        : { msg: x.msg, ...subLevel(rule, x.rule) };
       return f ? [{ file: e.path, line: x.line, snippet: lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
     }));
   });
   // SPEC 3.1 / Q12: an edit to the lint config is a finding of its own; the waiver is the owner approving the rule change
   // (ESLint: the rule's config file; ruff: a [tool.ruff] table or ruff.toml; clippy: clippy.toml or a [lints] table - not the rest of the file)
   const cfgOf = (side, f) => (f ? LINTERS[rule.tool].configOf(rule, f, () => ctx.text(side, f)) ?? null : null);
-  if (rule.kind === 'lint' && got.head) for (const e of ctx.entries) if (cfgOf('base', e.old) !== cfgOf('head', e.status === 'D' ? null : e.path))
+  if (got.head) for (const e of ctx.entries) if (cfgOf('base', e.old) !== cfgOf('head', e.status === 'D' ? null : e.path))
     got.head.push({ file: e.path, line: 0, snippet: 'config-changed', msg: `${e.path} changed: the check lints with the merge base's config; the owner approves a rule change (a waiver)`, ...subLevel(rule, 'config-changed') });
   return got;
+}
+
+// ---------- ast (slop-langs SPEC 3.4): ONE ast-grep scan per side over the touched files of every ast rule of the check ----------
+// a rule's `match` is ast-grep's own data keyed by pack id; each entry runs as <rule>.<pack>.<n>.<language> for the languages present
+const AST_ID = /^(.+)\.(\w+)\.(\d+)\.(\w+)$/;
+function astSide(ctx, side) {
+  const memo = (ctx.ast ||= {});
+  if (side in memo) { if (memo[side] instanceof Error) throw memo[side]; return memo[side]; }
+  try {
+    const texts = new Map(), rules = [];
+    for (const r of ctx.astRules) {
+      const langs = new Map();
+      for (const x of sideFiles(r, ctx, side)) {
+        const p = packOf(x.e.path), lang = p && r.match[p.ID] && p.astLang(x.e.path);
+        if (lang) { texts.set(x.e.path, x.text); langs.set(`${p.ID}.${lang}`, [p.ID, lang]); }
+      }
+      for (const [pack, lang] of langs.values()) r.match[pack].forEach((m, n) => rules.push({ id: `${r.id}.${pack}.${n}.${lang}`, language: lang, rule: m.rule, ...(m.constraints ? { constraints: m.constraints } : {}) }));
+    }
+    if (!rules.length) return (memo[side] = new Map());
+    const raw = ctx.tool({ id: ctx.astRules.map(r => r.id).join('+'), kind: 'ast', tool: 'ast-grep', rules }, side, { texts, dir: ctx.repo }), by = new Map();
+    if (raw === null) return (memo[side] = null);
+    for (const x of JSON.parse(raw)) if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x);
+    return (memo[side] = by);
+  } catch (e) { memo[side] = e; throw e; }
+}
+/**
+ * an ast rule's findings: its own entries' matches, less those whose lines carry a reason comment (K2's test: the comment says what
+ * happens next), with the matched token (key: match, K21). A language in shadow_langs is shadow: the rule id stays, so the snippet
+ * (line + "<rule>: <message>") and every JS fingerprint and waiver stay valid.
+ */
+export function ast(rule, ctx) {
+  return both(side => {
+    const by = astSide(ctx, side);
+    if (by === null) return null;
+    return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
+      const [, id, pack, n] = AST_ID.exec(x.ruleId) || [], m = id === rule.id && rule.match[pack]?.[n];
+      if (!m || (rule.reason && isReason(commentsIn(text, x.line, x.endLine), rule.reason).ok)) return [];
+      const tok = rule.key === 'match' && new RegExp(rule.token || '[\\s\\S]+').exec(x.text);
+      if (rule.key === 'match' && !tok) return [];
+      return [{ file: e.path, line: x.line, snippet: `${lineText(text, x.line)} ${rule.id}: ${m.message}`, msg: m.message, ...(tok ? { token: tok[1] ?? tok[0] } : {}),
+        ...((rule.shadow_langs || []).includes(pack) ? { shadow: true } : {}) }];
+    }));
+  });
 }
 
 // ---------- dup (K9): a new one-statement helper whose body another module of the same group already has ----------

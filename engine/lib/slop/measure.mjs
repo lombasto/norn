@@ -18,7 +18,7 @@ export const BRANCH_WARN = 600;
 export const FAN_OUT = 15;
 const METRIC = { complexity: 'complexity', 'max-lines-per-function': 'lines', 'max-depth': 'depth', 'max-params': 'params', 'max-statements': 'statements' };
 /** the ONE measure run: ESLint core size rules at zero, no repo config (the numbers are Choppa's, not the repo's gate) */
-export const MEASURE_RUN = { id: 'measure', kind: 'lint', tool: 'eslint', config: null, selectors: [], rules: Object.fromEntries(Object.keys(METRIC).map(r => [r, ['error', r === 'max-lines-per-function' ? { max: 0 } : 0]])) };   // its number form is >= 1
+export const MEASURE_RUN = { id: 'measure', kind: 'lint', tool: 'eslint', config: null, rules: Object.fromEntries(Object.keys(METRIC).map(r => [r, ['error', r === 'max-lines-per-function' ? { max: 0 } : 0]])) };   // its number form is >= 1
 const sign = n => `${n >= 0 ? '+' : ''}${num(n)}`;
 
 // ---------- the numbers of one file ----------
