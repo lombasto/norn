@@ -349,6 +349,7 @@ test('LS could not run: no voice prompt is built and each model rule says why; L
   slopCheck({ repo, base: 'main', rules: MODEL, tool: off });
   assert.equal(off.prompts.length, 1);
   assert.ok(off.prompts[0].includes('+export const token') && !/Withheld/.test(off.prompts[0]), 'LS off: every hunk shown, nothing withheld');
-  const hunks = parseHunks(git(repo, 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', 'main', 'feat/v'));
+  // git() trims; the check's ctx.diff keeps git's last newline, so today's prompt is built from the untrimmed diff
+  const hunks = parseHunks(git(repo, 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', 'main', 'feat/v') + '\n');
   assert.equal(off.prompts[0], voicePrompt({ rules: MODEL, hunks, match: matchAny }).prompt, 'the prompt of today');
 });
