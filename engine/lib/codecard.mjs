@@ -15,16 +15,16 @@ import { usageOfRun } from './cost.mjs';
 import { runTranscript } from './standing.mjs';
 import { transcriptReads } from './readev.mjs';
 import { defaultProjectsDir } from './billing.mjs';
+import { readJsonS } from './fsnap.mjs';
 
 // the one place for the card's thresholds (listed in docs/code-graph.md); tokens are estimated as characters / chars_per_token
 export const CARD_LIMITS = Object.freeze({ tokens: 400, chars_per_token: 4, dependents: 5, partners: 5, tests: 5, subject: 72, min_group: 15 });
 const NA = 'not indexed', ENDED = ['exited', 'lost', 'killed'];
 const norm = f => String(f).replace(/\\/g, '/').replace(/^\.\//, '');
-const ageOf = s => (s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`);
+export const ageOf = s => (s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`);
 const ageAt = (iso, now) => Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
 const tokensOf = t => Math.ceil(t.length / CARD_LIMITS.chars_per_token);
 const linesOf = file => { try { const t = fs.readFileSync(file, 'utf8'); return t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0; } catch { return null; } };
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 
 /** the cards of `files` (paths relative to the project folder `repo`) -> { cap, not_indexed: { graph, signals, tests }, cards: [Card] }.
  *  graph / signals / impact: the readers' answers when the caller has them (tests), else read here. */
@@ -32,7 +32,7 @@ export function cards({ state, repo, files, graph, signals, impact, now = Date.n
   const g = graph ?? graphAt({ state, repo, noIndex: true });
   let s = signals, sWhy = null;
   if (s === undefined) try { s = readSignals(state); } catch (e) { s = null; sWhy = `unreadable: ${e.message}`; }
-  const im = impact ?? readJson(path.join(state, 'tests', IMPACT_FILE));
+  const im = impact ?? readJsonS(path.join(state, 'tests', IMPACT_FILE));
   const fan = g.ok ? fans(g) : null;
   const stamps = { graph: g.ok ? { commit: g.stamp.commit.slice(0, 12), age_s: g.stamp.age_s, exact: g.stamp.exact } : null,
     signals: s ? { sha: s.sha, age_s: ageAt(s.at, now) } : null, tests: im ? { sha: im.sha ?? null, age_s: ageAt(im.at, now) } : null };
@@ -97,7 +97,7 @@ const mean = xs => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null
 /** the finished marked runs per group: tokens per run, distinct files read per run, the done rate -> { ok, why?, min, groups: { card, control } }.
  *  usageOf(item) -> { total } (cost.mjs), readsOf(item) -> number | null (the run's transcript Read calls); a run they cannot measure is counted apart */
 export function cardReport({ state, items, projectsDir = defaultProjectsDir(), usageOf = it => usageOfRun(it, { projectsDir }), readsOf = it => readsOfRun(it, projectsDir) }) {
-  const marks = fs.existsSync(markDir(state)) ? fs.readdirSync(markDir(state)).filter(f => f.endsWith('.json')).map(f => readJson(path.join(markDir(state), f))).filter(Boolean) : [];
+  const marks = fs.existsSync(markDir(state)) ? fs.readdirSync(markDir(state)).filter(f => f.endsWith('.json')).map(f => readJsonS(path.join(markDir(state), f))).filter(Boolean) : [];
   const groups = { card: [], control: [] };
   for (const m of marks) { const it = items[m.run]; if (it && ENDED.includes(it.state) && groups[m.group]) groups[m.group].push(it); }
   const sizes = { card: { runs: groups.card.length }, control: { runs: groups.control.length } }, min = CARD_LIMITS.min_group;
