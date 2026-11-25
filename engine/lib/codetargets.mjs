@@ -286,9 +286,10 @@ export function targetLines(r) {
   const head = `refactor targets at ${r.stamp.graph}${r.stamp.graph_exact === false ? ' (newest stored)' : ''} · fix first ${r.rank_na ? `n/a (${r.rank_na})` : `from signals ${r.stamp.signals}`} · tests index ${r.stamp.tests ?? 'n/a'} · ${r.targets.length} shown, ${r.judged} of ${r.candidates} candidates judged`;
   return [head, ...r.targets.flatMap(t => ['', t.text]), ...(r.na.length ? ['', ...r.na.map(x => `n/a ${x.kind} ${x.file}: ${x.why}`)] : [])];
 }
-const fileOf = state => path.join(state, 'code', TARGETS_FILE);
+/** the stored answer's path (the dash primes it before its Slop page reads it) */
+export const targetsFile = state => path.join(state, 'code', TARGETS_FILE);
 /** the stored answer (the Slop page reads it) | null when `norn code targets` has not run */
-export const readTargets = state => readJsonS(fileOf(state)) ?? null;
+export const readTargets = state => readJsonS(targetsFile(state)) ?? null;
 /** the Slop page's slice of the stored answer: the top TARGET_LIMITS.page targets, each its kind, title, rank, Scope and brief text | null */
 export const pageTargets = state => { const r = readTargets(state); return r?.targets ? { at: r.at, stamp: r.stamp, rank_na: r.rank_na ?? null, list: r.targets.slice(0, TARGET_LIMITS.page).map(t => ({ kind: t.kind, title: t.title, rank: t.rank, scope: t.scope, text: t.text })) } : null; };
-export const writeTargets = (state, r) => { fs.mkdirSync(path.dirname(fileOf(state)), { recursive: true }); atomicWrite(fileOf(state), JSON.stringify(r)); };
+export const writeTargets = (state, r) => { fs.mkdirSync(path.dirname(targetsFile(state)), { recursive: true }); atomicWrite(targetsFile(state), JSON.stringify(r)); };
