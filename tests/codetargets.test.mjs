@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { refactorTargets, groupsOf, readTargets, writeTargets, pageTargets, TARGET_LIMITS } from '../engine/lib/codetargets.mjs';
+import { refactorTargets, groupsOf, newFile, readTargets, writeTargets, pageTargets, TARGET_LIMITS } from '../engine/lib/codetargets.mjs';
 import { codeCmd } from '../engine/lib/codecli.mjs';
 import { parseReady } from '../engine/lib/ready.mjs';
 import { MEASURE_RUN, FILE_CAP } from '../engine/lib/slop/measure.mjs';
@@ -145,6 +145,13 @@ test('a cut whose moving symbols use another file of the cycle is not a cut: the
   w.read.callers = (c => q => { const r = c(q); return r.symbol?.file === X && r.symbol.name === 'useY' ? { ...r, rows: [site(Z, 'k', 2)] } : r; })(w.read.callers);   // z.k calls x.useY: moving k drags x
   const r = await run(w, { top: 10 });
   assert.ok(!r.targets.some(t => t.kind === 'cycle')); assert.match(r.na.find(x => x.kind === 'cycle').why, /no single import cut breaks the cycle/);
+});
+
+test('a proposed file is named for a symbol it gets: Python and Rust in snake_case (a valid module name), JS kebab, at most 4 words', () => {
+  assert.equal(newFile('lib/big.mjs', 'readyWords'), 'lib/big-ready-words.mjs');
+  assert.equal(newFile('src/render.rs', 'DenoiseState'), 'src/render_denoise_state.rs');
+  assert.equal(newFile('pkg/capture.py', '_first_hit_cells'), 'pkg/capture_first_hit_cells.py');
+  assert.equal(newFile('src/waves_tests.rs', 'foam_texture_uses_integrated_drift_instead_of_velocity'), 'src/waves_tests_foam_texture_uses_integrated.rs');
 });
 
 test('groupsOf: greedy modularity keeps tight groups apart and leaves units with no edge where they are', () => {

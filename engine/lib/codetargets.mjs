@@ -125,7 +125,11 @@ export function groupsOf(ids, links) {
 }
 
 // ---------- the three kinds ----------
-const newFile = (file, sym) => { const ext = path.posix.extname(file), stem = file.slice(0, -ext.length); return `${stem}-${String(sym).replace(/[^\w-]+/g, '_').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()}${ext}`; };
+// a proposed file beside `file`, named for a symbol it gets: at most 4 words; Python and Rust in snake_case (a module name holds no hyphen), JS kebab
+export const newFile = (file, sym) => {
+  const ext = path.posix.extname(file), stem = file.slice(0, -ext.length), words = String(sym).replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).slice(0, 4);
+  return `${stem}${/^\.(py|rs)$/.test(ext) ? '_' + words.join('_') : '-' + words.join('-')}${ext}`;
+};
 /** split-file: the groups that move out (largest group stays) | { na } */
 async function splitOf(c, ctx) {
   const w = await wiring(c.file, ctx);
