@@ -5,7 +5,7 @@
 // live section pages/runs-feed.mjs mounts into the slot: the view only hides parts, the stream never reconnects) and Facts. The
 // table's view lives in the URL (index.html: S.runsView, runsViewOf / runsViewQs); the drawer's view is module state (runView).
 import { esc, fin, dash, int, mTok, fmtMin, fmtTime, runWho, chip, exChip, projTag, homeChip, ctxMeter, pauseAct, speedLine, laneCard, guardOn, guardChip, filterChips } from '../cells.mjs';
-import { dodChips, critiqueChip, hoChip } from '../widgets.mjs';
+import { dodChips, critiqueChip, hoChip, ageBar, ageAxis, fmtShort } from '../widgets.mjs';
 import { LANE_SHOW, prioSelect, prioChip } from './lanes.mjs';
 import { closeBtn } from '../norn/assets.mjs';
 
@@ -83,13 +83,17 @@ const stateChip = n => { const s = runStateOf(n); return s === 'running' ? chip(
 // the minutes a run ran (the pace's own count while live, else start to end) and its budget, in words: "1 h 40 / 1 h 30"
 const ranMin = (n, now) => fin(n.progress?.pace?.elapsed_min) && runStateOf(n) === 'running' ? n.progress.pace.elapsed_min : runTimes(n, now).ran_min;
 const rtime = (n, now) => { const b = n.progress?.pace?.budget_min; return `<span class="rtime">${fmtMin(ranMin(n, now))}${fin(b) ? ` / ${fmtMin(b)}` : ''}</span>`; };
-/** time against the budget: the fill, the budget line and the median tick (the estimate of like runs), on one scale */
-function timeBar(n, now, cls = '') {
-  const p = n.progress?.pace, ran = ranMin(n, now), b = p?.budget_min, med = p?.estimate?.min;
-  if (!fin(ran) || !fin(b)) return '';
-  const top = Math.max(ran, b, fin(med) ? med : 0) || 1, at = x => (100 * x / top).toFixed(1), over = ran > b;
-  return `<span class="tbar${over ? ' over' : ''} ${cls}" role="img" aria-label="${esc(`ran ${fmtMin(ran)} of a ${fmtMin(b)} budget${fin(med) ? `, like runs take ${fmtMin(med)}` : ''}`)}"><i style="width:${at(ran)}%"></i><u class="tb-budget" style="left:${at(b)}%"></u>${fin(med) ? `<u class="tb-med" style="left:${at(med)}%"></u>` : ''}</span>`;
-}
+const budgetOf = n => { const b = n.progress?.pace?.budget_min; return fin(b) && b > 0 ? b : null; };
+// where this session began in the chain's minutes (the pace counts every session; the run's own start to now is this one): a divider
+// there when the run was resumed. Earlier sessions' starts are not in the payload (follow-up: pace.session_min[])
+const cutsOf = (n, now) => { const p = n.progress?.pace, own = runTimes(n, now).ran_min;
+  return runStateOf(n) === 'running' && p?.handoffs > 0 && fin(p.elapsed_min) && fin(own) && p.elapsed_min - own >= 1 ? [p.elapsed_min - own] : []; };
+// the hover text: state, time against the budget, hand-offs, the run's status line ("running (slow) - 1 h 40 of 1 h 30 - 1 hand-off - ...")
+const ageTip = (n, now) => { const p = n.progress?.pace, s = runStateOf(n), h = p?.handoffs;
+  return [s === 'running' && paceOf(n) ? `running (${paceOf(n)})` : s === 'running' ? 'running' : outcomeOf(n)[1], `${fmtMin(ranMin(n, now))} of ${fmtMin(budgetOf(n))}`,
+    h > 0 ? `${h} hand-off${h === 1 ? '' : 's'}` : null, n.progress?.line].filter(Boolean).join(' - '); };
+/** time against the budget as one bar (widgets ageBar) on the shared axis's scale (top); '' with no budget */
+const timeBar = (n, now, top = null, cls = '') => budgetOf(n) ? ageBar({ ran: ranMin(n, now), budget: budgetOf(n), top, cuts: cutsOf(n, now), tip: ageTip(n, now), cls }) : '';
 /** the checklist as at most 5 segments + "n of m"; a worker whose brief has no checklist says so */
 function items(n) {
   const g = n.progress;
@@ -119,18 +123,20 @@ function prioCell(n, d) {
   const { part, u } = planOf(n, d);
   return `<td class="rprio" data-label="priority">${u ? prioSelect(n.project ?? part.project, n.id, u.priority, part.priorities) || prioChip({ priority: { p: u.priority ?? 'P2', dflt: !u.priority } }) : prioChip({ priority: { p: n.priority ?? 'P2', dflt: !n.priority } })}</td>`;
 }
-// age: a live run's time against its budget, an ended run's run time and how long ago it ended, a queued run's wait
+// age: a run with a budget = its bar on the column's shared axis + the short "1h40 / 1h30" (a phone has no hover), else its run time;
+// an ended run's how long ago it ended; a queued run's wait
 function ageCell(n, ctx) {
-  const now = ctx.now, s = runStateOf(n), t = runTimes(n, now);
-  const v = s === 'queued' ? (fin(t.queued_min) ? `waited ${fmtMin(t.queued_min)}` : dash) : `${rtime(n, now)}${s !== 'running' && fin(t.ended_min) ? `<div class="small mute">ended ${fmtMin(t.ended_min)} ago</div>` : ''}`;
+  const now = ctx.now, s = runStateOf(n), t = runTimes(n, now), b = budgetOf(n);
+  const ran = b && fin(ranMin(n, now)) ? `<div class="rage-bar"><span class="atrack">${timeBar(n, now, ctx.ageTop)}</span><span class="rtime short mute">${fmtShort(ranMin(n, now))} / ${fmtShort(b)}</span></div>` : rtime(n, now);
+  const v = s === 'queued' ? (fin(t.queued_min) ? `waited ${fmtMin(t.queued_min)}` : dash) : `${ran}${s !== 'running' && fin(t.ended_min) ? `<div class="small mute">ended ${fmtMin(t.ended_min)} ago</div>` : ''}`;
   return `<td class="rage" data-label="age">${v}</td>`;
 }
 // pace: a live run's pace chip, time bar, checklist and why slow (or what it does now); an ended run's checklist and why it ended;
 // a queued run's estimate, start, hold-ups and the priority control (Plan's Up next, now here and on Lanes)
-function paceCell(n, d, ctx) {
-  const s = runStateOf(n), now = ctx.now;
+function paceCell(n, d) {
+  const s = runStateOf(n);
   if (s === 'queued') return `<td class="rpace" data-label="pace">${queuedCell(n, d)}</td>`;
-  if (s === 'running') return `<td class="rpace" data-label="pace"><div class="rtimes small">${paceChip(n)}${timeBar(n, now)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}</td>`;
+  if (s === 'running') return `<td class="rpace" data-label="pace"><div class="rtimes small">${paceChip(n)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}</td>`;
   return `<td class="rpace" data-label="pace"><div class="rtimes small">${items(n)}</div>${whyEnded(n) ? `<div class="rline small">${whyEnded(n)}</div>` : ''}</td>`;
 }
 function row(n, d, ctx, sel) {
@@ -141,7 +147,7 @@ function row(n, d, ctx, sel) {
     <td class="rwho" data-label="run">${projTag(ctx, n.project)}<span class="id">${esc(n.id)}</span> ${homeChip(n)}${guardChips(n, d, false)}${kids(n) ? `<div>${kids(n)}</div>` : ''}</td>
     ${agentCell(n)}${prioCell(n, d)}<td class="rlane" data-label="lane">${laneCard(n.lane_card, runLane(n))}</td>
     <td class="rmodel small" data-label="model">${exChip(n.executor, n.model, n.effort)}</td>
-    ${ageCell(n, ctx)}${actCell(n, 'tools')}${actCell(n, 'words')}${actCell(n, 'commits')}${paceCell(n, d, ctx)}</tr><!--/row-->`;
+    ${ageCell(n, ctx)}${actCell(n, 'tools')}${actCell(n, 'words')}${actCell(n, 'commits')}${paceCell(n, d)}</tr><!--/row-->`;
 }
 // a queued run's Up next entry in Plan (its project's part)
 function planOf(n, d) {
@@ -189,7 +195,7 @@ function runDoc(n, d, ctx) {
   const alarms = (g?.alarms || []).map(a => `<div class="rd-alarm" role="alert">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} <b>${esc(a.words)}</b><div class="small mute">${esc(a.numbers ?? '')}</div><div class="small">${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc((a.act || []).join(' / '))}</div></div>`).join('');
   // C's session beads: one per session of the stage, the hand-offs between them; the last one is this session
   const beads = fin(p?.sessions) && p.sessions > 0 ? `<span class="beads" role="img" aria-label="${esc(`session ${p.sessions}${p.handoffs ? `, ${p.handoffs} hand-off${p.handoffs === 1 ? '' : 's'}` : ''}`)}">${Array.from({ length: Math.min(8, p.sessions) }, (_, i) => `<i${i === Math.min(8, p.sessions) - 1 ? ' class="now"' : ''}></i>`).join('')}</span><span class="small mute">session ${p.sessions}</span>` : '';
-  const paceBand = live && p ? `<section class="rd-sec rd-pace"><div class="rd-tline">${timeBar(n, now, 'wide')}${rtime(n, now)}</div>
+  const paceBand = live && p ? `<section class="rd-sec rd-pace"><div class="rd-tline">${timeBar(n, now, null, 'wide')}${rtime(n, now)}</div>
     ${p.words ? `<p class="small">${esc(p.words)}</p>` : ''}${g.slow?.line ? `<p class="small ${PACE[paceOf(n)] ?? ''}">${esc(g.slow.line)}</p>` : ''}${beads ? `<div class="rd-beads">${beads}</div>` : ''}</section>` : '';
   const result = !live ? `<section class="rd-sec" id="run-result"><h3>Result</h3><div class="kv small">
     <span class="mute">outcome</span><span>${stateChip(n)}${n.outcome ? ` <span class="mono">${esc(n.outcome)}</span>` : ''}</span>
@@ -225,7 +231,9 @@ export function runs(d, ctx) {
   const all = [...seen.values(), ...(d.queue || []).map(queueNode)], win = (RUNS_WINDOWS.find(w => w[0] === (d.window ?? v.window)) ?? RUNS_WINDOWS[0])[1];
   const shown = runsOrder(runsFilter(all, v)), loading = !!d.parts_loading, pick = ctx.run ?? null, picked = pick ? all.find(n => n.id === pick) : null;
   const cks = shown.filter(n => runKindOf(n) === 'checkin' && !['running', 'queued'].includes(runStateOf(n))), fold = cks.length > 1 && !v.ck;
-  const rows = shown.map(n => (fold && cks.includes(n) ? (n === cks[0] ? checkinFold(cks, ctx) : '') : row(n, d, ctx, n.id === pick))).join('');
+  // the age column's one shared axis: 0 .. the widest track (2x the largest budget shown); every bar is drawn on its scale
+  const ageTop = Math.max(0, ...shown.map(n => 2 * (budgetOf(n) ?? 0))) || null, rctx = { ...ctx, ageTop };
+  const rows = shown.map(n => (fold && cks.includes(n) ? (n === cks[0] ? checkinFold(cks, rctx) : '') : row(n, d, rctx, n.id === pick))).join('');
   // the one filter row: the state chips (with their counts), the kinds, the window, the projects (when the tree spans more than one), the lane box
   const chips = (group, l, of) => filterChips(group, l.map(([k, t]) => ({ act: 'runs-show', data: { group, show: k }, text: t, n: all.filter(n => of(n) === k).length, on: v[group].has(k) })));
   const projs = [...new Set(all.map(n => n.project).filter(Boolean))].sort();
@@ -236,7 +244,9 @@ export function runs(d, ctx) {
   const msg = t => `<tr class="rnone"><td colspan="${COLS.length}" class="small mute">${esc(t)}</td></tr>`;
   const empty = shown.length ? '' : msg(all.length ? 'No runs under these filters.' : `No running, queued or recent (${win}) sessions.`);
   const wait = loading ? msg(d.ended ? 'refreshing the ended runs ...' : 'loading the ended runs ...') : '';
-  const table = `<div class="tablecard runs-table"><table class="runtab" data-rows="runs"><thead><tr>${COLS.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows}${empty}${wait}</tbody></table></div>`;
+  // the shared axis: a second head row, the axis under the age head (the head names stay plain text)
+  const ai = COLS.indexOf('age'), axis = ageTop ? `<tr class="raxis"><td colspan="${ai}"></td><td><div class="rage-bar"><span class="atrack">${ageAxis(ageTop)}</span></div></td><td colspan="${COLS.length - ai - 1}"></td></tr>` : '';
+  const table = `<div class="tablecard runs-table"><table class="runtab" data-rows="runs"><thead><tr>${COLS.map(c => `<th>${esc(c)}</th>`).join('')}</tr>${axis}</thead><tbody>${rows}${empty}${wait}</tbody></table></div>`;
   const doc = picked ? runDoc(picked, d, ctx) : pick ? missingDoc(pick, d, ctx, win) : '';
   return `<div class="phead pagehead" id="runs-head"><h2 class="ptitle">Runs</h2></div>${bar}${table}${doc}`;
 }

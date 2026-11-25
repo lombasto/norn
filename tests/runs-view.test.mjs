@@ -240,7 +240,7 @@ test('the Runs table: one row per run by attention (live, queued, ended), the st
   assert.match(live, /chip warn">slow</, 'a live row: its pace');
   assert.match(live, /40 % of the last hour in test runs/, 'why slow, in words');
   assert.match(live, /2 of 4/, 'items as n of m');
-  assert.match(live, /1 h 40 \/ 1 h 30/, 'time against the budget in words');
+  assert.match(live, /1h40 \/ 1h30/, 'time against the budget, short');
   assert.match(live, /data-label="tools">[^]*>41<\/button><\/td>[^]*data-label="words">[^]*>1,?200<\/button><\/td>[^]*data-label="commits">[^]*>3<\/button><\/td>/, 'the counts');
   assert.match(live, /data-act="run-open" data-run="RUN-2"/, 'a row opens its run');
   const ended = rowOf(html, 'RUN-1');
@@ -261,6 +261,37 @@ test('the Runs table: one row per run by attention (live, queued, ended), the st
   assert.match(html, /aria-label="Filter by lane"/, 'the lane box has a label');
   const look = renderTab('runs', d, { now: NOW, projects: [], runsView: runsViewOf(new URLSearchParams('state=look')) });
   assert.deepEqual([...look.matchAll(/id="node-([^"]+)"/g)].map(x => x[1]), ['RUN-3', 'RUN-2'], 'need a look alone: the stalled and the slow run');
+});
+
+test('the age bar: one bar per run on a shared hour axis - track = 2x the budget, a tick at 1x, the fill, over / stop past 1x / near 2x, a hand-off divider, the status on hover; no budget = plain text', () => {
+  const d = listFixture(), p2 = d.tree[1].progress, p3 = d.tree[2].progress;
+  d.tree[1] = { ...d.tree[1], started: ago(60), progress: { ...p2, pace: { ...p2.pace, handoffs: 1, sessions: 2 } } };
+  d.tree[2] = { ...d.tree[2], progress: { ...p3, pace: { ...p3.pace, elapsed_min: 110, budget_min: 60 } } };
+  d.tree[3] = { ...d.tree[3], progress: { ...d.tree[3].progress, pace: null } };
+  const html = renderTab('runs', d, { now: NOW, projects: [], runsView: runsViewOf(new URLSearchParams()) });
+  const age = id => rowOf(html, id).match(/<td class="rage"[^]*?<\/td>/)?.[0] ?? '';
+  const slow = age('RUN-2');
+  assert.equal((slow.match(/class="abar/g) || []).length, 1, 'one bar per run');
+  assert.match(slow, /class="abar over" [^>]*style="width:100\.0%"/, 'past 1x: over (amber); its track = 2x 90 min = the widest, the whole axis');
+  assert.match(slow, /<i style="width:55\.6%"><\/i>/, 'the fill: 100 of 180 min');
+  assert.match(slow, /<u class="ab-1x" style="left:50%"><\/u>/, 'the 1x tick: the budget');
+  assert.match(slow, /<b class="ab-cut" style="left:22\.2%"><\/b>/, 'the hand-off divider: this session started at 40 min of the chain');
+  assert.match(slow, /title="running \(slow\) - 1 h 40 of 1 h 30 - 1 hand-off - 2 of 4 items done, editing item 3"/, 'the hover text: state, time, hand-offs, status line');
+  assert.match(slow, /<span class="rtime short mute">1h40 \/ 1h30<\/span>/, 'the short text at the right (a phone has no hover)');
+  const stalled = age('RUN-3');
+  assert.match(stalled, /class="abar over stop" [^>]*style="width:66\.7%"/, '110 of a 60 min budget: near the 2x stop line (red); a 2 h track on the 3 h axis');
+  assert.doesNotMatch(stalled, /ab-cut/, 'no hand-off: no divider');
+  const plain = age('RUN-4');
+  assert.doesNotMatch(plain, /abar/, 'no budget: no bar');
+  assert.match(plain, /<span class="rtime">10 min<\/span>/, 'no budget: the plain run time');
+  const th = html.match(/<tr class="raxis">[^]*?<\/tr>/)?.[0] ?? '';
+  assert.equal((html.match(/class="aaxis"/g) || []).length, 1, 'one shared axis, in the head');
+  assert.match(html, /<\/tr><tr class="raxis"><td colspan="6"><\/td><td>[^]*class="aaxis"[^]*<\/td><td colspan="4"><\/td><\/tr><\/thead>/, 'a second head row, under the age column');
+  assert.ok(html.includes('<th>age</th>'), 'the head names stay plain');
+  assert.deepEqual([...th.matchAll(/<span style="left:([\d.]+)%">([^<]+)<\/span>/g)].map(m => `${m[2]}@${m[1]}`), ['0@0.0', '1h@33.3', '2h@66.7', '3h@100.0'], 'hour labels on the time axis');
+  const doc = renderTab('runs', d, { now: NOW, projects: [], runsView: runsViewOf(new URLSearchParams()), run: 'RUN-2' });
+  assert.match(doc.slice(doc.indexOf('id="run-doc"')), /class="abar over wide"/, 'the drawer: the same bar, wide');
+  assert.doesNotMatch(doc, /class="tbar/, 'no second bar');
 });
 
 test('the run drawer: none without &run=; the picked run with Close, Stop and Pause on a live run, Copy link always; an ended run shows its result', () => {
