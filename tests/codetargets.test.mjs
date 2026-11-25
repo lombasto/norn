@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { refactorTargets, groupsOf, readTargets, writeTargets, TARGET_LIMITS } from '../engine/lib/codetargets.mjs';
+import { refactorTargets, groupsOf, readTargets, writeTargets, pageTargets, TARGET_LIMITS } from '../engine/lib/codetargets.mjs';
 import { codeCmd } from '../engine/lib/codecli.mjs';
 import { parseReady } from '../engine/lib/ready.mjs';
 import { MEASURE_RUN, FILE_CAP } from '../engine/lib/slop/measure.mjs';
@@ -135,6 +135,9 @@ test('stored for the Slop page and printed by `norn code targets`', async () => 
   const w = world(), r = await run(w, { top: 3 });
   writeTargets(state, r); assert.deepEqual(readTargets(state).targets.map(t => t.kind), ['extract', 'split', 'cycle']);
   assert.equal(readTargets(path.join(d, 'none')), null);
+  const pg = pageTargets(state);   // the Slop page's slice: at most TARGET_LIMITS.page, each with the brief text it copies
+  assert.ok(pg.list.length <= TARGET_LIMITS.page); assert.deepEqual(pg.list.map(t => t.text), r.targets.slice(0, TARGET_LIMITS.page).map(t => t.text));
+  assert.deepEqual(Object.keys(pg.list[0]).sort(), ['kind', 'rank', 'scope', 'text', 'title']); assert.equal(pageTargets(path.join(d, 'none')), null);
   const out = [], err = [];
   const code = await codeCmd(['targets', '--top', 'x'], { out: s => out.push(s), err: s => err.push(s), where: () => ({ state }) });
   assert.equal(code, 2); assert.match(err.join('\n'), /--top/);
