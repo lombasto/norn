@@ -143,6 +143,23 @@ The `M*` rules ship `shadow: true`. A thumb on a model finding in the Guard reco
 last one counts); Slop › Rules shows each rule's precision. At 90 % over 20 rated a rule may go to `BLOCK`, under 50 % (over 20
 rated) to `TREND`: the owner or the controller records that in `overrides.json`; nothing changes a level by itself.
 
+## Test smells (T4, T5)
+
+T4 (a new or changed test with no assertion) and T5 (a test whose every assertion is on a mock it made) are `ast` rules, WARN and
+`shadow`. A test is a node:test `test` / `it` / `t.test` call with an inline function, a pytest `def test*` (a method too), or a Rust
+`fn` under `#[test]` / `#[tokio::test]` / `#[rstest]`. A test whose match is unchanged from the base is no new finding.
+
+| | counts as an assertion (a call that can fail the test) | a helper the rule cannot see into (silent) |
+|---|---|---|
+| js | a call whose callee names `assert`, `expect`, `should`, `check`, `verify`, `ensure` or `must` (`assert.equal`, `t.assert.ok`, `assertRow`), `t.plan`, `*.fail`, `throw` | a call to a function of the file or to a name imported from a module whose path says `help`, `support`, `fixture`, `common` or `util`; a subtest (`t.test`) |
+| py | `assert`, `raise`, a call named as in js plus `fail`, `raises`, `warns`, `deprecated_call` (`self.assertEqual`, `pytest.raises`, `m.assert_called_once`) | a call to a `def` of the file, to a test argument (a pytest fixture), or to a name imported from such a module or `conftest` |
+| rs | an `assert*!` / `panic!` / `unreachable!` / `todo!` macro, `.unwrap()` / `.expect()` / `_err` forms, `?`, `#[should_panic]`, a call named as in js | a call to a `fn` of the test's own module, or through a `common::` / `helpers::` / `support::` / `fixtures::` / `test_utils::` path |
+
+A helper is recognised by its name (it counts as an assertion) or by where it is defined (silent): a helper the rule does not
+recognise makes it silent, never loud. T5 reads a mock the test made itself: node:test `mock.fn` / `mock.method` (an assertion on it
+reads `<fn>.mock`), `unittest.mock` / `mocker` (its `assert_called*` methods or an `assert` on `called`, `call_count`, `call_args`, ...),
+mockall's `Mock<T>::new()` bound by `let` (an `assert*!` naming it). A mock from a decorator, a hook or a shared variable is no finding.
+
 ## Machine rules
 
 `machine: true` marks a rule that reads this machine's state rather than the diff's trees (K14: `norn gen --check` reads the

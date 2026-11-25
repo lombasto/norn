@@ -1,0 +1,766 @@
+{
+  "id": "T5",
+  "level": "WARN",
+  "shadow": true,
+  "kind": "ast",
+  "tool": "ast-grep",
+  "title": "a new or changed test whose every assertion is on a mock it created",
+  "explain": {
+    "what": "Every assertion of a test is on a mock or stub the same test created: its calls, its call count or the value it was told to return.",
+    "why": "Such a test checks the mock, not the code: it passes when the real code is broken, and it breaks only when the mock is rewritten.",
+    "fix": "Pass the mock to the real code and assert what the code does with it (its result, or what it sent to the mock); or test the real collaborator."
+  },
+  "files": [
+    "tests/**",
+    "test/**",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/test_*.py",
+    "**/*_test.py",
+    "**/*.rs"
+  ],
+  "exclude": [
+    "**/vendor/**",
+    "**/fixtures/**"
+  ],
+  "match": {
+    "js": [
+      {
+        "rule": {
+          "kind": "call_expression",
+          "has": {
+            "field": "function",
+            "regex": "^(?:test|it)(?:\\.only)?$|^(?:t|tt|ctx|context|st|sub)\\.test$"
+          },
+          "all": [
+            {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "function_expression"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "regex": "(?:^|\\.)mock\\.(?:fn|method|getter|setter|property)$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "regex": "^(?:(?:t|tt|ctx|context|st|sub)\\.)?assert(?:\\.\\w+)*$"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "has": {
+                            "field": "function",
+                            "regex": "^(?:(?:t|tt|ctx|context|st|sub)\\.)?assert(?:\\.\\w+)*$"
+                          },
+                          "not": {
+                            "has": {
+                              "field": "arguments",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "member_expression",
+                                "has": {
+                                  "field": "property",
+                                  "regex": "^mock$"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "function",
+                                "regex": "(?:^|[.)])(?:assert|expect|should|check|verify|ensure|must)\\w*(?:$|[.(])"
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "field": "function",
+                                  "regex": "^(?:(?:t|tt|ctx|context|st|sub)\\.)?assert(?:\\.\\w+)*$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "has": {
+                            "field": "function",
+                            "regex": "\\.(?:plan|fail)$"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "throw_statement"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "has": {
+                            "field": "function",
+                            "regex": "^(?:test|it|describe|suite)(?:\\.\\w+)?$|^(?:t|tt|ctx|context|st|sub)\\.test$"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "function",
+                                "kind": "identifier",
+                                "pattern": "$F"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "program",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "function_declaration",
+                                  "has": {
+                                    "field": "name",
+                                    "pattern": "$F"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "function",
+                                "kind": "identifier",
+                                "pattern": "$F"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "program",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "variable_declarator",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$F"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "value",
+                                        "any": [
+                                          {
+                                            "kind": "arrow_function"
+                                          },
+                                          {
+                                            "kind": "function_expression"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "function",
+                                "kind": "identifier",
+                                "pattern": "$F"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "program",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "import_statement",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "source",
+                                        "regex": "(?i)help|support|fixture|common|util|conftest"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "stopBy": "end",
+                                        "kind": "identifier",
+                                        "pattern": "$F"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "message": "every assertion of this test is on a mock it made: it checks the mock, not the code"
+      }
+    ],
+    "py": [
+      {
+        "rule": {
+          "kind": "function_definition",
+          "has": {
+            "field": "name",
+            "regex": "^test"
+          },
+          "all": [
+            {
+              "has": {
+                "field": "body",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "call",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(?:(?:unittest\\.)?mock\\.)?(?:Mock|MagicMock|AsyncMock|NonCallableMock|NonCallableMagicMock|create_autospec|patch(?:\\.object|\\.dict|\\.multiple)?)$|^mocker\\.\\w+(?:\\.object)?$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "assert_statement"
+                        },
+                        {
+                          "kind": "call",
+                          "has": {
+                            "field": "function",
+                            "regex": "\\.assert_(?:called|not_called|any_call|has_calls|awaited|not_awaited|has_awaits|any_await)\\w*$"
+                          }
+                        },
+                        {
+                          "kind": "call",
+                          "has": {
+                            "field": "function",
+                            "regex": "^self\\.assert\\w+$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "assert_statement",
+                            "not": {
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "attribute",
+                                "has": {
+                                  "field": "attribute",
+                                  "regex": "^(?:called|call_count|call_args|call_args_list|mock_calls|method_calls|await_count|await_args|await_args_list|return_value|side_effect)$"
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "kind": "call",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "function",
+                                  "regex": "^self\\.assert\\w+$"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "stopBy": "end",
+                                    "kind": "attribute",
+                                    "has": {
+                                      "field": "attribute",
+                                      "regex": "^(?:called|call_count|call_args|call_args_list|mock_calls|method_calls|await_count|await_args|await_args_list|return_value|side_effect)$"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "raise_statement"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "regex": "(?:^|\\.)(?:assert|expect|should|check|verify|ensure|must|fail|raises|warns|deprecated_call)\\w*$"
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "field": "function",
+                                "regex": "^self\\.assert\\w+$|\\.assert_(?:called|not_called|any_call|has_calls|awaited|not_awaited|has_awaits|any_await)\\w*$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "kind": "identifier",
+                              "pattern": "$F"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "module",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "function_definition",
+                                "has": {
+                                  "field": "name",
+                                  "pattern": "$F"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "kind": "identifier",
+                              "pattern": "$F"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "function_definition",
+                              "has": {
+                                "field": "parameters",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "identifier",
+                                  "pattern": "$F"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "kind": "identifier",
+                              "pattern": "$F"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "module",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "import_from_statement",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "module_name",
+                                      "regex": "(?i)help|support|fixture|common|util|conftest"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "stopBy": "end",
+                                      "kind": "identifier",
+                                      "pattern": "$F"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "message": "every assertion of this test is on a mock it made: it checks the mock, not the code"
+      }
+    ],
+    "rs": [
+      {
+        "rule": {
+          "kind": "function_item",
+          "follows": {
+            "stopBy": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "attribute_item"
+                  },
+                  {
+                    "kind": "line_comment"
+                  },
+                  {
+                    "kind": "block_comment"
+                  }
+                ]
+              }
+            },
+            "kind": "attribute_item",
+            "regex": "^#\\[(?:\\w+::)*(?:test|rstest)\\b"
+          },
+          "all": [
+            {
+              "has": {
+                "field": "body",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "let_declaration",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "regex": "^Mock\\w*::(?:new|default)\\(\\)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "pattern",
+                            "regex": "^(?:mut\\s+)?\\w+$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "pattern": "$M"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "macro_invocation",
+                      "has": {
+                        "field": "macro",
+                        "regex": "(?:^|::)\\w*assert\\w*$"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "macro_invocation",
+                        "has": {
+                          "field": "macro",
+                          "regex": "(?:^|::)\\w*assert\\w*$"
+                        },
+                        "not": {
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "pattern": "$M"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "regex": "\\.(?:unwrap|expect|unwrap_err|expect_err)$"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "try_expression"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "regex": "(?:^|::|\\.)(?:assert|expect|should|check|verify|ensure|must)\\w*$"
+                        },
+                        "not": {
+                          "has": {
+                            "field": "function",
+                            "regex": "\\.expect_\\w+$"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "macro_invocation",
+                        "has": {
+                          "field": "macro",
+                          "regex": "(?:^|::)(?:panic|unreachable)$"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "kind": "identifier",
+                              "pattern": "$F"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "function_item",
+                              "inside": {
+                                "any": [
+                                  {
+                                    "kind": "declaration_list"
+                                  },
+                                  {
+                                    "kind": "source_file"
+                                  }
+                                ],
+                                "has": {
+                                  "kind": "function_item",
+                                  "has": {
+                                    "field": "name",
+                                    "pattern": "$F"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "regex": "(?:^|::)(?:common|helpers?|support|fixtures?|test_?utils?)::"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "message": "every assertion of this test is on a mock it made: it checks the mock, not the code"
+      }
+    ]
+  },
+  "fixture": {
+    "hit": {
+      "base": {
+        "tests/a.test.mjs": "import test from 'node:test';\n"
+      },
+      "head": {
+        "tests/a.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\n\ntest('sends once', t => {\n  const send = t.mock.fn(() => 200);\n  send({ to: \"a\" });\n  assert.equal(send.mock.callCount(), 1);\n  assert.deepEqual(send.mock.calls[0].arguments, [{ to: \"a\" }]);\n});\n",
+        "tests/test_send.py": "from unittest.mock import Mock\n\n\ndef test_sends_once():\n    send = Mock(return_value=200)\n    send(to=\"a\")\n    send.assert_called_once_with(to=\"a\")\n    assert send.call_count == 1\n",
+        "src/send.rs": "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn sends_once() {\n        let mut m = MockTransport::new();\n        m.expect_send().returning(|_| 200);\n        assert_eq!(m.send(\"a\"), 200);\n    }\n}\n"
+      },
+      "recorded": {
+        "head": [
+          {
+            "file": "src/send.rs",
+            "ruleId": "T5.rs.0.Rust",
+            "line": 6,
+            "column": 5,
+            "endLine": 10,
+            "text": "fn sends_once() {\n        let mut m = MockTransport::new();\n        m.expect_send().returning(|_| 200);\n        assert_eq!(m.send(\"a\"), 200);\n    }"
+          },
+          {
+            "file": "tests/a.test.mjs",
+            "ruleId": "T5.js.0.JavaScript",
+            "line": 4,
+            "column": 1,
+            "endLine": 9,
+            "text": "test('sends once', t => {\n  const send = t.mock.fn(() => 200);\n  send({ to: \"a\" });\n  assert.equal(send.mock.callCount(), 1);\n  assert.deepEqual(send.mock.calls[0].arguments, [{ to: \"a\" }]);\n})"
+          },
+          {
+            "file": "tests/test_send.py",
+            "ruleId": "T5.py.0.Python",
+            "line": 4,
+            "column": 1,
+            "endLine": 8,
+            "text": "def test_sends_once():\n    send = Mock(return_value=200)\n    send(to=\"a\")\n    send.assert_called_once_with(to=\"a\")\n    assert send.call_count == 1"
+          }
+        ],
+        "base": []
+      }
+    },
+    "miss": {
+      "base": {
+        "tests/a.test.mjs": "import test from 'node:test';\n"
+      },
+      "head": {
+        "tests/a.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { notify } from '../src/notify.mjs';\n\ntest('notify sends', t => {\n  const send = t.mock.fn(() => 200);\n  const r = notify('a', { send });\n  assert.equal(r, 'sent');\n  assert.equal(send.mock.callCount(), 1);\n});\ntest('helper reads the mock', t => {\n  const send = t.mock.fn();\n  notify('a', { send });\n  assert.equal(send.mock.callCount(), 1);\n  checkPayload(send);\n});\ntest('no mock made here', () => {\n  assert.equal(shared.mock.callCount(), 0);\n});\nlet shared;\nfunction checkPayload(f) { assert.deepEqual(f.mock.calls[0].arguments[0], { to: \"a\" }); }\n",
+        "tests/test_send.py": "from unittest.mock import Mock, patch\n\nfrom src.notify import notify\n\n\ndef test_notify_sends():\n    send = Mock(return_value=200)\n    assert notify(\"a\", send) == \"sent\"\n    send.assert_called_once()\n\n\n@patch(\"src.notify.send\")\ndef test_patched_by_decorator(send):\n    notify(\"a\")\n    send.assert_called_once()\n\n\ndef test_helper_reads_the_mock():\n    send = Mock()\n    notify(\"a\", send)\n    send.assert_called_once()\n    check_payload(send)\n\n\ndef check_payload(m):\n    assert m.call_args.kwargs == {\"to\": \"a\"}\n",
+        "src/send.rs": "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn notify_sends() {\n        let mut m = MockTransport::new();\n        m.expect_send().returning(|_| 200);\n        let n = Notifier::new(m);\n        assert_eq!(n.notify(\"a\"), Sent);\n    }\n\n    #[test]\n    fn helper_reads_the_mock() {\n        let mut m = MockTransport::new();\n        m.expect_send().returning(|_| 200);\n        assert_eq!(m.send(\"a\"), 200);\n        check_sent(&m);\n    }\n\n    fn check_sent(m: &MockTransport) {\n        assert!(m.sent());\n    }\n}\n"
+      },
+      "recorded": {
+        "head": [],
+        "base": []
+      }
+    }
+  }
+}
