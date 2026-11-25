@@ -20,16 +20,17 @@ function valid(log) {
     if (!isObj(r) || !isObj(r.tool) || typeof r.tool.driver?.name !== 'string') bad(`runs[${i}] has no tool.driver.name`);
     // results absent defaults to null: the tool's results are unknown (a run that found nothing writes [])
     if (!Array.isArray(r.results)) bad(`runs[${i}].results is ${r.results == null ? 'null' : 'not an array'}: the tool's results are unknown`);
-    r.results.forEach((x, k) => {
-      const at = `runs[${i}].results[${k}]`;
-      if (!isObj(x) || !isObj(x.message) || (typeof x.message.text !== 'string' && typeof x.message.id !== 'string')) bad(`${at} has no message text or id`);
-      if (x.level !== undefined && !LEVELS.includes(x.level)) bad(`${at}.level is ${JSON.stringify(x.level)}`);
-      if (x.kind !== undefined && !KINDS.includes(x.kind)) bad(`${at}.kind is ${JSON.stringify(x.kind)}`);
-      if (x.locations !== undefined && !Array.isArray(x.locations)) bad(`${at}.locations is not an array`);
-      for (const l of x.locations || []) { const s = l?.physicalLocation?.region?.startLine; if (s !== undefined && !(Number.isInteger(s) && s >= 1)) bad(`${at}: startLine ${JSON.stringify(s)} (an integer from 1)`); }
-    });
+    r.results.forEach((x, k) => validResult(x, `runs[${i}].results[${k}]`));
   });
   return log;
+}
+/** one result: a message, a known level and kind, locations a list with startLines from 1 */
+function validResult(x, at) {
+  if (!isObj(x) || !isObj(x.message) || (typeof x.message.text !== 'string' && typeof x.message.id !== 'string')) bad(`${at} has no message text or id`);
+  if (x.level !== undefined && !LEVELS.includes(x.level)) bad(`${at}.level is ${JSON.stringify(x.level)}`);
+  if (x.kind !== undefined && !KINDS.includes(x.kind)) bad(`${at}.kind is ${JSON.stringify(x.kind)}`);
+  if (x.locations !== undefined && !Array.isArray(x.locations)) bad(`${at}.locations is not an array`);
+  for (const l of x.locations || []) { const s = l?.physicalLocation?.region?.startLine; if (s !== undefined && !(Number.isInteger(s) && s >= 1)) bad(`${at}: startLine ${JSON.stringify(s)} (an integer from 1)`); }
 }
 const read = (text, where) => { let j; try { j = JSON.parse(text); } catch (e) { bad(`${where}: ${e.message}`); } return valid(j); };
 
