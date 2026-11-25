@@ -46,7 +46,7 @@ test('Settings: ONE row "SloppaChoppa" on / off per project, default on, beside 
   const row = SETTINGS.find(s => s.key === 'policy.slop.enabled');
   assert.ok(row, 'the row exists');
   assert.deepEqual([row.label, row.type, row.recommended, sectionOf(row).join('/')], ['SloppaChoppa', 'bool', 'on', 'voice/onoff']);
-  assert.equal(SETTINGS.filter(s => /^policy\.slop\./.test(s.key)).length, 1, 'no second switch');
+  assert.equal(SETTINGS.filter(s => s.type === 'bool' && /^policy\.slop\./.test(s.key)).length, 1, 'no second switch');   // on/off rows only: a cap (voice_reads_per_day) is not a switch
   assert.equal(SETTINGS.find(s => s.key === 'policy.voice.popups').recommended, 'off', 'pop-ups stay their own row, default off');
   const v = settingsView({}).find(s => s.key === 'policy.slop.enabled');
   assert.deepEqual([v.value, v.scope, v.modified], [true, 'project', false]);
@@ -56,7 +56,7 @@ test('Settings: ONE row "SloppaChoppa" on / off per project, default on, beside 
   assert.equal(withDefaults({ policy: { slop: { run_end: false } } }).policy.slop.enabled, false);
   assert.equal(settingsView({ policy: { slop: { run_end: false } } }).find(s => s.key === 'policy.slop.enabled').value, false, 'Settings shows it off');
   const saved = applySettings({ policy: { slop: { run_end: false } } }, { 'policy.slop.enabled': true });
-  assert.deepEqual(saved.policy.slop, { enabled: true }, 'a save writes the one key; run_end leaves project.json');
+  assert.deepEqual([saved.policy.slop.enabled, Object.hasOwn(saved.policy.slop, 'run_end')], [true, false], 'a save writes the one switch; run_end leaves project.json');   // a save also writes the defaults (voice_reads_per_day)
   assert.equal(applySettings({ policy: { slop: { run_end: false } } }, { 'policy.voice.popups': 'on' }).policy.slop.enabled, false, 'another save keeps it off');
 });
 
