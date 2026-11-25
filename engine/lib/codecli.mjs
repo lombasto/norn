@@ -18,8 +18,8 @@ import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
 import { drawGraphMap, graphMapAt } from './codemapgraph.mjs';
-import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
-import { graphAt, graphStatus, dependencies, dependents, cycles, reach, ALL_KINDS } from './codegraph.mjs';
+import { codeSignals, writeSignals, readSignals, checkLine } from './codesignals.mjs';
+import { graphAt, graphStatus, dependencies, dependents, cycles, reach, symbols, references, ALL_KINDS, LIMITS } from './codegraph.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
@@ -44,7 +44,7 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code card <file>.. | --report [--project P | --state D] [--repo DIR] [--json]   (card = per file in at most ~400 tokens: language and lines, '
   + 'its dependents, the files that change with it, its fixes, its tests and the indexed commits; a part not indexed says so. --report = the policy.code.card '
   + 'A/B groups compared: tokens, files read and done rate per run, refused under 15 runs per group; docs/code-graph.md)\n'
-  + 'usage: norn code graph index|deps|dependents|cycles|reach|status ...   (the code graph: the file imports of JS / TS, Python and Rust; '
+  + 'usage: norn code graph index|deps|dependents|cycles|reach|symbols|refs|status ...   (the code graph: the file imports and definitions of JS / TS, Python and Rust; '
   + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
 const FLAGS = { history: [], map: ['refresh!', 'graph!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [], card: ['report!'] }, START_GAP_MS = 10 * 60e3;
@@ -79,7 +79,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'card') return cardCmd(f, w.state, dir, { out, err, now });
   let ix, sig, graph;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
-  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
+  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now(), state: w.state }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
   const gm = drawGraphMap({ state: w.state, graph });   // the import-graph map from the same graph (n/a stored as n/a)
   writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks
@@ -181,10 +181,10 @@ async function mapCmd(f, state, repo, { out, err }) {
 
 // ---- `norn code graph <verb>`: the code graph's reader (codegraph.mjs, docs/code-graph.md) on the command line ----
 export const GRAPH_USAGE = 'usage: norn code graph index | deps <file> [--depth N] [--kinds K,..] | dependents <file> [--depth N] [--kinds K,..] | cycles [--within GLOB]... [--kinds K,..]'
-  + ' | reach <file>... [--forward] [--to GLOB]... | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
+  + ' | reach <file>... [--forward] [--to GLOB]... | symbols <file> | refs <name> | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
   + '   (paths are relative to the repo root; exit 0 answer, 2 usage, 3 n/a; docs/code-graph.md)';
-const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], status: [] };
-const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], status: [0, 0] };
+const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], symbols: [], refs: [], status: [] };
+const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], symbols: [1, 1], refs: [1, 1], status: [0, 0] };
 function graphArgs(verb, argv) {
   const spec = [...GRAPH_FLAGS[verb], 'project', 'state', 'repo', 'at', 'worktree!', 'no-index!', 'json!'], f = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -196,7 +196,8 @@ function graphArgs(verb, argv) {
     if (s.endsWith('*')) (f[k] ||= []).push(argv[++i]); else f[k] = argv[++i];
   }
   const [lo, hi] = GRAPH_ARGS[verb];
-  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
+  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${verb === 'refs' ? 'one name' : hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
+  if ((verb === 'symbols' || verb === 'refs') && f['no-index']) throw new Error(`${verb} indexes the asked commit when needed: no --no-index`);
   if (f.depth !== undefined && !(Number.isInteger(Number(f.depth)) && Number(f.depth) > 0)) throw new Error('--depth needs a whole number over 0');
   const bad = f.kinds?.split(',').filter(k => !ALL_KINDS.includes(k));
   if (bad?.length) throw new Error(`unknown kind ${bad.join(', ')} (kinds: ${ALL_KINDS.join(', ')})`);
@@ -217,6 +218,19 @@ function graphCmd(argv, { out, err, where }) {
   } catch (e) { err('error: ' + e.message); err(GRAPH_USAGE); return 2; }
   const repo = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), na = why => { if (f.json) out(JSON.stringify({ ok: false, why })); else err(`n/a: ${why}`); return 3; };
   if (verb === 'status') { const s = graphStatus({ state: w.state, repo }); if (s.ok === false) return na(s.why); out(f.json ? JSON.stringify(s) : statusLines(s)); return 0; }
+  if (verb === 'symbols' || verb === 'refs') {   // through norn-code query: no file-level Graph needed
+    const o = { state: w.state, repo, at: f.at || 'HEAD', worktree: Boolean(f.worktree) };
+    const r = verb === 'symbols' ? symbols({ ...o, file: f._[0] }) : references({ ...o, name: f._[0] });
+    if (r.ok === false) return na(r.why);
+    if (f.json) { out(JSON.stringify(r)); return 0; }
+    out(stampLine(r.stamp));
+    const def = d => `${d.kind.padEnd(8)} ${d.qual}  ${d.file}:${d.line}..${d.end_line}${d.exported ? '  exported' : ''}`;
+    if (verb === 'symbols') { if (!r.defs.length) out('no definitions'); for (const d of r.defs.slice(0, LIMITS.rows)) out(def(d)); if (r.defs.length > LIMITS.rows) out(`+${r.defs.length - LIMITS.rows} more`); return 0; }
+    for (const d of r.defs) out(`def ${def(d)}`);
+    for (const x of r.rows) out(`${x.file}:${x.line}:${x.col}${x.def_ids ? `  -> ${x.def_ids.join(', ')} (${x.how})` : ''}`);
+    if (r.truncated) out(`+${r.truncated} more`);
+    return 0;
+  }
   const t0 = Date.now(), g = graphAt({ state: w.state, repo, at: f.at || 'HEAD', worktree: Boolean(f.worktree), noIndex: Boolean(f['no-index']) });
   if (!g.ok) return na(g.why);
   const kinds = f.kinds ? { kinds: f.kinds.split(',') } : {}, depth = f.depth === undefined ? 1 : Number(f.depth);
@@ -301,7 +315,8 @@ export async function codeAt(p, url) {
     if (!rows) return { list: null };
     const sort = CODE_SORTS.includes(q('sort')) ? q('sort') : 'importance', folder = String(q('folder') ?? '').replace(/\/+$/, ''), lim = Number(q('limit'));
     const hit = sorted(rows.filter(r => !folder || r.file.startsWith(`${folder}/`)), sort), shown = hit.slice(0, Number.isInteger(lim) && lim > 0 ? lim : CODE_CAP);
-    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null } };
+    return { list: { sort, folder, folders: foldersOf(ix.files), limit: shown.length, matched: hit.length, shown: shown.length, rows: shown, fixes: sig ? sig.fixes : null,
+      checks: ['fix_first', 'importance'].map(k => ({ rank: k, status: sig?.check?.status === 'measured' ? sig.check[k].status : sig?.check?.status ?? null, line: checkLine(sig?.check ?? null, k) })) } };
   }
   if (part === 'growth') {
     if (!rows) return { days: [], areas: [], fastest: [] };

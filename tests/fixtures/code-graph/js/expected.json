@@ -40,8 +40,66 @@
     "src/legacy.cjs": {"lang":"js"},
     "src/lib/index.js": {"lang":"js"},
     "src/main.mjs": {"lang":"js"},
+    "src/shapes.mjs": {"lang":"js"},
+    "src/shapes.ts": {"lang":"js"},
     "src/types.ts": {"lang":"js"},
     "src/util/str.js": {"lang":"js"},
     "src/vendored.js": {"lang":"js","excluded":"linguist-vendored"}
+  },
+  "defs": {
+    "packages/widgets/src/button.js": [
+      {"id":"packages/widgets/src/button.js#packages/widgets/src/button.js#wb#0","name":"wb","qual":"packages/widgets/src/button.js#wb","kind":"const","line":2,"end_line":2,"col":14,"exported":true}
+    ],
+    "packages/widgets/src/index.js": [
+      {"id":"packages/widgets/src/index.js#packages/widgets/src/index.js#w#0","name":"w","qual":"packages/widgets/src/index.js#w","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ],
+    "src/a.mjs": [
+      {"id":"src/a.mjs#src/a.mjs#a#0","name":"a","qual":"src/a.mjs#a","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ],
+    "src/b.ts": [
+      {"id":"src/b.ts#src/b.ts#b#0","name":"b","qual":"src/b.ts#b","kind":"function","line":3,"end_line":3,"col":16,"exported":true}
+    ],
+    "src/dual.ts": [
+      {"id":"src/dual.ts#src/dual.ts#d#0","name":"d","qual":"src/dual.ts#d","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ],
+    "src/lazy.js": [
+      {"id":"src/lazy.js#src/lazy.js#l#0","name":"l","qual":"src/lazy.js#l","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ],
+    "src/legacy.cjs": [
+      {"id":"src/legacy.cjs#src/legacy.cjs#a#0","name":"a","qual":"src/legacy.cjs#a","kind":"const","line":1,"end_line":1,"col":7,"exported":true},
+      {"id":"src/legacy.cjs#src/legacy.cjs#path#0","name":"path","qual":"src/legacy.cjs#path","kind":"const","line":2,"end_line":2,"col":7,"exported":true}
+    ],
+    "src/lib/index.js": [
+      {"id":"src/lib/index.js#src/lib/index.js#c#0","name":"c","qual":"src/lib/index.js#c","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ],
+    "src/main.mjs": [
+      {"id":"src/main.mjs#src/main.mjs#lazy#0","name":"lazy","qual":"src/main.mjs#lazy","kind":"const","line":14,"end_line":14,"col":7,"exported":false},
+      {"id":"src/main.mjs#src/main.mjs#dyn#0","name":"dyn","qual":"src/main.mjs#dyn","kind":"const","line":15,"end_line":15,"col":7,"exported":false},
+      {"id":"src/main.mjs#src/main.mjs#used#0","name":"used","qual":"src/main.mjs#used","kind":"const","line":17,"end_line":17,"col":14,"exported":true}
+    ],
+    "src/shapes.mjs": [
+      {"id":"src/shapes.mjs#src/shapes.mjs#Shape#0","name":"Shape","qual":"src/shapes.mjs#Shape","kind":"class","line":2,"end_line":10,"col":8,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#Shape.area#0","name":"area","qual":"src/shapes.mjs#Shape.area","kind":"method","line":6,"end_line":8,"col":3,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#Shape.of#0","name":"of","qual":"src/shapes.mjs#Shape.of","kind":"method","line":9,"end_line":9,"col":3,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#Square#0","name":"Square","qual":"src/shapes.mjs#Square","kind":"class","line":12,"end_line":16,"col":1,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#Square.area#0","name":"area","qual":"src/shapes.mjs#Square.area","kind":"method","line":13,"end_line":15,"col":3,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#double#0","name":"double","qual":"src/shapes.mjs#double","kind":"function","line":18,"end_line":18,"col":14,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#twice#0","name":"twice","qual":"src/shapes.mjs#twice","kind":"function","line":19,"end_line":19,"col":7,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#helper#0","name":"helper","qual":"src/shapes.mjs#helper","kind":"function","line":21,"end_line":24,"col":1,"exported":true},
+      {"id":"src/shapes.mjs#src/shapes.mjs#copy#0","name":"copy","qual":"src/shapes.mjs#copy","kind":"function","line":26,"end_line":28,"col":1,"exported":false}
+    ],
+    "src/shapes.ts": [
+      {"id":"src/shapes.ts#src/shapes.ts#Sized#0","name":"Sized","qual":"src/shapes.ts#Sized","kind":"trait","line":1,"end_line":3,"col":8,"exported":true},
+      {"id":"src/shapes.ts#src/shapes.ts#Sized.size#0","name":"size","qual":"src/shapes.ts#Sized.size","kind":"method","line":2,"end_line":2,"col":3,"exported":true},
+      {"id":"src/shapes.ts#src/shapes.ts#Tone#0","name":"Tone","qual":"src/shapes.ts#Tone","kind":"enum","line":5,"end_line":8,"col":8,"exported":true},
+      {"id":"src/shapes.ts#src/shapes.ts#Base#0","name":"Base","qual":"src/shapes.ts#Base","kind":"class","line":10,"end_line":13,"col":8,"exported":true},
+      {"id":"src/shapes.ts#src/shapes.ts#Base.size#0","name":"size","qual":"src/shapes.ts#Base.size","kind":"method","line":11,"end_line":11,"col":3,"exported":true},
+      {"id":"src/shapes.ts#src/shapes.ts#Base.label#0","name":"label","qual":"src/shapes.ts#Base.label","kind":"method","line":12,"end_line":12,"col":3,"exported":true},
+      {"id":"src/shapes.ts#src/shapes.ts#Inner#0","name":"Inner","qual":"src/shapes.ts#Inner","kind":"module","line":15,"end_line":19,"col":1,"exported":false},
+      {"id":"src/shapes.ts#src/shapes.ts#Inner.deep#0","name":"deep","qual":"src/shapes.ts#Inner.deep","kind":"function","line":16,"end_line":18,"col":10,"exported":false}
+    ],
+    "src/util/str.js": [
+      {"id":"src/util/str.js#src/util/str.js#u#0","name":"u","qual":"src/util/str.js#u","kind":"const","line":1,"end_line":1,"col":14,"exported":true}
+    ]
   }
 }

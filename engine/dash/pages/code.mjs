@@ -1,6 +1,6 @@
 // The Code page (SPEC dash-owner-1123 s.7; unwired: the SHELL lane adds the tab, /api/code and /api/source): every tracked text file of
 // the project from `norn code history` (lib/codeindex.mjs), a summary of at most 4 numbers and four sub-views, each its own part of /api/code:
-//   Files    - testparts fileTable: lines, the 26-week growth sparkline + delta, churn 90 d, fan-in, importance, fixes 365 d, fix first (the code
+//   Files    - the rank check line (do the rankings of 90 days ago predict the fixes since), then testparts fileTable: lines, the 26-week growth sparkline + delta, churn 90 d, fan-in, importance, fixes 365 d, fix first (the code
 //              signals, lib/codesignals.mjs); sorts and a folder filter. A row opens the file drawer (#code-file, &file=): its growth chart, the
 //              files that change with it, its last fixes, its last commits and the code viewer (/api/source).
 //   Growth   - lines per top-level area over 26 weeks (widgets timeChart) and the 10 fastest-growing files
@@ -41,6 +41,8 @@ const COLS = [{ key: 'file', label: 'file', html: r => fileBtn(r.file) }, { key:
   { key: 'importance', label: 'importance', num: true, html: r => int(r.importance) },
   { key: 'fixes', label: 'fixes 365 d', num: true, html: r => (fin(r.fixes_365d) ? int(r.fixes_365d) : NA) }, { key: 'fix_first', label: 'fix first', num: true, html: r => (fin(r.fix_first) ? int(r.fix_first) : NA) }];
 const fixRank = x => (!x ? ' (not built yet: `norn code history`)' : x.status === 'measured' ? '' : ` (n/a: ${esc(x.reason)})`);
+// the rank check (RM-a-70): does each ranking's top 20 of 90 days ago predict the fixes since? the server words it (codesignals checkLine)
+const checkRow = cs => (cs?.length ? `<p class="small" id="code-check">rank check: ${cs.map(c => esc(c.line)).join(' · ')}</p>` : '');
 function codeFiles(d) {
   const l = d.list;
   if (!l) return `<div class="card" id="code-files">${notYet('the file index')}</div>`;
@@ -49,6 +51,7 @@ function codeFiles(d) {
   const more = l.matched > l.shown ? ` · <button class="lnk" data-act="code-more" data-limit="${l.shown + CODE_CAP}">show more</button>` : '';
   return `<div class="tablecard" id="code-files"><h3>Every file <span class="mute small">${int(l.matched)}${l.folder ? ` in ${esc(l.folder)}/` : ''} · index at ${esc(d.index?.sha ?? '?')}, ${esc(String(d.index?.at ?? '').slice(0, 16))} · importance = the Borda rank of fan-in and churn; fix first = of churn, fan-in and fixes${fixRank(l.fixes)}</span></h3>
     <div class="tbar">${folder}${sorts}</div>
+    ${checkRow(l.checks)}
     ${l.rows.length ? fileTable(l.rows, COLS, { sort: { key: l.sort }, act: 'code-file', id: 'code-rows' }) : '<p class="small mute" style="padding:0 12px">no file in this folder</p>'}
     <p class="small mute" style="padding:0 12px" id="code-shown">showing ${int(l.shown)} of ${int(l.matched)}${more}</p></div>`;
 }

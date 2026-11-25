@@ -29,6 +29,19 @@ const QUERY: &str = r#"
 (call_expression function: (identifier) @fn arguments: (arguments . (string) @src) (#eq? @fn "require")) @req
 "#;
 
+/// our definition patterns (SPEC 4.2): class fields holding a function, TS enums and namespaces, and module-level `const` (find() drops
+/// let / var)
+const JS_DEFS: &str = "(field_definition property: (property_identifier) @name value: [(arrow_function) (function_expression)]) @definition.method";
+const TS_DEFS: &str = r#"
+(public_field_definition name: (property_identifier) @name value: [(arrow_function) (function_expression)]) @definition.method
+(enum_declaration name: (identifier) @name) @definition.enum
+(internal_module name: (identifier) @name) @definition.module
+"#;
+const CONSTS: &str = r#"
+(program (lexical_declaration (variable_declarator name: (identifier) @name) @definition.constant))
+(program (export_statement declaration: (lexical_declaration (variable_declarator name: (identifier) @name) @definition.constant)))
+"#;
+
 fn literal(s: &str) -> Option<String> {
     let b = s.as_bytes();
     if b.len() >= 2
@@ -57,6 +70,23 @@ impl Lang for Js {
     }
     fn import_query(&self) -> &'static str {
         QUERY
+    }
+    fn tags(&self, key: &str) -> String {
+        let js = tree_sitter_javascript::TAGS_QUERY;
+        match key {
+            "js" => format!(
+                "{js}
+{JS_DEFS}
+{CONSTS}"
+            ),
+            _ => format!(
+                "{js}
+{}
+{TS_DEFS}
+{CONSTS}",
+                tree_sitter_typescript::TAGS_QUERY
+            ),
+        }
     }
     fn extract(&self, q: &Query, tree: &Tree, src: &[u8]) -> Map<String, Value> {
         let mut imports = vec![];
