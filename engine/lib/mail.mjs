@@ -109,8 +109,36 @@ export function checkMail(state, { by, run = null, to, via, before = Infinity, n
   return got;
 }
 
+// ---------- NORN-MAIL-WAIT: `norn mail wait`, the controller session's blocking read (a run is woken by its hook, a check-in never blocks) ----------
+export const MAIL_WAIT_POLL_S = 10;   // one look at the box (and the stale fetch) per this many seconds while nothing came
+/**
+ * Deliver the reader's queued mail through checkMail; none queued = wait for it: each round sleeps one poll, runs `fetch` (the CLI: the
+ * tick's stale fetch, sync.mjs tickFetch; null = a home with no sync) and looks again. Ends with the round's mail, or [] once timeoutMin
+ * (null = never) has passed on `now`. now / sleep (ms -> promise) / fetch are passed in: the CLI's real ones, a test's fakes.
+ */
+export async function waitMail(state, { by, to, timeoutMin = null, now = Date.now, sleep, fetch = null, pollS = MAIL_WAIT_POLL_S }) {
+  const end = timeoutMin === null ? Infinity : now() + timeoutMin * 60000, take = () => checkMail(state, { by, to, via: 'cli', now: now() });
+  let got = take();
+  while (!got.length && now() < end) {
+    await sleep(Math.min(pollS * 1000, end - now()));
+    if (fetch) await fetch();
+    got = take();
+  }
+  return [...got];   // the mail only: checkMail's got.left is a check-in's take, not the controller's
+}
+
 export function ackMail(state, { by, run = null, id }) {
   return record(state, { kind: 'mail', ev: 'ack', id, by, data: {} }, { run });
+}
+// `norn mail ack MAIL-n [MAIL-m ...]`: each id in order, one line each (out / err), -> the first refusal's code (0: all acked); one id
+// throws its refusal as every subcommand does (the CLI adds the usage line)
+export function ackMails(state, { by, run = null, ids, out, err }) {
+  let code = 0;
+  for (const id of ids) {
+    try { ackMail(state, { by, run, id }); out(`${id} acked`); }
+    catch (e) { if (ids.length === 1 || !(e instanceof RecordError)) throw e; err('error: ' + e.message); code ||= e.code; }
+  }
+  return code;
 }
 
 // HOME-MAIL S1 (REPORT 3.1): where a queued mail this home sent to another home is, from that home's receipt (its seen.json, copied to

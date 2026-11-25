@@ -75,7 +75,8 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag, qualify, CHECKIN_TAKE_MIN } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMails, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag, qualify, CHECKIN_TAKE_MIN } from '../lib/mail.mjs';
+import { mailWait } from '../lib/mailwait.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -3131,10 +3132,10 @@ function scopeCmd(argv, env, out, err) {
 }
 
 const MAIL_USAGE = 'norn mail send --to RUN-n|lane:L|role:checkin|role:controller --subject S (--body B (<= 2 KB) | --body-file F) [--urgent] [--as checkin|controller]'
-  + '  |  norn mail check [--inject] [--run RUN-n (your own run) | --to role:controller]  |  norn mail ack MAIL-n  |  norn mail list [--to X] [--open] [--json]'
+  + '  |  norn mail check [--inject] [--run RUN-n (your own run) | --to role:controller]  |  norn mail wait [--to role:controller] [--timeout-min N]  |  norn mail ack MAIL-n [MAIL-m ...]  |  norn mail list [--to X] [--open] [--json]'
   + '    [--project project.json | --state D]    (a run speaks as itself: META_RUN_ID; --inject = the PostToolUse hook output, always exit 0;'
-  + ' check with no --run / --to reads your own box: a run its run, else this home\'s controller; a check-in takes controller mail older than policy.mail.checkin_take_min, 15 min)';
-const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'as', 'run', 'urgent!', 'inject!', 'open!', 'json!'];
+  + ' check with no --run / --to reads your own box: a run its run, else this home\'s controller; a check-in takes controller mail older than policy.mail.checkin_take_min, 15 min; wait = the controller session\'s blocking read: delivers as check does, else looks every 10 s (with the tick\'s stale fetch on a synced home) until mail comes or --timeout-min passes - not for a run or a check-in; ack takes several ids, one line each, the exit code of the first refusal)';
+const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'as', 'run', 'timeout-min', 'urgent!', 'inject!', 'open!', 'json!'];
 function mailCmd(argv, env, out, err) {
   const [sub, ...rest] = argv;
   const inject = sub === 'check' && rest.includes('--inject');
@@ -3150,8 +3151,8 @@ function mailCmd(argv, env, out, err) {
       if (i + 1 >= rest.length) throw new RunError(`${a} needs a value`);
       flags[a.slice(2)] = rest[++i];
     }
-    if (!['send', 'check', 'ack', 'list'].includes(sub)) throw new RunError(sub ? `unknown mail subcommand ${sub}` : 'missing subcommand');
-    if (pos.length > (sub === 'ack' ? 1 : 0) || (sub === 'ack' && !pos.length)) throw new RunError(sub === 'ack' ? 'ack needs one MAIL-n' : `unexpected ${pos[0]}`);
+    if (!['send', 'check', 'wait', 'ack', 'list'].includes(sub)) throw new RunError(sub ? `unknown mail subcommand ${sub}` : 'missing subcommand');
+    if (sub === 'ack' ? !pos.length : pos.length) throw new RunError(sub === 'ack' ? 'ack needs a MAIL-n' : `unexpected ${pos[0]}`);
     if (flags.as !== undefined && !['checkin', 'controller'].includes(flags.as)) throw new RunError('--as must be checkin | controller');
     const { state, project } = where(flags, env);
     const by = mailRole(state, env, flags.as);
@@ -3186,7 +3187,8 @@ function mailCmd(argv, env, out, err) {
       if (left.length) out(`left for the controller: ${left.map(l => `${l.id} (${l.age_min} min)`).join(', ')}`);
       return 0;
     }
-    if (sub === 'ack') { ackMail(state, { by, run, id: pos[0] }); out(`${pos[0]} acked`); return 0; }
+    if (sub === 'wait') return mailWait(state, { by, run, to: flags.to, timeoutMin: flags['timeout-min'], project, env, out, err });   // NORN-MAIL-WAIT (mailwait.mjs)
+    if (sub === 'ack') return ackMails(state, { by, run, ids: pos, out, err });
     const rows = listMail(state, { to: flags.to, open: !!flags.open });
     if (flags.json) out(JSON.stringify(rows, null, 1));
     else for (const m of rows) out(`${m.id} ${m.state} ${m.from} -> ${m.to}${m.urgent ? ' URGENT' : ''} ${m.subject}${m.where !== m.state ? `  (${m.where})` : ''}`);

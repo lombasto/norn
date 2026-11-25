@@ -35,6 +35,11 @@ Records rules: {{records}} (the one home; read it once per session).
 - `norn_tick` starts one detached check-in tick; `norn_pause` takes exactly one of: `mode` (checkins = Pause check-ins, queue = Hold the queue, all = Pause everything; a held start waits queued, never refused), `runs` (a safe pause of each: an urgent order to finish the step, commit and hand off; the paused hand-off waits for a resume), `half` (the pick of pause half: show its line to the owner, pause only what they confirm) or `resume` (RUN-n: its resume queued first; all: the pause released and every paused hand-off queued, merges first).
 - `norn_settings` reads or changes Settings through the same validation as the dashboard; use `dry_run` first and show the diff.
 
+## Mail
+- While you wait on runs, keep `norn mail wait` running in the background: it ends with your mail (other homes' too) or after
+  `--timeout-min N`. Act on each mail, then ack them: `norn mail ack MAIL-n [MAIL-m ...]`.
+- Fetch and publish run by themselves (dashboard sync loop, tick, run end, the wait): never `norn sync fetch` / `publish` by hand.
+
 ## Errors
 Tool errors carry the CLI exit code: 1 lock / integrity, 2 invalid input (the message says what), 3 worktree held, 4 cap, 5 lane held
 (a check-in's write on a lane the controller holds; your own acts on a lane hold it 30 min - check-ins skip it - `norn lane release` ends it).
