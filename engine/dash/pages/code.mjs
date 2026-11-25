@@ -22,6 +22,8 @@ const spark = xs => { const lo = Math.min(...xs), hi = Math.max(...xs); return x
 const signed = n => (n > 0 ? `+${int(n)}` : int(n));
 const deltaText = r => (fin(r.pct) ? `${r.pct > 0 ? '+' : ''}${r.pct} %` : `${signed(r.delta)} lines`);
 const fileBtn = f => `<span class="mono small">${esc(f)}</span>`;
+// fan-in the graph has no number for: n/a, its reason as the title (not a graph language, norn-code not built, ...)
+const naFan = r => `<span class="mute"${r.fan_in_why ? ` title="${esc(r.fan_in_why)}"` : ''}>n/a</span>`;
 const base = f => String(f).split('/').at(-1);
 const NA = '<span class="mute">n/a</span>';
 
@@ -34,7 +36,7 @@ function codeNumbers(d) {
 // ---- Files ----
 const COLS = [{ key: 'file', label: 'file', html: r => fileBtn(r.file) }, { key: 'lines', label: 'lines', num: true, html: r => int(r.lines) },
   { key: 'growth', label: '26 w', num: true, html: r => `<span class="mono cspark" aria-hidden="true">${spark(r.growth)}</span> ${esc(deltaText(r))}` },
-  { key: 'churn', label: 'churn 90 d', num: true, html: r => int(r.churn_90d) }, { key: 'fan_in', label: 'fan-in', num: true, html: r => (fin(r.fan_in) ? int(r.fan_in) : '<span class="mute">n/a</span>') },
+  { key: 'churn', label: 'churn 90 d', num: true, html: r => int(r.churn_90d) }, { key: 'fan_in', label: 'fan-in', num: true, html: r => (fin(r.fan_in) ? int(r.fan_in) : naFan(r)) },
   { key: 'importance', label: 'importance', num: true, html: r => int(r.importance) },
   { key: 'fixes', label: 'fixes 365 d', num: true, html: r => (fin(r.fixes_365d) ? int(r.fixes_365d) : NA) }, { key: 'fix_first', label: 'fix first', num: true, html: r => (fin(r.fix_first) ? int(r.fix_first) : NA) }];
 const fixRank = x => (!x ? ' (not built yet: `norn code history`)' : x.status === 'measured' ? '' : ` (n/a: ${esc(x.reason)})`);
@@ -56,7 +58,7 @@ function codeFile(d) {
   const f = d.file, s = d.source, x = '<button class="ghost cclose" data-act="code-file-close" aria-label="Close" title="Close (Esc)">&times;</button>';
   const shell = (head, body) => `<aside id="code-file" class="drawer cfile" aria-label="File detail"><div class="dh"><div class="cfhead">${head}</div><span class="spacer"></span>${x}</div>${body}</aside>`;
   if (!f) return shell(`<b class="small mono">${esc(d.file_id)}</b>`, '<p class="small mute">not in the index (new, removed, or the index is older than it)</p>');
-  const facts = `<div class="small">${esc(f.lang)} · born ${esc(f.born ?? '-')} · ${int(f.commits_90d)} commits and ${int(f.churn_90d)} lines churned in 90 days${fin(f.rel_churn) ? ` (${f.rel_churn} per line)` : ''} · fan-in ${fin(f.fan_in) ? int(f.fan_in) : 'n/a'} · importance ${int(f.importance)} · fix first ${fin(f.fix_first) ? int(f.fix_first) : 'n/a'}</div>`;
+  const facts = `<div class="small">${esc(f.lang)} · born ${esc(f.born ?? '-')} · ${int(f.commits_90d)} commits and ${int(f.churn_90d)} lines churned in 90 days${fin(f.rel_churn) ? ` (${f.rel_churn} per line)` : ''} · fan-in ${fin(f.fan_in) ? int(f.fan_in) : naFan(f)} · importance ${int(f.importance)} · fix first ${fin(f.fix_first) ? int(f.fix_first) : 'n/a'}</div>`;
   const chart = timeChart([{ key: 'lines', label: 'lines', points: f.growth.map((y, i) => ({ x: f.days[i], y })) }], { days: f.days, fmt: int, unit: 'lines', id: 'code-file-growth', title: 'lines per week' });
   const together = !f.signals ? '<p class="small mute" id="code-file-partners">not built yet (`norn code history` writes the signals)</p>'
     : f.partners.length ? `<ul class="tlist" id="code-file-partners">${f.partners.map(p => `<li><span class="mono small">${esc(p.file)}</span> <span class="small mute">${int(p.shared)} shared landings · ${Math.round(100 * p.share)} % of this file's · it has ${int(p.landings)}</span></li>`).join('')}</ul>`

@@ -1,11 +1,11 @@
-// NORN-DASH-1123 item 8 (SPEC 8): Slop > Rules' Linters section as data. Per tool of TOOLS (tools.mjs): its pinned version and lock hash
-// (tools/<set>/package.json + package-lock.json, the hash toolHome installs under), the lint rules (kind: lint) that run it, their ESLint
-// rules by level (levels + shadow_rules; '*' = every other rule), the open findings of those rules (rule <id> or <id>/<sub>) and the
+// NORN-DASH-1123 item 8 (SPEC 8): Slop > Rules' Linters section as data. Per pinned tool - TOOLS and SCANNERS (tools.mjs) - its version and
+// lock hash (tools/<set>/package.json + package-lock.json, or a scanner's manifest.json + lock.json: the hash toolHome / binHome install
+// under), the lint rules (kind: lint) that run it (a scanner: the rules whose scan names it), their tool rules by level (levels + shadow_rules; '*' = every other rule), the open findings of those rules (rule <id> or <id>/<sub>) and the
 // could-not-run findings with their why. Built from what the code already holds: nothing new is stored. Node built-ins only.
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { TOOLS } from './tools.mjs';
+import { TOOLS, SCANNERS } from './tools.mjs';
 import { loadRules } from './check.mjs';
 import { readText } from '../fsnap.mjs';
 
@@ -15,20 +15,23 @@ const LEVELS = ['BLOCK', 'WARN', 'shadow'];
 const json = f => { try { return JSON.parse(readText(f) ?? 'null'); } catch { return null; } };
 const setFile = (t, f) => path.join(TOOL_SETS, t.set, f);
 /** the files lintersView reads (each tool set's package.json + package-lock.json): the dash primes them on fs.promises (META-DASH-ASYNC R1) */
-export const lintersFiles = () => Object.values(TOOLS).flatMap(t => [setFile(t, 'package.json'), setFile(t, 'package-lock.json')]);
+export const lintersFiles = () => pinned().flatMap(p => [p.manifest, p.lock]);
+// every pinned tool: the npm tool sets (version in package.json) and the scanners (RM-a-69: manifest.json + lock.json, a binary per OS)
+const pinned = () => [...Object.entries(TOOLS).map(([tool, t]) => ({ tool, set: t.set, manifest: setFile(t, 'package.json'), lock: setFile(t, 'package-lock.json'), version: m => m?.dependencies?.[tool], uses: r => r.tool === tool })),
+  ...Object.entries(SCANNERS).map(([tool, t]) => ({ tool, set: t.set, manifest: setFile(t, 'manifest.json'), lock: setFile(t, 'lock.json'), version: m => m?.version, uses: r => r.scan === tool }))];
 // '*' (every other rule) last, the named rules by name
 const order = xs => [...new Set(xs)].sort((a, b) => (a === '*') - (b === '*') || a.localeCompare(b));
 
 /** lintersView(guard rows, { rules }) -> { tools: [{ tool, set, version, lock, rules: [id], levels: { BLOCK, WARN, shadow }, open: { n, by: { sub: n }, ids }, could_not_run: [{ id, rule, why, branch }] }] } */
 export function lintersView(rows = [], { rules = loadRules() } = {}) {
-  const tools = Object.entries(TOOLS).map(([tool, t]) => {
-    const mine = rules.filter(r => r.kind === 'lint' && r.tool === tool), ids = mine.map(r => r.id);
-    const lock = readText(setFile(t, 'package-lock.json'));
+  const tools = pinned().map(({ tool, set, manifest, lock: lockFile, version, uses }) => {
+    const mine = rules.filter(r => r.kind === 'lint' && uses(r)), ids = mine.map(r => r.id);
+    const lock = readText(lockFile);
     const levels = Object.fromEntries(LEVELS.map(l => [l, order(mine.flatMap(r => (l === 'shadow' ? r.shadow_rules || [] : Object.entries(r.levels || {}).filter(([, v]) => v === l).map(([k]) => k))))]));
     const ofTool = rows.filter(r => r.rule && ids.some(id => r.rule === id || r.rule.startsWith(id + '/')));
     const cnr = ofTool.filter(r => String(r.msg ?? '').startsWith(CNR)), open = ofTool.filter(r => !cnr.includes(r)), by = {};
     for (const r of open) { const sub = r.rule.split('/').slice(1).join('/') || r.rule; by[sub] = (by[sub] || 0) + 1; }
-    return { tool, set: t.set, version: json(setFile(t, 'package.json'))?.dependencies?.[tool] ?? null,
+    return { tool, set, version: version(json(manifest)) ?? null,
       lock: lock === null ? null : crypto.createHash('sha256').update(lock).digest('hex').slice(0, 12), rules: ids, levels,
       open: { n: open.length, by, ids: open.map(r => r.id) }, could_not_run: cnr.map(r => ({ id: r.id, rule: r.rule, why: r.msg.slice(CNR.length), branch: r.branch ?? null })) };
   });

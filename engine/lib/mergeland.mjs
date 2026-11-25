@@ -5,7 +5,8 @@
 // Repo = the owner/name of the remote's URL, base = project deliverables.main, title = the deliverable's `delivers` line (the lane
 // brief's heading), else the branch: project data, nothing chosen here. RM-44 D1: a branch whose pushed head has open slop BLOCK
 // findings (its stored check, or the check run now) gets no PR; RM-44 B: an opened PR's body carries that check's WARN list, and
-// SloppaChoppa 2 S4 (SPEC 4.1 a) the branch's size line (net lines by area from its merge base with main, tests apart).
+// SloppaChoppa 2 S4 (SPEC 4.1 a) the branch's size line (net lines by area from its merge base with main, tests apart), and RM-a-68 its
+// one-line risk rank (coderisk.mjs: where it stands against the last 100 landings).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,8 @@ import { slopOn } from './policy.mjs';
 import { doorCheck, doorWhy, doorWarns } from './slop/door.mjs';
 import { noteMqWhy } from './mqwhy.mjs';
 import { sizeOfNumstat, sizeLine } from './slop/measure.mjs';
+import { codeRisk } from './coderisk.mjs';
+import { subdirOf } from './monorepo.mjs';
 
 export const fwd = p => String(p || '').replace(/\\/g, '/');
 export const s7 = s => String(s || '').slice(0, 7);
@@ -39,11 +42,12 @@ export const ghSlug = url => (String(url || '').trim().match(/github\.com[:/]+([
 
 /**
  * Open (or reuse) the PR of each lane branch of the tested merge in wt. o: { repo, wt, branches, main, remote, stateDir, run, git, gh,
- * door ((branch, tip) -> the slop door's check of that head (doorCheck); door null = SloppaChoppa is off) }.
+ * door ((branch, tip) -> the slop door's check of that head (doorCheck); door null = SloppaChoppa is off), riskDir (the project's folder in
+ * wt, where the risk rank reads git: its paths are the signals'; default wt) }.
  * Returns [{ branch, status: opened | open | refused, url?, number?, ahead?, why, dlv? }].
  */
 export function openPrs(o) {
-  const { repo, wt, branches, main = 'main', remote = 'origin', stateDir = null, run = null, git = makeGit(), gh = makeGh(), door = null } = o;
+  const { repo, wt, branches, main = 'main', remote = 'origin', stateDir = null, run = null, git = makeGit(), gh = makeGh(), door = null, riskDir = wt } = o;
   const all = why => branches.map(branch => ({ branch, status: 'refused', why }));
   if (!branches?.length) return [{ branch: '', status: 'refused', why: 'no lane branch named (--branch)' }];
   if ((git(wt, ['status', '--porcelain', '--untracked-files=no'], { allowFail: true }) ?? 'x').trim()) return all(`the merge worktree ${fwd(wt)} has uncommitted changes (or is no git worktree): commit the merge first`);
@@ -65,8 +69,9 @@ export function openPrs(o) {
     if (!own.length) return res('refused', `${branch} has no commits past ${main}: nothing to land`);
     if (untested.length === own.length) return res('refused', `the tested merge ${s7(head)} holds none of ${branch}'s commits past ${main}`);
     if (untested.length) return res('refused', `${branch} has ${untested.length} commit(s) the tested merge ${s7(head)} does not hold (${untested.slice(0, 3).map(s7).join(', ')}${untested.length > 3 ? ', ...' : ''}): test them in a new MERGE run`);
-    let slop = null;   // the PR body's SloppaChoppa line(s): the size line, the stored check's WARN list
-    if (door) { let why; try { const d = door(branch, tip); why = doorWhy(d); slop = [sizeLine(sizeOfNumstat(git(wt, ['diff', '--numstat', '-z', '-M', `refs/remotes/${remote}/${main}...${tip}`]))), doorWarns(d)].join('\n\n'); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
+    let slop = null;   // the PR body's SloppaChoppa line(s): the size line, the risk rank (with the project's state: its signals), the stored check's WARN list
+    const risk = () => { if (!stateDir) return ''; try { return `Risk rank: ${codeRisk({ dir: riskDir, state: stateDir, base: `refs/remotes/${remote}/${main}`, head: tip }).line}.`; } catch (e) { return `Risk rank: n/a (${String(e.stderr || e.message).trim().split(/\r?\n/)[0]}).`; } };
+    if (door) { let why; try { const d = door(branch, tip); why = doorWhy(d); slop = [sizeLine(sizeOfNumstat(git(wt, ['diff', '--numstat', '-z', '-M', `refs/remotes/${remote}/${main}...${tip}`]))), risk(), doorWarns(d)].filter(Boolean).join('\n\n'); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
     const ahead = Number(git(wt, ['rev-list', '--count', `${head}..${tip}`], { allowFail: true }) || 0);   // merges of main only (the checks above)
     const dlv = dlvs.find(d => sameRepo(d.data.repo, repo) && d.data.branch === branch) || null;
     const list = gh(['pr', 'list', '--repo', slug, '--head', branch, '--base', main, '--state', 'open', '--json', 'url,number']);
@@ -99,7 +104,7 @@ export const prLine = r => r.status === 'refused' ? `NOT OPENED ${r.branch}: ${r
 export function openProjectPrs(p, { wt, branches, run, git, gh, door: d } = {}) {
   const cfg = mergeConfig(p);
   const door = d !== undefined ? d : slopOn(p.policy) ? (branch, tip) => doorCheck({ state: p.state, repo: cfg.repo, branch, head: tip, projectDir: p.project_dir, main: cfg.main, remote: cfg.remote }) : null;
-  return openPrs({ repo: cfg.repo, wt, branches, main: cfg.main, remote: cfg.remote, stateDir: p.state || null, run, door, ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
+  return openPrs({ repo: cfg.repo, wt, branches, main: cfg.main, remote: cfg.remote, stateDir: p.state || null, run, door, riskDir: path.join(wt, subdirOf(p)), ...(git ? { git } : {}), ...(gh ? { gh } : {}) });
 }
 
 // RM-46 S6a (multi-home SPEC 4.8): a home that is not the merge leader runs no merge queue and no MERGE stage - its tick hands each lane

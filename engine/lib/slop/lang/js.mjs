@@ -1,21 +1,10 @@
-// SloppaChoppa 2 S3 (SPEC 4.5, 7 S3): the JavaScript pack - a module's static import edges (the kind `imports`: layers, cycles),
-// its suppression comments (the kind `suppress`), and ESLint as a lint tool (its findings, its docs, which file is its config).
-import path from 'node:path';
+// SloppaChoppa 2 S3 (SPEC 4.5, 7 S3): the JavaScript pack - its suppression comments (the kind `suppress`), and ESLint as a lint
+// tool (its findings, its docs, which file is its config). The import edges are the code graph's (codegraph.mjs).
 import { parseEslint } from '../tools.mjs';
-import { classify, COMMENT, lineAt, norm } from '../scan.mjs';
+import { classify, COMMENT, lineAt } from '../scan.mjs';
 
 /** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads (slop-langs SPEC 3.4) */
 export const ID = 'js', astLang = () => 'JavaScript';
-
-// static `import ... from 'x'` / `export ... from 'x'` / `import 'x'` (a dynamic import() is no load-order edge)
-const IMPORT_RE = /^\s*(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/gm;
-/** the relative imports of a module that name a file of the tree: [{ to, line, text }] */
-export function imports(file, text, at) {
-  return [...text.matchAll(IMPORT_RE)].flatMap(m => {
-    const to = m[1].startsWith('.') && path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1]));
-    return to && at.has(to) ? [{ to, line: lineAt(text, m.index + m[0].indexOf(m[1])), text: norm(m[0]) }] : [];
-  });
-}
 
 // ESLint's inline switches; the reason is ESLint's own `-- description`
 const SUPPRESS_RE = /(?:\/\/|\/\*)\s*eslint-disable(?:-next-line|-line)?\b(?:(?!--|\*\/).)*(?:--(.*?))?(?:\*\/|$)/gm;
