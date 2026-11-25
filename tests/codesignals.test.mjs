@@ -19,7 +19,7 @@ function world(typed = true) {
   const d = mkTmp('meta-sig-'), repo = path.join(d, 'repo'), state = path.join(d, 'state', 'kestrel');
   let k = 0;
   const w = f => { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), `// ${f}\nexport const v${k++} = 1;\n`); };
-  const g = (args, at) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: { ...process.env, ...(at ? { GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } : {}) } });
+  const g = (args, at) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, env: { ...process.env, ...(at ? { GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } : {}) } });
   const land = (files, msg, at) => { files.forEach(w); g(['add', '-A']); g(['commit', '-q', '-m', typed ? msg : `change ${k}`], at); };
   fs.mkdirSync(repo, { recursive: true }); g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']); g(['config', 'core.autocrlf', 'false']);
   land(['src/a.mjs', 'src/b.mjs', 'src/c.mjs', 'notes.md'], 'fix: ancient', '2025-01-01T10:00:00Z');   // past the 365-day window
