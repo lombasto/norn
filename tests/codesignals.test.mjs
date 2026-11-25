@@ -124,7 +124,9 @@ function checkWorld({ start = '2026-01-05T10:00:00Z', after, typed = true }) {
   after.forEach(([files, day, msg], i) => land(files, msg ?? `fix: later ${i}`, `${day}T10:00:00Z`));
   return repo;
 }
-const sigOf = repo => codeSignals(repo, codeIndex(repo, { now: NOW }), { now: NOW });
+// the past landing's code graph, injected (norn-code is not needed): every file of that tree, no edge, or the edges given
+const graphOfTree = (repo, at, edges = []) => ({ ok: true, prefix: '', files: new Map(execFileSync('git', ['-C', repo, 'ls-tree', '-r', '--name-only', at], { encoding: 'utf8', windowsHide: true }).trim().split('\n').map(p => [p, { lang: 'javascript', excluded: null }])), edges });
+const sigOf = (repo, pastGraph = at => graphOfTree(repo, at)) => codeSignals(repo, codeIndex(repo, { now: NOW }), { now: NOW, pastGraph });
 
 test('rank check: the top 20 as ranked 90 days ago against the fixes since, beside the baseline; both rankings, measured at the old landing', () => {
   const repo = checkWorld({ after: [[[...T.hot.slice(0, 4), 'lib/c50.mjs', 'lib/c51.mjs'], '2026-10-01']] }), s = sigOf(repo), c = s.check;
@@ -158,6 +160,20 @@ test('rank check: too little history, an untyped history or no fix since reads n
   assert.equal(checkLine(null, 'importance'), 'importance check: not built yet (`norn code history` writes it)');
   const few = sigOf(world()[`repo`]).check;
   assert.deepEqual([few.status, few.reason], ['n/a', '5 files 90 days ago: the top 20 is every file']);
+});
+
+test('rank check: the past importance ranks from the code graph AT the ranked landing; that graph not ok: importance n/a with its reason, fix-first still measured', () => {
+  const repo = checkWorld({ after: [[[...T.hot.slice(0, 4), 'lib/c50.mjs', 'lib/c51.mjs'], '2026-10-01']] }), asked = [];
+  const edges = T.cold.slice(0, 40).map(f => ({ from: f, to: 'lib/c50.mjs', kind: 'import', how: 'exact' }));   // c50: imported by 40 files then
+  const c = sigOf(repo, at => { asked.push(at); return graphOfTree(repo, at, edges); }).check;
+  assert.deepEqual(asked.map(x => x.slice(0, 12)), [c.sha], 'the graph of the ranked landing, not of HEAD');
+  assert.equal(c.importance.status, 'measured');
+  assert.equal(c.importance.top.find(x => x.file === 'lib/c50.mjs')?.fixed, true, "c50's past fan-in ranks it into the top");
+  assert.equal(c.importance.hit, 5);
+  const no = sigOf(repo, () => ({ ok: false, why: 'norn-code is not built (x)' })).check;
+  assert.deepEqual([no.status, no.fix_first.status, no.fix_first.hit], ['measured', 'measured', 4], 'fix-first does not depend on the graph');
+  assert.deepEqual(no.importance, { status: 'n/a', reason: `no code graph at ${no.sha}: norn-code is not built (x)` }, 'never ranked from churn alone');
+  assert.equal(checkLine(no, 'importance'), `importance check: n/a (no code graph at ${no.sha}: norn-code is not built (x))`);
 });
 
 test('rank check in the daily report: rankLines reads the stored check, renderDaily prints it under its own heading; none stored says not built', () => {

@@ -79,7 +79,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'card') return cardCmd(f, w.state, dir, { out, err, now });
   let ix, sig, graph;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
-  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
+  try { graph = graphAt({ state: w.state, repo: dir }); ix = codeIndex(dir, { now: now ?? Date.now(), graph }); sig = codeSignals(dir, ix, { now: now ?? Date.now(), state: w.state }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
   const gm = drawGraphMap({ state: w.state, graph });   // the import-graph map from the same graph (n/a stored as n/a)
   writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks

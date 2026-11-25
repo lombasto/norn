@@ -6,14 +6,16 @@
 // touched. A history whose commits mostly carry no conventional type reads n/a with the reason, never a guess. fix_first = the Borda count
 // over churn_90d, fan_in and fixes in the window (the same rank method as codeindex.mjs importance), scaled 0-100.
 // The rank check (RM-a-70): do the rankings predict anything? Both are re-ranked as they were check_days ago (that day's landing: its tree
-// and its history only, through codeIndex at that rev) and their top check_top files are scored against the fix landings since, beside the
-// share of all files that got one (the baseline); a ranking at or under it says so. Too little history, an untyped one: n/a with the reason.
+// and its history only, through codeIndex at that rev, its fan_in from the code graph AT that rev: codegraph.mjs graphAt) and their top
+// check_top files are scored against the fix landings since, beside the share of all files that got one (the baseline); a ranking at or
+// under it says so. Too little history, an untyped one: n/a with the reason; no graph at that rev: importance n/a (never churn alone).
 // Every threshold is in SIGNAL_LIMITS. Stored in <state>/code/signals.json, written by `norn code history`; readSignals is THE reader.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { atomicWrite } from './policy.mjs';
 import { borda, codeIndex } from './codeindex.mjs';
+import { graphAt } from './codegraph.mjs';
 
 /** every window and threshold of the signals (docs/code-signals.md lists each) */
 export const SIGNAL_LIMITS = Object.freeze({
@@ -91,10 +93,11 @@ const partnersOf = (pair, n, f) => { const mine = n.get(f) ?? 0, L = SIGNAL_LIMI
 const typedOf = lands => { const own = lands.flatMap(l => l.intro.filter(c => c.p.length < 2)), typed = own.filter(c => typeOf(c.s)).length; return { own, typed, ok: own.length > 0 && typed / own.length >= SIGNAL_LIMITS.typed_min_share }; };
 const typedWhy = (typed, n, span) => (n ? `${typed} of ${n} commits in ${span} carry a conventional-commit type (under ${100 * SIGNAL_LIMITS.typed_min_share} %)` : `no commit in ${span}`);
 
-/** dir: the indexed folder; ix: codeIndex's answer (its files, churn, fan_in, importance) -> the signals (docs/code-signals.md), with the rank check */
-export function codeSignals(dir, ix, { now = Date.now() } = {}) {
+/** dir: the indexed folder; ix: codeIndex's answer (its files, churn, fan_in, importance); state: the code graph store's (graphAt's);
+ *  pastGraph(rev): the code graph at the rank check's landing (default graphAt at it) -> the signals (docs/code-signals.md), with the rank check */
+export function codeSignals(dir, ix, { now = Date.now(), state = null, pastGraph = at => graphAt({ state, repo: dir, at }) } = {}) {
   const C = commits(dir), head = git(dir, ['rev-parse', 'HEAD']).toString().trim();
-  return { ...signalsAt(C, head, ix, now), check: rankCheck(dir, C, head, now) };
+  return { ...signalsAt(C, head, ix, now), check: rankCheck(dir, C, head, now, pastGraph) };
 }
 /** the signals of the landing tip as at now (ix: codeIndex at that landing) */
 function signalsAt(C, tip, ix, now) {
@@ -114,9 +117,9 @@ function signalsAt(C, tip, ix, now) {
 
 // ---- the rank check ----
 const RANKS = { fix_first: { label: 'fix-first', order: (a, b) => b.fix_first - a.fix_first || b.importance - a.importance }, importance: { label: 'importance', order: (a, b) => b.importance - a.importance || b.churn_90d - a.churn_90d } };
-/** C, head: the commits and HEAD; now -> { status: 'measured', basis, as_of, days, sha (the landing ranked), files (then), fixed (of them, fixed since),
+/** C, head: the commits and HEAD; now; pastGraph(rev) -> { status: 'measured', basis, as_of, days, sha (the landing ranked), files (then), fixed (of them, fixed since),
  *  fix_first | importance: { status: 'measured', top: [{ file, rank, fixed }], hit } | { status: 'n/a', reason } } | { status: 'n/a', reason, ... } */
-function rankCheck(dir, C, head, now) {
+function rankCheck(dir, C, head, now, pastGraph) {
   const L = SIGNAL_LIMITS, then = now - L.check_days * DAY, span = `the last ${L.check_days} days`, base = { basis: 'measured', as_of: new Date(then).toISOString().slice(0, 10), days: L.check_days };
   const na = (reason, o = {}) => ({ status: 'n/a', reason, ...base, ...o });
   let born = Infinity; for (const c of C.values()) born = Math.min(born, c.t);
@@ -125,13 +128,14 @@ function rankCheck(dir, C, head, now) {
   if (!C.has(tip)) return na(`no landing on or before ${new Date(then).toISOString().slice(0, 10)}`);
   const since = landingsOf(C, head, then, now), ty = typedOf(since), o = { sha: tip.slice(0, 12) };
   if (!ty.ok) return na(typedWhy(ty.typed, ty.own.length, span), o);
-  const ix = codeIndex(dir, { now: then, rev: tip }), old = signalsAt(C, tip, ix, then), K = new Set(ix.files.map(x => x.file)), fixed = new Set();
+  const graph = pastGraph(tip), ix = codeIndex(dir, { graph, now: then, rev: tip }), old = signalsAt(C, tip, ix, then), K = new Set(ix.files.map(x => x.file)), fixed = new Set();
   for (const l of since) for (const f of fixesOn(l, K).keys()) fixed.add(f);
   Object.assign(o, { files: K.size, fixed: fixed.size });
   if (K.size <= L.check_top) return na(`${K.size} files ${L.check_days} days ago: the top ${L.check_top} is every file`, o);
   if (!fixed.size) return na(`no file got a fix in ${span}: nothing to predict`, o);
   const rows = Object.entries(old.files).map(([file, x]) => ({ file, ...x })), rank = k => {
     if (k === 'fix_first' && old.fixes.status !== 'measured') return { status: 'n/a', reason: `${L.check_days} days ago: ${old.fixes.reason}` };
+    if (k === 'importance' && !graph.ok) return { status: 'n/a', reason: `no code graph at ${o.sha}: ${graph.why}` };   // its fan_in half: never churn alone
     const top = [...rows].sort((a, b) => RANKS[k].order(a, b) || (a.file < b.file ? -1 : 1)).slice(0, L.check_top).map(x => ({ file: x.file, rank: x[k], fixed: fixed.has(x.file) }));
     return { status: 'measured', top, hit: top.filter(x => x.fixed).length };
   };
