@@ -231,17 +231,67 @@ The call table (`how`, `CALL_HOWS`), tried in this order per form of call:
 ## Trust
 
 The precision of each `(language, level, how)` class, keyed `<lang>/file/<how>` and `<lang>/call/<how>` in `TRUST` and copied onto
-every `Edge.trust` and `Caller.trust`. Stages S4a (file level) and S4b (calls) measure them against compiler-grade indexers; until
-then every class reads `"unmeasured"`, never a made-up number. Lane refactor-targets reads `Caller.trust`.
+every `Edge.trust` and `Caller.trust`. Stages S4a (file level) and S4b (calls) measure them against each language's toolchain. A
+value is the measured precision (a number in 0..1), `"below bar"` when the class measured under its bar (consumers drop it; whether
+to adopt a precise tool instead is owner question Q3, never automatic), or `"unmeasured"` when no row of the class was graded (never a
+made-up number). Lane refactor-targets reads `Caller.trust`.
 
-| language | exact | probed | config | name | ambiguous |
+### File edges (S4a): `norn-code grade files`
+
+`norn-code grade files [--seed N] [--per-lang N] --graders <norn>/tools/grade --repo D --state S [--at REV]` grades the commit's
+edges and unresolved imports (the files on disk must be that commit's) and writes `<state>/code/grade/<commit>.json`; a number
+without that file is not a result. Per language, a seeded draw of `GRADE_PER_LANG` rows stratified by `how` (equal shares; a small
+stratum whole, its leftover spread over the others; a smaller population graded whole). The graders (tools/grade, pinned like
+tools/lint, installed into Norn's tool cache, never imported by the engine):
+- JavaScript / TypeScript: Node's resolver from the importing file (`import.meta.resolve` for ESM, `createRequire().resolve` for
+  `require`); a TS importer, a `type` import and the TS-only specifiers Node cannot load (extensionless, folder) through
+  `ts.resolveModuleName` of the pinned typescript 6.0.3 (tsconfig / jsconfig options, else Bundler); workspace packages as npm would
+  link them.
+- Python: `importlib.machinery.PathFinder.find_spec`, step by step over the roots norn-code declares for the file, on uv's pinned
+  Python (tools/grade/manifest.json); a stdlib name is outside the repo. A `native` edge (a Rust extension) has no PathFinder truth:
+  n/a, counted.
+- Rust: `rustc --emit=dep-info` per crate target of `cargo metadata --no-deps` (as a library and as its `--test` harness, every
+  feature's cfg on; no build, no build script, no fetch): `mod` / `embed` targets must be in the crate's dep-info; a `use` /
+  `extern crate` target in the dep-info of the crate its path names (`crate` / `self` / `super`: the same crate; a path dependency:
+  that crate's library; membership, not the module within it); `cargo-dep` the dependency's `path`. Host cfg only: a cfg-gated
+  `mod` the host does not compile is n/a.
+
+An edge is right when its target is among the grader's files. A row the grader loads an in-repo file for is a recall unit, hit when
+our edge names that file (an `external` / `unresolved` row there is a miss). Precision per class, recall per class and per language
+(the strata weighted back to the population), each with its Wilson 95 % interval. Dynamic imports are counted, not graded. Bars
+(SPEC 5): precision >= 99 % per class, recall >= 98 % per language, on the point estimate.
+
+Measured 2026-11-25 (seed 1, 400 rows per language). Norn @ 67f997cb (grade file `67f997cb...json` in Norn's state; its tree holds
+the fixtures, so TypeScript and Python there are fixture rows); prism (a private project) @ 4c3b5e24 (a `git archive` copy, grade file 7e39ea91...json):
+
+| class | sample | graded | precision [95 %] | recall [95 %] | trust |
 |---|---|---|---|---|---|
-| javascript | unmeasured | unmeasured | unmeasured | unmeasured | unmeasured |
-| typescript | unmeasured | unmeasured | unmeasured | unmeasured | unmeasured |
-| python | unmeasured | unmeasured | unmeasured | unmeasured | unmeasured |
-| rust | unmeasured | unmeasured | unmeasured | unmeasured | unmeasured |
+| javascript/exact | Norn | 196 of 2,733 | 100 % [98.1, 100] | 100 % | 1 |
+| javascript/probed | Norn | 2 of 2 | 100 % [34.2, 100] | 100 % | 1 |
+| javascript/config | Norn | 5 of 5 | 100 % [56.6, 100] | 100 % | 1 |
+| javascript/ambiguous | Norn | 1 of 1 | 100 % [20.7, 100] | 100 % | 1 |
+| javascript/external | Norn | 195 of 1,948 | - | 0 missed | - |
+| javascript (language) | Norn | 204 edges, 109 dynamic | 100 % [98.2, 100] | 100 % [98.2, 100] | |
+| typescript/probed | Norn (fixture) | 2 of 2 | 100 % [34.2, 100] | 100 % | 1 |
+| python/exact | prism | 94 of 1,116 | 100 % [96.1, 100] | 100 % | 1 |
+| python/probed | prism | 94 of 9,908 | 100 % [96.1, 100] | 100 % | 1 |
+| python/ambiguous | Norn (fixture) | 1 of 1 | 100 % [20.7, 100] | 100 % | 1 |
+| python/config, python/name | prism | 0 (12 + 93 sampled `native`: n/a) | - | - | unmeasured |
+| python/external | prism | 94 of 7,574 | - | 0 missed | - |
+| python (language) | prism | 188 edges | 100 % [98.0, 100] | 100 % [98.0, 100] | |
+| rust/exact | prism | 97 of 1,407 | 100 % [96.2, 100] | 100 % | 1 |
+| rust/probed | prism | 97 of 2,498 | 100 % [96.2, 100] | 100 % | 1 |
+| rust/config | prism | 95 of 950 (1 n/a) | 100 % [96.1, 100] | 100 % | 1 |
+| rust/external | prism | 97 of 2,649 | - | 2 missed | - |
+| rust (language) | prism | 289 edges, 3 dynamic | 100 % [98.7, 100] | 98.9 % [96.9, 99.6] | |
+| rust (Norn's crates, census) | Norn | 50 of 50 edges | 100 % [92.9, 100] | 100 % | |
 
-Call edges (`<lang>/call/<how>`): every language, every how of `CALL_HOWS`: unmeasured.
+The 2 Rust misses: a file under a crate's `tests/support/` naming the crate's own library (`use coreengine::...`) reads `external`.
+No class is below the bar. The fixtures grade 100 % in every class (tests/code-graph-grade.test.mjs).
+
+### Call edges
+
+`<lang>/call/<how>`: every language, every how of `CALL_HOWS`: unmeasured (S4b).
 
 ## Store and freshness
 
@@ -302,6 +352,10 @@ norn-code's, in engine/code-rs/src/limits.rs:
 | `COMMITS_KEPT` | 200 | rows commits.json keeps |
 | `CANDIDATES_MAX` (calls.rs) | 20 | a call site lists at most this many candidates; the rest is counted in `more` |
 | `FOLLOW_MAX` (calls.rs) | 8 | a follow of re-exports / use paths stops after this many hops (unresolved) |
+| `GRADE_PER_LANG` | 400 | `grade files`: rows drawn per language |
+| `GRADE_SEED` | 1 | `grade files`: the seed when none is given (the grade file records the one used) |
+| `FILE_PRECISION_BAR` / `FILE_RECALL_BAR` | 0.99 / 0.98 | the file-edge bars: precision per class, recall per language |
+| `WILSON_Z` | 1.96 | the Wilson interval's z (95 %) |
 
 ## CLI: `norn code graph <verb>`
 
