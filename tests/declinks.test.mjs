@@ -149,3 +149,33 @@ test('--paths on rec add decision / directive: stored as repo-relative paths; an
   assert.deepEqual(last(d.out), ['engine/a.mjs', 'docs/x.md']); assert.deepEqual(last(dir.out), ['docs/x.md']);
   for (const bad of ['/etc/x', 'C:/x', '../x', 'a/../../x']) assert.throws(() => record(W.state, { kind: 'decision', ev: 'create', by: 'controller', data: { lane: 'z', question: 'q', choice: 'c', why: 'w', paths: [bad] } }, { views: false }), /paths/, bad);
 });
+
+test('stale counts only the measured sources (LINKS.stale_sources: stated, runs): a landings link is never stale, never a digest row', () => {
+  const W = world(); W.commit({ 'engine/b.mjs': 'b3\n' }, 'fix: b elsewhere', '07T12:00');
+  const now = ms('08T00:00'), ix = buildLinks({ state: W.state, repo: W.repo, now }), r = byId(ix);
+  assert.deepEqual(LINKS.stale_sources, ['stated', 'runs']);
+  for (const id of [W.ids.landing, W.ids.dir]) { assert.equal(r[id].links[0].source, 'landings'); assert.equal(r[id].links[0].stale, null, id); assert.equal(r[id].stale_at, null, id); }
+  assert.equal(r[W.ids.runs].stale_at, T('06T10:00'), 'a runs link still goes stale');
+  assert.deepEqual(staleRows(ix, now, { window_h: WINDOW_H }).map(x => x.id), [W.ids.stated, W.ids.runs], 'the landings decision changed at 07T12 is no row');
+  assert.deepEqual(whyOf(ix, 'engine/b.mjs', now).rows.map(x => [x.id, x.status]), [[W.ids.dir, 'inferred'], [W.ids.landing, 'inferred']], 'why still lists landings links, as inferred');
+  assert.deepEqual(whyOf(ix, 'engine/a.mjs', now).rows.map(x => x.status), ['stale']);
+  assert.deepEqual(whyOf(ix, 'docs/x.md', now).rows.map(x => [x.id, x.status]), [[W.ids.stated, 'stale']]);
+});
+
+test('an index stored before the stale sources were what they are now is rebuilt, though main and the records did not move', () => {
+  const W = world(), now = ms('08T00:00'); refreshLinks({ state: W.state, repo: W.repo, now });
+  const f = path.join(W.state, 'code', 'declinks.json'), ix = JSON.parse(fs.readFileSync(f, 'utf8')); delete ix.stale_sources; fs.writeFileSync(f, JSON.stringify(ix));
+  assert.equal(refreshLinks({ state: W.state, repo: W.repo, now }).built, true);
+  assert.deepEqual(readLinks(W.state).stale_sources, LINKS.stale_sources);
+});
+
+test('norn code why prints a landings row as inferred, the others as STALE / current; --json carries it as status', async () => {
+  const W = world(), outs = [], errs = [], o = { out: s => outs.push(s), err: s => errs.push(s), where: () => ({ project: null, state: W.state }), now: ms('08T00:00') };
+  assert.equal(await codeCmd(['why', 'engine/b.mjs', '--repo', W.repo], o), 0, errs.join('\n'));
+  const rows = outs.pop().split('\n').slice(1);
+  assert.equal(rows.length, 2); for (const l of rows) assert.match(l, /\blandings \(\w+\)  inferred  /);
+  assert.equal(await codeCmd(['why', 'engine/a.mjs', '--repo', W.repo], o), 0); assert.match(outs.pop(), /\bruns \(RUN-\d+\)  STALE: changed in /);
+  assert.equal(await codeCmd(['why', 'engine/b.mjs', '--repo', W.repo, '--json'], o), 0);
+  assert.deepEqual(JSON.parse(outs.pop()).rows.map(x => x.status), ['inferred', 'inferred']);
+  assert.equal(await codeCmd(['links', '--repo', W.repo], o), 0); assert.match(outs.pop(), /^code links: 4 of 6 records linked \(stated 1, runs 1, landings 2\)/);
+});
