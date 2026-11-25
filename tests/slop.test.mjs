@@ -44,6 +44,8 @@ function fixtureRepo({ base, head }) {
   writeTree(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
   return dir;
 }
+/** a state folder whose stored code signals (<state>/code/signals.json, docs/code-signals.md) hold a fixture's files (K27) */
+const signalsState = files => { const s = mkTmp('meta-slop-state-'); fs.mkdirSync(path.join(s, 'code')); fs.writeFileSync(path.join(s, 'code', 'signals.json'), JSON.stringify({ sha: 'abcdef012345', at: '2026-01-02T00:00:00.000Z', basis: 'measured', files })); return s; };
 const recordedTool = rec => (rule, side) => (rec?.[side] === undefined ? null : typeof rec[side] === 'string' ? rec[side] : JSON.stringify(rec[side]));
 
 // every built-in rule and the synthetic project rules (tests/fixtures/slop-project): the hit has new findings at the rule's level, the near-miss none
@@ -54,7 +56,7 @@ for (const rule of [...loadRules(), ...projectRules]) {
     for (const [which, want] of [['hit', true], ['miss', false]]) {
       const fx = rule.fixture[which];
       const repo = fixtureRepo(fx);
-      const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
+      const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded), state: fx.signals ? signalsState(fx.signals) : null });
       // a lint rule's findings carry their sub-rule's level and id (LJ/no-console); the held ones (not shadow) are what the hit must show
       const level = rule.levels ? 'BLOCK' : rule.level, at = r.findings.filter(f => f.new && f.level === level && !(rule.levels && f.shadow));
       assert.deepEqual(r.ran, [rule.id], `${rule.id} ${which} ran`);
