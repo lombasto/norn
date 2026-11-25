@@ -70,7 +70,7 @@ import { parseLedgerLine } from './ledger.mjs';
 import { ledgerConfig } from '../lib/ledger.mjs';
 import { loopOf, renameHome } from '../lib/sync.mjs';
 import { codeAt } from '../lib/codecli.mjs';
-import { pageTargets } from '../lib/codetargets.mjs';
+import { pageTargets, targetsFile } from '../lib/codetargets.mjs';
 import { graphMapPage } from '../lib/codemapgraph.mjs';
 import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
@@ -1129,7 +1129,7 @@ export function createDashboard(o) {
       top: (last.top || []).map(o => ({ ...o, abs: path.join(home, o.file).replace(/\\/g, '/') })) };
   }
   async function guardOf(p) {
-    await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state), ...lintersFiles()] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
+    await Promise.all([prime({ files: [...testsFiles(p.state), ...slopFiles(p.state), refusalsFile(p.state), targetsFile(p.state), ...lintersFiles()] }), primeRules(p.project_dir)]);   // META-DASH-ASYNC R1: the parts' files on fs.promises
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
     const ig = insForGuard(p), ins = ig.v?.error ? (errors.push(ig.v.error), null) : ig.v, tests = part('tests', () => testsView(p.state), null), advice = await adviceOf(p).catch(e => { errors.push(`models: ${String(e.message).slice(0, 200)}`); return null; });
     // the project's one SloppaChoppa switch: off = no slop rows (his recorded holds stay on disk)
