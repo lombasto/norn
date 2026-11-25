@@ -22,6 +22,7 @@ import { guardRows } from '../engine/lib/guard.mjs';
 import { waitFor } from './helpers/wait.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
 const fwd = p => p.split(path.sep).join('/');
@@ -35,8 +36,11 @@ function repoWith(base = { 'a.txt': 'a\n' }) {
   commit(dir, base, 'base');
   return dir;
 }
-const noTool = rule => (rule.kind === 'command' ? null : '[]');   // K14 has nothing to say in these repos; ESLint finds nothing (an empty JSON list)
+// K14 has nothing to say in these repos; ESLint and ast-grep find nothing (an empty JSON list), the secrets scan nothing (an empty SARIF 2.1.0 log)
+const EMPTY_SARIF = JSON.stringify({ version: '2.1.0', runs: [{ tool: { driver: { name: 'gitleaks' } }, results: [] }] });
+const noTool = rule => (rule.kind === 'command' ? null : rule.tool === 'sarif' ? EMPTY_SARIF : '[]');
 const stateDir = () => mkTmp('meta-slopgate-st-');
+test.before(rustReady);   // K10 reads the code graph: norn-code built, or every full check here holds on K10 "could not run"
 
 test('D5: every check appends one line to checks.jsonl (branch, base, head, rule-set hash, the new findings of every level); holds.json stays the BLOCK view', () => {
   const state = stateDir();
@@ -290,7 +294,8 @@ test('F4 + F5 at the CLI: a broken tool is a BLOCK "could not run" (exit 1); a -
   let r = slopCli(repo, env, '--ci', '--diff', 'main..HEAD', '--state', state);
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /^BLOCK LJ `\*` could not run: /m);
-  assert.match(r.stdout, /; could not run: K11A K19 K2 K21 LJ T3/);
+  assert.match(r.stdout, /^BLOCK LS `\*` could not run: /m);
+  assert.match(r.stdout, /; could not run: K11A K19 K2 K21 LJ LS T3 T4 T5 /);
   assert.deepEqual(slopChecks(state), [], 'a --diff check is not stored: it opens no door');
   r = slopCli(repo, env, '--ci', '--state', state);
   assert.equal(r.status, 1, r.stdout + r.stderr);

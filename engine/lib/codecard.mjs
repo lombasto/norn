@@ -4,6 +4,7 @@
 // A part whose index does not exist reads "not indexed"; nothing is guessed, and no part triggers an index run (graphAt noIndex).
 // The measurement: policy.code.card 'ab' offers the MCP tool to every second worker run (cardGroup by run number); the worker's MCP server
 // marks each run's group (markCard, <state>/code/card/<RUN>.json) and cardReport compares the finished runs of both groups. No model.
+// The same report measures warn-on-edit (codewarn.mjs warnMarks, groups warn / control): `norn code warn --report`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { graphAt, dependents, fans } from './codegraph.mjs';
@@ -94,29 +95,30 @@ export function markCard(state, run, group, now = Date.now()) {
   try { fs.writeFileSync(f, JSON.stringify({ run, group, at: new Date(now).toISOString() }), { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
 }
 const mean = xs => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-/** the finished marked runs per group: tokens per run, distinct files read per run, the done rate -> { ok, why?, min, groups: { card, control } }.
+export const cardMarks = state => (fs.existsSync(markDir(state)) ? fs.readdirSync(markDir(state)).filter(f => f.endsWith('.json')).map(f => readJsonS(path.join(markDir(state), f))).filter(Boolean) : []);
+/** the finished marked runs per group: tokens per run, distinct files read per run, the done rate -> { ok, why?, min, groups: { <test>, control } }.
+ *  marks: [{ run, group }] (default the card's), names: [test group, control group] (default card, control);
  *  usageOf(item) -> { total } (cost.mjs), readsOf(item) -> number | null (the run's transcript Read calls); a run they cannot measure is counted apart */
-export function cardReport({ state, items, projectsDir = defaultProjectsDir(), usageOf = it => usageOfRun(it, { projectsDir }), readsOf = it => readsOfRun(it, projectsDir) }) {
-  const marks = fs.existsSync(markDir(state)) ? fs.readdirSync(markDir(state)).filter(f => f.endsWith('.json')).map(f => readJsonS(path.join(markDir(state), f))).filter(Boolean) : [];
-  const groups = { card: [], control: [] };
+export function cardReport({ state, items, marks = cardMarks(state), names = ['card', 'control'], projectsDir = defaultProjectsDir(), usageOf = it => usageOfRun(it, { projectsDir }), readsOf = it => readsOfRun(it, projectsDir) }) {
+  const groups = Object.fromEntries(names.map(k => [k, []])), [a, b] = names;
   for (const m of marks) { const it = items[m.run]; if (it && ENDED.includes(it.state) && groups[m.group]) groups[m.group].push(it); }
-  const sizes = { card: { runs: groups.card.length }, control: { runs: groups.control.length } }, min = CARD_LIMITS.min_group;
-  if (groups.card.length < min || groups.control.length < min) return { ok: false, why: `too few runs: card ${groups.card.length}, control ${groups.control.length} (${min} each needed)`, min, groups: sizes };
+  const sizes = Object.fromEntries(names.map(k => [k, { runs: groups[k].length }])), min = CARD_LIMITS.min_group;
+  if (groups[a].length < min || groups[b].length < min) return { ok: false, why: `too few runs: ${a} ${groups[a].length}, ${b} ${groups[b].length} (${min} each needed)`, min, groups: sizes };
   const sum = runs => {
     const tok = runs.map(it => usageOf(it)?.total).filter(Number.isFinite), rd = runs.map(readsOf).filter(Number.isFinite);
     return { runs: runs.length, tokens_per_run: mean(tok), tokens_unmeasured: runs.length - tok.length, files_per_run: mean(rd), files_unmeasured: runs.length - rd.length,
       done_rate: runs.filter(it => it.end?.outcome === 'done').length / runs.length };
   };
-  return { ok: true, min, groups: { card: sum(groups.card), control: sum(groups.control) } };
+  return { ok: true, min, groups: Object.fromEntries(names.map(k => [k, sum(groups[k])])) };
 }
 function readsOfRun(it, projectsDir) {
   const t = runTranscript(it, { projectsDir });
   return t ? new Set(transcriptReads(t).filter(e => e[1] === 'read').map(e => e[2])).size : null;
 }
-/** the report in words */
-export function reportLines(r) {
+/** the report in words (what: the measured thing the owner keeps or drops) */
+export function reportLines(r, what = 'the card') {
   if (!r.ok) return [r.why];
   const n = x => (x === null ? 'n/a' : Math.round(x).toLocaleString('en-US')), row = (k, x) => `${k.padEnd(8)} ${String(x.runs).padStart(5)}  ${n(x.tokens_per_run).padStart(14)}  ${(x.files_per_run === null ? 'n/a' : x.files_per_run.toFixed(1)).padStart(10)}  ${(100 * x.done_rate).toFixed(0).padStart(5)} %`
     + (x.tokens_unmeasured || x.files_unmeasured ? `  (unmeasured: tokens ${x.tokens_unmeasured}, files ${x.files_unmeasured})` : '');
-  return ['group     runs  tokens per run  files read   done', row('card', r.groups.card), row('control', r.groups.control), 'measured from the finished runs\' records and transcripts; the owner decides whether the card stays'];
+  return ['group     runs  tokens per run  files read   done', ...Object.entries(r.groups).map(([k, x]) => row(k, x)), `measured from the finished runs' records and transcripts; the owner decides whether ${what} stays`];
 }

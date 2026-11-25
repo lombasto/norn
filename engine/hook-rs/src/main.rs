@@ -2,7 +2,9 @@
 // hook paid ~1 s of start-up plus the norn.mjs import graph on every tool call to answer "nothing to do" almost every time; this
 // answers that case alone and starts Node (`norn mail check --inject`, `norn scope check`) only when Node has something to do.
 //   norn-hook mail  --state S --node N --norn B   PostToolUse: no flag file <S>/mail/flag/<run> = exit 0, no output (Q-b-46:
-//                                                         a mail or a context order for the run raises it, mail.mjs raiseFlag)
+//                                                         a mail or a context order for the run raises it, mail.mjs raiseFlag);
+//                                                         RM-a-67: a first edit of a file in <S>/code/warn.json also gets its line
+//                                                         (codewarn.mjs; read only while that table exists, never through Node)
 //   norn-hook scope --state S --node N --norn B   PreToolUse: the payload on stdin. The calls scope.mjs surely allows (read
 //                                                         from <S>/runs/<run>.scope.json, written at launch) exit 0 here; every
 //                                                         other call goes to `norn scope check` unchanged. This binary never
@@ -124,13 +126,79 @@ fn node(a: &Args, words: &[&str], run: Option<&str>, input: Option<&[u8]>) -> ! 
     exit(ch.wait().ok().and_then(|s| s.code()).unwrap_or(1))
 }
 
-// ---------- mail ----------
+// ---------- mail (+ the warn line) ----------
 fn mail(a: &Args) -> ! {
     let run = the_run();
-    match &run {
-        Some(r) if !Path::new(&a.state).join("mail").join("flag").join(r).exists() => exit(0),
-        _ => node(a, &["mail", "check", "--inject"], run.as_deref(), None),   // a flag, or no run to look it up for (Node says why on stderr)
+    let flag = run.as_ref().map_or(true, |r| Path::new(&a.state).join("mail").join("flag").join(r).exists());   // no run: Node says why on stderr
+    let table = Path::new(&a.state).join("code").join("warn.json");
+    let Some(r) = run.as_deref().filter(|_| table.exists()) else {
+        if flag { node(a, &["mail", "check", "--inject"], run.as_deref(), None) } else { exit(0) }
+    };
+    let mut input = Vec::new();
+    let due = if io::stdin().read_to_end(&mut input).is_ok() { parse(&input).and_then(|p| warn_due(a, r, &p, &table)) } else { None };
+    if !flag {
+        if let Some(d) = due { d.show(&d.line); }
+        exit(0);
     }
+    // the flag is up: Node delivers the mail; a due line goes first in the same additionalContext (one JSON answer per hook call)
+    let mut c = Command::new(&a.node);
+    c.arg(&a.norn).args(["mail", "check", "--inject", "--run", r, "--state", &a.state]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    let o = match c.output() { Ok(o) => o, Err(e) => { eprintln!("norn-hook: cannot start {} ({e})", a.node); exit(1) } };
+    let code = o.status.code().unwrap_or(1);
+    let said = String::from_utf8_lossy(&o.stdout);
+    let ctx = if said.trim().is_empty() { Some(String::new()) } else { parse(said.trim().as_bytes()).and_then(|j| j.get("hookSpecificOutput")?.get("additionalContext")?.str().map(String::from)) };
+    match (due, ctx) {
+        (Some(d), Some(m)) if code == 0 => d.show(&if m.is_empty() { d.line.clone() } else { format!("{}\n\n{m}", d.line) }),
+        _ => { let _ = io::stdout().write_all(&o.stdout); }   // Node's answer as it is (a due line waits for the next edit of its file)
+    }
+    exit(code)
+}
+
+// RM-a-67 (codewarn.mjs): the line of an edited file over a threshold, read from <S>/code/warn.json - once per file per run, recorded in
+// <S>/code/warn/<run>.txt (`<mode> <group>`, then `shown <file>`). The switch policy.code.warn (off | on | ab) is read from the project
+// file whose current policy binds the run (the spec's ctx_from); ab: an even run number sees lines, an odd one is the control group.
+struct Due { line: String, file: String, mark: std::path::PathBuf }
+impl Due {
+    fn show(&self, ctx: &str) {
+        let ok = fs::OpenOptions::new().append(true).open(&self.mark).and_then(|mut f| f.write_all(format!("shown {}\n", self.file).as_bytes())).is_ok();
+        if ok { println!("{{\"hookSpecificOutput\":{{\"hookEventName\":\"PostToolUse\",\"additionalContext\":{}}}}}", jstr(ctx)); }
+    }
+}
+fn jstr(s: &str) -> String {
+    let mut o = String::from("\"");
+    for c in s.chars() { match c { '"' => o.push_str("\\\""), '\\' => o.push_str("\\\\"), '\n' => o.push_str("\\n"), '\r' => o.push_str("\\r"), '\t' => o.push_str("\\t"), c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)), c => o.push(c) } }
+    o.push('"'); o
+}
+fn read_json(p: &Path) -> Option<J> { fs::read(p).ok().and_then(|b| parse(&b)) }
+fn warn_due(a: &Args, run: &str, p: &J, table: &Path) -> Option<Due> {
+    if !matches!(p.get("tool_name")?.str()?, "Edit" | "Write" | "NotebookEdit") { return None; }
+    let i = p.get("tool_input")?;
+    let file = i.get("file_path").and_then(J::str).or_else(|| i.get("notebook_path").and_then(J::str)).filter(|f| !f.is_empty())?;
+    let spec = read_json(&Path::new(&a.state).join("runs").join(format!("{run}.spec.json")))?;
+    let mode = read_json(Path::new(spec.get("ctx_from")?.str()?))?.get("policy")?.get("code")?.get("warn")?.str()?.to_string();
+    if mode != "on" && mode != "ab" { return None; }
+    let n: u64 = run.rsplit('-').next()?.parse().ok()?;
+    let dir = Path::new(&a.state).join("code").join("warn");
+    let mark = dir.join(format!("{run}.txt"));
+    let rec = match fs::read_to_string(&mark) {
+        Ok(t) => t,
+        Err(_) => {   // the run's group, decided once at its first edit (a later switch change keeps it)
+            let head = format!("{mode} {}\n", if mode == "ab" && n % 2 == 1 { "control" } else { "warn" });
+            fs::create_dir_all(&dir).ok()?; fs::write(&mark, &head).ok()?; head
+        }
+    };
+    if rec.lines().next()?.split(' ').nth(1)? != "warn" { return None; }
+    // the edited file relative to the indexed folder: the run's worktree, plus a monorepo project's subdir
+    let wt = spec.get("worktree")?.str()?;
+    let root = match spec.get("subdir").and_then(J::str).filter(|s| !s.is_empty()) { Some(s) => resolve(wt, s)?, None => resolve(wt, ".")? };
+    let abs = resolve(p.get("cwd").and_then(J::str).filter(|x| !x.is_empty()).unwrap_or(wt), file)?;
+    if abs == root || !under(&abs, &root) { return None; }
+    let rel = &abs[root.len() + 1..];
+    let t = read_json(table)?;
+    let Some(J::Obj(files)) = t.get("files") else { return None };
+    let (key, line) = files.iter().find(|(k, _)| fold(k) == rel)?;
+    if rec.lines().skip(1).any(|l| l.strip_prefix("shown ").is_some_and(|f| fold(f) == rel)) { return None; }
+    Some(Due { line: line.str()?.to_string(), file: key.clone(), mark })
 }
 
 // ---------- scope: the calls scope.mjs checkTool + suiteCheck surely allow ----------

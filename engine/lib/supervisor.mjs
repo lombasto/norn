@@ -44,6 +44,7 @@ import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
 import { cutoffOf } from './laneout.mjs';
 import { postRunAsks } from './runasks.mjs';
+import { warnsOf } from './codewarn.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -255,6 +256,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (outcome === 'stopped') data.why = byResult?.why;
   if (nudging) data.nudge = nudging.mail.id;
   if (ctxForced) data.ctx_forced = ctxForced;
+  // RM-a-67: how many warn-on-edit lines norn-hook showed this run (its mark), and its A/B group
+  try { const cw = warnsOf(state, run); if (cw) data.code_warn = { mode: cw.mode, group: cw.group, shown: cw.shown }; } catch (e) { logLine(`warn record not read: ${e.message}`); }
   // RM-37: a HANDOFF after the owner's pause order (to this run, or to the session its nudge resumed) is a paused hand-off: never auto-resumed
   if (outcome === 'handoff') { try { const pz = pauseOf(state, run, spec); if (pz) data.paused = { mail: pz.mail, ...(pz.why ? { why: pz.why } : {}) }; } catch (e) { logLine(`pause order not read: ${e.message}`); } }
   if (signal) data.signal = signal;
