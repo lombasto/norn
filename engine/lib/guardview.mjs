@@ -123,7 +123,10 @@ const DAY = 86400000, dayOf = ms => new Date(ms).toISOString().slice(0, 10);
  * The trend counts, per type and day, the findings open now that were first seen on or before that day: how the open pile grew.
  */
 export function guardView(rows, { rules = null, now = Date.now(), days = 30, slop = true } = {}) {
-  const ranked = rankRows(rows);
+  // owner 11-24: each row carries its batch's oldest first_seen (batch_oldest) - a batch header shows it, past the rows it is capped to
+  const bk = r => r.batch ?? `${r.type}|${r.kind ?? 'drafts'}`, old = new Map();
+  for (const r of rows) if (r.first_seen && (!old.has(bk(r)) || r.first_seen < old.get(bk(r)))) old.set(bk(r), r.first_seen);
+  const ranked = rankRows(rows).map(r => (old.has(bk(r)) ? { ...r, batch_oldest: old.get(bk(r)) } : r));
   // META-BETA-PREP (DIR-52): the project's SloppaChoppa switch off = no code (slop) type in the counts
   const types = GUARD_TYPES.filter(([type]) => slop || type !== 'code').map(([type, label, tab]) => {
     const r = rows.filter(x => x.type === type);

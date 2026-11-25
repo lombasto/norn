@@ -21,7 +21,7 @@ const declinedLine = r => `<div class="small gdecl">${chip('idle', 'declined')} 
 const slopExplain = x => `<details class="sexplain"><summary class="small">what this is, why it matters, what to do</summary><dl class="small">
     <dt>What</dt><dd>${esc(x.what)}</dd><dt>Why</dt><dd>${esc(x.why)}</dd><dt>What to do</dt><dd>${esc(x.fix)}</dd>${x.waiver ? `<dt>If it must stay</dt><dd>only the owner or the controller waives it: <code>${esc(x.waiver)}</code></dd>` : ''}</dl></details>`;
 // owner 11-24: how stale a finding is - its first-seen day and its age in the viewer's local days ("today" on the same day); '' with no
-// first_seen (no state). A batch header gives its oldest row's (guardparts.mjs batchesOf oldest).
+// first_seen (no state). A batch header gives its oldest row's (guardview.mjs batch_oldest).
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 export function ageLine(iso, now = Date.now()) {
   const t = Date.parse(iso ?? '');
@@ -41,7 +41,7 @@ const KIND_HEAD = { ready: 'Ready', drafts: 'To draft', call: 'Your call' };
 function slopBatch(b, labels, open, hit = null) {
   const paths = b.rows.filter(r => r.path).map(r => `${shortPath(r.path)}${r.line ? ':' + r.line : ''}`);
   const all = b.n > b.rows.length ? ` <button class="lnk" data-act="slop-batch" data-batch="${esc(b.key)}">all ${int(b.n)}</button>` : '';
-  return `<li class="sbatch" id="slop-b-${esc(b.key.replace(/[^\w-]/g, '_'))}"><div><b>${esc(b.title)}</b> <span class="mute">× ${int(b.n)}</span> ${chip(G_SEV[b.severity] ?? 'idle', b.severity)}${b.new ? ' ' + chip('needs', `${int(b.new)} new`) : ''}${ageSpan(b.oldest, 'oldest: ')}</div>
+  return `<li class="sbatch" id="slop-b-${esc(b.key.replace(/[^\w-]/g, '_'))}"><div><b>${esc(b.title)}</b> <span class="mute">× ${int(b.n)}</span> ${chip(G_SEV[b.severity] ?? 'idle', b.severity)}${b.new ? ' ' + chip('needs', `${int(b.new)} new`) : ''}${ageSpan(b.rows[0]?.batch_oldest, 'oldest: ')}</div>
     ${open ? '' : `<div class="small mute sbpaths">${esc(paths.join(' · '))}${b.n > paths.length && paths.length ? ` +${int(b.n - paths.length)}` : ''}</div>`}
     ${b.action ? `<div class="small"><i>fix: ${esc(b.action)}</i></div>` : ''}${b.ways ? `<div class="small sbways">${b.ways.map(w => chip('prov', w)).join(' ')}</div>` : ''}
     ${open ? `<ol class="glist">${b.rows.map(r => guardRow(r, labels, r.id === hit)).join('')}</ol>${subMore(b.rows.length, b.n)} <button class="lnk" data-act="slop-batch" data-batch="">close</button>`

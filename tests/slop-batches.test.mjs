@@ -150,7 +150,7 @@ test('every row prints its first-seen day and age (local days), every batch head
   const rows = guardRows({ ins: insView() }).map((r, i) => ({ ...r, first_seen: iso(local(9 - (i % 3), 12)) }));
   const g = { ...guardView(rows), project: 'kestrel', pending: false, slop: true, voice: {}, errors: [] };
   const b = guardPart(g, 'fix').fix.batches.find(x => x.key === 'instr-c16|drafts');
-  assert.equal(b.oldest, iso(local(7, 12)), 'the batch keeps its oldest first_seen, past the rows it shows');
+  assert.ok(b.rows.length < b.n && b.rows.every(r => r.batch_oldest === iso(local(7, 12))), 'every row carries the oldest of its batch first_seen, past the rows it shows');
   const html = renderTab('slop', { ...guardSummary(g), sub: 'fix', limit: 40, ...guardPart(g, 'fix'), parts_loading: false }, { project: 'kestrel' });
   assert.match(html, /class="gage">first seen \d{4}-\d\d-\d\d · (today|\d+ d)</, 'a row prints its age');
   assert.match(html, /class="gage">oldest: first seen \d{4}-\d\d-\d\d · (today|\d+ d)</, 'a batch prints its oldest');
