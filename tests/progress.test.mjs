@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { briefPlan, workInit, onWork, checklist, doneLines, runProgress, alarmWords, testCounts, laneSteps, mergeWork } from '../engine/lib/progress.mjs';
+import { briefPlan, workInit, onWork, checklist, doneLines, runProgress, alarmWords, testCounts, laneSteps, mergeWork, sessionsOf } from '../engine/lib/progress.mjs';
 
 const FX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'progress');
 const read = f => fs.readFileSync(path.join(FX, f), 'utf8');
@@ -194,4 +194,46 @@ test('one long test is not a stall: an open test call reads "running a test for 
   const s = runProgress(r, { runs: { 'RUN-326': r }, brief: FIVE, work: bg, procs: procs.filter(x => x.pid < 200 || x.pid === 400), pid: 100, now: T0 + 40 * 60000 });
   assert.equal(s.pace.state, 'stalled');
   assert.match(s.pace.words, /^stalled: no commit, edit or test change for (30|39) min/);
+});
+
+// issue #153: a check-in is its own piece of work, and no run is stalled for longer than it has existed
+const ended = (id, created, endAt, data, outcome = 'done') => ({ id, kind: 'run', state: 'exited', created, updated: endAt, end: { outcome }, history: [{ ev: 'end', ts: endAt }], data });
+const CK = { kind: 'checkin', lane: 'checkin', stage: undefined, agent: 'checkin' };   // a check-in's lane has no stage
+test('a live check-in 60 s old after 3 ended check-ins (one re-ran a test 6 times, 2 h ago) and an old mail: 1 session, 1 min, not stalled, no repeat or mail reason', () => {
+  const runs = { 'RUN-1': ended('RUN-1', iso(-300), iso(-299), CK), 'RUN-2': ended('RUN-2', iso(-200), iso(-120), CK), 'RUN-3': ended('RUN-3', iso(-60), iso(-59), CK),
+    'RUN-4': run('RUN-4', { created: iso(0), data: CK }) };
+  const old = []; for (let i = 0; i < 6; i++) old.push(call(-200 + i * 10, -195 + i * 10, 'Bash', { command: 'node --test tests/a.test.mjs tests/b.test.mjs' }, 'ℹ pass 3\nℹ fail 0'));
+  const folds = { 'RUN-2': work(old), 'RUN-4': work([]) };
+  const sess = sessionsOf(runs['RUN-4'], runs);
+  assert.deepEqual(sess.map(r => r.id), ['RUN-4'], 'the earlier check-ins are not sessions of this one');
+  const AU = { kind: 'audit', lane: 'audit', stage: 'audit' }, au = { 'RUN-5': ended('RUN-5', iso(-90), iso(-80), AU), 'RUN-6': run('RUN-6', { created: iso(0), data: AU }) };
+  assert.deepEqual(sessionsOf(au['RUN-6'], au).map(r => r.id), ['RUN-6'], 'an audit (a standing lane too) is its own session');
+  const mail = { id: 'MAIL-7', kind: 'mail', created: iso(-150), data: { to: 'lane:checkin', subject: 'Owner: look at the queue' } };
+  const p = runProgress(runs['RUN-4'], { runs, brief: FIVE, mails: [mail], work: mergeWork(sess.map(r => folds[r.id] ?? null)), now: T0 + 60000 });
+  assert.notEqual(p.pace.state, 'stalled');
+  assert.deepEqual([p.pace.sessions, p.pace.handoffs, p.pace.elapsed_min], [1, 0, 1]);
+  assert.equal(p.slow.repeats, null);
+  assert.ok(!p.slow.reasons.some(x => /mail|re-run/.test(x)), p.slow.reasons.join('; '));
+  assert.ok(!p.items.some(x => x.mail), 'a check-in has no brief Scope: a mail adds no item');
+});
+
+test('a live round-2 worker run 2 min old whose round 1 last moved 3 h ago is not stalled; its stall clock starts at its own start', () => {
+  const runs = { 'RUN-1': ended('RUN-1', iso(-240), iso(-170), { kind: 'worker', lane: 'demo', stage: 'S1', agent: 'implementer' }),
+    'RUN-2': run('RUN-2', { created: iso(0), data: { lane: 'demo', stage: 'S1' } }) };
+  const w = work([call(-200, -180, 'Edit', { file_path: '/fx/repo/a.mjs' })]);
+  const p = runProgress(runs['RUN-2'], { runs, brief: FIVE, work: w, now: T0 + 2 * 60000 });
+  assert.notEqual(p.pace.state, 'stalled');
+  assert.equal(p.pace.still_min, null);
+  // still quiet 40 min into its own life: stalled for 40 min (its own age), not 3 h
+  const q = runProgress(runs['RUN-2'], { runs, brief: FIVE, work: w, now: T0 + 40 * 60000 });
+  assert.equal(q.pace.state, 'stalled');
+  assert.equal(q.pace.still_min, 40);
+});
+
+test('a hand-off chain still sums its sessions: 2 ended hand-offs + the live session = 3 sessions, their time summed', () => {
+  const d = { kind: 'worker', lane: 'demo', stage: 'S2', agent: 'implementer' };
+  const runs = { 'RUN-1': ended('RUN-1', iso(-100), iso(-70), d, 'handoff'), 'RUN-2': ended('RUN-2', iso(-70), iso(-50), d, 'handoff'), 'RUN-3': run('RUN-3', { created: iso(0), data: d }) };
+  const p = runProgress(runs['RUN-3'], { runs, brief: FIVE, work: work([call(1, 2, 'Edit', { file_path: '/fx/repo/a.mjs' })]), now: T0 + 10 * 60000 });
+  assert.deepEqual([p.pace.sessions, p.pace.handoffs, p.pace.elapsed_min], [3, 2, 60]);
+  assert.match(p.pace.words, /session 3 \(2 hand-offs\)/);
 });
