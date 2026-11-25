@@ -31,12 +31,15 @@ function branchRepo(head) {
 }
 const read = (dir, f) => fs.readFileSync(path.join(dir, f), 'utf8');
 const open = c => c.result.blocks;
+// the secrets scan (LS, every added line) finds nothing: an empty SARIF 2.1.0 log; the other tools an empty JSON list
+const EMPTY_SARIF = JSON.stringify({ version: '2.1.0', runs: [{ tool: { driver: { name: 'gitleaks' } }, results: [] }] });
+const noTool = r => (r.kind === 'command' ? null : r.tool === 'sarif' ? EMPTY_SARIF : '[]');
 
 test('K1: trailing whitespace and a blank line at the end of an added file are fixed in the worktree; nothing is committed', () => {
   const dir = branchRepo({ 'b.txt': 'one  \ntwo\t\nthree\n\n\n' }), head = git(dir, 'rev-parse', 'HEAD'), rules = loadRules();
-  const c = checkBranch({ repo: dir, rules, tool: () => '[]' });
+  const c = checkBranch({ repo: dir, rules, tool: noTool });
   assert.deepEqual(open(c).map(f => [f.rule, f.line, f.msg]).sort(), [['K1', 1, 'trailing whitespace'], ['K1', 2, 'trailing whitespace'], ['K1', 4, 'new blank line at EOF']]);
-  const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool: () => '[]' });
+  const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool: noTool });
   assert.equal(plan.fixed.length, 3); assert.deepEqual(plan.left, []);
   assert.deepEqual(applyFixes(dir, plan), ['b.txt']);
   assert.equal(read(dir, 'b.txt'), 'one\ntwo\nthree\n');
@@ -51,7 +54,7 @@ test('LJ: an unused import specifier is removed by ESLint\'s own suggestion; an 
     suggestions: [{ messageId: 'removeVar', desc: `Remove unused variable '${name}'.`, fix: { range, text: '' } }] });
   const ia = text.indexOf('a,'), ic = text.indexOf("import { c }"), iu = text.indexOf('u)');
   const report = JSON.stringify([{ filePath: 'm.mjs', messages: [msg('a', 1, [ia, ia + 2]), msg('c', 2, [ic, ic + "import { c } from './y.mjs';".length]), msg('u', 4, [iu, iu + 1])] }]);
-  const tool = (r, side) => (r.kind === 'command' ? null : r.tool === 'eslint' && side === 'head' ? report : '[]');   // recorded ESLint output
+  const tool = (r, side) => (r.kind === 'command' ? null : r.tool === 'eslint' && side === 'head' ? report : noTool(r));   // recorded ESLint output
   const c = checkBranch({ repo: dir, rules, tool });
   assert.deepEqual(open(c).map(f => f.rule + ':' + f.line), ['LJ/no-unused-vars:1', 'LJ/no-unused-vars:2', 'LJ/no-unused-vars:4']);
   const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool });
@@ -63,9 +66,9 @@ test('LJ: an unused import specifier is removed by ESLint\'s own suggestion; an 
 
 test('a file the worktree changed since HEAD is never edited', () => {
   const dir = branchRepo({ 'b.txt': 'one  \n' }), rules = loadRules();
-  const c = checkBranch({ repo: dir, rules, tool: () => '[]' });
+  const c = checkBranch({ repo: dir, rules, tool: noTool });
   fs.writeFileSync(path.join(dir, 'b.txt'), 'one  \nmine\n');
-  const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool: () => '[]' });
+  const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool: noTool });
   assert.deepEqual(plan.fixed, []); assert.match(plan.left[0].why, /differs from HEAD/);
 });
 
@@ -90,8 +93,8 @@ test('demotion: two reverts in the last ten fixes of a class switch it off, said
   assert.deepEqual(w('c6', 'reverted'), [], 'already off: not said again');
   assert.equal((digestRow(state).line.match(/autofix OFF for K1/g) || []).length, 1);
   assert.equal(slopOutcomes(state).length, 8);
-  const dir = branchRepo({ 'b.txt': 'one  \n' }), rules = loadRules(), c = checkBranch({ repo: dir, rules, tool: () => '[]' });
-  const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool: () => '[]', off: fixOff(state) });
+  const dir = branchRepo({ 'b.txt': 'one  \n' }), rules = loadRules(), c = checkBranch({ repo: dir, rules, tool: noTool });
+  const plan = planFixes({ repo: dir, base: c.base, open: open(c), rules, tool: noTool, off: fixOff(state) });
   assert.deepEqual(plan.left.map(x => x.why), ['autofix off for this class']);
 });
 

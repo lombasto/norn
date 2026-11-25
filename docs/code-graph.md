@@ -25,7 +25,7 @@ and the consumer decides whether it counts. `norn code history` (codeindex.mjs) 
 ## The one reader
 
 ```js
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, callers, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, CALL_HOWS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, defsByHash, references, callers, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, CALL_HOWS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
 const g = graphAt({ state, repo, at: 'HEAD' });   // Graph | { ok: false, why }
 if (!g.ok) return na(g.why);
 dependents(g, 'engine/lib/a.mjs', { depth: 2 });
@@ -45,6 +45,8 @@ carries the `stamp` of the commit it is for.
 | `fans(g, { kinds = FAN_KINDS })` | `Map(file -> { in, out })`: distinct importers and distinct imports per file (self-edges not counted); every file of `g.files` has a row |
 | `excluded(g, file)` | the exclusion reason of `file` (e.g. `"path segment vendor"`), or `null` (a graph file, or a file the graph does not know) |
 | `symbols({ state = null, repo, file, at = 'HEAD', worktree = false })` | `{ stamp, file, defs: Def[] }`: the definitions of `file`, in source order (see "Symbols"); no Graph needed |
+| `symbols({ state = null, repo, files, at = 'HEAD', worktree = false })` | `{ stamp, files: { [file]: { defs: Def[] } | { ok: false, why } } }`: the same for many files in ONE norn-code run; a file that has no symbols to give (unknown, excluded, not a graph language) is its own `{ ok: false, why }` row, the others still answered; `file` and `files` together, or an empty `files`, is `{ ok: false }` |
+| `defsByHash({ state = null, repo, hashes, at = 'HEAD', worktree = false })` | `{ stamp, defs: { [hash]: Def[] }, truncated }`: the definitions of the tree's first-party sources (a graph language, not excluded) whose `hash` is one asked, in ONE norn-code run; every asked hash is a key (`[]` when no definition has it); each list in file, then source order, capped at `LIMITS.rows` (`truncated`: the cut ones over all hashes) |
 | `references({ state = null, repo, name, at = 'HEAD', worktree = false })` | `{ stamp, name, defs: Def[], rows: Ref[], truncated }`: the definitions named `name` and every other occurrence of the identifier; a name no definition has is `{ ok: false }` |
 | `callers({ state = null, repo, symbol, depth = 1, at = 'HEAD', worktree = false })` | `{ stamp, symbol: Def, rows: Caller[], truncated }`: every call site whose candidates hold the definition `symbol` (a Def id, or `<file>:<name>` when the file has one definition of that name), and with `depth` > 1 the callers of each calling definition in turn (see "Call edges") |
 | `graphStatus({ state = null, repo })` | `{ built, binary, why?, store_schema, store, head, indexed }` or `{ ok: false, why }` (see "CLI") |
@@ -159,7 +161,7 @@ The git-tracked blobs at the commit, minus (and each listed in `files` with `exc
 
 ## Symbols
 
-`symbols()` and `references()` (and `norn-code query symbols | refs`) answer from the blob facts and the tree's name index; they
+`symbols()`, `defsByHash()` and `references()` (and `norn-code query symbols | hash | refs`) answer from the blob facts and the tree's name index; they
 index the asked commit first when the store lacks it, like `graphAt`, and take `at` / `worktree` the same way (no `noIndex`).
 
 ```
@@ -188,7 +190,17 @@ Ref  { file, line, col, name, def_ids?, how? }
   any other nested definition false.
 - **hash** (lane slop-langs reads it for K9, copied helpers, with `line..end_line` as the span): FNV-1a 64 over the definition
   node's leaf tokens, comments and whitespace left out, the definition's own name read as `$`. Two definitions with the same body
-  under different names (and different comments or layout) share it; nothing else is needed to find a copy.
+  under different names (and different comments or layout) share it; nothing else is needed to find a copy. `defsByHash()` finds
+  every definition sharing a hash in one run: it reads the blob facts of each first-party source of the tree (no index of its own,
+  so no store schema change; measured S5, below), where a `symbols()` per file paid a process start and a snapshot read each.
+- **Batch reads** (S5, for lane slop-langs' K9 pool): `symbols({ files })` sends the paths on norn-code's stdin
+  (`norn-code query symbols --stdin`, `query hash --stdin` for the hashes, one per line: a list too long for a command line).
+  Measured on a 20-core Windows machine, warm store, one call each (`symbols()` per file before, the new calls after):
+
+  | repo (first-party py / rs / ts files under the K9 root) | before: one `symbols()` per file | `symbols({ files })` | `defsByHash()` (20 hashes) |
+  |---|---|---|---|
+  | Norn @ 9f56fa45 (15 files) | 5.1 s (341 ms a call) | 0.27-0.61 s | 0.46-1.55 s |
+  | a private project (1,981 files) | ~750 s (379 ms a call, 100 timed) | 1.1-2.0 s | 0.71-1.07 s |
 - **References**: through the snapshot's name index (name -> the files whose blobs hold that identifier, kept for every name a
   first-party definition has), every identifier occurrence of `name` in those files, the definitions' own name nodes left out.
   Rows capped at `LIMITS.rows` (`truncated`).
@@ -489,6 +501,8 @@ norn code graph dependents <file> [--depth N] [--kinds K,..]   -> dependents()
 norn code graph cycles     [--within GLOB]... [--kinds K,..]   -> cycles()
 norn code graph reach      <file>... [--forward] [--to GLOB]...  -> reach() (reverse by default: what depends on these)
 norn code graph symbols    <file>                              -> symbols()     text: kind, qual, file:line..end_line, "exported"
+norn code graph symbols    <file> <file>...                    -> symbols({ files })  text: per file its path, then its defs indented (or "<file>  n/a: <why>")
+norn code graph hash       <body hash>...                      -> defsByHash()  text: per hash the hash, then its defs indented ("none")
 norn code graph refs       <name>                              -> references()  text: the defs, then file:line:col [-> id (unique)]
 norn code graph callers    <symbol id | file:name> [--depth N]  -> callers()   text: depth, file:line:col, how [of N: ids], in <caller qual>
 norn code graph status                                         -> graphStatus()
@@ -501,7 +515,8 @@ exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else
 - The store: `--state D`, or the state of `--project P` / the project found from the current folder; with none, the repo's own
   `<git common dir>/norn`. `--repo DIR` (default: the project's folder, else the current folder) picks the repo. File arguments
   are repo-root-relative.
-- `symbols` / `refs` / `callers` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
+- `symbols` / `hash` / `refs` / `callers` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
+- `symbols` with 2+ files exits 0 when some file is n/a: that file's row says why.
 - `index` with `parsed` / `reused` / `ms` of the run it made (0 / null / the read time when already stored).
 - `status`: `{ built, binary, why? (why norn-code is not usable), store_schema, store, head, indexed: [the newest 5 commits.json rows, indexed_at as ISO] }`.
 

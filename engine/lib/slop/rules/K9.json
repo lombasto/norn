@@ -9,9 +9,12 @@
     "fix": "Import the existing helper and delete the copy. If the two must differ, make the difference visible in the name or the body."
   },
   "roots": ["engine/"],
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.rs"],
+  "shadow_langs": ["py","rs","ts"],
   "exclude": ["**/vendor/**"],
   "min_chars": 20,
+  "min_tokens": 12,
+  "max_lines": 3,
   "groups": [
     [
       "engine/dash/server.mjs",
@@ -27,15 +30,23 @@
   ],
   "fixture": {
     "hit": {
-      "base": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\n"},
-      "head": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\n","engine/lib/b.mjs":"const toSlash = (p) => String(p).replace(/\\\\/g, '/');\nexport const b = q => toSlash(q) + '/';\n"}
+      "base": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\n","engine/lib/pa.py":"def fwd_py(p):\n    return str(p).replace(\"-\", \"_\")\n","engine/lib/ta.ts":"export function magTs(n: number): number { return n > 0 ? n : -n; }\n","engine/lib/a.rs":"pub fn fwd_rs(p: &str) -> String { p.replace('-', \"_\") }\n"},
+      "head": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\n","engine/lib/b.mjs":"const toSlash = (p) => String(p).replace(/\\\\/g, '/');\nexport const b = q => toSlash(q) + '/';\n","engine/lib/pa.py":"def fwd_py(p):\n    return str(p).replace(\"-\", \"_\")\n","engine/lib/ta.ts":"export function magTs(n: number): number { return n > 0 ? n : -n; }\n","engine/lib/a.rs":"pub fn fwd_rs(p: &str) -> String { p.replace('-', \"_\") }\n","engine/lib/pb.py":"def to_snake(p):\n    return str(p).replace(\"-\", \"_\")\n","engine/lib/tb.ts":"function absTs(n: number): number { return n > 0 ? n : -n; }\nexport const tb = absTs(1);\n","engine/lib/b.rs":"pub fn to_snake(p: &str) -> String { p.replace('-', \"_\") }\n"}
     },
     "miss": {
-      "base": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const mag = n => n > 0 ? n : -n;\n"},
+      "base": {"engine/lib/a.mjs":"export const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const mag = n => n > 0 ? n : -n;\n","engine/lib/pa.py":"def fwd_py(p):\n    return str(p).replace(\"-\", \"_\")\n\n\ndef long_py(p):\n    q = str(p)\n    q = q.strip()\n    return q.replace(\"-\", \"_\")\n\n\ndef one_py():\n    return 1\n","engine/lib/ta.ts":"export function magTs(n: number): number { return n > 0 ? n : -n; }\n","engine/lib/a.rs":"pub fn fwd_rs(p: &str) -> String { p.replace('-', \"_\") }\n"},
       "head": {
         "engine/lib/a.mjs": "export const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const mag = n => n > 0 ? n : -n;\n",
         "engine/lib/c.mjs": "const fwd = p => String(p).split('\\\\').join('/');\nconst abs = n => n > 0 ? n : -n;\nexport const c = q => fwd(q) + abs(1);\n",
-        "engine/dash/ui.mjs": "const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const ui = q => fwd(q);\n"
+        "engine/dash/ui.mjs": "const fwd = p => String(p).replace(/\\\\/g, '/');\nexport const ui = q => fwd(q);\n",
+        "engine/lib/pa.py": "def fwd_py(p):\n    return str(p).replace(\"-\", \"_\")\n\n\ndef long_py(p):\n    q = str(p)\n    q = q.strip()\n    return q.replace(\"-\", \"_\")\n\n\ndef one_py():\n    return 1\n",
+        "engine/lib/ta.ts": "export function magTs(n: number): number { return n > 0 ? n : -n; }\n",
+        "engine/lib/a.rs": "pub fn fwd_rs(p: &str) -> String { p.replace('-', \"_\") }\n",
+        "engine/lib/pc.py": "def fwd2(p):\n    return str(p).replace(\"_\", \"-\")\n\n\ndef long2(p):\n    q = str(p)\n    q = q.strip()\n    return q.replace(\"-\", \"_\")\n\n\ndef uno():\n    return 1\n",
+        "engine/dash/ui.py": "def fwd_ui(p):\n    return str(p).replace(\"-\", \"_\")\n",
+        "engine/dash/ui.ts": "export function magUi(n: number): number { return n > 0 ? n : -n; }\n",
+        "engine/dash/ui.rs": "pub fn fwd_ui(p: &str) -> String { p.replace('-', \"_\") }\n",
+        "engine/lib/c.rs": "pub fn fwd_c(p: &str) -> String { p.replace('_', \"-\") }\n"
       }
     }
   }

@@ -12,6 +12,8 @@ import { scopeOfLaunch, mailHookOf } from '../engine/lib/runs.mjs';
 import { SETTINGS, sectionOf, withDefaults } from '../engine/lib/policy.mjs';
 import { adapterFor } from '../engine/lib/harness/index.mjs';
 import { guardRows } from '../engine/lib/guardview.mjs';
+import { binOf } from '../engine/lib/rustbin.mjs';
+import { fwd } from '../engine/lib/config.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const git = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
@@ -114,7 +116,7 @@ test('gh: repo edit / visibility / delete are refused; other gh calls pass', () 
 
 test('the claude command of a guarded run: one --settings with the deny rules, the write block, the PreToolUse scope hook beside the mail hook; the NOTES folder is a working directory', () => {
   const w = world(), hook = scopeHookOf({ executor: 'claude', state: w.state });
-  assert.match(hook.command, /\/engine\/hook-rs\/target\/release\/norn-hook(\.exe)?$/);
+  assert.equal(hook.command, fwd(binOf('hook')), 'the store binary of this engine\'s hook sources (rustbin.mjs)');
   assert.deepEqual([hook.type, hook.args[0], hook.args[1], hook.args[3], hook.args[5], hook.timeout], ['command', 'scope', '--state', '--node', '--norn', 30], 'the exec form: no shell');
   assert.match(hook.args[6], /\/engine\/bin\/norn\.mjs$/);
   const base = { ...w.spec, exe: 'claude', executor: 'claude', mode: 'write', model: 'opus', effort: 'medium', session_id: 'S', promptText: 'p', mail_hook: { type: 'command', command: 'MAILHOOK' } };
