@@ -127,3 +127,24 @@ test('tick: a PAUSED tick still tracks the hold, and returns ONE hold notice pas
   fs.unlinkSync(pausedF);
   assert.equal(holdReason(readHold(state).term).resume, true);
 });
+
+// HOME-MAIL S3 (REPORT 3.3): the tick tells the sender once per mail another home has not acked past policy.mail.unacked_alert_min
+test('tick: a mail to home b unacked 31 min gives ONE notice over two ticks, with the reason (b holds it, nobody read it)', async () => {
+  const { tick } = await import('../engine/lib/tick.mjs');
+  const { sendMail } = await import('../engine/lib/mail.mjs');
+  const t = mkTmp('meta-holds-mail-'), state = path.join(t, 'state', 'demo'), wt = path.join(t, 'wt');
+  for (const d of [state, wt]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(state, 'home.json'), JSON.stringify({ id: 'a', bare_home: 'a' }));
+  fs.writeFileSync(path.join(state, 'PAUSED'), 'x\n');
+  const m = sendMail(state, { by: 'controller', to: 'role:controller@b', subject: 'are you there', body: 'x' }), T = Date.parse(m.ts);
+  const seen = ms => { fs.mkdirSync(path.join(state, 'homes', 'b'), { recursive: true });
+    fs.writeFileSync(path.join(state, 'homes', 'b', 'seen.json'), JSON.stringify({ polled_at: new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z'), held: { a: { 'mail.jsonl': m.seq } } })); };
+  const project = { name: 'demo', root: wt, state, ledger: path.join(t, 'progress.md'), policy: {} };
+  const go = min => { seen(T + (min - 1) * 60000); return tick({ project, machine: {}, budget: {}, reason: 'test', dry: true, now: () => new Date(T + min * 60000) }); };
+  assert.equal(go(29).sync_notices, undefined, 'not before 30 min');
+  const [n, ...more] = go(31).sync_notices;
+  assert.deepEqual(more, []);
+  assert.match(n.title, new RegExp(`${m.id} to role:controller@b unacked 31 min`));
+  assert.match(n.body, /b holds it; nobody there has read it/);
+  assert.equal(go(32).sync_notices, undefined, 'once per mail');
+});

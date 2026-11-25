@@ -511,6 +511,8 @@ const list = (v, name, { req = false } = {}) => {
   if (!Array.isArray(v)) fail(`${name} must be a list`);
   if (req && !v.length) fail(`${name} needs at least one entry`);
 };
+// RM-a-58: --paths = the repo paths a DEC / DIR governs (declinks.mjs): relative, forward slashes, never outside the repo
+const repoPaths = v => { list(v, 'paths'); for (const p of v || []) if (typeof p !== 'string' || !p || /^[\\/]|^[A-Za-z]:|\\|(^|\/)\.\.(\/|$)/.test(p)) fail(`paths: ${JSON.stringify(p)} is not a repo-relative path (forward slashes, no .. or drive)`); };
 const oneOf = (v, name, allowed, req = true) => {
   if (v === undefined && !req) return;
   if (!allowed.includes(v)) fail(`${name} must be one of ${allowed.join(' | ')} (got ${JSON.stringify(v)})`);
@@ -607,7 +609,7 @@ function validateData(kind, ev, d, target, st, by, home = null) {
     if (ev === 'create') {
       str(d.lane, 'lane'); str(d.question, 'question'); str(d.choice, 'choice'); str(d.why, 'why');
       if (d.answers !== undefined && kindOfId(d.answers) !== 'question') fail('answers must be a Q-n id');
-      list(d.on_runs, 'on_runs');
+      list(d.on_runs, 'on_runs'); repoPaths(d.paths);
       str(d.owner_words, 'owner_words', { req: false, max: 4000 });   // META-Q-RECONCILE R1
       if (d.not_an_answer !== undefined && d.not_an_answer !== true) fail('not_an_answer must be true');
       if (d.not_an_answer && d.answers) fail('--answers and --not-an-answer exclude each other');
@@ -629,7 +631,7 @@ function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'directive') {
     if (ev === 'create') {
       str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false });
-      list(d.distinct_from, 'distinct_from');   // gap #5: the active DIRs this one was created next to on purpose (--new): no duplicate row
+      list(d.distinct_from, 'distinct_from'); repoPaths(d.paths);   // gap #5: the active DIRs this one was created next to on purpose (--new): no duplicate row
     }
     if (ev === 'done') list(d.refs, 'refs', { req: true });
     if (ev === 'supersede') {

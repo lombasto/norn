@@ -6,7 +6,9 @@
 // overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
 // lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk),
 // homes (RM-46 S1d: a synced dir's refused cross-home writes and copies that did not fold),
-// mail (HOME-MAIL S2: each mail for this home's controller not acked yet, with its age; leaves at the ack).
+// stale_decisions (RM-a-58: decisions whose governed paths changed on main in the window - declinks.mjs's stored index; read only).
+// mail (HOME-MAIL S2: each mail for this home's controller not acked yet, with its age; leaves at the ack),
+// sync (HOME-MAIL S3: a home's heartbeat past the limit, our mail unacked at another home past the limit; leaves when the rule holds).
 import { loadState, loadShared, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS, roleAddr } from './records.mjs';
 import { deliverablesView, deliverableConfig, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { fwd } from './dlvmerge.mjs';
@@ -31,7 +33,9 @@ import { laneRules, lanePolicy, ciFixPlan, laneHooks, laneShippedIn } from './li
 import { readSync } from './claims.mjs';
 import { readCollide } from './intents.mjs';
 import { applyNeed, demotedWhy } from './collide.mjs';
+import { readLinks, staleRows } from './declinks.mjs';
 import { controllerMail } from './mail.mjs';
+import { homesStatus, alertLimits } from './sync.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -237,9 +241,17 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // each with SloppaChoppa's pick; what Norn handled by itself in the last day, each with its undo; the other homes' `**` claims
   const co = collideRows(stateDir, project?.policy?.collide, now);
   if (co.length) sections.collisions = co;
+  // RM-a-58: the decisions gone stale in the window (a governed path changed on main after them), newest first, capped - from the index
+  // `norn code links` / the tick stored; the decision itself is never changed by this. Only while any.
+  const lx = readLinks(stateDir), sd = lx ? staleRows(lx, now, { window_h: WINDOW_H }) : [];
+  if (sd.length) sections.stale_decisions = sd;
   // HOME-MAIL S2 (REPORT 3.2): the controller's mail waits for a reader - a row per mail until its ack (a check-in takes it past 15 min)
   const ml = controllerMail(stateDir, { now });
   if (ml.length) sections.mail = ml.map(m => ({ ...m, to: roleAddr('controller', stateDir) }));
+  // HOME-MAIL S3 (REPORT 3.3): a broken sync rule - a home's heartbeat past policy.sync.heartbeat_min, our mail unacked there past
+  // policy.mail.unacked_alert_min - is a row while it holds (the tick told the owner once; norn sync status shows every home)
+  const sy = homesStatus(stateDir, { now, limits: alertLimits(project?.policy) }).broken;
+  if (sy.length) sections.sync = sy;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }

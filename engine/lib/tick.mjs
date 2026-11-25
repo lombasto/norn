@@ -22,7 +22,7 @@ import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs'
 import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
-import { syncStep } from './sync.mjs';
+import { syncStep, tickFetch, syncAlerts, alertLimits, lastFetch } from './sync.mjs';
 import { tickMergeq, mqProbe, spawnDetached, mergeqOn } from './mergeq.mjs';
 import { followerPrs, makeGh } from './mergeland.mjs';
 import { tickFix } from './fixer.mjs';
@@ -187,6 +187,16 @@ export function tick(o) {
     // RM-37: the one owner notice of a run asked to pause that has not reached a clean point within policy.pause.clean_min (never killed)
     try { const n = lateNotice(o.project.state, { min: cleanMin(o.project.policy), project: o.project.name, ...(o.now ? { now: o.now().getTime() } : {}) }); if (n) r = { ...r, pause_notice: n }; }
     catch { /* a notice never fails the tick */ }
+    // HOME-MAIL S3 (REPORT 3.3): a home whose own poll is stale (no dashboard loop, issue #189) runs the fetch pass here, before the
+    // publish below carries its new receipt; then the alerts (a home's heartbeat past the limit, our mail unacked there), each told once
+    try {
+      const L = alertLimits(o.project.policy), now = o.now ? o.now().getTime() : Date.now(), ns = [];
+      const fr = o.ledger ? tickFetch(o.ledger, { now, min: L.fetch_min }) : null;
+      if (fr?.error) tickLog(o.project.state, `sync: the tick's fetch failed (the last copies stay): ${fr.error}`);
+      for (const n of fr?.notices || []) ns.push({ title: n.title, body: n.body });   // S2's urgent arrivals, from this fetch
+      ns.push(...syncAlerts(o.project.state, { now, limits: L, ...(o.ledger ? { polledAt: lastFetch(o.ledger) } : {}) }));
+      if (ns.length) r = { ...r, sync_notices: ns };
+    } catch { /* a notice never fails the tick */ }
     return r;
   }
   finally {

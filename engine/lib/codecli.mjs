@@ -3,6 +3,8 @@
 // /api/code: the summary (<= 4 numbers) or one part of the Code tab (files | growth | outliers | file | map), read from that one file.
 // `norn code map [--refresh]` draws the Floorplan map (codemap.mjs); the same hook starts its metered refresh when HEAD moved past it.
 // history also stores the code signals (codesignals.mjs, docs/code-signals.md); `norn code signals` prints them, the Files part joins them.
+// RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
+// prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
 // `norn code suspects` ranks the recent landings against a trace or symptom words (codesuspects.mjs, RM-a-61).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +15,8 @@ import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
 import { codeSignals, writeSignals, readSignals, checkLine } from './codesignals.mjs';
+import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
+import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
@@ -21,10 +25,13 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'tools/floorplan, seeded by docs/architecture.json; --refresh = the tick\'s metered update, skipped over 0.05 % of plan)\n'
   + 'usage: norn code signals <file>.. | --top N [--project P | --state D] [--json]   (signals = <state>/code/signals.json, stored by history: the files '
   + 'that change together with a file, its fix history and the fix-first rank, from git; docs/code-signals.md)\n'
+  + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
+  + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and whether one changed on main since)\n'
+  + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)\n'
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
   + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], suspects: ['trace', 'since', 'top'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
@@ -32,10 +39,12 @@ function parse(verb, argv) {
   for (let i = 0; i < argv.length; i++) {
     if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
+    if (!s && verb === 'why' && f.file === undefined && !argv[i].startsWith('--')) { f.file = argv[i]; continue; }   // why's one operand
     if (!s) throw new Error(`unexpected ${argv[i]}`);
     if (s.endsWith('!')) f[s.slice(0, -1)] = true;
     else { if (i + 1 >= argv.length) throw new Error(`${argv[i]} needs a value`); f[s] = argv[++i]; }
   }
+  if (verb === 'why' && !f.file) throw new Error('why needs a file');
   return f;
 }
 /** o: { out, err, where(flags) -> { project, state }, now } -> exit code */
@@ -47,6 +56,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   const dir = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), t0 = Date.now();
   if (verb === 'map') return mapCmd(f, w.state, dir, { out, err });
   if (verb === 'signals') return signalsCmd(f, w.state, { out, err });
+  if (verb === 'links' || verb === 'why') return linksCmd(verb, f, w, dir, { out, err, now });
   if (verb === 'suspects') return suspectsCmd(f, w.state, dir, { out, err, now });
   let ix, sig;
   try { ix = codeIndex(dir, { now: now ?? Date.now() }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
@@ -54,6 +64,24 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks
   if (f.json) out(JSON.stringify({ files: ix.files.length, lines, sha: ix.sha, ms }));
   else out(`code history: ${ix.files.length} files, ${lines} lines at ${ix.sha} in ${(ms / 1000).toFixed(1)} s -> ${file}; signals: fixes ${sig.fixes.status}, ${sig.landings} landings`);
+  return 0;
+}
+
+/** `norn code links` / `norn code why <file>`: refresh the index when main or the records moved, then its coverage / the file's records */
+function linksCmd(verb, f, w, repo, { out, err, now = Date.now() }) {
+  let r;
+  try { r = refreshLinks({ state: w.state, repo, main: deliverableConfig(w.project || {}).main, now }); } catch (e) { err(`error: code ${verb}: ${String(e.stderr || e.message).trim()} (${repo})`); return 2; }
+  const ix = r.ix, how = 'stated = measured; runs / landings = inferred';
+  if (verb === 'links') {
+    const s = linksSummary(ix);
+    if (f.json) out(JSON.stringify({ ...s, sha: ix.sha, main: ix.main, built: r.built, file: r.file }));
+    else out(`code links: ${s.linked} of ${s.records} records linked (stated ${s.by_source.stated}, runs ${s.by_source.runs}, landings ${s.by_source.landings}), ${s.links} links at ${ix.main} ${ix.sha} (${how}) -> ${r.file}`);
+    return 0;
+  }
+  const y = whyOf(ix, f.file, now);
+  if (f.json) { out(JSON.stringify(y)); return 0; }
+  out([`code why ${y.file}: ${y.matched} records at ${y.sha} (${how})${y.matched > y.rows.length ? `, newest ${y.rows.length} shown` : ''}`,
+    ...y.rows.map(x => `  ${x.id}  ${x.age_d} d  ${x.source}${x.from.length ? ` (${x.from.join(', ')})` : ''}  ${x.stale ? `STALE: changed in ${x.stale.sha} ${x.stale.at}` : 'current'}  ${x.title}`)].join('\n'));
   return 0;
 }
 
@@ -113,7 +141,7 @@ export function tickCode(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) 
   if (!p?.file || !p.root) return null;
   let head;
   try { head = execFileSync('git', ['-C', projectHome(p), 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; /* no git repo: nothing to index */ }
-  const said = [tickHistory(p, state, { metaCmd, spawnFn, now, head }), tickMap(p, state, { metaCmd, spawnFn, now, head })].filter(Boolean);
+  const said = [tickHistory(p, state, { metaCmd, spawnFn, now, head }), tickMap(p, state, { metaCmd, spawnFn, now, head }), tickLinks(p, state, { metaCmd, spawnFn, now })].filter(Boolean);
   return said.length ? said.join('; ') : null;
 }
 function tickHistory(p, state, { metaCmd, spawnFn, now, head }) {
@@ -125,6 +153,20 @@ function tickHistory(p, state, { metaCmd, spawnFn, now, head }) {
   let r = spawnFn ? spawnFn(process.execPath, args) : null;
   if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
   return `code history: started pid ${r?.pid ?? '?'}`;
+}
+
+// RM-a-58: `norn code links` detached when main or the records moved past the stored index (not while one started in the last 10 min;
+// never in a project with no in-force decision or active directive: nothing to link)
+function tickLinks(p, state, { metaCmd, spawnFn, now }) {
+  const lf = linksFresh({ state, repo: projectHome(p), main: deliverableConfig(p).main });
+  if (lf.fresh || !lf.governing || !lf.head) return null;
+  const mark = path.join(state, 'code', 'links.started');
+  try { if (now - Number(fs.readFileSync(mark, 'utf8')) < START_GAP_MS) return null; } catch { /* never started: start it now */ }
+  fs.mkdirSync(path.dirname(mark), { recursive: true }); fs.writeFileSync(mark, String(now));
+  const args = [metaCmd, 'code', 'links', '--project', p.file, '--state', state];
+  let r = spawnFn ? spawnFn(process.execPath, args) : null;
+  if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
+  return `code links: started pid ${r?.pid ?? '?'}`;
 }
 
 // ---- the Code tab's parts ----
