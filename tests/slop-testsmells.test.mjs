@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck } from '../engine/lib/slop/check.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
-const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const put = (dir, files) => { for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); } };
 /** main = base, feat/x = head (a base file absent from head is deleted) */
 function repoOf({ base, head }) {
