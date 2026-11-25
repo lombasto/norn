@@ -3188,7 +3188,7 @@ function mailCmd(argv, env, out, err) {
     }
     if (sub === 'wait') {
       // NORN-MAIL-WAIT: the controller session's blocking read; a run is woken by its hook and a check-in must not block: one line says so
-      if (run || by === 'checkin') { err(`error: norn mail wait is the controller session's: ${run ? `a run (META_RUN_ID=${run}) gets its mail from the hook` : 'a check-in must not block'}; read with norn mail check`); return 2; }
+      if (run || by === 'checkin') { err(`error: norn mail wait is the controller session's: ${run ? `a run gets its mail from the hook (META_RUN_ID=${run})` : 'a check-in must not block'}; read with norn mail check`); return 2; }
       const to = qualify(flags.to ?? 'role:controller', homeOf(state)?.id), ctl = roleAddr('controller', state), min = flags['timeout-min'] === undefined ? null : Number(flags['timeout-min']);
       if (to !== ctl) throw new RunError(`--to: the controller's session reads ${ctl}`);
       if (min !== null && !(flags['timeout-min'].trim() && min >= 0)) throw new RunError('--timeout-min wants minutes (a number >= 0)');

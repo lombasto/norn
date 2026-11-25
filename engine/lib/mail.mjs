@@ -124,7 +124,7 @@ export async function waitMail(state, { by, to, timeoutMin = null, now = Date.no
     if (fetch) await fetch();
     got = take();
   }
-  return got;
+  return [...got];   // the mail only: checkMail's got.left is a check-in's take, not the controller's
 }
 
 export function ackMail(state, { by, run = null, id }) {
