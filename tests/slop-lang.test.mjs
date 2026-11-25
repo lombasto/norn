@@ -1,5 +1,5 @@
-// SloppaChoppa 2 S3 (SPEC 4.5, 7 S3): the language packs - Python and Rust import edges under the kind `imports` (layers and
-// cycles), the suppression rule K25 over the three languages, and Rust's #[cfg(test)] counted as tests in loc.mjs. Synthetic
+// SloppaChoppa 2 S3 (SPEC 4.5, 7 S3): the language packs - K10 (the kind `imports`: layers and cycles) over Python and Rust
+// through the code graph (codegraph.mjs), the suppression rule K25 over the three languages, and Rust's #[cfg(test)] counted as tests in loc.mjs. Synthetic
 // trees only (the repo is public).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck } from '../engine/lib/slop/check.mjs';
-import { packOf } from '../engine/lib/slop/lang/index.mjs';
 import { testRegions } from '../engine/lib/slop/lang/rs.mjs';
 import { snapshot } from '../engine/lib/slop/loc.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -22,28 +21,11 @@ function repoOf(base, head) {
   git(dir, 'checkout', '-q', '-b', 'feat/x'); put(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
   return dir;
 }
-const edges = (file, text, tree) => { const has = new Set(tree); return packOf(file).imports(file, text, { has: f => has.has(f), tree, memo: {} }).map(e => [e.to, e.line, e.order !== false]); };
-
-test('py pack: module-level imports resolve through packages (absolute, relative, submodules); a function-level import or a loose script is no edge', () => {
-  const tree = ['eng/src/core/__init__.py', 'eng/src/core/a.py', 'eng/src/core/sub/__init__.py', 'eng/src/core/sub/b.py', 'games/g/src/game/__init__.py', 'games/g/src/game/world.py', 'scripts/types.py'];
-  const text = 'import core.a\nfrom game import world\nfrom .sub import b\nfrom . import a as aa\nfrom .sub.b import X\nimport types\ndef f():\n    import game.world\n';
-  assert.deepEqual(edges('eng/src/core/x.py', text, tree), [['eng/src/core/a.py', 1, true], ['games/g/src/game/world.py', 2, true], ['eng/src/core/sub/b.py', 3, true], ['eng/src/core/a.py', 4, true], ['eng/src/core/sub/b.py', 5, true]]);
-  assert.deepEqual(edges('eng/src/core/x.py', 'from game import (\n    world,\n    Missing,\n)\n', tree), [['games/g/src/game/world.py', 1, true]], 'a parenthesised name list');
-});
-
-test('rs pack: mod and Cargo path dependencies are edges; use crate:: / super:: are layer-only edges (no load order)', () => {
-  const tree = ['eng/c/Cargo.toml', 'eng/c/src/lib.rs', 'eng/c/src/net.rs', 'eng/c/src/net/wire.rs', 'eng/c/src/util/mod.rs', 'games/g/Cargo.toml'];
-  assert.deepEqual(edges('eng/c/src/lib.rs', 'pub mod net;\nmod util;\nmod inline { }\nuse crate::net::wire::Frame;\nuse std::io;\n', tree),
-    [['eng/c/src/net.rs', 1, true], ['eng/c/src/util/mod.rs', 2, true], ['eng/c/src/net/wire.rs', 4, false]]);
-  assert.deepEqual(edges('eng/c/src/net/wire.rs', 'use super::super::util::Thing;\n', tree), [['eng/c/src/util/mod.rs', 1, false]]);
-  assert.deepEqual(edges('eng/c/Cargo.toml', '[package]\nname = "c"\npath = "../../games/g"\n[dependencies]\ng = { path = "../../games/g" }\nserde = "1"\n[dev-dependencies.h]\npath = "../../games/g"\n', tree),
-    [['games/g/Cargo.toml', 5, true], ['games/g/Cargo.toml', 8, true]], 'only dependency tables');
-});
-
 const LAYER = { id: 'P-engine-games', level: 'BLOCK', kind: 'imports', title: 'engine imports games', roots: ['engine/'], files: ['**/*.py', '**/*.rs', '**/Cargo.toml'], forbid: [{ from: 'engine/**', to: ['games/**'] }],
   explain: { what: 'w', why: 'y', fix: 'f' }, fixture: { hit: {}, miss: {} } };
 test('imports over Python and Rust: engine/** may not import games/** (a Python import, a Cargo path dependency); a new Python cycle; Rust use-cycles are no finding', () => {
-  const base = { 'engine/e/src/eng/__init__.py': '', 'engine/e/src/eng/a.py': 'X = 1\n', 'engine/e/src/eng/b.py': 'from eng import a\n', 'games/g/src/game/__init__.py': '', 'games/g/src/game/w.py': 'Y = 1\n',
+  // the code graph finds Python import roots from each pyproject.toml (SPEC code-graph 4.1): each project has one
+  const base = { 'engine/e/pyproject.toml': '[project]\nname = "e"\n', 'games/g/pyproject.toml': '[project]\nname = "g"\n', 'engine/e/src/eng/__init__.py': '', 'engine/e/src/eng/a.py': 'X = 1\n', 'engine/e/src/eng/b.py': 'from eng import a\n', 'games/g/src/game/__init__.py': '', 'games/g/src/game/w.py': 'Y = 1\n',
     'engine/r/Cargo.toml': '[package]\nname = "r"\n', 'engine/r/src/lib.rs': 'mod a;\nmod b;\n', 'engine/r/src/a.rs': 'pub fn f() {}\n', 'engine/r/src/b.rs': 'pub fn g() {}\n', 'games/g/Cargo.toml': '[package]\nname = "g"\n' };
   const head = { 'engine/e/src/eng/a.py': 'from game import w\nfrom eng import b\nX = 1\n', 'engine/r/Cargo.toml': '[package]\nname = "r"\n[dependencies]\ng = { path = "../../games/g" }\n',
     'engine/r/src/a.rs': 'use crate::b::g;\npub fn f() {}\n', 'engine/r/src/b.rs': 'use crate::a::f;\npub fn g() {}\n' };

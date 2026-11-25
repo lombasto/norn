@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { functionsOf, ratchets, measureDiff, sizeLine, sizeOfNumstat, landingPoints, topMerges, hotspots, fanList, growthOf, renderGrowth, measureReplay, CAPS, MEASURE_RUN } from '../engine/lib/slop/measure.mjs';
-import { importGraph, cycles, fans } from '../engine/lib/slop/graph.mjs';
+import { graphAt, cycles } from '../engine/lib/codegraph.mjs';
 import { hostWrite, slopSeries, slopLandings } from '../engine/lib/slop/host.mjs';
 import { renderDaily } from '../engine/lib/slop/daily.mjs';
 import { openPrs } from '../engine/lib/mergeland.mjs';
@@ -139,12 +139,14 @@ test('hotspots: commits in 30 days times the file\'s complexity sum, top five; g
   commit(dir, { 'engine/c.mjs': fn('fd', { c: 2 }) + '// c\n', 'README.md': 'r2\n' }, 'c');
   const hs = hotspots(dir, 'main', { tool: fakeEslint, now: Date.now() });
   assert.deepEqual(hs.map(h => [h.file, h.commits, h.complexity, h.score]), [['engine/a.mjs', 4, 15, 60], ['engine/b.mjs', 1, 40, 40], ['engine/c.mjs', 2, 2, 4]]);
-  const tree = ['e/a.mjs', 'e/b.mjs', 'e/c.mjs', 'e/d.mjs'];
-  const edges = importGraph(tree, ["import './b.mjs';\nimport './c.mjs';\n", "import './c.mjs';\n", "import './a.mjs';\n", "import './c.mjs';\n"], tree);
-  assert.deepEqual([...fans(edges)].map(([f, x]) => [f, x.in, x.out]), [['e/a.mjs', 1, 2], ['e/b.mjs', 1, 1], ['e/c.mjs', 3, 1], ['e/d.mjs', 0, 1]]);
-  assert.deepEqual(cycles(edges), [['e/a.mjs', 'e/b.mjs', 'e/c.mjs']]);
-  const fl = fanList(dir, 'main');
-  assert.deepEqual(fl.in, [], 'no imports in that tree: no fan rows');
+  const state = mkTmp('fan-state-');
+  assert.deepEqual(fanList(dir, 'main', { state }).in, [], 'no imports in that tree: no fan rows');
+  commit(dir, { 'e/a.mjs': "import './b.mjs';\nimport './c.mjs';\n", 'e/b.mjs': "import './c.mjs';\n", 'e/c.mjs': "import './a.mjs';\n", 'e/d.mjs': "import './c.mjs';\n" }, 'graph');
+  const fl = fanList(dir, 'main', { state });   // the code graph (codegraph.mjs) at main
+  assert.deepEqual(fl.in.map(r => [r.file, r.in, r.out]), [['e/c.mjs', 3, 1], ['e/a.mjs', 1, 2], ['e/b.mjs', 1, 1]]);
+  assert.deepEqual(fl.out.map(r => [r.file, r.out]), [['e/a.mjs', 2], ['e/b.mjs', 1], ['e/c.mjs', 1], ['e/d.mjs', 1]]);
+  assert.deepEqual(cycles(graphAt({ state, repo: dir, at: 'main' }), { within: ['e/**'] }).cycles, [['e/a.mjs', 'e/b.mjs', 'e/c.mjs']]);
+  assert.match(fanList(dir, 'no-such-ref', { state }).why, /unknown rev/, 'no graph: n/a with the why, never a guess');
 });
 
 test('the daily report names the five merges that grew the code most this week, the five hotspots, fan-in / fan-out and each area\'s share of the growth', () => {
