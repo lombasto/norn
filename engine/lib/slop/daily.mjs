@@ -15,8 +15,8 @@ import { landedUnchecked, landedWords } from './landed.mjs';
 import { mainTip, projectSlop } from './runend.mjs';
 import { readEvents, recordsFile } from '../records.mjs';
 import { meterOf, meterInput, meterPoint, meterDelta, loadMeter } from './meter.mjs';
-import { loadRegister, drift, renderDrift, dueDeferrals } from './register.mjs';
-import { blobs } from './check.mjs';
+import { loadRegister, drift, renderDrift } from './register.mjs';
+import { gitRun, blobs, patterns, matchAny } from './check.mjs';
 
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
 export const delta = (now, then) => `${now - then >= 0 ? '+' : ''}${num(now - then)}${then ? ` (${now - then >= 0 ? '+' : ''}${(100 * (now - then) / then).toFixed(1)} %)` : ''}`;
@@ -57,6 +57,16 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = []
     + (landed.length ? `; LANDED UNCHECKED ${landed.length}: ${landed.map(l => `${l.sha.slice(0, 7)} (${landedWords(l)})`).join(', ')}` : '')
     + (register && !register.error ? `; rules with no check: ${register.noCheck}` : '');
   return { markdown: L.join('\n') + '\n', line };
+}
+
+/** SPEC 4.7: the tree's deferrals (K22's patterns at ref) whose cited records are all known and one of them no longer open */
+export function dueDeferrals(repo, ref, rule, resolve) {
+  if (!rule?.cite || !resolve) return [];
+  const files = gitRun(repo, ['ls-tree', '-r', '-z', '--name-only', ref]).split('\0').filter(f => f && matchAny(rule.files, f) && !matchAny(rule.exclude, f));
+  return blobs(repo, files.map(f => `${ref}:${f}`)).flatMap((t, i) => (t === null ? [] : patterns(rule, t, files[i], { resolve }))).flatMap(f => {
+    const ids = f.snippet.match(new RegExp(rule.cite.id, 'g')) || [], st = ids.map(id => [id, resolve(id)]);
+    return ids.length && st.every(([, s]) => s) && st.some(([, s]) => !rule.cite.open.includes(s)) ? [{ ...f, ids: st.filter(([, s]) => !rule.cite.open.includes(s)).map(([id, s]) => `${id} is ${s}`) }] : [];
+  });
 }
 
 /** S7 (SPEC 4.5, 4.7): the register's drift at main's tip (repo sources from git, project sources from the folder) over the week's stored

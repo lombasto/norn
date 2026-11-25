@@ -2,10 +2,11 @@
 // its rules/ files, standing owner rulings), each with a class (how it is checked) and a home (where), as data in
 // <project folder>/rules/slop/register.json. This module loads it, splits a rule file into sentences, counts the drift on the tree
 // clock (the daily report), finds a new rule sentence with no row on a diff (K26, a WARN: say how it is checked) and lists the
-// deferrals whose cited record is done (K22's resolver over the tree), each with its fixer brief.
+// deferrals whose cited record is done (K22's resolver over the tree: daily.mjs), each with its fixer brief. check.mjs imports this
+// module (K26's detector, the register in the rule set), so it imports nothing of check.mjs.
 import path from 'node:path';
-import { gitRun, blobs, patterns, matchAny } from './check.mjs';
 import { readText } from '../fsnap.mjs';
+import { globToRe } from '../dlvgit.mjs';
 
 export const REG_CLASSES = ['mechanical', 'proxy', 'voice', 'unchecked'], HOMES = ['slop', 'hook', 'tests', 'ci'];
 export const registerFile = projectDir => path.join(projectDir, 'rules', 'slop', 'register.json');
@@ -27,7 +28,7 @@ export function loadRegister(projectDir) {
   return { sources, prose: r.prose || {}, rows: r.rows || [] };
 }
 
-const norm = s => s.replace(/\*\*|__/g, '').replace(/\s+/g, ' ').trim();
+const matchAny = (globs, f) => globs.some(g => globToRe(g).test(f)), norm = s => s.replace(/\*\*|__/g, '').replace(/\s+/g, ' ').trim();
 const ITEM = /^\s*(?:[-*+]|\d+\.|[a-z]\.|[ivx]+\.)\s+/, SPLIT = /(?<=[.!?])\s+(?=[A-Z`"'(*[])/g;
 /** the sentences of a rule file: [{ line, text }]. A list item or a blank line starts a block; headings, code fences, HTML comments
  * and table rows are no rule text; a sentence needs three words */
@@ -87,16 +88,6 @@ export function renderDrift(d) {
   if (d.breaches.length) L.push('', 'Breaches in 7 d:', '', ...d.breaches.map(b => `- ${b.id}: ${b.n} new (${Object.entries(b.by).map(([r, n]) => `${r} ${n}`).join(', ')})`));
   if (d.due?.length) L.push('', `Deferrals that came due: ${d.due.length}`, '', ...d.due.map(f => `- \`${f.file}:${f.line}\` ${f.ids.join(', ')}: do the deferred removal (${f.snippet.trim().slice(0, 120)})`));
   return [...L, ''];
-}
-
-/** SPEC 4.7: the tree's deferrals (K22's patterns at ref) whose cited records are all known and one of them no longer open */
-export function dueDeferrals(repo, ref, rule, resolve) {
-  if (!rule?.cite || !resolve) return [];
-  const files = gitRun(repo, ['ls-tree', '-r', '-z', '--name-only', ref]).split('\0').filter(f => f && matchAny(rule.files, f) && !matchAny(rule.exclude, f));
-  return blobs(repo, files.map(f => `${ref}:${f}`)).flatMap((t, i) => (t === null ? [] : patterns(rule, t, files[i], { resolve }))).flatMap(f => {
-    const ids = f.snippet.match(new RegExp(rule.cite.id, 'g')) || [], st = ids.map(id => [id, resolve(id)]);
-    return ids.length && st.every(([, s]) => s) && st.some(([, s]) => !rule.cite.open.includes(s)) ? [{ ...f, ids: st.filter(([, s]) => !rule.cite.open.includes(s)).map(([id, s]) => `${id} is ${s}`) }] : [];
-  });
 }
 
 /** K26's detector: the new sentences of a rule file (the rule's files + the register's repo sources) that no row covers */

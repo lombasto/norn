@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, effectiveRules, slopCheck } from '../engine/lib/slop/check.mjs';
-import { loadRegister, sentences, uncovered, drift, dueDeferrals } from '../engine/lib/slop/register.mjs';
-import { renderDaily } from '../engine/lib/slop/daily.mjs';
+import { loadRegister, sentences, uncovered, drift } from '../engine/lib/slop/register.mjs';
+import { renderDaily, dueDeferrals } from '../engine/lib/slop/daily.mjs';
 import { CLASSES, APART } from '../engine/lib/slop/loc.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
