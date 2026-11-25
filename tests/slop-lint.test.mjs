@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadRules, effectiveRules, slopCheck, explainOf, replay, KIND_PARAMS } from '../engine/lib/slop/check.mjs';
+import { loadRules, effectiveRules, slopCheck, explainOf, replay, budget, budgetLines, PROVE, KIND_PARAMS } from '../engine/lib/slop/check.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { LINTERS } from '../engine/lib/slop/lang/index.mjs';
 
@@ -90,6 +90,34 @@ test('the replay: per merged branch, the old rule\'s new findings beside its new
   assert.equal(rows[0].subject, 'merge y');
   assert.deepEqual([rows[0].old, rows[0].missed], [['b.mjs:1'], []]);
   assert.deepEqual(rows[0].added.map(a => a.split(' ')[0]), ['b.mjs:2'], 'the case-blind core rule adds one: labelled by hand in the table');
+});
+
+test('the budget (SPEC 5, PROVE): 1 hit in 50 merges passes BLOCK once rated real, 3 fail it and pass WARN; unrated is n/a, never a pass', () => {
+  assert.deepEqual(PROVE, { BLOCK: { merges: 0.02, real: 0.9 }, WARN: { merges: 0.1 } });
+  const repo = repoOf({ 'a.py': 'x = 1\n' }, {});
+  git(repo, 'checkout', '-q', 'main');
+  // 52 merges, oldest first: hit hit, 47 clean, hit, clean clean. HEAD's last 50 hold 1 hit; main~2's last 50 hold 3
+  [true, true, ...Array(47).fill(false), true, false, false].forEach((hit, i) => {
+    git(repo, 'checkout', '-q', '-b', `f${i}`, 'main'); put(repo, { [`m${i}.py`]: hit ? '# TODO: later\n' : `y${i} = ${i}\n` });
+    git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', `c${i}`); git(repo, 'checkout', '-q', 'main'); git(repo, 'merge', '-q', '--no-ff', '-m', `merge ${i}`, `f${i}`);
+  });
+  const KX = { id: 'KX', level: 'BLOCK', kind: 'pattern', in: ['comment'], patterns: { py: ['\\bTODO\\b'], rs: ['\\bTODO\\b'] }, shadow_langs: ['py', 'rs'], files: ['**/*.py', '**/*.rs'], explain: LJ.explain, fixture: LJ.fixture, title: 'x' };
+  const one = replay({ repo, old: 'KX', as: ['KX'], main: 'main', rules: [KX] }), three = replay({ repo, old: 'KX', as: ['KX'], main: 'main~2', rules: [KX] });
+  assert.equal(one.length, 50);
+  assert.deepEqual(one.flatMap(r => r.found.map(f => [f.rule, f.file, f.lang])), [['KX', 'm49.py', 'py']]);
+  const real = rows => Object.fromEntries(rows.flatMap(r => r.found.map(f => [f.fp, 'real'])));
+  const row = (b, lang) => b.find(x => x.rule === 'KX' && x.lang === lang);
+  const b1 = row(budget(one, { rules: [KX], ratings: real(one) }), 'py');
+  assert.deepEqual([b1.merges, b1.of, b1.findings, b1.real, b1.block, b1.warn], [1, 50, 1, 1, 'pass', 'pass']);
+  assert.deepEqual(row(budget(one, { rules: [KX], ratings: real(one) }), 'rs'), { rule: 'KX', lang: 'rs', merges: 0, of: 50, findings: 0, real: 0, rated: 0, unrun: 0, block: 'pass', warn: 'pass', unrated: [] }, 'a language of the rule with no finding meets both');
+  const b3 = row(budget(three, { rules: [KX], ratings: real(three) }), 'py');
+  assert.deepEqual([b3.merges, b3.findings, b3.block, b3.warn], [3, 3, 'fail', 'pass'], '3 of 50 = 6 %: over BLOCK\'s 2 %, inside WARN\'s 10 %');
+  const wrong = budget(one, { rules: [KX], ratings: Object.fromEntries(Object.keys(real(one)).map(k => [k, 'wrong'])) });
+  assert.equal(row(wrong, 'py').block, 'fail', 'rated wrong: under 90 % real');
+  const none = row(budget(one, { rules: [KX] }), 'py');
+  assert.match(none.block, /^n\/a: 1 of 1 findings not rated/);
+  assert.equal(none.unrated[0].fp, one.flatMap(r => r.found)[0].fp, 'the unrated findings are listed by fingerprint, the key of the ratings file');
+  assert.match(budgetLines(budget(one, { rules: [KX], ratings: real(one) })).join('\n'), /^KX py: merges 1 of 50 \(2 %\), real 1 of 1 \(100 %\): BLOCK pass, WARN pass$/m);
 });
 
 test('a check on a cold tool cache with no network holds the merge: LJ could not run (BLOCK), exit 1', () => {

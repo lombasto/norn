@@ -408,8 +408,42 @@ export function replay({ repo, old, as, main = 'HEAD', last = 50, rules = loadRu
     const [sha, p1, p2, ...s] = l.split(' '), base = gitRun(repo, ['merge-base', p1, p2]).trim();
     const r = slopCheck({ repo, base, head: p2, rules: use, tool, config, machine: false }), fresh = r.findings.filter(f => f.new && !f.unrun);
     const was = fresh.filter(f => f.rule === old), now = fresh.filter(f => as.includes(f.rule)), on = xs => new Set(xs.map(at));
-    return { merge: sha.slice(0, 8), subject: s.join(' '), old: was.map(at), new: now.map(f => `${at(f)} ${f.rule}`),
+    return { merge: sha.slice(0, 8), subject: s.join(' '), as, old: was.map(at), new: now.map(f => `${at(f)} ${f.rule}`),
       missed: was.filter(f => !on(now).has(at(f))).map(at), added: now.filter(f => !on(was).has(at(f))).map(f => `${at(f)} ${f.rule}: ${f.snippet.slice(0, 120)}`),
-      unrun: r.findings.filter(f => f.unrun).map(f => `${f.rule} ${f.msg}`) };
+      unrun: r.findings.filter(f => f.unrun).map(f => `${f.rule} ${f.msg}`),
+      found: now.map(f => ({ rule: f.rule, file: f.file, line: f.line, lang: packOf(f.file)?.ID || 'other', fp: f.fp, snippet: f.snippet.slice(0, 120) })) };
   });
 }
+
+/** slop-langs SPEC 5: the false-positive budget a rule meets, per language, before the controller lifts its shadow (rules/README "Proving a rule") */
+export const PROVE = { BLOCK: { merges: 0.02, real: 0.9 }, WARN: { merges: 0.1 } };
+
+/**
+ * The budget of a replay (its rows, newest first): per rule of the new form x language, the merges of the window with a finding of
+ * it against PROVE. The rated-real share comes from `ratings` ({ fp: 'real' | 'wrong' }, a person's; a replay cannot rate): BLOCK
+ * passes only when every finding is rated, else it is n/a with the unrated listed. A merge the rule could not run on makes both n/a.
+ * The languages: each of the rule's packs (match / patterns by pack / shadow_langs) and each a finding has. Nothing here promotes:
+ * the controller writes overrides.json.
+ */
+export function budget(rows, { rules = loadRules(), ratings = {} } = {}) {
+  const of = rows.length, found = rows.flatMap((r, i) => r.found.map(f => ({ ...f, at: i }))), out = [];
+  const ids = [...new Set([...found.map(f => f.rule), ...rows.flatMap(r => r.as || [])])];
+  for (const id of ids) {
+    const rule = rules.find(r => r.id === id.split('/')[0]) || {}, mine = found.filter(f => f.rule === id);
+    const langs = [...new Set([...Object.keys(rule.match || {}), ...(isObj(rule.patterns) ? Object.keys(rule.patterns) : []), ...(rule.shadow_langs || []), ...mine.map(f => f.lang)])];
+    const unrun = rows.filter(r => r.unrun.some(u => u.split(' ')[0] === id.split('/')[0])).length;
+    for (const lang of langs) {
+      const fs_ = mine.filter(f => f.lang === lang), merges = new Set(fs_.map(f => f.at)).size, rated = fs_.filter(f => ratings[f.fp] === 'real' || ratings[f.fp] === 'wrong');
+      const real = rated.filter(f => ratings[f.fp] === 'real').length, unrated = fs_.filter(f => !rated.includes(f));
+      const share = merges / (of || 1), na = unrun ? `n/a: could not run on ${unrun} of ${of} merges` : of ? null : 'n/a: no merges in the window';
+      const block = na || (share > PROVE.BLOCK.merges ? 'fail' : unrated.length ? `n/a: ${unrated.length} of ${fs_.length} findings not rated` : real >= PROVE.BLOCK.real * fs_.length ? 'pass' : 'fail');
+      out.push({ rule: id, lang, merges, of, findings: fs_.length, real, rated: rated.length, unrun, block, warn: na || (share <= PROVE.WARN.merges ? 'pass' : 'fail'), unrated: unrated.map(({ at, ...f }) => f) });
+    }
+  }
+  return out;
+}
+
+const pct = (a, b) => (b ? `${Math.round((100 * a) / b)} %` : 'n/a');
+/** the budget's text: one line per rule x language, then each unrated finding by fingerprint (the key of the ratings file) */
+export const budgetLines = b => b.flatMap(x => [`${x.rule} ${x.lang}: merges ${x.merges} of ${x.of} (${pct(x.merges, x.of)}), real ${x.real} of ${x.findings} (${pct(x.real, x.findings)}): BLOCK ${x.block}, WARN ${x.warn}`,
+  ...x.unrated.map(f => `  rate ${f.fp} ${f.file}:${f.line} ${f.snippet}`)]);

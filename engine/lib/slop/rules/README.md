@@ -288,7 +288,27 @@ may have an effect). A file the worktree changed since HEAD is not edited.
 ## Proving a rule
 
 Each rule's fixtures run in `tests/slop.test.mjs` (tool rules from their recorded output); `norn slop fixtures` runs the real tools on
-them. Before a rule blocks, replay it over recent merged branches: a rule that fires on many of them is noise, not a gate.
+them. Before a rule or a language of it blocks, it meets the false-positive budget on a replay of the last 50 merges of main.
+
+The budget is `PROVE` in `check.mjs`, the one place it lives:
+
+| level | merges of the window with a finding | findings rated real |
+|---|---|---|
+| BLOCK | at most 2 % (1 of 50) | at least 90 % |
+| WARN | at most 10 % (5 of 50) | - |
+
+More than that stays shadow, or the rule's data is fixed.
+
+- `norn slop replay <R> --as <R> --last 50 --budget [--ratings FILE] [--json]` runs the real check (every filter) on each merge's
+  branch and prints one line per rule x language: `K2 py: merges 1 of 50 (2 %), real 1 of 1 (100 %): BLOCK pass, WARN pass`.
+  The languages are the rule's packs (`match`, `patterns` by pack, `shadow_langs`) and any a finding has; a sub-rule is its own row
+  (`--as LP/ERA001`).
+- A replay cannot rate. The real share comes from the ratings file, a person's: JSON `{ "<fingerprint>": "real" | "wrong" }`.
+  Each unrated finding is listed under its row as `rate <fingerprint> <file>:<line> <snippet>`, and BLOCK reads
+  `n/a: k of n findings not rated` until every finding is rated. A rule with no finding meets both.
+- A merge the rule could not run on makes the row `n/a: could not run on k of n merges`, never a pass.
+- Nothing promotes itself. When a rule x language meets the budget on BOTH projects, the controller writes `overrides.json` (drops
+  the language from `shadow_langs`, or the sub-rule from `shadow_rules`) with a record that cites the replay. The owner may veto.
 
 ## On a pull request
 
