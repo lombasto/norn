@@ -72,10 +72,11 @@ import { mergeConfig } from '../lib/mergecfg.mjs';
 import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
-import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin, tickFetch, alertLimits } from '../lib/sync.mjs';
+import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag, qualify, CHECKIN_TAKE_MIN, waitMail } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMails, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag, qualify, CHECKIN_TAKE_MIN } from '../lib/mail.mjs';
+import { mailWait } from '../lib/mailwait.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -3186,32 +3187,8 @@ function mailCmd(argv, env, out, err) {
       if (left.length) out(`left for the controller: ${left.map(l => `${l.id} (${l.age_min} min)`).join(', ')}`);
       return 0;
     }
-    if (sub === 'wait') {
-      // NORN-MAIL-WAIT: the controller session's blocking read; a run is woken by its hook and a check-in must not block: one line says so
-      if (run || by === 'checkin') { err(`error: norn mail wait is the controller session's: ${run ? `a run gets its mail from the hook (META_RUN_ID=${run})` : 'a check-in must not block'}; read with norn mail check`); return 2; }
-      const to = qualify(flags.to ?? 'role:controller', homeOf(state)?.id), ctl = roleAddr('controller', state), min = flags['timeout-min'] === undefined ? null : Number(flags['timeout-min']);
-      if (to !== ctl) throw new RunError(`--to: the controller's session reads ${ctl}`);
-      if (min !== null && !(flags['timeout-min'].trim() && min >= 0)) throw new RunError('--timeout-min wants minutes (a number >= 0)');
-      const root = metaRoot(env), mf = path.join(root, 'local', 'machine.json'), machine = fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null;
-      const cfg = ledgerConfig(machine, { metaRoot: root, machineFile: mf }), fetchMin = alertLimits(project?.policy).fetch_min, said = new Set();
-      // a synced home: the tick's stale fetch (a pass only when this home's own fetch is older than policy.sync.tick_fetch_min), its urgent arrivals told as the tick tells them
-      const fetch = cfg && (async () => {
-        let r; try { r = tickFetch(cfg, { min: fetchMin }); } catch (e) { r = { error: e.message }; }
-        if (r?.error && !said.has(r.error)) { said.add(r.error); err(`fetch failed, the last copies stay: ${r.error}`); }
-        if (r?.notices?.length) { const { notify } = await import('../lib/notify.mjs'); for (const n of r.notices) await notify({ title: n.title, body: n.body, cls: 'alert', machine, state: path.join(cfg.state_root, n.project), env }).catch(e => err(`urgent mail ${n.id}: notice not sent (${e.message})`)); }
-      });
-      return waitMail(state, { by, to, timeoutMin: min, sleep: ms => new Promise(res => setTimeout(res, ms)), fetch })
-        .then(got => { out(got.length ? got.map(formatMail).join('\n\n') : `no new mail in ${flags['timeout-min']} min`); return 0; },
-          e => { if (!(e instanceof RecordError)) throw e; err('error: ' + e.message); return e.code; });
-    }
-    if (sub === 'ack') {   // several ids: each in order, one line each, the first refusal's code; one id refuses as every subcommand does
-      let code = 0;
-      for (const id of pos) {
-        try { ackMail(state, { by, run, id }); out(`${id} acked`); }
-        catch (e) { if (pos.length === 1 || !(e instanceof RecordError)) throw e; err('error: ' + e.message); code ||= e.code; }
-      }
-      return code;
-    }
+    if (sub === 'wait') return mailWait(state, { by, run, to: flags.to, timeoutMin: flags['timeout-min'], project, env, out, err });   // NORN-MAIL-WAIT (mailwait.mjs)
+    if (sub === 'ack') return ackMails(state, { by, run, ids: pos, out, err });
     const rows = listMail(state, { to: flags.to, open: !!flags.open });
     if (flags.json) out(JSON.stringify(rows, null, 1));
     else for (const m of rows) out(`${m.id} ${m.state} ${m.from} -> ${m.to}${m.urgent ? ' URGENT' : ''} ${m.subject}${m.where !== m.state ? `  (${m.where})` : ''}`);

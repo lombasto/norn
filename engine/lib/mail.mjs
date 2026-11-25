@@ -130,6 +130,16 @@ export async function waitMail(state, { by, to, timeoutMin = null, now = Date.no
 export function ackMail(state, { by, run = null, id }) {
   return record(state, { kind: 'mail', ev: 'ack', id, by, data: {} }, { run });
 }
+// `norn mail ack MAIL-n [MAIL-m ...]`: each id in order, one line each (out / err), -> the first refusal's code (0: all acked); one id
+// throws its refusal as every subcommand does (the CLI adds the usage line)
+export function ackMails(state, { by, run = null, ids, out, err }) {
+  let code = 0;
+  for (const id of ids) {
+    try { ackMail(state, { by, run, id }); out(`${id} acked`); }
+    catch (e) { if (ids.length === 1 || !(e instanceof RecordError)) throw e; err('error: ' + e.message); code ||= e.code; }
+  }
+  return code;
+}
 
 // HOME-MAIL S1 (REPORT 3.1): where a queued mail this home sent to another home is, from that home's receipt (its seen.json, copied to
 // homes/<h>/seen.json): "sent" (not held there yet) or "at <h>", each with when <h> last polled; no receipt (a home on an older version) =
