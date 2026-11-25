@@ -133,19 +133,28 @@ function settle(p, r, o) {
   const left = partProblem(p, o);
   return left ? no(`${left} after its build (${buildOf(p, o)})`) : { ok: true, built: true };
 }
-const opts = (p, { err = () => {}, run = spawnSync, cc = ccProblem, src = srcOf(p), store: st = store(), exe } = {}) => ({ err, run, cc, src, store: st, exe: exe ?? binOf(p, { src, store: st }) });
+const opts = (p, { err = () => {}, start = () => {}, run = spawnSync, cc = ccProblem, src = srcOf(p), store: st = store(), exe } = {}) => ({ err, start, run, cc, src, store: st, exe: exe ?? binOf(p, { src, store: st }) });
 
 /** build part `p` for `src` when its binary is missing -> { ok, built, part?, why? } (why: the ONE reason, naming the part, the cause
- *  and the build command; cargo's own output goes to err). run: spawnSync-shaped, for cargo and `norn-code version` */
+ *  and the build command; cargo's own output goes to err). run: spawnSync-shaped, for cargo and `norn-code version`; start(p) is said
+ *  just before cargo runs (a caller names the wait: a cold norn-code takes minutes) */
 export function ensurePart(p, o = {}) {
   const x = opts(p, o), pl = plan(p, x);
-  return pl.done ?? settle(p, x.run('cargo', pl.args, { encoding: 'utf8', windowsHide: true, timeout: BUILD_MS }), x);
+  if (pl.done) return pl.done;
+  x.start(p);
+  return settle(p, x.run('cargo', pl.args, { encoding: 'utf8', windowsHide: true, timeout: BUILD_MS }), x);
 }
 /** ensurePart without blocking the event loop: cargo (default boundedAsync: the tree dies at BUILD_MS) resolves spawnSync's shape */
 export async function ensurePartAsync(p, { cargo = args => boundedAsync('cargo', args, { timeout: BUILD_MS }), ...o } = {}) {
   const x = opts(p, o), pl = plan(p, x);
-  return pl.done ?? settle(p, await cargo(pl.args), x);
+  if (pl.done) return pl.done;
+  x.start(p);
+  return settle(p, await cargo(pl.args), x);
 }
+
+/** the ONE condition on which a slop check reads the code graph, so needs norn-code: one of its `imports` rules (K10) has a root the
+ *  worktree holds. The supervisor (run start, run end) and `norn done` (its stored check) build norn-code on it; `rules` is the check's */
+export const graphReads = (rules, worktree) => rules.some(r => r.kind === 'imports' && r.roots?.some(x => fs.existsSync(path.join(worktree, x))));
 
 /** the parts a run reads -> [{ p, src, store, exe }]: `parts` of this engine, and every part of the worktree's own engine when the
  *  worktree is a checkout of Norn that is not this engine's (its tests import that engine); one entry per binary */

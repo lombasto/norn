@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { storeOf, sourceHash, binOf, partsOf, partProblem, ensurePart, ensurePartAsync, ensureParts, targetOf, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
+import { storeOf, sourceHash, binOf, partsOf, partProblem, ensurePart, ensurePartAsync, ensureParts, targetOf, graphReads, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
@@ -106,4 +106,26 @@ test('ensureParts: every part in order, what was built named; the first that can
   assert.equal(f.ok, false); assert.equal(f.part, 'code'); assert.match(f.why, /^norn-code .* cannot build: no C compiler found/);
   assert.deepEqual(f.built, [], 'the hook was fresh: no build');
   assert.equal(seen.length, 0);
+});
+
+test('graphReads: the ONE condition for norn-code - an `imports` rule with a root the worktree holds; no such root or rule = no graph', () => {
+  const t = mkTmp('rb-reads-'), k10 = { id: 'K10', kind: 'imports', roots: ['engine/'] }, other = { id: 'K15', kind: 'names', roots: ['engine/'] };
+  assert.equal(graphReads([other, k10], t), false, 'the worktree holds no root');
+  fs.mkdirSync(path.join(t, 'engine'));
+  assert.equal(graphReads([other, k10], t), true);
+  assert.equal(graphReads([other], t), false, 'no imports rule');
+  assert.equal(graphReads([{ id: 'P-x', kind: 'imports' }], t), false, 'an imports rule without roots');
+});
+
+test('ensurePartAsync / ensurePart: start(p) is said once before cargo runs, never for a fresh part', async () => {
+  const t = mkTmp('rb-start-'), src = path.join(checkout(path.join(t, 'wt')), 'hook-rs'), store = path.join(t, 'store'), said = [], calls = [];
+  const cargo = fakeCargo('norn-hook', calls), seen = args => { assert.equal(calls.length, 0, 'said before cargo'); return cargo(args); };
+  assert.deepEqual(await ensurePartAsync('hook', { src, store, start: p => said.push(p), cargo: seen }), { ok: true, built: true });
+  assert.deepEqual(said, ['hook']);
+  await ensurePartAsync('hook', { src, store, start: p => said.push(p), cargo: noCargo });
+  ensurePart('hook', { src, store, start: p => said.push(p), run: noCargo });
+  assert.deepEqual(said, ['hook'], 'a fresh part: nothing said');
+  const s2 = path.join(checkout(path.join(t, 'wt2'), { main: 'fn main() { }\n' }), 'hook-rs'), sync = [];
+  ensurePart('hook', { src: s2, store, start: p => sync.push(p), run: (c, a) => { assert.deepEqual(sync, ['hook']); const d = a[a.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(d, 'release'), { recursive: true }); fs.writeFileSync(path.join(d, 'release', 'norn-hook' + EXE), 'b'); return { status: 0 }; } });
+  assert.deepEqual(sync, ['hook'], 'the sync form says it too');
 });
