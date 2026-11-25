@@ -11,8 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
 import { runTool, PARSE } from './tools.mjs';
 import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
-import { packOf, LINTERS } from './lang/index.mjs';
-import { lint, dup, exportsKind, refs, depLock } from './kinds.mjs';
+import { packOf, PACKS, LINTERS } from './lang/index.mjs';
+import { lint, ast, dup, exportsKind, refs, depLock, companion } from './kinds.mjs';
 import { model } from './voice.mjs';
 import { registerKind, loadRegister, registerFile } from './register.mjs';
 import { importGraph, cycles } from './graph.mjs';
@@ -22,13 +22,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RULES_DIR = path.join(HERE, 'rules');
 export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // RM-45 (audit REPORT sec. 6): the parameters a project may patch per kind (overrides.json), and the kinds a project rule
-// (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, command, dup, exports, refs, register) are code over the whole tree, and
+// (P-*.json) may use; a rule's text (patterns, ast match data, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, command, dup, exports, refs, register, companion) are code over the whole tree, and
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
   'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
-  ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
+  ast: ['files', 'exclude', 'reason', 'shadow_langs'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
-  model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'], register: ['files'],
+  model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'], register: ['files'], companion: ['files', 'exclude', 'min_shared', 'min_share', 'partners_exclude'],
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'lint'];
 
@@ -42,12 +42,19 @@ function checkRule(r, f) {
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
   if (r.kind === 'lint' && (!LINTERS[r.tool] || (r.tool === 'eslint' && !r.rules) || Object.keys(r.rules || {}).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
   if (r.kind === 'lint' && r.tool === 'sarif' && !readsLog(r)) throw new Error(`${f}: a sarif rule reads the file a project tool wrote: source "log" and log (path templates, {git} / {head})`);
-  if (r.kind === 'ast' && (r.tool !== 'eslint' || !r.selectors?.length || r.selectors.some(s => typeof s.selector !== 'string' || typeof s.message !== 'string'))) throw new Error(`${f}: an ast rule is a list of { selector, message } (tool eslint)`);
+  if (r.kind === 'ast' && !astData(r)) throw new Error(`${f}: an ast rule is ast-grep match data (tool ast-grep): see rules/README.md`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
   if (r.key && r.key !== 'match') throw new Error(`${f}: key is "match" or absent (the line)`);
   return r;
 }
+// slop-langs SPEC 3.4: tool ast-grep; match { <pack id>: [{ rule, constraints?, message }] } (ast-grep's own keys, passed through);
+// shadow_langs names packs of match. Nothing else: a rule of the deleted ESLint selector form (selectors) does not load.
+const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
+const astData = r => r.tool === 'ast-grep' && !('selectors' in r) && isObj(r.match) && Object.keys(r.match).length > 0
+  && Object.entries(r.match).every(([p, ms]) => PACKS[p] && Array.isArray(ms) && ms.length && ms.every(m => isObj(m.rule) && typeof m.message === 'string' && m.message.trim()
+    && (m.constraints === undefined || isObj(m.constraints)) && Object.keys(m).every(k => ['rule', 'constraints', 'message'].includes(k))))
+  && (r.shadow_langs || []).every(p => p in r.match);
 // rule reads go through fsnap (META-DASH-ASYNC R1): a snapshot lookup inside a dash GET that awaited primeRules, the sync form elsewhere
 const readRule = file => checkRule(JSON.parse(readText(file)), path.basename(file));
 const jsonNames = (dir, re = /\.json$/) => readdirS(dir).map(d => d.name).filter(f => re.test(f)).sort();
@@ -236,12 +243,13 @@ const DETECT = {
   suppress: (rule, ctx) => content(rule, ctx, (t, f) => (packOf(f)?.suppressions(t) || []).filter(s => !isReason(s.reason, rule.reason).ok)
     .map(s => ({ file: f, line: s.line, msg: rule.title, snippet: lineText(t, s.line) }))),
   lint,
-  ast: lint,
+  ast,
   dup,
   exports: exportsKind,
   refs,
   model,
   register: registerKind,
+  companion,
   // K10 (roots + forbid: layers and cycles) and K20 (bare / manifests / vendor: the dependency lock), each part when its params are set
   imports: (rule, ctx) => {
     const touched = rule.roots && ctx.entries.some(e => rule.roots.some(r => (e.path || '').startsWith(r) || (e.old || '').startsWith(r)));
@@ -303,24 +311,24 @@ export function pairFindings(rule, got, { renamed = new Map(), inBase = () => fa
 const pathspecs = rule => [...(rule.files || ['**']).map(g => `:(glob)${g}`), ...(rule.exclude || []).map(g => `:(glob,exclude)${g}`)];
 
 /**
- * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve, brief, machine }) -> the ONE result:
+ * slopCheck({ repo, base, head = 'HEAD', rules, only: [rule ids], tool, resolve, brief, machine, state }) -> the ONE result:
  * { base, head, at, findings: [{ rule, level, file, line, msg, snippet, fp, new, value?, base_value?, token?, shadow?, voice? }],
  *   blocks: [the new BLOCK findings of rules not in shadow], ran: [ids], files: [the paths the diff changes] }
  * base / head are any revisions (base = the merge base the caller chose). tool(rule, side, { dir, files }) -> raw output | null.
  * resolve(record id) -> its state | null: K22's cited ids (no resolver: an id only has to be named). brief: the run's brief text (the
  * model rules read its Scope and numbered items). The model rules run last: they read the other rules' new findings (their hits).
  * machine false: a rule flagged `machine` in its data (it reads this machine's state, K14) is not run - CI and a landing's after-check
- * have no such state to read. config: the lint config text both sides use (the replay's candidate; default the merge base's file).
+ * have no such state to read. state: the project's state folder (K27 reads its code signals there; none = could not run). config: the lint config text both sides use (the replay's candidate; default the merge base's file).
  * A rule whose detector throws is a finding of its own (couldNotRun): no check passes by not checking.
  */
-export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, config = null, now = Date.now() }) {
+export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, config = null, state = null, now = Date.now() }) {
   const sha = r => gitRun(repo, ['rev-parse', '--verify', r + '^{commit}']).trim();
   const B = sha(base), H = sha(head);
   const entries = diffEntries(repo, B, H), picked = rules.filter(r => !only || only.includes(r.id)), run = [...picked.filter(r => r.kind !== 'model'), ...picked.filter(r => r.kind === 'model')];
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
   const findings = [], ran = [];
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, found: findings, config, lintRules: [...run.filter(r => r.kind === 'lint'), ...run.filter(r => r.kind === 'ast')], modelRules: run.filter(r => r.kind === 'model'),
+  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, state, found: findings, config, lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));

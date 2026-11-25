@@ -10,6 +10,8 @@ import { which } from '../../paths.mjs';
 import { lineAt, norm, tomlTables, prefix } from '../scan.mjs';
 
 const P = path.posix;
+/** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads (slop-langs SPEC 3.4) */
+export const ID = 'py', astLang = () => 'Python';
 /** dotted module name -> [files]: every module inside a package (a folder with __init__.py), named from its top package; a loose
  *  script is no import target (a stdlib name like `types` must not resolve to some scripts/types.py) */
 function index(tree) {

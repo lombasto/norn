@@ -17,7 +17,7 @@ fixed or waived (`norn rec add waiver`).
 | `<project folder>/rules/slop/register.json` | the project's rule register (below): one row per rule sentence of its rule files |
 
 `overrides.json` may set `enabled`, `level`, `shadow` and `params` (only the parameters listed for that kind in
-`KIND_PARAMS`, `engine/lib/slop/check.mjs`). It never replaces a rule's text: patterns, selectors, lint rules and fixtures stay
+`KIND_PARAMS`, `engine/lib/slop/check.mjs`). It never replaces a rule's text: patterns, ast-grep match data, lint rules and fixtures stay
 those of the rule file.
 
 ```json
@@ -34,16 +34,27 @@ those of the rule file.
 | `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
-| `ast` | `selectors`: `{ selector, message, text? }`, ESLint `no-restricted-syntax` through the pinned ESLint; `reason` | yes |
+| `ast` | `tool: ast-grep`, `match` by language pack (`js`, `ts`, `py`, `rs`): a list of `{ rule, constraints?, message }` (ast-grep rule data; its `regex` is Rust regex), `shadow_langs` (packs whose findings are shadow, the rule id kept), `reason`, `files`, `exclude`; the old ESLint `selectors` form does not load | yes |
 | `model` | `question` (plain words), `files`, `on` (`code` / `tests`: which branch it reads), `hits` (rule ids whose findings it is sent), `context` (quality files) | no |
 | `register` | `files` (the rule files beside the register's repo sources): K26, a new sentence no register row covers | no |
+| `companion` | `min_shared`, `min_share` (the rule's threshold, at or over the signals' own), `partners_exclude` (lock and generated files), `files`, `exclude`: a changed file whose usual partner in the code signals is not in the branch (K27) | no |
 | `diff-check`, `command`, `dup`, `exports`, `refs` | engine-only: level, switch and listed parameters through `overrides.json` | no |
+
+K27 (`companion`, WARN, `shadow`, `machine`) reads the project's code signals through their one reader (`readSignals(state)`,
+[docs/code-signals.md](../../../../docs/code-signals.md)): for each file the branch changes, each partner with `shared >= min_shared`
+and `share >= min_share` that is at head and not in the diff (a rename's old path counts as in it) is one finding, "A usually
+changes with B (n of m landings); B is not in this branch (measured from git at <sha>)". With no state or no stored signals it is
+"could not run" (shadow: recorded, never held); `--ci` does not run it (a runner has no signals).
 
 R2 (`refs`) excludes changelogs (`**/CHANGELOG*.md`): a changelog line naming a path deleted later is history, not a broken reference.
 
 A rule file never loads code: the engine writes the ESLint config from the rule's data and the merge base's `eslint.config.mjs`
 (plain data, core rules only), with inline config comments off. ESLint is the locked tool set in `tools/lint`, installed by
 `npm ci --ignore-scripts` into `<meta root>/state/tools/lint/<lock hash>`; a tool that cannot install or run is a BLOCK "could not run".
+The `ast` rules run on the locked ast-grep set in `tools/ast` (`@ast-grep/cli`, installed the same way into
+`<meta root>/state/tools/ast/<lock hash>`): ONE scan per side over every `ast` rule, the platform binary run directly. ast-grep could
+not run when it exits other than 0 (8: a rule that does not parse), prints an `ERROR:` line on stderr or prints a line that is not
+JSON: each `ast` rule is then one BLOCK "could not run".
 ruff and clippy are the project's own tools, never pinned here: ruff runs as `uv run --no-sync --project <the config's folder in the
 main checkout> ruff` (VIRTUAL_ENV unset, never `uv sync`) on the touched files in a temp folder; clippy is never started (a build).
 
@@ -142,7 +153,7 @@ rule (it is not in the summary's `ran:` list); every other check runs it. The fl
 
 - `key: "match"` keys a pattern or `ast` rule on the matched token instead of the line: a token is new only when no file of the
   base tree has it (a new environment name, a retired term), so editing an old line is no finding.
-- Fail-closed (SPEC 3.4): a rule whose detector throws (no npx, a cold tool cache, ESLint exit 2) is ONE BLOCK finding of that
+- Fail-closed (SPEC 3.4): a rule whose detector throws (no npx, a cold tool cache, ESLint exit 2, an ast-grep exit other than 0 or an `ERROR:` line on its stderr) is ONE BLOCK finding of that
   rule, `<rule> * could not run: <why>` (fingerprint rule + could-not-run), so it holds, resumes and is waived as any finding; a file
   ESLint cannot parse is one BLOCK `does not parse: <parser message>` of the first held lint rule. A run-end check that throws holds
   the branch `check * could not check: <why>` (the digest lists it); the door runs its own check.

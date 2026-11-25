@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { sendMail, checkMail, listMail, qualify } from '../engine/lib/mail.mjs';
+import { sendMail, checkMail, listMail, qualify, arrivalNotices } from '../engine/lib/mail.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 function homes() {
@@ -105,4 +105,69 @@ test('mail list rows carry body, where and age_min; where: sent / at b from the 
   assert.equal(r.status, 0, r.stderr);
   const j = JSON.parse(r.stdout)[0];
   assert.equal(j.body, 'the body'); assert.equal(j.where, 'delivered'); assert.ok(Number.isInteger(j.age_min), r.stdout);
+});
+
+// HOME-MAIL S2 (REPORT 3.2): pickup - the receiving home puts the mail in front of a reader
+const NORN = path.resolve('engine/bin/norn.mjs');
+const cli = (state, args, env = {}) => spawnSync(process.execPath, [NORN, 'mail', ...args, '--state', state], { env: { ...process.env, META_RUN_ID: '', META_ROLE: '', ...env }, encoding: 'utf8', windowsHide: true });
+// a mail home a wrote `min` minutes ago (the CLI reads the real clock), in a's own log
+const oldMail = (a, n, min, data = {}) => fs.appendFileSync(path.join(a, 'mail.jsonl'), JSON.stringify({ v: 1, seq: n, ts: new Date(Date.now() - min * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z'), id: `MAIL-a-${n}`, kind: 'mail', ev: 'create', to: 'queued', by: 'controller', run: null,
+  data: { from: 'role:controller@a', to: 'role:controller@b', subject: `S${n}`, body: 'b', ...data } }) + '\n');
+
+test('home b: `norn mail check` with no flag and with the bare --to role:controller both deliver home a\'s mail', () => {
+  const { a, b, sync } = homes();
+  const m1 = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'one', body: 'x' });
+  sync();
+  let r = cli(b, ['check']);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, new RegExp(`${m1.id} from role:controller@a`));
+  const m2 = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'two', body: 'y' });
+  sync();
+  r = cli(b, ['check', '--to', 'role:controller']);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, new RegExp(m2.id));
+  r = cli(b, ['check', '--to', 'role:controller@b']);
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout.trim(), 'no new mail');
+});
+
+test('the usage text names a check address a home accepts', () => {
+  const { b } = homes();
+  const r = cli(b, ['check', '--to', 'role:checkin']);
+  assert.equal(r.status, 2);
+  const addr = r.stderr.match(/norn mail check .*?--to (role:[a-z]+)/)?.[1];
+  assert.ok(addr, r.stderr);
+  assert.equal(cli(b, ['check', '--to', addr]).status, 0);
+});
+
+test('DEC-a-581: a check-in takes delivery of controller mail older than 15 min, and is refused before that', () => {
+  const { a, b, sync } = homes();
+  oldMail(a, 1, 5);
+  sync();
+  let r = cli(b, ['check', '--to', 'role:controller', '--as', 'checkin']);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /MAIL-a-1 is 5 min old: a check-in takes controller mail after 15 min/);
+  assert.equal(listMail(b, { to: 'role:controller' })[0].state, 'queued', 'left for the controller');
+  oldMail(a, 2, 16);
+  sync();
+  r = cli(b, ['check', '--as', 'checkin', '--to', 'role:controller']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /MAIL-a-2 from/); assert.doesNotMatch(r.stdout, /MAIL-a-1 from/);
+  assert.match(r.stdout, /left for the controller: MAIL-a-1 \(5 min\)/);
+  assert.deepEqual(listMail(b, { to: 'role:controller' }).map(x => [x.id, x.state]), [['MAIL-a-1', 'queued'], ['MAIL-a-2', 'delivered']]);
+  // the controller itself takes its mail at any age
+  assert.deepEqual(checkMail(b, { by: 'controller', to: 'role:controller', via: 'cli' }).map(x => x.id), ['MAIL-a-1']);
+});
+
+test('an urgent arrival for the controller returns exactly one notice; plain mail and mail for another box none', () => {
+  const { a, b, sync } = homes();
+  const u = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'now', body: 'x', urgent: true });
+  sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'later', body: 'y' });
+  sendMail(a, { by: 'controller', to: 'role:checkin@b', subject: 'ci', body: 'z', urgent: true });
+  assert.deepEqual(arrivalNotices(b), [], 'nothing arrived yet');
+  sync();
+  const n = arrivalNotices(b);
+  assert.equal(n.length, 1);
+  assert.match(n[0].title, new RegExp(`URGENT mail ${u.id} for role:controller@b`));
+  assert.match(n[0].body, /now/); assert.match(n[0].body, /norn mail check/);
+  assert.deepEqual(arrivalNotices(b), [], 'once');
+  sync();
+  assert.deepEqual(arrivalNotices(b), [], 'a second fetch of the same mail: still once');
 });

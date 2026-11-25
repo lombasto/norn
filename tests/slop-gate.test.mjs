@@ -158,7 +158,7 @@ test('D1 run end: a lane run that ends STOPPED with commits is checked and its c
   assert.ok(c, 'the stopped end was checked');
   assert.equal(c.head, head);
   assert.deepEqual(c.findings.filter(f => !f.unrun).map(f => f.rule), ['K15']);
-  assert.ok(c.findings.filter(f => f.unrun).every(f => /^M\d/.test(f.rule) && f.level === 'WARN'), 'only the voice (no route here) could not run: WARN, never a hold');
+  assert.ok(c.findings.filter(f => f.unrun).every(f => (/^M\d/.test(f.rule) && f.level === 'WARN') || (f.rule === 'K27' && f.shadow)), 'only the voice (no route here) and K27 (no code signals here, shadow) could not run: never a hold');
   assert.equal(slopHolds(state)['feat/x']?.run, id, 'its BLOCK holds the branch');
   assert.equal(loadState(state).items[id].resume, undefined, 'a stopped end is not resumed for slop');
 });

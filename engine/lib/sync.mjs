@@ -24,6 +24,7 @@ import { ghSlug } from './mergeland.mjs';
 import { ringDoorbell, doorbellStream } from './notify.mjs';
 import { setPause, clearPause } from './pause.mjs';
 import { boundedAsync } from './bounded.mjs';
+import { arrivalNotices } from './mail.mjs';
 
 // SPEC 3.3 as data: the shared kinds publish their log, the local kinds with a read-only copy publish it under copy/, the rest stay local
 const COPIED = ['run', 'deliverable'];
@@ -226,10 +227,13 @@ export function fetchHomes(cfg0, o = {}) {
       catch (e) { logTo(cfg, `relay failed for ${p} (the next pass retries): ${e.message}`); }
     }
     for (const p of mine) writeSeen(cfg, p, homes, o.now ?? Date.now());
+    // HOME-MAIL S2 (REPORT 3.2): the arrival step - each urgent mail for this home's controller is one notice (the caller sends it)
+    const notices = mine.flatMap(p => { try { return arrivalNotices(path.join(cfg.state_root, p)).map(n => ({ ...n, project: p })); }
+      catch (e) { logTo(cfg, `arrival step failed for ${p} (the next pass retries): ${e.message}`); return []; } });
     const gone = mine.flatMap(p => ls(path.join(cfg.state_root, p, 'homes')).filter(d => d.isDirectory() && !tips[d.name]).map(d => `${p}/${d.name}`)).sort();
     writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone }));
     writeAtomic(at(cfg, 'names'), JSON.stringify(homeNames(f)));
-    return { homes, written, gone, relayed, refused };
+    return { homes, written, gone, relayed, refused, notices };
   } catch (e) { logTo(cfg, `copies failed: ${e.message}`); return { error: e.message }; }
 }
 

@@ -1,0 +1,6 @@
+// slop-langs S1 (SPEC 3.4, 7 S1): the TypeScript pack. Its ast-grep language is TypeScript (Tsx for .tsx); its import edges, its
+// suppression comments and its lexer are JavaScript's (the same syntax), so it re-exports the JS pack's. TS has no lint tool and no
+// parse gate (tree-sitter is error tolerant): the same as before the pack existed.
+export { imports, suppressions } from './js.mjs';
+
+export const ID = 'ts', astLang = f => (f.endsWith('.tsx') ? 'Tsx' : 'TypeScript');

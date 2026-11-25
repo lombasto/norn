@@ -44,6 +44,8 @@ function fixtureRepo({ base, head }) {
   writeTree(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
   return dir;
 }
+/** a state folder whose stored code signals (<state>/code/signals.json, docs/code-signals.md) hold a fixture's files (K27) */
+const signalsState = files => { const s = mkTmp('meta-slop-state-'); fs.mkdirSync(path.join(s, 'code')); fs.writeFileSync(path.join(s, 'code', 'signals.json'), JSON.stringify({ sha: 'abcdef012345', at: '2026-01-02T00:00:00.000Z', basis: 'measured', files })); return s; };
 const recordedTool = rec => (rule, side) => (rec?.[side] === undefined ? null : typeof rec[side] === 'string' ? rec[side] : JSON.stringify(rec[side]));
 
 // every built-in rule and the synthetic project rules (tests/fixtures/slop-project): the hit has new findings at the rule's level, the near-miss none
@@ -54,7 +56,7 @@ for (const rule of [...loadRules(), ...projectRules]) {
     for (const [which, want] of [['hit', true], ['miss', false]]) {
       const fx = rule.fixture[which];
       const repo = fixtureRepo(fx);
-      const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
+      const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded), state: fx.signals ? signalsState(fx.signals) : null });
       // a lint rule's findings carry their sub-rule's level and id (LJ/no-console); the held ones (not shadow) are what the hit must show
       const level = rule.levels ? 'BLOCK' : rule.level, at = r.findings.filter(f => f.new && f.level === level && !(rule.levels && f.shadow));
       assert.deepEqual(r.ran, [rule.id], `${rule.id} ${which} ran`);
@@ -66,7 +68,7 @@ for (const rule of [...loadRules(), ...projectRules]) {
 }
 
 // S1a (SPEC 1.3 F5 / F6, 3.4): the check fails closed - a rule that could not run and a file the linter cannot parse are BLOCK findings
-const LINT = loadRules().filter(r => (r.kind === 'lint' || r.kind === 'ast') && r.tool === 'eslint');   // the rules that read a.mjs (LP / LR: slop-lint.test.mjs)
+const LINT = loadRules().filter(r => (r.kind === 'lint' && r.tool === 'eslint') || r.kind === 'ast');   // the tool rules that read a.mjs (LP / LR: slop-lint.test.mjs)
 test('F5: a rule whose detector throws is one BLOCK finding of that rule ("could not run: <why>", fingerprint rule + could-not-run); the result has no skipped list', () => {
   const repo = fixtureRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n' } });
   const down = () => { throw new Error('npm not found on PATH'); };
@@ -132,16 +134,16 @@ test('only new: a finding the base already had never blocks, even in a renamed f
   const rest = Array.from({ length: 12 }, (_, i) => `export const k${i} = ${i};\n`).join('');   // enough unchanged lines to stay a rename
   const repo = fixtureRepo({ base: { 'src/a.mjs': body + rest }, head: { 'src/a.mjs': body + rest } });
   git(repo, 'mv', 'src/a.mjs', 'src/b.mjs'); git(repo, 'commit', '-q', '-m', 'rename');
-  // K2 is an ast rule: ESLint's recorded answer, one empty catch per copy of body (line 2, and 17 for the twin); both sides lint under the head's path
-  const k2 = (file, lines) => ({ filePath: file, messages: lines.map(line => ({ ruleId: 'no-restricted-syntax', severity: 2, message: 'K2: empty catch: say what happens next, or let it throw', line, column: 16, endLine: line, endColumn: 28 })) });
-  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: [k2('src/b.mjs', [2])], head: [k2('src/b.mjs', [2])] }) });
+  // K2 is an ast rule: ast-grep's recorded answer, one empty catch per copy of body (line 2, and 17 for the twin); both sides scan under the head's path
+  const k2 = (file, lines) => lines.map(line => ({ file, ruleId: 'K2.js.0.JavaScript', line, column: 16, endLine: line, text: 'catch (e) {}' }));
+  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: k2('src/b.mjs', [2]), head: k2('src/b.mjs', [2]) }) });
   assert.equal(r.findings.length, 1, 'the old swallow is seen in the renamed file');
   assert.equal(r.findings[0].file, 'src/b.mjs');
   assert.equal(r.findings[0].new, false);
   assert.deepEqual(r.blocks, []);
   fs.appendFileSync(path.join(repo, 'src/b.mjs'), body.replace('old', 'twin'));   // the same swallow written a second time IS new
   git(repo, 'commit', '-qam', 'twin');
-  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: [k2('src/b.mjs', [2])], head: [k2('src/b.mjs', [2, 17])] }) });
+  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'], tool: recordedTool({ base: k2('src/b.mjs', [2]), head: k2('src/b.mjs', [2, 17]) }) });
   assert.equal(r2.blocks.length, 1);
   assert.equal(r2.blocks[0].line, 17);
 });
