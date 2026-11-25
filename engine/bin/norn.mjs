@@ -90,6 +90,7 @@ import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { codeCmd } from '../lib/codecli.mjs';
+import { normPath } from '../lib/declinks.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
@@ -103,8 +104,8 @@ import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--from-source "<file>#<section>"] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]    (list every real alternative - 3-4 where they exist; never trim to two, never pad with a fake one. --from-source copies every alternative the section lists, verbatim, and records the file + section; an --option next to it is marked "added by <you>")',
-  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
-  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
+  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--paths a/b.mjs,c] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
+  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--paths a/b.mjs,c] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO] [--q Q-n]    (owner / controller: a slop finding that may stay; a check-in only with --q, the answered Q whose ruling is the waiver)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage STAGE] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
@@ -129,8 +130,8 @@ const USAGE = {
 const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'from-source', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
-  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
-  'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
+  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'paths', 'approach-review'],
+  'add directive': ['text', 'via', 'scope', 'paths', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until', 'q'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], say: ['text', 'via'], reply: ['text', 'option*', 'recommend', 'propose'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
@@ -167,6 +168,7 @@ function parse(cmd, argv) {
 }
 
 const csv = v => v === undefined ? undefined : v.split(',').map(s => s.trim()).filter(Boolean);
+const repoCsv = v => csv(v)?.map(normPath);   // RM-a-58: --paths as declinks.mjs keys them (a\b, ./a -> a/b, a)
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
 const optionsOf = (f, cmd) => (f.option || []).map(o => {
@@ -194,8 +196,8 @@ function addData(what, f, cmd, by) {
     const body = f['body-file'] !== undefined ? fs.readFileSync(f['body-file'], 'utf8') : f.body;
     return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source, origin, owner_only: f['owner-only'] ? true : undefined });
   }
-  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
-  if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
+  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), paths: repoCsv(f.paths), approach_review: f['approach-review'] });
+  if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), paths: repoCsv(f.paths), expires_utc: f.expires });
   if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until, q: f.q });
   if (what === 'lane') return drop({ name: f.name, worktree: f.worktree, notes: f.notes, branch: f.branch, brief_dir: f['brief-dir'], stage: f.stage, round_estimate: f['round-estimate'], executor_hint: f['executor-hint'] });
   throw new Usage(`unknown kind ${what}`, cmd);
