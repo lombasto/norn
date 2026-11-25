@@ -177,8 +177,11 @@ function indexOf(runs) {
   IDX.set(runs, x = { lanes, stages, done, whole: new Map() });
   return x;
 }
-/** the sessions of this run's lane + stage up to it (a hand-off resumes the same stage in a new run), oldest first */
-export const sessionsOf = (run, runs) => { if (!run.data?.lane) return []; const n = num(run.id);
+/** the sessions of this run's lane + stage up to it (a hand-off resumes the same stage in a new run), oldest first. A check-in or an
+ * audit is its own piece of work: its standing lane keeps one stage (none / 'audit'), so the lane + stage rule would chain every
+ * check-in or audit ever run into one (issue #153) */
+const STANDING = new Set(['checkin', 'audit']);
+export const sessionsOf = (run, runs) => { if (!run.data?.lane) return []; if (STANDING.has(run.data.kind)) return [run]; const n = num(run.id);
   return (indexOf(runs).stages.get(run.data.lane)?.get(run.data.stage) ?? []).filter(([k]) => k <= n).map(([, r]) => r); };
 /** the median minutes of finished work like it: the lane's own ended stages (2 at least), else the same agent's done runs */
 function estimate(run, runs) {
@@ -248,7 +251,8 @@ export function alarmWords(g, { test_share = null, ctx = null, moving = false } 
  */
 export function runProgress(run, { runs = {}, brief = null, notes = null, mails = [], work = workInit(), guard = [], cpu = null, ctx = null, procs = null, pid = null, now = Date.now(), stall_min = STALE_MIN } = {}) {
   const sess = sessionsOf(run, runs), first = sess[0] ?? run, live = run.state === 'running';
-  const plan = briefPlan(brief), added = mails.filter(m => Date.parse(m.created) >= Date.parse(first.created)).sort((a, b) => num(a.id) - num(b.id));
+  // a check-in has no brief Scope: a mail to its lane adds no item
+  const plan = briefPlan(brief), added = run.data?.kind === 'checkin' ? [] : mails.filter(m => Date.parse(m.created) >= Date.parse(first.created)).sort((a, b) => num(a.id) - num(b.id));
   const end = live ? now : Date.parse(endOf(run) ?? '') || now;
   const items = checklist({ plan, mails: added, work, notes, now: end }), done = items.filter(x => x.state === 'done').length;
   const doing = live ? nowDoing(work, now) : null;
@@ -258,7 +262,8 @@ export function runProgress(run, { runs = {}, brief = null, notes = null, mails 
   // pace: every session of the stage counts; the budget is the brief's (else the run's own)
   const elapsed = sess.reduce((s, x) => s + ((x.id === run.id ? end : Date.parse(endOf(x) ?? '') || end) - Date.parse(x.created)), 0) / 60000;
   const budget = plan.budget_min ?? run.data?.budget_min ?? null, est = estimate(run, runs), moved = lastMove(work);
-  const quiet = live && mins(now - Date.parse(moved ?? run.created)) >= stall_min ? mins(now - Date.parse(moved ?? run.created)) : null;
+  // the stall clock starts no earlier than this run's own start: an earlier session's last move is not this run's silence (issue #153)
+  const since = Math.max(Date.parse(moved ?? '') || 0, Date.parse(run.created)), quiet = live && mins(now - since) >= stall_min ? mins(now - since) : null;
   // a run in one long test is not stalled: the test is its activity (a test past its limit reads as such, warn)
   const testing = quiet !== null ? testRunning(work, { procs, pid, now }) : null, still = testing ? null : quiet;
   const over = (budget && elapsed > budget) || (est && elapsed > est.min * 1.5);
