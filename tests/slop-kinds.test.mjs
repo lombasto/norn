@@ -15,6 +15,7 @@ import { record } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { rustReady } from './helpers/rust.mjs';
 
+test.before(() => rustReady());   // the graph rules read norn-code: a cold build (minutes on a fresh store) runs here, never in a step
 const SYNTH = path.join(import.meta.dirname, 'fixtures', 'slop-project');
 const at = (t, s, cls) => classify(t)[t.indexOf(s)] === cls;
 
@@ -167,7 +168,6 @@ test('ast-grep S2: K11A, K21 and T3 find their lines in every language (shadow b
 // slop-langs S6: K10 (layers, cycles), K4 (exports) and K9 (copied helpers) in py / rs / ts through the code graph's reader only; the
 // new languages are shadow (K10's py / ts were live since S3); the JS findings and fingerprints are those of the JS files alone
 test('graph rules S6: K10, K4 and K9 find their lines in all four languages (shadow by shadow_langs); each miss finds none; JS is unchanged', () => {
-  rustReady();
   const want = { K10: { 'engine/lib/a.mjs': [1], 'engine/lib/pa.py': [1], 'engine/lib/ta.ts': [1], 'engine/lib/src/lib.rs': [1] },
     K4: { 'engine/lib/a.mjs': [2], 'engine/lib/pa.py': [5], 'engine/lib/ta.ts': [2], 'engine/core/src/util.rs': [2] },
     K9: { 'engine/lib/b.mjs': [1], 'engine/lib/pb.py': [1], 'engine/lib/tb.ts': [1], 'engine/lib/b.rs': [1] } };

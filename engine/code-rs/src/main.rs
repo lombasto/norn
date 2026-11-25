@@ -5,7 +5,7 @@
 // in memory and prints the snapshot instead of storing it. `norn-code query` answers symbols (one file or many), defs by body hash, refs, calls and callers over a commit
 // (calls.rs resolves the call sites). `norn-code grade files` grades the file-level edges against each language's own toolchain
 // (grade.rs); `norn-code grade calls` the definitions and call edges against compiler-grade indexers (grade_calls.rs, scip.rs).
-// `norn-code version` prints { crate, store_schema }.
+// `norn-code version` prints { crate, store_schema, source }.
 mod calls;
 mod exclude;
 mod git;
