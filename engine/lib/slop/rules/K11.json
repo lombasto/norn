@@ -10,7 +10,7 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.pyi","**/*.rs"],
   "shadow_langs": ["ts","py","rs"],
-  "exclude": ["tests/**","**/vendor/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/test_*.py","**/vendor/**","**/third_party/**"],
   "in": ["comment","string"],
   "patterns": ["\\b(?:[Oo]ld names?|keeps? resolving|still accepted|for old links|folds? into|falls? back to)\\b"],
   "fixture": {
@@ -23,7 +23,12 @@
     },
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"src/a.mjs":"// a rename changes every caller\nexport const oldName = 1;\n// \"falls back to\" is a phrase this rule reads\nexport const a = 1;\n",
+      "head": {"web/third_party/lib/x.mjs":"// the old name keeps resolving: falls back to the new one\nexport const a = 1;\n",
+        "crates/core/tests/it.rs":"// falls back to the old name when the new one is gone\n#[test]\nfn it() {}\n",
+        "crates/core/src/env_tests.rs":"// falls back to the old name when the new one is gone\npub const A: u8 = 1;\n",
+        "games/g/tests/test_a.py":"# falls back to the old name when the new one is gone\nA = 1\n",
+        "pkg/test_b.py":"# falls back to the old name when the new one is gone\nB = 1\n",
+        "src/a.mjs":"// a rename changes every caller\nexport const oldName = 1;\n// \"falls back to\" is a phrase this rule reads\nexport const a = 1;\n",
         "src/b.py":"# a rename changes every caller\nold_name = 1\n# \"falls back to\" is a phrase this rule reads\n",
         "src/c.rs":"// a rename changes every caller\npub const OLD_NAME: u8 = 1;\n/* \"falls back to\" is a phrase this rule reads */\n",
         "src/d.ts":"// a rename changes every caller\nexport const oldName: number = 1;\n"}

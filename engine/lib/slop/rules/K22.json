@@ -10,10 +10,10 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.pyi","**/*.rs"],
   "shadow_langs": ["ts","py","rs"],
-  "exclude": ["tests/**","**/vendor/**"],
+  "exclude": ["**/tests/**","**/*_tests.rs","**/test_*.py","**/vendor/**","**/third_party/**"],
   "in": ["comment","string"],
   "patterns": [
-    "\\b(?:[Ff]or now|[Ss]top-?gap|[Ii]nterim|[Tt]emporarily|[Rr]emove (?:once|when|after)|in a later (?:stage|slice|round)|comes? later|not yet (?:built|wired|implemented)|[Uu]ntil then|[Ss]lice [B-Z]|[Ss]tage [B-Z])\\b"
+    "\\b(?:(?<!asked )[Ff]or now|[Ss]top-?gap|[Ii]nterim|[Tt]emporarily|[Rr]emove (?:once|when|after)|in a later (?:stage|slice|round)|comes? later|not yet (?:built|wired|implemented)|[Uu]ntil then|(?:in|until|for|by|after|at) (?:[Ss]lice|[Ss]tage) [B-Z])\\b"
   ],
   "cite": {"id":"\\b(?:RM|DEC|DIR|Q)-\\d+\\b","open":["open","in-force","active"]},
   "fixture": {
@@ -26,7 +26,13 @@
     },
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"src/a.mjs":"// the user wrote \"for now, skip it\" and the text stays as written\nexport const dir = 'a temporary worktree';\n// a stop-gap until RM-12 lands\nexport const a = 1;\n",
+      "head": {"web/third_party/lib/x.mjs":"// for now the retry is off\nexport const a = 1;\n",
+        "crates/core/tests/it.rs":"// for now the retry is off\n#[test]\nfn it() {}\n",
+        "crates/core/src/env_tests.rs":"// for now the retry is off\npub const A: u8 = 1;\n",
+        "games/g/tests/test_a.py":"# for now the retry is off\nA = 1\n",
+        "pkg/test_b.py":"# for now the retry is off\nB = 1\n",
+        "crates/waves/src/surf.rs":"/// SS-5 stage B (DRAW-B): the rows of the stage-A surf set, every frame\npub const ROWS: u8 = 1;\n// f32 shore_s (m; stage B's swash reads it)\npub const SHORE: u8 = 2;\n// a mode refuses a switch asked for now; one asked for in another mode is kept\npub const KEEP: u8 = 3;\n",
+        "src/a.mjs":"// the user wrote \"for now, skip it\" and the text stays as written\nexport const dir = 'a temporary worktree';\n// a stop-gap until RM-12 lands\nexport const a = 1;\n",
         "src/b.py":"# the user wrote \"for now, skip it\" and the text stays as written\nDIR = \"a temporary worktree\"\n# a stop-gap until RM-12 lands\nA = 1\n",
         "src/c.rs":"// the user wrote \"for now, skip it\" and the text stays as written\npub const DIR: &str = \"a temporary worktree\";\n// a stop-gap until RM-12 lands\npub const A: u8 = 1;\n",
         "src/d.ts":"// a stop-gap until RM-12 lands\nexport const dir: string = 'a temporary worktree';\n"}
