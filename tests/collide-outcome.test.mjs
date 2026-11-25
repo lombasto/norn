@@ -176,27 +176,27 @@ function baseline() {
   for (const [lane, pr, , ,] of work.filter(w => w[0] !== 'quiet')) {
     git(wts[lane], '2026-11-20T16:00:00Z', 'fetch', '-q', 'origin');
     git(wts[lane], '2026-11-20T16:00:00Z', 'merge', '-q', '--no-edit', '-m', `merge: main into norn/${lane} (port ${lane} onto the Lanes board redesign)`, 'origin/main');
-    land(lane, wts[lane], `2026-11-20T1${7 + work.findIndex(w => w[0] === lane)}:00:00Z`, pr);
+    land(lane, wts[lane], `2026-11-20T${17 + work.findIndex(w => w[0] === lane)}:00:00Z`, pr);
   }
   return r;
 }
 
 test('replay on a fixture of 2026-11-20 lists the #83, #84 and #86 pairs as collided with no reaction', () => {
   const r = baseline(), p = path.join(r.t, 'project.json');
-  fs.writeFileSync(p, JSON.stringify({ name: 'k', root: fwd(r.home), state: fwd(r.state), policy: {} }));
-  const res = spawnSync(process.execPath, [NORN, 'collide', 'replay', '--since', '2026-11-19', '--json', '--project', p], { encoding: 'utf8', windowsHide: true,
+  fs.writeFileSync(p, JSON.stringify({ schema: 1, name: 'k', title: 'k', root: fwd(r.home), ledger: '${root}/L.md', briefs_dir: '${root}', policy: {} }));
+  const res = spawnSync(process.execPath, [NORN, 'collide', 'replay', '--since', '2026-11-19', '--json', '--project', p, '--state', r.state], { encoding: 'utf8', windowsHide: true,
     env: { ...process.env, META_ROOT: path.dirname(r.state), META_NO_TICK: '1', META_RUN_ID: '', META_ROLE: '' } });
   assert.equal(res.status, 0, res.stderr);
   const pairs = JSON.parse(res.stdout).pairs;
   assert.deepEqual(pairs.map(x => [x.day, x.a.lane, x.b.lane, x.b.pr, x.reaction]).sort((x, y) => x[3] - y[3]),
     [['2026-11-20', 'ui-nav', 'fair-slots', 83, 'none'], ['2026-11-20', 'ui-nav', 'lane-outputs', 84, 'none'], ['2026-11-20', 'ui-nav', 'branches-view', 86, 'none']]);
   for (const x of pairs) { assert.equal(x.ports, 1, `${x.b.lane}: one port commit`); assert.equal(x.shared.length, 1); }
-  const text = spawnSync(process.execPath, [NORN, 'collide', 'replay', '--since', '2026-11-19', '--project', p], { encoding: 'utf8', windowsHide: true,
+  const text = spawnSync(process.execPath, [NORN, 'collide', 'replay', '--since', '2026-11-19', '--project', p, '--state', r.state], { encoding: 'utf8', windowsHide: true,
     env: { ...process.env, META_ROOT: path.dirname(r.state), META_NO_TICK: '1', META_RUN_ID: '', META_ROLE: '' } }).stdout;
   assert.match(text, /2026-11-20 .*ui-nav \(#79\) > fair-slots \(#83\).*no reaction/);
   assert.doesNotMatch(text, /quiet/);
   // the report's last block is that baseline
-  const rep = spawnSync(process.execPath, [NORN, 'collide', 'report', '--since', '2026-11-19', '--project', p], { encoding: 'utf8', windowsHide: true,
+  const rep = spawnSync(process.execPath, [NORN, 'collide', 'report', '--since', '2026-11-19', '--project', p, '--state', r.state], { encoding: 'utf8', windowsHide: true,
     env: { ...process.env, META_ROOT: path.dirname(r.state), META_NO_TICK: '1', META_RUN_ID: '', META_ROLE: '' } });
   assert.equal(rep.status, 0, rep.stderr);
   assert.match(rep.stdout, /baseline .*3 pairs collided with no reaction, 3 port commits/);
