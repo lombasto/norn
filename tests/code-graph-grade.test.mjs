@@ -2,6 +2,8 @@
 // language's own toolchain (tools/grade: Node's resolver and the pinned typescript, Python's PathFinder on uv's Python, rustc's
 // dep-info and cargo metadata). Each fixture under tests/fixtures/code-graph/<lang>/ grades 100 % in every class it has; a repo
 // with one wrong edge and one missed import shows both, below the bar; the draw is stratified by how and the seed is recorded.
+// S4b: `norn-code grade calls` grades definition bounds and call edges (scip-typescript, jedi, rust-analyzer's SCIP): on each fixture
+// no definition is wrong, no chosen call edge is wrong and an ambiguous site lists the grader's target among its candidates.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,8 +23,9 @@ function repoOf(src, files = null) {
   git(repo, 'init', '-q'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'fixture');
   return { repo, state: path.join(d, 'state') };
 }
-const grade = ({ repo, state }, ...extra) => {
-  const r = spawnSync(binOf('code'), ['grade', 'files', '--graders', GRADERS, '--repo', repo, '--state', state, ...extra], { encoding: 'utf8', windowsHide: true, timeout: 300000 });
+const grade = ({ repo, state }, ...extra) => gradeAt('files', { repo, state }, ...extra);
+const gradeAt = (level, { repo, state }, ...extra) => {
+  const r = spawnSync(binOf('code'), ['grade', level, '--graders', GRADERS, '--repo', repo, '--state', state, ...extra], { encoding: 'utf8', windowsHide: true, timeout: 300000 });
   const j = JSON.parse(r.stdout); assert.ok(j.ok, j.why); return j;
 };
 const uv = spawnSync('uv', ['--version'], { windowsHide: true }).status === 0;
@@ -90,3 +93,27 @@ test('the draw: stratified by how (equal shares, a small stratum whole), the see
   const strip = ({ graded_at, ...g }) => g;
   assert.deepEqual(strip(a), strip(b));
 });
+
+for (const [fx, langs] of Object.entries(LANGS)) {
+  test(`grade calls on fixture ${fx}: no definition wrong, no chosen call edge wrong, an ambiguous site contains the target, the grade file written`, t => {
+    if (fx === 'py' && !uv) { t.skip('uv is not on PATH: jedi reads n/a'); return; }
+    const r = repoOf(path.join(FIX, fx)), g = gradeAt('calls', r);
+    assert.equal(g.level, 'calls');
+    assert.deepEqual(g.below_bar, []);
+    for (const l of langs) {
+      const L = g.langs[l];
+      assert.ok(L && L.na === null, `${l} graded`);
+      for (const [kind, c] of Object.entries(L.defs.classes)) assert.equal(c.wrong, 0, `${l}/def/${kind}: ${JSON.stringify(L.defs.disagreements)}`);
+      assert.ok(Object.values(L.defs.classes).some(c => c.graded > 0), `${l} defs graded`);
+      assert.equal(L.defs.recall.p, 1, `${l} def recall: ${JSON.stringify(L.defs.missed)}`);
+      for (const [how, c] of Object.entries(L.calls.classes)) {
+        if (c.graded !== undefined) assert.equal(c.fp, 0, `${l}/call/${how}: ${JSON.stringify(L.calls.disagreements)}`);
+        if (how === 'ambiguous') assert.equal(c.contains, c.recall_units, 'an ambiguous site lists the grader target among its candidates');
+      }
+      if (l !== 'typescript') for (const how of ['local', 'import', 'self']) assert.ok(L.calls.classes[how].graded > 0, `${l}/call/${how} graded`);
+    }
+    const file = path.join(r.state, 'code', 'grade', `${g.commit}.calls.json`);
+    const { file: _, ...stored } = g;
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), stored);
+  });
+}
