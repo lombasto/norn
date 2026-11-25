@@ -30,19 +30,9 @@ const sarif = (results, rules = []) => ({ version: '2.1.0', $schema: 'https://js
     results: results.map(({ uri, line, text, base, ...x }) => ({ message: { text }, locations: [{ physicalLocation: { artifactLocation: { uri, ...(base ? { uriBaseId: base } : {}) }, ...(line ? { region: { startLine: line } } : {}) } }], ...x })) }] });
 const hit = (uri, line, ruleId = 'hardcoded-token', extra = {}) => ({ ruleId, uri, line, text: 'a token is written in the code', level: 'error', ...extra });
 
-// the worked example of rules/README.md: P-scan reads {git}/norn/sarif/<sha>.sarif; errors hold, notes warn, a missing file warns
-const RULE = {
-  id: 'P-scan', level: 'WARN', kind: 'lint', tool: 'sarif', source: 'log', log: ['{git}/norn/sarif/{head}*.sarif'],
-  title: 'a new result of the project scanner on a file the branch touches',
-  explain: { what: 'The project scanner reports something new on a file the branch touches (P-scan/<its rule>).', why: 'The scanner knows what it looks for; only what the branch adds counts.', fix: 'Fix what the message says, or waive P-scan/<rule>.' },
-  files: ['**/*.py', '**/*.mjs'], levels: { error: 'BLOCK', warning: 'WARN', note: 'WARN', none: 'TREND', 'no-evidence': 'WARN', 'no-base': 'WARN' },
-  fixture: {
-    hit: { base: { 'src/a.py': 'X = 1\n' }, head: { 'src/a.py': 'X = 1\nTOKEN = "t0k"\n' },
-      recorded: { base: sarif([]), head: sarif([hit('src/a.py', 2)]) } },
-    miss: { base: { 'src/a.py': 'TOKEN = "t0k"\n', 'src/b.py': 'Y = 1\n' }, head: { 'src/a.py': '# moved down a line\nTOKEN = "t0k"\n', 'src/b.py': 'Y = 1\n' },
-      recorded: { base: sarif([hit('src/a.py', 1)]), head: sarif([hit('src/a.py', 2), hit('src/b.py', 1)]) } },
-  },
-};
+// the worked example of rules/README.md, read from it: P-scan reads {git}/norn/sarif/<sha>.sarif; errors hold, notes warn, a missing file warns
+const README = fs.readFileSync(path.join(import.meta.dirname, '..', 'engine', 'lib', 'slop', 'rules', 'README.md'), 'utf8');
+const RULE = JSON.parse(/```json\n([\s\S]*?)```/.exec(README.slice(README.indexOf('A worked example')))[1]);
 
 test('the fixture: the hit is a new P-scan/<ruleId> at its level (error -> BLOCK); the near-miss (an old result on a moved line, a result on an untouched file) is none', () => {
   for (const [which, want] of [['hit', [['P-scan/hardcoded-token', 'src/a.py', 2, 'BLOCK', true]]], ['miss', []]]) {
