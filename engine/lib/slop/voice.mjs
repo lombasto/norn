@@ -9,12 +9,11 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { norm } from './scan.mjs';
 import { classExecutor } from '../critique.mjs';
-import { allowedClasses } from '../policy.mjs';
 import { resolveShim } from '../paths.mjs';
 import { harnessOf, adapterFor } from '../harness/index.mjs';
 import { providersOf, typedExe, providerEnv, isOpenAI, cliMode } from '../executors.mjs';
 import { presetExe } from '../presets.mjs';
-import { withDefaults } from '../policy.mjs';
+import { withDefaults, allowedClasses } from '../policy.mjs';
 
 // the sec. 5 budget: about 3.3 bytes a token for this dense code (an estimate); the diff, the rest of the input (questions, rule hits,
 // brief lines, project quality lines), the answer; at most 10 findings kept. timeout_ms: one read waits this long, then it is skipped.
