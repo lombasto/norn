@@ -71,6 +71,7 @@ function alternatives(s, cur) {
   if (s.key === 'calib_time_utc') return ['2026-11-08T10:00:00Z'];
   if (s.key === 'policy.checkin.merge_agent') return ['runner'];
   if (s.key === 'policy.dod.critique_filter') return ['review-filter.txt'];
+  if (s.key === 'policy.slop.voice_reader') return ['codex-sol gpt-6.1-sol'];   // the setting's own example: a built-in executor allowed to do review, with a model
   return [];
 }
 
