@@ -125,6 +125,16 @@ test('a read-only read runs in its own empty folder; the prompt rides stdin, the
   assert.equal(voiceCall({ executor: 'fake', family: 'fake', model: 'fake', effort: 'low', mode: 'no-tools' }, at).cmd.args.includes('--read-only'), false);
 });
 
+test('a cli entry is picked only in a mode it declares, and its call carries the entry', () => {
+  const cli = modes => ({ type: 'cli', exe: 'tool.exe', model: 'm-1', effort: 'low', brief: 'file', args: ['--prompt-file', '{brief}', '{mode}', '-m', '{model}'], modes });
+  const project = modes => ({ executors: { other: cli(modes) }, policy: { executors: { review: { executor: 'other', model: 'm-1', effort: 'low' } } } });
+  const r = voiceRoute({ project: project({ rw: { access: 'write', args: ['--all'] }, quiet: { access: 'no-tools', args: ['--no-tools'] } }), author: 'claude' });
+  assert.deepEqual([r.executor, r.family, r.mode], ['other', 'cli', 'no-tools']);
+  assert.ok(voiceCall(r, mkTmp('slop-voice-cli-')).cmd.args.includes('--no-tools'));
+  const rw = voiceRoute({ project: project({ rw: { access: 'write', args: ['--all'] } }), author: 'claude' });
+  assert.notEqual(rw?.executor, 'other', 'a cli entry with neither no-tools nor read-only is never picked');
+});
+
 test('the daily cap: the reads of the day are counted from the stored checks; over it each model rule is the WARN could-not-run, no call', () => {
   const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'src/a.mjs': 'export const a = 2;\n' });
   const state = mkTmp('slop-voice-cap-'), ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');

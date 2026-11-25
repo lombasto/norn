@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { norm } from './scan.mjs';
 import { classExecutor } from '../critique.mjs';
 import { harnessOf, adapterFor } from '../harness/index.mjs';
-import { providersOf, typedExe, providerEnv, isOpenAI } from '../executors.mjs';
+import { providersOf, typedExe, providerEnv, isOpenAI, cliMode } from '../executors.mjs';
 import { presetExe } from '../presets.mjs';
 import { withDefaults } from '../policy.mjs';
 
@@ -139,7 +139,8 @@ export function model(rule, ctx) {
 export function voiceRoute({ project, machine = null, author = 'claude', env = process.env }) {
   const provs = providersOf(project), fam = ex => harnessOf(ex, provs[ex]), pol = withDefaults({ policy: project?.policy }).policy, classes = Object.keys(pol.executors);
   const routes = ['review', ...classes.filter(c => c !== 'review')].map(c => classExecutor(project, c)).filter(r => r.executor === 'fake' || r.model || provs[r.executor]?.model);
-  const can = (x, m) => { try { return adapterFor(fam(x.executor)).caps.modes.includes(m); } catch { return false; } }, other = x => fam(x.executor) && fam(x.executor) !== fam(author);
+  // a family that has the mode; a cli entry must declare it too (its own modes)
+  const can = (x, m) => { try { const e = provs[x.executor]; return adapterFor(fam(x.executor)).caps.modes.includes(m) && (e?.type !== 'cli' || cliMode(e, m)[1].access === m); } catch { return false; } }, other = x => fam(x.executor) && fam(x.executor) !== fam(author);
   const pick = [[x => other(x), 'no-tools'], [x => other(x), 'read-only'], [x => fam(x.executor) === fam(author), 'no-tools']].map(([ok, mode]) => ({ r: routes.find(x => ok(x) && can(x, mode)), mode })).find(p => p.r);
   if (!pick) return null;
   const { r, mode } = pick, entry = provs[r.executor] || null;
@@ -152,7 +153,7 @@ export function voiceRoute({ project, machine = null, author = 'claude', env = p
 export function voiceCall(route, dir) {
   const a = adapterFor(route.family), brief = path.join(dir, 'voice.md'), final = path.join(dir, 'final.md'), cwd = fs.mkdtempSync(path.join(dir, 'cwd-'));
   const cmd = a.command({ exe: route.exe, mode: route.mode, model: route.model, effort: route.effort, brief, final, worktree: cwd, addDirs: [], session_id: crypto.randomUUID(),
-    remote: false, lane: 'slop', project: 'slop', executor: route.executor, ...(isOpenAI(route.entry) ? { provider: route.entry } : {}),
+    remote: false, lane: 'slop', project: 'slop', executor: route.executor, ...(isOpenAI(route.entry) || route.entry?.type === 'cli' ? { provider: route.entry } : {}),
     promptText: 'The diff and the questions are on stdin. Answer with the JSON object only.' });
   return { cmd, cwd, brief, final };
 }
