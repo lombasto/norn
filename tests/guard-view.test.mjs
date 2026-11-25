@@ -3,8 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { advisory } from '../engine/lib/advisory.mjs';
-import { guardRows, guardView, rankRows, GUARD_TYPES } from '../engine/lib/guardview.mjs';
+import { guardRows, guardView, rankRows, GUARD_TYPES, openRefusals } from '../engine/lib/guardview.mjs';
 import { orcLine, bestAction } from '../engine/dash/norn/orc.mjs';
+import { stepHist, histTypes } from '../engine/lib/slophist.mjs';
 
 const adv = (o) => advisory({ source: 'test', fix: { tier: 'flag', kind: 'drafts', action: 'look' }, why: 'a finding', surface: 'x', severity: 'medium', ...o });
 
@@ -65,4 +66,30 @@ test('the worst pick: a low row (path not found), even a new one, never outranks
   assert.match(orcLine({ rows }), /The worst: a doc is stale\./);
   assert.equal(bestAction(rows).row.id, 'n');
   assert.match(orcLine({ rows: rankRows(rows.filter(r => r.id !== 'n')) }), /The worst: a test is red\./, 'not the new low row');
+});
+
+// owner 11-24: a scope refusal is an open finding only while its decision can still change something - its run is live, or it is its
+// lane's last run and that work has not landed. The rest is history: in the run's drawer (scope.mjs refusalFeed), in no row and no count.
+test('openRefusals: only a live run or the last unlanded run of its lane keeps its refusals open', () => {
+  const run = (id, state, lane, created) => ({ id, kind: 'run', state, created, data: { lane } });
+  const runs = [run('RUN-1', 'running', 'kelp', '2026-03-01T10:00:00Z'), run('RUN-2', 'exited', 'reef', '2026-03-01T10:00:00Z'),
+    run('RUN-3', 'exited', 'tide', '2026-03-01T10:00:00Z'), run('RUN-4', 'exited', 'tide', '2026-03-02T10:00:00Z'),
+    run('RUN-5', 'exited', 'shoal', '2026-03-01T10:00:00Z'), run('RUN-6', 'withdrawn', 'dune', '2026-03-01T10:00:00Z'),
+    run('RUN-7', 'exited', 'cove', '2026-03-01T10:00:00Z'), run('RUN-8', 'withdrawn', 'cove', '2026-03-02T10:00:00Z'),
+    run('RUN-9', 'exited', null, '2026-03-01T10:00:00Z'), run('RUN-10', 'running', 'tide', '2026-03-01T09:00:00Z')];
+  const refs = ['RUN-1', 'RUN-2', 'RUN-3', 'RUN-4', 'RUN-5', 'RUN-6', 'RUN-7', 'RUN-9', 'RUN-10'].map(r => ({ at: '2026-03-01T11:00:00Z', run: r, tool: 'Write', target: 'x', why: 'outside' }));
+  const open = openRefusals(refs, runs, { landed: l => l === 'shoal' }).map(r => r.run);
+  assert.deepEqual(open, ['RUN-1', 'RUN-2', 'RUN-4', 'RUN-7', 'RUN-10'],
+    'running (RUN-1, RUN-10 though older) and the last unlanded run (RUN-2, RUN-4; RUN-7: a withdrawn later run is no later run) stay; a lane that moved on (RUN-3), landed (RUN-5), a withdrawn run (RUN-6) and an ended run with no lane (RUN-9) are history');
+  assert.equal(guardRows({ refusals: openRefusals(refs, runs, { landed: l => l === 'shoal' }) }).length, 5, 'only the open ones become rows');
+});
+
+test('the closed-findings store: a refusal leaving the view (its lane moved on) is not a closed finding - Per type never says "fixed"', () => {
+  const t0 = Date.parse('2026-03-01T00:00:00Z'), r = id => ({ id, type: 'code', first_seen: '2026-03-01T00:00:00Z' });
+  const old = { since: '2026-02-01T00:00:00Z', open: { 'S-a': ['code', '2026-03-01T00:00:00Z'], 'R-1': ['code', '2026-03-01T00:00:00Z'], 'R-2': ['code', '2026-03-01T00:00:00Z'] }, closed: [['R-0', 'code', '2026-02-27T00:00:00Z', '2026-02-28T00:00:00Z']] };
+  const { h, dirty } = stepHist(old, [r('S-a'), r('R-1')], { types: ['code'], now: t0 + 86400000 });
+  assert.ok(dirty);
+  assert.deepEqual([Object.keys(h.open), h.closed.length], [['S-a'], 1], 'the store drops every refusal id, open or still shown, and closes none');
+  assert.deepEqual(histTypes(h, t0 + 86400000).types.code, { closed: 0, opened7: 1, closed7: 0, net7: 1 }, 'an old closed refusal line counts nothing');
+  assert.equal(stepHist(h, [r('S-a')], { types: ['code'], now: t0 + 2 * 86400000 }).h.closed.length, 1, 'the next step closes nothing');
 });

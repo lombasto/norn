@@ -96,7 +96,7 @@ import { classCost } from '../lib/classcost.mjs';
 import { advise, decidedKeys, writeAdviceCache, loadAdviceDataAsync } from '../lib/advice.mjs';
 import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
-import { guardRows, guardView } from '../lib/guardview.mjs';
+import { guardRows, guardView, openRefusals } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHist } from '../lib/slophist.mjs';
 import { slopHolds, openBlocks, slopFiles, slopDir, meterSeries, waiverCmd, voiceFindings, voicePrecision, hostWrite } from '../lib/slop/host.mjs';
@@ -1142,7 +1142,7 @@ export function createDashboard(o) {
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
     let at = null; try { at = Date.parse(JSON.parse(await readA(bf, 'null')).at); } catch { at = null; }
     const meter = !slop ? null : part('meter', () => meterView(p), null);
-    const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
+    const refused = !slop ? [] : part('scope', () => { const h = laneHooks(p.state); return openRefusals(refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), runsOf(st(p)), { landed: (l, r) => h.landed(l, r) || h.merged(l, r) }); }, []);   // META-DOD 2; owner 11-24: only the refusals that can still change something
     // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
     const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
     const crossed = (await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, voice: voiceRows, refusals: refused, docs: docsList(p) }))).map(r => (told.has(r.id) && told.get(r.id).what ? { ...r, explain: told.get(r.id) } : r));
