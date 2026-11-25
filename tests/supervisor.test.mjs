@@ -347,3 +347,29 @@ test('a slow start-time probe: the supervisor beats first - no lost sweep before
   assert.equal(end?.outcome, 'done', JSON.stringify(it.history.map(h => h.ev)));
   assert.ok(Number.isFinite(end.supervisor_started), 'the end waits for the start time and names it');
 });
+
+// NORN-RUST-FRESH: the Rust parts a run reads are built before the executor starts. The worktree is a fake Norn checkout (its own
+// engine/hook-rs) and the supervisor's PATH has no cargo, so no real cargo runs: a missing part is the run's ONE reason and the executor
+// is never spawned; a part already in the store (its content-named file) costs no build and the run goes ahead
+test('run start: a missing Rust part with no cargo = stopped on ONE reason, no executor; a stored part = no build, the run goes', async () => {
+  const { partsOf } = await import('../engine/lib/rustbin.mjs');
+  const d = sandbox(), policy = { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } };
+  fs.mkdirSync(path.join(d.wt, 'engine', 'hook-rs', 'src'), { recursive: true });
+  fs.writeFileSync(path.join(d.wt, 'engine', 'hook-rs', 'Cargo.toml'), '[package]\nname = "x"\n'); fs.writeFileSync(path.join(d.wt, 'engine', 'hook-rs', 'src', 'main.rs'), 'fn main() {}\n');
+  const [part] = partsOf({ parts: [], worktree: d.wt });
+  const sep = process.platform === 'win32' ? ';' : ':', old = process.env.PATH;
+  const hasCargo = dir => ['cargo', 'cargo.exe'].some(n => fs.existsSync(path.join(dir.replace(/"/g, ''), n)));
+  let id;
+  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); id = d.run('mode: done\n', { policy }); } finally { process.env.PATH = old; }
+  const e = (await d.end(id)).data;
+  assert.equal(e.outcome, 'stopped');
+  assert.match(e.why, /^the run did not start: norn-hook \(the per-tool-call hooks of every claude run\) cannot build: cargo is not on PATH \(install Rust: https:\/\/rustup\.rs\); build command: cargo build --release --locked /);
+  assert.equal(e.rust, e.why.replace('the run did not start: ', ''));
+  assert.equal(e.pid, null, 'the executor was never spawned');
+  fs.mkdirSync(path.dirname(part.exe), { recursive: true }); fs.writeFileSync(part.exe, 'stored');
+  try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); id = d.run('mode: done\n', { policy }); } finally { process.env.PATH = old; }
+  const ok = (await d.end(id)).data;
+  assert.equal(ok.outcome, 'done', JSON.stringify(ok));
+  assert.equal(ok.rust, undefined);
+  assert.ok(Number.isInteger(ok.pid), 'the executor ran');
+});

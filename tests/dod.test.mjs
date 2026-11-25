@@ -88,6 +88,26 @@ test('doneCheck: green = clean tree, changes in Scope, Tests + gate exit 0 with 
   assert.ok(d.at && d.head);
 });
 
+// NORN-RUST-FRESH: the Done check builds the worktree engine's Rust parts (rustbin.mjs ensureParts) before it tests; one that cannot
+// be had is its ONE problem and no test runs (the ensure is injected: no real cargo here)
+test('doneCheck: the Rust parts are built before any test runs; a part that cannot be had is the one problem and no test runs', async () => {
+  const t = mkTmp('meta-dod-rust-'), { wt } = laneRepo(t), mark = fwd(path.join(t, 'built'));
+  const ready = parseReady(`Scope: src/**\nTests: \`node -e "process.exit(require('fs').existsSync('${mark}') ? 0 : 3)"\`\nDone: x\n`);
+  const order = [];
+  const built = async w => { order.push(['ensure', w]); fs.writeFileSync(mark, 'x'); return { ok: true, built: ['/s/bin/norn-code-abc'] }; };
+  const d = await doneCheck({ worktree: wt, dod: { ready, tests: CHANGED }, logDir: path.join(t, 'logs'), run: 'RUN-1', ensure: built });
+  assert.deepEqual(order, [['ensure', wt]]);
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.deepEqual(d.tests.map(x => [x.name, x.code]), [['tests', 0]], 'the test saw the part built');
+  assert.deepEqual(d.rust_built, ['/s/bin/norn-code-abc']);
+  const why = 'norn-code (the code graph (docs/code-graph.md)) cannot build: cargo is not on PATH (install Rust: https://rustup.rs); build command: cargo build ...';
+  const red = await doneCheck({ worktree: wt, dod: { ready, tests: CHANGED, gate: { cmd: 'node -e 1' } }, logDir: path.join(t, 'logs2'), run: 'RUN-2', ensure: async () => ({ ok: false, built: [], part: 'code', why }) });
+  assert.equal(red.ok, false);
+  assert.equal(red.rust, why);
+  assert.equal(red.why, `Rust part: ${why}`, 'one reason, never a skip');
+  assert.deepEqual(red.tests, [], 'no test and no gate runs on a missing part');
+});
+
 // RUN-1063 / RUN-1072 (11-15): a README + 2 pictures branch stopped twice - the full-suite gate timed out at 997 pass, 0 fail.
 // CI runs no suite for such a push and the docs-only MERGE runs none either: the Done check skips its gate the same way.
 test('doneCheck: a docs-only branch (the CI paths-ignore) skips the gate, its Tests still run; one code file brings the gate back', async () => {
