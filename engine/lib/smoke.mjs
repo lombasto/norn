@@ -1,5 +1,5 @@
 // `norn smoke` (META-GENERAL-DESIGN section 8): an end-to-end check of a fresh install in a temp dir, also run by CI on
-// windows / ubuntu / macos. Clone (git clone --depth 1 file://) -> setup --non-interactive --no-scheduler with the example project ->
+// windows / ubuntu / macos. Clone (git clone --depth 1 file://) -> the Rust parts built here and copied in -> setup --non-interactive --no-scheduler with the example project ->
 // records add / answer / apply / supersede -> views vs tests/golden/smoke -> fake run handoff -> auto-resume -> done ->
 // second writer refused (exit 3) -> scheduler files (dry, nothing installed) -> dashboard on a random 127.0.0.1 port whose
 // /api/strip + /api/agents show the running fake run -> project new / list / remove on a temp repo with a GitHub origin (an
@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadState } from './records.mjs';
+import { RUST_PARTS, ensurePart, binOf } from './rustbin.mjs';
 
 const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VIEWS = ['OWNER-QUESTIONS.md', 'DECISIONS-LOG.md', 'DIRECTIVES.md'];
@@ -59,6 +60,16 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     // 1. clone (committed HEAD only - what a user gets)
     cloneCommitted(ENGINE_ROOT, M);
     ok('clone', 'git clone --depth 1 file://');
+    // the Rust parts are built (cargo, minutes from scratch: norn-code's C grammars) in THIS repo, where cargo keeps its cache, and
+    // copied into the clone, so the setup step below finds them built and stays inside its 30 s (SMOKE-45554406629: setup was killed
+    // building norn-code); a fresh mtime, as a copy keeps the old one on Windows and the clone's sources are newer
+    for (const p of Object.keys(RUST_PARTS)) {
+      const b = ensurePart(p, { err });
+      if (!b.ok) throw new SmokeError(`rust part: ${b.why}`);
+      const dst = path.join(M, path.relative(ENGINE_ROOT, binOf(p)));
+      fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(binOf(p), dst); const now = new Date(); fs.utimesSync(dst, now, now);
+    }
+    ok('rust', `${Object.values(RUST_PARTS).map(x => x.bin).join(', ')} built here, copied into the clone`);
 
     // 2. setup in a sandbox
     for (const d of [home, bin, cfg]) fs.mkdirSync(d, { recursive: true });
