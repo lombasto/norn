@@ -146,7 +146,7 @@ test('callers (S3): each call site whose candidates hold the def, with its how; 
   const r = repoOf('js'), c = callers({ state: r.state, repo: r.repo, symbol: AREA });
   assert.equal(c.stamp.exact, true); assert.equal(c.symbol.id, AREA); assert.equal(c.truncated, 0);
   assert.deepEqual(c.rows.map(x => [x.file, x.line, x.col, x.how, x.candidates, x.caller?.qual ?? null, x.depth, x.trust]), [
-    ['src/calls.mjs', 16, 17, 'self', 1, 'src/calls.mjs#Walker.walk', 1, 'unmeasured'],
+    ['src/calls.mjs', 16, 17, 'self', 1, 'src/calls.mjs#Walker.walk', 1, 1],
     ['src/calls.mjs', 25, 5, 'ambiguous', 2, 'src/calls.mjs#main', 1, 'unmeasured']]);
   assert.deepEqual(c.rows[1].targets, [AREA, 'src/shapes.mjs#src/shapes.mjs#Square.area#0']);
   const d2 = callers({ state: r.state, repo: r.repo, symbol: AREA, depth: 2 });
@@ -155,7 +155,7 @@ test('callers (S3): each call site whose candidates hold the def, with its how; 
   assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:area' }).why, /defines 2 named area; name one by id/);
   assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/nope.mjs#x#0' }).why, /no definition has the id/);
   assert.equal(callers({ state: r.state, repo: r.repo }).ok, false);
-  assert.ok(CALL_HOWS.every(h => TRUST[`python/call/${h}`] === 'unmeasured'));
+  assert.equal(TRUST['javascript/call/method-unique'], 'below bar'); assert.ok(['ambiguous', 'external', 'unresolved'].every(h => TRUST[`python/call/${h}`] === 'unmeasured'));
 });
 
 test('norn code graph callers: the --json shape, the text line with its how, 2 on usage, 3 n/a', () => {
