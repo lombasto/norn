@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
-import { ensurePart, binOf } from '../engine/lib/rustbin.mjs';
+import { ensurePart, ensurePartAsync, binOf, targetOf } from '../engine/lib/rustbin.mjs';
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'code-graph'), GRADERS = path.join(import.meta.dirname, '..', 'tools', 'grade');
 const built = ensurePart('code', { err: s => process.stderr.write(s + '\n') });
@@ -30,6 +30,19 @@ const uv = spawnSync('uv', ['--version'], { windowsHide: true }).status === 0;
 const wilsonLo = (k, n) => { const z = 1.96, p = k / n, d = 1 + z * z / n; return Math.round(Math.max(0, (p + z * z / (2 * n) - z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d) * 10000) / 10000; };
 
 test('norn-code is built', () => assert.ok(built.ok, built.why));
+
+// the binary graded above must be built from THIS checkout's sources: the store's target dir is shared, and cargo, finding another
+// checkout's fingerprint of the same package, checks only the files that build listed (a new grade.rs is not among them) and calls
+// it fresh - its old binary was then stored under this source's name (Done check RUN-a-2003: every grade call read "usage")
+test('a build drops the part\'s own cargo fingerprints first, so another checkout\'s build is never taken as fresh; deps keep theirs', async () => {
+  const t = mkTmp('cg-fp-'), src = path.join(t, 'engine', 'hook-rs'), store = path.join(t, 'store'), fp = path.join(targetOf('hook', store), 'release', '.fingerprint');
+  fs.mkdirSync(path.join(src, 'src'), { recursive: true }); fs.writeFileSync(path.join(src, 'Cargo.toml'), '[package]\nname = "norn-hook"\n'); fs.writeFileSync(path.join(src, 'src', 'main.rs'), 'fn main() {}\n');
+  for (const d of ['norn-hook-18ae1f6be3a3883e', 'norn-hook-0123456789abcdef', 'serde-0123456789abcdef']) fs.mkdirSync(path.join(fp, d), { recursive: true });
+  const seen = [], exe = process.platform === 'win32' ? '.exe' : '';
+  const cargo = async args => { seen.push(fs.readdirSync(fp).sort()); const out = path.join(args[args.indexOf('--target-dir') + 1], 'release'); fs.mkdirSync(out, { recursive: true }); fs.writeFileSync(path.join(out, 'norn-hook' + exe), 'bin'); return { status: 0, stdout: '', stderr: '' }; };
+  assert.deepEqual(await ensurePartAsync('hook', { src, store, cargo }), { ok: true, built: true });
+  assert.deepEqual(seen, [['serde-0123456789abcdef']]);
+});
 
 const LANGS = { js: ['javascript', 'typescript'], py: ['python'], rs: ['rust'] };
 for (const [fx, langs] of Object.entries(LANGS)) {
