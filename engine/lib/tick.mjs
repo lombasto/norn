@@ -405,7 +405,7 @@ export function collidePass(state, p, { now = Date.now(), ledger = null, mergeTr
   }
   for (const c of Object.values(casesOf(state))) for (const a of actionsOf(c)) if (a.auto && !a.undone && AUTO_ACTS.includes(a.action) && now - Date.parse(a.at) < HANDLED_MS)
     out.handled.push({ col: c.id, kind: c.data.kind, grade: c.data.grade ?? null, action: a.action, at: a.at, lane: c.data.b?.lane ?? null, why: c.data.why, undo: a.action === 'caveat' });
-  out.closed = outcomePass(state, p, { now });
+  out.closed = outcomePass(state, p, { now, lanes: new Set(X.map(x => x.lane)) });
   return save();
 }
 
@@ -417,25 +417,28 @@ const startOf = r => msOf(r.history?.find(h => h.ev === 'start')?.ts ?? r.create
 const endedAt = r => (LIVE_RUN.includes(r.state) ? Infinity : msOf(r.history?.at(-1)?.ts));
 const mergedEv = x => { const h = [...(x.history || [])].reverse().find(e => ['merged', 'done', 'create'].includes(e.ev)); return h?.ev === 'merged' ? h : null; };
 const tipOf = x => mergedEv(x)?.data?.tip ?? x.history?.filter(e => e.data?.tip).at(-1)?.data.tip ?? x.data?.tip ?? null;
-/** one side of a case: { lane, runs, dlv (the lane's newest deliverable of the case), settled, how: merged | archived | ended, merged_at, tip } */
-function sideOf(lane, opened, { runs, dlvs, items, state }) {
+/** one side of a case: { lane, runs, dlv (the lane's newest deliverable of the case), settled, how: merged | archived | ended, merged_at, tip }.
+ *  Settled only with no live run, no unmerged deliverable and no open work the judge still sees (lanes: gatherIntents' lanes) - an archived
+ *  lane record never settles a live side (a lane name used again after its archive kept closing and reopening the case every tick) */
+function sideOf(lane, opened, { runs, dlvs, items, state, lanes }) {
   const rs = runs.filter(r => r.data?.lane === lane), ds = dlvs.filter(x => x.data?.lane === lane && ((['open', 'parked'].includes(x.state) && !mergedEv(x)) || msOf(x.updated) >= opened));
   const live = rs.some(r => LIVE_RUN.includes(r.state)), open = ds.some(x => ['open', 'parked'].includes(x.state) && !mergedEv(x)), archived = items[laneId(lane, state)]?.state === 'archived';
   const m = ds.filter(mergedEv).sort((x, y) => msOf(mergedEv(x).data?.merged_at ?? mergedEv(x).ts) - msOf(mergedEv(y).data?.merged_at ?? mergedEv(y).ts)).at(-1), dlv = m ?? ds.at(-1) ?? null;
-  return { lane, runs: rs, dlv, settled: archived || (!live && !open), how: archived ? 'archived' : m ? 'merged' : 'ended', merged_at: m ? msOf(mergedEv(m).data?.merged_at ?? mergedEv(m).ts) : null, tip: dlv ? tipOf(dlv) : null };
+  return { lane, runs: rs, dlv, settled: !live && !open && !lanes?.has(lane), how: m ? 'merged' : archived ? 'archived' : 'ended', merged_at: m ? msOf(mergedEv(m).data?.merged_at ?? mergedEv(m).ts) : null, tip: dlv ? tipOf(dlv) : null };
 }
 /**
  * outcomePass(state, p, { now, usage }) -> [COL ids closed] - each open case whose two sides have merged, ended or been archived (closeCause) gets
  * its outcome (SPEC 4A.6): held_min, merge (the later side's landing path), resolve runs / tokens / minutes, the files the two sides both changed
  * against main as it was at the opening, the port commits on them, the duplicate run time of the side that did not merge, the scope guard's
- * refusals of a dropped file after a narrow, and real. usage: runsTotal's options (the transcript cache). Written once: the case closes.
+ * refusals of a dropped file after a narrow, and real. usage: runsTotal's options (the transcript cache); lanes: the lanes with open work (a
+ * side among them is not settled). Written once: the case closes.
  */
-export function outcomePass(state, p, { now = Date.now(), usage = {} } = {}) {
+export function outcomePass(state, p, { now = Date.now(), usage = {}, lanes = null } = {}) {
   const open = Object.values(casesOf(state)).filter(c => c.state === 'open');
   if (!open.length) return [];
   const cfg = deliverableConfig(p), repo = cfg.repo || p.root, ref = repo && fs.existsSync(repo) ? mainRef(repo, { main: cfg.main, remote: cfg.remote }) : null;
   const all = loadState(state).items, runs = Object.values(fold(readEvents(recordsFile(state, 'run'))).items).filter(r => r.kind === 'run');
-  const dlvs = Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(x => x.kind === 'deliverable'), F = { runs, dlvs, items: all, state }, out = [];
+  const dlvs = Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(x => x.kind === 'deliverable'), F = { runs, dlvs, items: all, state, lanes }, out = [];
   const total = rs => runsTotal(rs, { now, ...usage }), byId = new Map(runs.map(r => [r.id, r]));
   for (const c of open) {
     const d = c.data || {}, opened = msOf(c.history[0].ts), stale = d.kind === 'stale';
@@ -447,7 +450,7 @@ export function outcomePass(state, p, { now = Date.now(), usage = {} } = {}) {
       const h = acts.find(x => HOLD_ACTS.includes(x.action)), t0 = h ? msOf(h.at) : null;
       if (h) { const s = b.runs.map(startOf).filter(t => t >= t0).sort((x, y) => x - y)[0]; o.held_min = Math.round((((s ?? now) - t0) / 60000) * 10) / 10; }
       const la = landOutcome(state, a.dlv?.id), lb = landOutcome(state, b.dlv?.id);
-      o.merge = lb.merge;
+      o.merge = (a.merged_at != null && b.merged_at != null && a.merged_at > b.merged_at ? la : lb).merge;   // the later side; both merged: the one that landed last met the other's work
       const resolve = [...new Set([...la.queued, ...lb.queued].map(id => byId.get(id)).filter(Boolean).concat([...a.runs, ...b.runs].filter(r => roleOf(r.data) === 'landing' && startOf(r) >= opened)))];
       const R = total(resolve); o.resolve_runs = R.runs; o.resolve_tokens = R.tokens; o.resolve_min = R.min;
       const base = ref ? firstParentBefore(repo, ref.sha, opened) : null, A = ref ? ownWork(repo, a.tip, base) : { files: [] }, B = ref ? ownWork(repo, b.tip, base) : { files: [], ports: [] };

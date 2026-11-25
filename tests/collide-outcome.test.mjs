@@ -9,11 +9,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
-import { record } from '../engine/lib/records.mjs';
+import { record, recordsFile } from '../engine/lib/records.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { landDir } from '../engine/lib/landing.mjs';
 import { collidePass, outcomePass } from '../engine/lib/tick.mjs';
-import { casesOf, caseView, readCollide } from '../engine/lib/intents.mjs';
+import { casesOf, caseView, readCollide, gatherIntents } from '../engine/lib/intents.mjs';
 import { closeCause, realOf, demotedClasses, collideReport } from '../engine/lib/collide.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 
@@ -216,4 +216,58 @@ test('report: per kind and reaction - cases, automatic, as recommended, changed,
   assert.deepEqual([t.cases, t.automatic, t.held_med, t.clean, t.conflict, t.resolve_tokens, t.duplicate_min], [2, 2, 20, 1, 1, 900, 5]);
   const i = rep.rows.find(x => x.kind === 'item' && x.reaction === 'part');
   assert.deepEqual([i.cases, i.confirmed, i.changed, i.undone], [1, 1, 0, 1]);
+});
+
+// 11-25 (task NORN-COLLIDE-MEASURE): the real state's 311 cases had no landing outcome - no landing there is mechanical (a PR or a
+// check-in's git merge), and the churn came from live lanes the outcome pass called settled
+test('a case whose two sides both merged through merge commits records clean or conflict from git: a resolved port is a conflict', () => {
+  const r = repo(['ui/board.mjs', 'map/paint.mjs']), cases = {};
+  const land = (lane, wt, at2) => { const tip = git(wt, at2, 'rev-parse', 'HEAD'); git(r.home, at2, 'fetch', '-q', 'origin');
+    git(r.home, at2, 'checkout', '-q', '--detach', 'origin/main'); git(r.home, at2, 'merge', '-q', '--no-ff', '-m', `Merge ${lane}`, tip); const mc = git(r.home, at2, 'rev-parse', 'HEAD');
+    git(r.home, at2, 'push', '-q', 'origin', `${mc}:refs/heads/main`); git(r.home, at2, 'fetch', '-q', 'origin'); return { tip, mc }; };
+  for (const [n, file] of [['clean', 'map/paint.mjs'], ['conflict', 'ui/board.mjs']]) {
+    const a = r.lane(`board-${n}`), b = r.lane(`paint-${n}`), A = r.run(`board-${n}`, 'S1', { worktree: fwd(a) }), B = r.run(`paint-${n}`, 'S1', { worktree: fwd(b) });
+    const col = record(r.state, { kind: 'collision', ev: 'open', by: 'launcher', data: { key: `territory/covers:board-${n}>paint-${n}`, kind: 'territory', grade: 'covers', verdict: 'warn', door: 'run',
+      a: { lane: `board-${n}`, run: A, state: 'running' }, b: { lane: `paint-${n}`, run: B, state: 'running' }, files: ['ui/board.mjs'], files_n: 1, why: 'covers', pair: `board-${n}+paint-${n}` } }).id;
+    r.edit(a, soon(60), 'ui/board.mjs', s => s.replace('line 4', 'board line 4'), 'board: line 4'); r.end(A);
+    const LA = land(`board-${n}`, a, soon(65)), dA = r.dlv(`board-${n}`, LA.tip, A); r.merged(dA, LA.tip, soon(65), LA.mc);
+    r.edit(b, soon(70), file, s => s.replace('line 4', 'paint line 4'), 'paint: line 4');
+    // the worker brings main in (git's own message): on the same line it conflicts and is resolved by hand
+    const m = spawnSync('git', ['-c', 'core.autocrlf=false', 'merge', '--no-edit', 'origin/main'], { cwd: b, env: { ...ENV, GIT_AUTHOR_DATE: soon(75), GIT_COMMITTER_DATE: soon(75) }, encoding: 'utf8', windowsHide: true });
+    if (m.status !== 0) { put(path.join(b, 'ui/board.mjs'), BASE('ui/board.mjs').replace('line 4', 'board and paint line 4')); git(b, soon(75), 'add', '-A');
+      git(b, soon(75), 'commit', '-qm', "Merge remote-tracking branch 'origin/main' into norn/paint-conflict"); }
+    r.end(B); const LB = land(`paint-${n}`, b, soon(80)), dB = r.dlv(`paint-${n}`, LB.tip, B); r.merged(dB, LB.tip, soon(80), LB.mc);
+    cases[n] = col;
+  }
+  outcomePass(r.state, r.p, { now: Date.now() + 100e3 });
+  const o = n => casesOf(r.state)[cases[n]].outcome;
+  assert.equal(o('clean').cause, 'merged'); assert.equal(o('clean').merge, 'clean', 'both landing merges and the port replay cleanly');
+  assert.equal(o('conflict').merge, 'conflict', 'the port met a conflict on the shared line (git merge-tree)');
+  assert.equal(o('conflict').port_commits, 1, "git's own \"Merge remote-tracking branch 'origin/main' into\" is a port");
+});
+
+test('a merged lane with commits left ahead, another home\'s run and a live lane whose name was archived before are no settled or live side', () => {
+  const r = repo(['ui/board.mjs']), a = r.lane('board');
+  const A = r.run('board', 'S1', { worktree: fwd(a) }), tip = r.edit(a, soon(10), 'ui/board.mjs', s => `${s}x\n`, 'board: x'); r.end(A);
+  git(r.home, soon(20), 'push', '-q', 'origin', `${tip}:refs/heads/main`); git(r.home, soon(20), 'fetch', '-q', 'origin');
+  r.edit(a, soon(30), 'ui/board.mjs', s => `${s}y\n`, 'board: a leftover commit ahead of main');
+  const lanes = () => gatherIntents({ state: r.state, repo: r.home, home: 'a', now: Date.now() + 60e3 }).intents.map(x => x.lane).sort();
+  assert.deepEqual(lanes(), ['board'], 'paused work ahead of main');
+  const d = r.dlv('board', tip, A); r.merged(d, tip, soon(40));
+  assert.deepEqual(lanes(), [], 'its deliverable merged after the run ended: landed work, not a live side');
+  // another home's run copied into this state is that home's to judge
+  const f = recordsFile(r.state, 'run'), ev = JSON.parse(fs.readFileSync(f, 'utf8').trim().split('\n').at(0));
+  fs.appendFileSync(f, JSON.stringify({ ...ev, seq: 999, id: 'RUN-b-7', data: { ...ev.data, lane: 'paint', worktree: null } }) + '\n');
+  assert.deepEqual(lanes(), [], 'RUN-b-7 is not this home\'s');
+  // a live run on a lane name that was archived before: the case stays open (no close, no reopen next tick)
+  record(r.state, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'ci' } }); record(r.state, { kind: 'lane', ev: 'archive', id: 'L:ci', by: 'owner', data: {} });
+  const C = r.run('ci', 'CI-1'), D = r.run('doc', 'S1');
+  r.end(D);
+  const col = record(r.state, { kind: 'collision', ev: 'open', by: 'launcher', data: { key: 'territory/scopes:ci>doc', kind: 'territory', grade: 'scopes', verdict: 'shadow', door: 'run',
+    a: { lane: 'ci', run: C, state: 'running' }, b: { lane: 'doc', run: D, state: 'running' }, files: [], files_n: 0, why: 'scopes', pair: 'ci+doc' } }).id;
+  assert.deepEqual(outcomePass(r.state, r.p, { now: Date.now() + 60e3 }), [], 'ci still runs');
+  assert.deepEqual(outcomePass(r.state, r.p, { now: Date.now() + 60e3, lanes: new Set(['doc']) }), [], 'doc is still open work the judge sees');
+  r.end(C);
+  assert.deepEqual(outcomePass(r.state, r.p, { now: Date.now() + 60e3 }), [col]);
+  assert.equal(casesOf(r.state)[col].outcome.cause, 'archived');
 });

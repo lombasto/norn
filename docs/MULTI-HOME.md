@@ -142,6 +142,10 @@ A lane whose branch is predicted to conflict with another home's open branch car
   the others at every tick (every 15 min). With `ledger.doorbell.topic` set, a home rings the doorbell after each push and the
   others fetch within seconds. The doorbell carries only the home id and a commit id; when it is down, polling still works and nothing is
   lost.
+- **A refused push.** A publish never force-pushes. When the remote refuses it, Norn asks the remote for the tip of `home/<id>`: a
+  tip that is not in this home's history means another install uses the same id, so publishing stops (`home-stopped.txt` in the
+  ledger dir; remove it once the id is unique). Any other refusal (the remote was busy with another push, or unreachable) keeps the
+  commit local and the next pass pushes it.
 - **Status and alerts.** `norn sync status [--json]` shows the last publish and fetch, then one row per home: last push, last poll
   (its heartbeat: the time it last polled the ledger, rounded to 5 min), how much of our mail log it holds, our mail unread there
   (with the oldest age) and its mail waiting here. It exits 1 on a broken rule, named on a `broken:` line: a home whose heartbeat is
