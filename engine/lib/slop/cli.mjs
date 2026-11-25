@@ -12,6 +12,7 @@ import { locReport, formatLoc, mainRef } from './loc.mjs';
 import { meterOf, meterInput, formatMeter, loadMeter } from './meter.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
 import { dailyReport } from './daily.mjs';
+import { measureDiff } from './measure.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
 export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | fix [--lane L] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures'
@@ -79,14 +80,17 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id, explain: explainOf(b.rule, project?.project_dir) }));
     if (state && !f.diff) hostWrite(state, { type: 'check', branch: c.branch, lane: f.lane, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings });
     if (!c.result.files.length) { out(`slop check: nothing to check: ${at} changes no file`); return 0; }
-    const open = blocks.filter(b => !b.waived);
-    if (f.json) out(JSON.stringify({ branch: c.branch, ...c.result, blocks }, null, 1));
+    const open = blocks.filter(b => !b.waived), m = measureDiff({ repo, base: c.result.base, head: c.result.head, tool: makeTool() });   // S4: the size line and the ratchets (shadow)
+    if (f.json) out(JSON.stringify({ branch: c.branch, ...c.result, blocks, measure: m }, null, 1));
     else {
       // RM-27: each open finding says what / why / what to do - once per rule (the first of its findings), so ten K2s are not ten copies
       const told = new Set();
       for (const b of blocks) { out((b.waived ? `waived (${b.waived}) ` : 'BLOCK ') + findingLine(b)); if (!b.waived && !b.unrun && !told.has(b.rule)) { told.add(b.rule); for (const l of explainLines(b, { projectDir: project?.project_dir })) out(l); } }
       const unrun = c.result.findings.filter(x => x.unrun).map(x => x.rule);
       out(`slop check: ${open.length} BLOCK${blocks.length > open.length ? ` (+${blocks.length - open.length} waived)` : ''} on ${c.branch ?? head} ${at}, ${c.result.files.length} file(s); ran: ${c.result.ran.join(' ')}${unrun.length ? `; could not run: ${unrun.join(' ')}` : ''}`);
+      out(m.line);
+      for (const r of m.ratchets) out(`shadow ${r.ratchet} ratchet: ${r.msg}`);
+      if (m.error) out(`ratchets could not run (shadow: nothing holds): ${m.error}`);
     }
     return open.length ? 1 : 0;
   }

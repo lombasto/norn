@@ -4,7 +4,8 @@
 // and records the PR on the branch's deliverable (a `pr` event). The owner approves and merges the PR; Norn never touches main.
 // Repo = the owner/name of the remote's URL, base = project deliverables.main, title = the deliverable's `delivers` line (the lane
 // brief's heading), else the branch: project data, nothing chosen here. RM-44 D1: a branch whose pushed head has open slop BLOCK
-// findings (its stored check, or the check run now) gets no PR; RM-44 B: an opened PR's body carries that check's WARN list.
+// findings (its stored check, or the check run now) gets no PR; RM-44 B: an opened PR's body carries that check's WARN list, and
+// SloppaChoppa 2 S4 (SPEC 4.1 a) the branch's size line (net lines by area from its merge base with main, tests apart).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +22,7 @@ import { LIVE } from './lifecycle.mjs';
 import { slopOn } from './policy.mjs';
 import { doorCheck, doorWhy, doorWarns } from './slop/door.mjs';
 import { noteMqWhy } from './mqwhy.mjs';
+import { sizeOfNumstat, sizeLine } from './slop/measure.mjs';
 
 export const fwd = p => String(p || '').replace(/\\/g, '/');
 export const s7 = s => String(s || '').slice(0, 7);
@@ -63,8 +65,8 @@ export function openPrs(o) {
     if (!own.length) return res('refused', `${branch} has no commits past ${main}: nothing to land`);
     if (untested.length === own.length) return res('refused', `the tested merge ${s7(head)} holds none of ${branch}'s commits past ${main}`);
     if (untested.length) return res('refused', `${branch} has ${untested.length} commit(s) the tested merge ${s7(head)} does not hold (${untested.slice(0, 3).map(s7).join(', ')}${untested.length > 3 ? ', ...' : ''}): test them in a new MERGE run`);
-    let slop = null;   // the PR body's SloppaChoppa line(s): the stored check's WARN list
-    if (door) { let why; try { const d = door(branch, tip); why = doorWhy(d); slop = doorWarns(d); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
+    let slop = null;   // the PR body's SloppaChoppa line(s): the size line, the stored check's WARN list
+    if (door) { let why; try { const d = door(branch, tip); why = doorWhy(d); slop = [sizeLine(sizeOfNumstat(git(wt, ['diff', '--numstat', '-z', '-M', `refs/remotes/${remote}/${main}...${tip}`]))), doorWarns(d)].join('\n\n'); } catch (e) { why = `slop check could not run: ${e.message.split(/\r?\n/)[0]}`; } if (why) return res('refused', why); }
     const ahead = Number(git(wt, ['rev-list', '--count', `${head}..${tip}`], { allowFail: true }) || 0);   // merges of main only (the checks above)
     const dlv = dlvs.find(d => sameRepo(d.data.repo, repo) && d.data.branch === branch) || null;
     const list = gh(['pr', 'list', '--repo', slug, '--head', branch, '--base', main, '--state', 'open', '--json', 'url,number']);

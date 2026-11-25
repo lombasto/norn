@@ -7,8 +7,9 @@
 // Kinds built here: item, territory (grades exclusive > conflict > same-files > covers > scopes, the commons dropped; conflict from the tick's merge-tree), order (stacked, planned, named), stale
 // (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1, of a run and of a lane). First come: a hold only
 // from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix. S2a: the remedy menu and who may apply
-// it (APPLY_BY, policy.collide.apply_by), the judge reads a recorded wait and part, narrowScope for norn collide narrow. S3: the outcome
-// (closeCause, realOf), the demotion of an automatic class, the replay's pairs and the report (tick.mjs and norn.mjs gather their facts).
+// it (APPLY_BY, policy.collide.apply_by), the judge reads a recorded wait and part, narrowScope for norn collide narrow.
+// S2b: fold - foldRefusal, the FOLDED-<lane>.md text (foldedText; foldedSources reads its exact bytes back) and the kept lane's prompt line.
+// S3: the outcome (closeCause, realOf), the demotion of an automatic class, the replay's pairs and the report (tick.mjs and norn.mjs gather their facts).
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
@@ -341,6 +342,47 @@ export function takenBy(o, tracked, policy) {
 }
 /** the dropped files a Ready line (Tests: or Done:) of me names */
 export const namesDropped = (me, dropped) => dropped.filter(f => `${me.tests ?? ''} ${me.done ?? ''}`.includes(f));
+
+// ---------- S2b: fold (SPEC 4A.4 fold: keep A, fold B's brief and notes into it, end B) ----------
+/** may role fold lane B (lane) into lane `into`? -> null | why not. Never across homes, into an archived lane or for a lane that leads
+ *  parts of its own; an empty fold (no commits of its own, no live run) needs only the check-in for every kind on the menu (4A.3) */
+export function foldRefusal({ role, kind, grade = null, lane, into, homes = [], leads = [], commits = 0, live = null, keepArchived = false, col = 'COL-n', policy } = {}) {
+  if (new Set(homes.filter(Boolean)).size > 1) return `lanes of two homes (${homes.join(', ')}): a home cannot fold another home's lane - wait, narrow or allow`;
+  if (keepArchived) return `lane ${into} is archived: unarchive it first (controller or owner), or fold it into a live lane`;
+  if (leads.length) return `lane ${lane} leads parts of its own (${leads.join(', ')}): fold or re-link them first`;
+  if (!applyNeed('fold', kind, grade, policy)) return applyRefusal(role, 'fold', kind, grade, policy);
+  if (role === 'checkin' && (commits || live)) return `a check-in folds only an empty lane: lane ${lane} has ${live ? `a live run ${live}` : `${commits} commit${commits === 1 ? '' : 's'} of its own`} - ask the controller (norn collide ask ${col} --want fold)`;
+  return role === 'checkin' ? null : applyRefusal(role, 'fold', kind, grade, policy);
+}
+const fenceFor = t => '~'.repeat(Math.max(4, ...[...String(t).matchAll(/~+/g)].map(m => m[0].length + 1)));
+/** FOLDED-<B>.md: the folded lane's objective, branch and commits not on main, open questions, decisions and roadmap links, then each source
+ *  text verbatim (its path and sha256; a tilde fence longer than any run inside, so foldedSources reads back the exact bytes) */
+export function foldedText({ lane, into, col, at, by, why, objective, branch, tip, commits = [], questions = [], decisions = [], links = [], sources = [] }) {
+  const list = (xs, none) => (xs.length ? xs.map(x => `- ${x}`) : [none]);
+  return [`# FOLDED-${lane}: lane ${lane} folded into lane ${into} (${col})`, '', `${at} by ${by}: ${why}`,
+    'The texts below are copies of the sources named; the sources are never moved, edited or deleted.', '',
+    '## Objective', objective || '(no brief heading)', '',
+    '## Branch', branch ? `${branch} at ${tip ?? '?'}: ${commits.length} commit${commits.length === 1 ? '' : 's'} not on main` : 'no worktree on record', ...list(commits, '').filter(Boolean), '',
+    '## Open questions', ...list(questions, '(none)'), '', '## Decisions', ...list(decisions, '(none)'), '', '## Roadmap links', ...list(links, '(none)'), '',
+    '## Sources', ...sources.flatMap(s => { const f = fenceFor(s.text); return [`### ${s.kind}: ${s.path}`, `sha256 ${s.sha256}, ${Buffer.byteLength(s.text)} bytes`, f, s.text, f]; }), ''].join('\n');
+}
+/** the sources of a FOLDED-<B>.md text -> [{ kind, path, sha256, text }] (text: the exact copy) */
+export function foldedSources(md) {
+  const out = [], at = md.indexOf('\n## Sources\n');
+  if (at < 0) return out;
+  const re = /### (\w+): (.+)\nsha256 ([0-9a-f]{64}), \d+ bytes\n(~{4,})\n/g;
+  re.lastIndex = at;
+  for (let m; (m = re.exec(md));) {
+    const start = re.lastIndex, end = md.indexOf(`\n${m[4]}\n`, start);
+    if (end < 0) break;
+    out.push({ kind: m[1], path: m[2], sha256: m[3], text: md.slice(start, end) });
+    re.lastIndex = end + m[4].length + 2;
+  }
+  return out;
+}
+/** the prompt line of every start on the kept lane until a run there ended DONE (SPEC 4A.4 fold step 4) */
+export const foldLine = ({ lane, col, branch, commits = 0 }) => `Lane ${lane} was folded into this lane (${col}). Read FOLDED-${lane}.md first.`
+  + (commits ? ` Branch ${branch} has ${commits} commit${commits === 1 ? ' that is' : 's that are'} not on main: merge it into your branch first (\`git merge\`, a merge commit).` : '');
 
 // ---------- S3 (SPEC 4A.6): the outcome, the demotion, the replay and the report ----------
 const DAY_MS = 864e5;

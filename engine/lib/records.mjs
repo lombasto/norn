@@ -183,7 +183,7 @@ export const KINDS = {
 // META-ROADMAP S1: a roadmap link is a kind:id term (the --after grammar); existence is checked by roadmap.mjs checkLinks
 // lane-collide S1b: the kinds a case names (SPEC 2; any = a ruling on a whole pair) and the actions S1b records (SPEC 4A.1 hold, after, told; allow)
 export const COLLIDE_KINDS = ['item', 'lead', 'goal', 'territory', 'resource', 'order', 'stale', 'any'];
-export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow', 'caveat', 'claim-release', 'wait', 'narrow', 'part', 'ask'];   // S1c: the tick's stale corrections; S2a: the remedies (wait, narrow, part) and ask
+export const COLLIDE_ACTIONS = ['hold', 'after', 'told', 'released', 'allow', 'caveat', 'claim-release', 'wait', 'narrow', 'part', 'ask', 'fold'];   // S1c: the tick's stale corrections; S2a: the remedies (wait, narrow, part) and ask; S2b: fold
 // the one id rule (<P>-n, <P>-<home>-n): every module builds its id regexes from NID, so a home's ids (RUN-b-12) parse everywhere
 export const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
 export const HOME_RE = /^[a-z][a-z0-9]{0,7}$/;
