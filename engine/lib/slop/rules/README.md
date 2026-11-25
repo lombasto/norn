@@ -31,7 +31,7 @@ those of the rule file.
 | `pattern` | `patterns` (regexes), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked), `unless`, `cite` | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
 | `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
-| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
+| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`; or `scan`: a pinned scanner Norn runs, below), `quote` (`false`: a finding never quotes its line), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
 | `ast` | `tool: ast-grep`, `match` by language pack (`js`, `ts`, `py`, `rs`): a list of `{ rule, constraints?, message }` (ast-grep rule data; its `regex` is Rust regex), `shadow_langs` (packs whose findings are shadow, the rule id kept), `reason`, `files`, `exclude`; the old ESLint `selectors` form does not load | yes |
@@ -62,7 +62,8 @@ main checkout> ruff` (VIRTUAL_ENV unset, never `uv sync`) on the touched files i
 
 Any analyzer that writes SARIF 2.1.0 plugs into the kind `lint` with no parser of its own (`engine/lib/slop/lang/sarif.mjs`). Choppa
 never runs it: the project's own gate writes the file, and the rule's `log` templates name it (`{git}` the repo's common git
-folder, `{head}` the commit, `*` in the file name; several files are read as one log). No built-in rule uses it; a project adds one.
+folder, `{head}` the commit, `*` in the file name; several files are read as one log). A project adds such a rule; the one built-in sarif
+rule, LS, names a pinned scanner Norn runs instead (`scan`, below).
 
 - **The head** reads the templates with `{head}` = the head's sha. No file is `<id>/no-evidence` (give it a `levels` entry: `WARN`).
 - **The merge base** reads the same templates with `{head}` = the merge base's sha, so the gate that writes the file at each commit
@@ -112,6 +113,25 @@ The hit is one BLOCK finding P-scan/hardcoded-token on line 2. The near-miss rep
 (the base had it on the same line text, one line up), and the other file is not touched. `tests/slop-sarif.test.mjs` runs this rule
 and its fixture.
 
+### A pinned scanner (`scan`): LS, keys and tokens
+
+A sarif rule may name a scanner Norn runs itself (`scan`, one of `SCANNERS` in `engine/lib/slop/tools.mjs`) instead of `source: log`;
+exactly one of the two. LS (BLOCK) names `gitleaks` (MIT): `tools/gitleaks/manifest.json` pins the version and `lock.json` the release
+archive of each OS with its sha256 (from the release's checksums file). On first use the archive is downloaded, its sha256 checked
+before it is opened, and the binary extracted into `<meta root>/state/tools/gitleaks/<lock hash>/<platform>-<arch>/`; never a
+worktree, never imported. No pin for the OS, no network, a wrong checksum or a scanner that exits non-zero is LS's "could not run".
+
+- **Only the branch's added lines** are scanned (`git diff -U0` merge base..head; every other line of a touched file blanked, so lines
+  keep their numbers). The merge base side is an empty log: every result is new, and there is no `no-base`.
+- **The branch cannot switch it off**: the files are scanned from a folder of their own, so the branch's `.gitleaksignore` and
+  `.gitleaks.toml` are not read; `GITLEAKS_*` is unset and `gitleaks:allow` comments are ignored. A false positive is a waiver of
+  `LS/<gitleaks rule>`.
+- **The key is never printed**: gitleaks runs with `--redact`, each result keeps only its rule, file and lines (no snippet, no
+  fingerprints, a fixed message), and `quote: false` makes a finding's snippet `<rule> line <sha256 of the line>` instead of the line
+  (the fingerprint still follows a moved line).
+- **Fixtures**: a fixture file's text may be a list of parts, joined when the rule loads, so the repo never holds a key in one string
+  (the host's push protection blocks even a fake one). LS's fixture and `tests/slop-secrets.test.mjs` build their keys that way.
+
 ## The second voice (`model`)
 
 All `model` rules of a check share ONE model call at the run end: the prompt on stdin and nothing else, launched lean (the
@@ -138,6 +158,23 @@ questions, the rule hits and the brief's Scope lines. A docs-only branch is not 
 `tests`. Every finding must quote an added line of its file verbatim, or the engine drops it; its fingerprint is rule + file +
 quote, so new-only and waivers work as for every rule. At most 10 findings. With no route (the doors, `norn slop check`) each
 model rule is a WARN finding "could not run": the voice is advisory and holds nothing.
+
+**The risk rank decides which diffs a short day's reads go to** (RM-a-68; `voiceGate`, `engine/lib/slop/voice.mjs`). At each run end
+`left` = the cap minus today's reads, and `expected` = the run-end checks (stored checks with a run) a day over the last 7 full UTC
+days (`VOICE_GATE.history_days`) times the share of the UTC day still left, rounded up, at least 1 (this diff included). When `left
+>= expected` the diff is read. When `left < expected`, the diff is read only when its risk percentile (`norn code risk`,
+`engine/lib/coderisk.mjs`: where it stands against the last 100 landings) is at least the bar `100 x (1 - left / expected)`; under
+it each model rule is the WARN "could not run: skipped by the risk rank: riskier than p % of the last n landings (...), under the bar
+b % (l reads left, ~e diffs expected today)", and no read is spent. A rank that is n/a (no code signals stored, fewer than 10
+landings) reads in arrival order with the reason said: the cap alone decides, as before. `endCheck` returns the one-line rank
+(`risk`) to the run end, a skipped diff's WARN quotes it, and the PR body (merge-land) prints it as "Risk rank: ...".
+
+The rank (`norn code risk <base>..<head> [--json]`): the diff from the merge base to head, and the same numbers for each of the last
+100 first-parent landings ending at that merge base - lines and files changed (git), the fixes 365 d of its files summed, their top
+`fix_first`, and the companions it leaves out (the code signals through `readSignals`, docs/code-signals.md; an untyped history drops
+the two fix numbers and says why). Per number the Borda count over the landings and the diff (ties half), summed; the percentile =
+the landings with a lower sum plus half the equal ones. The line names the three numbers standing highest. `RISK_LIMITS`
+(engine/lib/coderisk.mjs, the one place): `landings` 100 (the pool), `min_landings` 10 (under it the rank is n/a), `why` 3.
 
 The `M*` rules ship `shadow: true`. A thumb on a model finding in the Guard records a rating (`<state>/slop/ratings.jsonl`, the
 last one counts); Slop › Rules shows each rule's precision. At 90 % over 20 rated a rule may go to `BLOCK`, under 50 % (over 20

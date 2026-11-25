@@ -9,9 +9,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { codeIndex, lineCount } from '../engine/lib/codeindex.mjs';
+import { graphAt } from '../engine/lib/codegraph.mjs';
+import { rustReady } from './helpers/rust.mjs';
 import { codeCmd, codeAt, tickCode } from '../engine/lib/codecli.mjs';
 
 test.after(cleanTmp);
+test.before(rustReady);   // fan_in is the code graph's: norn-code built
 const DAY = 86400e3, NOW = Date.parse('2026-11-20T12:00:00Z');
 const C1 = '2026-07-01T10:00:00Z', C2 = '2026-10-15T10:00:00Z', C3 = '2026-11-10T10:00:00Z';
 function world() {
@@ -31,12 +34,13 @@ function world() {
 }
 const byFile = ix => Object.fromEntries(ix.files.map(f => [f.file, f]));
 
-test('K1 K2 codeIndex: lines, born, churn, growth weeks and fan-in exact; importance in Borda order; binaries and vendor/ skipped', () => {
-  const { repo, sha } = world(), ix = codeIndex(repo, { now: NOW }), f = byFile(ix);
+test('K1 K2 codeIndex: lines, born, churn, growth weeks and fan-in exact; importance in Borda order; binaries and the graph-excluded files (vendor/) skipped', () => {
+  const { repo, state, sha } = world(), ix = codeIndex(repo, { now: NOW, graph: graphAt({ state, repo }) }), f = byFile(ix);
   assert.equal(ix.sha, sha);
   assert.deepEqual(Object.keys(f).sort(), ['README.md', 'engine/a.mjs', 'engine/b.mjs', 'engine/c.mjs', 'engine/d.mjs'], 'img.png (binary) and vendor/ are dropped');
   assert.deepEqual(Object.fromEntries(ix.files.map(x => [x.file, [x.lines, x.commits_90d, x.churn_90d, x.fan_in]])),
     { 'README.md': [2, 0, 0, null], 'engine/a.mjs': [5, 1, 2, 0], 'engine/b.mjs': [4, 2, 6, 2], 'engine/c.mjs': [1, 0, 0, 1], 'engine/d.mjs': [2, 1, 2, 0] }, 'the vendor importer of b is not counted');
+  assert.equal(f['README.md'].fan_in_why, 'not a graph language'); assert.equal(f['engine/b.mjs'].fan_in_why, undefined);
   assert.equal(f['engine/b.mjs'].rel_churn, 1.5);
   assert.equal(f['engine/a.mjs'].lang, 'javascript'); assert.equal(f['README.md'].lang, 'markdown');
   assert.equal(f['engine/a.mjs'].born, '2026-07-01'); assert.equal(f['engine/d.mjs'].born, '2026-10-15');
@@ -90,6 +94,25 @@ test('codecli: history writes <state>/code/index.json; codeAt serves the summary
   const none = { name: 'empty', state: path.join(path.dirname(state), 'empty') };
   assert.deepEqual((await codeAt(none, new URL('http://x/api/code'))).index, null);
   assert.deepEqual(await codeAt(none, new URL('http://x/api/code?part=files')), { list: null });
+});
+
+test('codeIndex fan_in for every graph language (.mjs, .py, .rs, Cargo.toml) with paths of a monorepo subfolder; no graph: n/a with its reason', () => {
+  const d = mkTmp('meta-code-langs-'), repo = path.join(d, 'repo'), sub = path.join(repo, 'proj'), state = path.join(d, 'state');
+  const w = (f, t) => { fs.mkdirSync(path.dirname(path.join(sub, f)), { recursive: true }); fs.writeFileSync(path.join(sub, f), t); };
+  const g = args => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true });
+  fs.mkdirSync(repo, { recursive: true }); g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']); g(['config', 'core.autocrlf', 'false']);
+  fs.writeFileSync(path.join(repo, 'top.md'), 'outside the project\n');
+  w('pyproject.toml', '[project]\nname = "pkg"\n'); w('pkg/__init__.py', ''); w('pkg/m.py', 'from . import n\n'); w('pkg/n.py', 'X = 1\n'); w('pkg/o.py', 'import pkg.n\n');
+  w('crates/c/Cargo.toml', '[package]\nname = "c"\n'); w('crates/c/src/lib.rs', 'mod k;\n'); w('crates/c/src/k.rs', 'pub fn f() {}\n');
+  w('web/a.mjs', "import './b.mjs';\n"); w('web/b.mjs', 'export {};\n'); w('notes.md', 'n\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'one']);
+  const f = byFile(codeIndex(sub, { now: NOW, graph: graphAt({ state, repo: sub }) }));
+  assert.deepEqual(Object.keys(f).sort(), ['crates/c/Cargo.toml', 'crates/c/src/k.rs', 'crates/c/src/lib.rs', 'notes.md', 'pkg/__init__.py', 'pkg/m.py', 'pkg/n.py', 'pkg/o.py', 'pyproject.toml', 'web/a.mjs', 'web/b.mjs'], 'the folder\'s own paths');
+  assert.deepEqual(Object.fromEntries(Object.entries(f).map(([k, x]) => [k, x.fan_in])), { 'crates/c/Cargo.toml': 0, 'crates/c/src/k.rs': 1, 'crates/c/src/lib.rs': 0, 'notes.md': null, 'pkg/__init__.py': 0,
+    'pkg/m.py': 0, 'pkg/n.py': 2, 'pkg/o.py': 0, 'pyproject.toml': 0, 'web/a.mjs': 0, 'web/b.mjs': 1 }, 'package-init edges are no fan-in; the rest is');
+  assert.equal(f['notes.md'].fan_in_why, 'not a graph language');
+  const none = byFile(codeIndex(sub, { now: NOW, graph: { ok: false, why: 'norn-code is not built (x)' } }));
+  assert.deepEqual([none['web/b.mjs'].fan_in, none['web/b.mjs'].fan_in_why], [null, 'norn-code is not built (x)'], 'no graph: n/a, never a guess');
 });
 
 test('tickCode: starts `norn code history` (and, with no map yet, the first code map) detached when the sha moved, not again within 10 minutes, not when the index is at HEAD', () => {

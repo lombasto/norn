@@ -161,6 +161,29 @@ export function voiceRoute({ project, machine = null, author = 'claude', authorM
   return { executor: r.executor, family: fam(r.executor), mode, cap: pol.slop.voice_reads_per_day, model: r.model || modelOf(r), effort: r.effort || entry?.effort || 'medium', exe, entry };
 }
 
+// RM-a-68: how the day's reads are spent when they are short. history_days: the full UTC days before today whose run-end checks set the
+// expected rate (a run-end check is a stored check with a run)
+export const VOICE_GATE = { history_days: 7 };
+const DAY_MS = 864e5;
+/**
+ * The risk gate of one run-end read (rules/README.md "The second voice"): left = cap - used reads; expected = the diffs still expected
+ * today, this one included = ceil(run-end checks a day over the last history_days days x the share of the UTC day left), at least 1.
+ * left >= expected: read. Fewer: read only a diff whose risk percentile (coderisk.mjs) is at least the bar 100 x (1 - left / expected),
+ * so the reads go to the riskiest share of the expected diffs. A rank n/a reads in arrival order (the cap alone decides, as before).
+ * -> { read, why, left, expected, bar }
+ */
+export function voiceGate({ risk, cap, used = 0, checks = [], now = Date.now() }) {
+  const left = cap == null ? Infinity : cap - used, day0 = Math.floor(now / DAY_MS) * DAY_MS, from = day0 - VOICE_GATE.history_days * DAY_MS;
+  const past = checks.filter(c => c.run && Date.parse(c.at) >= from && Date.parse(c.at) < day0).length;
+  const expected = Math.max(1, Math.ceil(past / VOICE_GATE.history_days * (day0 + DAY_MS - now) / DAY_MS)), x = { left, expected, bar: null };
+  if (left <= 0) return { ...x, read: true, why: `daily cap ${cap} reached` };   // the cap's own refusal (makeTool) says it
+  if (left >= expected) return { ...x, read: true, why: `${left} reads left, ~${expected} diffs expected today: read` };
+  const bar = Math.round(100 * (1 - left / expected)), tail = `${left} reads left, ~${expected} diffs expected today`;
+  if (risk?.pct == null) return { ...x, bar, read: true, why: `${tail}; ${risk?.line ?? 'risk rank n/a'}: read in arrival order` };
+  return risk.pct >= bar ? { ...x, bar, read: true, why: `${tail}; ${risk.line}, at or over the bar ${bar} %: read` }
+    : { ...x, bar, read: false, why: `skipped by the risk rank: ${risk.line}, under the bar ${bar} % (${tail})` };
+}
+
 // the read sees the prompt and nothing else: the adapter's lean launch (harness profileArgs) - no MCP server, no user setup (its memory,
 // hooks, plugins), no skills, no dynamic system-prompt sections; an adapter without lean flags ignores it (its profileGap)
 export const VOICE_PROFILE = { name: 'voice', mcp: 'none', user_setup: false, skills: false, dynamic_prompt: false };

@@ -9,13 +9,13 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
-import { runTool, PARSE } from './tools.mjs';
+import { runTool, PARSE, SCANNERS } from './tools.mjs';
 import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
 import { packOf, PACKS, LINTERS } from './lang/index.mjs';
 import { lint, ast, dup, exportsKind, refs, depLock, companion } from './kinds.mjs';
 import { model } from './voice.mjs';
 import { registerKind, loadRegister, registerFile } from './register.mjs';
-import { importGraph, cycles } from './graph.mjs';
+import { graphAt, cycles, ALL_KINDS, LOAD_KINDS } from '../codegraph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +41,8 @@ function checkRule(r, f) {
   if (!r.id || !LEVELS.includes(r.level) || !DETECT[r.kind]) throw new Error(`${f}: a rule needs an id, a level (${LEVELS.join(' | ')}) and a known kind`);
   if (!r.fixture?.hit || !r.fixture?.miss) throw new Error(`${f}: a rule ships with a fixture hit and a near-miss (SPEC 3.4.5)`);
   if (r.kind === 'lint' && (!LINTERS[r.tool] || (r.tool === 'eslint' && !r.rules) || Object.keys(r.rules || {}).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
-  if (r.kind === 'lint' && r.tool === 'sarif' && !readsLog(r)) throw new Error(`${f}: a sarif rule reads the file a project tool wrote: source "log" and log (path templates, {git} / {head})`);
+  if (r.kind === 'lint' && r.tool === 'sarif' && readsLog(r) === !!SCANNERS[r.scan]) throw new Error(`${f}: a sarif rule reads the file a project tool wrote: source "log" and log (path templates, {git} / {head}), or names a pinned scanner Norn runs (scan: ${Object.keys(SCANNERS).join(' | ')}) - one of the two`);
+  if (r.quote !== undefined && (r.kind !== 'lint' || typeof r.quote !== 'boolean')) throw new Error(`${f}: quote (false: a finding never quotes its line) is a lint rule's true / false`);
   if (r.kind === 'ast' && !astData(r)) throw new Error(`${f}: an ast rule is ast-grep match data (tool ast-grep): see rules/README.md`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
@@ -56,7 +57,9 @@ const astData = r => r.tool === 'ast-grep' && !('selectors' in r) && isObj(r.mat
     && (m.constraints === undefined || isObj(m.constraints)) && Object.keys(m).every(k => ['rule', 'constraints', 'message'].includes(k))))
   && (r.shadow_langs || []).every(p => p in r.match);
 // rule reads go through fsnap (META-DASH-ASYNC R1): a snapshot lookup inside a dash GET that awaited primeRules, the sync form elsewhere
-const readRule = file => checkRule(JSON.parse(readText(file)), path.basename(file));
+// a fixture file's text may be a list of parts, joined here: a test key (LS) is never one string in a file of the repo
+const joined = fx => fx && Object.fromEntries(Object.entries(fx).map(([k, v]) => [k, ['base', 'head'].includes(k) ? Object.fromEntries(Object.entries(v || {}).map(([p, s]) => [p, Array.isArray(s) ? s.join('') : s])) : v]));
+const readRule = file => { const r = checkRule(JSON.parse(readText(file)), path.basename(file)); return { ...r, fixture: { ...r.fixture, hit: joined(r.fixture.hit), miss: joined(r.fixture.miss) } }; };
 const jsonNames = (dir, re = /\.json$/) => readdirS(dir).map(d => d.name).filter(f => re.test(f)).sort();
 export function loadRules(dir = RULES_DIR) {
   return jsonNames(dir).map(f => readRule(path.join(dir, f)));
@@ -217,14 +220,22 @@ export function shimFindings(rule, text, file) {
   return [...byLine.values()].sort((a, b) => a.line - b.line);
 }
 
-// the edges of the files under the roots, each read by its language pack (S3: JS, Python, Rust); a target is any file of the tree
-const ruleGraph = (rule, ctx, side) => { const tree = ctx.tree(side), files = tree.filter(f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && packOf(f)); return importGraph(files, ctx.texts(side, files), tree); };
+// K10's edges: the code graph (codegraph.mjs) of the side's commit, kept to the edges from the rule's files (roots, files, exclude).
+// Layers count the static load-time kinds: a dynamic import, a Python import inside a function and a package's __init__ are no layer
+// edge. Cycles run over LOAD_KINDS between the rule's files. No graph (norn-code not built, an index that failed): the rule could not run
+const LAYER_KINDS = new Set(ALL_KINDS.filter(k => !['dynamic', 'import-local', 'package-init'].includes(k)));
+function ruleGraph(rule, ctx, side) {
+  const g = graphAt({ state: ctx.state || undefined, repo: ctx.repo, at: side === 'head' ? ctx.head : ctx.base });
+  if (!g.ok) throw new Error(`code graph: ${g.why}`);
+  const mine = f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && g.files.has(f);
+  return { ...g, edges: g.edges.filter(e => mine(e.from)), mine };
+}
 function layering(rule, ctx, side) {
-  const edges = ruleGraph(rule, ctx, side), out = [];
-  for (const [f, es] of edges) for (const e of es) for (const fb of rule.forbid) {
-    if (matchAny([fb.from], f) && matchAny(fb.to, e.to)) out.push({ file: f, line: e.line, msg: `${f} must not import ${e.to} (${fb.from} -> ${fb.to.join(' | ')})`, snippet: e.text });
+  const g = ruleGraph(rule, ctx, side), out = [];
+  for (const e of g.edges) if (LAYER_KINDS.has(e.kind)) for (const fb of rule.forbid) {
+    if (matchAny([fb.from], e.from) && matchAny(fb.to, e.to)) out.push({ file: e.from, line: e.line, msg: `${e.from} must not import ${e.to} (${fb.from} -> ${fb.to.join(' | ')})`, snippet: norm(lineText(ctx.text(side, e.from) || '', e.line)) });
   }
-  for (const c of cycles(edges)) out.push({ file: c[0], line: 1, msg: `import cycle: ${c.join(' -> ')}`, snippet: 'cycle ' + c.join(' ') });
+  for (const c of cycles({ ...g, edges: g.edges.filter(e => g.mine(e.to)) }, { kinds: LOAD_KINDS }).cycles) out.push({ file: c[0], line: 1, msg: `import cycle: ${c.join(' -> ')}`, snippet: 'cycle ' + c.join(' ') });
   return out;
 }
 
