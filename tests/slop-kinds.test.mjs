@@ -175,7 +175,9 @@ test('ast-grep fails closed: exit 8 (a rule that does not parse), an ERROR: line
   const repo = fxRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n', 'tests/a.test.mjs': 'export const b = 1;\n' } });
   const exit8 = () => astGrepOut({ status: 8, stdout: '', stderr: 'Error: Cannot parse rule rules.yml\n' }, 'd', 'd/t');
   const r = slopCheck({ repo, base: 'main', rules: AST, tool: exit8 });
-  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.msg]), AST.map(x => [x.id, '*', 'could not run: ast-grep exited 8: Error: Cannot parse rule rules.yml']));
+  const why = x => [x.id, '*', 'could not run: ast-grep exited 8: Error: Cannot parse rule rules.yml'];
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.msg]), AST.filter(x => !x.shadow).map(why));
+  assert.deepEqual(r.findings.filter(f => f.unrun && f.shadow).map(b => [b.rule, b.file, b.msg]), AST.filter(x => x.shadow).map(why), 'a shadow ast rule (T4, T5) is recorded, never held');
   assert.deepEqual(r.ran, []);
 });
 
