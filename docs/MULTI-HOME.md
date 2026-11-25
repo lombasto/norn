@@ -126,6 +126,13 @@ A lane whose branch is predicted to conflict with another home's open branch car
   takes it. The Ledger page has a Homes block (head, last fetch, lag) and a Claims block. `norn runs --homes` lists the other homes' runs.
 - **Mail.** `norn mail --to RUN-b-12`, `lane:b/x` or `role:checkin@b` reaches the other home's run, lane or check-in at its next sync
   pass.
+- **The controller's wake.** While it waits on runs, the controller's session keeps `norn mail wait` running in the background. It
+  delivers and prints the controller's mail as `norn mail check` does, at once if some is queued; otherwise it looks every 10 s
+  (`MAIL_WAIT_POLL_S`, engine/lib/mail.mjs) and, on a synced home, runs the tick's stale fetch, so mail from another home wakes the
+  session even when the dashboard is down. It ends when mail comes, or after `--timeout-min N` with `no new mail in N min`. A run gets its
+  mail from its hook and a check-in must not block: both are refused. Ack each mail you acted on: `norn mail ack MAIL-a-4 MAIL-b-9`.
+  The fetch (the dashboard's sync loop, the tick's stale fetch, this wait) and the publish (run end, tick, sync loop) already run by
+  themselves: never run `norn sync fetch` or `norn sync publish` by hand for mail.
 - **Cross-home conflict warnings.** When an own lane (running, or with an open deliverable) changes the same files as another home's
   open branch, Norn runs `git merge-tree` on the two tips. A predicted conflict is a digest row for the check-in, for example
   "norn/a/x conflicts with norn/b/y (on b): 2 files".
