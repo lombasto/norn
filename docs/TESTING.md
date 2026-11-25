@@ -99,7 +99,9 @@ row names its `runner` (`node:test`, `pytest`, `cargo`). engine/lib/testimpact.m
   non-excluded .rs file, named by its module path as libtest names it (`water::tests::first`).
 - **Impact.** A test covers a source file when the test's file reaches it through the code graph's import edges
   (docs/code-graph.md, its reader only); a pytest file also through the `conftest.py` files above it. A Rust `mod` edge is taken only
-  down the test file's own module tree: a crate root it reaches (`lib.rs`) does not pull in every module of the crate. Each source
+  down the test file's own module tree: a crate root it reaches (`lib.rs`) does not pull in every module of the crate. A Python
+  package `__init__.py` reached only by its implicit `package-init` edge (a test imports `pkg.a`, so `pkg/__init__.py` runs) is covered
+  but is a leaf: what it re-exports is not pulled in. One a test imports itself (`from pkg import B`) is walked as usual. Each source
   lists its tests nearest first. Every test row says `basis: 'inferred'` (static imports); `measured` is kept for a coverage report,
   not built. impact.json carries the graph's commit (`graph`), or `graph: { na: why }` when the graph cannot be had.
 - **Commands per group.** pytest: one `python -m pytest <node ids>` per pytest root (the folder of the nearest pytest.ini /
@@ -110,8 +112,11 @@ row names its `runner` (`node:test`, `pytest`, `cargo`). engine/lib/testimpact.m
   the pytest / cargo groups are printed with their command, and the Done check runs them as commands in their folder.
 - Thresholds (testimpact.mjs `IMPACT_LIMITS`): `light_per` = 1.
 - Known limits: a test that drives code through a subprocess or reads files at run time has no import edge, so it is not inferred;
-  a Python package `__init__.py` that imports its whole package, and the `native` edge to a Rust extension, make the full sets large
-  (the replay of 30 merged branches of a mono-repo: 94 % of the edited tests were in the full set, median set about half the suite).
+  the `native` edge to a Rust extension and `__init__.py` files a test imports make the full sets large.
+- Measured (a replay of the last 30 merged branches of a mono-repo, 24 of them changing sources and tests, 795 edited test files of
+  1579): the full set holds 746 of the edited tests (94 %), the light set 120 (15 %); full set size p50 / p90 / max 509 / 1172 / 1269
+  (before the `package-init` leaf rule: 829 / 1238 / 1432, the same 746 hits). `light_per` 2 or 3 for pytest raised the light hits to
+  19 % / 22 % but the light set's median from 6 to 11 / 13, so it stays 1.
 
 ## Output replay (output-trim S1)
 
