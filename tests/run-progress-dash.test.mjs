@@ -114,3 +114,24 @@ test('the browser: the chevron opens the lane in place (the checklist), Esc clos
     assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll on Runs at 390 px');
   } finally { await pg.close(); await f.done(); }
 });
+
+test('issue #153: a check-in after older ones is its own session, not stalled while live, and once exited never renders stalled', { timeout: 120000 }, async () => {
+  const f = await fixture();
+  try {
+    const S = f.pa.state, brief = path.join(S, 'briefs', 'checkin-brief.md'), now = Date.now(), ago = m => ({ now: () => new Date(now - m * 60000) });
+    fs.mkdirSync(path.dirname(brief), { recursive: true }); fs.writeFileSync(brief, BRIEF);
+    const ck = { kind: 'checkin', executor: 'claude', lane: 'checkin', agent: 'checkin', brief };
+    const old = record(S, { kind: 'run', ev: 'start', by: 'launcher', data: ck }, ago(180)).id;
+    record(S, { kind: 'run', ev: 'end', id: old, by: 'launcher', data: { exit: 0, outcome: 'done' } }, ago(179));
+    record(S, { kind: 'mail', ev: 'create', by: 'controller', data: { from: 'role:controller', to: 'lane:checkin', subject: 'Owner: an old note', body: 'old' } }, ago(170));
+    const id = record(S, { kind: 'run', ev: 'start', by: 'launcher', data: ck }, ago(1)).id;
+    const live = (await f.get('/api/agents?project=kestrel')).data.tree.find(n => n.id === id);
+    assert.notEqual(live.progress.pace.state, 'stalled');
+    assert.deepEqual([live.progress.pace.sessions, live.progress.pace.elapsed_min], [1, 1]);
+    assert.ok(!live.progress.slow.reasons.some(x => /mail/.test(x)), 'no mail added scope to a check-in');
+    record(S, { kind: 'run', ev: 'end', id, by: 'launcher', data: { exit: 0, outcome: 'done' } });
+    const tree = (await f.get('/api/agents?project=kestrel')).data.tree, node = tree.find(n => n.id === id);
+    assert.notEqual(node.progress?.pace?.state, 'stalled');
+    assert.doesNotMatch(renderTab('runs', { tree }, { project: 'kestrel', now: Date.now() }).split('id="node-').find(x => x.startsWith(`${id}"`)) ?? '', /stalled/);
+  } finally { await f.done(); }
+});
