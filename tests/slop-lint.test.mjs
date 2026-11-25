@@ -99,6 +99,10 @@ test('a check on a cold tool cache with no network holds the merge: LJ could not
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /^BLOCK LJ `\*` could not run: npm ci failed \(lock [0-9a-f]{12}\)/m);
   assert.match(r.stdout, /; could not run: .*\bLJ\b/);
+  for (const id of ['K11A', 'K19', 'K2', 'K21', 'T3']) {
+    assert.match(r.stdout, new RegExp(`^BLOCK ${id} \`\\*\` could not run: npm ci failed \\(lock [0-9a-f]{12}\\)`, 'm'), `the ast rule ${id}: one BLOCK, ast-grep's tools/ast set is cold too`);
+    assert.match(r.stdout, new RegExp(`; could not run: .*\\b${id}\\b`));
+  }
 });
 
 // ---------- S3: LP (ruff, recorded JSON) and LR (clippy, read from the head's log) ----------

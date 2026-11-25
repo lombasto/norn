@@ -4,6 +4,9 @@ import path from 'node:path';
 import { parseEslint } from '../tools.mjs';
 import { classify, COMMENT, lineAt, norm } from '../scan.mjs';
 
+/** the pack's id (an ast rule's `match` key) and the ast-grep language of a file it reads (slop-langs SPEC 3.4) */
+export const ID = 'js', astLang = () => 'JavaScript';
+
 // static `import ... from 'x'` / `export ... from 'x'` / `import 'x'` (a dynamic import() is no load-order edge)
 const IMPORT_RE = /^\s*(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/gm;
 /** the relative imports of a module that name a file of the tree: [{ to, line, text }] */
