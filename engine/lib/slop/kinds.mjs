@@ -195,21 +195,32 @@ export function depsOf(file, text) {
   const lines = text.split(/\r?\n/), out = [];
   if (/\.toml$|\.lock$/.test(base) && !/^yarn\.lock$/.test(base)) {
     // list: inside a `dependencies = [ ... ]` array (pyproject); groups: a table of such arrays by name ([project.optional-dependencies],
-    // PEP 735's [dependency-groups]); one: Cargo's table of one dependency ([dependencies.glam]), whose keys name it (slop-langs SPEC 4)
-    let sec = '', pkg = null, list = false, groups = false, one = null;
+    // PEP 735's [dependency-groups]); one: Cargo's table of one dependency ([dependencies.glam]), whose keys name it (slop-langs SPEC 4).
+    // Own code is no dependency (S4F): a path dependency, and a Cargo package with no source (the crate's own [package], a workspace
+    // member in Cargo.lock). held: an entry whose inline table or array runs over lines, read whole as ONE entry
+    const cargo = /^Cargo\.(?:toml|lock)$/.test(base), open = s => s.replace(/"(?:[^"\\]|\\.)*"|'[^']*'|#.*$/gm, '').split('').reduce((d, c) => d + ('{['.includes(c) ? 1 : ']}'.includes(c) ? -1 : 0), 0);
+    let sec = '', pkg = null, list = false, groups = false, one = null, held = '';
+    const endPkg = () => { if (pkg?.name && pkg.version && !(cargo && !pkg.source)) out.push(`${pkg.name}@${pkg.version}`); pkg = null; };
+    const endOne = () => { if (one?.kv.length && !one.kv.some(k => /^path =/.test(k))) out.push(`${one.name} = { ${one.kv.join(', ')} }`); one = null; };
     for (const l of lines) {
-      const h = !list && /^\s*\[\[?([^\]]+)\]\]?\s*$/.exec(l);
+      const h = !list && !held && /^\s*\[\[?([^\]]+)\]\]?\s*$/.exec(l);
       if (h) {
-        sec = h[1].trim(); pkg = sec === 'package' ? {} : null;
-        groups = /^(?:project\.optional-dependencies|dependency-groups)$/.test(sec); one = /(?:^|\.)(?:[\w-]*-)?dependencies\.(["']?)([\w.-]+)\1$/.exec(sec)?.[2] || null;
+        endPkg(); endOne(); sec = h[1].trim(); pkg = sec === 'package' ? {} : null;
+        groups = /^(?:project\.optional-dependencies|dependency-groups)$/.test(sec);
+        const name = /(?:^|\.)(?:[\w-]*-)?dependencies\.(["']?)([\w.-]+)\1$/.exec(sec)?.[2]; one = name ? { name, kv: [] } : null;
         continue;
       }
-      if (pkg) { const kv = /^\s*(name|version)\s*=\s*"([^"]*)"/.exec(l); if (kv) { pkg[kv[1]] = kv[2]; if (pkg.name && pkg.version) { out.push(`${pkg.name}@${pkg.version}`); pkg = {}; } } continue; }
-      const open = /^\s*(?:dependencies|[\w-]*-dependencies|requires)\s*=\s*\[/.test(l) || (groups && /^\s*["']?[\w.-]+["']?\s*=\s*\[/.test(l));
-      if (open || list) { out.push(...[...l.matchAll(/"([^"]+)"/g)].map(m => m[1])); list = (open || list) && !/\]\s*(?:#.*)?$/.test(l); }
-      else if (one) { const kv = /^\s*([\w-]+)\s*=\s*(.+?)\s*$/.exec(l); if (kv) out.push(norm(`${one}.${kv[1]} = ${kv[2]}`)); }
-      else if (/dependencies/.test(sec) && /^\s*[\w.-]+\s*=/.test(l)) out.push(norm(l));
+      if (pkg) { const kv = /^\s*(name|version)\s*=\s*"([^"]*)"/.exec(l); if (kv) pkg[kv[1]] = kv[2]; else if (/^\s*source\s*=/.test(l)) pkg.source = true; continue; }
+      const arr = /^\s*(?:dependencies|[\w-]*-dependencies|requires)\s*=\s*\[/.test(l) || (groups && /^\s*["']?[\w.-]+["']?\s*=\s*\[/.test(l));
+      if (arr || list) { out.push(...[...l.matchAll(/"([^"]+)"/g)].map(m => m[1])); list = (arr || list) && !/\]\s*(?:#.*)?$/.test(l); continue; }
+      if (!held && !(one ? /^\s*[\w-]+\s*=/.test(l) : /dependencies/.test(sec) && /^\s*[\w.-]+\s*=/.test(l))) continue;
+      held += (held ? ' ' : '') + l;
+      if (open(held) > 0) continue;
+      const entry = norm(held); held = '';
+      if (one) one.kv.push(entry);
+      else if (!/[{,]\s*path\s*=/.test(entry)) out.push(entry);
     }
+    endPkg(); endOne();
     return out;
   }
   return lines.map(l => l.replace(/#.*$/, '').trim()).filter(Boolean);
