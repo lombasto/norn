@@ -19,10 +19,10 @@ function world() {
   const d = mkTmp('meta-recpaths-'), repo = path.join(d, 'repo'), state = path.join(d, 'state', 'kestrel');
   fs.mkdirSync(state, { recursive: true });
   for (const f of ['engine/a.mjs', 'engine/lib/b.mjs', 'docs/x.md', 'README.md']) { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), 'x\n'); }
-  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', windowsHide: true });
   g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('add', '-A'); g('commit', '-q', '-m', 'base');
   const cli = (role, ...a) => { const env = { ...process.env, META_STATE: state, META_ROLE: role }; delete env.META_RUN_ID; delete env.META_PROJECT;
-    const r = spawnSync(process.execPath, [NORN, 'rec', 'add', ...a], { env, cwd: repo, encoding: 'utf8' }); return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() }; };
+    const r = spawnSync(process.execPath, [NORN, 'rec', 'add', ...a], { env, cwd: repo, encoding: 'utf8', windowsHide: true }); return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() }; };
   const created = id => fs.readFileSync(path.join(state, 'records.jsonl'), 'utf8').trim().split('\n').map(JSON.parse).find(e => e.id === id && e.ev === 'create');
   return { repo, state, cli, created };
 }
@@ -60,7 +60,7 @@ test('the record is the same with and without the warning', () => {
   const W = world(), a = W.cli('controller', ...dec());
   // the same decision recorded where there is no repo to list: no warning, and the same data
   const env = { ...process.env, META_STATE: W.state, META_ROLE: 'controller' }; delete env.META_RUN_ID; delete env.META_PROJECT;
-  const r = spawnSync(process.execPath, [NORN, 'rec', 'add', ...dec()], { env, cwd: mkTmp('meta-recpaths-nogit-'), encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [NORN, 'rec', 'add', ...dec()], { env, cwd: mkTmp('meta-recpaths-nogit-'), encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr); assert.equal(warns(a.err).length, 1); assert.deepEqual(warns(r.stderr), []);
   assert.deepEqual(W.created(r.stdout.trim()).data, W.created(a.out).data);
 });
