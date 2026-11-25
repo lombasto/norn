@@ -249,3 +249,50 @@ test('Rust: a local variable shadows the import of its name; a nested fn resolve
     [32, 'calls', 'local', 'src/lib.rs#crate::second::calls#0', null],
   ]);
 });
+
+// S7 (S6 follow-up): a Rust `use super::*` / `self::` / `super::` path inside an inline `mod` starts at that inline module, not at the
+// file's module: `deposit()` in `mod tests` is the fn of the file, never the parent's `mod deposit`
+const INLINE = {
+  'Cargo.toml': '[package]\nname = "inline"\nversion = "0.1.0"\nedition = "2021"\n',
+  'src/lib.rs': 'pub mod deposit;\n',
+  'src/deposit.rs': [
+    'pub fn deposit() -> u32 {',
+    '    1',
+    '}',
+    '',
+    'mod tests {',
+    '    use super::*;',
+    '    use self::inner::probe;',
+    '',
+    '    fn check() -> u32 {',
+    '        deposit() + probe()',
+    '    }',
+    '',
+    '    fn path() -> u32 {',
+    '        super::deposit() + self::check()',
+    '    }',
+    '',
+    '    mod inner {',
+    '        use super::super::deposit as d;',
+    '',
+    '        pub fn probe() -> u32 {',
+    '            d() + super::check()',
+    '        }',
+    '    }',
+    '}',
+    '',
+  ].join('\n'),
+};
+test('Rust: super / self inside an inline mod (and a nested one) start at that module and reach the file\'s own definitions', () => {
+  const r = repoFiles(INLINE);
+  index(r);
+  const at = q => `src/deposit.rs#crate::deposit::${q}#0`;
+  assert.deepEqual(sitesOf(r, 'src/deposit.rs').map(c => [c.line, c.name, c.how, c.targets.join(), c.why ?? null]), [
+    [10, 'deposit', 'import', at('deposit'), null],
+    [10, 'probe', 'import', at('tests::inner::probe'), null],
+    [14, 'deposit', 'qualified', at('deposit'), null],
+    [14, 'check', 'qualified', at('tests::check'), null],
+    [21, 'd', 'import', at('deposit'), null],
+    [21, 'check', 'qualified', at('tests::check'), null],
+  ]);
+});
