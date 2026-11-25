@@ -2,7 +2,8 @@
 // counts once, a batch landing past the cap is skipped, both counts carried), fix history (fix / revert landings, the 90 and 365 day
 // counts, the newest first, a fix inside a merged branch dated at its landing, a commit older than the window dropped), fix_first in Borda
 // order, an untyped history reading n/a with the reason - and `norn code history` storing it, `norn code signals` printing it, readSignals.
-// Sandbox only (mkTmp).
+// RM-a-70: the rank check (the rankings of 90 days ago against the fixes since, the baseline, n/a with the reason) and its line on the files
+// part and in the daily report. Sandbox only (mkTmp).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,8 +11,10 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { codeIndex } from '../engine/lib/codeindex.mjs';
-import { codeSignals, readSignals, typeOf, SIGNAL_LIMITS } from '../engine/lib/codesignals.mjs';
+import { codeSignals, readSignals, typeOf, checkLine, SIGNAL_LIMITS } from '../engine/lib/codesignals.mjs';
 import { codeCmd, codeAt } from '../engine/lib/codecli.mjs';
+import { rankLines, renderDaily } from '../engine/lib/slop/daily.mjs';
+import { CLASSES, APART } from '../engine/lib/slop/loc.mjs';
 
 test.after(cleanTmp);
 const NOW = Date.parse('2026-11-20T12:00:00Z');
@@ -93,6 +96,8 @@ test('`norn code history` stores the signals; readSignals reads them; `norn code
   const fl = await at('&part=files&sort=fix_first&limit=3');
   assert.equal(fl.list.sort, 'fix_first'); assert.deepEqual(fl.list.rows.map(r => r.file)[0], 'src/a.mjs');
   assert.deepEqual([fl.list.rows[0].fix_first, fl.list.rows[0].fixes_365d], [sig.files['src/a.mjs'].fix_first, 2]);
+  assert.deepEqual(fl.list.checks, ['fix_first', 'importance'].map(rank => ({ rank, status: 'n/a', line: checkLine(sig.check, rank) })), 'the rank check line, worded by the signals');
+  assert.match(fl.list.checks[0].line, /^fix-first check: n\/a \(5 files 90 days ago/);
   const one = (await at('&part=file&file=src/a.mjs')).file;
   assert.deepEqual([one.partners, one.fixes.last[0].subject, one.fixes_na], [sig.files['src/a.mjs'].partners, 'fix(a): off by one', null]);
 });
@@ -102,4 +107,84 @@ test('`norn code signals` on an untyped history prints n/a and the reason', () =
   assert.equal(codeCmd(['history', '--repo', repo, '--state', state], o), 0);
   out.length = 0; assert.equal(codeCmd(['signals', 'src/a.mjs', '--state', state], o), 0);
   assert.match(out.join('\n'), /fix first n\/a[^]*fixes: n\/a \(0 of 7 commits in 365 days carry a conventional-commit type/);
+});
+
+// RM-a-70 rank-selfcheck: the fix-first and importance rankings as they were check_days ago (that landing's tree and history only), their
+// top check_top files against the fix landings since, beside the share of all files that got one (the baseline)
+const T = { hot: Array.from({ length: 6 }, (_, i) => `src/h${i}.mjs`), cold: Array.from({ length: 54 }, (_, i) => `lib/c${String(i).padStart(2, '0')}.mjs`) };
+function checkWorld({ start = '2026-01-05T10:00:00Z', after, typed = true }) {
+  const d = mkTmp('meta-chk-'), repo = path.join(d, 'repo');
+  let k = 0;
+  const w = f => { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), `// ${f}\nexport const v${k++} = ${k};\n`); };
+  const g = (args, at) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, env: { ...process.env, ...(at ? { GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } : {}) } });
+  const land = (files, msg, at) => { files.forEach(w); g(['add', '-A']); g(['commit', '-q', '-m', typed ? msg : `change ${k}`], at); };
+  fs.mkdirSync(repo, { recursive: true }); g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']); g(['config', 'core.autocrlf', 'false']);
+  land([...T.hot, ...T.cold], 'feat: start', start);
+  ['2026-06-10', '2026-07-10', '2026-08-10'].forEach((day, i) => land(T.hot, `fix: hot ${i}`, `${day}T10:00:00Z`));   // before the check day (2026-08-22)
+  after.forEach(([files, day, msg], i) => land(files, msg ?? `fix: later ${i}`, `${day}T10:00:00Z`));
+  return repo;
+}
+// the past landing's code graph, injected (norn-code is not needed): every file of that tree, no edge, or the edges given
+const graphOfTree = (repo, at, edges = []) => ({ ok: true, prefix: '', files: new Map(execFileSync('git', ['-C', repo, 'ls-tree', '-r', '--name-only', at], { encoding: 'utf8', windowsHide: true }).trim().split('\n').map(p => [p, { lang: 'javascript', excluded: null }])), edges });
+const sigOf = (repo, pastGraph = at => graphOfTree(repo, at)) => codeSignals(repo, codeIndex(repo, { now: NOW }), { now: NOW, pastGraph });
+
+test('rank check: the top 20 as ranked 90 days ago against the fixes since, beside the baseline; both rankings, measured at the old landing', () => {
+  const repo = checkWorld({ after: [[[...T.hot.slice(0, 4), 'lib/c50.mjs', 'lib/c51.mjs'], '2026-10-01']] }), s = sigOf(repo), c = s.check;
+  const old = execFileSync('git', ['-C', repo, 'rev-list', '--first-parent', '-1', '--before=2026-08-22T12:00:00Z', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim().slice(0, 12);
+  assert.deepEqual([c.status, c.basis, c.as_of, c.sha, c.days, c.files, c.fixed], ['measured', 'measured', '2026-08-22', old, 90, 60, 6]);
+  assert.deepEqual([SIGNAL_LIMITS.check_days, SIGNAL_LIMITS.check_top, SIGNAL_LIMITS.check_min_history_days], [90, 20, 180]);
+  for (const k of ['fix_first', 'importance']) {
+    const r = c[k];
+    assert.equal(r.status, 'measured'); assert.equal(r.top.length, 20); assert.equal(r.hit, 4, k);
+    assert.deepEqual(r.top.slice(0, 6).map(x => x.file).sort(), [...T.hot].sort(), `${k}: the hot files led 90 days ago`);
+    assert.deepEqual(r.top.filter(x => x.fixed).map(x => x.file).sort(), T.hot.slice(0, 4));
+  }
+  assert.equal(checkLine(c, 'fix_first'), '4 of the top 20 fix-first files got a fix in the last 90 days; baseline 10 % of files');
+  assert.equal(checkLine(c, 'importance'), '4 of the top 20 importance files got a fix in the last 90 days; baseline 10 % of files');
+});
+
+test('rank check: a ranking at or under the baseline says so', () => {
+  const s = sigOf(checkWorld({ after: [[T.cold.slice(48), '2026-10-01']] }));
+  assert.deepEqual([s.check.fix_first.hit, s.check.fixed], [0, 6]);
+  assert.equal(checkLine(s.check, 'fix_first'), '0 of the top 20 fix-first files got a fix in the last 90 days; baseline 10 % of files: at or under the baseline, the ranking predicted nothing');
+});
+
+test('rank check: too little history, an untyped history or no fix since reads n/a with the reason', () => {
+  const short = sigOf(checkWorld({ start: '2026-06-01T10:00:00Z', after: [[T.hot, '2026-10-01']] })).check;
+  assert.deepEqual([short.status, short.reason], ['n/a', 'the history starts 2026-06-01: under 180 days']);
+  assert.equal(checkLine(short, 'fix_first'), 'fix-first check: n/a (the history starts 2026-06-01: under 180 days)');
+  const untyped = sigOf(checkWorld({ after: [[T.hot, '2026-10-01']], typed: false })).check;
+  assert.deepEqual([untyped.status, untyped.reason], ['n/a', '0 of 1 commits in the last 90 days carry a conventional-commit type (under 25 %)']);
+  const none = sigOf(checkWorld({ after: [[T.hot, '2026-10-01', 'feat: grow']] })).check;
+  assert.deepEqual([none.status, none.reason], ['n/a', 'no file got a fix in the last 90 days: nothing to predict']);
+  assert.equal(checkLine(null, 'importance'), 'importance check: not built yet (`norn code history` writes it)');
+  const few = sigOf(world()[`repo`]).check;
+  assert.deepEqual([few.status, few.reason], ['n/a', '5 files 90 days ago: the top 20 is every file']);
+});
+
+test('rank check: the past importance ranks from the code graph AT the ranked landing; that graph not ok: importance n/a with its reason, fix-first still measured', () => {
+  const repo = checkWorld({ after: [[[...T.hot.slice(0, 4), 'lib/c50.mjs', 'lib/c51.mjs'], '2026-10-01']] }), asked = [];
+  const edges = T.cold.slice(0, 40).map(f => ({ from: f, to: 'lib/c50.mjs', kind: 'import', how: 'exact' }));   // c50: imported by 40 files then
+  const c = sigOf(repo, at => { asked.push(at); return graphOfTree(repo, at, edges); }).check;
+  assert.deepEqual(asked.map(x => x.slice(0, 12)), [c.sha], 'the graph of the ranked landing, not of HEAD');
+  assert.equal(c.importance.status, 'measured');
+  assert.equal(c.importance.top.find(x => x.file === 'lib/c50.mjs')?.fixed, true, "c50's past fan-in ranks it into the top");
+  assert.equal(c.importance.hit, 5);
+  const no = sigOf(repo, () => ({ ok: false, why: 'norn-code is not built (x)' })).check;
+  assert.deepEqual([no.status, no.fix_first.status, no.fix_first.hit], ['measured', 'measured', 4], 'fix-first does not depend on the graph');
+  assert.deepEqual(no.importance, { status: 'n/a', reason: `no code graph at ${no.sha}: norn-code is not built (x)` }, 'never ranked from churn alone');
+  assert.equal(checkLine(no, 'importance'), `importance check: n/a (no code graph at ${no.sha}: norn-code is not built (x))`);
+});
+
+test('rank check in the daily report: rankLines reads the stored check, renderDaily prints it under its own heading; none stored says not built', () => {
+  const { repo, state } = world(), o = { out: () => {}, err: () => {}, where: f => ({ project: null, state: f.state }), now: NOW };
+  assert.deepEqual(rankLines(state), { sha: null, lines: ['fix-first check: not built yet (`norn code history` writes it)', 'importance check: not built yet (`norn code history` writes it)'] });
+  assert.equal(codeCmd(['history', '--repo', repo, '--state', state], o), 0);
+  const r = rankLines(state), sig = readSignals(state);
+  assert.deepEqual(r, { sha: sig.sha, lines: [checkLine(sig.check, 'fix_first'), checkLine(sig.check, 'importance')] });
+  const loc = { series: [], ref: 'main', head: 'abcdef0123', totals: Object.fromEntries(CLASSES.map(c => [c, 1])), apart: Object.fromEntries(APART.map(c => [c, 0])), areas: {}, landings: [] }, sw = { main: 'main', real: [], empty: [], unrelated: [], dead: [], at_risk: [], remote_merged: [] };
+  const { markdown } = renderDaily(loc, sw, { day: '2026-11-20', ranks: r });
+  assert.ok(markdown.includes(`## Rank check (signals at ${sig.sha})\n\n- ${r.lines[0]}\n- ${r.lines[1]}\n`), markdown);
+  fs.writeFileSync(path.join(state, 'code', 'signals.json'), '{ torn');
+  assert.match(rankLines(state).lines[0], /^could not read the code signals: /);
 });

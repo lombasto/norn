@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck, fingerprint, matchAny } from '../engine/lib/slop/check.mjs';
@@ -307,4 +308,48 @@ test('the dashboard: a V- row with its thumb; POST /api/slop/rate records it, th
     assert.equal((await voiceRows()).length, 0, 'a rated finding leaves the Guard');
     assert.deepEqual(['rated', 'up', 'precision'].map(k => after.precision.find(p => p.rule === 'M1')[k]), [1, 1, 1]);
   } finally { await f.done(); }
+});
+
+// RM-a-69 follow-up (secrets-voice): a hunk with a secrets-rule (LS) finding never reaches the voice's model. The key is built at test
+// time from harmless parts and random hex (no string in a key format in the repo); LS's scan is a recorded SARIF, the voice a recording tool.
+const LS = loadRules().find(r => r.id === 'LS');
+const testKey = () => ['g', 'hp', '_'].join('') + crypto.randomBytes(18).toString('hex');
+const sarifAt = (file, line) => JSON.stringify({ version: '2.1.0', runs: [{ tool: { driver: { name: 'gitleaks' } }, results: line ? [{ ruleId: 'github-pat', message: { text: 'gitleaks found a secret (github-pat); the value is never shown' },
+  locations: [{ physicalLocation: { artifactLocation: { uri: file }, region: { startLine: line, endLine: line } } }] }] : [] }] });
+// a tool that answers LS with `scan(side)` (a throw: the scanner could not run) and every model read with no finding, recording the prompts
+const scanned = scan => { const prompts = []; const tool = (rule, side) => { if (rule.id === 'LS') return scan(side); if (rule.kind !== 'model') return null; prompts.push(rule.prompt); return answer([]); }; tool.prompts = prompts; return tool; };
+function keyRepo(key) {
+  const pad = Array.from({ length: 20 }, (_, i) => `export const p${i} = ${i};`);
+  return repoOf({ 'src/conf.mjs': ['export const host = "example.test";', ...pad, ''].join('\n'), 'src/b.mjs': 'export const b = 1;\n' },
+    { 'src/conf.mjs': ['export const host = "example.test";', `export const token = "${key}";`, ...pad, 'export const port = 8080;', ''].join('\n'), 'src/b.mjs': 'export const b = 1;\nexport const c = 2;\n' });
+}
+
+test('a hunk with an LS finding is never in the voice prompt: its file is named as withheld; a hunk of that file without a finding is shown', () => {
+  const key = testKey(), repo = keyRepo(key), tool = scanned(side => (side === 'head' ? sarifAt('src/conf.mjs', 2) : sarifAt()));
+  const r = slopCheck({ repo, base: 'main', rules: [LS, ...MODEL], tool });
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.line]), [['LS/github-pat', 'src/conf.mjs', 2]], 'LS ran and holds the merge');
+  assert.equal(tool.prompts.length, 1, 'the voice read once');
+  const p = tool.prompts[0];
+  assert.ok(!p.includes(key) && !p.includes('export const token'), 'neither the key nor its hunk');
+  assert.match(p, /^Withheld by the secrets rule: src\/conf\.mjs$/m);
+  assert.match(p, /^\+export const port = 8080;$/m, 'the other hunk of that file is shown');
+  assert.match(p, /^\+export const c = 2;$/m, 'another file is shown as before');
+  assert.ok(!JSON.stringify(r).includes(key), 'no key in the result');
+});
+
+test('LS could not run: no voice prompt is built and each model rule says why; LS off: the voice reads as today', () => {
+  const key = testKey(), repo = keyRepo(key), down = scanned(() => { throw new Error('gitleaks: no network'); });
+  const r = slopCheck({ repo, base: 'main', rules: [LS, ...MODEL], tool: down });
+  assert.equal(down.prompts.length, 0, 'no prompt built');
+  const unrun = r.findings.filter(isModel);
+  assert.deepEqual(unrun.map(f => [f.rule, f.level, f.unrun]), MODEL.map(m => [m.id, 'WARN', true]));
+  assert.ok(unrun.every(f => /^could not run: the secrets rule LS could not run \(gitleaks: no network\)/.test(f.msg)), unrun[0].msg);
+  assert.ok(r.blocks.some(b => b.rule === 'LS' && b.unrun), 'LS itself is the BLOCK could-not-run');
+  const off = scanned(() => assert.fail('LS is off: never scanned'));
+  slopCheck({ repo, base: 'main', rules: MODEL, tool: off });
+  assert.equal(off.prompts.length, 1);
+  assert.ok(off.prompts[0].includes('+export const token') && !/Withheld/.test(off.prompts[0]), 'LS off: every hunk shown, nothing withheld');
+  // git() trims; the check's ctx.diff keeps git's last newline, so today's prompt is built from the untrimmed diff
+  const hunks = parseHunks(git(repo, 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', 'main', 'feat/v') + '\n');
+  assert.equal(off.prompts[0], voicePrompt({ rules: MODEL, hunks, match: matchAny }).prompt, 'the prompt of today');
 });

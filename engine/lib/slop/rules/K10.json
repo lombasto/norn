@@ -9,7 +9,7 @@
     "fix": "Move the shared code down into engine/lib, or pass the value in as a parameter, so that the import goes one way only."
   },
   "roots": ["engine/"],
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py"],
   "forbid": [{"from":"engine/lib/**","to":["engine/dash/**","engine/bin/**"]}],
   "fixture": {
     "hit": {

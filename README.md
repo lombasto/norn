@@ -49,10 +49,12 @@ An agent re-reads its whole context on every turn, including every instruction f
 ### SloppaChoppa
 
 Before a lane's branch can merge, Norn checks its changes against main for leftovers: conflict markers, generated files out of
-date, stray logs, binaries over 1 MB, and a committed `.only` in a test that silently stops the rest of the suite. It also finds
+date, stray logs, binaries over 1 MB, a committed `.only` in a test that silently stops the rest of the suite, and a skip with no condition (the last two also in
+TypeScript, Python and Rust tests, in shadow). It also finds
 empty or reason-less catch blocks in JavaScript, TypeScript, Python and Rust (TypeScript, Python and Rust in shadow until proven),
-unused variables and imports in JavaScript (ESLint) and Python (ruff), and import cycles and broken layer rules in JavaScript and
-Python (layers in Rust). The
+unused variables and imports in JavaScript (ESLint) and Python (ruff), and import cycles and broken layer rules in JavaScript,
+TypeScript and Python (layers in Rust). Comments and strings that keep an old name alive or defer work with no record, and
+commented-out code, are read in all four languages (TypeScript, Python and Rust in shadow; Python's commented-out code is ruff's ERA001). The
 findings go back to the same agent as one resume, and the merge waits until each is fixed or waived. The Slop page lists every open finding, from branches and from
 instruction files, grouped by the kind of fix; a finding from a branch opens its own row. "Fix all" sends the selected findings to
 a read-only fixer run. Its result card, in the Inbox and on Slop, shows every file and every hunk as a diff, with "Apply all n"

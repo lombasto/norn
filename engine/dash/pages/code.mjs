@@ -1,12 +1,12 @@
 // The Code page (SPEC dash-owner-1123 s.7; unwired: the SHELL lane adds the tab, /api/code and /api/source): every tracked text file of
 // the project from `norn code history` (lib/codeindex.mjs), a summary of at most 4 numbers and four sub-views, each its own part of /api/code:
-//   Files    - testparts fileTable: lines, the 26-week growth sparkline + delta, churn 90 d, fan-in, importance, fixes 365 d, fix first (the code
+//   Files    - the rank check line (do the rankings of 90 days ago predict the fixes since), then testparts fileTable: lines, the 26-week growth sparkline + delta, churn 90 d, fan-in, importance, fixes 365 d, fix first (the code
 //              signals, lib/codesignals.mjs); sorts and a folder filter. A row opens the file drawer (#code-file, &file=): its growth chart, the
 //              files that change with it, its last fixes, its last commits and the code viewer (/api/source).
 //   Growth   - lines per top-level area over 26 weeks (widgets timeChart) and the 10 fastest-growing files
 //   Outliers - widgets outliers() over size, growth and churn (Tukey fences)
-//   Map      - the Floorplan map (`norn code map`, lib/codemap.mjs) in an iframe sandboxed to scripts only on GET /code-map/ (its own CSP);
-//              none drawn: the not-built text, no iframe. A skipped refresh (over the meter) says so above it.
+//   Map      - the import-graph map (lib/codemapgraph.mjs, no model) in an iframe sandboxed to scripts only on GET /code-map/ (its own
+//              CSP); none drawn: the not-built text, no iframe; an n/a graph: the reason.
 // No index yet: the parts say what writes it, never a number. Click handlers are data-act names (SHELL wires them).
 import { esc, fin, int, chip, filterChips } from '../cells.mjs';
 import { timeChart, outliers } from '../widgets.mjs';
@@ -40,6 +40,8 @@ const COLS = [{ key: 'file', label: 'file', html: r => fileBtn(r.file) }, { key:
   { key: 'importance', label: 'importance', num: true, html: r => int(r.importance) },
   { key: 'fixes', label: 'fixes 365 d', num: true, html: r => (fin(r.fixes_365d) ? int(r.fixes_365d) : NA) }, { key: 'fix_first', label: 'fix first', num: true, html: r => (fin(r.fix_first) ? int(r.fix_first) : NA) }];
 const fixRank = x => (!x ? ' (not built yet: `norn code history`)' : x.status === 'measured' ? '' : ` (n/a: ${esc(x.reason)})`);
+// the rank check (RM-a-70): does each ranking's top 20 of 90 days ago predict the fixes since? the server words it (codesignals checkLine)
+const checkRow = cs => (cs?.length ? `<p class="small" id="code-check">rank check: ${cs.map(c => esc(c.line)).join(' · ')}</p>` : '');
 function codeFiles(d) {
   const l = d.list;
   if (!l) return `<div class="card" id="code-files">${notYet('the file index')}</div>`;
@@ -48,6 +50,7 @@ function codeFiles(d) {
   const more = l.matched > l.shown ? ` · <button class="lnk" data-act="code-more" data-limit="${l.shown + CODE_CAP}">show more</button>` : '';
   return `<div class="tablecard" id="code-files"><h3>Every file <span class="mute small">${int(l.matched)}${l.folder ? ` in ${esc(l.folder)}/` : ''} · index at ${esc(d.index?.sha ?? '?')}, ${esc(String(d.index?.at ?? '').slice(0, 16))} · importance = the Borda rank of fan-in and churn; fix first = of churn, fan-in and fixes${fixRank(l.fixes)}</span></h3>
     <div class="tbar">${folder}${sorts}</div>
+    ${checkRow(l.checks)}
     ${l.rows.length ? fileTable(l.rows, COLS, { sort: { key: l.sort }, act: 'code-file', id: 'code-rows' }) : '<p class="small mute" style="padding:0 12px">no file in this folder</p>'}
     <p class="small mute" style="padding:0 12px" id="code-shown">showing ${int(l.shown)} of ${int(l.matched)}${more}</p></div>`;
 }
@@ -90,13 +93,14 @@ function codeOutliers(d) {
     ${outliers(d[k] || [], { fmt: int, unit: 'lines', top: 10, id: `code-outliers-${k}`, act: 'code-file' }) || '<p class="small mute" style="padding:0 12px">no file</p>'}</div>`).join('');
 }
 
-// ---- Map: the drawn Floorplan file on its own route (own CSP), framed with scripts only: an opaque origin, no dashboard cookie or API ----
+// ---- Map: the import-graph map (lib/codemapgraph.mjs, no model) on its own route (own CSP), framed with scripts only: an opaque origin,
+// no dashboard cookie or API ----
 function codeMap(d) {
-  const m = d.map;
-  if (!m) return '<div class="card" id="code-map"><p class="small mute" style="padding:0 12px"><span class="chip idle">not built yet</span> the architecture map <span class="mute">(`norn code map` draws it with the pinned Floorplan; the tick refreshes it after a merge)</span></p></div>';
-  const skip = m.skipped ? ` · ${chip('warn', `refresh skipped at ${m.skipped.sha}`)} ${esc(m.skipped.why)}; <span class="mono">norn code map</span> draws it` : '';
-  return `<div class="card" id="code-map"><p class="small mute" style="padding:0 12px">map at <span class="mono">${esc(m.sha)}</span>, ${esc(String(m.at).slice(0, 16))} · Floorplan ${esc(m.tool)} · Ask is off (no map server)${skip}</p>
-    <iframe id="code-map-frame" class="cmap" sandbox="allow-scripts" src="/code-map/?project=${esc(encodeURIComponent(d.project))}" title="Architecture map (Floorplan)" loading="lazy" referrerpolicy="no-referrer"></iframe></div>`;
+  const g = d.map;
+  if (!g) return '<div class="card" id="code-map"><p class="small mute" style="padding:0 12px"><span class="chip idle">not built yet</span> the import-graph map <span class="mute">(`norn code history` or `norn code map` draws it from the code graph; the tick starts it when HEAD moves)</span></p></div>';
+  if (!g.sha) return `<div class="card" id="code-map"><p class="small mute" style="padding:0 12px">import-graph map: n/a: ${esc(g.na)}</p></div>`;
+  return `<div class="card" id="code-map"><p class="small mute" style="padding:0 12px">import-graph map at <span class="mono">${esc(g.sha)}</span>, ${esc(String(g.at).slice(0, 16))} · ${int(g.files)} files in ${int(g.areas)} areas · drawn from the code graph, no model · click a file: what depends on it</p>
+    <iframe id="code-map-frame" class="cmap" sandbox="allow-scripts" src="/code-map/?project=${esc(encodeURIComponent(d.project))}" title="Code map (import graph)" loading="lazy" referrerpolicy="no-referrer"></iframe></div>`;
 }
 
 const CODE_PART = { files: codeFiles, growth: codeGrowth, outliers: codeOutliers, map: codeMap };

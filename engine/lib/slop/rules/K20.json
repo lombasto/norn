@@ -8,7 +8,7 @@
     "why": "Each dependency is code we did not write and must trust, update and ship. Norn keeps to Node built-ins unless the owner approves an addition.",
     "fix": "Use a Node built-in or write the small piece yourself. If the dependency is needed, ask the owner; the approval is the waiver. Give a vendored file its row in VENDOR.md."
   },
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts"],
   "exclude": ["tests/fixtures/**"],
   "bare": ["^node:"],
   "manifests": [

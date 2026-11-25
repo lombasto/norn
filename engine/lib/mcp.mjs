@@ -9,7 +9,7 @@ import { record, loadState, kindOfId, kindNamed, RecordError, KINDS, holdOf, lan
 import { ConfigError, metaRoot, fwd, loadMachine, loadProject, expandVars } from './config.mjs';
 import { genAfterPolicy, projectNew, SetupError } from './setup.mjs';
 import { scan, interviewOf, proposalOf, adoptDecide, adoptApply, renderProposal, AdoptError, PARTS } from './adopt.mjs';
-import { settingsView, applySettings, onlyChanged, floorChanges, withDefaults, merged, split, generatedLines, rewriteMarked, getPath, executorsFor } from './policy.mjs';
+import { POLICY_DEFAULTS, settingsView, applySettings, onlyChanged, floorChanges, withDefaults, merged, split, generatedLines, rewriteMarked, getPath, executorsFor } from './policy.mjs';
 import { providersOf, executorExtra } from './executors.mjs';
 import { renderCheckin, CHECKIN_PROMPT } from './tick.mjs';
 import { tryDigest, digestIds } from './digest.mjs';
@@ -25,6 +25,7 @@ import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resum
 import { PAUSE_MODES, MODE_NAMES, pauseFiles, readPause } from './pausemode.mjs';
 import { laneHooks, laneAsksOwner } from './lifecycle.mjs';
 import { cards, cardGroup, markCard } from './codecard.mjs';
+import { readSymbols, symbolLines } from './codesymbol.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
@@ -147,6 +148,10 @@ export const TOOLS = [
   { name: 'norn_code_card', profiles: ['worker'], offered: ctx => cardGroup(ctx.project?.policy, ctx.env?.META_RUN_ID) === 'card',
     description: 'Before reading a file: a short card per file (who imports it, what changes with it, its fixes and tests). Paths relative to the project folder.',
     schema: obj({ files: { ...S.strs, description: 'one or more paths' } }, ['files']), run: cardTool },
+  // RM-a-64: one symbol's source by file::name (codesymbol.mjs), offered under policy.code.symbol on; off by default
+  { name: 'norn_code_symbol', profiles: ['worker'], offered: ctx => (ctx.project?.policy?.code?.symbol ?? POLICY_DEFAULTS.code.symbol) === 'on',
+    description: 'Read one function or class instead of the whole file: its source and exact lines, checked against your worktree. file::name, repo-root paths.',
+    schema: obj({ symbols: { ...S.strs, description: 'file::name, e.g. src/a.mjs::Shape.area' } }, ['symbols']), run: symbolTool },
   // lane-collide S2a (SPEC 4A.4 MCP): the remedy menu through the CLI's verbs, with this server's role (SPEC 4A.3 decides who may)
   { name: 'norn_collide', profiles: ['controller', 'checkin'], description: 'Collision cases (COL-n): list, show; a remedy wait | allow | narrow | part; ask (hand it to the role that may); undo.',
     schema: obj({ action: S.str('', { enum: COLLIDE_ACTIONS }), case: S.str('COL-n'), why: S.str('required for a write'), scope: S.str('narrow: the globs to keep'), kind: S.str('allow: one kind'),
@@ -442,6 +447,13 @@ function cardTool(a, ctx) {
   if (!a.files.length) bad('files needs one or more paths');
   const r = cards({ state: ctx.state, repo: ctx.project ? projectHome(ctx.project) : process.cwd(), files: a.files });
   return { text: r.cards.map(c => c.text).join('\n'), data: r };
+}
+// the worker's own worktree (its server's folder): the lines are checked against the files it edits
+function symbolTool(a, ctx) {
+  if (!a.symbols.length) bad('symbols needs one or more file::name');
+  let r;
+  try { r = readSymbols({ state: ctx.state, repo: process.cwd(), specs: a.symbols }); } catch (e) { bad(e.message); }
+  return { text: symbolLines(r).join('\n'), data: r };
 }
 
 // ---------- META-ADOPT A4: the setup profile (machine-scoped; SPEC meta-adopt sec. 5 MCP) ----------

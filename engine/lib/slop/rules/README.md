@@ -28,13 +28,13 @@ those of the rule file.
 
 | Kind | Parameters | In a project rule? |
 |---|---|---|
-| `pattern` | `patterns` (regexes), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked), `unless`, `cite` | yes |
+| `pattern` | `patterns` (regexes: one list for every language, or lists by pack id `js` / `ts` / `py` / `rs`, a file whose pack has none is not read), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked by the file's pack lexer; a file with no pack, a doc or data file, is all prose), `unless`, `cite`, `shadow_langs` (packs whose findings are shadow) | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
 | `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
-| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`; or `scan`: a pinned scanner Norn runs, below), `quote` (`false`: a finding never quotes its line), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
+| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`; or `scan`: a pinned scanner Norn runs, below), `quote` (`false`: a finding never quotes its line), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `select` (ruff only: rules Norn adds to the project's own, as `--extend-select`; LP selects ERA001, K12's Python route), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
-| `ast` | `tool: ast-grep`, `match` by language pack (`js`, `ts`, `py`, `rs`): a list of `{ rule, constraints?, message }` (ast-grep rule data; its `regex` is Rust regex), `shadow_langs` (packs whose findings are shadow, the rule id kept), `reason`, `files`, `exclude`; the old ESLint `selectors` form does not load | yes |
+| `ast` | `tool: ast-grep`, `match` by language pack (`js`, `ts`, `py`, `rs`): a list of `{ rule, constraints?, message }` (ast-grep rule data; its `regex` is Rust regex), `shadow_langs` (packs whose findings are shadow, the rule id kept), `reason`, `files`, `exclude`, `allow` (`{ token, listed_in }` of a `key: match` rule: a token that matches `token` and is listed in that file passes; K21 names `^NORN_` and engine/lib/slop/env.md, a project sets its own); the old ESLint `selectors` form does not load | yes |
 | `model` | `question` (plain words), `files`, `on` (`code` / `tests`: which branch it reads), `hits` (rule ids whose findings it is sent), `context` (quality files) | no |
 | `register` | `files` (the rule files beside the register's repo sources): K26, a new sentence no register row covers | no |
 | `companion` | `min_shared`, `min_share` (the rule's threshold, at or over the signals' own), `partners_exclude` (lock and generated files), `files`, `exclude`: a changed file whose usual partner in the code signals is not in the branch (K27) | no |
@@ -159,6 +159,15 @@ questions, the rule hits and the brief's Scope lines. A docs-only branch is not 
 quote, so new-only and waivers work as for every rule. At most 10 findings. With no route (the doors, `norn slop check`) each
 model rule is a WARN finding "could not run": the voice is advisory and holds nothing.
 
+**A key never reaches the voice** (`secretLines`, `withhold`, `engine/lib/slop/voice.mjs`). A key sent to the reader's provider has
+left the machine and is burnt, whatever the merge does. So the check runs every other rule, LS included, before the model rules, and
+before the prompt is built every hunk with an added line LS reported is dropped (matched by file and line, never by the line's
+text); the prompt names such a file on one line, `Withheld by the secrets rule: <file>`, and a hunk of the same file without a
+finding is shown as before. Another rule's hit on a reported line is left out of the rule hits too (its snippet is the line). Fail
+closed: LS on but could not run (no pin, no network, a wrong checksum, no scan of the head) builds no prompt, and each model rule is
+the WARN "could not run: the secrets rule LS could not run (<why>)". LS switched off for the project (overrides.json): the voice
+reads every hunk as before.
+
 **The risk rank decides which diffs a short day's reads go to** (RM-a-68; `voiceGate`, `engine/lib/slop/voice.mjs`). At each run end
 `left` = the cap minus today's reads, and `expected` = the run-end checks (stored checks with a run) a day over the last 7 full UTC
 days (`VOICE_GATE.history_days`) times the share of the UTC day still left, rounded up, at least 1 (this diff included). When `left
@@ -179,6 +188,34 @@ the landings with a lower sum plus half the equal ones. The line names the three
 The `M*` rules ship `shadow: true`. A thumb on a model finding in the Guard records a rating (`<state>/slop/ratings.jsonl`, the
 last one counts); Slop › Rules shows each rule's precision. At 90 % over 20 rated a rule may go to `BLOCK`, under 50 % (over 20
 rated) to `TREND`: the owner or the controller records that in `overrides.json`; nothing changes a level by itself.
+
+## Test smells (T4, T5)
+
+T4 (a new or changed test with no assertion) and T5 (a test whose every assertion is on a mock it made) are `ast` rules, WARN and
+`shadow`. A test is a node:test `test` / `it` / `t.test` call with an inline function, a pytest `def test*` (a method too), or a Rust
+`fn` under `#[test]` / `#[tokio::test]` / `#[rstest]`. A test whose match is unchanged from the base is no new finding.
+
+T4 reads "a call that can fail the test" as the brief says it (DEC-a-599): any call can throw, raise or panic, so a test whose one
+check is "this does not throw" checks something. T4 fires only on a test with no assertion that calls nothing but print / log and
+constructors.
+
+| | an assertion | a call or read that can fail the test (T4 silent) | print / log / constructor (T4 still fires) |
+|---|---|---|---|
+| js | a callee naming `assert`, `expect`, `should`, `check`, `verify`, `ensure` or `must` (`assert.equal`, `t.assert.ok`, `assertRow`), `t.plan`, `*.fail`, `throw` | any other call | `console.*`, `new X()` |
+| py | `assert`, `raise`, a call named as in js plus `fail`, `raises`, `warns`, `deprecated_call` (`self.assertEqual`, `pytest.raises`) | any other call, an import, an attribute read | `print`, `logging.*` / `logger.*` / `log.*`, a `Capitalised()` call |
+| rs | an `assert*!` / `panic!` / `unreachable!` / `todo!` macro, `.unwrap()` / `.expect()` / `_err` forms, `?`, `#[should_panic]`, a call named as in js | any other call or macro, a call inside a print macro's arguments | `println!` / `eprintln!` / `print!` / `dbg!` / `format!` / `vec!`, `log` / `tracing` macros, `Type::new()` / `Type::default()` / `Type(..)` |
+
+A helper is recognised by its name (it counts as an assertion); any other helper is a call, so T4 is silent on it, never loud.
+
+T5 reads the test's one mock: node:test `mock.fn`, `unittest.mock` / `mocker` `Mock` / `MagicMock` / `AsyncMock` / `create_autospec`,
+mockall's `Mock<T>::new()`, bound to a name (`const` / `=` / `let`). It fires when every assertion is on that mock (`<fn>.mock` in the
+assertion, its `assert_called*` methods or an `assert` on `called`, `call_count`, `call_args`, ..., an `assert*!` naming it) and the
+mock never reaches other code: it is silent when the mock is an argument of a call, put into an object or struct, assigned, its member
+passed, or when the test makes a second mock (a mock handed to real code makes asserting what it saw a real interaction test). A
+patch (`patch*`, `mock.method`) replaces a dependency of real code, so it is no mock the test made; a mock from a decorator, a fixture,
+a hook or a shared variable is no finding either. A helper call that does not take the mock is silent too (a
+function of the file, a name imported from a `help` / `support` / `fixture` / `common` / `util` / `conftest` module, a test argument,
+a `fn` of the test's module or a `*test*` / `*util*` path).
 
 ## Machine rules
 

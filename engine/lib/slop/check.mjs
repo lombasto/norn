@@ -10,10 +10,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { globToRe } from '../dlvgit.mjs';
 import { runTool, PARSE, SCANNERS } from './tools.mjs';
-import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
-import { packOf, PACKS, LINTERS } from './lang/index.mjs';
+import { norm, lineAt, lineText, isReason, prefix } from './scan.mjs';
+import { packOf, PACKS, LINTERS, masked } from './lang/index.mjs';
 import { lint, ast, dup, exportsKind, refs, depLock, companion } from './kinds.mjs';
-import { model } from './voice.mjs';
+import { model, SECRETS_RULE } from './voice.mjs';
 import { registerKind, loadRegister, registerFile } from './register.mjs';
 import { graphAt, cycles, ALL_KINDS, LOAD_KINDS } from '../codegraph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
@@ -25,8 +25,8 @@ export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // (P-*.json) may use; a rule's text (patterns, ast match data, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, command, dup, exports, refs, register, companion) are code over the whole tree, and
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
-  'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
-  ast: ['files', 'exclude', 'reason', 'shadow_langs'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
+  'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless', 'shadow_langs'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
+  ast: ['files', 'exclude', 'reason', 'shadow_langs', 'allow'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
   model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'], register: ['files'], companion: ['files', 'exclude', 'min_shared', 'min_share', 'partners_exclude'],
 };
@@ -43,6 +43,8 @@ function checkRule(r, f) {
   if (r.kind === 'lint' && (!LINTERS[r.tool] || (r.tool === 'eslint' && !r.rules) || Object.keys(r.rules || {}).some(k => k.includes('/')) || Object.values(r.levels || {}).some(l => !LEVELS.includes(l)))) throw new Error(`${f}: a lint rule names a known tool and its core rules only (no plugin rule: no '/'); levels are ${LEVELS.join(' | ')}`);
   if (r.kind === 'lint' && r.tool === 'sarif' && readsLog(r) === !!SCANNERS[r.scan]) throw new Error(`${f}: a sarif rule reads the file a project tool wrote: source "log" and log (path templates, {git} / {head}), or names a pinned scanner Norn runs (scan: ${Object.keys(SCANNERS).join(' | ')}) - one of the two`);
   if (r.quote !== undefined && (r.kind !== 'lint' || typeof r.quote !== 'boolean')) throw new Error(`${f}: quote (false: a finding never quotes its line) is a lint rule's true / false`);
+  if (r.kind === 'pattern' && !patternData(r)) throw new Error(`${f}: a pattern rule's patterns are a list of regexes, or lists by pack id (${Object.keys(PACKS).join(' | ')}); shadow_langs names packs`);
+  if (r.kind === 'lint' && r.select !== undefined && (r.tool !== 'ruff' || !Array.isArray(r.select) || !r.select.every(s => typeof s === 'string' && /^[A-Z]+\d*$/.test(s)))) throw new Error(`${f}: select (the ruff rules Norn adds to the project's own) is a ruff rule's list of codes`);
   if (r.kind === 'ast' && !astData(r)) throw new Error(`${f}: an ast rule is ast-grep match data (tool ast-grep): see rules/README.md`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
@@ -56,6 +58,11 @@ const astData = r => r.tool === 'ast-grep' && !('selectors' in r) && isObj(r.mat
   && Object.entries(r.match).every(([p, ms]) => PACKS[p] && Array.isArray(ms) && ms.length && ms.every(m => isObj(m.rule) && typeof m.message === 'string' && m.message.trim()
     && (m.constraints === undefined || isObj(m.constraints)) && Object.keys(m).every(k => ['rule', 'constraints', 'message'].includes(k))))
   && (r.shadow_langs || []).every(p => p in r.match);
+const strings = a => Array.isArray(a) && a.length > 0 && a.every(p => typeof p === 'string');
+const patternData = r => (strings(r.patterns) || (isObj(r.patterns) && Object.entries(r.patterns).every(([p, ps]) => PACKS[p] && strings(ps))))
+  && (r.shadow_langs || []).every(p => PACKS[p]);
+// key: match's allow (K21), a param since slop-langs S2: a project names its own token and env table
+const allowData = a => isObj(a) && typeof a.token === 'string' && typeof a.listed_in === 'string' && Object.keys(a).length === 2 && !!new RegExp(a.token);
 // rule reads go through fsnap (META-DASH-ASYNC R1): a snapshot lookup inside a dash GET that awaited primeRules, the sync form elsewhere
 // a fixture file's text may be a list of parts, joined here: a test key (LS) is never one string in a file of the repo
 const joined = fx => fx && Object.fromEntries(Object.entries(fx).map(([k, v]) => [k, ['base', 'head'].includes(k) ? Object.fromEntries(Object.entries(v || {}).map(([p, s]) => [p, Array.isArray(s) ? s.join('') : s])) : v]));
@@ -93,6 +100,7 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
       if (bad.length) throw new Error(`overrides.json ${id}: only enabled, level, shadow and params may change (not ${bad.join(', ')})`);
       const badP = Object.keys(p.params || {}).filter(k => !KIND_PARAMS[r.kind].includes(k));
       if (badP.length) throw new Error(`overrides.json ${id}: ${r.kind} takes the params ${KIND_PARAMS[r.kind].join(', ') || '(none)'} (not ${badP.join(', ')})`);
+      if (p.params?.allow !== undefined && !allowData(p.params.allow)) throw new Error(`overrides.json ${id}: allow is { token (a regex), listed_in (a file) }`);
       if (p.level !== undefined && !LEVELS.includes(p.level)) throw new Error(`overrides.json ${id}: level is one of ${LEVELS.join(' | ')}`);
       of.set(id, { ...r, ...p.params, ...(p.params?.levels ? { levels: { ...r.levels, ...p.params.levels } } : {}), ...(p.level ? { level: p.level } : {}), ...('shadow' in p ? { shadow: !!p.shadow } : {}), ...('enabled' in p ? { enabled: !!p.enabled } : {}) });
     }
@@ -172,18 +180,22 @@ const content = (rule, ctx, fn) => {
 };
 
 // RM-45: `in` (code | comment | string: the other classes blanked), `unless` (a line that also matches is no finding), `cite`
-// (K22: the line must name a record id that resolves to an open item), `key: match` (the matched token, capture 1 or all)
+// (K22: the line must name a record id that resolves to an open item), `key: match` (the matched token, capture 1 or all).
+// slop-langs S3 (SPEC 4): `patterns` is one list for every language, or a list per pack id (K12: the code shape is the language's
+// syntax; a file whose pack has none is not read); a file of a pack in `shadow_langs` gives shadow findings (a new language, SPEC 5)
 export function patterns(rule, text, file, ctx) {
-  const seen = rule.in ? masked(text, rule.in, file) : text, unless = rule.unless && new RegExp(rule.unless);
-  return rule.patterns.flatMap(p => [...seen.matchAll(new RegExp(p, 'g'))].flatMap(m => {
+  const pack = packOf(file)?.ID, list = Array.isArray(rule.patterns) ? rule.patterns : rule.patterns[pack] || [];
+  if (!list.length) return [];
+  const seen = rule.in ? masked(text, rule.in, file) : text, unless = rule.unless && new RegExp(rule.unless), sh = (rule.shadow_langs || []).includes(pack) ? { shadow: true } : {};
+  return list.flatMap(p => [...seen.matchAll(new RegExp(p, 'g'))].flatMap(m => {
     const line = lineAt(seen, m.index), lt = lineText(text, line);
     if (unless?.test(lt)) return [];
     if (rule.cite) {
       const ids = lt.match(new RegExp(rule.cite.id, 'g')) || [], state = id => ctx.resolve?.(id);
       if (ids.length && ids.every(id => !ctx.resolve || rule.cite.open.includes(state(id)))) return [];
-      return [{ file, line, msg: `${rule.title}${ids.length ? `: ${ids.map(id => `${id} is ${state(id) || 'unknown'}`).join(', ')}` : ''}`, snippet: lt }];
+      return [{ file, line, msg: `${rule.title}${ids.length ? `: ${ids.map(id => `${id} is ${state(id) || 'unknown'}`).join(', ')}` : ''}`, snippet: lt, ...sh }];
     }
-    return [{ file, line, msg: rule.title, snippet: lt, ...(rule.key === 'match' ? { token: m[1] ?? m[0] } : {}) }];
+    return [{ file, line, msg: rule.title, snippet: lt, ...(rule.key === 'match' ? { token: m[1] ?? m[0] } : {}), ...sh }];
   }));
 }
 
@@ -339,7 +351,8 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
   const findings = [], ran = [];
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, state, found: findings, config, lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
+  // secrets: the project's secrets rule (LS) when it is on, even if `only` leaves it out - the voice withholds its hunks (voice.mjs secretLines)
+  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, state, found: findings, config, secrets: rules.find(r => r.id === SECRETS_RULE) || null, secretScan: r => lint(r, ctx), lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));

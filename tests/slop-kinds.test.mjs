@@ -7,7 +7,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { effectiveRules, pairFindings, fingerprint, slopCheck, RULES_DIR } from '../engine/lib/slop/check.mjs';
 import { checkBranch } from '../engine/lib/slop/runend.mjs';
-import { classify, masked, CODE, COMMENT, STRING, QUOTE, helpers, exportsOf, usesOf, commentsIn, isReason } from '../engine/lib/slop/scan.mjs';
+import { classify, CODE, COMMENT, STRING, QUOTE, helpers, exportsOf, usesOf, isReason } from '../engine/lib/slop/scan.mjs';
+import { masked, commentsIn } from '../engine/lib/slop/lang/index.mjs';
 import { depsOf } from '../engine/lib/slop/kinds.mjs';
 import { eslintConfig, astGrepOut } from '../engine/lib/slop/tools.mjs';
 import { record } from '../engine/lib/records.mjs';
@@ -37,7 +38,9 @@ test('helpers, exports and the reason test: the pieces dup (K9), exports (K4) an
   assert.deepEqual(helpers(t).map(h => [h.name, h.body, h.line]), [['fwd', "p => String(p).replace(/a/g, 'b')", 1], ['iso', 'd => new Date(d).toISOString()', 2]]);
   assert.deepEqual(exportsOf(t), [{ name: 'fwd', line: 1 }, { name: 'Box', line: 4 }]);
   assert.equal(usesOf('a$b + a$b + xa$b', 'a$b'), 2, 'a $ in the name is literal, words only');
-  assert.equal(commentsIn('a; // one\nb; /* two */\nc;\n', 1, 2), 'one two');
+  assert.equal(commentsIn('a; // one\nb; /* two */\nc;\n', 1, 2, 'a.mjs'), 'one two');
+  assert.equal(commentsIn('try:\n    go()\nexcept OSError:  # the cache is optional: a miss rebuilds it\n    pass\n', 3, 4, 'a.py'), 'the cache is optional: a miss rebuilds it', 'a Python reason comment (K2 / K19)');
+  assert.equal(commentsIn('let s = "// no"; // gone: the caller retries\n', 1, 1, 'a.rs'), 'gone: the caller retries');
   assert.equal(isReason('gone: the caller retries', ['ignore']).ok, true);
   assert.equal(isReason('ignore: it is fine', ['ignore']).ok, false);
 });
@@ -50,6 +53,10 @@ test('depsOf: package.json and lock packages, TOML dependency sections and array
   assert.deepEqual(depsOf('Cargo.lock', '[[package]]\nname = "a"\nversion = "0.1"\n[[package]]\nname = "b"\nversion = "2"\n'), ['a@0.1', 'b@2']);
   assert.deepEqual(depsOf('requirements.txt', 'numpy==2  # pinned\n\nruff\n'), ['numpy==2', 'ruff']);
   assert.deepEqual(depsOf('package.json', '{ nope'), ['(unparsable) package.json']);
+  // slop-langs S3 (SPEC 4, the three measured gaps): a multi-line optional extra, PEP 735's dependency groups, a Cargo table of one dependency
+  assert.deepEqual(depsOf('pyproject.toml', '[project]\nname = "g"\n[project.optional-dependencies]\ngui = [\n  "pyside6>=6",\n  "pillow",\n]\ndev = ["pytest"]\n'), ['pyside6>=6', 'pillow', 'pytest']);
+  assert.deepEqual(depsOf('pyproject.toml', '[dependency-groups]\ndev = [\n  "ruff==0.15",\n]\nlint = ["mypy"]\n[tool.uv]\npackage = true\n'), ['ruff==0.15', 'mypy']);
+  assert.deepEqual(depsOf('Cargo.toml', '[dependencies.glam]\nversion = "0.30"\nfeatures = ["serde"]\n[dev-dependencies]\nrand = "0.9"\n'), ['glam.version = "0.30"', 'glam.features = ["serde"]', 'rand = "0.9"']);
 });
 
 test('finding shape: value and base_value; key: match fingerprints the token tree-wide; a shadow rule is recorded, never held', () => {
@@ -131,6 +138,40 @@ test('ast-grep: K2 and K19 find their lines in Python, Rust and TypeScript (shad
     assert.ok(r.blocks.every(b => b.file.endsWith('.mjs')), 'a shadow language holds nothing');
   }
 });
+// slop-langs S2: K11A, K21, T3 in py / rs / ts (shadow); T3's test.only( / it.skip( shape (js held); T3 reaches nested Python tests,
+// Rust integration tests and an inline #[cfg(test)] module; a bare #[ignore] hits, a reasoned one passes (DEC-a-579 Q2 A)
+test('ast-grep S2: K11A, K21 and T3 find their lines in every language (shadow but JS); each miss finds none after the engine filters', () => {
+  const want = { K11A: { 'src/a.mjs': [1, 3], 'src/a.py': [1, 9, 13], 'src/a.rs': [2, 3, 4], 'src/a.ts': [1, 3] },
+    K21: { 'engine/lib/a.mjs': [2, 3], 'engine/lib/a.py': [3, 4, 5], 'engine/lib/a.rs': [1, 2, 3], 'engine/lib/a.ts': [1, 2] },
+    T3: { 'tests/a.test.mjs': [2, 3, 4, 5, 6], 'pkg/tests/unit/test_a.py': [6, 11, 17], 'pkg/test_b.py': [4], 'crates/core/tests/it.rs': [2], 'crates/core/src/lib.rs': [6], 'tests/a.test.ts': [2, 3, 4, 5] } };
+  for (const rule of AST.filter(r => want[r.id])) {
+    for (const which of ['hit', 'miss']) {
+      const fx = rule.fixture[which], tool = (run, side) => (fx.recorded[side] === undefined ? null : JSON.stringify(fx.recorded[side]));
+      const r = slopCheck({ repo: fxRepo(fx), base: 'main', rules: [rule], tool }), got = {};
+      for (const f of r.findings.filter(x => x.new)) { (got[f.file] ||= []).push(f.line); assert.equal(!!f.shadow, !f.file.endsWith('.mjs'), `${rule.id} ${f.file}: shadow by language`); }
+      assert.deepEqual(got, which === 'hit' ? want[rule.id] : {}, `${rule.id} ${which}`);
+      assert.ok(r.blocks.every(b => b.file.endsWith('.mjs')), 'a shadow language holds nothing');
+    }
+    assert.deepEqual(Object.keys(rule.match).sort(), ['js', 'py', 'rs', 'ts']);
+  }
+  const t3 = AST.find(r => r.id === 'T3'), only = slopCheck({ repo: fxRepo(t3.fixture.hit), base: 'main', rules: [t3], tool: (run, side) => JSON.stringify(t3.fixture.hit.recorded[side]) });
+  assert.deepEqual(only.blocks.filter(b => b.line >= 5).map(b => b.msg), [t3.match.js[2].message, t3.match.js[2].message], 'a JS test.only( / describe.skip( is held');
+});
+test('K21: allow is a param - a project\'s overrides.json names its own token and env table, and the listed names follow it', () => {
+  const d = mkTmp('slop-k21-'); fs.mkdirSync(path.join(d, 'rules', 'slop'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'rules', 'slop', 'overrides.json'), JSON.stringify({ K21: { params: { allow: { token: '^HL_', listed_in: 'docs/env.md' } } } }));
+  const own = effectiveRules({ projectDir: d }).find(r => r.id === 'K21'), built = AST.find(r => r.id === 'K21');
+  assert.deepEqual(own.allow, { token: '^HL_', listed_in: 'docs/env.md' });
+  const src = 'export const a = process.env.NORN_LISTED;\nexport const b = process.env.HL_LISTED;\n';
+  const repo = fxRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': src, 'engine/lib/slop/env.md': '| NORN_LISTED | x |\n', 'docs/env.md': '| HL_LISTED | x |\n' } });
+  const hit = (line, name) => ({ file: 'a.mjs', ruleId: 'K21.js.0.JavaScript', line, column: 18, endLine: line, text: `process.env.${name}` });
+  const tool = (run, side) => JSON.stringify(side === 'head' ? [hit(1, 'NORN_LISTED'), hit(2, 'HL_LISTED')] : []);
+  const names = rule => slopCheck({ repo, base: 'main', rules: [rule], tool }).findings.filter(f => f.new).map(f => f.token);
+  assert.deepEqual(names(built), ['HL_LISTED'], 'built-in: NORN_* listed in engine/lib/slop/env.md');
+  assert.deepEqual(names(own), ['NORN_LISTED'], 'the project\'s: HL_* listed in docs/env.md');
+  fs.writeFileSync(path.join(d, 'rules', 'slop', 'overrides.json'), JSON.stringify({ K21: { params: { allow: { token: '^HL_' } } } }));
+  assert.throws(() => effectiveRules({ projectDir: d }), /overrides\.json K21: allow is \{ token \(a regex\), listed_in \(a file\) \}/);
+});
 test('ast-grep fails closed: exit 8 (a rule that does not parse), an ERROR: line at exit 0, output that is not JSON; each is ONE BLOCK could not run per ast rule', () => {
   assert.throws(() => astGrepOut({ status: 8, stdout: '', stderr: 'Error: Cannot parse rule rules.yml\nHelp: x\n╰▻ Kind `no_such_kind` is invalid.\n' }, 'd', 'd/t'), /^Error: ast-grep exited 8: Error: Cannot parse rule rules\.yml \.\.\. ╰▻ Kind `no_such_kind` is invalid\.$/);
   assert.throws(() => astGrepOut({ status: 0, stdout: '', stderr: 'ERROR: nope: The system cannot find the file specified. (os error 2)\n' }, 'd', 'd/t'), /ast-grep exited 0: ERROR: nope/);
@@ -141,7 +182,9 @@ test('ast-grep fails closed: exit 8 (a rule that does not parse), an ERROR: line
   const repo = fxRepo({ base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 2;\n', 'tests/a.test.mjs': 'export const b = 1;\n' } });
   const exit8 = () => astGrepOut({ status: 8, stdout: '', stderr: 'Error: Cannot parse rule rules.yml\n' }, 'd', 'd/t');
   const r = slopCheck({ repo, base: 'main', rules: AST, tool: exit8 });
-  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.msg]), AST.map(x => [x.id, '*', 'could not run: ast-grep exited 8: Error: Cannot parse rule rules.yml']));
+  const why = x => [x.id, '*', 'could not run: ast-grep exited 8: Error: Cannot parse rule rules.yml'];
+  assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.msg]), AST.filter(x => !x.shadow).map(why));
+  assert.deepEqual(r.findings.filter(f => f.unrun && f.shadow).map(b => [b.rule, b.file, b.msg]), AST.filter(x => x.shadow).map(why), 'a shadow ast rule (T4, T5) is recorded, never held');
   assert.deepEqual(r.ran, []);
 });
 
