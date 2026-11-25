@@ -25,11 +25,11 @@ export const CALL_HOWS = ['local', 'import', 'qualified', 'self', 'method-unique
 const FILE_MEASURED = { 'javascript/file/exact': 1, 'javascript/file/probed': 1, 'javascript/file/config': 1, 'javascript/file/ambiguous': 1, 'typescript/file/probed': 1,
   'python/file/exact': 1, 'python/file/probed': 1, 'python/file/ambiguous': 1, 'rust/file/exact': 1, 'rust/file/probed': 1, 'rust/file/config': 1 };
 /** the call-edge precision measured by `norn-code grade calls` (S4b; docs/code-graph.md "Trust" > "Call edges" has the intervals, commits and
- *  dates): JavaScript on Norn @ dcade05c, Python and Rust on a private project (prism) @ 7e39ea91; ambiguous / external / unresolved choose
+ *  dates): JavaScript on Norn @ dcade05c (method-unique regraded @ cbb4d12d, S6), Python and Rust on a private project (prism) @ 7e39ea91 (Rust regraded S6); ambiguous / external / unresolved choose
  *  no target, so they have no precision (unmeasured; their misses are in the recall); TypeScript had no call site to grade */
 const CALL_MEASURED = { 'javascript/call/local': 1, 'javascript/call/import': 1, 'javascript/call/qualified': 1, 'javascript/call/self': 1, 'javascript/call/method-unique': 'below bar',
   'python/call/local': 1, 'python/call/import': 1, 'python/call/qualified': 1, 'python/call/self': 1, 'python/call/method-unique': 1,
-  'rust/call/local': 0.9787, 'rust/call/import': 0.98, 'rust/call/qualified': 1, 'rust/call/self': 1, 'rust/call/method-unique': 1 };
+  'rust/call/local': 1, 'rust/call/import': 0.98, 'rust/call/qualified': 1, 'rust/call/self': 1, 'rust/call/method-unique': 1 };
 /** the precision of each (language, level, how) class, `<lang>/file/<how>` and `<lang>/call/<how>`: measured by stages S4a / S4b of RM-a-53
  *  (a number in 0..1; "below bar" when under SPEC 5's bar: consumers drop it), "unmeasured" when no graded row (never a made-up number) */
 export const TRUST = Object.fromEntries(LANGS.flatMap(l => [...HOWS.map(h => [`${l}/file/${h}`, FILE_MEASURED[`${l}/file/${h}`] ?? 'unmeasured']), ...CALL_HOWS.map(h => [`${l}/call/${h}`, CALL_MEASURED[`${l}/call/${h}`] ?? 'unmeasured'])]));

@@ -614,6 +614,224 @@ fn py_binds(n: Node, src: &[u8], out: &mut Vec<Value>) {
 }
 
 /// a blob's call sites, import bindings, class bases and JS default export (`defs` as find() gave them, in the stored order)
+/// the identifiers a pattern binds (a path in a pattern - `Some`, `E::V`, a type - binds nothing)
+fn binds_name(p: Node, name: &str, src: &[u8]) -> bool {
+    match p.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier" => {
+            text(p, src) == name
+        }
+        "scoped_identifier" | "type_identifier" | "type_annotation" | "predefined_type" => false,
+        _ => {
+            let mut c = p.walk();
+            let kids: Vec<(Option<&str>, Node)> = p
+                .children(&mut c)
+                .enumerate()
+                .map(|(i, k)| (p.field_name_for_child(i as u32), k))
+                .collect();
+            // a `{ key: target }` pattern binds its value; elsewhere a value, default or guard is an expression
+            let pair = p.kind() == "pair_pattern";
+            kids.into_iter().any(|(f, k)| match f {
+                Some("value") => pair && binds_name(k, name, src),
+                Some("type" | "right" | "key" | "default" | "condition") => false,
+                _ => binds_name(k, name, src),
+            })
+        }
+    }
+}
+
+/// Rust: a call `name()` whose name is a local variable (a `let`, a fn / closure parameter, a `for` / `match` / `if let` pattern of
+/// an enclosing block, before the call) - a closure or fn pointer, never an item: it shadows every def and import of the name. The
+/// climb ends at the enclosing fn item (a nested fn sees no local of the fn around it).
+fn rs_var(n: Node, name: &str, src: &[u8]) -> bool {
+    let (at, mut p) = (n.start_byte(), n.parent());
+    while let Some(x) = p {
+        let hit = match x.kind() {
+            "block" => {
+                let mut c = x.walk();
+                let kids: Vec<Node> = x.named_children(&mut c).collect();
+                kids.into_iter().any(|k| {
+                    k.kind() == "let_declaration"
+                        && k.end_byte() <= at
+                        && k.child_by_field_name("pattern")
+                            .is_some_and(|q| binds_name(q, name, src))
+                })
+            }
+            "function_item" | "closure_expression" => x
+                .child_by_field_name("parameters")
+                .is_some_and(|q| binds_name(q, name, src)),
+            "for_expression" | "match_arm" | "let_condition" => x
+                .child_by_field_name("pattern")
+                .is_some_and(|q| binds_name(q, name, src)),
+            _ => false,
+        };
+        if hit {
+            return true;
+        }
+        if matches!(
+            x.kind(),
+            "function_item" | "impl_item" | "trait_item" | "mod_item"
+        ) {
+            return false;
+        }
+        p = x.parent();
+    }
+    false
+}
+
+/// JS / TS: what a member call's receiver `recv` is bound to locally, the nearest enclosing declaration first: `["lit"]` (a literal,
+/// a function or class expression, an operator's result), `["new", C]`, `["call", F]`, `["ref", X]` (another name), `["type", T]`
+/// (a TS annotation); None when no local binding is found or its value is unknown (an untyped parameter, a destructured name).
+/// `let x;` with no value takes the first `x = ...` assignment of its scope.
+fn js_bound(n: Node, recv: &str, src: &[u8]) -> Option<Value> {
+    fn value(e: Node, src: &[u8]) -> Option<Value> {
+        match e.kind() {
+            "await_expression"
+            | "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression" => {
+                let mut c = e.walk();
+                let k = e.named_children(&mut c).next()?;
+                value(k, src)
+            }
+            "object"
+            | "array"
+            | "string"
+            | "template_string"
+            | "number"
+            | "regex"
+            | "true"
+            | "false"
+            | "null"
+            | "undefined"
+            | "arrow_function"
+            | "function_expression"
+            | "function"
+            | "class"
+            | "binary_expression"
+            | "unary_expression" => Some(json!(["lit"])),
+            "new_expression" => {
+                chain(e.child_by_field_name("constructor")?, src).map(|c| json!(["new", c]))
+            }
+            "call_expression" => {
+                chain(e.child_by_field_name("function")?, src).map(|f| json!(["call", f]))
+            }
+            "identifier" | "member_expression" => chain(e, src).map(|x| json!(["ref", x])),
+            _ => None,
+        }
+    }
+    fn typed(t: Node, src: &[u8]) -> Option<Value> {
+        let mut c = t.walk();
+        let k = t.named_children(&mut c).next()?;
+        match k.kind() {
+            "type_identifier" | "nested_type_identifier" => Some(json!(["type", text(k, src)])),
+            "generic_type" => Some(json!(["type", text(k.child_by_field_name("name")?, src)])),
+            "predefined_type" | "literal_type" | "array_type" | "tuple_type" | "object_type"
+            | "function_type" => Some(json!(["lit"])),
+            _ => None,
+        }
+    }
+    /// the first `recv = ...` assignment under node x
+    fn assigned<'t>(x: Node<'t>, recv: &str, src: &[u8]) -> Option<Node<'t>> {
+        let mut stack = vec![x];
+        let mut best: Option<Node> = None;
+        while let Some(y) = stack.pop() {
+            if y.kind() == "assignment_expression"
+                && y.child_by_field_name("left")
+                    .is_some_and(|l| l.kind() == "identifier" && text(l, src) == recv)
+                && best.is_none_or(|b| y.start_byte() < b.start_byte())
+            {
+                best = Some(y);
+            }
+            let mut c = y.walk();
+            stack.extend(y.named_children(&mut c));
+        }
+        best.and_then(|b| b.child_by_field_name("right"))
+    }
+    let mut p = n.parent();
+    while let Some(x) = p {
+        match x.kind() {
+            "statement_block" | "program" | "class_static_block" | "switch_case" => {
+                let mut c = x.walk();
+                let mut decls: Vec<Node> = vec![];
+                for k in x.named_children(&mut c) {
+                    let k = if k.kind() == "export_statement" {
+                        k.child_by_field_name("declaration").unwrap_or(k)
+                    } else {
+                        k
+                    };
+                    if matches!(k.kind(), "lexical_declaration" | "variable_declaration") {
+                        let mut c2 = k.walk();
+                        decls.extend(
+                            k.named_children(&mut c2)
+                                .filter(|d| d.kind() == "variable_declarator"),
+                        );
+                    }
+                }
+                for d in decls {
+                    let Some(nm) = d.child_by_field_name("name") else {
+                        continue;
+                    };
+                    if nm.kind() == "identifier" && text(nm, src) == recv {
+                        return match d
+                            .child_by_field_name("value")
+                            .or_else(|| assigned(x, recv, src))
+                        {
+                            Some(v) => value(v, src),
+                            None => d.child_by_field_name("type").and_then(|t| typed(t, src)),
+                        };
+                    }
+                    if binds_name(nm, recv, src) {
+                        return None;
+                    }
+                }
+            }
+            "function_declaration"
+            | "function_expression"
+            | "function"
+            | "arrow_function"
+            | "method_definition"
+            | "generator_function_declaration"
+            | "generator_function" => {
+                if let Some(q) = x.child_by_field_name("parameter") {
+                    if text(q, src) == recv {
+                        return None;
+                    }
+                }
+                if let Some(ps) = x.child_by_field_name("parameters") {
+                    let mut c = ps.walk();
+                    for q in ps.named_children(&mut c) {
+                        let pat = q.child_by_field_name("pattern").unwrap_or(q);
+                        if pat.kind() == "identifier" && text(pat, src) == recv {
+                            return q.child_by_field_name("type").and_then(|t| typed(t, src));
+                        }
+                        if binds_name(pat, recv, src) {
+                            return None;
+                        }
+                    }
+                }
+            }
+            "catch_clause" | "for_in_statement" | "for_statement" => {
+                let f = if x.kind() == "catch_clause" {
+                    "parameter"
+                } else if x.kind() == "for_in_statement" {
+                    "left"
+                } else {
+                    "initializer"
+                };
+                if x.child_by_field_name(f)
+                    .is_some_and(|q| binds_name(q, recv, src))
+                {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        p = x.parent();
+    }
+    None
+}
+
 pub fn extract(lang: &str, tree: &Tree, src: &[u8], defs: &[Found]) -> Extracted {
     let at: HashMap<usize, usize> = defs
         .iter()
@@ -693,7 +911,24 @@ pub fn extract(lang: &str, tree: &Tree, src: &[u8], defs: &[Found]) -> Extracted
             p = x.parent();
         }
         let (line, col) = pos(name);
-        calls.push(json!([line, col, text(name, src), form, recv, inn, err]));
+        let mut row = vec![
+            json!(line),
+            json!(col),
+            json!(text(name, src)),
+            json!(form),
+            json!(recv),
+            json!(inn),
+            json!(err),
+        ];
+        let bound = match (lang, form, recv.as_deref()) {
+            ("rs", 0, _) => rs_var(n, text(name, src), src).then(|| json!(["var"])),
+            ("js", 1, Some(r)) if !r.contains('.') && !matches!(r, "this" | "super") => {
+                js_bound(n, r, src)
+            }
+            _ => None,
+        };
+        row.extend(bound);
+        calls.push(Value::Array(row));
     }
     Extracted {
         calls: Value::Array(calls),
@@ -715,6 +950,8 @@ pub enum Res {
     Module(Vec<String>),
     External(String),
     Unresolved(String),
+    /// a by-name candidate (`method-unique`) the receiver's local binding argues against: `ambiguous`, its list kept, the why said
+    Demoted(Vec<D>, String),
 }
 
 fn sep(lang: &str) -> &'static str {
@@ -1376,6 +1613,62 @@ impl Graph {
         }
     }
 
+    /// JS `x.f()` matched by name to the one repo method f: kept `method-unique` unless the receiver's local binding (extraction's
+    /// `bound`) says its value is something else - a literal, a `new` / typed value whose class has no such method, the result of a
+    /// call that is not the method's owner (the class or the function whose object holds it), or a package / builtin value.
+    /// Then `ambiguous` with the one candidate and the why: a guess the binding contradicts is never an edge (S4b grade, S6).
+    fn vet(
+        &self,
+        file: &str,
+        inn: Option<usize>,
+        r: &str,
+        name: &str,
+        b: &Value,
+        v: Vec<D>,
+    ) -> Res {
+        let d = &v[0];
+        let f = &self.files[&d.0];
+        let op = parent_of(s(self.fact_def(d), "path"), &f.lang);
+        let owner: Vec<D> = f.at(&op).map(|j| (d.0.clone(), j)).collect();
+        let (k, x) = (b[0].as_str().unwrap_or(""), b[1].as_str().unwrap_or(""));
+        // the receiver names the owner itself (`const o = { f() {} }; o.f()`): the binding agrees
+        let named = self.local(file, inn, r).iter().any(|l| owner.contains(l));
+        let why = match k {
+            _ if named => None,
+            "lit" => Some(format!(
+                "receiver {r} holds a literal, not an object of {op}"
+            )),
+            "new" | "type" => {
+                let cls = self.classes(file, inn, x, 0);
+                (!cls.iter().any(|c| self.method_in(c, name, 0).contains(d))).then(|| {
+                    format!(
+                        "receiver {r} is {} {x}, not an object of {op}",
+                        if k == "new" { "a new" } else { "typed" }
+                    )
+                })
+            }
+            "call" => {
+                let (recv, last, form) = match x.rsplit_once('.') {
+                    Some((a, l)) => (json!(a), l, 1),
+                    None => (Value::Null, x, 0),
+                };
+                match self.resolve(file, &json!([0, 0, last, form, recv, inn, false])) {
+                    Res::Hit(_, h) if h.iter().any(|t| owner.contains(t)) => None,
+                    _ => Some(format!("receiver {r} is the result of {x}, not of {op}")),
+                }
+            }
+            "ref" => match self.receiver(file, inn, x, 0) {
+                Some(Res::External(w)) => Some(format!("receiver {r} is {x}: {w}")),
+                _ => None,
+            },
+            _ => None,
+        };
+        match why {
+            None => Res::Hit("method-unique", v),
+            Some(w) => Res::Demoted(v, w),
+        }
+    }
+
     /// one call site of `file` -> its class and candidates
     pub fn resolve(&self, file: &str, c: &Value) -> Res {
         let name = c[2].as_str().unwrap_or("");
@@ -1388,6 +1681,11 @@ impl Graph {
         let lang = self.files[file].lang.clone();
         let lang = lang.as_str();
         let plain = || -> Res {
+            if lang == "rs" && c[7] == json!(["var"]) {
+                return Res::Unresolved(format!(
+                    "{name} is a local variable (a closure or fn pointer), not a definition"
+                ));
+            }
             let l = self.local(file, inn, name);
             if !l.is_empty() {
                 return Res::Hit("local", l);
@@ -1504,7 +1802,12 @@ impl Graph {
                         }
                     }
                     Some(Res::External(w)) => Res::External(w),
-                    _ => self.by_method_name(lang, name),
+                    _ => match (self.by_method_name(lang, name), c.get(7)) {
+                        (Res::Hit("method-unique", v), Some(b)) => {
+                            self.vet(file, inn, r, name, b, v)
+                        }
+                        (x, _) => x,
+                    },
                 }
             }
         }
@@ -1527,6 +1830,7 @@ impl Graph {
                     Res::External(w) => ("external", vec![], Some(w)),
                     Res::Unresolved(w) => ("unresolved", vec![], Some(w)),
                     Res::Module(_) => ("unresolved", vec![], Some("a module, not a callable".to_string())),
+                    Res::Demoted(h, w) => ("ambiguous", h, Some(w)),
                 };
                 let ids: Vec<&Value> = targets.iter().take(CANDIDATES_MAX).map(|d| &self.def(d)["id"]).collect();
                 let caller = c[5].as_u64().map_or(Value::Null, |i| f.defs[i as usize]["id"].clone());
