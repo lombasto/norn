@@ -1,6 +1,7 @@
 # The full node suite on GitHub-hosted runners (Windows + Linux) after the merge: on a push to main and nightly. A pull request runs
 # the fast check instead (pr.yml, META-PR-FAST RM-29): slop, smoke and the tests of the files it changes.
-# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt.
+# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt. Before the suite, norn-code (engine/code-rs, the code
+# graph: docs/code-graph.md) is built and gated: build, test, fmt and clippy with --locked; macOS runs that step only (DEC-a-574).
 name: ci
 
 # A docs-only push (markdown / docs / images / html) runs no suite; the nightly runs regardless.
@@ -30,18 +31,32 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
+        code_rs_only: [false]
+        include:
+          - os: macos-latest
+            code_rs_only: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: norn-code (engine/code-rs) - build, test, fmt, clippy
+        shell: bash
+        working-directory: engine/code-rs
+        run: |
+          rustup component add rustfmt clippy
+          cargo build --release --locked
+          cargo test --locked
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
       - uses: actions/setup-node@v4
+        if: ${{ !matrix.code_rs_only }}
         with:
           node-version: 24
       # Chromium's Linux SUID sandbox: the helper beside each browser (Edge's msedge-sandbox, Chrome's chrome-sandbox) must be
       # owned by root with mode 4755, else the browser aborts rather than run unsandboxed (setuid_sandbox_host.cc; "Linux SUID
       # Sandbox", https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md). The sandbox stays on.
       - name: configure the browsers' SUID sandbox helper (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.code_rs_only
         shell: bash
         run: |
           for b in microsoft-edge microsoft-edge-stable google-chrome google-chrome-stable chromium chromium-browser; do
@@ -54,5 +69,6 @@ jobs:
             done
           done
       - name: suite (fails only on a red not in tests/KNOWN-REDS.txt)
+        if: ${{ !matrix.code_rs_only }}
         shell: bash
         run: node engine/bin/ci-suite.mjs
