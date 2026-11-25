@@ -1,12 +1,13 @@
 # Code graph: the contract
 
 The file-level import graph of a git repo at a commit, for JavaScript / TypeScript, Python and Rust: which file loads which, how
-each import was resolved, and the imports that resolve to nothing in the repo. It is extracted by `norn-code` (engine/code-rs,
+each import was resolved, and the imports that resolve to nothing in the repo; and its symbols: every definition with its exact
+bounds, and the references to a name (see "Symbols"). It is extracted by `norn-code` (engine/code-rs,
 tree-sitter, no model), stored per tree, and read through ONE reader module and its CLI. Lane code-graph (RM-a-53) writes it;
 lanes impacted-tests, code-map-graph, triage-card and warn-on-edit (and later symbol-read, refactor-targets) read this doc and
 `engine/lib/codegraph.mjs`, nothing else. The store's file format is private between norn-code and the reader.
 
-Stage S1b: file level only. Symbols (`symbols()`) come with stage S2 and call edges (`callers()`) with S3; neither is in the reader yet.
+Call edges (`callers()`) come with stage S3; they are not in the reader yet.
 
 ## Paths
 
@@ -26,7 +27,7 @@ and the consumer decides whether it counts. `norn code history` (codeindex.mjs) 
 ## The one reader
 
 ```js
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
 const g = graphAt({ state, repo, at: 'HEAD' });   // Graph | { ok: false, why }
 if (!g.ok) return na(g.why);
 dependents(g, 'engine/lib/a.mjs', { depth: 2 });
@@ -45,6 +46,8 @@ carries the `stamp` of the commit it is for.
 | `cycles(g, { within = null, kinds = LOAD_KINDS })` | `{ stamp, cycles: [[file, ...]] }`: Tarjan's strongly connected components over the edges whose both ends match a `within` glob (null: all files); a component of 2+ files, or a file importing itself, is a cycle; each cycle sorted, the list sorted by its first file |
 | `fans(g, { kinds = FAN_KINDS })` | `Map(file -> { in, out })`: distinct importers and distinct imports per file (self-edges not counted); every file of `g.files` has a row |
 | `excluded(g, file)` | the exclusion reason of `file` (e.g. `"path segment vendor"`), or `null` (a graph file, or a file the graph does not know) |
+| `symbols({ state = null, repo, file, at = 'HEAD', worktree = false })` | `{ stamp, file, defs: Def[] }`: the definitions of `file`, in source order (see "Symbols"); no Graph needed |
+| `references({ state = null, repo, name, at = 'HEAD', worktree = false })` | `{ stamp, name, defs: Def[], rows: Ref[], truncated }`: the definitions named `name` and every other occurrence of the identifier; a name no definition has is `{ ok: false }` |
 | `graphStatus({ state = null, repo })` | `{ built, binary, why?, store_schema, store, head, indexed }` or `{ ok: false, why }` (see "CLI") |
 
 Walks (`dependencies`, `dependents`, `reach`) are breadth-first: each file appears once, at its least depth, with the first edge
@@ -75,7 +78,8 @@ FileRow    { lang, excluded, why?, crate?, module?, orphan?, parse_error? }
              lang: 'javascript' | 'typescript' | 'python' | 'rust' | null (null: a manifest the graph reads, e.g. package.json,
              pyproject.toml, Cargo.toml, or any other file an edge reaches, e.g. a shader an include_str! names); excluded: null | 'vendored' | 'generated' | 'config';
              why: the exclusion rule, only when excluded ("path segment node_modules", "linguist-vendored", "linguist-generated",
-             "generated header", "code.exclude <glob>"); crate / module: a Rust file's crate name and module path; orphan: true for a
+             "generated header", "code.exclude <glob>"); crate / module: a Rust file's crate name and module path, a
+             Python file's dotted module name (from the longest root that holds it); orphan: true for a
              Rust file no crate target reaches; parse_error: true when tree-sitter could not parse the file (its edges may be missing)
 Edge       { from, to, line, col, kind, how, spec, alts?, to_kind?, cfg?, trust }
              line / col: 1-based, of the import in `from`; kind, how: the tables below; spec: the import's source text, at most 120
@@ -154,6 +158,43 @@ The git-tracked blobs at the commit, minus (and each listed in `files` with `exc
   inside the crate, a path or workspace dependency's lib name to that crate's root (`config`), the longest module prefix to its
   file; Cargo path dependencies as `cargo-dep`. Limits: modules that macros generate are invisible, and `cfg` is not evaluated.
 
+## Symbols
+
+`symbols()` and `references()` (and `norn-code query symbols | refs`) answer from the blob facts and the tree's name index; they
+index the asked commit first when the store lacks it, like `graphAt`, and take `at` / `worktree` the same way (no `noIndex`).
+
+```
+Def  { id, file, name, qual, kind, line, end_line, col, exported, hash, tokens }
+       line..end_line: the definition node's exact bounds, 1-based, inclusive; col: 1-based column of its first character
+       kind: 'function' | 'method' | 'class' | 'struct' | 'enum' | 'trait' | 'module' | 'const' | 'impl'
+       qual / id: below; exported: below; hash: 16 hex, the normalised body hash (below); tokens: the body's leaf-token count
+Ref  { file, line, col, name, def_ids?, how? }
+       one occurrence of the identifier `name` (line / col 1-based); def_ids + how 'unique' only when exactly one definition
+       in the tree has the name (inferred by name, not resolved); else both absent
+```
+
+- **Which definitions**: the grammar's `TAGS_QUERY` plus our patterns: JS / TS functions, classes, methods, class fields and
+  module-level `const`s holding a function (kind 'function'), other module-level `const`s ('const'), TS interfaces ('trait'),
+  enums, namespaces ('module'); Python functions, classes, methods (a function directly in a class body); Rust fn, struct / union
+  ('struct'), enum, trait, trait fn signatures and impl fns ('method'), impl blocks ('impl'), mod, const / static ('const'). Not
+  definitions: Rust `macro_rules!` and type aliases, JS `let` / `var` that hold no function, JS constructors.
+- **qual**: JS / TS `file#Path` (`src/a.mjs#Shape.area`); Python `module.Path` (`fx.models.Model`, the file's `module`); Rust
+  `module::Path` (`crate::cli::Args`, `crate::shapes::<Square as Area>::area`; an orphan file: the path alone). An inherent `impl T`
+  has the qual of `T`.
+- **id** = `file + "#" + qual + "#" + n`, n counting the same qual earlier in the file (so an impl after its struct is `#1`).
+- **exported** (lane slop-langs reads it for K4, unused exports): Rust: a plain `pub` (`pub(crate)` and the rest: false). Python:
+  the name is public (no leading `_`; dunders are public) and, when the module has `__all__`, listed in it; a nested definition only
+  as a method of a public class. JS / TS: a top-level definition in an `export` statement, an `export { }` clause, `export default
+  <identifier>` or a CommonJS `exports.x =` / `module.exports = { }`; a method of an exported class or interface (not `#private`);
+  any other nested definition false.
+- **hash** (lane slop-langs reads it for K9, copied helpers, with `line..end_line` as the span): FNV-1a 64 over the definition
+  node's leaf tokens, comments and whitespace left out, the definition's own name read as `$`. Two definitions with the same body
+  under different names (and different comments or layout) share it; nothing else is needed to find a copy.
+- **References**: through the snapshot's name index (name -> the files whose blobs hold that identifier, kept for every name a
+  first-party definition has), every identifier occurrence of `name` in those files, the definitions' own name nodes left out.
+  Rows capped at `LIMITS.rows` (`truncated`).
+- n/a: an unknown file (`unknown file F (not in the graph; ...)`), a name no definition has (`no definition in the tree is named N`).
+
 ## Trust
 
 The precision of each `(language, level, how)` class, keyed `<lang>/file/<how>` in `TRUST` and copied onto every `Edge.trust`.
@@ -170,15 +211,15 @@ Stage S4 measures them against compiler-grade indexers; until then every class r
 
 ```
 <state>/code/graph/
-  blobs/v1/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema), shared by every commit and worktree
-  trees/v1/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved
+  blobs/v2/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs, names; shared by every commit and worktree
+  trees/v2/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
   commits.json                    the newest 200 indexed commits: { commit, tree, indexed_at (unix s), ms, parsed, reused, counts }
   HEAD                            the newest indexed commit
 ```
 
 - A snapshot is keyed by the root tree's sha: two commits with the same content share it, and an unchanged blob is never parsed
   again. Lane worktrees share the repo's objects, so a branch at main + 3 commits parses only the blobs those commits changed.
-- `v1` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
+- `v2` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
   never read.
 - Writes are atomic (tmp then rename); a tree has a lock, and a second writer waits for it, then reads the snapshot.
 - `--worktree` answers are resolved in memory and never stored as a tree.
@@ -199,7 +240,7 @@ norn-code's, in engine/code-rs/src/limits.rs:
 
 | name | value | meaning |
 |---|---|---|
-| `STORE_SCHEMA` | 1 | the store's extractor schema |
+| `STORE_SCHEMA` | 2 | the store's extractor schema |
 | `SPEC_MAX` | 120 | an edge's `spec` keeps at most this many characters |
 | `GENERATED_LINES` | 5 | the header lines exclusion rule (c) reads |
 | `LOCK_WAIT_MS` | 30000 | a second writer of a tree waits this long for the first one's lock |
@@ -213,6 +254,8 @@ norn code graph deps       <file> [--depth N] [--kinds K,..]   -> dependencies()
 norn code graph dependents <file> [--depth N] [--kinds K,..]   -> dependents()
 norn code graph cycles     [--within GLOB]... [--kinds K,..]   -> cycles()
 norn code graph reach      <file>... [--forward] [--to GLOB]...  -> reach() (reverse by default: what depends on these)
+norn code graph symbols    <file>                              -> symbols()     text: kind, qual, file:line..end_line, "exported"
+norn code graph refs       <name>                              -> references()  text: the defs, then file:line:col [-> id (unique)]
 norn code graph status                                         -> graphStatus()
 common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]
 exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else "n/a: <why>" on stderr)
@@ -223,6 +266,7 @@ exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else
 - The store: `--state D`, or the state of `--project P` / the project found from the current folder; with none, the repo's own
   `<git common dir>/norn`. `--repo DIR` (default: the project's folder, else the current folder) picks the repo. File arguments
   are repo-root-relative.
+- `symbols` / `refs` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
 - `index` with `parsed` / `reused` / `ms` of the run it made (0 / null / the read time when already stored).
 - `status`: `{ built, binary, why? (why norn-code is not usable), store_schema, store, head, indexed: [the newest 5 commits.json rows, indexed_at as ISO] }`.
 
