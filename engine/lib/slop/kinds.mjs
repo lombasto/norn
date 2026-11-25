@@ -3,6 +3,7 @@
 // (rule, ctx) -> { head: [finding], base: [finding] | null } as check.mjs's DETECT table; ctx carries git, the texts, the trees
 // and the file filter, so this module imports nothing of check.mjs.
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { PARSE } from './tools.mjs';
 import { LINTERS } from './lang/index.mjs';
 import { CODE, classify, commentsIn, exportsOf, helpers, isJs, isReason, lineAt, lineText, masked, norm, usesOf } from './scan.mjs';
@@ -29,7 +30,7 @@ function lintSide(ctx, side, tool, own = null) {
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
     const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...held.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null),
       selectors: rules.filter(r => r.kind === 'ast').flatMap(r => r.selectors.map(s => ({ selector: s.selector, message: `${r.id}: ${s.message}` }))) }
-      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, base: ctx.base, log: held.find(r => r.log)?.log, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
+      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, base: ctx.base, log: held.find(r => r.log)?.log, scan: held.find(r => r.scan)?.scan, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
     const raw = ctx.tool(run, side, { texts, dir: ctx.repo }), by = new Map();
     if (raw === null) return (memo[side] = null);
     for (const y of t.parse(raw, [...names.keys()])) { const x = { ...y, file: names.get(y.file) }; if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x); }
@@ -66,7 +67,8 @@ export function lint(rule, ctx) {
       // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6, 3.4: LJ/parse)
       const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK', ...(rule.kind === 'lint' ? { sub: PARSE } : {}) } : null)
         : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule, x.level) }) : astHit(rule, x, text);
-      return f ? [{ file: e.path, line: x.line, snippet: lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
+      // quote: false (a secrets scan): the line is never quoted - the fingerprint takes its hash, so a waiver still follows the line
+      return f ? [{ file: e.path, line: x.line, snippet: rule.quote === false ? `${x.rule} line ${crypto.createHash('sha256').update(lineText(text, x.line)).digest('hex').slice(0, 16)}` : lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
     }));
   });
   // SPEC 3.1 / Q12: an edit to the lint config is a finding of its own; the waiver is the owner approving the rule change

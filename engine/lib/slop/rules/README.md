@@ -31,7 +31,7 @@ those of the rule file.
 | `pattern` | `patterns` (regexes), `files`, `exclude`, `in` (`code` / `comment` / `string`: the other text blanked), `unless`, `cite` | yes |
 | `junk` | name `patterns`, `max_bytes`, `allow` | yes |
 | `imports` | `roots` + `forbid` (layers, cycles); `bare`, `manifests`, `vendor` (the dependency lock) | yes |
-| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
+| `lint` | `tool` (`eslint`, `ruff`, `clippy`: the language packs in `lang/`; `sarif`: any analyzer's SARIF 2.1.0 file, below), `config` (ESLint's repo config; ruff's is the nearest `[tool.ruff]` / `ruff.toml` of each file; all read from the merge base for both sides; an edit to it is `<id>/config-changed`), `rules` (ESLint core rules), `source: log` + `log` (path templates `{git}` / `{head}`: clippy and sarif are read from the file a project tool wrote, never run; none for the head is `<id>/no-evidence`; or `scan`: a pinned scanner Norn runs, below), `quote` (`false`: a finding never quotes its line), `levels` (per sub-rule; sarif: then per SARIF level `error` / `warning` / `note` / `none`; `*` for the rest), `shadow_rules` (`*`: every one `levels` does not name), `files`, `exclude`; a finding's rule is `<id>/<tool rule>` | yes |
 | `shim` | `files`, `exclude` | no |
 | `suppress` | `files`, `exclude`, `reason` (words that are no reason): a suppression the file's language pack finds (`# noqa`, `# type: ignore`, `#[allow]`, `eslint-disable`) with no reason on its line | yes |
 | `ast` | `selectors`: `{ selector, message, text? }`, ESLint `no-restricted-syntax` through the pinned ESLint; `reason` | yes |
@@ -51,7 +51,8 @@ main checkout> ruff` (VIRTUAL_ENV unset, never `uv sync`) on the touched files i
 
 Any analyzer that writes SARIF 2.1.0 plugs into the kind `lint` with no parser of its own (`engine/lib/slop/lang/sarif.mjs`). Choppa
 never runs it: the project's own gate writes the file, and the rule's `log` templates name it (`{git}` the repo's common git
-folder, `{head}` the commit, `*` in the file name; several files are read as one log). No built-in rule uses it; a project adds one.
+folder, `{head}` the commit, `*` in the file name; several files are read as one log). A project adds such a rule; the one built-in sarif
+rule, LS, names a pinned scanner Norn runs instead (`scan`, below).
 
 - **The head** reads the templates with `{head}` = the head's sha. No file is `<id>/no-evidence` (give it a `levels` entry: `WARN`).
 - **The merge base** reads the same templates with `{head}` = the merge base's sha, so the gate that writes the file at each commit
@@ -100,6 +101,25 @@ A worked example, `<project folder>/rules/slop/P-scan.json`: the project's gate 
 The hit is one BLOCK finding P-scan/hardcoded-token on line 2. The near-miss reports nothing: the result on the touched file is old
 (the base had it on the same line text, one line up), and the other file is not touched. `tests/slop-sarif.test.mjs` runs this rule
 and its fixture.
+
+### A pinned scanner (`scan`): LS, keys and tokens
+
+A sarif rule may name a scanner Norn runs itself (`scan`, one of `SCANNERS` in `engine/lib/slop/tools.mjs`) instead of `source: log`;
+exactly one of the two. LS (BLOCK) names `gitleaks` (MIT): `tools/gitleaks/manifest.json` pins the version and `lock.json` the release
+archive of each OS with its sha256 (from the release's checksums file). On first use the archive is downloaded, its sha256 checked
+before it is opened, and the binary extracted into `<meta root>/state/tools/gitleaks/<lock hash>/<platform>-<arch>/`; never a
+worktree, never imported. No pin for the OS, no network, a wrong checksum or a scanner that exits non-zero is LS's "could not run".
+
+- **Only the branch's added lines** are scanned (`git diff -U0` merge base..head; every other line of a touched file blanked, so lines
+  keep their numbers). The merge base side is an empty log: every result is new, and there is no `no-base`.
+- **The branch cannot switch it off**: the files are scanned from a folder of their own, so the branch's `.gitleaksignore` and
+  `.gitleaks.toml` are not read; `GITLEAKS_*` is unset and `gitleaks:allow` comments are ignored. A false positive is a waiver of
+  `LS/<gitleaks rule>`.
+- **The key is never printed**: gitleaks runs with `--redact`, each result keeps only its rule, file and lines (no snippet, no
+  fingerprints, a fixed message), and `quote: false` makes a finding's snippet `<rule> line <sha256 of the line>` instead of the line
+  (the fingerprint still follows a moved line).
+- **Fixtures**: a fixture file's text may be a list of parts, joined when the rule loads, so the repo never holds a key in one string
+  (the host's push protection blocks even a fake one). LS's fixture and `tests/slop-secrets.test.mjs` build their keys that way.
 
 ## The second voice (`model`)
 
