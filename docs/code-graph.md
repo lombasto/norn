@@ -229,10 +229,10 @@ The call table (`how`, `CALL_HOWS`), tried in this order per form of call:
 | `import` | `f()`: f is bound by an import (`import { f }`, `import d from` with the target's `export default` name, `const { f } = require()`, `from m import f`, `use m::f`, aliases included), followed to the target module's top-level definition, through re-exports (`export { } from`, `export * from`, `__init__` imports, `from m import *`, `pub use`, `use m::*`) up to 8 hops |
 | `qualified` | `m.f()` where m is an imported module (or `pkg.mod` through `import pkg.mod`), `Class.f()` (a local or imported class: its method, then its bases'), `crate::m::f()`, `super::f()`, `m::f()`, `Type::f()` (inherent, then `<Type as Trait>::f`) |
 | `self` | Python `self.f()` / `cls.f()`, JS `this.f()` in a class (a JS `self` / `cls` is an ordinary name): that class's method f, then its bases' by name (Python superclasses, JS `extends`); Rust `self.f()` / `Self::f()` in an impl or trait: the methods f of that type (inherent and trait impls) in the crate |
-| `method-unique` | `x.f()` on a receiver of unknown type where exactly one repo method (same language) is named f |
-| `ambiguous` | more than one candidate from any rule above, or `x.f()` where several repo methods are named f: all are listed, none is chosen |
+| `method-unique` | `x.f()` on a receiver of unknown type where exactly one repo method (same language) is named f. JS / TS: only while the receiver's local binding does not say otherwise; when it is a literal, a `new` or a TS type whose class lacks f, the result of a call that is not f's owner (its class, or the function whose object holds it), or a package / builtin value, the site is `ambiguous` with that one candidate and a `why` (S6) |
+| `ambiguous` | more than one candidate from any rule above, or `x.f()` where several repo methods are named f: all are listed, none is chosen; or a JS `method-unique` candidate the receiver's binding contradicts (one candidate, with its `why`) |
 | `external` | builtins (Python builtins, JS globals, the Rust prelude), the standard library and packages: an import that resolves outside the repo, a Rust path headed by `std` / `core` / `alloc` or a crate not in the workspace, and `x.f()` where no repo method is named f |
-| `unresolved` | none of the above, with its `why`: a name bound nowhere in the file (a parameter, a local variable, a global), a path with no definition, an enum variant, a site inside a parse error (`parse-error`) |
+| `unresolved` | none of the above, with its `why`: a name bound nowhere in the file (a parameter, a local variable, a global; a Rust `f()` whose f is a `let`, a parameter or a pattern binding of an enclosing block before the call, which shadows any def or import of f), a path with no definition, an enum variant, a site inside a parse error (`parse-error`) |
 
 - Inferred, not compiled: names and scopes only; no type inference (so `x.f()` is method-unique or ambiguous by name), no
   conditional or dynamic imports followed beyond the file graph.
@@ -334,7 +334,9 @@ Bars (SPEC 5, `DEF_*` / `CALL_*`): definitions 99 % precision per kind and 99 % 
 
 Measured 2026-11-25 (seed 1, 400 per language). Norn @ dcade05c (grade file `dcade05c...calls.json` in Norn's state; Python and
 TypeScript there are the fixtures). prism (a private project) @ 7e39ea91 (the `git archive` copy of S4a; no JavaScript / TypeScript
-in it). `TRUST` takes JavaScript from Norn, Python and Rust from prism.
+in it). `TRUST` takes JavaScript from Norn, Python and Rust from prism. Regraded after S6 (the receiver-binding vet, Rust local
+variables, the grader's n/a on a symbol of several definitions): Norn @ cbb4d12d and prism @ 7e39ea91 again; the rows marked S6 are
+from it.
 
 | class | sample | graded | precision [95 %] | recall | trust |
 |---|---|---|---|---|---|
@@ -363,7 +365,7 @@ in it). `TRUST` takes JavaScript from Norn, Python and Rust from prism.
 | javascript/call/import | Norn | 66 of 14,804 | 100 % [94.5, 100] | 66 of 66 | 1 |
 | javascript/call/qualified | Norn | 1 of 2 | 100 % [20.6, 100] | 1 of 1 | 1 |
 | javascript/call/self | Norn | 2 of 2 | 100 % [34.2, 100] | 2 of 2 | 1 |
-| javascript/call/method-unique | Norn | 10 of 1,005 (41 outside, 15 n/a) | 0 % [0, 27.8] | 0 of 2 | below bar |
+| javascript/call/method-unique | Norn (S6) | 2 of 421 (37 outside, 27 n/a) | 0 % [0, 65.8] | - | below bar |
 | javascript/call/ambiguous | Norn | 66 sampled of 639 | - | 0 of 41 (contains 40) | unmeasured |
 | javascript calls (language) | Norn | 145 | 99.6 % [96.7, 100] | 96.3 % [92.4, 98.2] | |
 | typescript/call/* | Norn (fixture) | no call site | - | - | unmeasured |
@@ -375,8 +377,8 @@ in it). `TRUST` takes JavaScript from Norn, Python and Rust from prism.
 | python/call/ambiguous | prism | 50 sampled of 34,124 | - | 0 of 27 (contains 27) | unmeasured |
 | python calls (language) | prism | 221 | 100 % [98.3, 100] | 81.8 % [76.5, 86.1] | |
 | python calls (language) | Norn (fixture) | 31 | 100 % [89.0, 100] | 100 % [89.0, 100] | |
-| rust/call/local | prism | 47 of 20,699 (3 n/a) | 97.9 % [88.9, 99.6] | 46 of 47 | 0.9787 |
-| rust/call/import | prism | 50 of 5,980 | 98.0 % [89.5, 99.7] | 49 of 49 | 0.98 |
+| rust/call/local | prism (S6) | 49 of 20,666 (1 n/a) | 100 % [92.7, 100] | - | 1 |
+| rust/call/import | prism (S6) | 50 of 5,956 | 98.0 % [89.5, 99.7] | - | 0.98 |
 | rust/call/qualified | prism | 49 of 6,862 | 100 % [92.7, 100] | 49 of 49 | 1 |
 | rust/call/self | prism | 49 of 3,070 | 100 % [92.7, 100] | 49 of 49 | 1 |
 | rust/call/method-unique | prism | 19 of 28,940 (29 outside, 2 n/a) | 100 % [83.2, 100] | 19 of 19 | 1 |
@@ -385,10 +387,15 @@ in it). `TRUST` takes JavaScript from Norn, Python and Rust from prism.
 | rust calls (language) | prism | 214 | 98.8 % [96.3, 99.6] | 78.3 % [72.6, 83.1] | |
 | rust calls (language) | Norn | 223 | 100 % [98.3, 100] | 98.2 % [95.5, 99.3] | |
 
-Below the bar: `javascript/call/method-unique`. Each graded `x.close()` / `x.at()` / `x.start()` site resolved by name to the one
-repo method of that name, while the receiver was a local object, a Node server or an array. It reads "below bar" in `TRUST`
-(owner question Q3). The 2 Rust disagreements on prism: an `import` site whose name a definition in the same file shadows, and a
-`local` site that picked a same-named function nested in another test function. No definition is wrong; on prism the grader's start
+Below the bar: `javascript/call/method-unique`. At dcade05c each graded `x.close()` / `x.at()` / `x.start()` site resolved by name
+to the one repo method of that name while the receiver was bound to another value. S6 vets the receiver's local binding (above): the
+class shrinks from 1,005 to 421 sites, but of 66 drawn only 2 have an in-repo grader target and both are wrong (`f.app.close()`: a
+property chain, whose value no local binding tells); 37 of the 66 resolve outside the repo. It stays "below bar" in `TRUST`. Rust on
+prism after S6: the `local` miss of S4b was the grader's (rust-analyzer gives two same-named fns nested in sibling fns one SCIP
+symbol, so its target named the first for every call of either; such a site is now n/a "several definitions"); the closure that
+shadowed an import (seabed.rs:1427 class) is `unresolved` (a local variable). One `import` miss remains: `use super::*` inside an
+inline `mod tests` is read against the file's parent module, not the file's own, so a fn of the file loses to a same-named module
+(follow-up). The grader indexes a copy of the Cargo packages (2.7 s on prism), never the checkout. No definition is wrong; on prism the grader's start
 sits on an attribute or doc comment above ours for 24 to 49 of each Rust kind's 50 (`exact_past_attributes`). The fixtures grade
 with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.test.mjs).
 
