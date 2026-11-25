@@ -1,0 +1,37 @@
+{
+  "id": "LS",
+  "level": "BLOCK",
+  "kind": "lint",
+  "tool": "sarif",
+  "scan": "gitleaks",
+  "quote": false,
+  "title": "a key, token or password on a line the branch adds (the pinned secrets scanner)",
+  "explain": {
+    "what": "The pinned secrets scanner (gitleaks, tools/gitleaks) finds a key, token or password on a line the branch adds (LS/<its rule>). Only the file and the line are shown, never the value.",
+    "why": "The repo is public, and git keeps every pushed line in its history: once a key is pushed, anyone may already hold it. The scanner's own rules know the key formats; only what the branch adds is scanned.",
+    "fix": "Rotate the key first: revoke it where it was issued and make a new one. Removing the line is not enough - the value stays in the git history and may already be copied. Read the new key from the environment, never a repo file. A false positive needs a waiver for LS/<rule>."
+  },
+  "levels": { "*": "BLOCK" },
+  "fixture": {
+    "hit": {
+      "base": { "src/conf.py": "HOST = \"example.test\"\n" },
+      "head": { "src/conf.py": ["HOST = \"example.test\"\nTOKEN = \"", "g", "hp", "_", "Qm3Xa8Kd", "5WtRz1Hc", "7NpLv4Bj", "2YsEf9Gu", "6OiTq0", "\"\n"] },
+      "recorded": {
+        "base": { "version": "2.1.0", "runs": [] },
+        "head": { "version": "2.1.0", "runs": [{ "tool": { "driver": { "name": "gitleaks" } }, "results": [
+          { "ruleId": "github-pat", "message": { "text": "gitleaks found a secret (github-pat); the value is never shown" },
+            "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/conf.py" }, "region": { "startLine": 2, "endLine": 2 } } }] },
+          { "ruleId": "generic-api-key", "message": { "text": "gitleaks found a secret (generic-api-key); the value is never shown" },
+            "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "src/conf.py" }, "region": { "startLine": 2, "endLine": 2 } } }] }] }] }
+      }
+    },
+    "miss": {
+      "base": { "src/conf.py": ["HOST = \"example.test\"\nTOKEN = \"", "g", "hp", "_", "Qm3Xa8Kd", "5WtRz1Hc", "7NpLv4Bj", "2YsEf9Gu", "6OiTq0", "\"\n"] },
+      "head": { "src/conf.py": ["HOST = \"example.test\"\nTOKEN = \"", "g", "hp", "_", "Qm3Xa8Kd", "5WtRz1Hc", "7NpLv4Bj", "2YsEf9Gu", "6OiTq0", "\"\nPORT = 8080\n"] },
+      "recorded": {
+        "base": { "version": "2.1.0", "runs": [] },
+        "head": { "version": "2.1.0", "runs": [{ "tool": { "driver": { "name": "gitleaks" } }, "results": [] }] }
+      }
+    }
+  }
+}
