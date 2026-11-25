@@ -250,3 +250,24 @@ test('digest mail: each unacked mail for role:controller@<own home> is a row wit
   ackMail(b, { by: 'controller', id: m.id });
   assert.equal(mailRows(), undefined, 'the row leaves at the ack');
 });
+
+// HOME-MAIL S3 (REPORT 3.3): a broken sync rule (a home's heartbeat past 15 min, our mail unacked past 30) is a row while it holds
+test('digest sync: a stale heartbeat of home b and our mail unacked there are rows; a fresh receipt clears its row', () => {
+  const t = tmp('meta-digest-sync-'), a = path.join(t, 'a');
+  fs.mkdirSync(path.join(a, 'homes', 'b'), { recursive: true }); fs.writeFileSync(path.join(a, 'home.json'), JSON.stringify({ id: 'a', bare_home: 'a' }));
+  const m = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'ping', body: 'x' }), T = Date.parse(m.ts) + 40 * 60000;
+  const iso = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const seen = (ms, held = {}) => fs.writeFileSync(path.join(a, 'homes', 'b', 'seen.json'), JSON.stringify({ polled_at: iso(ms), held }));
+  fs.writeFileSync(path.join(a, 'seen.json'), JSON.stringify({ polled_at: iso(T), held: {} }));
+  seen(T - 20 * 60000);
+  const rows = () => digest(a, {}, { now: T, git: fakeGit(), dlv: [] }).sections.sync;
+  assert.deepEqual(rows().map(r => [r.rule, r.home, r.id ?? null]), [['heartbeat', 'b', null], ['mail', 'b', m.id]]);
+  const [hb, ml] = rows();
+  assert.match(hb.why, /^home b: heartbeat 20 min old/);
+  assert.ok(ml.what === `${m.id} to role:controller@b unacked 40 min`, ml.what);
+  seen(T, { a: { 'mail.jsonl': m.seq } });
+  assert.deepEqual(rows().map(r => r.rule), ['mail'], 'fresh heartbeat: that row leaves');
+  assert.match(rows()[0].why, /b holds it/);
+  fs.rmSync(path.join(a, 'homes', 'b', 'seen.json'));
+  assert.match(rows()[0].why, /b sends no receipts/);
+});
