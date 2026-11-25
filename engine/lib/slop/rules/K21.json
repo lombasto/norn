@@ -10,12 +10,80 @@
     "why": "Hidden switches change behaviour without a trace. One prefix and one table let anyone find every switch and what it does.",
     "fix": "Name it NORN_<something> and add its row to engine/lib/slop/env.md. Better still, use a setting or a flag."
   },
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.mts","**/*.cts","**/*.tsx","**/*.py","**/*.rs"],
+  "shadow_langs": ["py","rs","ts"],
   "exclude": ["tests/**","**/vendor/**"],
   "token": "([A-Z][A-Z0-9_]+)['\"]?\\]?$",
   "allow": {"token":"^NORN_","listed_in":"engine/lib/slop/env.md"},
   "match": {
     "js": [
+      {
+        "rule": {
+          "kind": "member_expression",
+          "has": {"field":"property","kind":"property_identifier","regex":"^[A-Z][A-Z0-9_]+$"},
+          "all": [
+            {
+              "has": {
+                "field": "object",
+                "any": [{"kind":"identifier","regex":"^env$"},{"kind":"member_expression","has":{"field":"property","regex":"^env$"}}]
+              }
+            }
+          ]
+        },
+        "message": "a new environment switch: name it NORN_* and give it a row in the env table (engine/lib/slop/env.md)"
+      },
+      {
+        "rule": {
+          "kind": "subscript_expression",
+          "has": {"field":"index","kind":"string","regex":"^.[A-Z][A-Z0-9_]+.$"},
+          "all": [
+            {
+              "has": {
+                "field": "object",
+                "any": [{"kind":"identifier","regex":"^env$"},{"kind":"member_expression","has":{"field":"property","regex":"^env$"}}]
+              }
+            }
+          ]
+        },
+        "message": "a new environment switch (computed): name it NORN_* and give it a row in the env table (engine/lib/slop/env.md)"
+      }
+    ],
+    "py": [
+      {
+        "rule": {
+          "kind": "string",
+          "regex": "^.[A-Z][A-Z0-9_]+.$",
+          "any": [
+            {"inside":{"kind":"subscript","pattern":"os.environ[$K]"}},
+            {
+              "nthChild": 1,
+              "inside": {"kind":"argument_list","inside":{"kind":"call","any":[{"pattern":"os.environ.get($$$)"},{"pattern":"os.getenv($$$)"}]}}
+            }
+          ]
+        },
+        "message": "a new environment switch: name it NORN_* and give it a row in the env table (engine/lib/slop/env.md)"
+      }
+    ],
+    "rs": [
+      {
+        "rule": {
+          "kind": "string_literal",
+          "regex": "^\"[A-Z][A-Z0-9_]+\"$",
+          "nthChild": 1,
+          "inside": {"kind":"arguments","inside":{"kind":"call_expression","has":{"field":"function","regex":"^(?:std::)?env::var(?:_os)?$"}}}
+        },
+        "message": "a new environment switch: name it NORN_* and give it a row in the env table (engine/lib/slop/env.md)"
+      },
+      {
+        "rule": {
+          "kind": "string_literal",
+          "regex": "^\"[A-Z][A-Z0-9_]+\"$",
+          "inside": {"kind":"token_tree","inside":{"kind":"macro_invocation","has":{"field":"macro","regex":"^(?:option_)?env$"}}}
+        },
+        "message": "a new build-time environment switch (env!): name it NORN_* and give it a row in the env table (engine/lib/slop/env.md)"
+      }
+    ],
+    "ts": [
       {
         "rule": {
           "kind": "member_expression",
@@ -53,12 +121,23 @@
       "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/lib/slop/env.md":"| name | what |\n| NORN_LISTED | x |\n"},
       "head": {
         "engine/lib/a.mjs": "export const a = 1;\nexport const t = process.env.META_NEW_SWITCH;\nexport const u = env => env['NORN_UNLISTED'];\n",
-        "engine/lib/slop/env.md": "| name | what |\n| NORN_LISTED | x |\n"
+        "engine/lib/slop/env.md": "| name | what |\n| NORN_LISTED | x |\n",
+        "engine/lib/a.py": "import os\n\nT = os.environ[\"META_PY_SWITCH\"]\nU = os.environ.get(\"NORN_PY_UNLISTED\")\nW = os.getenv(\"META_PY_OTHER\", \"0\")\n",
+        "engine/lib/a.rs": "pub fn t() -> Option<String> { std::env::var(\"META_RS_SWITCH\").ok() }\npub fn u() -> Option<std::ffi::OsString> { std::env::var_os(\"NORN_RS_UNLISTED\") }\npub const B: Option<&str> = option_env!(\"META_RS_BUILD\");\n",
+        "engine/lib/a.ts": "export const t: string | undefined = process.env.META_TS_SWITCH;\nexport const u = (env: Record<string, string | undefined>): string | undefined => env['NORN_TS_UNLISTED'];\n"
       },
       "recorded": {
         "head": [
           {"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":2,"column":18,"endLine":2,"text":"process.env.META_NEW_SWITCH"},
-          {"file":"engine/lib/a.mjs","ruleId":"K21.js.1.JavaScript","line":3,"column":25,"endLine":3,"text":"env['NORN_UNLISTED']"}
+          {"file":"engine/lib/a.mjs","ruleId":"K21.js.1.JavaScript","line":3,"column":25,"endLine":3,"text":"env['NORN_UNLISTED']"},
+          {"file":"engine/lib/a.py","ruleId":"K21.py.0.Python","line":3,"column":16,"endLine":3,"text":"\"META_PY_SWITCH\""},
+          {"file":"engine/lib/a.py","ruleId":"K21.py.0.Python","line":4,"column":20,"endLine":4,"text":"\"NORN_PY_UNLISTED\""},
+          {"file":"engine/lib/a.py","ruleId":"K21.py.0.Python","line":5,"column":15,"endLine":5,"text":"\"META_PY_OTHER\""},
+          {"file":"engine/lib/a.rs","ruleId":"K21.rs.0.Rust","line":1,"column":46,"endLine":1,"text":"\"META_RS_SWITCH\""},
+          {"file":"engine/lib/a.rs","ruleId":"K21.rs.0.Rust","line":2,"column":61,"endLine":2,"text":"\"NORN_RS_UNLISTED\""},
+          {"file":"engine/lib/a.rs","ruleId":"K21.rs.1.Rust","line":3,"column":41,"endLine":3,"text":"\"META_RS_BUILD\""},
+          {"file":"engine/lib/a.ts","ruleId":"K21.ts.0.TypeScript","line":1,"column":38,"endLine":1,"text":"process.env.META_TS_SWITCH"},
+          {"file":"engine/lib/a.ts","ruleId":"K21.ts.1.TypeScript","line":2,"column":83,"endLine":2,"text":"env['NORN_TS_UNLISTED']"}
         ],
         "base": []
       }
@@ -68,12 +147,18 @@
       "head": {
         "engine/lib/a.mjs": "export const t = Number(process.env.META_OLD) || 0;\nexport const n = process.env.NORN_LISTED;\nexport const k = (env, key) => env[key];\n",
         "tests/a.test.mjs": "export const p = process.env.META_TEST_ONLY;\n",
-        "engine/lib/slop/env.md": "| name | what |\n| NORN_LISTED | x |\n"
+        "engine/lib/slop/env.md": "| name | what |\n| NORN_LISTED | x |\n",
+        "engine/lib/a.py": "import os\n\n\ndef k(key):\n    return os.environ.get(key) or os.getenv(key, \"META_DEFAULT\")\n\n\nN = os.environ.get(\"NORN_LISTED\")\nDOC = 'os.environ[\"META_IN_TEXT\"]'\n",
+        "engine/lib/a.rs": "pub fn k(key: &str) -> Option<String> { std::env::var(key).ok() }\npub fn n() -> Option<String> { std::env::var(\"NORN_LISTED\").ok() }\npub const DOC: &str = \"std::env::var(\\\"META_IN_TEXT\\\")\";\n",
+        "engine/lib/a.ts": "export const k = (env: Record<string, string | undefined>, key: string): string | undefined => env[key];\nexport const n: string | undefined = process.env.NORN_LISTED;\nexport const doc: string = 'process.env.META_IN_TEXT';\n"
       },
       "recorded": {
         "head": [
           {"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":1,"column":25,"endLine":1,"text":"process.env.META_OLD"},
-          {"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":2,"column":18,"endLine":2,"text":"process.env.NORN_LISTED"}
+          {"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":2,"column":18,"endLine":2,"text":"process.env.NORN_LISTED"},
+          {"file":"engine/lib/a.py","ruleId":"K21.py.0.Python","line":8,"column":20,"endLine":8,"text":"\"NORN_LISTED\""},
+          {"file":"engine/lib/a.rs","ruleId":"K21.rs.0.Rust","line":2,"column":46,"endLine":2,"text":"\"NORN_LISTED\""},
+          {"file":"engine/lib/a.ts","ruleId":"K21.ts.0.TypeScript","line":2,"column":38,"endLine":2,"text":"process.env.NORN_LISTED"}
         ],
         "base": [{"file":"engine/lib/a.mjs","ruleId":"K21.js.0.JavaScript","line":1,"column":18,"endLine":1,"text":"process.env.META_OLD"}]
       }
