@@ -224,13 +224,22 @@ fn scip_truth(docs: &[scip::Doc], sites: &[(u64, &Site)], texts: &mut Texts) -> 
 /// decorator's) starts at them, the definition node's at the item (`fn`, `def`, `class`); the end line is compared as given
 fn item_start(texts: &mut Texts, file: &str, (a, b): (u64, u64)) -> u64 {
     const TRIVIA: [&str; 6] = ["#[", "///", "//", "/*", "*", "@"];
-    (a..=b)
-        .find(|l| {
-            let t = texts.line(file, *l);
-            let t = t.trim_start();
-            !t.is_empty() && !TRIVIA.iter().any(|p| t.starts_with(p))
-        })
-        .unwrap_or(a)
+    // an attribute or decorator runs until its brackets close (a `#[allow(` on one line, its `)]` lines later)
+    let mut depth = 0i64;
+    for l in a..=b {
+        let line = texts.line(file, l);
+        let t = line.trim_start();
+        let opens = depth > 0 || t.starts_with("#[") || t.starts_with('@');
+        if opens {
+            depth += t.matches(['[', '(']).count() as i64 - t.matches([']', ')']).count() as i64;
+            depth = depth.max(0);
+            continue;
+        }
+        if !t.is_empty() && !TRIVIA.iter().any(|p| t.starts_with(p)) {
+            return l;
+        }
+    }
+    a
 }
 
 /// our definition a grader target names: the one of that name whose bounds hold its line, the innermost (a JS constructor: its class)
