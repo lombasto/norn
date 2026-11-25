@@ -5,6 +5,7 @@
 // history also stores the code signals (codesignals.mjs, docs/code-signals.md); `norn code signals` prints them, the Files part joins them.
 // RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
 // prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
+// `norn code suspects` ranks the recent landings against a trace or symptom words (codesuspects.mjs, RM-a-61).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -16,6 +17,7 @@ import { drawMap, tickMap, mapAt } from './codemap.mjs';
 import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
+import { suspects, suspectsLines } from './codesuspects.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
@@ -26,14 +28,16 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
   + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and whether one changed on main since)\n'
   + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)';
+  + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
+  + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = verb === 'signals' ? { _: [] } : {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = verb === 'signals' || verb === 'suspects' ? { _: [] } : {};
   for (let i = 0; i < argv.length; i++) {
-    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named
+    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
     if (!s && verb === 'why' && f.file === undefined && !argv[i].startsWith('--')) { f.file = argv[i]; continue; }   // why's one operand
     if (!s) throw new Error(`unexpected ${argv[i]}`);
@@ -53,6 +57,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'map') return mapCmd(f, w.state, dir, { out, err });
   if (verb === 'signals') return signalsCmd(f, w.state, { out, err });
   if (verb === 'links' || verb === 'why') return linksCmd(verb, f, w, dir, { out, err, now });
+  if (verb === 'suspects') return suspectsCmd(f, w.state, dir, { out, err, now });
   let ix, sig;
   try { ix = codeIndex(dir, { now: now ?? Date.now() }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
@@ -101,6 +106,15 @@ function signalsCmd(f, state, { out, err }) {
   for (const file of pick) fileLines(file, s, na).forEach(l => out(l));
   out(stamp);
   return miss ? 1 : 0;
+}
+/** `norn code suspects "<words>" | --trace F`: codesuspects.mjs's ranking -> exit code (1 = no suspect found) */
+function suspectsCmd(f, state, dir, { out, err, now }) {
+  const top = f.top === undefined ? undefined : Number(f.top);
+  if ((!f._.length && !f.trace) || (top !== undefined && !(Number.isInteger(top) && top > 0))) { err('error: code suspects: symptom words or --trace <file>, and --top N with N > 0'); err(CODE_USAGE); return 2; }
+  let r;
+  try { r = suspects({ dir, state, words: f._.join(' '), trace: f.trace ?? null, since: f.since, top, now: now ?? Date.now() }); } catch (e) { err(`error: code suspects: ${String(e.stderr || e.message).trim()}`); return 2; }
+  if (f.json) out(JSON.stringify(r)); else suspectsLines(r).forEach(l => out(l));
+  return r.found ? 0 : 1;
 }
 /** one file's signals in words: the rank line, the fixes line, the partners line */
 function fileLines(file, s, na) {

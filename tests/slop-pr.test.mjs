@@ -34,7 +34,7 @@ const K15 = loadRules().find(r => r.id === 'K15');
 const WARN = { id: 'W9', level: 'WARN', kind: 'pattern', title: 'a hack marker', files: ['**/*.txt'], patterns: ['\\bHACK\\b'], fixture: { hit: {}, miss: {} } };
 
 test('the machine flag is rule data: K14 carries it, and a check with machine off skips every rule that has it, whatever its id', () => {
-  assert.deepEqual(loadRules().filter(r => r.machine).map(r => r.id), ['K14'], 'K14 reads the machine (norn gen --check): the one machine rule');
+  assert.deepEqual(loadRules().filter(r => r.machine).map(r => r.id), ['K14', 'K27'], 'K14 reads the machine (norn gen --check), K27 its code signals: the machine rules');
   const repo = repoWith(); git(repo, 'checkout', '-q', '-b', 'feat/x'); commit(repo, { 'x.orig': 'junk\n' }, 'x');
   const machineRule = { id: 'X7', level: 'BLOCK', kind: 'command', machine: true, argv: ['gen', '--check'], line: '^PROBLEM (?<file>\\S+): (?<msg>.*) \\[source (?<source>.+)\\]$', fixture: { hit: {}, miss: {} } };
   const called = [], tool = (rule, side) => { called.push(rule.id); return noTool(rule, side); };
@@ -163,16 +163,14 @@ test('the PR #6 replay: the job\'s check of a branch shaped like PR #6 fails wit
   }, 'pr6');
   const base = git(repo, 'merge-base', 'main', head);
   const msg = (line, column, name) => ({ ruleId: 'no-unused-vars', severity: 2, message: `'${name}' is defined but never used. Allowed unused vars must match /^_/u.`, line, column });
-  const k2 = (line, column, endColumn, arrow) => ({ ruleId: 'no-restricted-syntax', severity: 2, message: `K2: empty ${arrow ? '.catch(() => {})' : 'catch'}: say what happens next, or let it throw`, line, column, endLine: line, endColumn });
+  const k2 = (file, line, column, arrow) => ({ file, ruleId: `K2.js.${arrow ? 1 : 0}.JavaScript`, line, column, endLine: line, text: arrow ? '() => {}' : 'catch {}' });
+  const astOut = { base: '[]', head: JSON.stringify([k2('lib/cost.mjs', 1, 48), k2('lib/guard.mjs', 2, 16), k2('lib/guard.mjs', 4, 35, true), k2('lib/hold.mjs', 2, 23),
+    k2('tests/sup.test.mjs', 1, 46), k2('tests/sup.test.mjs', 1, 68)]) };
   const lintOut = { base: '[]', head: JSON.stringify([
-    { filePath: 'lib/hold.mjs', messages: [k2(2, 23, 31)] },
-    { filePath: 'lib/guard.mjs', messages: [k2(2, 16, 28), k2(4, 35, 43, true)] },
-    { filePath: 'lib/cost.mjs', messages: [k2(1, 48, 70)] },
-    { filePath: 'tests/sup.test.mjs', messages: [k2(1, 46, 54), k2(1, 68, 76)] },
     { filePath: 'lib/server.mjs', messages: [msg(1, 31, 'readdirS')] },
     { filePath: 'tests/legacy.test.mjs', messages: [msg(1, 8, 'path')] },
     { filePath: 'tests/scope.test.mjs', messages: [msg(1, 7, 'unusedRoot')] }]) };
-  const tool = (rule, side) => (rule.kind === 'lint' ? lintOut[side] : noTool(rule, side));   // one ESLint run serves LJ and every ast rule (K2)
+  const tool = (rule, side) => (rule.kind === 'lint' ? lintOut[side] : rule.kind === 'ast' ? astOut[side] : noTool(rule, side));   // one ESLint run (LJ), one ast-grep scan (every ast rule: K2)
   const r = slopCheck({ repo, base, head, tool, machine: false });
   assert.ok(!r.ran.includes('K14') && !r.findings.some(f => f.rule === 'K14'), 'the CI form: the machine rule is not run');
   assert.ok(r.findings.filter(f => f.unrun).every(f => /^M\d/.test(f.rule) && f.level === 'WARN'), 'only the model rules (gate F, no route) could not run: WARN, never a hold');

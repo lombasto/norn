@@ -2,7 +2,7 @@
   "id": "K11A",
   "level": "BLOCK",
   "kind": "ast",
-  "tool": "eslint",
+  "tool": "ast-grep",
   "title": "a new compatibility shim, by its shape: an alias map, or x.new ?? x.oldName",
   "explain": {
     "what": "The code has the shape of a shim: a map from old names to new ones, or x.newKey ?? x.oldKey.",
@@ -11,44 +11,58 @@
   },
   "files": ["**/*.mjs","**/*.js","**/*.cjs"],
   "exclude": ["tests/**","**/vendor/**"],
-  "selectors": [
-    {"selector":"VariableDeclarator[id.name=/ALIAS|REDIRECT|[Aa]lias|[Rr]edirect|^OLD_|^old[A-Z]/][init.type='ObjectExpression'][init.properties.0.value.type='Literal']","message":"a map from old names to new ones: change every caller and delete the old name"},
-    {
-      "selector": "LogicalExpression[operator='??'][left.type='MemberExpression'][right.type='MemberExpression']",
-      "text": "^([\\w$.]+)\\.[\\w$]+\\s*\\?\\?\\s*\\1\\.(?:[Oo]ld|[Ll]egacy|[Dd]eprecated)[\\w$]*$",
-      "message": "x.new ?? x.old reads an old key: migrate the data once and delete the old key"
-    }
-  ],
+  "match": {
+    "js": [
+      {
+        "rule": {
+          "kind": "variable_declarator",
+          "has": {"field":"name","kind":"identifier","regex":"ALIAS|REDIRECT|[Aa]lias|[Rr]edirect|^OLD_|^old[A-Z]"},
+          "all": [
+            {
+              "has": {
+                "field": "value",
+                "kind": "object",
+                "has": {
+                  "kind": "pair",
+                  "nthChild": 1,
+                  "has": {
+                    "field": "value",
+                    "any": [{"kind":"string"},{"kind":"number"},{"kind":"true"},{"kind":"false"},{"kind":"null"},{"kind":"regex"}]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "message": "a map from old names to new ones: change every caller and delete the old name"
+      },
+      {
+        "rule": {"pattern":"$X.$A ?? $X.$B"},
+        "constraints": {"B":{"regex":"^(?:[Oo]ld|[Ll]egacy|[Dd]eprecated)"}},
+        "message": "x.new ?? x.old reads an old key: migrate the data once and delete the old key"
+      }
+    ]
+  },
   "fixture": {
     "hit": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"src/a.mjs":"const TAB_ALIAS = { agents: 'runs' };\nexport const tab = id => TAB_ALIAS[id] || id;\nexport const end = p => p.label ?? p.oldLabel;\n"},
+      "head": {
+        "src/a.mjs": "const TAB_ALIAS = { agents: 'runs' };\nexport const tab = id => TAB_ALIAS[id] || id;\nexport const end = p => p.label ?? p.oldLabel;\n"
+      },
       "recorded": {
         "head": [
-          {
-            "filePath": "src/a.mjs",
-            "messages": [
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: a map from old names to new ones: change every caller and delete the old name","line":1,"column":7,"endLine":1,"endColumn":37},
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key","line":3,"column":25,"endLine":3,"endColumn":46}
-            ]
-          }
-        ]
+          {"file":"src/a.mjs","ruleId":"K11A.js.0.JavaScript","line":1,"column":7,"endLine":1,"text":"TAB_ALIAS = { agents: 'runs' }"},
+          {"file":"src/a.mjs","ruleId":"K11A.js.1.JavaScript","line":3,"column":25,"endLine":3,"text":"p.label ?? p.oldLabel"}
+        ],
+        "base": []
       }
     },
     "miss": {
       "base": {"src/a.mjs":"export const a = 1;\n"},
-      "head": {"src/a.mjs":"const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.oldX;\nexport const w = o => o.width ?? o.size;\nexport const OLD_LIMIT = 3;\n"},
-      "recorded": {
-        "head": [
-          {
-            "filePath": "src/a.mjs",
-            "messages": [
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key","line":3,"column":31,"endLine":3,"endColumn":44},
-              {"ruleId":"no-restricted-syntax","severity":2,"message":"K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key","line":4,"column":23,"endLine":4,"endColumn":40}
-            ]
-          }
-        ]
-      }
+      "head": {
+        "src/a.mjs": "const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.oldX;\nexport const w = o => o.width ?? o.size;\nexport const OLD_LIMIT = 3;\n"
+      },
+      "recorded": {"head":[],"base":[]}
     }
   }
 }

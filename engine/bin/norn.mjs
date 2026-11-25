@@ -75,7 +75,7 @@ import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/led
 import { publishHome, syncPass, syncStatus, homeIdOf, ringHome, loopOf, LOOP, doorbellOf, syncedDirs, syncJoin } from '../lib/sync.mjs';
 import { reconcile } from '../lib/reconcile.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
-import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag } from '../lib/mail.mjs';
+import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole, hookWatchdog, clearFlag, qualify, CHECKIN_TAKE_MIN } from '../lib/mail.mjs';
 import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
@@ -3109,8 +3109,9 @@ function scopeCmd(argv, env, out, err) {
 }
 
 const MAIL_USAGE = 'norn mail send --to RUN-n|lane:L|role:checkin|role:controller --subject S (--body B (<= 2 KB) | --body-file F) [--urgent] [--as checkin|controller]'
-  + '  |  norn mail check [--inject] (--run RUN-n (your own run) | --to role:controller)  |  norn mail ack MAIL-n  |  norn mail list [--to X] [--open] [--json]'
-  + '    [--project project.json | --state D]    (a run speaks as itself: META_RUN_ID; --inject = the PostToolUse hook output, always exit 0)';
+  + '  |  norn mail check [--inject] [--run RUN-n (your own run) | --to role:controller]  |  norn mail ack MAIL-n  |  norn mail list [--to X] [--open] [--json]'
+  + '    [--project project.json | --state D]    (a run speaks as itself: META_RUN_ID; --inject = the PostToolUse hook output, always exit 0;'
+  + ' check with no --run / --to reads your own box: a run its run, else this home\'s controller; a check-in takes controller mail older than policy.mail.checkin_take_min, 15 min)';
 const MAIL_FLAGS = ['project', 'state', 'to', 'subject', 'body', 'body-file', 'as', 'run', 'urgent!', 'inject!', 'open!', 'json!'];
 function mailCmd(argv, env, out, err) {
   const [sub, ...rest] = argv;
@@ -3130,7 +3131,7 @@ function mailCmd(argv, env, out, err) {
     if (!['send', 'check', 'ack', 'list'].includes(sub)) throw new RunError(sub ? `unknown mail subcommand ${sub}` : 'missing subcommand');
     if (pos.length > (sub === 'ack' ? 1 : 0) || (sub === 'ack' && !pos.length)) throw new RunError(sub === 'ack' ? 'ack needs one MAIL-n' : `unexpected ${pos[0]}`);
     if (flags.as !== undefined && !['checkin', 'controller'].includes(flags.as)) throw new RunError('--as must be checkin | controller');
-    const { state } = where(flags, env);
+    const { state, project } = where(flags, env);
     const by = mailRole(state, env, flags.as);
     if (flags.as && env.META_RUN_ID) throw new RunError(`--as: a run (META_RUN_ID=${env.META_RUN_ID}) speaks as itself`);
     const run = env.META_RUN_ID || null;
@@ -3144,15 +3145,23 @@ function mailCmd(argv, env, out, err) {
     }
     if (sub === 'check') {
       // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
-      const reader = flags.run !== undefined && !RUN_ID_RE.test(flags.run) && run ? run : flags.run;
-      if (!reader === !flags.to) throw new RunError('check needs one of --run RUN-n | --to role:controller');
+      // HOME-MAIL S2: no --run / --to = the reader's own box (a run's, else the controller's); a bare role address is this home's
+      const reader = flags.run !== undefined && !RUN_ID_RE.test(flags.run) && run ? run : flags.run ?? (flags.to === undefined && run ? run : undefined);
+      if (inject && !reader) throw new RunError('--inject is the hook of a run: it needs --run RUN-n');
+      if (reader && flags.to !== undefined) throw new RunError('check needs one of --run RUN-n | --to role:controller');
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
-      if (flags.to && flags.to !== roleAddr('controller', state) && !(flags.to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${roleAddr('controller', state)} (a run reads with --run)`);
+      const to = reader ? undefined : qualify(flags.to ?? 'role:controller', homeOf(state)?.id), ctl = roleAddr('controller', state);
+      if (to && to !== ctl && !(to === roleAddr('checkin', state) && by === 'checkin')) throw new RunError(`--to: the controller's session reads ${ctl} (a run reads with --run)`);
+      // DEC-a-581: a check-in (the only thing that runs unattended on each home) takes controller mail once it waited past the take age
+      const takeMin = to === ctl && by === 'checkin' ? (project?.policy?.mail?.checkin_take_min ?? CHECKIN_TAKE_MIN) : null, now = Date.now();
       if (inject && reader) clearFlag(state, reader);   // hook-fast S1: down before the read (mail.mjs flagFile): a mail that lands meanwhile raises it again
-      const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
+      const got = checkMail(state, { by, run: reader || null, to, via: inject ? 'hook' : 'cli', ...(takeMin !== null ? { before: now - takeMin * 60000, now } : {}) });
       // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
       if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }
+      const left = takeMin !== null ? got.left : [];
+      if (!got.length && left.length) throw new RunError(`${left.map(l => `${l.id} is ${l.age_min} min old`).join(', ')}: a check-in takes controller mail after ${takeMin} min (DEC-a-581); the controller reads it first`);
       out(got.length ? got.map(formatMail).join('\n\n') : 'no new mail');
+      if (left.length) out(`left for the controller: ${left.map(l => `${l.id} (${l.age_min} min)`).join(', ')}`);
       return 0;
     }
     if (sub === 'ack') { ackMail(state, { by, run, id: pos[0] }); out(`${pos[0]} acked`); return 0; }
@@ -3289,7 +3298,7 @@ function syncCmd(argv, env, out, err) {
   if (!['status', 'publish', 'fetch', 'watch', 'ring', 'reconcile'].includes(sub)) { err(sub ? `error: unknown sync subcommand ${sub}` : 'error: missing subcommand'); err('usage: ' + SYNC_USAGE); return 2; }
   try {
     const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
-    const cfg = ledgerConfig(fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, { metaRoot: root, machineFile: mf });
+    const machine = fs.existsSync(mf) ? loadMachine(mf, { meta: root }) : null, cfg = ledgerConfig(machine, { metaRoot: root, machineFile: mf });
     const id = cfg && homeIdOf(cfg);
     if (!id) { err('error: sync is off (it needs machine.json ledger.remote and a synced project: a state dir with home.json)'); return 1; }
     if (sub === 'status') {
@@ -3330,7 +3339,10 @@ function syncCmd(argv, env, out, err) {
     if (r.error) { err(`error: fetch failed, the last copies stay: ${r.error}`); return 1; }
     out(`fetched ${r.homes.length} home${r.homes.length === 1 ? '' : 's'} (${r.homes.join(' ') || '-'}), ${r.written.length} copies written`);
     if (r.gone.length) out(`gone (copies kept): ${r.gone.join(' ')}`);
-    return 0;
+    // HOME-MAIL S2: an urgent arrival for this home's controller reaches the owner at once (class alert); a failed send is a line, never a failed fetch
+    if (!r.notices.length) return 0;
+    return import('../lib/notify.mjs').then(({ notify }) => Promise.all(r.notices.map(n => notify({ title: n.title, body: n.body, cls: 'alert', machine, state: path.join(cfg.state_root, n.project), env })
+      .then(() => out(`urgent mail ${n.id}: owner notified`), e => out(`urgent mail ${n.id}: notice not sent (${e.message})`))))).then(() => 0);
   } catch (e) {
     err('error: ' + e.message);
     return e instanceof ConfigError ? 2 : 1;
