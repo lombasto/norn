@@ -17,7 +17,7 @@ import { sha } from './views.mjs';
 import crypto from 'node:crypto';
 
 // every threshold of this module (px are the SVG's own units; the page scales the drawing to its frame's width)
-export const MAP_GRAPH = { area_depth: 2, band_min_px: 2, band_max_px: 26, cell: 10, cols_max: 16, pad: 8, head: 22, gap_x: 28, gap_y: 90, sweeps: 6, char_px: 7 };
+export const MAP_GRAPH = { area_depth: 2, band_min_px: 2, band_max_px: 26, cell: 10, cols_max: 16, pad: 8, head: 22, gap_x: 28, gap_y: 90, sweeps: 6, char_px: 7.5 };
 export const graphMapDir = state => path.join(state, 'code', 'graphmap');
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const xe = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -73,7 +73,7 @@ export function layoutMap(g) {
   const box = new Map();
   for (const a of ids) {
     const n = byArea.get(a).length, cols = Math.max(1, Math.min(P.cols_max, Math.ceil(Math.sqrt(n * 1.6)))), nr = Math.ceil(n / cols);
-    box.set(a, { id: a, files: byArea.get(a), cols, w: Math.max(cols * P.cell + 2 * P.pad, a.length * P.char_px + 2 * P.pad), h: P.head + nr * P.cell + P.pad, x: 0, y: 0 });
+    box.set(a, { id: a, files: byArea.get(a), cols, w: Math.max(cols * P.cell + 2 * P.pad, `${a} ${n}`.length * P.char_px + 2 * P.pad), h: P.head + nr * P.cell + P.pad, x: 0, y: 0 });
   }
   const rowW = rows.map(r => r.reduce((m, a) => m + box.get(a).w, 0) + P.gap_x * Math.max(0, r.length - 1)), W = Math.max(1, ...rowW) + 2 * P.gap_x;
   let y = P.gap_x;
@@ -101,11 +101,11 @@ export function layoutMap(g) {
 const STYLE = `html,body{margin:0;overflow-x:hidden;background:#fff;color:#1d2433;font:13px/1.4 system-ui,sans-serif}
 main{max-width:100%;padding:8px;box-sizing:border-box}header{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-bottom:6px}
 .mute{color:#5b6475}.mono{font-family:ui-monospace,monospace}select{max-width:100%;min-width:0;font:inherit}
-svg{display:block;width:100%;height:auto;max-width:100%}.area rect.box{fill:#f4f6fa;stroke:#9aa4b6}.area text{font:12px ui-monospace,monospace;fill:#1d2433}
+svg{display:block;width:100%;height:auto;max-width:100%;max-height:calc(100vh - 90px)}.area rect.box{fill:#f4f6fa;stroke:#9aa4b6}.area text{font:12px ui-monospace,monospace;fill:#1d2433}
 .band{fill:none;stroke:#5a7bd6;stroke-opacity:.28}.band:hover{stroke-opacity:.6}rect.f{fill:#c9d1e0;cursor:pointer}rect.f:hover{fill:#7d8bab}
 rect.f.h0{fill:#d6452b}rect.f.h1{fill:#e8a33c}rect.f.h2{fill:#f3d79a}#deps{margin-top:8px;overflow-wrap:anywhere}#deps ol{margin:4px 0;padding-left:20px}
 @media (prefers-color-scheme:dark){html,body{background:#14171f;color:#dfe4ee}.mute{color:#9aa4b6}.area rect.box{fill:#1d2230;stroke:#465068}.area text{fill:#dfe4ee}rect.f{fill:#3a4358}}`;
-// the click: the picked file, its direct importers, then everything that reaches it, lit and listed (BFS over the shipped dependents)
+// the click: the picked file, its direct importers, then everything that reaches it, lit and listed (BFS over the shipped dependents); #file=<path> picks one on load (a link to a file's map)
 const SCRIPT = `(()=>{const D=JSON.parse(document.getElementById('mapdata').textContent),R=[...document.querySelectorAll('rect.f')],by=[];R.forEach(r=>by[+r.dataset.i]=r);
 const out=document.getElementById('deps'),sel=document.getElementById('pick');
 function pick(i){R.forEach(r=>r.classList.remove('h0','h1','h2'));out.textContent='';if(!(i>=0))return;const depth=new Map([[i,0]]),q=[i];
@@ -116,7 +116,8 @@ h.textContent=D.files[i]+': '+direct+' direct importer'+(direct===1?'':'s')+', '
 if(rows.length){const ol=document.createElement('ol');for(const j of rows){const li=document.createElement('li');li.className='mono';li.textContent=D.files[j]+(depth.get(j)>1?'  (depth '+depth.get(j)+')':'');ol.append(li);}out.append(ol);}
 if(sel)sel.value=String(i);}
 document.getElementById('map').addEventListener('click',e=>{const r=e.target.closest&&e.target.closest('rect.f');if(r)pick(+r.dataset.i);});
-if(sel)sel.addEventListener('change',()=>pick(sel.value===''?-1:+sel.value));})();`;
+if(sel)sel.addEventListener('change',()=>pick(sel.value===''?-1:+sel.value));
+const h=/^#file=(.+)$/.exec(location.hash);if(h)pick(D.files.indexOf(decodeURIComponent(h[1])));})();`;
 const h256 = s => `'sha256-${crypto.createHash('sha256').update(s).digest('base64')}'`;
 
 /** the model -> { html, csp }: one self-contained page (no network; the CSP meta hashes its one style and its one script) */
