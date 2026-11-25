@@ -152,7 +152,7 @@ first:
 node engine/bin/norn.mjs adopt apply --project <project> --as owner
 ```
 
-The dashboard shows the same draft (Overview: "Review the draft setup") with a tick box per line, and a chat in Claude Code or
+The dashboard shows the same draft (Inbox: "Review the draft setup") with a tick box per line, and a chat in Claude Code or
 Codex can walk it through `norn mcp --profile setup`. A part left for later stays in the draft; `norn adopt <repo>` resumes it.
 
 ## 5. Check everything
