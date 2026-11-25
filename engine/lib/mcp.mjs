@@ -24,6 +24,7 @@ import { dupOf, dupMessage } from './dupdirs.mjs';
 import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll } from './pause.mjs';
 import { PAUSE_MODES, MODE_NAMES, pauseFiles, readPause } from './pausemode.mjs';
 import { laneHooks, laneAsksOwner } from './lifecycle.mjs';
+import { cards, cardGroup, markCard } from './codecard.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
@@ -142,6 +143,10 @@ export const TOOLS = [
   // META-GTP-MAIL delivery (b): the mailbox of the run this server serves (META_RUN_ID) - for executors without the mail hook
   { name: 'norn_mail', profiles: ['worker'], description: 'Your mail: check (takes delivery of unread mail), send (to your parent, role:checkin, role:controller or your epic), ack MAIL-n.',
     schema: obj({ action: S.str('', { enum: ['check', 'send', 'ack'] }), to: S.str('RUN-n | role:checkin | role:controller'), subject: S.str(), body: S.str('<= 2 KB'), urgent: S.bool, id: S.str('MAIL-n (ack)') }, ['action']), run: mailTool },
+  // RM-a-57: the triage card, offered only to the card group of policy.code.card ab (codecard.mjs cardGroup); off by default
+  { name: 'norn_code_card', profiles: ['worker'], offered: ctx => cardGroup(ctx.project?.policy, ctx.env?.META_RUN_ID) === 'card',
+    description: 'Before reading a file: a short card per file (who imports it, what changes with it, its fixes and tests). Paths relative to the project folder.',
+    schema: obj({ files: { ...S.strs, description: 'one or more paths' } }, ['files']), run: cardTool },
   // lane-collide S2a (SPEC 4A.4 MCP): the remedy menu through the CLI's verbs, with this server's role (SPEC 4A.3 decides who may)
   { name: 'norn_collide', profiles: ['controller', 'checkin'], description: 'Collision cases (COL-n): list, show; a remedy wait | allow | narrow | part; ask (hand it to the role that may); undo.',
     schema: obj({ action: S.str('', { enum: COLLIDE_ACTIONS }), case: S.str('COL-n'), why: S.str('required for a write'), scope: S.str('narrow: the globs to keep'), kind: S.str('allow: one kind'),
@@ -427,6 +432,18 @@ function mailTool(a, ctx) {
   return { text: `${a.id} acked`, data: { id: a.id } };
 }
 
+// RM-a-57: a tool with `offered` is listed (and callable) only when it says so; a worker's first tools/list marks its run's A/B group
+const listed = (t, ctx) => t.profiles.includes(ctx.profile) && (!t.offered || t.offered(ctx));
+function markGroup(ctx) {
+  const run = ctx.env?.META_RUN_ID, g = ctx.profile === 'worker' && ctx.state ? cardGroup(ctx.project?.policy, run) : null;
+  if (g) try { markCard(ctx.state, run, g); } catch { /* the mark only feeds the report; listing the tools never fails on it */ }
+}
+function cardTool(a, ctx) {
+  if (!a.files.length) bad('files needs one or more paths');
+  const r = cards({ state: ctx.state, repo: ctx.project ? projectHome(ctx.project) : process.cwd(), files: a.files });
+  return { text: r.cards.map(c => c.text).join('\n'), data: r };
+}
+
 // ---------- META-ADOPT A4: the setup profile (machine-scoped; SPEC meta-adopt sec. 5 MCP) ----------
 const machinePath = ctx => path.join(metaRoot(ctx.env), 'local', 'machine.json');
 const dirKey = p => { const k = fwd(path.resolve(p)).replace(/\/+$/, ''); return process.platform === 'win32' ? k.toLowerCase() : k; };
@@ -688,7 +705,7 @@ export function handle(msg, ctx) {
         : `norn ${ctx.profile} server for ${ctx.project?.name ?? fwd(ctx.state)}. Start with norn_boot (or norn_status for workers).` });
   }
   if (method === 'ping') return ok({});
-  if (method === 'tools/list') return ok({ tools: TOOLS.filter(t => t.profiles.includes(ctx.profile)).map(t => ({ name: t.name, description: t.description, inputSchema: t.schema })) });
+  if (method === 'tools/list') { markGroup(ctx); return ok({ tools: TOOLS.filter(t => listed(t, ctx)).map(t => ({ name: t.name, description: t.description, inputSchema: t.schema })) }); }
   if (method === 'prompts/list') return ok({ prompts: PROMPTS.filter(p => p.profiles.includes(ctx.profile)).map(({ name, description }) => ({ name, description })) });
   if (method === 'prompts/get') {
     const p = PROMPTS.find(x => x.name === params.name && x.profiles.includes(ctx.profile));
@@ -698,7 +715,7 @@ export function handle(msg, ctx) {
   if (method === 'tools/call') {
     const t = TOOLS.find(x => x.name === params.name);
     if (!t) return err(-32602, `unknown tool ${params.name}`);
-    if (!t.profiles.includes(ctx.profile)) return ok(errorResult(`${t.name} is not in profile ${ctx.profile}`, 2));
+    if (!listed(t, ctx)) return ok(errorResult(`${t.name} is not in profile ${ctx.profile}${t.profiles.includes(ctx.profile) ? ' for this run' : ''}`, 2));
     const failed = e => {
       if (e instanceof ToolError || e instanceof RecordError) return ok(errorResult(e.message, e.code));
       if (e instanceof ConfigError || e instanceof ActError) return ok(errorResult(e.message, 2));
