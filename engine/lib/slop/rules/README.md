@@ -45,8 +45,9 @@ those of the rule file.
 - `exports`: a top-level definition the graph marks `exported` (function, class, struct, enum, trait, const) whose name no identifier
   in `search` names; a use in its own file counts. `shadow_langs` (packs whose findings are shadow).
 - `dup`: a function or method of at most `max_lines` lines (3) and `min_tokens` leaf tokens (12) whose normalised body hash a
-  definition of another file of its group has (`min_chars` stays JavaScript's). `shadow_langs` as above. The pool (one `symbols()`
-  per file of the group) is read only when the diff has a candidate, and the base only when the head has a finding.
+  definition of another file of its group has (`min_chars` stays JavaScript's). `shadow_langs` as above. The pool (one `defsByHash()`
+  of the candidates' hashes, kept to the group's files; a capped answer makes the rule fail, not guess) is read only when the diff
+  has a candidate, and the base only when the head has a finding.
 
 K27 (`companion`, WARN, `shadow`, `machine`) reads the project's code signals through their one reader (`readSignals(state)`,
 [docs/code-signals.md](../../../../docs/code-signals.md)): for each file the branch changes, each partner with `shared >= min_shared`
