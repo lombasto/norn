@@ -11,7 +11,7 @@ import { mkTmp } from './helpers/tmp.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { sendMail, ackMail, flagFile, loadMail } from '../engine/lib/mail.mjs';
 import { writeScopeFile, scopeFile, scopeCheck, denyJson } from '../engine/lib/scope.mjs';
-import { ensurePart, partProblem, hookEntry } from '../engine/lib/rustbin.mjs';
+import { ensurePart, partProblem, hookEntry, binOf, srcOf, sourceHash } from '../engine/lib/rustbin.mjs';
 import { writeWarnTable, warnsOf } from '../engine/lib/codewarn.mjs';
 
 const built = ensurePart('hook', { err: s => process.stderr.write(s + '\n') });
@@ -27,6 +27,12 @@ const silent = (r, what) => { assert.equal(r.status, 0, `${what}: ${r.stderr}`);
 test('norn setup builds norn-hook: it is there and newer than its source', () => {
   assert.ok(built.ok, built.why);
   assert.equal(partProblem('hook'), null);
+});
+
+test('norn-hook version: { crate, store_schema: null, source } - source is the hash of the sources it was built from (rustbin sourceHash)', () => {
+  const r = spawnSync(binOf('hook'), ['version'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { crate: '0.1.0', store_schema: null, source: sourceHash(srcOf('hook')) });
 });
 
 test('mail: a send raises the flag of each running run its address reaches (run, lane:, role:checkin); the hook runs Node only on the flag and clears it', () => {

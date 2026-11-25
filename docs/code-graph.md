@@ -411,8 +411,8 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
 
 - A snapshot is keyed by the root tree's sha: two commits with the same content share it, and an unchanged blob is never parsed
   again. Lane worktrees share the repo's objects, so a branch at main + 3 commits parses only the blobs those commits changed.
-- `v5` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
-  never read.
+- `v5` is the store schema (`norn-code version` prints it, beside the hash of its sources; rustbin.mjs `CODE_STORE_SCHEMA`); a
+  snapshot of another schema is never read.
 - Writes are atomic (tmp then rename); a tree has a lock, and a second writer waits for it, then reads the snapshot.
 - `--worktree` answers are resolved in memory and never stored as a tree.
 - Freshness: an answer is always for the commit asked (indexed on demand) unless `noIndex` is given, and then `stamp.exact` says
@@ -452,6 +452,33 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
   - a lock older than `BUILD_MS` + 2 min (rustbin.mjs `LOCK`: a holder's cargo dies at `BUILD_MS`) is a dead holder's and is
     broken; a waiter gives up after twice that, with ONE reason naming the lock file;
   - the async form waits on a timer, so a supervisor that waits keeps its heartbeat; the sync form (setup, smoke) blocks.
+- The binary's own word on its source (NORN-PART-PROOF): the clean and the lock fix the two known ways a wrong binary got a right
+  name; this catches any way (a later cargo change, a racer, a hand copy). Each part answers `version` with one JSON shape:
+  - `norn-code version` = `{ "crate": "0.1.0", "store_schema": <n>, "source": "<sha12>" }`; `norn-hook version` = the same with
+    `"store_schema": null` (it keeps no store; one shape for every part, so one reader);
+  - `source` is rustbin.mjs `sourceHash`'s rule computed by the crate's build.rs from the files cargo compiles (every file under the
+    crate dir but any entry named `target`, relative posix paths sorted by UTF-16 unit, each as path + NUL + bytes + NUL, sha256, the
+    first 12 hex), given to the crate as `NORN_SOURCE`. The one build.rs is the same file in engine/hook-rs and engine/code-rs, std
+    only (sha256 written out, so norn-hook still builds with no registry fetch). A build with no Norn around it (a developer's
+    `cargo build`, CI's cargo step) prints the true hash of the files it built, the same one Norn would name it by.
+  - `partProblem` asks every part (norn-hook too: one ~5 ms spawn per ensure) and returns `<bin> at <file> is not this source's
+    binary: it answers source <its hash>, its name says <the name's hash>` when they differ, or `n/a (<why>)` when it answers no
+    source. `ensurePart` then cleans, builds and REPLACES the entry (the temp + rename above).
+  - The store schema is asked of this engine's own norn-code only (the entry whose source is this engine's engine/code-rs). A
+    binary of another engine's sources (a lane worktree's engine, `partsOf({ worktree })`) is proved by its source alone: its
+    schema is that engine's business, and a lane that bumps the schema in both its code-rs and its rustbin.mjs is not refused by
+    the supervisor's older constant.
+  - A wrong entry that a process still runs (Windows cannot replace a running exe; a live run started with it) cannot be replaced:
+    the ensure is ONE reason, `<bin> (<why>) built, but the wrong binary at <file> could not be replaced (<code>): ...`, the entry
+    is left as it is, and the first ensure after that process ends builds again and replaces it. No retry loop. Other systems
+    replace a running file.
+  - After this lands, every machine builds each part once more: both crates changed, so their names change anyway, and a binary
+    from before answers no `source` (old norn-hook: exit 2, its usage; old norn-code: no `source` key). Such a binary is never read
+    as right: under a current name it is "not this source's binary" and replaced. Old entries under old names are left for the
+    runs that still use them.
+  - tests/rustbin.test.mjs holds the build.rs files equal, checks the rule on one file set in both languages (a tiny real-cargo
+    crate that carries the same build.rs), and builds the real norn-hook into a temp store: its `version` answers its source, a
+    copy under another source's name is refused naming both hashes and replaced.
 - Path length on Windows, measured (2026-11-25, this Cargo.lock, a cold build of engine/code-rs into `<x>/.git/norn/rust/target/code`
   with every file it created logged, short-lived ones included): the longest path below the clone folder is 178 characters
   (`.git\norn\rust\target\code\release\build\tree-sitter-javascript\<16 hex>\out\tree_sitter_javascript-<16 hex>.tree_sitter_javascript.<16 hex>-cgu.0.rcgu.o`,

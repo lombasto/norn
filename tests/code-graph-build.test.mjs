@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
-import { ensurePart, partProblem, binOf, ccProblem, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
+import { ensurePart, partProblem, binOf, srcOf, sourceHash, ccProblem, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'code-graph');
 const built = ensurePart('code', { err: s => process.stderr.write(s + '\n') });
@@ -30,7 +30,7 @@ const snapshot = (state, tree) => JSON.parse(fs.readFileSync(path.join(state, 'c
 test('norn setup\'s build of norn-code: built, fresh, and its version names the store schema this engine reads', () => {
   assert.ok(built.ok, built.why);
   assert.equal(partProblem('code'), null);
-  assert.deepEqual(code('version'), { crate: '0.1.0', store_schema: CODE_STORE_SCHEMA });
+  assert.deepEqual(code('version'), { crate: '0.1.0', store_schema: CODE_STORE_SCHEMA, source: sourceHash(srcOf('code')) });
 });
 
 for (const lang of ['js', 'py', 'rs']) {
@@ -73,21 +73,24 @@ test('--worktree resolves uncommitted work over HEAD in memory: stamped, the cha
   assert.deepEqual(fs.readdirSync(path.join(r.state, 'code', 'graph', 'trees', `v${CODE_STORE_SCHEMA}`)).filter(f => f.endsWith('.json')), [`${base.tree}.json`]);
 });
 
-test('rustbin names a missing, a stale and a wrong-schema norn-code, and a build without a C compiler names the install', () => {
+test('rustbin names a missing, a stale, another source\'s and a wrong-schema norn-code, and a build without a C compiler names the install', () => {
   // NORN-RUST-FRESH: a binary is named by its source content (binOf), so a stale one is a binary not built for its source
   const d = mkTmp('cg-part-'), src = path.join(d, 'code-rs');
   fs.mkdirSync(path.join(src, 'src'), { recursive: true });
   fs.writeFileSync(path.join(src, 'Cargo.lock'), '');
-  const says = schema => () => ({ status: 0, stdout: JSON.stringify({ crate: '0.1.0', store_schema: schema }) });
+  const says = (schema, source) => () => ({ status: 0, stdout: JSON.stringify({ crate: '0.1.0', store_schema: schema, source }) });
   assert.match(partProblem('code', { src, exe: path.join(d, 'x'), run: says(CODE_STORE_SCHEMA) }), /^norn-code's source is missing \(/);
   fs.writeFileSync(path.join(src, 'Cargo.toml'), '[package]\n');
-  const exe = binOf('code', { src, store: d });
-  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA) }), /^norn-code is not built for its source \(/);
+  const exe = binOf('code', { src, store: d }), h = sourceHash(src);
+  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA, h) }), /^norn-code is not built for its source \(/);
   fs.mkdirSync(path.dirname(exe), { recursive: true }); fs.writeFileSync(exe, '');
-  assert.equal(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA) }), null);
+  assert.equal(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA, h) }), null);
+  // NORN-PART-PROOF: the binary's own word on its source; the store schema is asked of this engine's own norn-code only
+  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA, 'abcdef012345') }), new RegExp(`is not this source's binary: it answers source abcdef012345, its name says ${h}$`));
   fs.writeFileSync(path.join(src, 'src', 'main.rs'), 'fn main() {}\n');
   assert.notEqual(binOf('code', { src, store: d }), exe, 'a changed source names another binary: the old one is stale');
-  assert.match(partProblem('code', { src, exe, run: says(CODE_STORE_SCHEMA + 1) }), /answers store_schema \d+, this engine reads/);
+  const own = binOf('code', { store: d }); fs.writeFileSync(own, '');
+  assert.match(partProblem('code', { exe: own, run: says(CODE_STORE_SCHEMA + 1, sourceHash(srcOf('code'))) }), /answers store_schema \d+, this engine reads/);
   fs.rmSync(exe);
   const r = ensurePart('code', { src, exe, cc: () => 'no C compiler found (x): install y', run: () => assert.fail('no cargo without a C compiler') });
   assert.equal(r.ok, false);

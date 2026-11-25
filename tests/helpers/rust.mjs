@@ -7,17 +7,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { RUST_PARTS, ensurePart, binOf, srcOf, storeOf } from '../../engine/lib/rustbin.mjs';
 
-let built = null;
-/** build each Rust part (engine/hook-rs, engine/code-rs) once per process when missing; fails with the build command when cargo cannot */
-export function rustReady() {
-  built ??= Object.keys(RUST_PARTS).map(p => ensurePart(p, { err: s => process.stderr.write(s + '\n') }));
-  for (const b of built) assert.ok(b.ok, b.why);
+const built = {};
+/** build one Rust part once per process when missing; fails with the build command when cargo cannot. A file whose runs read only
+ *  norn-hook calls it alone (test.before(() => rustPart('hook'))), so it never waits on a cold norn-code build it does not use */
+export function rustPart(p) {
+  const b = (built[p] ??= ensurePart(p, { err: s => process.stderr.write(s + '\n') }));
+  assert.ok(b.ok, b.why);
 }
+/** build each Rust part (engine/hook-rs, engine/code-rs) once per process when missing */
+export function rustReady() { for (const p of Object.keys(RUST_PARTS)) rustPart(p); }
 /** a fresh clone's engine has its own empty store: each part whose sources equal this engine's gets this store's binary (built by
- *  rustReady) under the clone's name, as smoke.mjs does; a part whose sources differ is left for the clone's own setup to build */
-export function rustInto(engine) {
-  rustReady();
-  for (const p of Object.keys(RUST_PARTS)) {
+ *  rustPart) under the clone's name, as smoke.mjs does; a part whose sources differ is left for the clone's own setup to build */
+export function rustInto(engine, parts = Object.keys(RUST_PARTS)) {
+  for (const p of parts) {
+    rustPart(p);
     const dst = binOf(p, { src: srcOf(p, engine), store: storeOf(engine) });
     if (path.basename(dst) !== path.basename(binOf(p)) || fs.existsSync(dst)) continue;
     fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(binOf(p), dst);

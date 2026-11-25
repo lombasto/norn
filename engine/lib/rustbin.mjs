@@ -92,17 +92,21 @@ export const cleanOf = (p, { src = srcOf(p), store: st = store() } = {}) =>
 export const hookEntry = (sub, state) => ({ type: 'command', command: fwd(binOf('hook')), args: [sub, '--state', fwd(path.resolve(state)), '--node', fwd(process.execPath), '--norn', fwd(META_BIN)],
   timeout: 30, ...(sub === 'scope' ? { onFailure: 'block' } : {}) });
 
-/** what is wrong with the binary of part `p` for the sources in `src`: null = built (its content-named file exists) and (norn-code)
- *  of this store schema. A changed source names another file, so "stale" reads as "not built for its source" */
+/** what is wrong with the binary of part `p` for the sources in `src`: null = built (its content-named file exists), it is this
+ *  source's binary and (this engine's own norn-code) of this engine's store schema. A changed source names another file, so "stale"
+ *  reads as "not built for its source". NORN-PART-PROOF: every part answers `version` with { crate, store_schema, source }, source =
+ *  the sourceHash of the files it was built from (its build.rs); an entry whose answer is not the hash in its name is not this
+ *  source's binary, whatever put it there (cargo calling another source fresh, a racer, a hand copy), and ensurePart replaces it. A
+ *  binary of another engine's sources (a lane worktree's, partsOf) is proved by its source alone: its store schema is that engine's */
 export function partProblem(p, { run = spawnSync, src = srcOf(p), exe = binOf(p, { src }) } = {}) {
   const { bin } = part(p);
   if (!fs.existsSync(path.join(src, 'Cargo.toml'))) return `${bin}'s source is missing (${fwd(src)})`;
   if (!fs.existsSync(exe)) return `${bin} is not built for its source (${fwd(exe)})`;
-  if (p !== 'code') return null;
-  // the binary's own word on the schema: a file copied in under the right name but built from other sources is caught here
   const r = run(exe, ['version'], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
   let v = null; try { v = JSON.parse(r.stdout); } catch { /* no JSON: named below */ }
-  if (v?.store_schema !== CODE_STORE_SCHEMA) return `${bin} at ${fwd(exe)} answers store_schema ${v?.store_schema ?? `n/a (${r.error?.code || `exit ${r.status}`})`}, this engine reads ${CODE_STORE_SCHEMA}`;
+  const named = /-([0-9a-f]{12})(?:\.exe)?$/.exec(path.basename(exe))?.[1] ?? 'n/a', said = typeof v?.source === 'string' ? v.source : null;
+  if (said !== named) return `${bin} at ${fwd(exe)} is not this source's binary: it answers source ${said ?? `n/a (${v ? 'no source in its version answer' : r.error?.code || `exit ${r.status}`})`}, its name says ${named}`;
+  if (p === 'code' && pathKey(src) === pathKey(srcOf(p)) && v.store_schema !== CODE_STORE_SCHEMA) return `${bin} at ${fwd(exe)} answers store_schema ${v.store_schema ?? 'n/a'}, this engine reads ${CODE_STORE_SCHEMA}`;
   return null;
 }
 
@@ -147,12 +151,16 @@ function settle(p, r, o) {
   const { bin, why } = part(p), name = `${bin} (${why})`, no = w => ({ ok: false, built: false, part: p, why: w });
   const f = failed(p, r, o, 'build');
   if (f) return f;
-  // cargo's output is copied to the content-named file (temp + rename: a racer building the same sources leaves one whole file)
+  // cargo's output is copied to the content-named file (temp + rename: a racer building the same sources leaves one whole file; a
+  // wrong entry under the name is replaced)
   const out = path.join(targetOf(p, o.store), 'release', part(p).bin + EXE), tmp = `${o.exe}.${process.pid}.tmp`;
   try { fs.mkdirSync(path.dirname(o.exe), { recursive: true }); fs.copyFileSync(out, tmp); fs.renameSync(tmp, o.exe); }
   catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* the copy never started */ }
     if (!fs.existsSync(o.exe)) return no(`${name} built but not stored at ${fwd(o.exe)} (${e.code || e.message}); build command: ${buildOf(p, o)}`);
+    // NORN-PART-PROOF: a wrong entry that a process still runs (a live run started with it) cannot be replaced on Windows. ONE reason,
+    // no retry: the entry is left as it is, and the first ensure after that process ends builds again and replaces it
+    if (partProblem(p, o)) return no(`${name} built, but the wrong binary at ${fwd(o.exe)} could not be replaced (${e.code || e.message}): on Windows a process that runs it (a live run started with it) holds the file; the first build after it ends replaces it; build command: ${buildOf(p, o)}`);
   }
   const left = partProblem(p, o);
   return left ? no(`${left} after its build (${buildOf(p, o)})`) : { ok: true, built: true };
