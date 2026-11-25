@@ -136,3 +136,119 @@ test('the call fixtures together cover every how class of the call table', () =>
   const seen = new Set(['js', 'py', 'rs'].flatMap(l => Object.values(JSON.parse(fs.readFileSync(path.join(FIX, l, 'expected.json'), 'utf8')).calls).flat().map(c => c.how)));
   for (const h of HOW_CLASSES) assert.ok(seen.has(h), `no fixture call site is ${h}`);
 });
+
+/** files committed into their own repo -> { repo, state } */
+function repoFiles(files) {
+  const d = mkTmp('cg-inline-'), repo = path.join(d, 'repo');
+  for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), t); }
+  git(repo, 'init', '-q'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'fixture');
+  return { repo, state: path.join(d, 'graph-state') };
+}
+const sitesOf = (r, file) => code('query', 'calls', '--file', file, '--repo', r.repo, '--state', r.state).calls;
+
+// S6 (S4b grade: JS method-unique below bar): `x.f()` matched by name to the one repo method f stays method-unique only when x's local
+// binding does not say it is another value; else it is ambiguous with that one candidate and the why
+const RECV = {
+  'package.json': '{ "name": "recv", "type": "module" }\n',
+  'src/lock.mjs': 'export function startRun() {\n  return { release() { return 1; } };\n}\nexport class Pool {\n  drain() { return 0; }\n}\n',
+  'src/use.mjs': [
+    "import http from 'node:http';",
+    "import { startRun, Pool } from './lock.mjs';",
+    'function rig() { return { n: 1 }; }',
+    'export function main(x, acquire) {',
+    '  const lit = { n: 2 };',
+    '  lit.release();',
+    '  const g = rig();',
+    '  g.release();',
+    '  const run = startRun();',
+    '  run.release();',
+    '  const srv = http.createServer();',
+    '  srv.drain();',
+    '  const p = new Pool();',
+    '  p.drain();',
+    '  const m = new Map();',
+    '  m.drain();',
+    '  let lock;',
+    '  lock = acquire();',
+    '  lock.release();',
+    '  x.release();',
+    '  const y = x;',
+    '  y.drain();',
+    '}',
+    '',
+  ].join('\n'),
+  'src/typed.ts': "import type { Server } from 'node:http';\nimport { Pool } from './lock.mjs';\nexport function stop(s: Server, q: Pool) {\n  s.drain();\n  q.drain();\n}\n",
+};
+test('JS method-unique: kept for an unknown receiver or one bound to the owner; a literal, another call\'s result, a package or non-repo value is ambiguous', () => {
+  const r = repoFiles(RECV);
+  index(r);
+  const pick = (file, names) => sitesOf(r, file).filter(c => names.includes(c.name)).map(c => [c.line, c.name, c.how, c.candidates, c.why ?? null]);
+  const amb = why => ['ambiguous', 1, why];
+  assert.deepEqual(pick('src/use.mjs', ['release', 'drain']), [
+    [6, 'release', ...amb('receiver lit holds a literal, not an object of startRun')],
+    [8, 'release', ...amb('receiver g is the result of rig, not of startRun')],
+    [10, 'release', 'method-unique', 1, null],
+    [12, 'drain', ...amb('receiver srv is the result of http.createServer, not of Pool')],
+    [14, 'drain', 'method-unique', 1, null],
+    [16, 'drain', ...amb('receiver m is a new Map, not an object of Pool')],
+    [19, 'release', ...amb('receiver lock is the result of acquire, not of startRun')],
+    [20, 'release', 'method-unique', 1, null],
+    [22, 'drain', 'method-unique', 1, null],
+  ]);
+  assert.deepEqual(pick('src/typed.ts', ['drain']), [[4, 'drain', ...amb('receiver s is typed Server, not an object of Pool')], [5, 'drain', 'method-unique', 1, null]]);
+});
+
+// S6 (S4b grade on a Rust tree): a local variable (a closure, a fn pointer parameter) shadows an import of its name; a fn nested in a
+// fn is local to it, never to its sibling's nested fn of the same name
+const SHADOW = {
+  'Cargo.toml': '[package]\nname = "shadow"\nversion = "0.1.0"\nedition = "2021"\n',
+  'src/lib.rs': [
+    'mod shape {',
+    '    pub fn surface() -> f64 {',
+    '        1.0',
+    '    }',
+    '}',
+    'use shape::surface;',
+    '',
+    'pub fn bed(a: f64) -> f64 {',
+    '    let surface = |q: f64| q * 2.0;',
+    '    surface(a)',
+    '}',
+    '',
+    'pub fn top() -> f64 {',
+    '    surface()',
+    '}',
+    '',
+    'pub fn param(surface: fn() -> f64) -> f64 {',
+    '    surface()',
+    '}',
+    '',
+    'pub fn first() -> u32 {',
+    '    fn calls(n: u32) -> u32 {',
+    '        if n == 0 { 0 } else { calls(n - 1) }',
+    '    }',
+    '    calls(3)',
+    '}',
+    '',
+    'pub fn second() -> u32 {',
+    '    fn calls(n: u32) -> u32 {',
+    '        if n == 0 { 1 } else { calls(n - 1) }',
+    '    }',
+    '    calls(2)',
+    '}',
+    '',
+  ].join('\n'),
+};
+test('Rust: a local variable shadows the import of its name; a nested fn resolves inside its own fn, never its sibling\'s', () => {
+  const r = repoFiles(SHADOW);
+  index(r);
+  assert.deepEqual(sitesOf(r, 'src/lib.rs').map(c => [c.line, c.name, c.how, c.targets.join(), c.why ?? null]), [
+    [10, 'surface', 'unresolved', '', 'surface is a local variable (a closure or fn pointer), not a definition'],
+    [14, 'surface', 'import', 'src/lib.rs#crate::shape::surface#0', null],
+    [18, 'surface', 'unresolved', '', 'surface is a local variable (a closure or fn pointer), not a definition'],
+    [23, 'calls', 'local', 'src/lib.rs#crate::first::calls#0', null],
+    [25, 'calls', 'local', 'src/lib.rs#crate::first::calls#0', null],
+    [30, 'calls', 'local', 'src/lib.rs#crate::second::calls#0', null],
+    [32, 'calls', 'local', 'src/lib.rs#crate::second::calls#0', null],
+  ]);
+});

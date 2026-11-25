@@ -29,7 +29,7 @@ export const RUST_PARTS = {
   code: { dir: 'code-rs', bin: 'norn-code', why: 'the code graph (docs/code-graph.md)', cc: true },
 };
 /** the store schema this engine reads; `norn-code version` must print the same, or the binary is not this engine's */
-export const CODE_STORE_SCHEMA = 3;
+export const CODE_STORE_SCHEMA = 4;
 /** the limit of one cargo build, the one named place (a cold norn-code: 224 s on a 20-core Windows machine; a CI runner is slower) */
 export const BUILD_MS = 600000;
 /** the limit of the `cargo clean -p` before each build (well under a second measured; a slow disk gets a minute) */

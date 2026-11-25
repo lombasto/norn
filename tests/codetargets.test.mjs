@@ -90,6 +90,16 @@ test('each target is a brief: title, the symbols that move, Ready lines that par
   assert.match(parseReady(py.text).tests, /^none known/, 'no test the index knows covers it: said, never guessed');
 });
 
+test('the proposal line reads the Caller.trust of the call edges each target was weighed on; one that weighed none says so', async () => {
+  const w = world(), callers = w.read.callers;
+  w.read.callers = o => { const a = callers(o); return { ...a, rows: a.rows.map((x, i) => ({ ...x, trust: i ? 1 : 'below bar' })) }; };
+  const r = await run(w, { top: 10 }), by = k => r.targets.find(t => t.kind === k).text;
+  assert.match(by('split'), /from the code graph at \w+ \(call edges inferred: 12 weighed, 6 trust 1, 6 below bar\): nothing is edited/);
+  assert.match(by('cycle'), /\(call edges inferred: 4 weighed, 3 below bar, 1 trust 1\): nothing is edited/);
+  assert.match(by('extract'), /\(no call edge weighed\): nothing is edited/);
+  for (const t of r.targets) assert.doesNotMatch(t.text, /trust unmeasured/);
+});
+
 test('lazy in rank order: --top 1 measures only the top file and asks the graph for no call edges', async () => {
   const w = world(), r = await run(w, { top: 1 });
   assert.deepEqual(r.targets.map(t => t.file), ['lib/long.mjs']);
