@@ -2,7 +2,9 @@
 // [--worktree] [--exclude GLOB]... [--python-root DIR]...` parses each blob of the commit's tree that the store does not hold yet
 // (tree-sitter, in parallel), resolves imports over the whole tree, and writes the tree's snapshot; it prints one JSON line with
 // the commit, the tree, what it parsed and reused and where the time went. `--worktree` resolves uncommitted work over HEAD's tree
-// in memory and prints the snapshot instead of storing it. `norn-code version` prints { crate, store_schema }.
+// in memory and prints the snapshot instead of storing it. `norn-code query` answers symbols, refs, calls and callers over a commit
+// (calls.rs resolves the call sites). `norn-code version` prints { crate, store_schema }.
+mod calls;
 mod exclude;
 mod git;
 mod lang;
@@ -470,6 +472,138 @@ fn query(verb: &str, a: &Args, target: &str) -> Result<Value, String> {
     Ok(res)
 }
 
+/// the call graph of the asked commit's tree: every first-party source file's facts and defs, read from the store
+fn graph_of(a: &Args) -> Result<(Value, calls::Graph), String> {
+    let b = index(a)?;
+    let st = Store::new(&a.state);
+    let files = match b.files {
+        Some(f) => f,
+        None => git::ls_tree(&a.repo, a.at.as_deref().unwrap_or("HEAD"))?,
+    };
+    let rows = b.snap["files"].as_object().cloned().unwrap_or_default();
+    let srcs: Vec<(&String, &Value)> = rows
+        .iter()
+        .filter(|(p, r)| lang_of(p).is_some() && r["excluded"].is_null() && files.contains_key(*p))
+        .collect();
+    let facts: HashMap<String, (Value, Vec<Value>)> = srcs
+        .par_iter()
+        .map(|(p, r)| {
+            let f = Store::read(&st.blob_path(&files[*p]))
+                .ok_or(format!("{p}: its blob facts are not in the store"))?;
+            let d = defs_of(p, r, &f);
+            Ok(((*p).clone(), (f, d)))
+        })
+        .collect::<Result<_, String>>()?;
+    let mut stamp = json!({ "ok": true, "commit": b.out["commit"], "tree": b.out["tree"], "worktree": a.worktree });
+    if a.worktree {
+        stamp["changed"] = b.out["changed"].clone();
+    }
+    Ok((stamp, calls::Graph::new(&b.snap, facts)))
+}
+
+/// `query calls --file F` (each call site of F, resolved) | `query calls --all` (the count of call sites per language and how)
+fn query_calls(a: &Args, target: &str) -> Result<Value, String> {
+    let (mut res, g) = graph_of(a)?;
+    if target != "--all" {
+        if !g.files.contains_key(target) {
+            return Err(format!(
+                "unknown file {target} (not a first-party source of the graph)"
+            ));
+        }
+        res["file"] = json!(target);
+        res["calls"] = json!(g.sites(target).into_iter().map(|x| x.0).collect::<Vec<_>>());
+        return Ok(res);
+    }
+    let mut counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let all: Vec<(String, Vec<String>)> = g
+        .files
+        .par_iter()
+        .map(|(p, f)| {
+            (
+                f.lang.clone(),
+                g.sites(p)
+                    .into_iter()
+                    .map(|x| x.0["how"].as_str().unwrap_or("").to_string())
+                    .collect(),
+            )
+        })
+        .collect();
+    for (l, hows) in all {
+        for h in hows {
+            *counts.entry(l.clone()).or_default().entry(h).or_default() += 1;
+        }
+    }
+    res["counts"] = json!(counts);
+    Ok(res)
+}
+
+/// `query callers --symbol <id | file:name> [--depth N]`: every call site whose candidates hold the def; depth > 1 walks on to the
+/// callers of each calling def (each row once, at its first depth)
+fn query_callers(a: &Args, symbol: &str, depth: usize) -> Result<Value, String> {
+    let (mut res, g) = graph_of(a)?;
+    let d = if symbol.contains('#') {
+        g.def_by_id(symbol)
+            .ok_or(format!("no definition has the id {symbol}"))?
+    } else {
+        let (file, name) = symbol
+            .rsplit_once(':')
+            .ok_or(format!("{symbol}: name a symbol id or file:name"))?;
+        let f = g.files.get(file).ok_or(format!(
+            "unknown file {file} (not a first-party source of the graph)"
+        ))?;
+        let hits: Vec<usize> = (0..f.defs.len())
+            .filter(|&i| f.defs[i]["name"] == json!(name))
+            .collect();
+        match hits.as_slice() {
+            [i] => (file.to_string(), *i),
+            [] => return Err(format!("{file} defines no {name}")),
+            _ => {
+                let ids: Vec<&str> = hits
+                    .iter()
+                    .filter_map(|&i| f.defs[i]["id"].as_str())
+                    .collect();
+                return Err(format!(
+                    "{file} defines {} named {name}; name one by id: {}",
+                    hits.len(),
+                    ids.join(", ")
+                ));
+            }
+        }
+    };
+    let mut paths: Vec<&String> = g.files.keys().collect();
+    paths.sort();
+    let sites: Vec<(Value, Vec<(String, usize)>)> =
+        paths.par_iter().flat_map_iter(|p| g.sites(p)).collect();
+    let (mut rows, mut seen, mut frontier) = (vec![], HashSet::new(), vec![d.clone()]);
+    for level in 1..=depth.max(1) {
+        let mut next = vec![];
+        for (row, targets) in &sites {
+            if !targets.iter().any(|t| frontier.contains(t))
+                || !seen.insert((row["file"].clone(), row["line"].clone(), row["col"].clone()))
+            {
+                continue;
+            }
+            let mut r = row.clone();
+            let caller = row["caller"].as_str().and_then(|id| g.def_by_id(id));
+            r["caller"] = caller.as_ref().map_or(Value::Null, |c| g.def_value(c));
+            r["depth"] = json!(level);
+            if let Some(c) = caller {
+                next.push(c);
+            }
+            rows.push(r);
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    res["symbol"] = g.def_value(&d);
+    res["callers"] = json!(rows);
+    Ok(res)
+}
+
+const QUERY_USAGE: &str = "usage: norn-code query symbols --file F | refs --name N | calls --file F | calls --all | callers --symbol <id | file:name> [--depth N], then the index arguments";
+
 fn main() {
     let v: Vec<String> = std::env::args().skip(1).collect();
     let r = match v.first().map(String::as_str) {
@@ -484,9 +618,21 @@ fn main() {
         Some("query") => match (v.get(1).map(String::as_str), v.get(2).map(String::as_str), v.get(3)) {
             (Some("symbols"), Some("--file"), Some(t)) => args(&v[4..]).and_then(|a| query("symbols", &a, t)),
             (Some("refs"), Some("--name"), Some(t)) => args(&v[4..]).and_then(|a| query("refs", &a, t)),
-            _ => Err("usage: norn-code query symbols --file F | query refs --name N, then the index arguments".into()),
+            (Some("calls"), Some("--file"), Some(t)) => args(&v[4..]).and_then(|a| query_calls(&a, t)),
+            (Some("calls"), Some("--all"), _) => args(&v[3..]).and_then(|a| query_calls(&a, "--all")),
+            (Some("callers"), Some("--symbol"), Some(t)) => {
+                let (depth, rest) = match v.get(4).map(String::as_str) {
+                    Some("--depth") => match v.get(5).and_then(|n| n.parse::<usize>().ok()) {
+                        Some(n) if n >= 1 => (Ok(n), &v[6..]),
+                        _ => (Err("--depth needs a whole number >= 1".to_string()), &v[6.min(v.len())..]),
+                    },
+                    _ => (Ok(1), &v[4..]),
+                };
+                depth.and_then(|d| args(rest).and_then(|a| query_callers(&a, t, d)))
+            }
+            _ => Err(QUERY_USAGE.into()),
         },
-        _ => Err("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  norn-code query symbols --file F | refs --name N <index arguments>  |  norn-code version".into()),
+        _ => Err(format!("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  {QUERY_USAGE}  |  norn-code version")),
     };
     match r {
         Ok(j) => println!("{j}"),

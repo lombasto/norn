@@ -1,6 +1,8 @@
 {
   "edges": [
     {"from":"native/python/fx_native/__init__.py","to":"native/src/lib.rs","line":1,"col":1,"kind":"native","how":"config","spec":"from ._fast import *"},
+    {"from":"src/fx/calls.py","to":"src/fx/__init__.py","line":4,"col":1,"kind":"package-init","how":"probed","spec":"from fx import shapes"},
+    {"from":"src/fx/calls.py","to":"src/fx/shapes.py","line":4,"col":1,"kind":"import","how":"probed","spec":"from fx import shapes"},
     {"from":"src/fx/core.py","to":"src/fx/helpers.py","line":2,"col":1,"kind":"import","how":"exact","spec":"from . import helpers"},
     {"from":"src/fx/core.py","to":"src/fx/models.py","line":3,"col":1,"kind":"import","how":"exact","spec":"from .models import Model"},
     {"from":"src/fx/core.py","to":"src/common.py","line":4,"col":1,"kind":"import","how":"ambiguous","spec":"import common","alts":["lib/common.py"]},
@@ -15,6 +17,7 @@
     {"from":"tests/test_core.py","to":"src/fx/core.py","line":2,"col":1,"kind":"import","how":"probed","spec":"from fx import core"}
   ],
   "unresolved": [
+    {"from":"src/fx/calls.py","line":2,"kind":"import","how":"external","spec":"import os","package":"os"},
     {"from":"src/fx/core.py","line":1,"kind":"import","how":"external","spec":"from typing import TYPE_CHECKING","package":"typing"},
     {"from":"src/fx/core.py","line":7,"kind":"import","how":"external","spec":"import numpy as np","package":"numpy"},
     {"from":"src/fx/core.py","line":8,"kind":"import","how":"unresolved","spec":"import fx.missing","why":"missing"},
@@ -33,6 +36,7 @@
     "pyproject.toml": {"lang":"manifest"},
     "src/common.py": {"module":"common","lang":"py"},
     "src/fx/__init__.py": {"module":"fx","lang":"py"},
+    "src/fx/calls.py": {"module":"fx.calls","lang":"py"},
     "src/fx/core.py": {"module":"fx.core","lang":"py"},
     "src/fx/helpers.py": {"module":"fx.helpers","lang":"py"},
     "src/fx/models.py": {"module":"fx.models","lang":"py"},
@@ -47,6 +51,15 @@
     ],
     "native/src/lib.rs": [
       {"id":"native/src/lib.rs#crate::_fast#0","name":"_fast","qual":"crate::_fast","kind":"function","line":2,"end_line":2,"col":1,"exported":false}
+    ],
+    "src/fx/calls.py": [
+      {"id":"src/fx/calls.py#fx.calls.near#0","name":"near","qual":"fx.calls.near","kind":"function","line":8,"end_line":9,"col":1,"exported":true},
+      {"id":"src/fx/calls.py#fx.calls.Walker#0","name":"Walker","qual":"fx.calls.Walker","kind":"class","line":12,"end_line":18,"col":1,"exported":true},
+      {"id":"src/fx/calls.py#fx.calls.Walker.step#0","name":"step","qual":"fx.calls.Walker.step","kind":"method","line":13,"end_line":14,"col":5,"exported":true},
+      {"id":"src/fx/calls.py#fx.calls.Walker.walk#0","name":"walk","qual":"fx.calls.Walker.walk","kind":"method","line":16,"end_line":18,"col":5,"exported":true},
+      {"id":"src/fx/calls.py#fx.calls.Runner#0","name":"Runner","qual":"fx.calls.Runner","kind":"class","line":21,"end_line":23,"col":1,"exported":true},
+      {"id":"src/fx/calls.py#fx.calls.Runner.step#0","name":"step","qual":"fx.calls.Runner.step","kind":"method","line":22,"end_line":23,"col":5,"exported":true},
+      {"id":"src/fx/calls.py#fx.calls.main#0","name":"main","qual":"fx.calls.main","kind":"function","line":26,"end_line":35,"col":1,"exported":true}
     ],
     "src/fx/core.py": [
       {"id":"src/fx/core.py#fx.core.later#0","name":"later","qual":"fx.core.later","kind":"function","line":15,"end_line":17,"col":1,"exported":true}
@@ -64,6 +77,22 @@
       {"id":"src/fx/shapes.py#fx.shapes.copy#0","name":"copy","qual":"fx.shapes.copy","kind":"function","line":25,"end_line":26,"col":1,"exported":true},
       {"id":"src/fx/shapes.py#fx.shapes.outer#0","name":"outer","qual":"fx.shapes.outer","kind":"function","line":29,"end_line":33,"col":1,"exported":true},
       {"id":"src/fx/shapes.py#fx.shapes.outer.inner#0","name":"inner","qual":"fx.shapes.outer.inner","kind":"function","line":30,"end_line":31,"col":5,"exported":false}
+    ]
+  },
+  "calls": {
+    "src/fx/calls.py": [
+      {"line":14,"col":16,"name":"near","how":"local","candidates":1,"targets":["src/fx/calls.py#fx.calls.near#0"]},
+      {"line":17,"col":14,"name":"step","how":"self","candidates":1,"targets":["src/fx/calls.py#fx.calls.Walker.step#0"]},
+      {"line":18,"col":21,"name":"_hidden","how":"self","candidates":1,"targets":["src/fx/shapes.py#fx.shapes.Shape._hidden#0"]},
+      {"line":27,"col":5,"name":"helper","how":"import","candidates":1,"targets":["src/fx/shapes.py#fx.shapes.helper#0"]},
+      {"line":28,"col":12,"name":"copy","how":"qualified","candidates":1,"targets":["src/fx/shapes.py#fx.shapes.copy#0"]},
+      {"line":29,"col":12,"name":"walk","how":"qualified","candidates":1,"targets":["src/fx/calls.py#fx.calls.Walker.walk#0"]},
+      {"line":30,"col":7,"name":"walk","how":"method-unique","candidates":1,"targets":["src/fx/calls.py#fx.calls.Walker.walk#0"]},
+      {"line":31,"col":7,"name":"step","how":"ambiguous","candidates":2,"targets":["src/fx/calls.py#fx.calls.Walker.step#0","src/fx/calls.py#fx.calls.Runner.step#0"]},
+      {"line":32,"col":8,"name":"getcwd","how":"external","candidates":0,"targets":[]},
+      {"line":33,"col":5,"name":"len","how":"external","candidates":0,"targets":[]},
+      {"line":34,"col":5,"name":"ghost","how":"unresolved","candidates":0,"targets":[]},
+      {"line":35,"col":12,"name":"Walker","how":"local","candidates":1,"targets":["src/fx/calls.py#fx.calls.Walker#0"]}
     ]
   }
 }

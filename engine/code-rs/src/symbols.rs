@@ -392,22 +392,34 @@ fn idents<'t>(tree: &'t Tree, f: &mut impl FnMut(Node<'t>)) {
     });
 }
 
-/// a blob's stored symbol facts: { defs: [...], names: [distinct identifiers, sorted] }
-pub fn facts(lang: &str, q: &Query, tree: &Tree, src: &[u8]) -> (Value, Value) {
-    let defs: Vec<Value> = find(lang, q, tree, src)
+/// a blob's stored symbol facts: ({ defs: [...] with a class's `bases`, names: [distinct identifiers, sorted] }, its call facts)
+pub fn facts(
+    lang: &str,
+    q: &Query,
+    tree: &Tree,
+    src: &[u8],
+) -> (Value, Value, crate::calls::Extracted) {
+    let found = find(lang, q, tree, src);
+    let ex = crate::calls::extract(lang, tree, src, &found);
+    let defs: Vec<Value> = found
         .iter()
-        .map(|d| {
+        .enumerate()
+        .map(|(i, d)| {
             let (line, end_line) = bounds(d.node);
             let (hash, tokens) = body_hash(d, src);
-            json!({ "name": d.name, "path": d.path, "kind": d.kind, "line": line, "end_line": end_line, "col": d.node.start_position().column + 1,
-                "exported": d.exported, "hash": hash, "tokens": tokens })
+            let mut v = json!({ "name": d.name, "path": d.path, "kind": d.kind, "line": line, "end_line": end_line, "col": d.node.start_position().column + 1,
+                "exported": d.exported, "hash": hash, "tokens": tokens });
+            if let Some(b) = ex.bases.get(&i) {
+                v["bases"] = json!(b);
+            }
+            v
         })
         .collect();
     let mut names = BTreeSet::new();
     idents(tree, &mut |x| {
         names.insert(text(x, src).to_string());
     });
-    (Value::Array(defs), json!(names))
+    (Value::Array(defs), json!(names), ex)
 }
 
 /// the (line, col) of each occurrence of identifier `name` in the tree that is not a definition's own name

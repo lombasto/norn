@@ -12,15 +12,19 @@
     {"from":"crates/app/src/main.rs","to":"crates/util/src/text.rs","line":12,"col":1,"kind":"use","how":"config","spec":"fx_util::text::shout"},
     {"from":"crates/app/src/main.rs","to":"crates/app/shaders/water.wgsl","line":15,"col":22,"kind":"embed","how":"exact","spec":"../shaders/water.wgsl"},
     {"from":"crates/app/src/tests.rs","to":"crates/app/src/main.rs","line":1,"col":1,"kind":"use","how":"exact","spec":"super::*"},
+    {"from":"crates/util/src/calls.rs","to":"crates/util/src/shapes.rs","line":2,"col":1,"kind":"use","how":"probed","spec":"crate::shapes::helper"},
+    {"from":"crates/util/src/calls.rs","to":"crates/util/src/text.rs","line":3,"col":1,"kind":"use","how":"exact","spec":"crate::text"},
     {"from":"crates/util/src/lib.rs","to":"crates/util/src/text.rs","line":1,"col":1,"kind":"mod","how":"exact","spec":"mod text"},
     {"from":"crates/util/src/lib.rs","to":"crates/util/src/text.rs","line":2,"col":1,"kind":"use","how":"probed","spec":"text::shout"},
     {"from":"crates/util/src/lib.rs","to":"crates/util/src/shapes.rs","line":3,"col":1,"kind":"mod","how":"exact","spec":"mod shapes"},
+    {"from":"crates/util/src/lib.rs","to":"crates/util/src/calls.rs","line":4,"col":1,"kind":"mod","how":"exact","spec":"mod calls"},
     {"from":"crates/util/tests/it.rs","to":"crates/util/src/text.rs","line":1,"col":1,"kind":"use","how":"config","spec":"fx_util::text"}
   ],
   "unresolved": [
     {"from":"crates/app/Cargo.toml","line":7,"kind":"cargo-dep","how":"external","spec":"serde","package":"serde"},
     {"from":"crates/app/src/main.rs","line":9,"kind":"mod","how":"unresolved","spec":"mod missing_mod","why":"missing"},
-    {"from":"crates/app/src/main.rs","line":13,"kind":"use","how":"external","spec":"std::fs","package":"std"}
+    {"from":"crates/app/src/main.rs","line":13,"kind":"use","how":"external","spec":"std::fs","package":"std"},
+    {"from":"crates/util/src/calls.rs","line":4,"kind":"use","how":"external","spec":"std::collections::HashMap","package":"std"}
   ],
   "files": {
     "Cargo.toml": {"lang":"manifest"},
@@ -32,6 +36,7 @@
     "crates/app/src/platform/win.rs": {"crate":"fx-app","module":"crate::platform","target":"crates/app/src/main.rs","lang":"rs"},
     "crates/app/src/tests.rs": {"crate":"fx-app","module":"crate::tests","target":"crates/app/src/main.rs","lang":"rs"},
     "crates/util/Cargo.toml": {"lang":"manifest"},
+    "crates/util/src/calls.rs": {"crate":"fx-util","module":"crate::calls","target":"crates/util/src/lib.rs","lang":"rs"},
     "crates/util/src/lib.rs": {"crate":"fx-util","module":"crate","target":"crates/util/src/lib.rs","lang":"rs"},
     "crates/util/src/shapes.rs": {"crate":"fx-util","module":"crate::shapes","target":"crates/util/src/lib.rs","lang":"rs"},
     "crates/util/src/stray.rs": {"orphan":true,"lang":"rs"},
@@ -63,9 +68,21 @@
     "crates/app/src/platform/win.rs": [
       {"id":"crates/app/src/platform/win.rs#crate::platform::init#0","name":"init","qual":"crate::platform::init","kind":"function","line":1,"end_line":1,"col":1,"exported":true}
     ],
+    "crates/util/src/calls.rs": [
+      {"id":"crates/util/src/calls.rs#crate::calls::near#0","name":"near","qual":"crate::calls::near","kind":"function","line":6,"end_line":8,"col":1,"exported":false},
+      {"id":"crates/util/src/calls.rs#crate::calls::Walker#0","name":"Walker","qual":"crate::calls::Walker","kind":"struct","line":10,"end_line":10,"col":1,"exported":true},
+      {"id":"crates/util/src/calls.rs#crate::calls::Walker#1","name":"Walker","qual":"crate::calls::Walker","kind":"impl","line":12,"end_line":22,"col":1,"exported":false},
+      {"id":"crates/util/src/calls.rs#crate::calls::Walker::step#0","name":"step","qual":"crate::calls::Walker::step","kind":"method","line":13,"end_line":15,"col":5,"exported":true},
+      {"id":"crates/util/src/calls.rs#crate::calls::Walker::walk#0","name":"walk","qual":"crate::calls::Walker::walk","kind":"method","line":16,"end_line":18,"col":5,"exported":true},
+      {"id":"crates/util/src/calls.rs#crate::calls::Walker::make#0","name":"make","qual":"crate::calls::Walker::make","kind":"method","line":19,"end_line":21,"col":5,"exported":false},
+      {"id":"crates/util/src/calls.rs#crate::calls::<Walker as Area>#0","name":"Walker","qual":"crate::calls::<Walker as Area>","kind":"impl","line":24,"end_line":28,"col":1,"exported":false},
+      {"id":"crates/util/src/calls.rs#crate::calls::<Walker as Area>::area#0","name":"area","qual":"crate::calls::<Walker as Area>::area","kind":"method","line":25,"end_line":27,"col":5,"exported":false},
+      {"id":"crates/util/src/calls.rs#crate::calls::main#0","name":"main","qual":"crate::calls::main","kind":"function","line":30,"end_line":42,"col":1,"exported":true}
+    ],
     "crates/util/src/lib.rs": [
       {"id":"crates/util/src/lib.rs#crate::text#0","name":"text","qual":"crate::text","kind":"module","line":1,"end_line":1,"col":1,"exported":true},
-      {"id":"crates/util/src/lib.rs#crate::shapes#0","name":"shapes","qual":"crate::shapes","kind":"module","line":3,"end_line":3,"col":1,"exported":true}
+      {"id":"crates/util/src/lib.rs#crate::shapes#0","name":"shapes","qual":"crate::shapes","kind":"module","line":3,"end_line":3,"col":1,"exported":true},
+      {"id":"crates/util/src/lib.rs#crate::calls#0","name":"calls","qual":"crate::calls","kind":"module","line":4,"end_line":4,"col":1,"exported":true}
     ],
     "crates/util/src/shapes.rs": [
       {"id":"crates/util/src/shapes.rs#crate::shapes::Area#0","name":"Area","qual":"crate::shapes::Area","kind":"trait","line":2,"end_line":4,"col":1,"exported":true},
@@ -86,6 +103,25 @@
     ],
     "crates/util/src/text.rs": [
       {"id":"crates/util/src/text.rs#crate::text::shout#0","name":"shout","qual":"crate::text::shout","kind":"function","line":1,"end_line":1,"col":1,"exported":true}
+    ]
+  },
+  "calls": {
+    "crates/util/src/calls.rs": [
+      {"line":14,"col":9,"name":"near","how":"local","candidates":1,"targets":["crates/util/src/calls.rs#crate::calls::near#0"]},
+      {"line":17,"col":14,"name":"step","how":"self","candidates":1,"targets":["crates/util/src/calls.rs#crate::calls::Walker::step#0"]},
+      {"line":17,"col":29,"name":"make","how":"self","candidates":1,"targets":["crates/util/src/calls.rs#crate::calls::Walker::make#0"]},
+      {"line":20,"col":9,"name":"Walker","how":"local","candidates":1,"targets":["crates/util/src/calls.rs#crate::calls::Walker#0"]},
+      {"line":31,"col":5,"name":"helper","how":"import","candidates":1,"targets":["crates/util/src/shapes.rs#crate::shapes::helper#0"]},
+      {"line":32,"col":11,"name":"shout","how":"qualified","candidates":1,"targets":["crates/util/src/text.rs#crate::text::shout#0"]},
+      {"line":33,"col":12,"name":"shout","how":"qualified","candidates":1,"targets":["crates/util/src/text.rs#crate::text::shout#0"]},
+      {"line":34,"col":20,"name":"copy","how":"qualified","candidates":1,"targets":["crates/util/src/shapes.rs#crate::shapes::copy#0"]},
+      {"line":35,"col":13,"name":"new","how":"qualified","candidates":1,"targets":["crates/util/src/shapes.rs#crate::shapes::Square::new#0"]},
+      {"line":36,"col":7,"name":"walk","how":"method-unique","candidates":1,"targets":["crates/util/src/calls.rs#crate::calls::Walker::walk#0"]},
+      {"line":37,"col":8,"name":"area","how":"ambiguous","candidates":3,"targets":["crates/util/src/calls.rs#crate::calls::<Walker as Area>::area#0","crates/util/src/shapes.rs#crate::shapes::Area::area#0","crates/util/src/shapes.rs#crate::shapes::<Square as Area>::area#0"]},
+      {"line":38,"col":24,"name":"new","how":"external","candidates":0,"targets":[]},
+      {"line":39,"col":5,"name":"Some","how":"external","candidates":0,"targets":[]},
+      {"line":40,"col":5,"name":"ghost","how":"unresolved","candidates":0,"targets":[]},
+      {"line":41,"col":5,"name":"near","how":"local","candidates":1,"targets":["crates/util/src/calls.rs#crate::calls::near#0"]}
     ]
   }
 }
