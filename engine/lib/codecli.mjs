@@ -27,7 +27,7 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'that change together with a file, its fix history and the fix-first rank, from git; docs/code-signals.md)\n'
   + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
   + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and whether one changed on main since)\n'
-  + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)';
+  + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)\n'
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
   + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
