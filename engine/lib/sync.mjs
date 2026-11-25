@@ -121,6 +121,14 @@ function commitHome(cfg, f, ref, head, files) {
   } finally { try { fs.unlinkSync(index); } catch { /* already removed: nothing to clean up */ } }
 }
 
+// home/<id>'s remote tip after a refused push: true only for a tip outside our history (not our head, our last push or an ancestor)
+function foreignTip(cfg, f, ref, head, pushed) {
+  let r; try { r = rgit(f, ['ls-remote', cfg.remote, ref], { ok: [0, 2, 128] }); } catch { return false; }   // timed out: passing
+  const tip = r.status === 0 ? (r.out.split('\n').find(l => l.trim().endsWith(`\t${ref}`)) || '').split('\t')[0] : '';
+  if (!tip || tip === head || tip === pushed) return false;
+  return rgit(f, ['merge-base', '--is-ancestor', tip, head], { ok: [0, 1, 128] }).status !== 0;
+}
+
 /**
  * publishHome(cfg): this home's shared files onto home/<home_id> and a push without force. Never throws. -> { off } | { noop } |
  * { refused: [rel] } | { stopped: why } | { rejected: why } | { sha?, pushed: true, heartbeat? } | { sha?, offline: why } | { error }
@@ -153,8 +161,9 @@ export function publishHome(cfg0, o = {}) {
         writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: head, files: stat, held, pushed_at: now }));
         return { ...(sha ? { sha } : {}), pushed: true, ...(beat ? { heartbeat: true } : {}) };
       }
-      const bad = r.out.split('\n').find(l => l.startsWith('!'));
-      if (bad && /rejected|non-fast-forward|fetch first/.test(bad)) {
+      // a refused push is a clash only when home/<id> really moved: its remote tip is not ours. A server-side refusal ([remote rejected],
+      // a ref lock held by another push to the repo) or a failed ls-remote is passing: kept local, the next pass retries
+      if (foreignTip(cfg, f, ref, head, m?.pushed)) {
         const why = `push rejected at ${now}: home/${cfg.home_id} moved on the remote - another install uses home id ${cfg.home_id}? Publishing stopped; remove ${F.stopped} once the id is unique`;
         logTo(cfg, why); fs.writeFileSync(at(cfg, 'stopped'), why + '\n');
         return { rejected: why };
