@@ -6,13 +6,12 @@
 // back edges of a DFS in id order dropped, each area's layer the longest path to an area that imports nothing, importers drawn above
 // what they import, the order inside a row by barycenter sweeps. A click on a file lights the files that import it (direct, then the
 // rest transitively) and lists them. `norn code history` (the tick's start when HEAD moves) redraws it from the graph it already read;
-// the page lands in <state>/code/graphmap and GET /code-map/?map=graph serves it under codemap.mjs's mapCsp (sandboxed, no network).
+// the page lands in <state>/code/graphmap and GET /code-map/ serves it under mapCsp (sandboxed, no network).
 import fs from 'node:fs';
 import path from 'node:path';
 import { FAN_KINDS, LANGS, graphAt } from './codegraph.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { atomicWrite } from './policy.mjs';
-import { mapCsp } from './codemap.mjs';
 import { sha } from './views.mjs';
 import crypto from 'node:crypto';
 
@@ -150,12 +149,23 @@ export function drawGraphMap({ state, repo, graph } = {}) {
   return { drawn: true, sha: short, file };
 }
 
+// ---- the map's own CSP ----
+const META = /<meta http-equiv="Content-Security-Policy"[^>]*\bcontent="([^"]*)"/i;
+/** the map's meta policy -> the /code-map/ header: that policy, no network (connect-src 'none'), no forms or base, framed only by the
+ *  dashboard, sandboxed with scripts only (an opaque origin: no dashboard cookie, token or API) */
+export function mapCsp(meta) {
+  const d = new Map(String(meta).split(';').map(s => s.trim()).filter(Boolean).map(s => { const i = s.search(/\s/); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1).trim()]; }));
+  if (!d.has('default-src')) d.set('default-src', "'none'");
+  for (const [k, v] of [['connect-src', "'none'"], ['form-action', "'none'"], ['base-uri', "'none'"], ['frame-ancestors', "'self'"], ['sandbox', 'allow-scripts']]) { d.delete(k); d.set(k, v); }
+  return [...d].map(([k, v]) => (v ? `${k} ${v}` : k)).join('; ');
+}
+
 /** the Map view's line: { at, sha, commit, files, areas, bands, edges, na } | null (never drawn) */
 export function graphMapAt(state) {
   const m = readJsonS(path.join(graphMapDir(state), 'map.json'));
   return m ? { at: m.at, sha: m.sha, commit: m.commit ?? null, files: m.files ?? null, areas: m.areas ?? null, bands: m.bands ?? null, edges: m.edges ?? null, na: m.na ?? null } : null;
 }
-/** GET /code-map/?map=graph: the drawn page under codemap.mjs's mapCsp, revalidated by ETag -> { status, headers, body } */
+/** GET /code-map/ (Code > Map): the drawn page under mapCsp, revalidated by ETag -> { status, headers, body } */
 export function graphMapPage(state, ifNoneMatch) {
   const m = readJsonS(path.join(graphMapDir(state), 'map.json')), file = path.join(graphMapDir(state), 'index.html');
   if (!m?.sha || !fs.existsSync(file)) return { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: m?.na ? `Graph map n/a: ${m.na}` : 'No graph map yet: `norn code history` draws it (the tick starts it when HEAD moves).' };
