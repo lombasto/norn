@@ -129,10 +129,19 @@ A lane whose branch is predicted to conflict with another home's open branch car
 - **Cross-home conflict warnings.** When an own lane (running, or with an open deliverable) changes the same files as another home's
   open branch, Norn runs `git merge-tree` on the two tips. A predicted conflict is a digest row for the check-in, for example
   "norn/a/x conflicts with norn/b/y (on b): 2 files".
-- **Freshness and the doorbell.** The dashboard polls the ledger every 30 s (`norn sync watch` does the same without the dashboard;
-  with neither running, the tick syncs every 15 min). With `ledger.doorbell.topic` set, a home rings the doorbell after each push and the
+- **Freshness and the doorbell.** The dashboard polls the ledger every 30 s (`norn sync watch` does the same without the dashboard).
+  Each tick publishes this home's logs, and when this home has not fetched for `policy.sync.tick_fetch_min` (2 min: the dashboard
+  and `sync watch` are down), the tick runs the fetch pass itself before it publishes. So with neither running a home still hears
+  the others at every tick (every 15 min). With `ledger.doorbell.topic` set, a home rings the doorbell after each push and the
   others fetch within seconds. The doorbell carries only the home id and a commit id; when it is down, polling still works and nothing is
-  lost. `norn sync status` shows the last publish and fetch.
+  lost.
+- **Status and alerts.** `norn sync status [--json]` shows the last publish and fetch, then one row per home: last push, last poll
+  (its heartbeat: the time it last polled the ledger, rounded to 5 min), how much of our mail log it holds, our mail unread there
+  (with the oldest age) and its mail waiting here. It exits 1 on a broken rule, named on a `broken:` line: a home whose heartbeat is
+  older than `policy.sync.heartbeat_min` (15 min), or a mail of ours that home has not acked after `policy.mail.unacked_alert_min`
+  (30 min; URGENT: `policy.mail.urgent_alert_min`, 10). The tick tells the owner once per broken rule (one notice per mail, one per
+  silence of a home), with the reason: not fetched there yet, there but unread, or read and not acked. Each broken rule is also a
+  digest row while it holds. A home on an older Norn publishes no poll time: its row reads "unknown" and breaks no rule.
 
 ## Duplicates: norn sync reconcile
 

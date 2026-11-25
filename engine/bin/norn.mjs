@@ -90,6 +90,7 @@ import { speedReport, formatSpeed } from '../lib/speed.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { codeCmd } from '../lib/codecli.mjs';
+import { normPath } from '../lib/declinks.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
 import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
@@ -103,8 +104,8 @@ import { PAUSE_MODES, pauseFiles, readPause } from '../lib/pausemode.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--from-source "<file>#<section>"] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]    (list every real alternative - 3-4 where they exist; never trim to two, never pad with a fake one. --from-source copies every alternative the section lists, verbatim, and records the file + section; an --option next to it is marked "added by <you>")',
-  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
-  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
+  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--paths a/b.mjs,c] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
+  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--paths a/b.mjs,c] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO] [--q Q-n]    (owner / controller: a slop finding that may stay; a check-in only with --q, the answered Q whose ruling is the waiver)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage STAGE] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
@@ -129,8 +130,8 @@ const USAGE = {
 const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'from-source', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
-  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
-  'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
+  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'paths', 'approach-review'],
+  'add directive': ['text', 'via', 'scope', 'paths', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until', 'q'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], say: ['text', 'via'], reply: ['text', 'option*', 'recommend', 'propose'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
@@ -167,6 +168,7 @@ function parse(cmd, argv) {
 }
 
 const csv = v => v === undefined ? undefined : v.split(',').map(s => s.trim()).filter(Boolean);
+const repoCsv = v => csv(v)?.map(normPath);   // RM-a-58: --paths as declinks.mjs keys them (a\b, ./a -> a/b, a)
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
 const optionsOf = (f, cmd) => (f.option || []).map(o => {
@@ -194,8 +196,8 @@ function addData(what, f, cmd, by) {
     const body = f['body-file'] !== undefined ? fs.readFileSync(f['body-file'], 'utf8') : f.body;
     return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source, origin, owner_only: f['owner-only'] ? true : undefined });
   }
-  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
-  if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
+  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), paths: repoCsv(f.paths), approach_review: f['approach-review'] });
+  if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), paths: repoCsv(f.paths), expires_utc: f.expires });
   if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until, q: f.q });
   if (what === 'lane') return drop({ name: f.name, worktree: f.worktree, notes: f.notes, branch: f.branch, brief_dir: f['brief-dir'], stage: f.stage, round_estimate: f['round-estimate'], executor_hint: f['executor-hint'] });
   throw new Usage(`unknown kind ${what}`, cmd);
@@ -735,6 +737,9 @@ function s5Cmd(argv, env, out, err) {
         // META-CATCH S1: ONE notice per sweep that handled dead runs ("machine rebooted at T: n runs lost, m relaunched"), class alert
         if (r.lost_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.lost_notice.title, body: r.lost_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: lost-runs notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (lost runs) failed: ${e.message}`)));
+        // HOME-MAIL S3: ONE notice per broken sync rule (sync.mjs syncAlerts: a stale heartbeat, our mail unacked there) + S2's urgent arrivals, class alert
+        for (const n of r.sync_notices || []) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: n.title, body: n.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: sync notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (sync) failed: ${e.message}`)));
         // META-CATCH S1: ONE notice per new stuck flag (stuck.mjs: stuck.json noticed), class alert
         for (const n of r.stuck_notices || []) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: n.title, body: n.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: stuck notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (stuck) failed: ${e.message}`)));
@@ -3282,7 +3287,7 @@ function syncJoinCmd(argv, env, out, err) {
 }
 
 // ---------- RM-46 S1c + S4 + S5: norn sync status | publish | fetch | watch | ring | reconcile | cut (home/<id> on the ledger remote; SPEC 4.1-4.3) ----------
-const SYNC_USAGE = 'norn sync status | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head. On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE + '\n       ' + SYNC_JOIN_USAGE;
+const SYNC_USAGE = 'norn sync status [--json] | publish | fetch | watch | ring | reconcile [--dry-run] [--as <role>]  [--machine F]    (multi-home sync: publish this home\'s shared logs to home/<id> of the ledger remote and ring the doorbell; fetch every other home\'s into <state>/<project>/homes/<h>/ and record the claims seen; watch = the dashboard\'s sync loop without the dashboard (ls-remote every 30 s, a moved head = a fetch; machine.json ledger.doorbell { server?, topic } adds the ntfy doorbell); ring = ring the doorbell with the pushed head; status = one row per home (last push, last poll, what it holds of ours, our mail unread there, mail waiting here), exit 1 on a broken rule (a heartbeat past policy.sync.heartbeat_min, our mail unacked past policy.mail.unacked_alert_min). On with machine.json ledger.remote and a synced project: home.json { id } names the home; reconcile: one keep / merge / drop owner card per likely duplicate item, directive or decision across homes, the answered ones apply)' + '\n       ' + SYNC_CUT_USAGE + '\n       ' + SYNC_JOIN_USAGE;
 function syncCmd(argv, env, out, err) {
   if (argv[0] === 'cut') return syncCutCmd(argv, env, out, err);
   if (argv[0] === 'join') return syncJoinCmd(argv, env, out, err);
@@ -3290,6 +3295,7 @@ function syncCmd(argv, env, out, err) {
   for (let i = 0; i < rest.length; i++) {
     if (sub === 'reconcile' && rest[i] === '--dry-run') { f.dry = true; continue; }
     if (sub === 'reconcile' && rest[i] === '--as' && rest[i + 1] !== undefined) { f.as = rest[++i]; continue; }
+    if (sub === 'status' && rest[i] === '--json') { f.json = true; continue; }
     if (rest[i] !== '--machine' || rest[i + 1] === undefined) { err(`error: unexpected ${rest[i]}`); err('usage: ' + SYNC_USAGE); return 2; }
     f.machine = rest[++i];
   }
@@ -3300,13 +3306,21 @@ function syncCmd(argv, env, out, err) {
     const id = cfg && homeIdOf(cfg);
     if (!id) { err('error: sync is off (it needs machine.json ledger.remote and a synced project: a state dir with home.json)'); return 1; }
     if (sub === 'status') {
-      const s = syncStatus(cfg);
+      // HOME-MAIL S3 (REPORT 3.3): each project's limits come from its policy (machine.json projects[].config)
+      const policyOf = name => { const e = (machine?.projects || []).find(p => p.name === name); try { return e ? loadProject(e.config, { meta: root }).policy : {}; } catch { return {}; } };
+      const s = syncStatus(cfg, { policyOf });
+      if (f.json) { out(JSON.stringify(s, null, 2)); return s.broken.length ? 1 : 0; }
       out(`home ${s.home} remote set  published ${s.head ? s.head.slice(0, 10) : 'never'}${s.head && s.head !== s.pushed ? ' (not pushed yet)' : ''}`);
       if (s.stopped) out(`publish stopped: ${s.stopped}`);
       out(s.fetched_at ? `fetched ${s.fetched_at}` : 'never fetched');
       if (s.fetch_error) out(`stale since ${s.fetched_at || 'never'}: the fetch at ${s.failed_at} failed (${s.fetch_error})`);
       if (s.gone.length) out(`gone (copies kept): ${s.gone.join(' ')}`);
-      return 0;
+      const ago = (t, n) => t ? `${t}${n === null ? '' : ` (${n} min)`}` : 'unknown', box = b => `${b.count}${b.count ? ` (oldest ${b.oldest_min} min)` : ''}`;
+      for (const p of s.projects) for (const h of p.homes) out(`${p.project} home ${h.home}${h.own ? ' (this home)' : ''}: last push ${h.last_push || 'unknown'}, last poll ${ago(h.last_poll, h.heartbeat_min)}`
+        + (h.own ? '' : `, holds mail ${h.holds?.['mail.jsonl'] ?? 'unknown'} of our ${h.ours['mail.jsonl'] ?? 0}, our mail unread there ${box(h.unread_there)}, waiting here ${box(h.waiting_here)}${h.gone ? ' (gone)' : ''}`));
+      for (const p of s.projects.filter(x => x.error)) out(`${p.project}: no home rows (${p.error})`);
+      for (const b of s.broken) out(`broken: ${b.project} ${b.why}`);
+      return s.broken.length ? 1 : 0;
     }
     if (sub === 'reconcile') {   // S5: the likely duplicate pairs across homes -> one owner card each; the answered cards apply first
       const by = f.as || env.META_ROLE;
