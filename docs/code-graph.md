@@ -346,3 +346,40 @@ Thresholds (`CARD_LIMITS` in engine/lib/codecard.mjs, the one place):
 | `tests` | 5 | test files named |
 | `subject` | 72 | the last fix's subject keeps at most this many characters |
 | `min_group` | 15 | the report compares only from this many finished runs per group |
+
+## A consumer: `norn code targets` (RM-a-65)
+
+`norn code targets [--top N] [--json] [--project P | --state D] [--repo DIR]` turns SloppaChoppa's size numbers into refactoring briefs a
+lane can run (engine/lib/codetargets.mjs, no model), from this doc's reader (`graphAt`, `cycles`, `symbols`, `callers`, `references`),
+the code signals' reader (`readSignals`, docs/code-signals.md) and the tests index (`testsFor`). It proposes; it never edits.
+
+- **Split file**: a code file over the file ratchet (measure.mjs `FILE_CAP`). Its top-level symbols (a Rust impl joins its type) are
+  linked by their call sites (an ambiguous site weighs 1 / its candidates) and const references inside the file, then grouped by greedy
+  modularity. The largest group stays; a group moves when it has `min_group_lines` lines, `min_group_symbols` symbols and at most
+  `max_cut` of its edges crossing. Each moving group names its symbols, a proposed new file and the files that would change their import.
+- **Break cycle**: an import cycle (`cycles`). The edge to cut is the one with the fewest symbols that would have to move: the symbols of
+  `to` that `from` uses plus what they call inside `to`. They move into `from` when nothing else uses them, else into a proposed new file.
+- **Extract function**: a function over the function ratchet (`CAPS`). JS gets the measure numbers and its largest nested block; Python and
+  Rust get only the line count from the Def bounds and the block reads n/a ("the measure run is JS only").
+- **Rank**: the fix-first rank of the target's file (a cycle: the highest of its files). With no signals every rank reads n/a with the
+  reason and the order is by kind (split, cycle, extract), then code lines, then path. Candidates are judged lazily in rank order, so a
+  short `--top` reads only what it prints.
+- Each target prints as a brief: a title, the symbols that move, `Scope:` (the files touched), `Tests:` (from the tests index, or n/a with
+  the reason), `Done:`. Every answer is `inferred` and carries the graph's commit, the signals' sha and the tests index's sha.
+- It stores its answer in `<state>/code/targets.json`; the Slop page's To fix view lists the top `page` targets with "copy as brief".
+- `--json`: `{ at, basis, stamp: { graph, graph_exact, signals, tests }, limits, rank_na?, targets: [{ kind, file, rank, title, scope,
+  tests, text, ... }], na: [{ kind, file, why }], judged, candidates }`.
+
+Thresholds (`TARGET_LIMITS` in engine/lib/codetargets.mjs, the one place; the ratchets are measure.mjs's `CAPS` and `FILE_CAP`):
+
+| key | value | meaning |
+|---|---|---|
+| `top` | 10 | targets printed by default |
+| `page` | 5 | targets the Slop page lists |
+| `workers` | 8 | reader calls at once (at most half the cores) |
+| `min_group_lines` | 60 | a group moves out only from this many lines |
+| `min_group_symbols` | 2 | ... and this many top-level symbols |
+| `max_cut` | 0.25 | ... and when at most this share of its call edges cross to the rest of the file |
+| `groups_max` | 3 | groups proposed per split |
+| `per_file` | 3 | extract targets per file (the largest excess first; the rest counted) |
+| `tests` | 8 | test files a Tests line names; past it, those named for a Scope file and the `norn tests for` line |
