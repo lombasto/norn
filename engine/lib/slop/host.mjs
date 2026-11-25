@@ -3,7 +3,8 @@
 //   holds.json   { [branch]: { lane, run, base, head, at, blocks, resumed? } } - a branch with BLOCK findings; the merge waits on it
 //   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends); a day no daily ran is filled from git ({ loc, filled: true })
 //   landings.jsonl one point per landing on main { sha, day, branch, item, subject, code_net, tests_net, over_cap } (S4: which merge moved it)
-//   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level) } - the door reads it
+//   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level), voice_reads? (the
+//                second voice's calls: the daily cap counts them) } - the door reads it
 //   REPORT.md + report.json - the daily report, its one digest line and the main it read to; daily.started / daily.missed - a daily start, the ones that wrote nothing
 //   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (RM-43: the second voice's precision; the last one counts)
 //   outcomes.jsonl one line per finding the run end acted on { at, branch, lane, run, head, fix, rule, fp, file, line, action } (S1c: autofix | reverted | resume)
@@ -57,6 +58,11 @@ export const RATING = { rated: 20, block: 0.9, trend: 0.5 };
 /** fp -> its last rating { fp, rule, up, by, at } */
 export const slopRatings = state => new Map((readText(ratingsFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l)).map(r => [r.fp, r]));
 const modelFinding = (state, fp) => slopChecks(state).flatMap(c => c.findings).find(f => f.fp === fp && f.voice) || null;
+/** the second voice's calls today (UTC), from the stored checks: the daily cap (policy.slop.voice_reads_per_day) counts these */
+export function voiceReadsToday(state, now = Date.now()) {
+  const day = new Date(now).toISOString().slice(0, 10);
+  return slopChecks(state).filter(c => String(c.at || '').slice(0, 10) === day).reduce((n, c) => n + (c.voice_reads || 0), 0);
+}
 /** the unrated model findings of each branch's last check: [{ branch, run, findings }] */
 export function voiceFindings(state) {
   const rated = slopRatings(state), last = new Map();
@@ -102,7 +108,7 @@ export function hostWrite(state, payload) {
     if (!payload.hash) throw new Error('hostWrite check: no rule-set hash (a stored check is keyed on branch, head and rule set)');
     const holds = slopHolds(state), { branch } = payload, at = payload.at || new Date().toISOString();
     const check = { branch: branch ?? null, base: payload.base, head: payload.head, hash: payload.hash, lane: payload.lane ?? null, run: payload.run ?? null, at,
-      findings: payload.findings.filter(f => f.new !== false) };
+      findings: payload.findings.filter(f => f.new !== false), ...(payload.voice_reads ? { voice_reads: payload.voice_reads } : {}) };
     fs.mkdirSync(slopDir(state), { recursive: true });
     fs.appendFileSync(checksFile(state), JSON.stringify(check) + '\n');
     if (!branch) return { open: unwaived(state, payload.blocks), check };

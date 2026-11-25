@@ -81,14 +81,17 @@ function eslintRun(t, run, texts, env) {
  * The real tool runner: tool(rule, side, { dir, texts }) -> raw output | null (no output for that side). A tool rule here is the
  * ONE ESLint run of a check: { tool: 'eslint', rules, selectors, config (the merge base's repo config text, or null) } over texts,
  * Map(path -> that side's text); a ruff / clippy rule goes to its language pack's run. A command rule runs once, at check time in dir (its output is the machine's, not a side's: the
- * check keeps only the lines whose source the diff touches). A model read (kind `model`: { id, prompt }) is one no-tools call on
- * o.voice, the route voiceRoute picked at the launch; with no route (a door, `norn slop check`) it throws: each model rule is a
- * WARN "could not run" (the voice holds nothing) and reads at the run end. o.env.
+ * check keeps only the lines whose source the diff touches). A model read (kind `model`: { id, prompt }) is one call on o.voice in
+ * its mode, the route voiceRoute picked at the launch; with no route (a door, `norn slop check`) it throws: each model rule is a
+ * WARN "could not run" (the voice holds nothing) and reads at the run end. o.used: the project's reads today; at the route's cap it
+ * throws too (no call). tool.reads: the calls this tool made (the check record counts them). o.env.
  */
-export function makeTool({ env = process.env, voice = null } = {}) {
-  return (rule, side, { dir, texts } = {}) => {
+export function makeTool({ env = process.env, voice = null, used = 0 } = {}) {
+  const tool = (rule, side, { dir, texts } = {}) => {
     if (rule.kind === 'model') {
       if (!voice) throw new Error('no second voice routed here: the model rules read at the run end');
+      if (voice.cap != null && used + tool.reads >= voice.cap) throw new Error(`daily cap ${voice.cap} reached`);
+      tool.reads++;   // a call made is a read of the quota, answered or not
       return askVoice(voice, rule.prompt, { env });
     }
     if (rule.kind === 'command') {
@@ -101,5 +104,7 @@ export function makeTool({ env = process.env, voice = null } = {}) {
     if (!t) throw new Error(`${rule.id}: unknown tool ${rule.tool}`);
     return eslintRun(t, rule, texts, env);
   };
+  tool.reads = 0;
+  return tool;
 }
 export const runTool = makeTool();

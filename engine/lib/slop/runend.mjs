@@ -4,7 +4,7 @@
 import { gitRun, slopCheck, effectiveRules, fingerprint, rulesHash } from './check.mjs';
 import { loadState, loadShared } from '../records.mjs';
 import { makeTool } from './tools.mjs';
-import { findingLine, explainLines, hostWrite, slopChecks, unwaived } from './host.mjs';
+import { findingLine, explainLines, hostWrite, slopChecks, unwaived, voiceReadsToday } from './host.mjs';
 
 /** main's sha: the remote's main first (it is the fresher), else the local branch, else null */
 export function mainTip(repo, { main = 'main', remote = 'origin' } = {}) {
@@ -60,8 +60,8 @@ export function endCheck({ repo, state, projectDir = null, voice = null, brief =
   if (!bb || bb.base === head) return null;
   const rules = projectSlop({ projectDir }).rules, hash = rulesHash(rules), had = slopChecks(state).findLast(c => c.branch === bb.branch && c.head === head && c.hash === hash);
   if (had) return { branch: bb.branch, check: had, open: unwaived(state, had.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), result: null };
-  const c = checkBranch({ repo, state, base: bb.base, rules, projectDir, tool: makeTool({ voice }), brief });
-  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings }), result: c.result };
+  const tool = makeTool({ voice, used: voice ? voiceReadsToday(state) : 0 }), c = checkBranch({ repo, state, base: bb.base, rules, projectDir, tool, brief });   // the voice's daily cap: today's reads so far
+  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, voice_reads: tool.reads }), result: c.result };
 }
 
 /** SPEC 1.3 F7: the hold of a run-end check that threw - one BLOCK "could not check" on the branch, stored under a hash no rule set has
