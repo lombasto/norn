@@ -6,9 +6,9 @@
   "tool": "ast-grep",
   "title": "a new or changed test with no assertion",
   "explain": {
-    "what": "A test's body has no call that can fail it: no assert, no expect, no throw, no assertion helper.",
+    "what": "A test has no assertion and calls nothing but print / log and constructors: nothing in it can fail.",
     "why": "A test that checks nothing passes whatever the code does. It counts as coverage and proves no behaviour.",
-    "fix": "Assert what the code must do: its result, its output or its error. If the test only checks that nothing throws, assert that on purpose (assert.doesNotThrow, pytest.raises in reverse, a Result unwrapped)."
+    "fix": "Call the code under test and assert what it must do: its result, its output or its error."
   },
   "files": [
     "tests/**",
@@ -83,131 +83,12 @@
                         "has": {
                           "stopBy": "end",
                           "kind": "call_expression",
-                          "has": {
-                            "field": "function",
-                            "regex": "^(?:test|it|describe|suite)(?:\\.\\w+)?$|^(?:t|tt|ctx|context|st|sub)\\.test$"
+                          "not": {
+                            "has": {
+                              "field": "function",
+                              "regex": "^console\\.\\w+$"
+                            }
                           }
-                        }
-                      }
-                    },
-                    {
-                      "not": {
-                        "has": {
-                          "stopBy": "end",
-                          "kind": "call_expression",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "function",
-                                "kind": "identifier",
-                                "pattern": "$F"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "stopBy": "end",
-                                "kind": "program",
-                                "has": {
-                                  "stopBy": "end",
-                                  "kind": "function_declaration",
-                                  "has": {
-                                    "field": "name",
-                                    "pattern": "$F"
-                                  }
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "not": {
-                        "has": {
-                          "stopBy": "end",
-                          "kind": "call_expression",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "function",
-                                "kind": "identifier",
-                                "pattern": "$F"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "stopBy": "end",
-                                "kind": "program",
-                                "has": {
-                                  "stopBy": "end",
-                                  "kind": "variable_declarator",
-                                  "all": [
-                                    {
-                                      "has": {
-                                        "field": "name",
-                                        "pattern": "$F"
-                                      }
-                                    },
-                                    {
-                                      "has": {
-                                        "field": "value",
-                                        "any": [
-                                          {
-                                            "kind": "arrow_function"
-                                          },
-                                          {
-                                            "kind": "function_expression"
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  ]
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      }
-                    },
-                    {
-                      "not": {
-                        "has": {
-                          "stopBy": "end",
-                          "kind": "call_expression",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "function",
-                                "kind": "identifier",
-                                "pattern": "$F"
-                              }
-                            },
-                            {
-                              "inside": {
-                                "stopBy": "end",
-                                "kind": "program",
-                                "has": {
-                                  "stopBy": "end",
-                                  "kind": "import_statement",
-                                  "all": [
-                                    {
-                                      "has": {
-                                        "field": "source",
-                                        "regex": "(?i)help|support|fixture|common|util|conftest"
-                                      }
-                                    },
-                                    {
-                                      "has": {
-                                        "stopBy": "end",
-                                        "kind": "identifier",
-                                        "pattern": "$F"
-                                      }
-                                    }
-                                  ]
-                                }
-                              }
-                            }
-                          ]
                         }
                       }
                     }
@@ -217,7 +98,7 @@
             }
           ]
         },
-        "message": "a test with no assertion: it passes whatever the code does"
+        "message": "a test with no assertion that calls nothing but print / log and constructors: it passes whatever the code does"
       }
     ],
     "py": [
@@ -266,42 +147,12 @@
                       "has": {
                         "stopBy": "end",
                         "kind": "call",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "function",
-                              "kind": "attribute",
-                              "all": [
-                                {
-                                  "has": {
-                                    "field": "object",
-                                    "regex": "^(?:self|cls)$"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "field": "attribute",
-                                    "pattern": "$F"
-                                  }
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "inside": {
-                              "stopBy": "end",
-                              "kind": "module",
-                              "has": {
-                                "stopBy": "end",
-                                "kind": "function_definition",
-                                "has": {
-                                  "field": "name",
-                                  "pattern": "$F"
-                                }
-                              }
-                            }
+                        "not": {
+                          "has": {
+                            "field": "function",
+                            "regex": "^print$|^(?:logging|logger|log|_log|LOG|_logger)\\.\\w+$|(?:^|\\.)[A-Z]\\w*$"
                           }
-                        ]
+                        }
                       }
                     }
                   },
@@ -309,30 +160,7 @@
                     "not": {
                       "has": {
                         "stopBy": "end",
-                        "kind": "call",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "function",
-                              "kind": "identifier",
-                              "pattern": "$F"
-                            }
-                          },
-                          {
-                            "inside": {
-                              "stopBy": "end",
-                              "kind": "module",
-                              "has": {
-                                "stopBy": "end",
-                                "kind": "function_definition",
-                                "has": {
-                                  "field": "name",
-                                  "pattern": "$F"
-                                }
-                              }
-                            }
-                          }
-                        ]
+                        "kind": "import_statement"
                       }
                     }
                   },
@@ -340,30 +168,7 @@
                     "not": {
                       "has": {
                         "stopBy": "end",
-                        "kind": "call",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "function",
-                              "kind": "identifier",
-                              "pattern": "$F"
-                            }
-                          },
-                          {
-                            "inside": {
-                              "stopBy": "end",
-                              "kind": "function_definition",
-                              "has": {
-                                "field": "parameters",
-                                "has": {
-                                  "stopBy": "end",
-                                  "kind": "identifier",
-                                  "pattern": "$F"
-                                }
-                              }
-                            }
-                          }
-                        ]
+                        "kind": "import_from_statement"
                       }
                     }
                   },
@@ -371,41 +176,13 @@
                     "not": {
                       "has": {
                         "stopBy": "end",
-                        "kind": "call",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "function",
-                              "kind": "identifier",
-                              "pattern": "$F"
-                            }
-                          },
-                          {
-                            "inside": {
-                              "stopBy": "end",
-                              "kind": "module",
-                              "has": {
-                                "stopBy": "end",
-                                "kind": "import_from_statement",
-                                "all": [
-                                  {
-                                    "has": {
-                                      "field": "module_name",
-                                      "regex": "(?i)help|support|fixture|common|util|conftest"
-                                    }
-                                  },
-                                  {
-                                    "has": {
-                                      "stopBy": "end",
-                                      "kind": "identifier",
-                                      "pattern": "$F"
-                                    }
-                                  }
-                                ]
-                              }
-                            }
+                        "kind": "attribute",
+                        "not": {
+                          "inside": {
+                            "kind": "call",
+                            "field": "function"
                           }
-                        ]
+                        }
                       }
                     }
                   }
@@ -414,7 +191,7 @@
             }
           ]
         },
-        "message": "a test with no assertion: it passes whatever the code does"
+        "message": "a test with no assertion that calls nothing but print / log and constructors: it passes whatever the code does"
       }
     ],
     "rs": [
@@ -517,38 +294,12 @@
                       "has": {
                         "stopBy": "end",
                         "kind": "call_expression",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "function",
-                              "kind": "identifier",
-                              "pattern": "$F"
-                            }
-                          },
-                          {
-                            "inside": {
-                              "stopBy": "end",
-                              "kind": "function_item",
-                              "inside": {
-                                "any": [
-                                  {
-                                    "kind": "declaration_list"
-                                  },
-                                  {
-                                    "kind": "source_file"
-                                  }
-                                ],
-                                "has": {
-                                  "kind": "function_item",
-                                  "has": {
-                                    "field": "name",
-                                    "pattern": "$F"
-                                  }
-                                }
-                              }
-                            }
+                        "not": {
+                          "has": {
+                            "field": "function",
+                            "regex": "^(?:\\w+::)*[A-Z]\\w*(?:::<.*>)?(?:::(?:new|default))?$"
                           }
-                        ]
+                        }
                       }
                     }
                   },
@@ -556,11 +307,38 @@
                     "not": {
                       "has": {
                         "stopBy": "end",
-                        "kind": "call_expression",
-                        "has": {
-                          "field": "function",
-                          "regex": "(?:^|::)\\w*(?:tests?|helpers?|support|fixtures?|common|utils?)\\w*::"
+                        "kind": "macro_invocation",
+                        "not": {
+                          "has": {
+                            "field": "macro",
+                            "regex": "^(?:std::)?(?:e?print(?:ln)?|dbg|format|vec|(?:log::|tracing::)?(?:trace|debug|info|warn|error))$"
+                          }
                         }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "macro_invocation",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "macro",
+                              "regex": "^(?:std::)?(?:e?print(?:ln)?|dbg|format|vec|(?:log::|tracing::)?(?:trace|debug|info|warn|error))$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "token_tree",
+                              "follows": {
+                                "kind": "identifier"
+                              }
+                            }
+                          }
+                        ]
                       }
                     }
                   }
@@ -569,7 +347,7 @@
             }
           ]
         },
-        "message": "a test with no assertion: it passes whatever the code does"
+        "message": "a test with no assertion that calls nothing but print / log and constructors: it passes whatever the code does"
       }
     ]
   },
@@ -579,9 +357,9 @@
         "tests/a.test.mjs": "import test from 'node:test';\n"
       },
       "head": {
-        "tests/a.test.mjs": "import test from 'node:test';\nimport { parse } from '../src/parse.mjs';\ntest('parses a row', () => {\n  const r = parse('a,b');\n  console.log(r);\n});\ntest('parent', async t => {\n  await t.test('sub', () => { parse(''); });\n});\nit('empty', function () {});\n",
-        "tests/test_parse.py": "from src.parse import parse\n\n\ndef test_parses_a_row():\n    r = parse(\"a,b\")\n    print(r)\n\n\nclass TestParse:\n    def test_empty(self):\n        parse(\"\")\n",
-        "src/parse.rs": "pub fn parse(s: &str) -> Vec<&str> { s.split(',').collect() }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn parses_a_row() {\n        let r = parse(\"a,b\");\n        println!(\"{r:?}\");\n    }\n\n    #[test]\n    #[ignore]\n    fn empty() {\n        parse(\"\");\n    }\n}\n"
+        "tests/a.test.mjs": "import test from 'node:test';\nimport { parse } from '../src/parse.mjs';\ntest('builds a parser', () => {\n  const p = new Parser();\n  console.log(p);\n});\ntest('parent', async t => {\n  await t.test('sub', () => { console.log(new Parser()); });\n});\nit('empty', function () {});\n",
+        "tests/test_parse.py": "from src.parse import parse\n\n\ndef test_builds_a_parser():\n    p = Parser()\n    print(p)\n\n\nclass TestParse:\n    def test_empty(self):\n        logging.info(Parser())\n",
+        "src/parse.rs": "pub fn parse(s: &str) -> Vec<&str> { s.split(',').collect() }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds_a_parser() {\n        let p = Parser::new();\n        println!(\"{p:?}\");\n    }\n\n    #[test]\n    #[ignore]\n    fn empty() {\n        let _v: Vec<u8> = vec![];\n    }\n}\n"
       },
       "recorded": {
         "head": [
@@ -591,7 +369,7 @@
             "line": 8,
             "column": 5,
             "endLine": 11,
-            "text": "fn parses_a_row() {\n        let r = parse(\"a,b\");\n        println!(\"{r:?}\");\n    }"
+            "text": "fn builds_a_parser() {\n        let p = Parser::new();\n        println!(\"{p:?}\");\n    }"
           },
           {
             "file": "src/parse.rs",
@@ -599,7 +377,7 @@
             "line": 15,
             "column": 5,
             "endLine": 17,
-            "text": "fn empty() {\n        parse(\"\");\n    }"
+            "text": "fn empty() {\n        let _v: Vec<u8> = vec![];\n    }"
           },
           {
             "file": "tests/a.test.mjs",
@@ -607,7 +385,7 @@
             "line": 3,
             "column": 1,
             "endLine": 6,
-            "text": "test('parses a row', () => {\n  const r = parse('a,b');\n  console.log(r);\n})"
+            "text": "test('builds a parser', () => {\n  const p = new Parser();\n  console.log(p);\n})"
           },
           {
             "file": "tests/a.test.mjs",
@@ -615,7 +393,7 @@
             "line": 8,
             "column": 9,
             "endLine": 8,
-            "text": "t.test('sub', () => { parse(''); })"
+            "text": "t.test('sub', () => { console.log(new Parser()); })"
           },
           {
             "file": "tests/a.test.mjs",
@@ -631,7 +409,7 @@
             "line": 4,
             "column": 1,
             "endLine": 6,
-            "text": "def test_parses_a_row():\n    r = parse(\"a,b\")\n    print(r)"
+            "text": "def test_builds_a_parser():\n    p = Parser()\n    print(p)"
           },
           {
             "file": "tests/test_parse.py",
@@ -639,7 +417,7 @@
             "line": 10,
             "column": 5,
             "endLine": 11,
-            "text": "def test_empty(self):\n        parse(\"\")"
+            "text": "def test_empty(self):\n        logging.info(Parser())"
           }
         ],
         "base": []
@@ -647,12 +425,12 @@
     },
     "miss": {
       "base": {
-        "tests/a.test.mjs": "import test from 'node:test';\nimport { parse } from '../src/parse.mjs';\ntest('old smoke', () => { parse('a'); });\n"
+        "tests/a.test.mjs": "import test from 'node:test';\nimport { parse } from '../src/parse.mjs';\ntest('old smoke', () => { console.log(new Parser()); });\n"
       },
       "head": {
-        "tests/a.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { parse } from '../src/parse.mjs';\nimport { runCli } from './helpers/cli.mjs';\n\ntest('old smoke', () => { parse('a'); });\ntest('asserts', () => { assert.deepEqual(parse('a,b'), ['a', 'b']); });\ntest('t.assert', t => { t.assert.equal(parse('').length, 1); });\ntest('named helper', () => { assertRow(parse('a')); });\ntest('plan', t => { t.plan(1); parse('a').forEach(() => t.assert.ok(true)); });\ntest('throws', () => { if (parse('a').length !== 1) throw new Error('one cell'); });\ntest('local helper', () => { roundTrip('a,b'); });\ntest('imported helper', () => { runCli(['parse', 'a']); });\nexport const doc = \"test('x', () => {})\";\nfunction roundTrip(s) { assert.equal(parse(s).join(), s); }\nfunction assertRow(r) { assert.ok(Array.isArray(r)); }\n",
-        "tests/test_parse.py": "import pytest\n\nfrom src.parse import _assert_parsable, parse\nfrom tests.helpers import run_cli\n\n\ndef test_asserts():\n    assert parse(\"a,b\") == [\"a\", \"b\"]\n\n\ndef test_raises():\n    with pytest.raises(ValueError):\n        parse(None)\n\n\ndef test_fixture(parsed):\n    parsed(\"a\")\n\n\ndef test_local_helper():\n    round_trip(\"a,b\")\n\n\ndef test_imported_helper():\n    run_cli(\"parse\", \"a\")\n\n\nclass TestParse:\n    def test_unittest_style(self):\n        self.assertEqual(parse(\"\"), [\"\"])\n\n    def test_method_helper(self):\n        self._round_trip(\"a\")\n\n    def test_private_named_helper(self):\n        _assert_parsable(\"a\")\n\n    def _round_trip(self, s):\n        assert \",\".join(parse(s)) == s\n\n\ndef round_trip(s):\n    assert \",\".join(parse(s)) == s\n\n\ndef helper_not_a_test():\n    parse(\"a\")\n",
-        "src/parse.rs": "pub fn parse(s: &str) -> Vec<&str> { s.split(',').collect() }\npub fn first(s: &str) -> Result<&str, String> { s.split(',').next().ok_or_else(|| s.to_string()) }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn asserts() {\n        assert_eq!(parse(\"a,b\"), vec![\"a\", \"b\"]);\n    }\n\n    #[test]\n    fn unwraps() {\n        first(\"a\").unwrap();\n    }\n\n    #[test]\n    fn question_mark() -> Result<(), String> {\n        first(\"a\")?;\n        Ok(())\n    }\n\n    #[test]\n    #[should_panic]\n    fn panics() {\n        parse_strict(\"\");\n    }\n\n    #[test]\n    // a local helper asserts\n    fn local_helper() {\n        round_trip(\"a,b\");\n    }\n\n    fn round_trip(s: &str) {\n        assert_eq!(parse(s).join(\",\"), s);\n    }\n\n    fn not_a_test() {\n        parse(\"a\");\n    }\n}\n"
+        "tests/a.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { parse } from '../src/parse.mjs';\nimport { runCli } from './helpers/cli.mjs';\n\ntest('old smoke', () => { console.log(new Parser()); });\ntest('asserts', () => { assert.deepEqual(parse('a,b'), ['a', 'b']); });\ntest('t.assert', t => { t.assert.equal(parse('').length, 1); });\ntest('named helper', () => { assertRow(parse('a')); });\ntest('plan', t => { t.plan(1); parse('a').forEach(() => t.assert.ok(true)); });\ntest('throws', () => { if (parse('a').length !== 1) throw new Error('one cell'); });\ntest('local helper', () => { roundTrip('a,b'); });\ntest('imported helper', () => { runCli(['parse', 'a']); });\ntest('does not throw', () => { console.log(parse('a')); });\nexport const doc = \"test('x', () => {})\";\nfunction roundTrip(s) { assert.equal(parse(s).join(), s); }\nfunction assertRow(r) { assert.ok(Array.isArray(r)); }\n",
+        "tests/test_parse.py": "import pytest\n\nfrom src.parse import _assert_parsable, parse\nfrom tests.helpers import run_cli\n\n\ndef test_asserts():\n    assert parse(\"a,b\") == [\"a\", \"b\"]\n\n\ndef test_raises():\n    with pytest.raises(ValueError):\n        parse(None)\n\n\ndef test_fixture(parsed):\n    parsed(\"a\")\n\n\ndef test_local_helper():\n    round_trip(\"a,b\")\n\n\ndef test_imported_helper():\n    run_cli(\"parse\", \"a\")\n\n\ndef test_importable():\n    from src import parse_strict\n\n\ndef test_attribute_resolves(ctx):\n    _ = ctx.rows\n\n\ndef test_does_not_raise():\n    print(parse(\"a\"))\n\n\nclass TestParse:\n    def test_unittest_style(self):\n        self.assertEqual(parse(\"\"), [\"\"])\n\n    def test_method_helper(self):\n        self._round_trip(\"a\")\n\n    def test_private_named_helper(self):\n        _assert_parsable(\"a\")\n\n    def _round_trip(self, s):\n        assert \",\".join(parse(s)) == s\n\n\ndef round_trip(s):\n    assert \",\".join(parse(s)) == s\n\n\ndef helper_not_a_test():\n    parse(\"a\")\n",
+        "src/parse.rs": "pub fn parse(s: &str) -> Vec<&str> { s.split(',').collect() }\npub fn first(s: &str) -> Result<&str, String> { s.split(',').next().ok_or_else(|| s.to_string()) }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn asserts() {\n        assert_eq!(parse(\"a,b\"), vec![\"a\", \"b\"]);\n    }\n\n    #[test]\n    fn unwraps() {\n        first(\"a\").unwrap();\n    }\n\n    #[test]\n    fn question_mark() -> Result<(), String> {\n        first(\"a\")?;\n        Ok(())\n    }\n\n    #[test]\n    #[should_panic]\n    fn panics() {\n        parse_strict(\"\");\n    }\n\n    #[test]\n    // a local helper asserts\n    fn local_helper() {\n        round_trip(\"a,b\");\n    }\n\n    fn round_trip(s: &str) {\n        assert_eq!(parse(s).join(\",\"), s);\n    }\n\n    #[test]\n    fn does_not_panic() {\n        println!(\"{:?}\", parse(\"a\"));\n    }\n\n    fn not_a_test() {\n        parse(\"a\");\n    }\n}\n"
       },
       "recorded": {
         "head": [
@@ -662,7 +440,7 @@
             "line": 6,
             "column": 1,
             "endLine": 6,
-            "text": "test('old smoke', () => { parse('a'); })"
+            "text": "test('old smoke', () => { console.log(new Parser()); })"
           }
         ],
         "base": [
@@ -672,7 +450,7 @@
             "line": 3,
             "column": 1,
             "endLine": 3,
-            "text": "test('old smoke', () => { parse('a'); })"
+            "text": "test('old smoke', () => { console.log(new Parser()); })"
           }
         ]
       }

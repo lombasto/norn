@@ -149,16 +149,27 @@ T4 (a new or changed test with no assertion) and T5 (a test whose every assertio
 `shadow`. A test is a node:test `test` / `it` / `t.test` call with an inline function, a pytest `def test*` (a method too), or a Rust
 `fn` under `#[test]` / `#[tokio::test]` / `#[rstest]`. A test whose match is unchanged from the base is no new finding.
 
-| | counts as an assertion (a call that can fail the test) | a helper the rule cannot see into (silent) |
-|---|---|---|
-| js | a call whose callee names `assert`, `expect`, `should`, `check`, `verify`, `ensure` or `must` (`assert.equal`, `t.assert.ok`, `assertRow`), `t.plan`, `*.fail`, `throw` | a call to a function of the file or to a name imported from a module whose path says `help`, `support`, `fixture`, `common` or `util`; a subtest (`t.test`) |
-| py | `assert`, `raise`, a call named as in js plus `fail`, `raises`, `warns`, `deprecated_call` (`self.assertEqual`, `pytest.raises`, `m.assert_called_once`) | a call to a `def` of the file, to a test argument (a pytest fixture), or to a name imported from such a module or `conftest` |
-| rs | an `assert*!` / `panic!` / `unreachable!` / `todo!` macro, `.unwrap()` / `.expect()` / `_err` forms, `?`, `#[should_panic]`, a call named as in js | a call to a `fn` of the test's own module, or through a `common::` / `helpers::` / `support::` / `fixtures::` / `test_utils::` path |
+T4 reads "a call that can fail the test" as the brief says it (DEC-a-599): any call can throw, raise or panic, so a test whose one
+check is "this does not throw" checks something. T4 fires only on a test with no assertion that calls nothing but print / log and
+constructors.
 
-A helper is recognised by its name (it counts as an assertion) or by where it is defined (silent): a helper the rule does not
-recognise makes it silent, never loud. T5 reads a mock the test made itself: node:test `mock.fn` / `mock.method` (an assertion on it
-reads `<fn>.mock`), `unittest.mock` / `mocker` (its `assert_called*` methods or an `assert` on `called`, `call_count`, `call_args`, ...),
-mockall's `Mock<T>::new()` bound by `let` (an `assert*!` naming it). A mock from a decorator, a hook or a shared variable is no finding.
+| | an assertion | a call or read that can fail the test (T4 silent) | print / log / constructor (T4 still fires) |
+|---|---|---|---|
+| js | a callee naming `assert`, `expect`, `should`, `check`, `verify`, `ensure` or `must` (`assert.equal`, `t.assert.ok`, `assertRow`), `t.plan`, `*.fail`, `throw` | any other call | `console.*`, `new X()` |
+| py | `assert`, `raise`, a call named as in js plus `fail`, `raises`, `warns`, `deprecated_call` (`self.assertEqual`, `pytest.raises`) | any other call, an import, an attribute read | `print`, `logging.*` / `logger.*` / `log.*`, a `Capitalised()` call |
+| rs | an `assert*!` / `panic!` / `unreachable!` / `todo!` macro, `.unwrap()` / `.expect()` / `_err` forms, `?`, `#[should_panic]`, a call named as in js | any other call or macro, a call inside a print macro's arguments | `println!` / `eprintln!` / `print!` / `dbg!` / `format!` / `vec!`, `log` / `tracing` macros, `Type::new()` / `Type::default()` / `Type(..)` |
+
+A helper is recognised by its name (it counts as an assertion); any other helper is a call, so T4 is silent on it, never loud.
+
+T5 reads the test's one mock: node:test `mock.fn`, `unittest.mock` / `mocker` `Mock` / `MagicMock` / `AsyncMock` / `create_autospec`,
+mockall's `Mock<T>::new()`, bound to a name (`const` / `=` / `let`). It fires when every assertion is on that mock (`<fn>.mock` in the
+assertion, its `assert_called*` methods or an `assert` on `called`, `call_count`, `call_args`, ..., an `assert*!` naming it) and the
+mock never reaches other code: it is silent when the mock is an argument of a call, put into an object or struct, assigned, its member
+passed, or when the test makes a second mock (a mock handed to real code makes asserting what it saw a real interaction test). A
+patch (`patch*`, `mock.method`) replaces a dependency of real code, so it is no mock the test made; a mock from a decorator, a fixture,
+a hook or a shared variable is no finding either. A helper call that does not take the mock is silent too (a
+function of the file, a name imported from a `help` / `support` / `fixture` / `common` / `util` / `conftest` module, a test argument,
+a `fn` of the test's module or a `*test*` / `*util*` path).
 
 ## Machine rules
 
