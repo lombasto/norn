@@ -1,7 +1,8 @@
 // META-SLOP-A (REVIEW-FABLE 2.5 "he returns data, Norn writes"): the ONE writer of SloppaChoppa. The checks, the line counts and
 // the sweep return result objects; hostWrite turns them into Norn's files under <state>/slop/:
 //   holds.json   { [branch]: { lane, run, base, head, at, blocks, resumed? } } - a branch with BLOCK findings; the merge waits on it
-//   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends)
+//   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends); a day no daily ran is filled from git ({ loc, filled: true })
+//   landings.jsonl one point per landing on main { sha, day, branch, item, subject, code_net, tests_net, over_cap } (S4: which merge moved it)
 //   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level) } - the door reads it
 //   REPORT.md + report.json - the daily report, its one digest line and the main it read to; daily.started / daily.missed - a daily start, the ones that wrote nothing
 //   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (RM-43: the second voice's precision; the last one counts)
@@ -22,10 +23,13 @@ const holdsFile = state => path.join(slopDir(state), 'holds.json');
 const checksFile = state => path.join(slopDir(state), 'checks.jsonl');
 const ratingsFile = state => path.join(slopDir(state), 'ratings.jsonl');
 const outcomesFile = state => path.join(slopDir(state), 'outcomes.jsonl');
+const landingsFile = state => path.join(slopDir(state), 'landings.jsonl');
 
 export const slopHolds = state => readJ(holdsFile(state), {});
 export const slopReport = state => readJ(path.join(slopDir(state), 'report.json'), null);
 export const slopSeries = state => readJ(path.join(slopDir(state), 'series.json'), { days: {} });
+/** S4: the stored landing points, oldest first */
+export const slopLandings = state => (readText(landingsFile(state)) || '').split('\n').filter(Boolean).map(l => JSON.parse(l));
 /** slop-meter S1: the days that carry a meter, oldest first: [{ day, ...point.meter }] (the band's hysteresis, the strip, the gauge) */
 export const meterSeries = state => Object.entries(slopSeries(state).days).filter(([, p]) => p?.meter).sort(([a], [b]) => (a < b ? -1 : 1)).map(([day, p]) => ({ day, ...p.meter }));
 
@@ -87,7 +91,8 @@ export const revertedAt = (state, branch, head) => slopOutcomes(state).some(o =>
  * The one host write. payload.type:
  *  check  { branch, lane?, run?, base, head, hash (the rule set's), blocks, findings } -> one line in checks.jsonl
  *         (the new findings of every level) + the branch's hold set (blocks) or dropped (none); -> { open, check }
- *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }), main (the sha the landed-unchecked list ran to) } -> the report files
+ *  daily  { day, report (markdown), line (the digest line), point ({ loc, sweep }), fill? ({ day: point } from git: only days with no point), main (the sha the landed-unchecked list ran to) } -> the report files
+ *  landings { points } -> one line per point whose sha is not stored yet in landings.jsonl -> { added }
  *  rating { fp, up (true: the finding is right), by } -> one line in ratings.jsonl; only a stored model finding is rated -> { rating }
  *  outcome { branch, lane?, run?, head (the unfixed head), fix? (the autofix commit), action, findings } -> one line per finding in
  *         outcomes.jsonl; a class this switches off is said ONCE on the digest's slop line (report.json; the next daily replaces it) -> { off }
@@ -113,9 +118,16 @@ export function hostWrite(state, payload) {
     fs.writeFileSync(path.join(dir, 'REPORT.md'), payload.report);
     writeJ(path.join(dir, 'report.json'), { day: payload.day, at: new Date().toISOString(), line: payload.line, main: payload.main ?? null });
     const s = slopSeries(state);
+    for (const [d, p] of Object.entries(payload.fill || {})) s.days[d] ||= p;
     s.days[payload.day] = payload.point;
     writeJ(path.join(dir, 'series.json'), s);
     return { file: path.join(dir, 'REPORT.md') };
+  }
+  if (payload.type === 'landings') {
+    const have = new Set(slopLandings(state).map(p => p.sha)), add = payload.points.filter(p => !have.has(p.sha) && have.add(p.sha));
+    fs.mkdirSync(slopDir(state), { recursive: true });
+    if (add.length) fs.appendFileSync(landingsFile(state), add.map(p => JSON.stringify(p) + '\n').join(''));
+    return { added: add.length };
   }
   if (payload.type === 'rating') {
     if (typeof payload.up !== 'boolean') throw new Error('hostWrite rating: up is true or false');
