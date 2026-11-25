@@ -30,7 +30,7 @@ const COPIED = ['run', 'deliverable'];
 const logsOf = ks => [...new Set(ks.map(k => KINDS[k].file + '.jsonl'))];
 /** what a home branch carries per project: { from: file in the state dir, to: path under <project>/ on home/<id> (and under homes/<h>/) } */
 export const HOME_FILES = [{ from: 'home.json', to: 'home.json' }, ...logsOf(SHARED_KINDS).map(f => ({ from: f, to: f })), { from: 'relay.jsonl', to: 'relay.jsonl' },
-  ...logsOf(COPIED).map(f => ({ from: f, to: `copy/${f}` }))];
+  ...logsOf(COPIED).map(f => ({ from: f, to: `copy/${f}` })), { from: 'seen.json', to: 'seen.json' }];
 const HOME_SPEC = '+refs/heads/home/*:refs/sync/home/*';
 const SEG = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
@@ -70,6 +70,32 @@ function homeWalk(cfg) {
 const same = (a, b) => { const ka = Object.keys(a); return ka.length === Object.keys(b).length && ka.every(k => a[k] === b[k]); };
 // nothing to publish: the walk matches the manifest and its head is pushed, or there is nothing at all
 const idle = (m, files, stat) => (!!m && same(m.files || {}, stat) && m.pushed === m.head) || (!files.size && !m);
+// HOME-MAIL S1 (REPORT 3.1): <project>/seen.json = this home's receipt { polled_at (rounded down to 5 min), held: { h: { log: highest seq } } }
+// of the other homes' shared logs, written by the fetch only when its bytes change. A publish whose only change is a seen.json whose held part
+// is the one last committed (polled_at moved) is a heartbeat: pushed, but it rings no doorbell (the manifest keeps the held part per file).
+const SEEN_LOGS = logsOf(SHARED_KINDS), POLL_ROUND_MS = 5 * 60000;
+const heldOf = abs => { try { return JSON.stringify(JSON.parse(fs.readFileSync(abs, 'utf8')).held ?? null); } catch { return null; } };
+// the last seq of a log copy: a home appends its own log in seq order, so the last line that parses holds the highest
+function lastSeq(f) {
+  let t; try { t = fs.readFileSync(f, 'utf8'); } catch { return null; }
+  const lines = t.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].trim()) continue;
+    try { const s = JSON.parse(lines[i]).seq; if (Number.isInteger(s)) return s; } catch { /* a line that does not parse: the one before */ }
+  }
+  return null;
+}
+function writeSeen(cfg, p, homes, nowMs) {
+  const held = {};
+  for (const h of homes) {
+    const logs = Object.fromEntries(SEEN_LOGS.map(l => [l, lastSeq(path.join(cfg.state_root, p, 'homes', h, l))]).filter(([, s]) => s !== null));
+    if (Object.keys(logs).length) held[h] = logs;
+  }
+  const polled_at = new Date(Math.floor(nowMs / POLL_ROUND_MS) * POLL_ROUND_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const f = path.join(cfg.state_root, p, 'seen.json'), b = JSON.stringify({ polled_at, held }) + '\n';
+  let cur = null; try { cur = fs.readFileSync(f, 'utf8'); } catch { /* no receipt yet */ }
+  if (cur !== b) writeAtomic(f, b);
+}
 const tipOf = (f, ref) => rgit(f, ['rev-parse', '-q', '--verify', `${ref}^{commit}`], { ok: [0, 1] }).out.trim() || null;
 
 // commit the walk's bytes on home/<id>: -> { sha } | { head } (tree unchanged) | { refused }
@@ -94,7 +120,7 @@ function commitHome(cfg, f, ref, head, files) {
 
 /**
  * publishHome(cfg): this home's shared files onto home/<home_id> and a push without force. Never throws. -> { off } | { noop } |
- * { refused: [rel] } | { stopped: why } | { rejected: why } | { sha?, pushed: true } | { sha?, offline: why } | { error }
+ * { refused: [rel] } | { stopped: why } | { rejected: why } | { sha?, pushed: true, heartbeat? } | { sha?, offline: why } | { error }
  */
 export function publishHome(cfg0, o = {}) {
   let cfg; try { cfg = synced(cfg0); } catch (e) { return { error: e.message }; }
@@ -107,19 +133,22 @@ export function publishHome(cfg0, o = {}) {
       if (stopped) return { stopped };
       const m = readJsonS(at(cfg, 'manifest')), { files, stat } = homeWalk(cfg), unchanged = m && same(m.files || {}, stat);
       if (idle(m, files, stat)) return { noop: true };
+      const held = Object.fromEntries([...files].filter(([rel]) => rel.endsWith('/seen.json')).map(([rel, abs]) => [rel, heldOf(abs)]));
+      const changed = Object.keys({ ...stat, ...(m?.files || {}) }).filter(k => m?.files?.[k] !== stat[k]);
+      const beat = !!m && changed.length > 0 && changed.every(k => k.endsWith('/seen.json') && held[k] !== undefined && held[k] === m.held?.[k]);
       let head = m?.head ?? tipOf(f, ref), sha;
       if (!unchanged) {
         const c = commitHome(cfg, f, ref, head, files);
         if (c.refused) return c;
         sha = c.sha; head = c.sha || c.head;
-        writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: m?.pushed ?? null, files: stat }));
+        writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: m?.pushed ?? null, files: stat, held }));
         if (head === m?.pushed) return { noop: true };
       }
       const r = rgit(f, ['push', '-q', '--porcelain', cfg.remote, `${head}:${ref}`], { ok: [0, 1, 128] });
       if (r.status === 0) {
         rgit(f, ['update-ref', `refs/sync/home/${cfg.home_id}`, head]);
-        writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: head, files: stat }));
-        return { ...(sha ? { sha } : {}), pushed: true };
+        writeAtomic(at(cfg, 'manifest'), JSON.stringify({ head, pushed: head, files: stat, held }));
+        return { ...(sha ? { sha } : {}), pushed: true, ...(beat ? { heartbeat: true } : {}) };
       }
       const bad = r.out.split('\n').find(l => l.startsWith('!'));
       if (bad && /rejected|non-fast-forward|fetch first/.test(bad)) {
@@ -196,6 +225,7 @@ export function fetchHomes(cfg0, o = {}) {
       try { const r = relayPass(path.join(cfg.state_root, p), { now: () => new Date(o.now ?? Date.now()) }); relayed.push(...r.relayed); refused.push(...r.refused); }
       catch (e) { logTo(cfg, `relay failed for ${p} (the next pass retries): ${e.message}`); }
     }
+    for (const p of mine) writeSeen(cfg, p, homes, o.now ?? Date.now());
     const gone = mine.flatMap(p => ls(path.join(cfg.state_root, p, 'homes')).filter(d => d.isDirectory() && !tips[d.name]).map(d => `${p}/${d.name}`)).sort();
     writeAtomic(at(cfg, 'fetch'), JSON.stringify({ fetched_at: now, fetch_error: null, failed_at: null, gone }));
     writeAtomic(at(cfg, 'names'), JSON.stringify(homeNames(f)));
@@ -267,7 +297,7 @@ export function syncStatus(cfg0) {
  * doorbell (SPEC 4.3) from a detached child: the run end exits right after this step, and a ring must not hold it (o.publish / o.ring: tests) */
 export function syncStep(cfg, reason, o = {}) {
   const r = (o.publish ?? publishHome)(cfg, o);
-  if (r.pushed && doorbellOf(cfg)) { try { (o.ring ?? ringDetached)(cfg); } catch (e) { logTo(cfg, `doorbell ring not started: ${e.message}`); } }
+  if (r.pushed && !r.heartbeat && doorbellOf(cfg)) { try { (o.ring ?? ringDetached)(cfg); } catch (e) { logTo(cfg, `doorbell ring not started: ${e.message}`); } }
   if (r.noop || r.off) return null;
   if (r.error) return `sync: publish failed (${reason}): ${r.error}`;
   if (r.refused) return `sync: publish refused (secret value in ${r.refused.join(', ')})`;

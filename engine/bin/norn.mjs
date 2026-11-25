@@ -3156,7 +3156,7 @@ function mailCmd(argv, env, out, err) {
     if (sub === 'ack') { ackMail(state, { by, run, id: pos[0] }); out(`${pos[0]} acked`); return 0; }
     const rows = listMail(state, { to: flags.to, open: !!flags.open });
     if (flags.json) out(JSON.stringify(rows, null, 1));
-    else for (const m of rows) out(`${m.id} ${m.state} ${m.from} -> ${m.to}${m.urgent ? ' URGENT' : ''} ${m.subject}`);
+    else for (const m of rows) out(`${m.id} ${m.state} ${m.from} -> ${m.to}${m.urgent ? ' URGENT' : ''} ${m.subject}${m.where !== m.state ? `  (${m.where})` : ''}`);
     return 0;
   } catch (e) {
     // the hook never fails the tool call it follows: its errors go to stderr, exit 0
@@ -3314,7 +3314,7 @@ function syncCmd(argv, env, out, err) {
       const r = publishHome(cfg);
       if (r.error || r.refused || r.stopped || r.rejected) { err('error: ' + (r.error || r.stopped || r.rejected || `refused: a machine.json secret value in ${r.refused.join(', ')}`)); return 1; }
       out(r.noop ? 'nothing to publish' : `published home/${id}${r.sha ? ' ' + r.sha.slice(0, 10) : ''}, ${r.pushed ? 'pushed' : `not pushed (${r.offline}): the next pass retries`}`);
-      return r.pushed ? ringCli(cfg, out).then(() => 0) : 0;   // SPEC 4.3: after each push
+      return r.pushed && !r.heartbeat ? ringCli(cfg, out).then(() => 0) : 0;   // SPEC 4.3: after each push (HOME-MAIL S1: a heartbeat rings no doorbell)
     }
     if (sub === 'ring') return ringCli(cfg, out).then(r => (r.error ? 1 : 0));
     if (sub === 'watch') {   // long-running like norn dash: the same loop the dashboard server runs; Ctrl+C stops it
