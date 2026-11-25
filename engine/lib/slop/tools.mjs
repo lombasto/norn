@@ -2,7 +2,10 @@
 // tools/<set>/ (lint: ESLint; ast: ast-grep, slop-langs SPEC 3.4) (package.json + package-lock.json, a hash for every package), installed with `npm ci --ignore-scripts` once per lock
 // into Norn's own cache (<meta root>/state/tools/<set>/<lock hash>; never a worktree, never imported by the engine) and run from
 // there. The main test suite reads RECORDED tool output (each rule's fixture); `norn slop fixtures` runs the real tools on them.
+// RM-a-69: a pinned SCANNER is a release binary per OS (tools/<set>/manifest.json + lock.json, a sha256 per archive), installed the same
+// way by binHome and run by Norn on the branch's added lines (LS: gitleaks); its SARIF goes to the lint kind's tool sarif.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -54,6 +57,96 @@ export function toolHome(set, env = process.env) {
     try { fs.renameSync(tmp, home); } catch (e) { if (!fs.existsSync(path.join(home, 'node_modules'))) throw e; }   // another check won the race: the same lock
     return home;
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// ---------- RM-a-69: the pinned scanners (a release binary per OS, tools/<set>/manifest.json + lock.json) ----------
+/** the scanners a sarif rule may name in `scan`: Norn runs them on the branch's added lines; their SARIF goes to lang/sarif.mjs */
+export const SCANNERS = { gitleaks: { set: 'gitleaks' } };
+// one file over HTTPS in a child node (fetch follows the release's redirect; the check is synchronous)
+const FETCH = "const [u, f] = process.argv.slice(1); const r = await fetch(u); if (!r.ok) { console.error(`HTTP ${r.status} for ${u}`); process.exit(1); } (await import('node:fs')).writeFileSync(f, Buffer.from(await r.arrayBuffer()));";
+export function fetchFile(url, dest, env = process.env) {
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', FETCH, url, dest], { env, encoding: 'utf8', windowsHide: true, timeout: 600000 });
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`download failed: ${String(r.stderr).trim().split('\n').slice(-1)[0] || `exit ${r.status}`}`);
+}
+/**
+ * The binary of a pinned scanner, installed on first use: <cache>/<set>/<first 12 of lock.json's sha256>/<platform>-<arch>/<bin>.
+ * The archive is downloaded, its sha256 checked against the lock BEFORE it is opened, the binary extracted (Windows' own bsdtar
+ * reads the zip; Git's GNU tar on PATH cannot), all in a fresh folder renamed into place. No pin for this OS, no network or a wrong
+ * checksum throws: the rule could not run (a BLOCK), never a pass. download(url, dest): the fetch (tests hand in a failing one).
+ */
+export function binHome(set, env = process.env, download = (u, d) => fetchFile(u, d, env)) {
+  const src = path.join(TOOL_SETS, set), raw = fs.readFileSync(path.join(src, 'lock.json')), lock = JSON.parse(raw), man = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'), 'utf8'));
+  if (man.version !== lock.version) throw new Error(`tools/${set}: the manifest pins ${man.version}, the lock ${lock.version}`);
+  const key = `${process.platform}-${process.arch}`, a = lock.assets[key];
+  if (!a) throw new Error(`${set} ${lock.version} has no pinned binary for ${key}`);
+  const home = path.join(toolCache(env), set, crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12), key), bin = path.join(home, a.bin);
+  if (fs.existsSync(bin)) return bin;
+  const tmp = `${home}.${process.pid}-${Date.now()}`, arc = path.join(tmp, a.file);
+  fs.mkdirSync(tmp, { recursive: true });
+  try {
+    download(lock.url.split('{version}').join(lock.version).split('{file}').join(a.file), arc);
+    const got = crypto.createHash('sha256').update(fs.readFileSync(arc)).digest('hex');
+    if (got !== a.sha256) throw new Error(`${a.file}: sha256 ${got.slice(0, 12)}, the lock pins ${a.sha256.slice(0, 12)}: not installed`);
+    const tar = process.platform === 'win32' ? path.join(env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    const r = spawnSync(tar, ['-xf', a.file, a.bin], { cwd: tmp, encoding: 'utf8', windowsHide: true, timeout: 120000 });
+    if (r.error) throw r.error;
+    if (r.status !== 0 || !fs.existsSync(path.join(tmp, a.bin))) throw new Error(`${a.file}: tar could not extract ${a.bin}: ${String(r.stderr).trim().split('\n').slice(-1)[0]}`);
+    fs.rmSync(arc); fs.chmodSync(path.join(tmp, a.bin), 0o755);
+    try { fs.renameSync(tmp, home); } catch (e) { if (!fs.existsSync(bin)) throw e; }   // another check won the race: the same lock
+    return bin;
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+const NO_RESULTS = JSON.stringify({ version: '2.1.0', runs: [] });
+/** the added lines of each file of a diff (git diff -U0 base head) -> Map(head path -> Set(line numbers)) */
+function addedLines(dir, base, head) {
+  const out = spawnSync('git', ['-c', 'core.quotepath=off', 'diff', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '-M', base, head], { cwd: dir, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 28 });
+  if (out.status !== 0) throw new Error(`git diff ${base.slice(0, 12)} ${head.slice(0, 12)}: ${String(out.stderr).trim()}`);
+  const by = new Map();
+  let cur = null;
+  for (const l of out.stdout.split('\n')) {
+    if (l.startsWith('+++ ')) { const q = l.slice(4), p = (q.startsWith('"') ? JSON.parse(q) : q).slice(2); cur = q === '/dev/null' ? null : by.set(p, new Set()).get(p); continue; }
+    const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(l);
+    if (h && cur) for (let i = 0, n = h[2] === undefined ? 1 : Number(h[2]); i < n; i++) cur.add(Number(h[1]) + i);
+  }
+  return by;
+}
+/**
+ * gitleaks over the branch's ADDED lines (each touched file at its head path with every other line blanked, so lines keep their
+ * numbers), the base side none (nothing of it is added). The files sit at <tmp>/s/r/<path> and the scan starts at s from an empty
+ * <tmp>: the branch's own .gitleaksignore / .gitleaks.toml are never read, GITLEAKS_* is unset and `gitleaks:allow` is ignored -
+ * a waiver is the way. --redact keeps the secret out of the report; the SARIF handed on keeps per result only its rule, file and
+ * region (no snippet, no fingerprints, a message without the scan folder), so nothing downstream can print the key.
+ */
+function scanRun(rule, side, { dir, texts, env, download }) {
+  if (side === 'base') return NO_RESULTS;
+  const added = addedLines(dir, rule.base, rule.head), bin = binHome(SCANNERS[rule.scan].set, env, download), tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'norn-scan-'));
+  try {
+    let n = 0;
+    for (const [f, text] of texts) {
+      const keep = added.get(f);
+      if (!keep?.size) continue;
+      const p = path.join(tmp, 's', 'r', f);
+      fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text.split('\n').map((l, i) => (keep.has(i + 1) ? l : '')).join('\n')); n++;
+    }
+    if (!n) return NO_RESULTS;
+    const clean = Object.fromEntries(Object.entries(env).filter(([k]) => !/^GITLEAKS_/i.test(k)));
+    const r = spawnSync(bin, ['dir', 's', '--report-format', 'sarif', '--report-path', 'out.sarif', '--no-banner', '--redact', '--ignore-gitleaks-allow', '--exit-code', '0', '--log-level', 'error'],
+      { cwd: tmp, env: clean, encoding: 'utf8', windowsHide: true, timeout: 600000, maxBuffer: 1 << 26 });
+    if (r.error) throw r.error;
+    if (r.status !== 0) throw new Error(`${rule.scan} exited ${r.status}: ${String(r.stderr).replace(/\x1b\[[0-9;]*m/g, '').trim().split('\n').slice(-1)[0]}`);
+    return scrubbed(fs.readFileSync(path.join(tmp, 'out.sarif'), 'utf8'), rule.scan);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+/** a scanner's SARIF -> the same log with each result cut to ruleId, level, a fixed message and its file (repo path) and region */
+function scrubbed(raw, scan) {
+  const log = JSON.parse(raw), rel = u => String(u).replace(/\\/g, '/').replace(/^(?:\.\/)?s\/r\//, '');
+  for (const run of Array.isArray(log?.runs) ? log.runs : []) if (Array.isArray(run.results)) run.results = run.results.map(x => ({
+    ruleId: x.ruleId, ...(x.level ? { level: x.level } : {}), message: { text: `${scan} found a secret (${x.ruleId}); the value is never shown` },
+    locations: (x.locations || []).map(l => { const p = l?.physicalLocation, g = p?.region; return { physicalLocation: { artifactLocation: { uri: encodeURI(rel(p?.artifactLocation?.uri)) },
+      ...(g ? { region: { startLine: g.startLine, ...(g.endLine ? { endLine: g.endLine } : {}) } } : {}) } }; }),
+  }));
+  return JSON.stringify(log);
 }
 
 /** ESLint `-f json` output (paths relative to the run) -> [{ file, rule (PARSE: the file does not parse, SPEC 1.3 F6), line, column, endLine, endColumn, msg }] */
@@ -115,12 +208,12 @@ export function astGrepOut(r, dir, src) {
  * ONE ESLint run of a check: { tool: 'eslint', rules, config (the merge base's repo config text, or null) } over texts,
  * Map(path -> that side's text), or the ONE ast-grep scan of a check: { tool: 'ast-grep', rules: [ast-grep rule data] } over texts;
  * a ruff / clippy rule goes to its language pack's run. A command rule runs once, at check time in dir (its output is the machine's, not a side's: the
- * check keeps only the lines whose source the diff touches). A model read (kind `model`: { id, prompt }) is one call on o.voice in
+ * check keeps only the lines whose source the diff touches). A sarif rule with `scan` runs its pinned scanner (scanRun; o.download: the fetch). A model read (kind `model`: { id, prompt }) is one call on o.voice in
  * its mode, the route voiceRoute picked at the launch; with no route (a door, `norn slop check`) it throws: each model rule is a
  * WARN "could not run" (the voice holds nothing) and reads at the run end. o.used: the project's reads today; at the route's cap it
  * throws too (no call). tool.reads: the calls this tool made (the check record counts them). o.env.
  */
-export function makeTool({ env = process.env, voice = null, used = 0 } = {}) {
+export function makeTool({ env = process.env, voice = null, used = 0, download } = {}) {
   const tool = (rule, side, { dir, texts } = {}) => {
     if (rule.kind === 'model') {
       if (!voice) throw new Error('no second voice routed here: the model rules read at the run end');
@@ -133,6 +226,7 @@ export function makeTool({ env = process.env, voice = null, used = 0 } = {}) {
       if (r.error) throw r.error;
       return r.stdout;
     }
+    if (rule.tool === 'sarif' && rule.scan) return scanRun(rule, side, { dir, texts, env, download });
     if (PROJECT_TOOLS[rule.tool]) return PROJECT_TOOLS[rule.tool].run(rule, side, { dir, texts, env });
     const t = TOOLS[rule.tool];
     if (!t) throw new Error(`${rule.id}: unknown tool ${rule.tool}`);
