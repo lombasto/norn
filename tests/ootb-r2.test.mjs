@@ -11,6 +11,8 @@ import { rustReady } from './helpers/rust.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META = path.join(HERE, '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';
@@ -18,7 +20,6 @@ const GIT_DIR = path.dirname(which('git'));
 
 /** a fresh machine: temp META_ROOT / HOME / config dir, a placeholder claude on PATH (+ git, node), no META_* inherited */
 function sandbox(extra = {}) {
-  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-ootb-r2-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });

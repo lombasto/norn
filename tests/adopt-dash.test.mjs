@@ -19,6 +19,8 @@ import { renderTab, loadTab, stripCards } from '../engine/dash/ui.mjs';
 import { renderAdopt, adoptStep, ADOPT_STEPS } from '../engine/dash/adopt.mjs';
 import { proposalOf } from '../engine/lib/adopt.mjs';
 
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
+
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';
 const GIT_DIR = path.dirname(which('git'));
@@ -28,7 +30,6 @@ const FILES = { 'package.json': JSON.stringify({ name: 'tide', scripts: { test: 
   'ROADMAP.md': '# Roadmap\n\n## Sync\n- [IN PROGRESS] Offline sync (branch feat/sync)\n- [ ] Retry queue\n\n## Now\n- [ ] Export to CSV\n' };
 
 function sandbox() {
-  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-adopt-dash-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });

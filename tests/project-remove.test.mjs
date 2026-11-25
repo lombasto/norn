@@ -14,13 +14,14 @@ import { projectRemove } from '../engine/lib/setup.mjs';
 import { ROLE_AGENTS } from '../engine/lib/policy.mjs';
 import { ADAPTERS } from '../engine/lib/sched/index.mjs';
 
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
+
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';
 const GIT_DIR = path.dirname(which('git'));
 const fwd = p => p.split(path.sep).join('/');
 
 function sandbox() {
-  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-prm-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg') };
   for (const x of [d.root, d.home, d.bin, d.cfg]) fs.mkdirSync(x, { recursive: true });

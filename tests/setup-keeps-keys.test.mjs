@@ -9,6 +9,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { updateMachine } from '../engine/lib/config.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
+
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';

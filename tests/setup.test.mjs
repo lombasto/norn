@@ -14,12 +14,13 @@ import { policyLine } from '../engine/lib/tick.mjs';
 import { generatedLines, REQUIRED_CAPS, WORK_CLASSES, BASIC_KEYS, STARTER_CAPS, ROLE_AGENTS, settingsView } from '../engine/lib/policy.mjs';
 import { loadProfiles, getProfile, profileBudget, profilePolicy, profileChanges, COSTS } from '../engine/lib/profiles.mjs';
 
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
+
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';
 const fwd = p => p.replace(/\\/g, '/');
 
 function sandbox({ claude = true, git = true } = {}) {
-  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-setup-');
   const dirs = { root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
