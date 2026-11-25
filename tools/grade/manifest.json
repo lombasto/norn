@@ -1,0 +1,4 @@
+{
+  "description": "The Python the code graph grader py_find.py runs on (stdlib only: importlib.machinery.PathFinder, ast). uv installs and runs it: uv run --no-project --python <python> python py_find.py.",
+  "python": "3.13"
+}
