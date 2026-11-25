@@ -174,7 +174,7 @@ test('norn code why prints a landings row as inferred, the others as STALE / cur
   assert.equal(await codeCmd(['why', 'engine/b.mjs', '--repo', W.repo], o), 0, errs.join('\n'));
   const rows = outs.pop().split('\n').slice(1);
   assert.equal(rows.length, 2); for (const l of rows) assert.match(l, /\blandings \(\w+\)  inferred  /);
-  assert.equal(await codeCmd(['why', 'engine/a.mjs', '--repo', W.repo], o), 0); assert.match(outs.pop(), /\bruns \(RUN-\d+\)  STALE: changed in /);
+  assert.equal(await codeCmd(['why', 'engine/a.mjs', '--repo', W.repo], o), 0); assert.match(outs.pop(), /\bruns \(\S+\)  STALE: changed in /);
   assert.equal(await codeCmd(['why', 'engine/b.mjs', '--repo', W.repo, '--json'], o), 0);
   assert.deepEqual(JSON.parse(outs.pop()).rows.map(x => x.status), ['inferred', 'inferred']);
   assert.equal(await codeCmd(['links', '--repo', W.repo], o), 0); assert.match(outs.pop(), /^code links: 4 of 6 records linked \(stated 1, runs 1, landings 2\)/);

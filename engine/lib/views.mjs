@@ -293,5 +293,7 @@ export function renderDigest(d, { level = 2 } = {}) {
   if (s.lanes) sec('13 Lanes nothing acts on (act this pass)', s.lanes, r => `- ${r.id} ${r.rule}${r.run ? ' (' + r.run + ')' : ''}: ${r.why}`);
   // HOME-MAIL S2: the controller's unacked mail; the row leaves at the ack (CHECKIN.md: a check-in takes it past policy.mail.checkin_take_min)
   if (s.mail) sec(`14 Mail for ${s.mail[0].to}`, s.mail, r => `- ${r.id} ${r.state}${r.urgent ? ' URGENT' : ''} from ${r.from} (${r.age_min} min): ${r.subject} - ${r.state === 'queued' ? 'norn mail check' : `norn mail ack ${r.id}`}`);
+  // RM-a-58: a decision whose governed path (a stated / runs link) changed on main in the window; the row leaves with the window
+  if (s.stale_decisions) sec('15 Decisions gone stale (a governed path changed on main since)', s.stale_decisions, r => `- ${r.id} stale: ${r.path} changed in ${r.sha} (${r.age_h} h ago): ${r.title}`);
   return L.join('\n') + '\n';
 }
