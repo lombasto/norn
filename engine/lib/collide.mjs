@@ -345,7 +345,7 @@ export const namesDropped = (me, dropped) => dropped.filter(f => `${me.tests ?? 
  *  parts of its own; an empty fold (no commits of its own, no live run) needs only the check-in for every kind on the menu (4A.3) */
 export function foldRefusal({ role, kind, grade = null, lane, into, homes = [], leads = [], commits = 0, live = null, keepArchived = false, col = 'COL-n', policy } = {}) {
   if (new Set(homes.filter(Boolean)).size > 1) return `lanes of two homes (${homes.join(', ')}): a home cannot fold another home's lane - wait, narrow or allow`;
-  if (keepArchived) return `lane ${into} is archived: unarchive it first (controller or owner), or fold into a live lane`;
+  if (keepArchived) return `lane ${into} is archived: unarchive it first (controller or owner), or fold it into a live lane`;
   if (leads.length) return `lane ${lane} leads parts of its own (${leads.join(', ')}): fold or re-link them first`;
   if (!applyNeed('fold', kind, grade, policy)) return applyRefusal(role, 'fold', kind, grade, policy);
   if (role === 'checkin' && (commits || live)) return `a check-in folds only an empty lane: lane ${lane} has ${live ? `a live run ${live}` : `${commits} commit${commits === 1 ? '' : 's'} of its own`} - ask the controller (norn collide ask ${col} --want fold)`;

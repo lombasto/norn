@@ -22,7 +22,6 @@
 //            the fold is pending and foldPass (the tick) applies it when that run ends. No branch, worktree, source file or run is touched.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn, homeOfId, copyItems, RecordError, laneId } from './records.mjs';
 import { makeEval } from './after.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
@@ -35,6 +34,9 @@ import { notesDirOf } from './laneout.mjs';
 import { briefObjective } from './purpose.mjs';
 import { loadRoadmap, setLink } from './roadmap.mjs';
 import { gitOut, lines } from './gitfacts.mjs';
+import { sha } from './views.mjs';
+import { runsOf } from './delegate.mjs';
+import { fwd } from './config.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
 const H = 3600e3, D = 24 * H;
@@ -235,17 +237,14 @@ export function pathWords(x, now = Date.now()) {
 }
 
 // ---------- lane-collide S2b: fold (SPEC 4A.4 fold, steps 1 to 6 and the undo) ----------
-const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 // lane park / unpark are the check-in's and the controller's events (records.mjs KINDS.lane): an owner's fold writes them as the controller's step
 const ckRole = by => (['checkin', 'controller'].includes(by) ? by : 'controller');
-const runsIn = state => fold(readEvents(recordsFile(state, 'run'))).items;
 const laneWork = (runs, lane) => Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.role !== 'helper' && r.data.kind !== 'checkin').sort((a, b) => runNum(a.id) - runNum(b.id));
 const git1 = (wt, args) => (wt && fs.existsSync(wt) ? gitOut(wt, args) : null);
-const slash = p => String(p).split(path.sep).join('/');
 /** the facts a fold of lane `lane` into `into` reads: B's live run, its newest worktree, branch, tip and commits not on main (git log
  *  --oneline), the lanes that are declared parts of B, whether `into` is archived, B's queued runs, the kept lane's worktree and notes */
 export function foldFacts(state, { lane, into, repo = null, main = 'main', remote = 'origin' }) {
-  const runs = runsIn(state), mine = laneWork(runs, lane), keep = laneWork(runs, into), st = loadState(state);
+  const runs = runsOf(state), mine = laneWork(runs, lane), keep = laneWork(runs, into), st = loadState(state);
   const wt = mine.filter(r => r.data.worktree).at(-1)?.data.worktree ?? null, at = repo || (wt && fs.existsSync(wt) ? wt : null), ref = at ? mainRef(at, { main, remote }) : null;
   const commits = ref?.sha ? lines(git1(wt, ['log', '--oneline', `${ref.sha}..HEAD`])) : [];
   const leads = [...new Set([...Object.values(rulingsOf(casesOf(state))).filter(r => r.part?.of === lane).map(r => r.part.lane),
@@ -262,7 +261,7 @@ function foldSources(mine) {
     const xs = st.isDirectory() ? fs.readdirSync(n).filter(f => /\.md$/i.test(f) && !/^FOLDED-/.test(f)).sort().map(f => path.join(n, f)) : [n];
     for (const f of xs) if (!out.some(x => path.resolve(x.path) === path.resolve(f))) out.push({ kind: 'notes', path: f });
   }
-  return out.map(x => { const buf = fs.readFileSync(x.path); return { ...x, path: slash(x.path), text: buf.toString('utf8'), sha256: sha256(buf) }; });
+  return out.map(x => { const buf = fs.readFileSync(x.path); return { ...x, path: fwd(x.path), text: buf.toString('utf8'), sha256: sha(buf) }; });
 }
 /**
  * steps 1 to 5 of a fold of lane B (f.lane) into f.into by role `by` -> the action's args, each step's before (the runs moved, the links
@@ -288,7 +287,7 @@ export function applyFold(state, { col, by, why, facts: f, now = new Date() }) {
     links: items.map(([id, it]) => `${id} ${it.title ?? ''} (${it.state})`), sources });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, text);
-  const back = foldedSources(fs.readFileSync(file, 'utf8')), bad = sources.find(s => !back.some(b => b.path === s.path && sha256(Buffer.from(b.text, 'utf8')) === s.sha256));
+  const back = foldedSources(fs.readFileSync(file, 'utf8')), bad = sources.find(s => !back.some(b => b.path === s.path && sha(Buffer.from(b.text, 'utf8')) === s.sha256));
   if (bad) { fs.rmSync(file, { force: true }); throw new RunRefused(`${bad.path} cannot be copied byte for byte (not UTF-8?): nothing was folded`, 3); }
   // step 1: B's queued runs again on lane K, same brief and stage; each old one withdrawn naming its successor (its spec stays on disk)
   const moved = [], reason = `folded into ${K} (${col})`;
@@ -306,7 +305,7 @@ export function applyFold(state, { col, by, why, facts: f, now = new Date() }) {
   let after = null, refusedWhy = null;
   if (!f.commits.length && was !== 'archived') try { record(state, { kind: 'lane', ev: 'archive', id: lid, by, data: { why: reason, rule: 'fold' } }); after = 'archived'; } catch (e) { if (!(e instanceof RecordError)) throw e; refusedWhy = e.message; }
   if (!after && (was ?? 'active') === 'active') { record(state, { kind: 'lane', ev: 'park', id: lid, by: ckRole(by), data: { why: reason } }); after = 'parked'; }
-  return { lane: B, into: K, since_run, file: slash(file), sources: sources.map(({ text: _t, ...s }) => s), moved, linked, lane_before: was, lane_after: after,
+  return { lane: B, into: K, since_run, file: fwd(file), sources: sources.map(({ text: _t, ...s }) => s), moved, linked, lane_before: was, lane_after: after,
     ...(refusedWhy ? { archive_refused: refusedWhy.slice(0, 300) } : {}), branch: f.branch, tip: f.tip, commits_n: f.commits.length, commits: f.commits.slice(0, 20), keep_worktree: f.keepWt };
 }
 /** SPEC 4A.4 undo of an applied fold (its args a): B unarchived or unparked, the moved runs that have not started withdrawn and B's own
@@ -319,7 +318,7 @@ export function undoFold(state, a, { col, by }) {
     record(state, { kind: 'lane', ev: 'unarchive', id: lid, by, data: { why: `fold undone (${col})` } });
   }
   if (a.lane_after === 'parked' && now === 'parked') record(state, { kind: 'lane', ev: 'unpark', id: lid, by: ckRole(by), data: { why: `fold undone (${col})` } });
-  const runs = runsIn(state);
+  const runs = runsOf(state);
   for (const m of a.moved || []) {
     if (runs[m.to]?.state !== 'queued') { out.push(`${m.to} (from ${m.from}) is ${runs[m.to]?.state ?? 'gone'} on lane ${a.into}: it stays`); continue; }
     record(state, { kind: 'run', ev: 'withdraw', id: m.to, by, data: { why: `fold undone (${col})` } });

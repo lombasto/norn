@@ -195,7 +195,7 @@ export const caseAction = (state, id, action, { by = 'launcher', auto = by === '
 export const foldsOf = cases => Object.values(cases).flatMap(c => actionsOf(c).filter(a => a.action === 'fold').map(a => ({ col: c.id, i: a.i, at: a.at, by: a.by, why: a.why ?? null, undone: a.undone, ...a.args })));
 /** the pending folds the tick has still to apply: not undone, no applied fold names them */
 export const pendingFolds = cases => { const fs2 = foldsOf(cases); return fs2.filter(f => f.pending && !f.undone && !fs2.some(g => g.col === f.col && g.pending_of === f.i)); };
-/** the prompt lines of a start on lane `lane` (SPEC 4A.4 fold step 4): one per applied fold into it, until a run there that started after
+/** the prompt lines of a start on lane `lane` (SPEC 4A.4 fold step 4): one per applied fold of a lane into it, until a run there that started after
  *  the fold (a run id above the fold's since_run) has ended DONE */
 export function foldLines(state, lane, { cases = casesOf(state), runs = fold(readEvents(recordsFile(state, 'run'))).items } = {}) {
   const done = f => Object.values(runs).some(r => r.kind === 'run' && r.data?.lane === lane && idNum(r.id) > (f.since_run ?? 0) && r.state === 'exited' && (r.end?.outcome ?? 'done') === 'done');
