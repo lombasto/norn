@@ -6,6 +6,7 @@
 // RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
 // prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
 // `norn code suspects` ranks the recent landings against a trace or symptom words (codesuspects.mjs, RM-a-61).
+// `norn code risk <base>..<head>` ranks a diff against the last 100 landings (coderisk.mjs, RM-a-68).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -19,6 +20,7 @@ import { graphAt, graphStatus, dependencies, dependents, cycles, reach, ALL_KIND
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
+import { codeRisk } from './coderisk.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
@@ -31,16 +33,18 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)\n'
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
   + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)\n'
+  + 'usage: norn code risk <base>..<head> [--project P | --state D] [--repo DIR] [--json]   (where the diff stands against the last 100 landings before '
+  + 'its merge base: a percentile, with the numbers that put it there; engine/lib/slop/rules/README.md)\n'
   + 'usage: norn code graph index|deps|dependents|cycles|reach|status ...   (the code graph: the file imports of JS / TS, Python and Rust; '
   + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = verb === 'signals' || verb === 'suspects' ? { _: [] } : {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = ['signals', 'suspects', 'risk'].includes(verb) ? { _: [] } : {};
   for (let i = 0; i < argv.length; i++) {
-    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words
+    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words; risk: the range
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
     if (!s && verb === 'why' && f.file === undefined && !argv[i].startsWith('--')) { f.file = argv[i]; continue; }   // why's one operand
     if (!s) throw new Error(`unexpected ${argv[i]}`);
@@ -62,6 +66,7 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'signals') return signalsCmd(f, w.state, { out, err });
   if (verb === 'links' || verb === 'why') return linksCmd(verb, f, w, dir, { out, err, now });
   if (verb === 'suspects') return suspectsCmd(f, w.state, dir, { out, err, now });
+  if (verb === 'risk') return riskCmd(f, w.state, dir, { out, err });
   let ix, sig;
   // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
   try { ix = codeIndex(dir, { now: now ?? Date.now(), graph: graphAt({ state: w.state, repo: dir }) }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
@@ -120,6 +125,19 @@ function suspectsCmd(f, state, dir, { out, err, now }) {
   try { r = suspects({ dir, state, words: f._.join(' '), trace: f.trace ?? null, since: f.since, top, now: now ?? Date.now() }); } catch (e) { err(`error: code suspects: ${String(e.stderr || e.message).trim()}`); return 2; }
   if (f.json) out(JSON.stringify(r)); else suspectsLines(r).forEach(l => out(l));
   return r.found ? 0 : 1;
+}
+/** `norn code risk <base>..<head>`: coderisk.mjs's rank -> exit code (0 also when n/a: the line says why; 2 = no such range) */
+function riskCmd(f, state, dir, { out, err }) {
+  const m = f._.length === 1 && /^(.+?)\.\.(.+)$/.exec(f._[0]);
+  if (!m) { err('error: code risk: one range <base>..<head>'); err(CODE_USAGE); return 2; }
+  let r;
+  try { r = codeRisk({ dir, state, base: m[1], head: m[2] }); } catch (e) { err(`error: code risk: ${String(e.stderr || e.message).trim().split('\n')[0]}`); return 2; }
+  if (f.json) { out(JSON.stringify(r)); return 0; }
+  out(r.line);
+  const n = r.numbers;
+  out(`  ${n.files} files, ${n.lines} lines${n.fixes === undefined ? '' : `; fixes 365 d ${n.fixes ?? 'n/a'}, top fix first ${n.fix_first ?? 'n/a'}, companions left out ${n.companions}`}`);
+  for (const x of r.left_out) out(`  left out: ${x.partner} (changes with ${x.file}: ${x.shared} of ${x.landings} landings)`);
+  return 0;
 }
 /** one file's signals in words: the rank line, the fixes line, the partners line */
 function fileLines(file, s, na) {
