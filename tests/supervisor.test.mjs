@@ -363,32 +363,29 @@ const noCargo = fn => {
   const hasCargo = dir => ['cargo', 'cargo.exe'].some(n => fs.existsSync(path.join(dir.replace(/"/g, ''), n)));
   try { process.env.PATH = old.split(sep).filter(x => x && !hasCargo(x)).join(sep); return fn(); } finally { process.env.PATH = old; }
 };
-test('run start: this engine's own Rust part that cannot be had = stopped on ONE reason, no executor', async () => {
+test('run start: this engine\'s own Rust part that cannot be had = stopped on ONE reason, no executor', async () => {
   const d = sandbox(), eng = path.join(d.t, 'copy', 'engine');
   fs.cpSync(path.join(import.meta.dirname, '..', 'engine'), eng, { recursive: true, filter: f => path.basename(f) !== 'target' });
   const { startRun: startCopy } = await import(pathToFileURL(path.join(eng, 'lib', 'runs.mjs')).href);
   const id = noCargo(() => startCopy({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt, notes: d.notes, hbMs: 150, staleMs: 3000, mail_hook: true,
-    policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } }, budget: {}, brief: d.brief('mode: done
-') }).run);
+    policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } }, budget: {}, brief: d.brief('mode: done\n') }).run);
   const e = (await d.end(id)).data;
   assert.equal(e.outcome, 'stopped');
-  assert.match(e.why, /^the run did not start: norn-hook (the per-tool-call hooks of every claude run) cannot build: cargo is not on PATH (install Rust: https://rustup.rs); build command: cargo build --release --locked /);
+  assert.match(e.why, /^the run did not start: norn-hook \(the per-tool-call hooks of every claude run\) cannot build: cargo is not on PATH \(install Rust: https:\/\/rustup\.rs\); build command: cargo build --release --locked /);
   assert.equal(e.rust, e.why.replace('the run did not start: ', ''));
   assert.equal(e.pid, null, 'the executor was never spawned');
 });
-test('run start: a lane worktree's part behind main's contract is logged and the run starts; its Done check names that part', async () => {
+test('run start: a lane worktree\'s part behind main\'s contract is logged and the run starts; its Done check names that part', async () => {
   const { partsOf, srcOf, binOf } = await import('../engine/lib/rustbin.mjs');
   const d = sandbox();
   repo(d.wt);
   const src = srcOf('hook', path.join(d.wt, 'engine'));
   fs.cpSync(srcOf('hook'), src, { recursive: true, filter: f => path.basename(f) !== 'target' });
-  fs.writeFileSync(path.join(src, 'OLDER.txt'), 'a branch behind main
-');
+  fs.writeFileSync(path.join(src, 'OLDER.txt'), 'a branch behind main\n');
   const [part] = partsOf({ parts: [], worktree: d.wt });
   assert.notEqual(path.basename(part.exe), path.basename(binOf('hook')), 'the worktree part has other sources');
   fs.mkdirSync(path.dirname(part.exe), { recursive: true }); fs.copyFileSync(binOf('hook'), part.exe);   // its own temp store, never the shared one
-  const id = noCargo(() => d.run('mode: done
-', { policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } }, dod: { ready: { scope: ['**'], tests: '`node -e 0`' } }, dodOf: 'RUN-0' }));
+  const id = noCargo(() => d.run('mode: done\n', { policy: { auto_resume_max: 0, trigger_on_exit: false, slop: { enabled: false } }, dod: { ready: { scope: ['**'], tests: '`node -e 0`' } }, dodOf: 'RUN-0' }));
   const e = (await d.end(id)).data;
   assert.ok(Number.isInteger(e.pid), `the executor ran: ${JSON.stringify(e)}`);
   assert.equal(e.rust, undefined, 'the worktree part is no start reason');
