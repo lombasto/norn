@@ -100,7 +100,7 @@
                             {
                               "has": {
                                 "field": "function",
-                                "regex": "(?:^|[.)])(?:assert|expect|should|check|verify|ensure|must)\\w*(?:$|[.(])"
+                                "regex": "(?:^|[.)])_*(?:assert|expect|should|check|verify|ensure|must)\\w*(?:$|[.(])"
                               }
                             },
                             {
@@ -386,7 +386,7 @@
                           {
                             "has": {
                               "field": "function",
-                              "regex": "(?:^|\\.)(?:assert|expect|should|check|verify|ensure|must|fail|raises|warns|deprecated_call)\\w*$"
+                              "regex": "(?:^|\\.)_*(?:assert|expect|should|check|verify|ensure|must|fail|raises|warns|deprecated_call)\\w*$"
                             }
                           },
                           {
@@ -394,6 +394,50 @@
                               "has": {
                                 "field": "function",
                                 "regex": "^self\\.assert\\w+$|\\.assert_(?:called|not_called|any_call|has_calls|awaited|not_awaited|has_awaits|any_await)\\w*$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "kind": "attribute",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "object",
+                                    "regex": "^(?:self|cls)$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "attribute",
+                                    "pattern": "$F"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "module",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "function_definition",
+                                "has": {
+                                  "field": "name",
+                                  "pattern": "$F"
+                                }
                               }
                             }
                           }
@@ -624,7 +668,7 @@
                         "kind": "call_expression",
                         "has": {
                           "field": "function",
-                          "regex": "(?:^|::|\\.)(?:assert|expect|should|check|verify|ensure|must)\\w*$"
+                          "regex": "(?:^|::|\\.)_*(?:assert|expect|should|check|verify|ensure|must)\\w*$"
                         },
                         "not": {
                           "has": {
@@ -694,7 +738,7 @@
                         "kind": "call_expression",
                         "has": {
                           "field": "function",
-                          "regex": "(?:^|::)(?:common|helpers?|support|fixtures?|test_?utils?)::"
+                          "regex": "(?:^|::)\\w*(?:tests?|helpers?|support|fixtures?|common|utils?)\\w*::"
                         }
                       }
                     }

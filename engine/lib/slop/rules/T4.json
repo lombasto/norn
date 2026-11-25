@@ -53,7 +53,7 @@
                           "kind": "call_expression",
                           "has": {
                             "field": "function",
-                            "regex": "(?:^|[.)])(?:assert|expect|should|check|verify|ensure|must)\\w*(?:$|[.(])"
+                            "regex": "(?:^|[.)])_*(?:assert|expect|should|check|verify|ensure|must)\\w*(?:$|[.(])"
                           }
                         }
                       }
@@ -256,8 +256,52 @@
                         "kind": "call",
                         "has": {
                           "field": "function",
-                          "regex": "(?:^|\\.)(?:assert|expect|should|check|verify|ensure|must|fail|raises|warns|deprecated_call)\\w*$"
+                          "regex": "(?:^|\\.)_*(?:assert|expect|should|check|verify|ensure|must|fail|raises|warns|deprecated_call)\\w*$"
                         }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "function",
+                              "kind": "attribute",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "object",
+                                    "regex": "^(?:self|cls)$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "attribute",
+                                    "pattern": "$F"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "module",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "function_definition",
+                                "has": {
+                                  "field": "name",
+                                  "pattern": "$F"
+                                }
+                              }
+                            }
+                          }
+                        ]
                       }
                     }
                   },
@@ -463,7 +507,7 @@
                         "kind": "call_expression",
                         "has": {
                           "field": "function",
-                          "regex": "(?:^|::|\\.)(?:assert|expect|should|check|verify|ensure|must)\\w*$"
+                          "regex": "(?:^|::|\\.)_*(?:assert|expect|should|check|verify|ensure|must)\\w*$"
                         }
                       }
                     }
@@ -515,7 +559,7 @@
                         "kind": "call_expression",
                         "has": {
                           "field": "function",
-                          "regex": "(?:^|::)(?:common|helpers?|support|fixtures?|test_?utils?)::"
+                          "regex": "(?:^|::)\\w*(?:tests?|helpers?|support|fixtures?|common|utils?)\\w*::"
                         }
                       }
                     }
@@ -607,7 +651,7 @@
       },
       "head": {
         "tests/a.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { parse } from '../src/parse.mjs';\nimport { runCli } from './helpers/cli.mjs';\n\ntest('old smoke', () => { parse('a'); });\ntest('asserts', () => { assert.deepEqual(parse('a,b'), ['a', 'b']); });\ntest('t.assert', t => { t.assert.equal(parse('').length, 1); });\ntest('named helper', () => { assertRow(parse('a')); });\ntest('plan', t => { t.plan(1); parse('a').forEach(() => t.assert.ok(true)); });\ntest('throws', () => { if (parse('a').length !== 1) throw new Error('one cell'); });\ntest('local helper', () => { roundTrip('a,b'); });\ntest('imported helper', () => { runCli(['parse', 'a']); });\nexport const doc = \"test('x', () => {})\";\nfunction roundTrip(s) { assert.equal(parse(s).join(), s); }\nfunction assertRow(r) { assert.ok(Array.isArray(r)); }\n",
-        "tests/test_parse.py": "import pytest\n\nfrom src.parse import parse\nfrom tests.helpers import run_cli\n\n\ndef test_asserts():\n    assert parse(\"a,b\") == [\"a\", \"b\"]\n\n\ndef test_raises():\n    with pytest.raises(ValueError):\n        parse(None)\n\n\ndef test_fixture(parsed):\n    parsed(\"a\")\n\n\ndef test_local_helper():\n    round_trip(\"a,b\")\n\n\ndef test_imported_helper():\n    run_cli(\"parse\", \"a\")\n\n\nclass TestParse:\n    def test_unittest_style(self):\n        self.assertEqual(parse(\"\"), [\"\"])\n\n\ndef round_trip(s):\n    assert \",\".join(parse(s)) == s\n\n\ndef helper_not_a_test():\n    parse(\"a\")\n",
+        "tests/test_parse.py": "import pytest\n\nfrom src.parse import _assert_parsable, parse\nfrom tests.helpers import run_cli\n\n\ndef test_asserts():\n    assert parse(\"a,b\") == [\"a\", \"b\"]\n\n\ndef test_raises():\n    with pytest.raises(ValueError):\n        parse(None)\n\n\ndef test_fixture(parsed):\n    parsed(\"a\")\n\n\ndef test_local_helper():\n    round_trip(\"a,b\")\n\n\ndef test_imported_helper():\n    run_cli(\"parse\", \"a\")\n\n\nclass TestParse:\n    def test_unittest_style(self):\n        self.assertEqual(parse(\"\"), [\"\"])\n\n    def test_method_helper(self):\n        self._round_trip(\"a\")\n\n    def test_private_named_helper(self):\n        _assert_parsable(\"a\")\n\n    def _round_trip(self, s):\n        assert \",\".join(parse(s)) == s\n\n\ndef round_trip(s):\n    assert \",\".join(parse(s)) == s\n\n\ndef helper_not_a_test():\n    parse(\"a\")\n",
         "src/parse.rs": "pub fn parse(s: &str) -> Vec<&str> { s.split(',').collect() }\npub fn first(s: &str) -> Result<&str, String> { s.split(',').next().ok_or_else(|| s.to_string()) }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn asserts() {\n        assert_eq!(parse(\"a,b\"), vec![\"a\", \"b\"]);\n    }\n\n    #[test]\n    fn unwraps() {\n        first(\"a\").unwrap();\n    }\n\n    #[test]\n    fn question_mark() -> Result<(), String> {\n        first(\"a\")?;\n        Ok(())\n    }\n\n    #[test]\n    #[should_panic]\n    fn panics() {\n        parse_strict(\"\");\n    }\n\n    #[test]\n    // a local helper asserts\n    fn local_helper() {\n        round_trip(\"a,b\");\n    }\n\n    fn round_trip(s: &str) {\n        assert_eq!(parse(s).join(\",\"), s);\n    }\n\n    fn not_a_test() {\n        parse(\"a\");\n    }\n}\n"
       },
       "recorded": {
