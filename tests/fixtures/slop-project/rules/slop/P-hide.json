@@ -2,7 +2,7 @@
   "id": "P-hide",
   "level": "BLOCK",
   "kind": "ast",
-  "tool": "eslint",
+  "tool": "ast-grep",
   "title": "a new child-process call without windowsHide",
   "how": "a spawn / spawnSync / execFile / execFileSync / exec / execSync call (bare, or child_process.x without exec: RegExp has one) with no windowsHide property in its arguments. Each such call can flash a console window on Windows; the flag is ignored elsewhere. Options passed as a variable or a spread need the flag written in the call",
   "explain": {
@@ -10,104 +10,75 @@
     "why": "On Windows, each such call can flash a console window in front of the user.",
     "fix": "Add windowsHide: true to the call's options."
   },
-  "files": [
-    "engine/**",
-    "tests/**"
-  ],
-  "exclude": [
-    "**/vendor/**",
-    "tests/fixtures/**"
-  ],
-  "selectors": [
-    {
-      "selector": "CallExpression[callee.name=/^(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)$/]:not(:has(Property[key.name='windowsHide']))",
-      "message": "a child process without windowsHide: add windowsHide: true to its options"
-    },
-    {
-      "selector": "CallExpression[callee.property.name=/^(?:spawn|spawnSync|execFile|execFileSync|execSync)$/]:not(:has(Property[key.name='windowsHide']))",
-      "message": "a child process without windowsHide: add windowsHide: true to its options"
-    }
-  ],
+  "files": ["engine/**","tests/**"],
+  "exclude": ["**/vendor/**","tests/fixtures/**"],
+  "match": {
+    "js": [
+      {
+        "rule": {
+          "kind": "call_expression",
+          "has": {
+            "field": "function",
+            "regex": "^(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)$|\\.(?:spawn|spawnSync|execFile|execFileSync|execSync)$"
+          },
+          "not": {"has":{"kind":"pair","has":{"field":"key","regex":"^windowsHide$"},"stopBy":"end"}}
+        },
+        "message": "a child process without windowsHide: add windowsHide: true to its options"
+      }
+    ]
+  },
   "fixture": {
     "hit": {
-      "base": {
-        "engine/lib/a.mjs": "import { spawnSync } from 'node:child_process';\nexport const a = 1;\n"
-      },
+      "base": {"engine/lib/a.mjs":"import { spawnSync } from 'node:child_process';\nexport const a = 1;\n"},
       "head": {
         "engine/lib/a.mjs": "import { spawnSync } from 'node:child_process';\nimport cp from 'node:child_process';\nexport const a = 1;\nexport const run = () => spawnSync('git', ['status'], { encoding: 'utf8' });\nexport const go = o => cp.execFile('git', ['log'], { ...o });\n"
       },
       "recorded": {
         "head": [
           {
-            "filePath": "engine/lib/a.mjs",
-            "messages": [
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "P-hide: a child process without windowsHide: add windowsHide: true to its options",
-                "line": 4,
-                "column": 26,
-                "endLine": 4,
-                "endColumn": 76
-              },
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "P-hide: a child process without windowsHide: add windowsHide: true to its options",
-                "line": 5,
-                "column": 24,
-                "endLine": 5,
-                "endColumn": 61
-              }
-            ]
+            "file": "engine/lib/a.mjs",
+            "ruleId": "P-hide.js.0.JavaScript",
+            "line": 4,
+            "column": 26,
+            "endLine": 4,
+            "text": "spawnSync('git', ['status'], { encoding: 'utf8' })"
+          },
+          {
+            "file": "engine/lib/a.mjs",
+            "ruleId": "P-hide.js.0.JavaScript",
+            "line": 5,
+            "column": 24,
+            "endLine": 5,
+            "text": "cp.execFile('git', ['log'], { ...o })"
           }
         ],
-        "base": [
-          {
-            "filePath": "engine/lib/a.mjs",
-            "messages": []
-          }
-        ]
+        "base": []
       }
     },
     "miss": {
-      "base": {
-        "engine/lib/a.mjs": "import { spawnSync } from 'node:child_process';\nexport const old = () => spawnSync('git', ['status']);\n"
-      },
+      "base": {"engine/lib/a.mjs":"import { spawnSync } from 'node:child_process';\nexport const old = () => spawnSync('git', ['status']);\n"},
       "head": {
         "engine/lib/a.mjs": "import { spawnSync } from 'node:child_process';\nexport const old = () => spawnSync('git', ['status']);\nexport const run = () => spawnSync('git', ['status'], { encoding: 'utf8', windowsHide: true });\nexport const m = s => /x/.exec(s);\nexport const doc = 'spawnSync(cmd) needs windowsHide';\n"
       },
       "recorded": {
         "head": [
           {
-            "filePath": "engine/lib/a.mjs",
-            "messages": [
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "P-hide: a child process without windowsHide: add windowsHide: true to its options",
-                "line": 2,
-                "column": 26,
-                "endLine": 2,
-                "endColumn": 54
-              }
-            ]
+            "file": "engine/lib/a.mjs",
+            "ruleId": "P-hide.js.0.JavaScript",
+            "line": 2,
+            "column": 26,
+            "endLine": 2,
+            "text": "spawnSync('git', ['status'])"
           }
         ],
         "base": [
           {
-            "filePath": "engine/lib/a.mjs",
-            "messages": [
-              {
-                "ruleId": "no-restricted-syntax",
-                "severity": 2,
-                "message": "P-hide: a child process without windowsHide: add windowsHide: true to its options",
-                "line": 2,
-                "column": 26,
-                "endLine": 2,
-                "endColumn": 54
-              }
-            ]
+            "file": "engine/lib/a.mjs",
+            "ruleId": "P-hide.js.0.JavaScript",
+            "line": 2,
+            "column": 26,
+            "endLine": 2,
+            "text": "spawnSync('git', ['status'])"
           }
         ]
       }
