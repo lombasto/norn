@@ -81,6 +81,28 @@ test('pr.yml: pull_request only; slop of the diff, norn smoke and ci-suite --cha
   assert.doesNotMatch(code, /retry|retries|continue-on-error/i, 'never retries');
 });
 
+// A workflow-level env (indent 0) or job-level env (indent 4) offers only github, needs, strategy, matrix, vars, secrets and inputs:
+// naming runner, job, steps or env there makes GitHub reject the whole file and start nothing (pr.yml from 11-20 to META-PR-YML-ENV).
+test('every workflow: no workflow- or job-level env names a context GitHub does not offer there (runner, job, steps, env)', () => {
+  const bad = [];
+  for (const n of fs.readdirSync(path.dirname(F)).filter(n => /\.ya?ml$/.test(n))) {
+    const lines = WF(n).split(/\r?\n/);
+    lines.forEach((l, i) => {
+      const m = /^( {0}| {4})env:\s*$/.exec(l); if (!m) return;
+      if (m[1].length === 4 && lines.slice(0, i).reverse().find(x => /^\S/.test(x) && !x.startsWith('#')) !== 'jobs:') return;
+      for (let j = i + 1; j < lines.length; j++) {
+        const x = lines[j]; if (!x.trim() || x.trim().startsWith('#')) continue;
+        if (x.length - x.trimStart().length <= m[1].length) break;
+        if (/\$\{\{[^}]*\b(runner|job|steps|env)\./.test(x)) bad.push(`${n}:${j + 1}: ${x.trim()}`);
+      }
+    });
+  }
+  assert.deepEqual(bad, [], 'a workflow- or job-level env names a context it does not have; set it on the step instead');
+  // pr.yml's META_ROOT sits inside a step (indent 8 or more), where `runner` exists
+  const mr = WF('pr.yml').split(/\r?\n/).filter(l => /^\s*META_ROOT:/.test(l));
+  assert.equal(mr.length, 1); assert.match(mr[0], /^ {8,}META_ROOT: \$\{\{ runner\.temp \}\}\/norn$/);
+});
+
 test('only pr.yml runs on a pull request (DIR-2: no second job runs the full suite on a PR)', () => {
   const on = fs.readdirSync(path.dirname(F)).filter(n => /\.ya?ml$/.test(n) && block(WF(n), 'on').some(l => /^ {2}pull_request(_target)?:/.test(l)));
   assert.deepEqual(on, ['pr.yml']);
