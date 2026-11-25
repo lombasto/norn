@@ -18,8 +18,11 @@ export const LOAD_KINDS = ['import', 'reexport', 'require', 'mod', 'cargo-dep'];
 export const FAN_KINDS = ALL_KINDS.filter(k => k !== 'package-init');
 export const LANGS = ['javascript', 'typescript', 'python', 'rust'];
 export const HOWS = ['exact', 'probed', 'config', 'name', 'ambiguous'];
-/** the precision of each (language, level, how) class, `<lang>/file/<how>`: measured by stage S4 of RM-a-53, "unmeasured" before (never a made-up number) */
-export const TRUST = Object.fromEntries(LANGS.flatMap(l => HOWS.map(h => [`${l}/file/${h}`, 'unmeasured'])));
+/** the how classes of a call site (docs/code-graph.md "Call edges"); `unresolved` carries its why */
+export const CALL_HOWS = ['local', 'import', 'qualified', 'self', 'method-unique', 'ambiguous', 'external', 'unresolved'];
+/** the precision of each (language, level, how) class, `<lang>/file/<how>` and `<lang>/call/<how>`: measured by stages S4a / S4b of RM-a-53,
+ *  "unmeasured" before (never a made-up number) */
+export const TRUST = Object.fromEntries(LANGS.flatMap(l => [...HOWS.map(h => [`${l}/file/${h}`, 'unmeasured']), ...CALL_HOWS.map(h => [`${l}/call/${h}`, 'unmeasured'])]));
 /** the reader's thresholds, the one named place: rows = the most rows an answer holds (the rest is counted in `truncated`);
  *  index_ms = the wait for one norn-code index run (SPEC 6's hard cap of a cold index is 20 s) */
 export const LIMITS = { rows: 500, index_ms: 120000 };
@@ -101,10 +104,10 @@ export function graphAt({ state = null, repo, at = 'HEAD', worktree = false, noI
 }
 
 /** norn-code query <verb> over the asked commit (indexed first when the store lacks it) -> { stamp, ...its answer } | { ok: false, why } */
-function query(verb, flag, target, { state = null, repo, at = 'HEAD', worktree = false }) {
+function query(verb, flag, target, { state = null, repo, at = 'HEAD', worktree = false }, extra = []) {
   const w = locate({ state, repo, at, worktree, noIndex: false });
   if (!w.ok) return w;
-  const r = code(['query', verb, flag, target, '--repo', w.root, '--state', w.st, ...(worktree ? ['--worktree'] : at === 'HEAD' ? [] : ['--at', w.commit])]);
+  const r = code(['query', verb, flag, target, ...extra, '--repo', w.root, '--state', w.st, ...(worktree ? ['--worktree'] : at === 'HEAD' ? [] : ['--at', w.commit])]);
   if (!r.ok) return r;
   const { ok, commit, tree, worktree: _w, changed, ...answer } = r;
   return { stamp: w.stamp(commit, tree, worktree ? Date.now() : fs.statSync(treeFile(w.store, tree)).mtimeMs, worktree ? { dirty: changed } : {}), ...answer };
@@ -117,6 +120,18 @@ export function references({ state = null, repo, name, at = 'HEAD', worktree = f
   if (!name) return no('no name given');
   const r = query('refs', '--name', name, { state, repo, at, worktree });
   return r.ok === false ? r : { stamp: r.stamp, name: r.name, defs: r.defs, ...capped(r.refs) };
+}
+
+const langOf = f => (TS.test(f) ? 'typescript' : LANG[path.extname(f).slice(1)] || 'javascript');
+/** the call sites whose candidates hold `symbol` (a Def id, or `<file>:<name>` when the file has one def of that name), and with depth > 1
+ *  the callers of each calling def in turn -> { stamp, symbol: Def, rows: Caller[], truncated } | { ok: false, why }. An ambiguous site is
+ *  listed under every candidate, with its count and list; no candidate is ever picked for it */
+export function callers({ state = null, repo, symbol, depth = 1, at = 'HEAD', worktree = false } = {}) {
+  if (!symbol) return no('no symbol given');
+  const r = query('callers', '--symbol', symbol, { state, repo, at, worktree }, depth > 1 ? ['--depth', String(depth)] : []);
+  if (r.ok === false) return r;
+  const rows = r.callers.map(c => ({ ...c, trust: TRUST[`${langOf(c.file)}/call/${c.how}`] }));
+  return { stamp: r.stamp, symbol: r.symbol, ...capped(rows) };
 }
 
 const kindsOf = kinds => new Set(kinds);

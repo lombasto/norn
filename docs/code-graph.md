@@ -2,12 +2,10 @@
 
 The file-level import graph of a git repo at a commit, for JavaScript / TypeScript, Python and Rust: which file loads which, how
 each import was resolved, and the imports that resolve to nothing in the repo; and its symbols: every definition with its exact
-bounds, and the references to a name (see "Symbols"). It is extracted by `norn-code` (engine/code-rs,
+bounds, the references to a name (see "Symbols"), and the call sites with what each calls (see "Call edges"). It is extracted by `norn-code` (engine/code-rs,
 tree-sitter, no model), stored per tree, and read through ONE reader module and its CLI. Lane code-graph (RM-a-53) writes it;
 lanes impacted-tests, code-map-graph, triage-card and warn-on-edit (and later symbol-read, refactor-targets) read this doc and
 `engine/lib/codegraph.mjs`, nothing else. The store's file format is private between norn-code and the reader.
-
-Call edges (`callers()`) come with stage S3; they are not in the reader yet.
 
 ## Paths
 
@@ -27,7 +25,7 @@ and the consumer decides whether it counts. `norn code history` (codeindex.mjs) 
 ## The one reader
 
 ```js
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, callers, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, CALL_HOWS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
 const g = graphAt({ state, repo, at: 'HEAD' });   // Graph | { ok: false, why }
 if (!g.ok) return na(g.why);
 dependents(g, 'engine/lib/a.mjs', { depth: 2 });
@@ -48,6 +46,7 @@ carries the `stamp` of the commit it is for.
 | `excluded(g, file)` | the exclusion reason of `file` (e.g. `"path segment vendor"`), or `null` (a graph file, or a file the graph does not know) |
 | `symbols({ state = null, repo, file, at = 'HEAD', worktree = false })` | `{ stamp, file, defs: Def[] }`: the definitions of `file`, in source order (see "Symbols"); no Graph needed |
 | `references({ state = null, repo, name, at = 'HEAD', worktree = false })` | `{ stamp, name, defs: Def[], rows: Ref[], truncated }`: the definitions named `name` and every other occurrence of the identifier; a name no definition has is `{ ok: false }` |
+| `callers({ state = null, repo, symbol, depth = 1, at = 'HEAD', worktree = false })` | `{ stamp, symbol: Def, rows: Caller[], truncated }`: every call site whose candidates hold the definition `symbol` (a Def id, or `<file>:<name>` when the file has one definition of that name), and with `depth` > 1 the callers of each calling definition in turn (see "Call edges") |
 | `graphStatus({ state = null, repo })` | `{ built, binary, why?, store_schema, store, head, indexed }` or `{ ok: false, why }` (see "CLI") |
 
 Walks (`dependencies`, `dependents`, `reach`) are breadth-first: each file appears once, at its least depth, with the first edge
@@ -195,10 +194,45 @@ Ref  { file, line, col, name, def_ids?, how? }
   Rows capped at `LIMITS.rows` (`truncated`).
 - n/a: an unknown file (`unknown file F (not in the graph; ...)`), a name no definition has (`no definition in the tree is named N`).
 
+## Call edges
+
+`callers()` (and `norn-code query callers`) resolves every call site of the asked commit's tree at query time, from the blob facts
+(call sites, import bindings, class bases) and the snapshot's files and import edges; like `symbols()` it indexes the asked commit
+first when the store lacks it and takes `at` / `worktree` (no `noIndex`).
+
+```
+Caller { file, line, col, name, how, candidates, targets, more?, why?, caller: Def | null, depth, trust }
+         line / col: the callee name's position (1-based) in `f()`, `x.f()`, `a::f()`, `new F()`; name: the callee as written
+         how: one of CALL_HOWS (below); candidates: how many definitions the site may call (0 for external / unresolved)
+         targets: their Def ids, sorted, at most 20 (CANDIDATES_MAX), the rest counted in `more`; why: the reason of an
+         external / unresolved site; caller: the innermost definition holding the site (its Def without hash / tokens / exported),
+         null at top level; depth: 1 for a direct caller, n for a caller of a depth n-1 caller; trust: TRUST['<lang>/call/<how>']
+```
+
+The call table (`how`, `CALL_HOWS`), tried in this order per form of call:
+
+| how | rule |
+|---|---|
+| `local` | `f()`: a definition named f in an enclosing scope of the same file (innermost first; a class or impl body is no scope for the methods in it; a Rust inline module ends the climb). Methods are never local |
+| `import` | `f()`: f is bound by an import (`import { f }`, `import d from` with the target's `export default` name, `const { f } = require()`, `from m import f`, `use m::f`, aliases included), followed to the target module's top-level definition, through re-exports (`export { } from`, `export * from`, `__init__` imports, `from m import *`, `pub use`, `use m::*`) up to 8 hops |
+| `qualified` | `m.f()` where m is an imported module (or `pkg.mod` through `import pkg.mod`), `Class.f()` (a local or imported class: its method, then its bases'), `crate::m::f()`, `super::f()`, `m::f()`, `Type::f()` (inherent, then `<Type as Trait>::f`) |
+| `self` | Python `self.f()` / `cls.f()`, JS `this.f()` in a class (a JS `self` / `cls` is an ordinary name): that class's method f, then its bases' by name (Python superclasses, JS `extends`); Rust `self.f()` / `Self::f()` in an impl or trait: the methods f of that type (inherent and trait impls) in the crate |
+| `method-unique` | `x.f()` on a receiver of unknown type where exactly one repo method (same language) is named f |
+| `ambiguous` | more than one candidate from any rule above, or `x.f()` where several repo methods are named f: all are listed, none is chosen |
+| `external` | builtins (Python builtins, JS globals, the Rust prelude), the standard library and packages: an import that resolves outside the repo, a Rust path headed by `std` / `core` / `alloc` or a crate not in the workspace, and `x.f()` where no repo method is named f |
+| `unresolved` | none of the above, with its `why`: a name bound nowhere in the file (a parameter, a local variable, a global), a path with no definition, an enum variant, a site inside a parse error (`parse-error`) |
+
+- Inferred, not compiled: names and scopes only; no type inference (so `x.f()` is method-unique or ambiguous by name), no
+  conditional or dynamic imports followed beyond the file graph.
+- An ambiguous site is a row under every one of its candidates; `candidates` says how many share it.
+- n/a: a symbol id no definition has (`no definition has the id`), `file:name` naming several definitions (`defines N named
+  x; name one by id: ...`) or none, an unknown file.
+
 ## Trust
 
-The precision of each `(language, level, how)` class, keyed `<lang>/file/<how>` in `TRUST` and copied onto every `Edge.trust`.
-Stage S4 measures them against compiler-grade indexers; until then every class reads `"unmeasured"`, never a made-up number.
+The precision of each `(language, level, how)` class, keyed `<lang>/file/<how>` and `<lang>/call/<how>` in `TRUST` and copied onto
+every `Edge.trust` and `Caller.trust`. Stages S4a (file level) and S4b (calls) measure them against compiler-grade indexers; until
+then every class reads `"unmeasured"`, never a made-up number. Lane refactor-targets reads `Caller.trust`.
 
 | language | exact | probed | config | name | ambiguous |
 |---|---|---|---|---|---|
@@ -207,19 +241,21 @@ Stage S4 measures them against compiler-grade indexers; until then every class r
 | python | unmeasured | unmeasured | unmeasured | unmeasured | unmeasured |
 | rust | unmeasured | unmeasured | unmeasured | unmeasured | unmeasured |
 
+Call edges (`<lang>/call/<how>`): every language, every how of `CALL_HOWS`: unmeasured.
+
 ## Store and freshness
 
 ```
 <state>/code/graph/
-  blobs/v2/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs, names; shared by every commit and worktree
-  trees/v2/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
+  blobs/v3/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs (with bases), names, calls, binds; shared by every commit and worktree
+  trees/v3/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
   commits.json                    the newest 200 indexed commits: { commit, tree, indexed_at (unix s), ms, parsed, reused, counts }
   HEAD                            the newest indexed commit
 ```
 
 - A snapshot is keyed by the root tree's sha: two commits with the same content share it, and an unchanged blob is never parsed
   again. Lane worktrees share the repo's objects, so a branch at main + 3 commits parses only the blobs those commits changed.
-- `v2` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
+- `v3` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
   never read.
 - Writes are atomic (tmp then rename); a tree has a lock, and a second writer waits for it, then reads the snapshot.
 - `--worktree` answers are resolved in memory and never stored as a tree.
@@ -240,11 +276,13 @@ norn-code's, in engine/code-rs/src/limits.rs:
 
 | name | value | meaning |
 |---|---|---|
-| `STORE_SCHEMA` | 2 | the store's extractor schema |
+| `STORE_SCHEMA` | 3 | the store's extractor schema |
 | `SPEC_MAX` | 120 | an edge's `spec` keeps at most this many characters |
 | `GENERATED_LINES` | 5 | the header lines exclusion rule (c) reads |
 | `LOCK_WAIT_MS` | 30000 | a second writer of a tree waits this long for the first one's lock |
 | `COMMITS_KEPT` | 200 | rows commits.json keeps |
+| `CANDIDATES_MAX` (calls.rs) | 20 | a call site lists at most this many candidates; the rest is counted in `more` |
+| `FOLLOW_MAX` (calls.rs) | 8 | a follow of re-exports / use paths stops after this many hops (unresolved) |
 
 ## CLI: `norn code graph <verb>`
 
@@ -256,6 +294,7 @@ norn code graph cycles     [--within GLOB]... [--kinds K,..]   -> cycles()
 norn code graph reach      <file>... [--forward] [--to GLOB]...  -> reach() (reverse by default: what depends on these)
 norn code graph symbols    <file>                              -> symbols()     text: kind, qual, file:line..end_line, "exported"
 norn code graph refs       <name>                              -> references()  text: the defs, then file:line:col [-> id (unique)]
+norn code graph callers    <symbol id | file:name> [--depth N]  -> callers()   text: depth, file:line:col, how [of N: ids], in <caller qual>
 norn code graph status                                         -> graphStatus()
 common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]
 exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else "n/a: <why>" on stderr)
@@ -266,7 +305,7 @@ exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else
 - The store: `--state D`, or the state of `--project P` / the project found from the current folder; with none, the repo's own
   `<git common dir>/norn`. `--repo DIR` (default: the project's folder, else the current folder) picks the repo. File arguments
   are repo-root-relative.
-- `symbols` / `refs` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
+- `symbols` / `refs` / `callers` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
 - `index` with `parsed` / `reused` / `ms` of the run it made (0 / null / the read time when already stored).
 - `status`: `{ built, binary, why? (why norn-code is not usable), store_schema, store, head, indexed: [the newest 5 commits.json rows, indexed_at as ISO] }`.
 
