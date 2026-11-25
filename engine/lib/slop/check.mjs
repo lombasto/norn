@@ -13,7 +13,7 @@ import { runTool, PARSE, SCANNERS } from './tools.mjs';
 import { norm, lineAt, lineText, masked, isReason, prefix } from './scan.mjs';
 import { packOf, PACKS, LINTERS } from './lang/index.mjs';
 import { lint, ast, dup, exportsKind, refs, depLock, companion } from './kinds.mjs';
-import { model } from './voice.mjs';
+import { model, SECRETS_RULE } from './voice.mjs';
 import { registerKind, loadRegister, registerFile } from './register.mjs';
 import { graphAt, cycles, ALL_KINDS, LOAD_KINDS } from '../codegraph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
@@ -339,7 +339,8 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
   const findings = [], ran = [];
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, state, found: findings, config, lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
+  // secrets: the project's secrets rule (LS) when it is on, even if `only` leaves it out - the voice withholds its hunks (voice.mjs secretLines)
+  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, state, found: findings, config, secrets: rules.find(r => r.id === SECRETS_RULE) || null, lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));

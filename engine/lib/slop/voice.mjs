@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { norm } from './scan.mjs';
+import { lint } from './kinds.mjs';
 import { classExecutor } from '../critique.mjs';
 import { resolveShim } from '../paths.mjs';
 import { harnessOf, adapterFor } from '../harness/index.mjs';
@@ -49,9 +50,10 @@ export const briefLines = text => String(text || '').split(/\r?\n/).filter(l => 
 /**
  * The ranked, capped input of one read (sec. 5): hunks with a rule hit first, then code, then tests, then the rest, up to the diff cap;
  * a file none of whose hunks fit is listed by name. rules: the asked model rules; hits: the check's new findings so far.
+ * withheld: the files with a hunk the secrets rule held back (withhold), each named on a line of its own, never its text.
  * -> { prompt, shown (files shown), listed (files only named) }
  */
-export function voicePrompt({ rules, hunks, hits = [], brief = '', context = [], match }) {
+export function voicePrompt({ rules, hunks, hits = [], brief = '', context = [], match, withheld = [] }) {
   const want = new Set(rules.flatMap(r => r.hits || []));
   const mine = hits.filter(h => want.has(h.rule));
   const hit = h => mine.some(f => f.file === h.file && h.added.some(a => a.line === f.line));
@@ -77,6 +79,7 @@ export function voicePrompt({ rules, hunks, hits = [], brief = '', context = [],
     `the leading +): a finding whose quote is not an added line is dropped. At most ${VOICE.max_findings} findings, the surest first; no finding is a fine answer.`,
     '', '# Questions', ...qs, rest,
     '# The diff', diff || '(no hunk fits the budget)', ...(listed.length ? ['', `Changed but not shown (over the budget): ${listed.join(', ')}`] : []),
+    ...(withheld.length ? ['', ...withheld.map(f => `Withheld by the secrets rule: ${f}`)] : []),
     '', '# Your answer',
     'ONE JSON object in a ```json fence and nothing after it:',
     '{"findings": [{"rule": "<question id>", "file": "<path as in the diff>", "quote": "<the added line, verbatim>", "why": "<one sentence>"}]}',
@@ -107,6 +110,28 @@ export function quoteCheck(found, { asked, hunks }) {
   return { kept, dropped: found.length - kept.length };
 }
 
+// RM-a-69 follow-up: the secrets rule. A key the voice sent to its model's provider has left the machine and is burnt, whatever the
+// merge does: a hunk with an added line LS reported never reaches a prompt, and no LS scan means no prompt at all (fail closed).
+export const SECRETS_RULE = 'LS';
+/**
+ * the lines LS reported on this check's head -> [{ file, line }]; null when LS is off for the project (ctx.secrets null: the voice reads
+ * as before). LS's scan is memoised per check (kinds.mjs lintSide), so this reads the run the check already made - check.mjs runs every
+ * other kind before the model rules - and runs it only when the check left LS out (only). Could not run, or no scan of the head: throws.
+ */
+export function secretLines(ctx) {
+  const ls = ctx.secrets;
+  if (!ls) return null;
+  let head;
+  try { head = lint(ls, ctx).head; } catch (e) { throw new Error(`the secrets rule ${ls.id} could not run (${String(e.message).split('\n')[0]}): no voice prompt is built`); }
+  if (!head) throw new Error(`the secrets rule ${ls.id} could not run (no scan of the head): no voice prompt is built`);
+  return head.filter(f => f.line > 0).map(f => ({ file: f.file, line: f.line }));
+}
+/** drop every hunk with an added line in lines (by file and line, never by the line's text, which LS does not keep) -> { hunks, withheld: [files] } */
+export function withhold(hunks, lines = []) {
+  const held = h => lines.some(l => l.file === h.file && h.added.some(a => a.line === l.line));
+  return { hunks: hunks.filter(h => !held(h)), withheld: [...new Set(hunks.filter(held).map(h => h.file))] };
+}
+
 // the one read of a check, shared by its model rules (as lint's one ESLint run): { [rule id]: [finding] } | null (no answer), an Error
 function voiceRead(ctx) {
   if (ctx.voiceRead) { if (ctx.voiceRead instanceof Error) throw ctx.voiceRead; return ctx.voiceRead; }
@@ -114,9 +139,11 @@ function voiceRead(ctx) {
     const cls = branchClass(ctx.entries.map(e => e.path), ctx.match);
     const asked = ctx.modelRules.filter(r => (r.on || ['code']).includes(cls));
     if (!asked.length) return (ctx.voiceRead = {});   // docs only, or a test-only branch with no tests question: no call
-    const hunks = parseHunks(ctx.diff(asked.flatMap(r => r.files || ['**']), asked.flatMap(r => r.exclude || [])));
+    const secrets = secretLines(ctx);   // before any prompt: LS could not run throws here, so nothing is sent
+    const { hunks, withheld } = withhold(parseHunks(ctx.diff(asked.flatMap(r => r.files || ['**']), asked.flatMap(r => r.exclude || []))), secrets || []);
     const context = [...new Set(asked.flatMap(r => r.context || []))].map(f => ({ file: f, text: ctx.text('head', f) })).filter(c => c.text);
-    const { prompt } = voicePrompt({ rules: asked, hunks, hits: ctx.found.filter(f => f.new), brief: ctx.brief, context, match: ctx.match });
+    // a rule hit on a reported line quotes it in its snippet: withheld as well
+    const { prompt } = voicePrompt({ rules: asked, hunks, hits: ctx.found.filter(f => f.new && !(secrets || []).some(l => l.file === f.file && l.line === f.line)), brief: ctx.brief, context, match: ctx.match, withheld });
     const raw = ctx.tool({ id: asked.map(r => r.id).join('+'), kind: 'model', prompt }, 'head', { dir: ctx.repo });
     if (raw === null) return (ctx.voiceRead = null);
     const { kept } = quoteCheck(parseVoice(raw), { asked: asked.map(r => r.id), hunks }), by = {};
