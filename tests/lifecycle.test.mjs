@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { record, loadState } from '../engine/lib/records.mjs';
+import { record, loadState, recordsFile } from '../engine/lib/records.mjs';
 import { laneRules, tickLanes, lanesProbe, lanePolicy, laneHooks } from '../engine/lib/lifecycle.mjs';
 import { tickPaths } from '../engine/lib/lanepaths.mjs';
 import { lanesView, boardOf } from '../engine/lib/lanes.mjs';
@@ -21,6 +21,29 @@ const end = (state, id, ms, outcome, why) => rec(state, { kind: 'run', ev: 'end'
 const lane = (state, name, ms, o = {}) => rec(state, { kind: 'lane', ev: 'create', id: `L:${name}`, by: o.by || 'owner', data: { name } }, { now: at(ms), ...(o.run ? { run: o.run } : {}) });
 const archives = (state, name) => loadState(state).items[`L:${name}`].history.filter(h => h.ev === 'archive');
 const noGit = () => null;   // no repo: nothing counts merged by git (rulings only)
+
+test('home lane rules skip another home without its runs, while keeping own idle lanes and foreign board rows', () => {
+  const state = mkTmp('lc-home-rules-'), other = mkTmp('lc-other-home-');
+  for (const [dir, id] of [[state, 'a'], [other, 'b']]) {
+    fs.writeFileSync(path.join(dir, 'home.json'), JSON.stringify({ id, bare_home: 'a' }) + '\n');
+    rec(dir, { kind: 'lane', ev: 'create', id: `L:${id}/quiet`, by: 'owner', data: { name: 'quiet' } }, { now: at(T0) });
+  }
+  const copy = path.join(state, 'homes', 'b'); fs.mkdirSync(copy, { recursive: true });
+  fs.copyFileSync(recordsFile(other, 'lane'), path.join(copy, 'records.jsonl'));
+  const st = loadState(state), now = T0 + 7 * H;
+  assert.ok(st.items['L:b/quiet'], 'the foreign lane is shared');
+  assert.equal(Object.values(st.items).filter(x => x.kind === 'run').length, 0, 'no foreign runs in this home');
+  assert.deepEqual(laneRules(st, { now, home: 'a' }).map(x => [x.id, x.lane, x.rule]), [['L:a/quiet', 'quiet', 'idle']]);
+  const board = lanesView(st, { now, ...laneHooks(state) });
+  assert.equal(board.find(x => x.id === 'L:a/quiet').rule?.rule, 'idle');
+  assert.equal(board.find(x => x.id === 'L:b/quiet').rule, null, 'foreign lanes remain visible without a local rule');
+  assert.deepEqual(lanesProbe({}, 'a')({ at: now, items: Object.values(st.items) }), ['lanes:idle:L:a/quiet']);
+  assert.deepEqual(digest(state, {}, { now, git: noGit }).sections.lanes.map(x => [x.id, x.rule]), [['L:a/quiet', 'idle']]);
+  const shipped = [];
+  assert.deepEqual(laneRules(st, { now, home: 'a', shipped: name => { shipped.push(name); return 'on main'; } }).map(x => x.id), ['L:a/quiet']);
+  assert.deepEqual(shipped, ['quiet'], 'foreign lanes never reach local lifecycle hooks');
+  assert.deepEqual(tickLanes(state, { now, git: noGit, dry: true }), []);
+});
 
 test('docs-fixer-2: a lane a check-in created and dispatched nothing on is archived by the tick once that check-in ended', () => {
   const state = mkTmp('lc-orphan-');
