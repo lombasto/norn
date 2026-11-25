@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
-import { hookReady } from './helpers/hook.mjs';
+import { rustReady } from './helpers/rust.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadMachine, loadProject } from '../engine/lib/config.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
@@ -24,7 +24,7 @@ const GIT_DIR = path.dirname(which('git'));
 
 /** a fresh machine: temp META_ROOT / HOME / config dir, a fake claude on PATH (+ git, node), no machine.json yet */
 function sandbox(extra = {}) {
-  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
+  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-adopt-e2e-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });

@@ -1,0 +1,5 @@
+[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+fx-util = { path = "crates/util" }

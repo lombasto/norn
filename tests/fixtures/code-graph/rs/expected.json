@@ -1,0 +1,40 @@
+{
+  "edges": [
+    {"from":"crates/app/Cargo.toml","to":"crates/util/Cargo.toml","line":6,"col":1,"kind":"cargo-dep","how":"config","spec":"fx-util"},
+    {"from":"crates/app/src/cli.rs","to":"crates/app/src/cli/args.rs","line":1,"col":1,"kind":"mod","how":"exact","spec":"mod args"},
+    {"from":"crates/app/src/cli.rs","to":"crates/app/src/main.rs","line":2,"col":1,"kind":"use","how":"exact","spec":"super::net"},
+    {"from":"crates/app/src/cli.rs","to":"crates/app/src/platform/win.rs","line":3,"col":1,"kind":"use","how":"exact","spec":"crate::platform::*"},
+    {"from":"crates/app/src/main.rs","to":"crates/app/src/cli.rs","line":1,"col":1,"kind":"mod","how":"exact","spec":"mod cli"},
+    {"from":"crates/app/src/main.rs","to":"crates/app/src/net/http.rs","line":3,"col":5,"kind":"mod","how":"exact","spec":"mod http"},
+    {"from":"crates/app/src/main.rs","to":"crates/app/src/platform/win.rs","line":6,"col":1,"kind":"mod","how":"exact","spec":"mod platform"},
+    {"from":"crates/app/src/main.rs","to":"crates/app/src/tests.rs","line":8,"col":1,"kind":"mod","how":"exact","spec":"mod tests","cfg":"#[cfg(test)]"},
+    {"from":"crates/app/src/main.rs","to":"crates/app/src/net/http.rs","line":11,"col":1,"kind":"use","how":"probed","spec":"crate::net::http::get"},
+    {"from":"crates/app/src/main.rs","to":"crates/util/src/text.rs","line":12,"col":1,"kind":"use","how":"config","spec":"fx_util::text::shout"},
+    {"from":"crates/app/src/main.rs","to":"crates/app/shaders/water.wgsl","line":15,"col":22,"kind":"embed","how":"exact","spec":"../shaders/water.wgsl"},
+    {"from":"crates/app/src/tests.rs","to":"crates/app/src/main.rs","line":1,"col":1,"kind":"use","how":"exact","spec":"super::*"},
+    {"from":"crates/util/src/lib.rs","to":"crates/util/src/text.rs","line":1,"col":1,"kind":"mod","how":"exact","spec":"mod text"},
+    {"from":"crates/util/src/lib.rs","to":"crates/util/src/text.rs","line":2,"col":1,"kind":"use","how":"probed","spec":"text::shout"},
+    {"from":"crates/util/tests/it.rs","to":"crates/util/src/text.rs","line":1,"col":1,"kind":"use","how":"config","spec":"fx_util::text"}
+  ],
+  "unresolved": [
+    {"from":"crates/app/Cargo.toml","line":7,"kind":"cargo-dep","how":"external","spec":"serde","package":"serde"},
+    {"from":"crates/app/src/main.rs","line":9,"kind":"mod","how":"unresolved","spec":"mod missing_mod","why":"missing"},
+    {"from":"crates/app/src/main.rs","line":13,"kind":"use","how":"external","spec":"std::fs","package":"std"}
+  ],
+  "files": {
+    "Cargo.toml": {"lang":"manifest"},
+    "crates/app/Cargo.toml": {"lang":"manifest"},
+    "crates/app/src/cli.rs": {"crate":"fx-app","module":"crate::cli","target":"crates/app/src/main.rs","lang":"rs"},
+    "crates/app/src/cli/args.rs": {"crate":"fx-app","module":"crate::cli::args","target":"crates/app/src/main.rs","lang":"rs"},
+    "crates/app/src/main.rs": {"crate":"fx-app","module":"crate","target":"crates/app/src/main.rs","lang":"rs"},
+    "crates/app/src/net/http.rs": {"crate":"fx-app","module":"crate::net::http","target":"crates/app/src/main.rs","lang":"rs"},
+    "crates/app/src/platform/win.rs": {"crate":"fx-app","module":"crate::platform","target":"crates/app/src/main.rs","lang":"rs"},
+    "crates/app/src/tests.rs": {"crate":"fx-app","module":"crate::tests","target":"crates/app/src/main.rs","lang":"rs"},
+    "crates/util/Cargo.toml": {"lang":"manifest"},
+    "crates/util/src/lib.rs": {"crate":"fx-util","module":"crate","target":"crates/util/src/lib.rs","lang":"rs"},
+    "crates/util/src/stray.rs": {"orphan":true,"lang":"rs"},
+    "crates/util/src/text.rs": {"crate":"fx-util","module":"crate::text","target":"crates/util/src/lib.rs","lang":"rs"},
+    "crates/util/tests/it.rs": {"crate":"fx-util","module":"crate","target":"crates/util/tests/it.rs","lang":"rs"},
+    "crates/app/shaders/water.wgsl": {"lang":null}
+  }
+}
