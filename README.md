@@ -49,7 +49,8 @@ An agent re-reads its whole context on every turn, including every instruction f
 ### SloppaChoppa
 
 Before a lane's branch can merge, Norn checks its changes against main for leftovers: conflict markers, generated files out of
-date, stray logs, binaries over 1 MB, and a committed `.only` in a test that silently stops the rest of the suite. It also finds
+date, stray logs, binaries over 1 MB, a committed `.only` in a test that silently stops the rest of the suite, and a skip with no condition (the last two also in
+TypeScript, Python and Rust tests, in shadow). It also finds
 empty or reason-less catch blocks in JavaScript, TypeScript, Python and Rust (TypeScript, Python and Rust in shadow until proven),
 unused variables and imports in JavaScript (ESLint) and Python (ruff), and import cycles and broken layer rules in JavaScript and
 Python (layers in Rust). The

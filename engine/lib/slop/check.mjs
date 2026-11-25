@@ -26,7 +26,7 @@ export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
   'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
-  ast: ['files', 'exclude', 'reason', 'shadow_langs'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
+  ast: ['files', 'exclude', 'reason', 'shadow_langs', 'allow'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
   model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'], register: ['files'], companion: ['files', 'exclude', 'min_shared', 'min_share', 'partners_exclude'],
 };
@@ -56,6 +56,8 @@ const astData = r => r.tool === 'ast-grep' && !('selectors' in r) && isObj(r.mat
   && Object.entries(r.match).every(([p, ms]) => PACKS[p] && Array.isArray(ms) && ms.length && ms.every(m => isObj(m.rule) && typeof m.message === 'string' && m.message.trim()
     && (m.constraints === undefined || isObj(m.constraints)) && Object.keys(m).every(k => ['rule', 'constraints', 'message'].includes(k))))
   && (r.shadow_langs || []).every(p => p in r.match);
+// key: match's allow (K21), a param since slop-langs S2: a project names its own token and env table
+const allowData = a => isObj(a) && typeof a.token === 'string' && typeof a.listed_in === 'string' && Object.keys(a).length === 2 && !!new RegExp(a.token);
 // rule reads go through fsnap (META-DASH-ASYNC R1): a snapshot lookup inside a dash GET that awaited primeRules, the sync form elsewhere
 // a fixture file's text may be a list of parts, joined here: a test key (LS) is never one string in a file of the repo
 const joined = fx => fx && Object.fromEntries(Object.entries(fx).map(([k, v]) => [k, ['base', 'head'].includes(k) ? Object.fromEntries(Object.entries(v || {}).map(([p, s]) => [p, Array.isArray(s) ? s.join('') : s])) : v]));
@@ -93,6 +95,7 @@ export function effectiveRules({ projectDir = null, dir = RULES_DIR } = {}) {
       if (bad.length) throw new Error(`overrides.json ${id}: only enabled, level, shadow and params may change (not ${bad.join(', ')})`);
       const badP = Object.keys(p.params || {}).filter(k => !KIND_PARAMS[r.kind].includes(k));
       if (badP.length) throw new Error(`overrides.json ${id}: ${r.kind} takes the params ${KIND_PARAMS[r.kind].join(', ') || '(none)'} (not ${badP.join(', ')})`);
+      if (p.params?.allow !== undefined && !allowData(p.params.allow)) throw new Error(`overrides.json ${id}: allow is { token (a regex), listed_in (a file) }`);
       if (p.level !== undefined && !LEVELS.includes(p.level)) throw new Error(`overrides.json ${id}: level is one of ${LEVELS.join(' | ')}`);
       of.set(id, { ...r, ...p.params, ...(p.params?.levels ? { levels: { ...r.levels, ...p.params.levels } } : {}), ...(p.level ? { level: p.level } : {}), ...('shadow' in p ? { shadow: !!p.shadow } : {}), ...('enabled' in p ? { enabled: !!p.enabled } : {}) });
     }

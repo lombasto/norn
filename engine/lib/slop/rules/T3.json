@@ -3,13 +3,14 @@
   "level": "BLOCK",
   "kind": "ast",
   "tool": "ast-grep",
-  "title": "a test option that runs one test alone or skips with no condition",
+  "title": "a test that runs alone or skips with no condition",
   "explain": {
-    "what": "A test has the option { only: true }, or skip: true / skip: 'a reason' with no condition.",
+    "what": "A test runs alone ({ only: true }, test.only(...)) or skips with no condition (skip: true / skip: 'a reason', it.skip(...), @pytest.mark.skip, @unittest.skip, a bare Rust #[ignore]).",
     "why": "With only, the runner runs that test and silently skips the rest; a skipped test checks nothing. The suite still looks green.",
-    "fix": "Fix the test, or delete it if it no longer applies. If it must skip on some machines, make skip a condition (for example the platform)."
+    "fix": "Fix the test, or delete it if it no longer applies. If it must skip on some machines, make skip a condition (for example the platform: skipif in Python, cfg_attr in Rust); a Rust test that only runs on demand says why: #[ignore = \"...\"]."
   },
-  "files": ["tests/**","**/*.test.*","**/*.spec.*"],
+  "files": ["**/tests/**","**/*.test.*","**/*.spec.*","**/test_*.py","**/*_test.py","**/*.rs"],
+  "shadow_langs": ["py","rs","ts"],
   "match": {
     "js": [
       {
@@ -34,6 +35,57 @@
           "all": [{"has":{"field":"value","any":[{"kind":"true"},{"kind":"string"},{"kind":"template_string"}]}}]
         },
         "message": "a skip with no condition: make skip a condition, or fix the test"
+      },
+      {
+        "rule": {
+          "kind": "call_expression",
+          "has": {"field":"function","kind":"member_expression","regex":"^(?:describe|it|test|suite)\\.(?:only|skip)$"}
+        },
+        "message": "a committed .only( or .skip(: the rest of the suite stops running, or the test checks nothing"
+      }
+    ],
+    "py": [
+      {
+        "rule": {"kind":"decorator","regex":"^@(?:pytest\\.mark\\.skip|unittest\\.skip)(?:\\(|$)"},
+        "message": "a skip with no condition: use skipif with a condition, or fix the test"
+      }
+    ],
+    "rs": [
+      {
+        "rule": {"kind":"attribute_item","regex":"^#\\[ignore\\]$"},
+        "message": "a bare #[ignore]: say why (#[ignore = \"...\"]), or fix the test"
+      }
+    ],
+    "ts": [
+      {
+        "rule": {
+          "kind": "pair",
+          "has": {"field":"key","kind":"property_identifier","regex":"^only$"},
+          "all": [{"has":{"field":"value","kind":"true"}}],
+          "inside": {
+            "kind": "object",
+            "inside": {
+              "kind": "arguments",
+              "inside": {"kind":"call_expression","has":{"field":"function","kind":"identifier","regex":"^(?:describe|it|test|suite)$"}}
+            }
+          }
+        },
+        "message": "a committed { only: true }: the rest of the suite stops running"
+      },
+      {
+        "rule": {
+          "kind": "pair",
+          "has": {"field":"key","kind":"property_identifier","regex":"^skip$"},
+          "all": [{"has":{"field":"value","any":[{"kind":"true"},{"kind":"string"},{"kind":"template_string"}]}}]
+        },
+        "message": "a skip with no condition: make skip a condition, or fix the test"
+      },
+      {
+        "rule": {
+          "kind": "call_expression",
+          "has": {"field":"function","kind":"member_expression","regex":"^(?:describe|it|test|suite)\\.(?:only|skip)$"}
+        },
+        "message": "a committed .only( or .skip(: the rest of the suite stops running, or the test checks nothing"
       }
     ]
   },
@@ -41,13 +93,51 @@
     "hit": {
       "base": {"tests/a.test.mjs":"import test from 'node:test';\n"},
       "head": {
-        "tests/a.test.mjs": "import test from 'node:test';\ntest('alone', { only: true }, () => {});\ntest('y', { skip: 'flaky' }, () => {});\ntest('z', { skip: true }, () => {});\n"
+        "tests/a.test.mjs": "import test from 'node:test';\ntest('alone', { only: true }, () => {});\ntest('y', { skip: 'flaky' }, () => {});\ntest('z', { skip: true }, () => {});\ntest.only('one', () => {});\ndescribe.skip('later', () => {});\n",
+        "pkg/tests/unit/test_a.py": "import unittest\n\nimport pytest\n\n\n@pytest.mark.skip(reason=\"flaky\")\ndef test_y():\n    assert True\n\n\n@pytest.mark.skip\ndef test_z():\n    assert True\n\n\nclass T(unittest.TestCase):\n    @unittest.skip(\"later\")\n    def test_w(self):\n        assert True\n",
+        "pkg/test_b.py": "import pytest\n\n\n@pytest.mark.skip\ndef test_b():\n    assert True\n",
+        "crates/core/tests/it.rs": "#[test]\n#[ignore]\nfn slow() {}\n\n#[test]\n#[ignore = \"needs the network: run with --ignored\"]\nfn net() {}\n",
+        "crates/core/src/lib.rs": "pub fn one() -> u8 { 1 }\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    #[ignore]\n    fn slow() {}\n}\n",
+        "tests/a.test.ts": "import test, { describe, it } from 'node:test';\ntest('alone', { only: true }, (): void => {});\ntest('y', { skip: 'flaky' }, (): void => {});\nit.only('one', (): void => {});\ndescribe.skip('later', (): void => {});\n"
       },
       "recorded": {
         "head": [
+          {"file":"crates/core/src/lib.rs","ruleId":"T3.rs.0.Rust","line":6,"column":5,"endLine":6,"text":"#[ignore]"},
+          {"file":"crates/core/tests/it.rs","ruleId":"T3.rs.0.Rust","line":2,"column":1,"endLine":2,"text":"#[ignore]"},
+          {"file":"pkg/test_b.py","ruleId":"T3.py.0.Python","line":4,"column":1,"endLine":4,"text":"@pytest.mark.skip"},
+          {
+            "file": "pkg/tests/unit/test_a.py",
+            "ruleId": "T3.py.0.Python",
+            "line": 6,
+            "column": 1,
+            "endLine": 6,
+            "text": "@pytest.mark.skip(reason=\"flaky\")"
+          },
+          {"file":"pkg/tests/unit/test_a.py","ruleId":"T3.py.0.Python","line":11,"column":1,"endLine":11,"text":"@pytest.mark.skip"},
+          {"file":"pkg/tests/unit/test_a.py","ruleId":"T3.py.0.Python","line":17,"column":5,"endLine":17,"text":"@unittest.skip(\"later\")"},
           {"file":"tests/a.test.mjs","ruleId":"T3.js.0.JavaScript","line":2,"column":17,"endLine":2,"text":"only: true"},
           {"file":"tests/a.test.mjs","ruleId":"T3.js.1.JavaScript","line":3,"column":13,"endLine":3,"text":"skip: 'flaky'"},
-          {"file":"tests/a.test.mjs","ruleId":"T3.js.1.JavaScript","line":4,"column":13,"endLine":4,"text":"skip: true"}
+          {"file":"tests/a.test.mjs","ruleId":"T3.js.1.JavaScript","line":4,"column":13,"endLine":4,"text":"skip: true"},
+          {"file":"tests/a.test.mjs","ruleId":"T3.js.2.JavaScript","line":5,"column":1,"endLine":5,"text":"test.only('one', () => {})"},
+          {
+            "file": "tests/a.test.mjs",
+            "ruleId": "T3.js.2.JavaScript",
+            "line": 6,
+            "column": 1,
+            "endLine": 6,
+            "text": "describe.skip('later', () => {})"
+          },
+          {"file":"tests/a.test.ts","ruleId":"T3.ts.0.TypeScript","line":2,"column":17,"endLine":2,"text":"only: true"},
+          {"file":"tests/a.test.ts","ruleId":"T3.ts.1.TypeScript","line":3,"column":13,"endLine":3,"text":"skip: 'flaky'"},
+          {"file":"tests/a.test.ts","ruleId":"T3.ts.2.TypeScript","line":4,"column":1,"endLine":4,"text":"it.only('one', (): void => {})"},
+          {
+            "file": "tests/a.test.ts",
+            "ruleId": "T3.ts.2.TypeScript",
+            "line": 5,
+            "column": 1,
+            "endLine": 5,
+            "text": "describe.skip('later', (): void => {})"
+          }
         ],
         "base": []
       }
@@ -55,7 +145,11 @@
     "miss": {
       "base": {"tests/a.test.mjs":"import test from 'node:test';\n"},
       "head": {
-        "tests/a.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\ntest('v', { only: false }, () => {});\nexport const doc = 'skip: true';\n"
+        "tests/a.test.mjs": "import test from 'node:test';\nconst skipWhy = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, () => {});\ntest('w', { skip: process.platform !== 'win32' }, () => {});\ntest('v', { only: false }, () => {});\nexport const doc = 'skip: true';\nexport const q = s => s.skip('x');\nexport const doc2 = 'it.only(';\n",
+        "pkg/tests/test_c.py": "import sys\n\nimport pytest\n\n\n@pytest.mark.skipif(sys.platform == \"win32\", reason=\"posix only\")\ndef test_y():\n    assert True\n\n\n@pytest.mark.parametrize(\"x\", [1])\ndef test_v(x):\n    assert x\n\n\nDOC = \"@pytest.mark.skip\"\n",
+        "crates/core/tests/it.rs": "#[test]\n#[cfg_attr(not(feature = \"gpu\"), ignore)]\nfn gpu() {}\n\n#[test]\n#[ignore = \"needs the network: run with --ignored\"]\nfn net() {}\n\npub const DOC: &str = \"#[ignore]\";\n",
+        "crates/core/src/lib.rs": "pub fn one() -> u8 { 1 }\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    #[ignore = \"slow: run with --ignored\"]\n    fn slow() {}\n}\n",
+        "tests/a.test.ts": "import test from 'node:test';\nconst skipWhy: string | false = process.platform === 'win32' ? false : 'posix only';\ntest('y', { skip: skipWhy }, (): void => {});\ntest('v', { only: false }, (): void => {});\n"
       },
       "recorded": {"head":[],"base":[]}
     }
