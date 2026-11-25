@@ -66,7 +66,7 @@ enum Truth {
     Na(String),
 }
 
-fn lang_of_row(files: &Map<String, Value>, from: &str) -> Option<&'static str> {
+pub(crate) fn lang_of_row(files: &Map<String, Value>, from: &str) -> Option<&'static str> {
     match files.get(from).and_then(|r| r["lang"].as_str()) {
         Some("js") if matches!(crate::paths::ext(from), "ts" | "tsx" | "mts" | "cts") => {
             Some("typescript")
@@ -84,9 +84,9 @@ fn lang_of_row(files: &Map<String, Value>, from: &str) -> Option<&'static str> {
 }
 
 /// splitmix64: the draw's generator (a seed gives the same sample on every machine)
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -94,14 +94,14 @@ impl Rng {
         z ^ (z >> 31)
     }
 }
-fn fnv(s: &str) -> u64 {
+pub(crate) fn fnv(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
     })
 }
 
 /// each stratum's share of `n`: equal, a stratum smaller than its share taken whole and the rest spread over the others
-fn allocate(sizes: &BTreeMap<String, usize>, n: usize) -> BTreeMap<String, usize> {
+pub(crate) fn allocate(sizes: &BTreeMap<String, usize>, n: usize) -> BTreeMap<String, usize> {
     let mut by: Vec<(&String, usize)> = sizes.iter().map(|(k, v)| (k, *v)).collect();
     by.sort_by_key(|(k, v)| (*v, (*k).clone()));
     let (mut left, mut out) = (n, BTreeMap::new());
@@ -127,7 +127,7 @@ pub fn wilson(k: f64, n: f64, n_obs: usize) -> Value {
 }
 
 /// unix seconds -> ISO 8601 UTC (days to civil date: Howard Hinnant's algorithm)
-fn iso(s: u64) -> String {
+pub(crate) fn iso(s: u64) -> String {
     let (days, rem) = ((s / 86400) as i64, s % 86400);
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -147,12 +147,28 @@ fn iso(s: u64) -> String {
 }
 
 /// run a grader script: write its input, run it, read its { results: [{ id, ... }] } -> id -> result
-fn run_grader(
+pub(crate) fn run_grader(
     cmd: &mut Command,
     tmp: &Path,
     name: &str,
     input: Value,
 ) -> Result<HashMap<u64, Value>, String> {
+    let out = run_script(cmd, tmp, name, input)?;
+    Ok(out["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["id"].as_u64().map(|id| (id, r.clone())))
+        .collect())
+}
+
+/// run a grader script: write its input, run it, read its whole output
+pub(crate) fn run_script(
+    cmd: &mut Command,
+    tmp: &Path,
+    name: &str,
+    input: Value,
+) -> Result<Value, String> {
     let (i, o) = (
         tmp.join(format!("{name}-in.json")),
         tmp.join(format!("{name}-out.json")),
@@ -181,15 +197,10 @@ fn run_grader(
         &std::fs::read(&o).map_err(|e| format!("{name} grader wrote no output: {e}"))?,
     )
     .map_err(|e| format!("{name} grader output: {e}"))?;
-    Ok(out["results"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|r| r["id"].as_u64().map(|id| (id, r.clone())))
-        .collect())
+    Ok(out)
 }
 
-fn on_path(exe: &str) -> bool {
+pub(crate) fn on_path(exe: &str) -> bool {
     Command::new(exe)
         .arg("--version")
         .output()

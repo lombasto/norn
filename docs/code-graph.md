@@ -25,7 +25,7 @@ and the consumer decides whether it counts. `norn code history` (codeindex.mjs) 
 ## The one reader
 
 ```js
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, callers, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, CALL_HOWS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, defsByHash, references, callers, graphStatus, ALL_KINDS, LOAD_KINDS, FAN_KINDS, CALL_HOWS, TRUST, LIMITS } from '<norn>/engine/lib/codegraph.mjs';
 const g = graphAt({ state, repo, at: 'HEAD' });   // Graph | { ok: false, why }
 if (!g.ok) return na(g.why);
 dependents(g, 'engine/lib/a.mjs', { depth: 2 });
@@ -45,6 +45,8 @@ carries the `stamp` of the commit it is for.
 | `fans(g, { kinds = FAN_KINDS })` | `Map(file -> { in, out })`: distinct importers and distinct imports per file (self-edges not counted); every file of `g.files` has a row |
 | `excluded(g, file)` | the exclusion reason of `file` (e.g. `"path segment vendor"`), or `null` (a graph file, or a file the graph does not know) |
 | `symbols({ state = null, repo, file, at = 'HEAD', worktree = false })` | `{ stamp, file, defs: Def[] }`: the definitions of `file`, in source order (see "Symbols"); no Graph needed |
+| `symbols({ state = null, repo, files, at = 'HEAD', worktree = false })` | `{ stamp, files: { [file]: { defs: Def[] } | { ok: false, why } } }`: the same for many files in ONE norn-code run; a file that has no symbols to give (unknown, excluded, not a graph language) is its own `{ ok: false, why }` row, the others still answered; `file` and `files` together, or an empty `files`, is `{ ok: false }` |
+| `defsByHash({ state = null, repo, hashes, at = 'HEAD', worktree = false })` | `{ stamp, defs: { [hash]: Def[] }, truncated }`: the definitions of the tree's first-party sources (a graph language, not excluded) whose `hash` is one asked, in ONE norn-code run; every asked hash is a key (`[]` when no definition has it); each list in file, then source order, capped at `LIMITS.rows` (`truncated`: the cut ones over all hashes) |
 | `references({ state = null, repo, name, at = 'HEAD', worktree = false })` | `{ stamp, name, defs: Def[], rows: Ref[], truncated }`: the definitions named `name` and every other occurrence of the identifier; a name no definition has is `{ ok: false }` |
 | `callers({ state = null, repo, symbol, depth = 1, at = 'HEAD', worktree = false })` | `{ stamp, symbol: Def, rows: Caller[], truncated }`: every call site whose candidates hold the definition `symbol` (a Def id, or `<file>:<name>` when the file has one definition of that name), and with `depth` > 1 the callers of each calling definition in turn (see "Call edges") |
 | `graphStatus({ state = null, repo })` | `{ built, binary, why?, store_schema, store, head, indexed }` or `{ ok: false, why }` (see "CLI") |
@@ -159,7 +161,7 @@ The git-tracked blobs at the commit, minus (and each listed in `files` with `exc
 
 ## Symbols
 
-`symbols()` and `references()` (and `norn-code query symbols | refs`) answer from the blob facts and the tree's name index; they
+`symbols()`, `defsByHash()` and `references()` (and `norn-code query symbols | hash | refs`) answer from the blob facts and the tree's name index; they
 index the asked commit first when the store lacks it, like `graphAt`, and take `at` / `worktree` the same way (no `noIndex`).
 
 ```
@@ -188,7 +190,17 @@ Ref  { file, line, col, name, def_ids?, how? }
   any other nested definition false.
 - **hash** (lane slop-langs reads it for K9, copied helpers, with `line..end_line` as the span): FNV-1a 64 over the definition
   node's leaf tokens, comments and whitespace left out, the definition's own name read as `$`. Two definitions with the same body
-  under different names (and different comments or layout) share it; nothing else is needed to find a copy.
+  under different names (and different comments or layout) share it; nothing else is needed to find a copy. `defsByHash()` finds
+  every definition sharing a hash in one run: it reads the blob facts of each first-party source of the tree (no index of its own,
+  so no store schema change; measured S5, below), where a `symbols()` per file paid a process start and a snapshot read each.
+- **Batch reads** (S5, for lane slop-langs' K9 pool): `symbols({ files })` sends the paths on norn-code's stdin
+  (`norn-code query symbols --stdin`, `query hash --stdin` for the hashes, one per line: a list too long for a command line).
+  Measured on a 20-core Windows machine, warm store, one call each (`symbols()` per file before, the new calls after):
+
+  | repo (first-party py / rs / ts files under the K9 root) | before: one `symbols()` per file | `symbols({ files })` | `defsByHash()` (20 hashes) |
+  |---|---|---|---|
+  | Norn @ 9f56fa45 (15 files) | 5.1 s (341 ms a call) | 0.27-0.61 s | 0.46-1.55 s |
+  | a private project (1,981 files) | ~750 s (379 ms a call, 100 timed) | 1.1-2.0 s | 0.71-1.07 s |
 - **References**: through the snapshot's name index (name -> the files whose blobs hold that identifier, kept for every name a
   first-party definition has), every identifier occurrence of `name` in those files, the definitions' own name nodes left out.
   Rows capped at `LIMITS.rows` (`truncated`).
@@ -289,9 +301,96 @@ the fixtures, so TypeScript and Python there are fixture rows); prism (a private
 The 2 Rust misses: a file under a crate's `tests/support/` naming the crate's own library (`use coreengine::...`) reads `external`.
 No class is below the bar. The fixtures grade 100 % in every class (tests/code-graph-grade.test.mjs).
 
-### Call edges
+### Call edges (S4b): `norn-code grade calls`
 
-`<lang>/call/<how>`: every language, every how of `CALL_HOWS`: unmeasured (S4b).
+`norn-code grade calls [--seed N] [--per-lang N] --graders <norn>/tools/grade --repo D --state S` grades the commit's definition
+bounds and call edges and writes `<state>/code/grade/<commit>.calls.json` (the file level keeps `<commit>.json`). The graders (tools/grade,
+pinned with hashes, installed into Norn's tool cache, never imported by the engine):
+- JavaScript / TypeScript: scip-typescript 0.6.2 (npm lock) over a copy of the tree's JS / TS files with the workspace packages
+  linked and a written tsconfig (`allowJs`, Bundler): its own `--infer-tsconfig` drops JS once one .ts exists and skips .mjs.
+- Python: jedi 0.20.1 (tools/grade/jedi.lock.txt, hashes) on uv's pinned Python, `goto` per sampled call site and per file of the
+  sampled definitions.
+- Rust: rust-analyzer's `scip` command (release 2026-11-23, the zip's sha256 per platform in tools/grade/rust-analyzer.lock.json) per
+  cargo workspace, its target dir in a temp folder removed after.
+
+SCIP is decoded in norn-code with the `scip` crate 0.10.0. Method:
+- Definitions: per language a seeded draw of `GRADE_PER_LANG` stratified by kind. One is right when the grader's definition of that
+  name inside our bounds spans our `line..end_line`. The grader's start is taken past leading attributes, decorators and comments,
+  since rust-analyzer's range holds `#[..]` and doc comments and the tree-sitter node does not; such rows count as
+  `exact_past_attributes`. Recall: a seeded draw of the grader's own function / method / class / struct / enum / trait / interface
+  definitions, found when one of ours of that name holds the line. Python's recall pool is the files of the sampled definitions (jedi
+  runs per file, so it is a cluster sample).
+- Calls: a draw stratified by `how`. The grader's target (file, line, name) is mapped onto our innermost definition of that name
+  holding the line (a JS `constructor` onto its class). Precision is per chosen how (`local`, `import`, `qualified`, `self`,
+  `method-unique`) over the sites the grader resolves inside the repo. A site whose grader target lies outside the repo is counted
+  `outside`, not graded. Recall units are the sites whose grader target maps onto one of our definitions; an `ambiguous`, `external`
+  or `unresolved` site there is a miss. `ambiguous`, `external` and `unresolved` choose no target, so they have no precision
+  (`TRUST` keeps them "unmeasured"); `contains` counts the ambiguous sites whose candidates hold the target.
+- n/a, with its reason, never a guess: the grader has no occurrence at the site (JS: an untyped receiver), jedi found nothing, an
+  impl block (no grader definition), the grader gives no bounds (a JS `const`), a file the grader did not index.
+
+Bars (SPEC 5, `DEF_*` / `CALL_*`): definitions 99 % precision per kind and 99 % recall per language. Calls: precision per
+`(language, how)` class at 90 % (Rust 85 %), recall per language at 70 % (Rust 60 %), all on the point estimate.
+
+Measured 2026-11-25 (seed 1, 400 per language). Norn @ dcade05c (grade file `dcade05c...calls.json` in Norn's state; Python and
+TypeScript there are the fixtures). prism (a private project) @ 7e39ea91 (the `git archive` copy of S4a; no JavaScript / TypeScript
+in it). `TRUST` takes JavaScript from Norn, Python and Rust from prism.
+
+| class | sample | graded | precision [95 %] | recall | trust |
+|---|---|---|---|---|---|
+| javascript/def/class | Norn | 31 of 31 | 100 % [89.0, 100] | | |
+| javascript/def/function | Norn | 105 of 8,532 (48 n/a) | 100 % [96.5, 100] | | |
+| javascript/def/method | Norn | 5 of 64 (59 n/a: no bounds) | 100 % [56.5, 100] | | |
+| javascript/def/const | Norn | 0 (152 n/a: no bounds) | - | | |
+| javascript defs (language) | Norn | 141 | 100 % [97.4, 100] | 100 % [99.1, 100] of 400 | |
+| typescript defs (class, enum, function, method, trait) | Norn (fixture) | 6 of 10 | 100 % [61.0, 100] | 100 % [67.6, 100] of 8 | |
+| python/def/class | prism | 100 of 3,661 | 100 % [96.3, 100] | | |
+| python/def/function | prism | 100 of 21,689 | 100 % [96.3, 100] | | |
+| python/def/method | prism | 100 of 12,673 | 100 % [96.3, 100] | | |
+| python/def/const | prism | 0 (100 n/a: jedi has no definition inside the bounds) | - | | |
+| python defs (language) | prism | 300 | 100 % [98.7, 100] | 100 % [99.1, 100] of 400 | |
+| rust/def/const | prism | 49 of 4,121 | 100 % [92.7, 100] | | |
+| rust/def/enum | prism | 50 of 249 | 100 % [92.9, 100] | | |
+| rust/def/function | prism | 50 of 11,336 | 100 % [92.9, 100] | | |
+| rust/def/method | prism | 50 of 6,496 | 100 % [92.9, 100] | | |
+| rust/def/module | prism | 14 of 1,065 (36 n/a) | 100 % [78.5, 100] | | |
+| rust/def/struct | prism | 51 of 1,965 | 100 % [93.0, 100] | | |
+| rust/def/trait | prism | 44 of 45 | 100 % [92.0, 100] | | |
+| rust/def/impl | prism | 0 (51 n/a: no grader definition) | - | | |
+| rust defs (language) | prism | 308 | 100 % [98.8, 100] | 99.3 % [97.8, 99.7] of 400 | |
+| rust defs (language) | Norn | 356 | 100 % [98.9, 100] | 100 % [98.9, 100] of 330 | |
+| javascript/call/local | Norn | 66 of 22,855 | 100 % [94.5, 100] | 66 of 66 | 1 |
+| javascript/call/import | Norn | 66 of 14,804 | 100 % [94.5, 100] | 66 of 66 | 1 |
+| javascript/call/qualified | Norn | 1 of 2 | 100 % [20.6, 100] | 1 of 1 | 1 |
+| javascript/call/self | Norn | 2 of 2 | 100 % [34.2, 100] | 2 of 2 | 1 |
+| javascript/call/method-unique | Norn | 10 of 1,005 (41 outside, 15 n/a) | 0 % [0, 27.8] | 0 of 2 | below bar |
+| javascript/call/ambiguous | Norn | 66 sampled of 639 | - | 0 of 41 (contains 40) | unmeasured |
+| javascript calls (language) | Norn | 145 | 99.6 % [96.7, 100] | 96.3 % [92.4, 98.2] | |
+| typescript/call/* | Norn (fixture) | no call site | - | - | unmeasured |
+| python/call/local | prism | 50 of 36,083 | 100 % [92.9, 100] | 50 of 50 | 1 |
+| python/call/import | prism | 50 of 29,069 | 100 % [92.9, 100] | 50 of 50 | 1 |
+| python/call/qualified | prism | 50 of 3,557 | 100 % [92.9, 100] | 50 of 50 | 1 |
+| python/call/self | prism | 50 of 5,044 | 100 % [92.9, 100] | 50 of 50 | 1 |
+| python/call/method-unique | prism | 21 of 20,965 (15 outside, 14 n/a) | 100 % [84.5, 100] | 21 of 21 | 1 |
+| python/call/ambiguous | prism | 50 sampled of 34,124 | - | 0 of 27 (contains 27) | unmeasured |
+| python calls (language) | prism | 221 | 100 % [98.3, 100] | 81.8 % [76.5, 86.1] | |
+| python calls (language) | Norn (fixture) | 31 | 100 % [89.0, 100] | 100 % [89.0, 100] | |
+| rust/call/local | prism | 47 of 20,699 (3 n/a) | 97.9 % [88.9, 99.6] | 46 of 47 | 0.9787 |
+| rust/call/import | prism | 50 of 5,980 | 98.0 % [89.5, 99.7] | 49 of 49 | 0.98 |
+| rust/call/qualified | prism | 49 of 6,862 | 100 % [92.7, 100] | 49 of 49 | 1 |
+| rust/call/self | prism | 49 of 3,070 | 100 % [92.7, 100] | 49 of 49 | 1 |
+| rust/call/method-unique | prism | 19 of 28,940 (29 outside, 2 n/a) | 100 % [83.2, 100] | 19 of 19 | 1 |
+| rust/call/ambiguous | prism | 50 sampled of 44,074 | - | 0 of 12 (contains 12) | unmeasured |
+| rust/call/unresolved | prism | 50 sampled of 11,818 | - | 0 of 7 | unmeasured |
+| rust calls (language) | prism | 214 | 98.8 % [96.3, 99.6] | 78.3 % [72.6, 83.1] | |
+| rust calls (language) | Norn | 223 | 100 % [98.3, 100] | 98.2 % [95.5, 99.3] | |
+
+Below the bar: `javascript/call/method-unique`. Each graded `x.close()` / `x.at()` / `x.start()` site resolved by name to the one
+repo method of that name, while the receiver was a local object, a Node server or an array. It reads "below bar" in `TRUST`
+(owner question Q3). The 2 Rust disagreements on prism: an `import` site whose name a definition in the same file shadows, and a
+`local` site that picked a same-named function nested in another test function. No definition is wrong; on prism the grader's start
+sits on an attribute or doc comment above ours for 24 to 49 of each Rust kind's 50 (`exact_past_attributes`). The fixtures grade
+with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.test.mjs).
 
 ## Store and freshness
 
@@ -352,9 +451,12 @@ norn-code's, in engine/code-rs/src/limits.rs:
 | `COMMITS_KEPT` | 200 | rows commits.json keeps |
 | `CANDIDATES_MAX` (calls.rs) | 20 | a call site lists at most this many candidates; the rest is counted in `more` |
 | `FOLLOW_MAX` (calls.rs) | 8 | a follow of re-exports / use paths stops after this many hops (unresolved) |
-| `GRADE_PER_LANG` | 400 | `grade files`: rows drawn per language |
+| `GRADE_PER_LANG` | 400 | `grade files` / `grade calls`: rows drawn per language |
 | `GRADE_SEED` | 1 | `grade files`: the seed when none is given (the grade file records the one used) |
 | `FILE_PRECISION_BAR` / `FILE_RECALL_BAR` | 0.99 / 0.98 | the file-edge bars: precision per class, recall per language |
+| `DEF_PRECISION_BAR` / `DEF_RECALL_BAR` | 0.99 / 0.99 | `grade calls`: definition bounds, precision per (language, kind), recall per language |
+| `CALL_PRECISION_BAR` / `CALL_RECALL_BAR` | 0.90 / 0.70 | `grade calls`: call edges of JavaScript / TypeScript / Python, precision per (language, how), recall per language |
+| `CALL_PRECISION_BAR_RUST` / `CALL_RECALL_BAR_RUST` | 0.85 / 0.60 | the same for Rust |
 | `WILSON_Z` | 1.96 | the Wilson interval's z (95 %) |
 
 ## CLI: `norn code graph <verb>`
@@ -366,6 +468,8 @@ norn code graph dependents <file> [--depth N] [--kinds K,..]   -> dependents()
 norn code graph cycles     [--within GLOB]... [--kinds K,..]   -> cycles()
 norn code graph reach      <file>... [--forward] [--to GLOB]...  -> reach() (reverse by default: what depends on these)
 norn code graph symbols    <file>                              -> symbols()     text: kind, qual, file:line..end_line, "exported"
+norn code graph symbols    <file> <file>...                    -> symbols({ files })  text: per file its path, then its defs indented (or "<file>  n/a: <why>")
+norn code graph hash       <body hash>...                      -> defsByHash()  text: per hash the hash, then its defs indented ("none")
 norn code graph refs       <name>                              -> references()  text: the defs, then file:line:col [-> id (unique)]
 norn code graph callers    <symbol id | file:name> [--depth N]  -> callers()   text: depth, file:line:col, how [of N: ids], in <caller qual>
 norn code graph status                                         -> graphStatus()
@@ -378,7 +482,8 @@ exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else
 - The store: `--state D`, or the state of `--project P` / the project found from the current folder; with none, the repo's own
   `<git common dir>/norn`. `--repo DIR` (default: the project's folder, else the current folder) picks the repo. File arguments
   are repo-root-relative.
-- `symbols` / `refs` / `callers` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
+- `symbols` / `hash` / `refs` / `callers` index the asked commit when needed: `--no-index` with them is a usage error (exit 2).
+- `symbols` with 2+ files exits 0 when some file is n/a: that file's row says why.
 - `index` with `parsed` / `reused` / `ms` of the run it made (0 / null / the read time when already stored).
 - `status`: `{ built, binary, why? (why norn-code is not usable), store_schema, store, head, indexed: [the newest 5 commits.json rows, indexed_at as ISO] }`.
 
