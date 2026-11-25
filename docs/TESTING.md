@@ -79,15 +79,39 @@ watcher never exits and outlives your run. If you need one, bound it (`timeout N
 
 | Need | Command |
 |---|---|
-| The test files that cover a source file (node; from the last measure's coverage) | `norn tests for engine/lib/testcmd.mjs` |
+| The test files that cover a source file (node, pytest, cargo; from `norn tests index`), with the runner command per group | `norn tests for engine/lib/testcmd.mjs` |
 | One node test file (or a few), kept off the live state, through the machine's test cache | `norn tests run tests/<file>.test.mjs` |
-| The tests that directly cover the files your branch changed (node; policy.tests.mode picks them) | `norn tests run --changed` |
+| The tests that directly cover the files your branch changed (policy.tests.mode picks them; node runs, pytest / cargo are named with their command) | `norn tests run --changed` |
 | One pytest file | `python -m pytest tests/test_<module>.py -q -p no:cacheprovider` |
 | The measured battery: never-failing, duplicate and slowest tests | `norn tests lean` |
 | What trimming command logs would save on a project's recorded runs, and the output-trim gate (below, "Output replay") | `norn tests output-replay --project P` |
 
 Project-specific details (the interpreter, META_ROOT, the temp-folder helpers) live in the project's CLAUDE.md or RULES.md, which
 point back here.
+
+## Impacted tests: pytest and cargo (RM-a-55)
+
+`norn tests index` writes one index (`<state>/tests/cases.json`, `impact.json`) for every runner a repo has; each case and each test
+row names its `runner` (`node:test`, `pytest`, `cargo`). engine/lib/testimpact.mjs finds the pytest and cargo part:
+
+- **Discovery.** pytest: the files `test_*.py` / `*_test.py`, their module-level `test*` functions and the `test*` methods of `Test*`
+  classes (nested too), id = the pytest node id (`file::Class::test_x`). cargo: every `#[test]` / `#[<path>::test]` function in a
+  non-excluded .rs file, named by its module path as libtest names it (`water::tests::first`).
+- **Impact.** A test covers a source file when the test's file reaches it through the code graph's import edges
+  (docs/code-graph.md, its reader only); a pytest file also through the `conftest.py` files above it. A Rust `mod` edge is taken only
+  down the test file's own module tree: a crate root it reaches (`lib.rs`) does not pull in every module of the crate. Each source
+  lists its tests nearest first. Every test row says `basis: 'inferred'` (static imports); `measured` is kept for a coverage report,
+  not built. impact.json carries the graph's commit (`graph`), or `graph: { na: why }` when the graph cannot be had.
+- **Commands per group.** pytest: one `python -m pytest <node ids>` per pytest root (the folder of the nearest pytest.ini /
+  pyproject.toml / tox.ini / setup.cfg). cargo: `cargo test -p <crate>` with `--test <x>` for an integration test, `--bin <x>`,
+  `--lib`, or the file's module path as the filter (a filter is a substring: it can run more than the file), in the workspace folder.
+- **Picks.** `norn tests run --changed` and the Done check's light set take per changed source the nearest `IMPACT_LIMITS.light_per`
+  (1) covering tests, plus every changed test file; mode `changed` takes all of them. `norn tests run` runs node:test files only:
+  the pytest / cargo groups are printed with their command, and the Done check runs them as commands in their folder.
+- Thresholds (testimpact.mjs `IMPACT_LIMITS`): `light_per` = 1.
+- Known limits: a test that drives code through a subprocess or reads files at run time has no import edge, so it is not inferred;
+  a Python package `__init__.py` that imports its whole package, and the `native` edge to a Rust extension, make the full sets large
+  (the replay of 30 merged branches of a mono-repo: 94 % of the edited tests were in the full set, median set about half the suite).
 
 ## Output replay (output-trim S1)
 

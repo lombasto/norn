@@ -180,6 +180,34 @@ The `M*` rules ship `shadow: true`. A thumb on a model finding in the Guard reco
 last one counts); Slop › Rules shows each rule's precision. At 90 % over 20 rated a rule may go to `BLOCK`, under 50 % (over 20
 rated) to `TREND`: the owner or the controller records that in `overrides.json`; nothing changes a level by itself.
 
+## Test smells (T4, T5)
+
+T4 (a new or changed test with no assertion) and T5 (a test whose every assertion is on a mock it made) are `ast` rules, WARN and
+`shadow`. A test is a node:test `test` / `it` / `t.test` call with an inline function, a pytest `def test*` (a method too), or a Rust
+`fn` under `#[test]` / `#[tokio::test]` / `#[rstest]`. A test whose match is unchanged from the base is no new finding.
+
+T4 reads "a call that can fail the test" as the brief says it (DEC-a-599): any call can throw, raise or panic, so a test whose one
+check is "this does not throw" checks something. T4 fires only on a test with no assertion that calls nothing but print / log and
+constructors.
+
+| | an assertion | a call or read that can fail the test (T4 silent) | print / log / constructor (T4 still fires) |
+|---|---|---|---|
+| js | a callee naming `assert`, `expect`, `should`, `check`, `verify`, `ensure` or `must` (`assert.equal`, `t.assert.ok`, `assertRow`), `t.plan`, `*.fail`, `throw` | any other call | `console.*`, `new X()` |
+| py | `assert`, `raise`, a call named as in js plus `fail`, `raises`, `warns`, `deprecated_call` (`self.assertEqual`, `pytest.raises`) | any other call, an import, an attribute read | `print`, `logging.*` / `logger.*` / `log.*`, a `Capitalised()` call |
+| rs | an `assert*!` / `panic!` / `unreachable!` / `todo!` macro, `.unwrap()` / `.expect()` / `_err` forms, `?`, `#[should_panic]`, a call named as in js | any other call or macro, a call inside a print macro's arguments | `println!` / `eprintln!` / `print!` / `dbg!` / `format!` / `vec!`, `log` / `tracing` macros, `Type::new()` / `Type::default()` / `Type(..)` |
+
+A helper is recognised by its name (it counts as an assertion); any other helper is a call, so T4 is silent on it, never loud.
+
+T5 reads the test's one mock: node:test `mock.fn`, `unittest.mock` / `mocker` `Mock` / `MagicMock` / `AsyncMock` / `create_autospec`,
+mockall's `Mock<T>::new()`, bound to a name (`const` / `=` / `let`). It fires when every assertion is on that mock (`<fn>.mock` in the
+assertion, its `assert_called*` methods or an `assert` on `called`, `call_count`, `call_args`, ..., an `assert*!` naming it) and the
+mock never reaches other code: it is silent when the mock is an argument of a call, put into an object or struct, assigned, its member
+passed, or when the test makes a second mock (a mock handed to real code makes asserting what it saw a real interaction test). A
+patch (`patch*`, `mock.method`) replaces a dependency of real code, so it is no mock the test made; a mock from a decorator, a fixture,
+a hook or a shared variable is no finding either. A helper call that does not take the mock is silent too (a
+function of the file, a name imported from a `help` / `support` / `fixture` / `common` / `util` / `conftest` module, a test argument,
+a `fn` of the test's module or a `*test*` / `*util*` path).
+
 ## Machine rules
 
 `machine: true` marks a rule that reads this machine's state rather than the diff's trees (K14: `norn gen --check` reads the

@@ -1,16 +1,21 @@
 // SPEC dash-owner-1123 s.1.1: `norn tests index` - the Tests tab's static index of a node:test suite, code only (no model). It writes
 // <state>/tests/, each file stamped { at, sha }:
 //   cases.json   per test() / it() / t.test() case { id: <file>::<title path>, file, name (the title path), line, lines (the call's span,
-//                by a bracket scan that skips strings, comments, templates and regex literals), desc } + per file { lines, cases }.
+//                by a bracket scan that skips strings, comments, templates and regex literals), desc, runner } + per file { lines, cases }.
+//                RM-a-55: pytest and cargo cases (testimpact.mjs graphIndex) join the same list, each with its runner.
 //                desc = a `//` line right above the call, else the title's text after its first ': ', else the title. A title that is not
 //                a string literal (a loop's `test(name, ...)`) has no static id: it is left out.
-//   impact.json  { suite, sources: { source file: [test files] }, uncovered } - the inverse of testcache depsOf over every test file, so a
-//                test covers a file iff changing the file changes the test's cache key; tests/ (helpers, fixtures) and fixtures are no sources.
+//   impact.json  { suite, sources: { source file: [test files] }, tests: { test file: { runner, basis, dir, ... } }, uncovered, graph? } -
+//                node:test: the inverse of testcache depsOf over every test file, so a test covers a file iff changing the file changes the
+//                test's cache key; tests/ (helpers, fixtures) and fixtures are no sources. pytest / cargo: the code graph's import reach
+//                (testimpact.mjs), nearest test first; graph = the graph's { commit, tree }, or { na: why } when it cannot be had.
+//                Every test row's basis is 'inferred' (static: imports, not a coverage run).
 //   times.json   { files: [{ file, ms }] } - the median of each file's last 5 `ran` rows in the machine's cache log (testpolicy: fastest-first).
 import fs from 'node:fs';
 import path from 'node:path';
 import { depsOf } from './testcache.mjs';
 import { IMPACT_FILE, TIMES_FILE } from './testtimes.mjs';
+import { RUNNERS } from './testimpact.mjs';
 
 export const CASES_FILE = 'cases.json', TIMES_RUNS = 5;
 // a case call: test / it (+ .only .skip .todo), a subtest on the context (t.test: `re.test(s)` is a regex, not a case), describe / suite
@@ -76,7 +81,7 @@ export function scanCases(file, text) {
       word = s.slice(i, j); prev = s[j - 1]; i = j; continue;
     }
     if (c === '(') parens.push(null);
-    else if (c === ')') { const call = parens.pop(); if (call && call.kind === 'case' && call.path) { const name = call.path.join('::'); out.push({ id: `${file}::${name}`, file, name, line: call.line, lines: line - call.line + 1, desc: descOf(call.title, call.above) }); } }
+    else if (c === ')') { const call = parens.pop(); if (call && call.kind === 'case' && call.path) { const name = call.path.join('::'); out.push({ id: `${file}::${name}`, file, name, line: call.line, lines: line - call.line + 1, desc: descOf(call.title, call.above), runner: 'node:test' }); } }
     else if (c === '{') braces++;
     else if (c === '}') { braces--; if (tpl.length && braces === tpl.at(-1)) { tpl.pop(); i++; inTemplate(); prev = '`'; word = ''; continue; } }
     prev = c; word = ''; i++;
@@ -98,12 +103,19 @@ export function timesOf(log, tests) {
   for (const r of log) if (r.how === 'ran' && want.has(r.file) && Number.isFinite(r.ms)) by.set(r.file, [...(by.get(r.file) ?? []), r.ms].slice(-TIMES_RUNS));
   return { files: [...by].map(([file, ms]) => ({ file, ms: Math.round(median(ms)) })).sort((a, b) => a.file.localeCompare(b.file)) };
 }
-/** the three files of a repo (ix: testcache repoIndex) -> { cases, impact, times }, each stamped { at, sha }. tests: its test files,
- *  code: its tracked code files, log: the cache log rows */
-export function buildIndex({ ix, tests, code = [], log = [], sha = null, now = Date.now() }) {
-  const at = new Date(now).toISOString(), files = {}, cases = [];
+/** the three files of a repo (ix: testcache repoIndex) -> { cases, impact, times }, each stamped { at, sha }. tests: its node test files,
+ *  code: its tracked code files, log: the cache log rows; graph: testimpact.mjs graphIndex's part (pytest + cargo), or { na: why }, or null */
+export function buildIndex({ ix, tests, code = [], log = [], sha = null, now = Date.now(), graph = null }) {
+  const at = new Date(now).toISOString(), files = {}, cases = [], gp = graph && !graph.na ? graph : null;
   for (const t of [...tests].sort()) { const text = ix.read(t) ?? '', cs = scanCases(t, text); files[t] = { lines: text.split('\n').length, cases: cs.length }; cases.push(...cs); }
-  return { cases: { at, sha, files, cases }, impact: { at, sha, ...impactOf(ix, tests, code) }, times: { at, sha, ...timesOf(log, tests) } };
+  const node = impactOf(ix, tests, code), sources = { ...node.sources };
+  for (const [f, ts] of Object.entries(gp?.sources ?? {})) sources[f] = [...new Set([...(sources[f] ?? []), ...ts])];
+  const runners = [...new Set([...(tests.length ? ['node:test'] : []), ...Object.values(gp?.tests ?? {}).map(r => r.runner)])].sort((a, b) => RUNNERS.indexOf(a) - RUNNERS.indexOf(b));
+  const impact = { at, sha, suite: runners.join(' + ') || node.suite, sources: Object.fromEntries(Object.entries(sources).sort(([a], [b]) => a.localeCompare(b))),
+    tests: { ...Object.fromEntries([...tests].sort().map(t => [t, { runner: 'node:test', basis: 'inferred', dir: '.' }])), ...(gp?.tests ?? {}) },
+    uncovered: [...new Set([...node.uncovered.filter(f => !(f in sources)), ...(gp?.uncovered ?? [])])].sort(),
+    ...(graph ? { graph: gp ? { ...gp.graph, ...(gp.partial.length ? { partial: gp.partial } : {}) } : { na: graph.na } } : {}) };
+  return { cases: { at, sha, files: { ...files, ...(gp?.files ?? {}) }, cases: [...cases, ...(gp?.cases ?? [])] }, impact, times: { at, sha, ...timesOf(log, tests) } };
 }
 /** write the index into <state>/tests/ (each file atomically) */
 export function writeIndex(dir, idx) {
