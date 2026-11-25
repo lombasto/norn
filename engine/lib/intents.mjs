@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readEvents, recordsFile, fold, idNum, record, NID } from './records.mjs';
 import { parseReady } from './ready.mjs';
-import { readScope, ahead, caseKey, pairKey } from './collide.mjs';
+import { readScope, ahead, caseKey, pairKey, foldLine } from './collide.mjs';
 import { gitOut, gitDirs, shaOf, mergeBase, diffNames, countOf, isAncestorOf, worktreeFacts, lines, memo } from './gitfacts.mjs';
 
 const have = p => !!p && fs.existsSync(p);
@@ -189,6 +189,18 @@ export function openCase(state, h, me, other, { door, by = 'launcher', cases = c
 /** one action on a case (S1b: hold, after, told, released, allow) */
 export const caseAction = (state, id, action, { by = 'launcher', auto = by === 'launcher', args, why } = {}) =>
   record(state, { kind: 'collision', ev: 'action', id, by, data: { action, auto, ...(args ? { args } : {}), ...(why ? { why } : {}) } });
+// ---------- S2b: the folds (SPEC 4A.4 fold) - action `fold` on a case: { lane (folded), into, pending: RUN-n } while a live run on the
+// folded lane holds it (the tick applies it when that run ends, as a second fold action naming pending_of), else the applied steps ----------
+/** every fold action of the cases -> [{ col, i, at, by, why, undone, ...args }] */
+export const foldsOf = cases => Object.values(cases).flatMap(c => actionsOf(c).filter(a => a.action === 'fold').map(a => ({ col: c.id, i: a.i, at: a.at, by: a.by, why: a.why ?? null, undone: a.undone, ...a.args })));
+/** the pending folds the tick has still to apply: not undone, no applied fold names them */
+export const pendingFolds = cases => { const fs2 = foldsOf(cases); return fs2.filter(f => f.pending && !f.undone && !fs2.some(g => g.col === f.col && g.pending_of === f.i)); };
+/** the prompt lines of a start on lane `lane` (SPEC 4A.4 fold step 4): one per applied fold of a lane into it, until a run there that started after
+ *  the fold (a run id above the fold's since_run) has ended DONE */
+export function foldLines(state, lane, { cases = casesOf(state), runs = fold(readEvents(recordsFile(state, 'run'))).items } = {}) {
+  const done = f => Object.values(runs).some(r => r.kind === 'run' && r.data?.lane === lane && idNum(r.id) > (f.since_run ?? 0) && r.state === 'exited' && (r.end?.outcome ?? 'done') === 'done');
+  return foldsOf(cases).filter(f => f.into === lane && !f.pending && !f.undone && !done(f)).map(f => foldLine({ lane: f.lane, col: f.col, branch: f.branch, commits: f.commits_n }));
+}
 /** the planned stages per roadmap item from the item events (create / edit `stages`): { RM-n: { stages } } - the judge's order / planned
  *  input (the door cannot import roadmap.mjs: it imports runs.mjs) */
 export function itemStages(events) {

@@ -45,7 +45,7 @@ import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf, setCaveat } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { tickDerelicts } from './derelict.mjs';
-import { tickLanes, lanesProbe, laneShippedIn } from './lifecycle.mjs';
+import { tickLanes, lanesProbe, laneShippedIn, foldPass } from './lifecycle.mjs';
 import { tickPaths } from './lanepaths.mjs';
 import { tickProposals } from './proposals.mjs';
 import { lateNotice, cleanMin } from './pause.mjs';
@@ -468,6 +468,9 @@ function tickPass(o, g = {}) {
     if (o.collide !== false && (!o.dry || o.collide)) try { const c = collidePass(state, p, { ledger: o.ledger, ...(o.now ? { now: o.now().getTime() } : {}) });
       for (const l of [...c.told.map(id => `${id}: the later run told`), ...c.caveats.map(id => `${id}: a stale caveat gained the fact`), ...c.released.map(k => `claim ${k} released (no open work)`)]) tickLog(state, `${tag}: collide ${l}`); }
     catch (e) { tickLog(state, `${tag}: collide: ${e.message}`); }
+    // lane-collide S2b: a fold that waited for a live run is applied once that run ended; never fails the tick
+    if (!o.dry) try { for (const x of foldPass(state, { project: p })) tickLog(state, x.refused ? `${tag}: collide ${x.col}: the pending fold is refused: ${x.refused}` : `${tag}: collide ${x.col}: lane ${x.lane} folded into lane ${x.into}`); }
+    catch (e) { tickLog(state, `${tag}: collide fold: ${e.message}`); }
     // META-CATCH S1: the stuck sweep (stuck.mjs) - the flags into stuck.json (the gate fact, the run refusal); one notice per new flag
     try { const tr = Object.keys(loadRoadmap(state).items).length ? buildTree({ stateDir: state, project: p }) : null; const sw = stuckSweep(state, tr ? itemsOf(tr) : [], { project: p.name }); if (sw.notices.length) g.stuck = sw.notices; }
     catch (e) { tickLog(state, `${tag}: stuck sweep failed: ${e.message}`); }

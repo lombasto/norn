@@ -29,7 +29,7 @@ test('the kind: COL-n in collide.jsonl; open reuses the open case of the same ke
   assert.equal(openCase(f.state, f.hit, { lane: 'web-runs' }, null, { door: 'fill' }), 'COL-1', 'one case per key while it is open');
   const c = casesOf(f.state)['COL-1'];
   assert.deepEqual([c.state, c.data.key, c.data.pair, c.data.a.lane, c.data.b.lane, c.data.files_n], ['open', 'territory/exclusive:web-nav>web-runs', 'web-nav+web-runs', 'web-nav', 'web-runs', 1]);
-  assert.throws(() => caseAction(f.state, id, 'fold'), RecordError, 'S1b records hold, after, told, released, allow');
+  assert.throws(() => caseAction(f.state, id, 'merge'), RecordError, 'merge is no collision action (the recorded ones: COLLIDE_ACTIONS)');
   assert.throws(() => record(f.state, { kind: 'collision', ev: 'undo', id, by: 'controller', data: { action: 0, why: 'x' } }), /undo: action must name an action/);
   assert.throws(() => record(f.state, { kind: 'collision', ev: 'open', by: 'launcher', data: { key: 'k', kind: 'nope', why: 'w', a: { lane: 'a' }, b: { lane: 'b' }, files: [] } }), RecordError);
   record(f.state, { kind: 'collision', ev: 'outcome', id, by: 'tick', data: { closed_at: new Date().toISOString(), cause: 'merged' } });

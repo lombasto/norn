@@ -4,9 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { locReport, CLASSES, APART, num } from './loc.mjs';
+import { locReport, CLASSES, APART, num, delta } from './loc.mjs';
 import { sweep, formatSweep } from './sweep.mjs';
-import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers, findingLine, meterSeries, slopChecks } from './host.mjs';
+import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers, findingLine, meterSeries, slopChecks, slopLandings } from './host.mjs';
 import { spawnOutside } from '../jobguard.mjs';
 import { slopOn } from '../policy.mjs';
 import { inDir } from '../monorepo.mjs';
@@ -17,13 +17,14 @@ import { readEvents, recordsFile } from '../records.mjs';
 import { meterOf, meterInput, meterPoint, meterDelta, loadMeter } from './meter.mjs';
 import { loadRegister, drift, renderDrift } from './register.mjs';
 import { gitRun, blobs, patterns, matchAny } from './check.mjs';
+import { landingPoints, growthOf, renderGrowth, hotspots, fanList } from './measure.mjs';
+import { runTool } from './tools.mjs';
+import { loadDeliverables } from '../deliverables.mjs';
 
-/** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
-export const delta = (now, then) => `${now - then >= 0 ? '+' : ''}${num(now - then)}${then ? ` (${now - then >= 0 ? '+' : ''}${(100 * (now - then) / then).toFixed(1)} %)` : ''}`;
 const today = now => new Date(now).toISOString().slice(0, 10);
 
 /** the report from a LOC report + a sweep: { markdown, line } */
-export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0, meter = null, register = null } = {}) {
+export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = [], resumes = 0, meter = null, growth = null, register = null } = {}) {
   const then = loc.series.length > 7 ? loc.series[loc.series.length - 8] : loc.series[0];
   const L = [`# SloppaChoppa daily ${day}`, '', `Lines of code (non-blank, git) at ${loc.ref} ${loc.head.slice(0, 7)}; the change is against ${then?.day ?? '-'}.`, '',
     '| class | lines | 7 d |', '|---|---:|---:|', ...CLASSES.map(c => `| ${c} | ${num(loc.totals[c])} | ${delta(loc.totals[c], then?.totals[c] ?? 0)} |`),
@@ -48,6 +49,8 @@ export function renderDaily(loc, sw, { day, holds = [], waivers = 0, landed = []
     L.push('| group | score |', '|---|---:|', ...Object.entries(meter.groups).sort((a, b) => b[1] - a[1]).map(([g, s]) => `| ${g} | ${s} |`), '', 'The 10 worst offenders (points of the total):', '');
     meter.top.forEach((o, i) => L.push(`${i + 1}. ${o.pts} ${o.signal} \`${o.file}${o.line ? ':' + o.line : ''}\` ${o.what}`));
   }
+  // S4 (SPEC 4.1 d-f, 4.4 U2): the week's top merges by growth, each area's share, the hotspots, fan-in / fan-out (growthOf's result, or { error })
+  if (growth) L.push('', ...renderGrowth(growth));
   // S7: the rule register's drift numbers and the deferrals that came due (registerDrift's result, or { error })
   if (register) L.push('', ...renderDrift(register));
   const c = then ? delta(loc.totals.code, then.totals.code) : '', mw = !meter ? '' : meter.error ? 'meter could not run; ' : `meter ${Math.round(meter.score)} ${meter.band}; `;
@@ -101,10 +104,19 @@ export function dailyReport({ repo, state, now = Date.now(), own = null, main = 
   let meter;
   try { const { texts, git } = meterInput(home, { ref: loc.head, now }), m = meterOf(texts, git, loadMeter(), { prev: past.at(-1)?.band ?? null }); meter = { ...m, delta: meterDelta(past, day, m.score) }; }
   catch (e) { meter = { error: String(e.message).split('\n')[0].slice(0, 300) }; }
-  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now), meter, register: registerDrift({ repo, state, projectDir, tip, now }) });
+  // S4: a point per landing of the week not stored yet (a missed day is filled from git), then the growth section; one that throws is said, the rest is written
+  let growth;
+  try {
+    const stored = slopLandings(state), items = Object.fromEntries(Object.values(loadDeliverables(state)).filter(d => d.data?.branch).map(d => [d.data.branch, d.id])), mt = tool || runTool;
+    const fresh = landingPoints(home, loc.ref, today(now - 7 * 864e5), { tool: mt, items, skip: new Set(stored.map(p => p.sha)) });
+    if (fresh.length) hostWrite(state, { type: 'landings', points: fresh });
+    growth = growthOf({ loc, points: [...stored, ...fresh], hotspots: hotspots(home, loc.ref, { tool: mt, now }), fan: fanList(home, loc.ref) });
+  } catch (e) { growth = { error: String(e.message).split('\n')[0].slice(0, 300) }; }
+  const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length, landed, resumes: slopResumes(state, now), meter, growth, register: registerDrift({ repo, state, projectDir, tip, now }) });
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
     empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length }, ...(meter.error ? {} : { meter: meterPoint(meter) }) };
-  return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point, main: tip }) };
+  const fill = Object.fromEntries(loc.series.filter(p => p.day !== day).map(p => [p.day, { loc: { totals: p.totals, areas: p.areas }, filled: true }]));
+  return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point, fill, main: tip }) };
 }
 
 // daily.missed { since, n }: the starts since `since` that wrote no report (a report written after `since` ends the run of misses)
