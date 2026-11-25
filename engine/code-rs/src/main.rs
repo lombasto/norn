@@ -3,10 +3,12 @@
 // (tree-sitter, in parallel), resolves imports over the whole tree, and writes the tree's snapshot; it prints one JSON line with
 // the commit, the tree, what it parsed and reused and where the time went. `--worktree` resolves uncommitted work over HEAD's tree
 // in memory and prints the snapshot instead of storing it. `norn-code query` answers symbols, refs, calls and callers over a commit
-// (calls.rs resolves the call sites). `norn-code version` prints { crate, store_schema }.
+// (calls.rs resolves the call sites). `norn-code grade files` grades the file-level edges against each language's own toolchain
+// (grade.rs). `norn-code version` prints { crate, store_schema }.
 mod calls;
 mod exclude;
 mod git;
+mod grade;
 mod lang;
 mod limits;
 mod paths;
@@ -604,6 +606,8 @@ fn query_callers(a: &Args, symbol: &str, depth: usize) -> Result<Value, String> 
 
 const QUERY_USAGE: &str = "usage: norn-code query symbols --file F | refs --name N | calls --file F | calls --all | callers --symbol <id | file:name> [--depth N], then the index arguments";
 
+const GRADE_USAGE: &str = "usage: norn-code grade files [--seed N] [--per-lang N] [--graders <norn>/tools/grade], then the index arguments";
+
 fn main() {
     let v: Vec<String> = std::env::args().skip(1).collect();
     let r = match v.first().map(String::as_str) {
@@ -615,6 +619,10 @@ fn main() {
             }
             o
         }),
+        Some("grade") => match v.get(1).map(String::as_str) {
+            Some("files") => grade::opts(&v[2..]).and_then(|(o, rest)| args(&rest).and_then(|a| grade::files(&a, &o))),
+            _ => Err(GRADE_USAGE.into()),
+        },
         Some("query") => match (v.get(1).map(String::as_str), v.get(2).map(String::as_str), v.get(3)) {
             (Some("symbols"), Some("--file"), Some(t)) => args(&v[4..]).and_then(|a| query("symbols", &a, t)),
             (Some("refs"), Some("--name"), Some(t)) => args(&v[4..]).and_then(|a| query("refs", &a, t)),
@@ -632,7 +640,7 @@ fn main() {
             }
             _ => Err(QUERY_USAGE.into()),
         },
-        _ => Err(format!("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  {QUERY_USAGE}  |  norn-code version")),
+        _ => Err(format!("usage: norn-code index --repo D --state S [--at REV] [--worktree] [--exclude GLOB]... [--python-root DIR]...  |  {QUERY_USAGE}  |  {GRADE_USAGE}  |  norn-code version")),
     };
     match r {
         Ok(j) => println!("{j}"),

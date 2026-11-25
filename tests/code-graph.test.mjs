@@ -28,7 +28,7 @@ const run = (argv, state) => { const o = [], e = []; const code = codeCmd(['grap
 
 test('norn-code is built (every test below reads its snapshots)', () => assert.ok(built.ok, built.why));
 
-test('graphAt: a Graph of the commit asked, its stamp exact; typed files, trust "unmeasured"; a second call reads the store', () => {
+test('graphAt: a Graph of the commit asked, its stamp exact; typed files, each edge its class\'s trust; a second call reads the store', () => {
   const r = repoOf('js'), head = git(r.repo, 'rev-parse', 'HEAD'), g = graphAt({ state: r.state, repo: r.repo });
   assert.equal(g.ok, true, g.why);
   assert.deepEqual(Object.keys(g.stamp).sort(), ['age_s', 'asked', 'commit', 'exact', 'indexed_at', 'tree', 'worktree']);
@@ -37,7 +37,9 @@ test('graphAt: a Graph of the commit asked, its stamp exact; typed files, trust 
   assert.equal(g.prefix, ''); assert.ok(g.indexed && g.indexed.parsed > 0);
   assert.equal(g.files.get('src/b.ts').lang, 'typescript'); assert.equal(g.files.get('src/a.mjs').lang, 'javascript');
   assert.equal(g.files.get('src/vendored.js').excluded, 'vendored'); assert.equal(g.files.get('src/gen.js').excluded, 'generated');
-  assert.ok(g.edges.every(e => e.trust === 'unmeasured')); assert.ok(Object.values(TRUST).every(t => t === 'unmeasured'));
+  assert.ok(g.edges.every(e => e.trust === TRUST[`${g.files.get(e.from).lang}/file/${e.how}`]));
+  assert.equal(g.edges.find(e => e.from === 'src/main.mjs' && e.to === 'src/a.mjs').trust, 1);   // S4a: measured
+  assert.equal(TRUST['javascript/file/name'], 'unmeasured'); assert.ok(Object.values(TRUST).every(t => t === 'unmeasured' || t === 'below bar' || (t >= 0 && t <= 1)));
   const again = graphAt({ state: r.state, repo: r.repo });
   assert.equal(again.indexed, null); assert.equal(again.edges.length, g.edges.length);
   assert.equal(graphAt({ state: r.state, repo: path.join(r.repo, 'src') }).prefix, 'src/');

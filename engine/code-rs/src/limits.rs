@@ -10,3 +10,12 @@ pub const GENERATED_LINES: usize = 5;
 pub const LOCK_WAIT_MS: u64 = 30_000;
 /// commits.json keeps the newest this many indexed commits
 pub const COMMITS_KEPT: usize = 200;
+/// `grade files` (grade.rs, SPEC section 5): the sampled rows per language, stratified by `how`
+pub const GRADE_PER_LANG: usize = 400;
+/// `grade files`: the seed of the draw when none is given (the grade file records the one used)
+pub const GRADE_SEED: u64 = 1;
+/// the file-edge bars of SPEC section 5: precision per (language, how) class, recall per language (static imports)
+pub const FILE_PRECISION_BAR: f64 = 0.99;
+pub const FILE_RECALL_BAR: f64 = 0.98;
+/// the Wilson score interval's z (95 %)
+pub const WILSON_Z: f64 = 1.96;

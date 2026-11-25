@@ -112,6 +112,13 @@ function plan(p, o) {
   if (!partProblem(p, o)) return { done: { ok: true, built: false } };
   const noCc = needsCc ? o.cc() : null;
   if (noCc) return { done: { ok: false, built: false, part: p, why: `${bin} (${why}) cannot build: ${noCc}; build command: ${buildOf(p, o)}` } };
+  // the target dir is shared by every checkout, and a crate's artifact name ignores its path: cargo, finding another checkout's
+  // fingerprint of this package, checks only the files THAT build listed (a new module is not among them) and may call it fresh, so
+  // the old binary would be stored under this source's name. No binary for this source = this crate must compile: drop its own
+  // fingerprints (its dependencies keep theirs and stay built)
+  const fp = path.join(targetOf(p, o.store), 'release', '.fingerprint');
+  let fps = []; try { fps = fs.readdirSync(fp); } catch { /* a cold target dir: nothing to drop */ }
+  for (const d of fps.filter(d => d.startsWith(`${bin}-`) && /^[0-9a-f]{16}$/.test(d.slice(bin.length + 1)))) fs.rmSync(path.join(fp, d), { recursive: true, force: true });
   return { args: ['build', '--release', '--locked', '--target-dir', targetOf(p, o.store), '--manifest-path', path.join(o.src, 'Cargo.toml')] };
 }
 const lastError = s => { const ls = String(s ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean); return ls.find(l => /^error\b/.test(l)) ?? ls.at(-1) ?? ''; };

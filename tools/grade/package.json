@@ -1,0 +1,8 @@
+{
+  "name": "norn-grade-tools",
+  "private": true,
+  "description": "The locked graders of the code graph (SPEC code-graph section 5, stage S4a): TypeScript's own resolver for the TS-only specifiers. Installed with npm ci --ignore-scripts into <meta root>/state/tools/grade/<lock hash>/, never in a worktree; nothing under engine/ imports it. Every change here is an owner approval (K20).",
+  "dependencies": {
+    "typescript": "6.0.3"
+  }
+}
