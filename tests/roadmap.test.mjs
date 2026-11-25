@@ -494,6 +494,11 @@ test('ROAD-LINK-FORM: norn road link / add / apply store the one form - lane:a/x
   const s = mkTmp('rlf-cli-');
   fs.writeFileSync(path.join(s, 'home.json'), JSON.stringify({ id: 'a', bare_home: 'a' }));
   record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'x' } }, { views: false });
+  const b = mkTmp('rlf-b-');   // home b's own lane x, seen here through its copy
+  fs.writeFileSync(path.join(b, 'home.json'), JSON.stringify({ id: 'b', bare_home: 'a' }));
+  record(b, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'x' } }, { views: false });
+  fs.mkdirSync(path.join(s, 'homes', 'b'), { recursive: true });
+  fs.copyFileSync(path.join(b, 'records.jsonl'), path.join(s, 'homes', 'b', 'records.jsonl'));
   const r = (...a) => meta(['road', ...a, '--state', s, '--as', 'controller']);
   const t = r('add', '--title', 'T', '--kind', 'theme');
   assert.equal(t.code, 0, t.err);
