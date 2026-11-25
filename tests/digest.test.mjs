@@ -271,3 +271,15 @@ test('digest sync: a stale heartbeat of home b and our mail unacked there are ro
   fs.rmSync(path.join(a, 'homes', 'b', 'seen.json'));
   assert.match(rows()[0].why, /b sends no receipts/);
 });
+
+test('renderDigest prints the stale_decisions section (RM-a-58): id, title, the changed path, sha and age, in the order given', () => {
+  const d = { project: 'demo', at: '2026-11-09T00:00:00Z', sections: { finished: [], queued: [], questions: [], ended: [], directives: [],
+    stale_decisions: [{ id: 'DEC-9', title: 'newer rule? -> keep', lane: 'x', stale_at: '2026-11-08T20:00:00Z', age_h: 4, path: 'engine/a.mjs', sha: 'abc123def456' },
+      { id: 'DEC-3', title: 'older rule? -> cut', lane: null, stale_at: '2026-11-07T00:00:00Z', age_h: 48, path: 'docs/x.md', sha: '0123456789ab' }] } };
+  const text = renderDigest(d), L = text.split('\n');
+  const h = L.findIndex(l => /^### \d+ Decisions gone stale.* \(2\)$/.test(l));
+  assert.ok(h >= 0, text);
+  assert.equal(L[h + 1], '- DEC-9 stale: engine/a.mjs changed in abc123def456 (4 h ago): newer rule? -> keep');
+  assert.equal(L[h + 2], '- DEC-3 stale: docs/x.md changed in 0123456789ab (48 h ago): older rule? -> cut');
+  assert.doesNotMatch(renderDigest({ ...d, sections: { ...d.sections, stale_decisions: undefined } }), /Decisions gone stale/, 'only while any');
+});
