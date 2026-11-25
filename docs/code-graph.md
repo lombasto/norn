@@ -396,15 +396,15 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
 
 ```
 <state>/code/graph/
-  blobs/v3/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs (with bases), names, calls, binds; shared by every commit and worktree
-  trees/v3/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
+  blobs/v4/<aa>/<blob sha>.json   per-blob facts (a pure function of the blob and the store schema): imports, defs (with bases), names, calls, binds; shared by every commit and worktree
+  trees/v4/<tree sha>.json        one resolved snapshot per root tree: files, edges, unresolved, the name index
   commits.json                    the newest 200 indexed commits: { commit, tree, indexed_at (unix s), ms, parsed, reused, counts }
   HEAD                            the newest indexed commit
 ```
 
 - A snapshot is keyed by the root tree's sha: two commits with the same content share it, and an unchanged blob is never parsed
   again. Lane worktrees share the repo's objects, so a branch at main + 3 commits parses only the blobs those commits changed.
-- `v3` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
+- `v4` is the store schema (`norn-code version` prints it; rustbin.mjs `CODE_STORE_SCHEMA`); a snapshot of another schema is
   never read.
 - Writes are atomic (tmp then rename); a tree has a lock, and a second writer waits for it, then reads the snapshot.
 - `--worktree` answers are resolved in memory and never stored as a tree.
@@ -444,7 +444,7 @@ norn-code's, in engine/code-rs/src/limits.rs:
 
 | name | value | meaning |
 |---|---|---|
-| `STORE_SCHEMA` | 3 | the store's extractor schema |
+| `STORE_SCHEMA` | 4 | the store's extractor schema |
 | `SPEC_MAX` | 120 | an edge's `spec` keeps at most this many characters |
 | `GENERATED_LINES` | 5 | the header lines exclusion rule (c) reads |
 | `LOCK_WAIT_MS` | 30000 | a second writer of a tree waits this long for the first one's lock |
