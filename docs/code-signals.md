@@ -107,3 +107,41 @@ which stays beside it.
 Code > Files has a "fix first" sort and the columns "fixes 365 d" and "fix first"; the file drawer lists "Changes together with" (the
 partners) and "Last fixes". Without stored signals, or with signals of another commit than the index, they read "not built yet"; an
 untyped history reads n/a with the reason.
+
+## A consumer: `norn code suspects` (RM-a-61)
+
+`norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]`
+answers "which recent landing do I read first?" against a bug report, from git and the stored signals (`readSignals`), no model
+(engine/lib/codesuspects.mjs).
+
+- **Candidates**: the landings (definition above) after `--since` (a commit, or the last N days; default `since_days`). A **batch merge**
+  is expanded into one candidate per member branch: an octopus gives one per merged parent; a branch whose own first-parent line holds
+  merges of other branches (an integration branch, e.g. a merge-queue batch) gives one per merged branch, plus "its own commits" when it
+  has any. A merge of main into a branch is no member (its commits belong to earlier landings). A member's files = the files its commits
+  touched that the landing changed; its subjects = its merge's and its commits'.
+- **Score**, compared in this order (strongest first, no weights): trace files the candidate changed; files that change together with
+  those (each trace file's `partners`, from the stored signals; a partner that is itself a trace file counts as a trace file); symptom
+  words found in its changed paths or its subjects. Ties: the newer landing first. Every row prints its score (`trace · partners · words`)
+  and its reasons in words.
+- **Words**: lower case, camelCase and paths split; shorter than `min_word`, numbers, function words and git's merge words go; a
+  conventional commit type is dropped with the reason. Two words match when equal, or when both are at least `stem_min` long and one
+  starts with the other. A word that matches more than `common_share` of the candidates (from `common_min` candidates up) is dropped with
+  the reason: it says nothing about which one.
+- **Trace**: every path with an extension in the file (`file://`, `\`, a drive and a `:line:col` tail taken off), matched to the repo's
+  files by suffix (a bare file name only when one file has it). Paths that match no file are listed as "not in the repo". Without stored
+  signals the partners read n/a with the reason.
+- **No suspect found** (exit 1) when no candidate scores: never a filler ranking. `--json`: `{ sha, at, basis: 'measured', since,
+  landings, batches, candidates, words: { used, dropped }, trace, partners: { sha } | { na }, top, found, suspects: [{ landing, member,
+  branch, pr, day, subject, files, score: { trace, partners, words }, reasons }] }`.
+
+Thresholds (`SUSPECT_LIMITS` in engine/lib/codesuspects.mjs, the one place):
+
+| key | value | meaning |
+|---|---|---|
+| `since_days` | 30 | the default window |
+| `top` | 5 | rows shown by default |
+| `min_word` | 3 | a shorter symptom word says nothing |
+| `stem_min` | 4 | two words this long match when one starts with the other |
+| `common_share` | 0.5 | a word matching more than this share of the candidates is dropped ... |
+| `common_min` | 4 | ... judged from this many candidates up |
+| `types` | feat fix docs style refactor perf test build ci chore revert | commit types: never a symptom word |
