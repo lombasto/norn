@@ -6,7 +6,8 @@
 // overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
 // lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk),
 // homes (RM-46 S1d: a synced dir's refused cross-home writes and copies that did not fold),
-// stale_decisions (RM-a-58: decisions whose governed paths changed on main in the window - declinks.mjs's stored index; read only).
+// stale_decisions (RM-a-58: decisions whose governed paths changed on main in the window - stated / runs links only, LINKS.stale_sources -
+// declinks.mjs's stored index; read only; views.mjs renderDigest prints it as section 15).
 // mail (HOME-MAIL S2: each mail for this home's controller not acked yet, with its age; leaves at the ack),
 // sync (HOME-MAIL S3: a home's heartbeat past the limit, our mail unacked at another home past the limit; leaves when the rule holds).
 import { loadState, loadShared, heldLanes, holdWho, homeOf, laneName, SHARED_KINDS, KINDS, roleAddr } from './records.mjs';
