@@ -3,13 +3,14 @@
   "audience": "developers",
   "project": {
     "name": "Norn",
-    "summary": "Norn runs coding agents (Claude Code, Codex or any command-line agent) on your own computer and keeps long pieces of work going without you, handing each agent off to a fresh session before its memory gets too big. It checks every branch for leftovers before it can merge, watches the instruction files agents read, and asks you only what it cannot decide, through a local dashboard and phone notifications. It is plain Node with no npm packages, plus one small Rust helper.",
+    "summary": "Norn runs coding agents (Claude Code, Codex or any command-line agent) on your own computer and keeps long pieces of work going without you, handing each agent off to a fresh session before its memory gets too big. It checks every branch for leftovers before it can merge, watches the instruction files agents read, and asks you only what it cannot decide, through a local dashboard and phone notifications. It is plain Node with no npm packages, plus two small Rust helpers.",
     "entrypoints": [
       "engine/bin/norn.mjs",
       "engine/dash/server.mjs",
       "engine/lib/supervisor.mjs",
       "engine/lib/tick.mjs",
-      "engine/hook-rs/src/main.rs"
+      "engine/hook-rs/src/main.rs",
+      "engine/code-rs/src/main.rs"
     ]
   },
   "ignore": [
@@ -119,7 +120,7 @@
       "kind": "library",
       "summary": "Decides which agent program and model a run uses, checks sign-in and limits before it starts, keeps it inside its brief's files, measures its context size and passes it messages.",
       "paths": [
-        "engine/lib/{executors,harness,launchargs,launchpolicy,probe,prereqs,authguard,account-refresh,hookbin,scope,mail,ctxlimit,bounded,agents,agentprocs,procs,kills,jobguard}.mjs",
+        "engine/lib/{executors,harness,launchargs,launchpolicy,probe,prereqs,authguard,account-refresh,rustbin,scope,mail,ctxlimit,bounded,agents,agentprocs,procs,kills,jobguard}.mjs",
         "engine/lib/jobguard.cs"
       ]
     },
@@ -241,6 +242,15 @@
       "summary": "A tiny program the agent runs before and after every tool call; it answers 'nothing to do' on its own and only wakes the full command line when there is mail or a call to check.",
       "paths": [
         "engine/hook-rs/**"
+      ]
+    },
+    {
+      "id": "codegraph",
+      "label": "Code graph indexer (engine/code-rs, Rust)",
+      "kind": "service",
+      "summary": "Parses the project's JavaScript, Python and Rust files and records which file imports which, keyed by commit, so other parts can ask what a change reaches.",
+      "paths": [
+        "engine/code-rs/**"
       ]
     },
     {

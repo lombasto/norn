@@ -1,0 +1,5 @@
+[project]
+name = "fx"
+
+[tool.setuptools.packages.find]
+where = ["src", "lib"]

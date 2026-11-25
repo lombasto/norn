@@ -1,0 +1,43 @@
+{
+  "edges": [
+    {"from":"native/python/fx_native/__init__.py","to":"native/src/lib.rs","line":1,"col":1,"kind":"native","how":"config","spec":"from ._fast import *"},
+    {"from":"src/fx/core.py","to":"src/fx/helpers.py","line":2,"col":1,"kind":"import","how":"exact","spec":"from . import helpers"},
+    {"from":"src/fx/core.py","to":"src/fx/models.py","line":3,"col":1,"kind":"import","how":"exact","spec":"from .models import Model"},
+    {"from":"src/fx/core.py","to":"src/common.py","line":4,"col":1,"kind":"import","how":"ambiguous","spec":"import common","alts":["lib/common.py"]},
+    {"from":"src/fx/core.py","to":"native/src/lib.rs","line":5,"col":1,"kind":"native","how":"config","spec":"import fx_native._fast"},
+    {"from":"src/fx/core.py","to":"accel/src/lib.rs","line":6,"col":1,"kind":"native","how":"name","spec":"import _accel"},
+    {"from":"src/fx/core.py","to":"lib/extra/__init__.py","line":9,"col":1,"kind":"package-init","how":"probed","spec":"from extra import tools"},
+    {"from":"src/fx/core.py","to":"lib/extra/tools.py","line":9,"col":1,"kind":"import","how":"probed","spec":"from extra import tools"},
+    {"from":"src/fx/core.py","to":"src/fx/__init__.py","line":12,"col":5,"kind":"package-init","how":"probed","spec":"from fx.models import Model"},
+    {"from":"src/fx/core.py","to":"src/fx/models.py","line":12,"col":5,"kind":"import-local","how":"probed","spec":"from fx.models import Model"},
+    {"from":"tests/test_core.py","to":"tests/helpers_t.py","line":1,"col":1,"kind":"import","how":"probed","spec":"import helpers_t"},
+    {"from":"tests/test_core.py","to":"src/fx/__init__.py","line":2,"col":1,"kind":"package-init","how":"probed","spec":"from fx import core"},
+    {"from":"tests/test_core.py","to":"src/fx/core.py","line":2,"col":1,"kind":"import","how":"probed","spec":"from fx import core"}
+  ],
+  "unresolved": [
+    {"from":"src/fx/core.py","line":1,"kind":"import","how":"external","spec":"from typing import TYPE_CHECKING","package":"typing"},
+    {"from":"src/fx/core.py","line":7,"kind":"import","how":"external","spec":"import numpy as np","package":"numpy"},
+    {"from":"src/fx/core.py","line":8,"kind":"import","how":"unresolved","spec":"import fx.missing","why":"missing"},
+    {"from":"src/fx/core.py","line":16,"kind":"import-local","how":"external","spec":"import json","package":"json"}
+  ],
+  "files": {
+    "accel/Cargo.toml": {"lang":"manifest"},
+    "accel/src/lib.rs": {"crate":"accel","module":"crate","target":"accel/src/lib.rs","lang":"rs"},
+    "lib/common.py": {"lang":"py"},
+    "lib/extra/__init__.py": {"lang":"py"},
+    "lib/extra/tools.py": {"lang":"py"},
+    "native/Cargo.toml": {"lang":"manifest"},
+    "native/pyproject.toml": {"lang":"manifest"},
+    "native/python/fx_native/__init__.py": {"lang":"py"},
+    "native/src/lib.rs": {"crate":"fx-native","module":"crate","target":"native/src/lib.rs","lang":"rs"},
+    "pyproject.toml": {"lang":"manifest"},
+    "src/common.py": {"lang":"py"},
+    "src/fx/__init__.py": {"lang":"py"},
+    "src/fx/core.py": {"lang":"py"},
+    "src/fx/helpers.py": {"lang":"py"},
+    "src/fx/models.py": {"lang":"py"},
+    "tests/conftest.py": {"lang":"py"},
+    "tests/helpers_t.py": {"lang":"py"},
+    "tests/test_core.py": {"lang":"py"}
+  }
+}
