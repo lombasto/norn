@@ -37,8 +37,8 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code signals <file>.. | --top N [--project P | --state D] [--json]   (signals = <state>/code/signals.json, stored by history: the files '
   + 'that change together with a file, its fix history and the fix-first rank, from git; docs/code-signals.md)\n'
   + 'usage: norn code links [--project P | --state D] [--repo DIR] [--json]   (links = <state>/code/declinks.json: each in-force DEC / active DIR tied '
-  + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and whether one changed on main since)\n'
-  + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)\n'
+  + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and, for stated / runs links, whether one changed on main since)\n'
+  + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10; each STALE / current, a landings link inferred)\n'
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
   + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)\n'
   + 'usage: norn code risk <base>..<head> [--project P | --state D] [--repo DIR] [--json]   (where the diff stands against the last 100 landings before '
@@ -108,7 +108,7 @@ function linksCmd(verb, f, w, repo, { out, err, now = Date.now() }) {
   const y = whyOf(ix, f.file, now);
   if (f.json) { out(JSON.stringify(y)); return 0; }
   out([`code why ${y.file}: ${y.matched} records at ${y.sha} (${how})${y.matched > y.rows.length ? `, newest ${y.rows.length} shown` : ''}`,
-    ...y.rows.map(x => `  ${x.id}  ${x.age_d} d  ${x.source}${x.from.length ? ` (${x.from.join(', ')})` : ''}  ${x.stale ? `STALE: changed in ${x.stale.sha} ${x.stale.at}` : 'current'}  ${x.title}`)].join('\n'));
+    ...y.rows.map(x => `  ${x.id}  ${x.age_d} d  ${x.source}${x.from.length ? ` (${x.from.join(', ')})` : ''}  ${x.status === 'stale' ? `STALE: changed in ${x.stale.sha} ${x.stale.at}` : x.status}  ${x.title}`)].join('\n'));
   return 0;
 }
 
