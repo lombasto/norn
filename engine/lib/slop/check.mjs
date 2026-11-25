@@ -26,8 +26,8 @@ export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
   'diff-check': [], pattern: ['files', 'exclude', 'in', 'unless', 'shadow_langs'], lint: ['files', 'exclude', 'levels', 'shadow_rules'], shim: ['files', 'exclude'],
-  ast: ['files', 'exclude', 'reason', 'shadow_langs', 'allow'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
-  dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
+  ast: ['files', 'exclude', 'reason', 'shadow_langs', 'allow'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor', 'shadow_langs'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
+  dup: ['roots', 'files', 'exclude', 'groups', 'min_chars', 'min_tokens', 'max_lines', 'shadow_langs'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry', 'shadow_langs'], refs: ['files', 'exclude'],
   model: ['files', 'exclude'], suppress: ['files', 'exclude', 'reason'], register: ['files'], companion: ['files', 'exclude', 'min_shared', 'min_share', 'partners_exclude'],
 };
 const PROJECT_KINDS = ['pattern', 'junk', 'imports', 'ast', 'lint'];
@@ -45,6 +45,7 @@ function checkRule(r, f) {
   if (r.quote !== undefined && (r.kind !== 'lint' || typeof r.quote !== 'boolean')) throw new Error(`${f}: quote (false: a finding never quotes its line) is a lint rule's true / false`);
   if (r.kind === 'pattern' && !patternData(r)) throw new Error(`${f}: a pattern rule's patterns are a list of regexes, or lists by pack id (${Object.keys(PACKS).join(' | ')}); shadow_langs names packs`);
   if (r.kind === 'lint' && r.select !== undefined && (r.tool !== 'ruff' || !Array.isArray(r.select) || !r.select.every(s => typeof s === 'string' && /^[A-Z]+\d*$/.test(s)))) throw new Error(`${f}: select (the ruff rules Norn adds to the project's own) is a ruff rule's list of codes`);
+  if (['imports', 'dup', 'exports'].includes(r.kind) && !(r.shadow_langs || []).every(p => PACKS[p])) throw new Error(`${f}: shadow_langs names packs (${Object.keys(PACKS).join(' | ')})`);
   if (r.kind === 'ast' && !astData(r)) throw new Error(`${f}: an ast rule is ast-grep match data (tool ast-grep): see rules/README.md`);
   if (r.kind === 'model' && (typeof r.question !== 'string' || !r.question.trim() || (r.on || []).some(o => !['code', 'tests'].includes(o)))) throw new Error(`${f}: a model rule asks a question in plain words; on lists code and / or tests`);
   if (!EXPLAIN.every(k => typeof r.explain?.[k] === 'string' && r.explain[k].trim())) throw new Error(`${f}: a rule explains itself (RM-27): explain.${EXPLAIN.join(' / explain.')} in plain words`);
@@ -234,7 +235,8 @@ export function shimFindings(rule, text, file) {
 
 // K10's edges: the code graph (codegraph.mjs) of the side's commit, kept to the edges from the rule's files (roots, files, exclude).
 // Layers count the static load-time kinds: a dynamic import, a Python import inside a function and a package's __init__ are no layer
-// edge. Cycles run over LOAD_KINDS between the rule's files. No graph (norn-code not built, an index that failed): the rule could not run
+// edge. Cycles run over LOAD_KINDS between the rule's files. No graph (norn-code not built, an index that failed): the rule could not run.
+// A finding whose file's pack is in shadow_langs (a new language, slop-langs SPEC 5) is shadow
 const LAYER_KINDS = new Set(ALL_KINDS.filter(k => !['dynamic', 'import-local', 'package-init'].includes(k)));
 function ruleGraph(rule, ctx, side) {
   const g = graphAt({ state: ctx.state || undefined, repo: ctx.repo, at: side === 'head' ? ctx.head : ctx.base });
@@ -248,7 +250,7 @@ function layering(rule, ctx, side) {
     if (matchAny([fb.from], e.from) && matchAny(fb.to, e.to)) out.push({ file: e.from, line: e.line, msg: `${e.from} must not import ${e.to} (${fb.from} -> ${fb.to.join(' | ')})`, snippet: norm(lineText(ctx.text(side, e.from) || '', e.line)) });
   }
   for (const c of cycles({ ...g, edges: g.edges.filter(e => g.mine(e.to)) }, { kinds: LOAD_KINDS }).cycles) out.push({ file: c[0], line: 1, msg: `import cycle: ${c.join(' -> ')}`, snippet: 'cycle ' + c.join(' ') });
-  return out;
+  return out.map(x => ((rule.shadow_langs || []).includes(packOf(x.file)?.ID) ? { ...x, shadow: true } : x));
 }
 
 const DETECT = {

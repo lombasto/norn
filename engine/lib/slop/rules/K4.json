@@ -9,7 +9,8 @@
     "fix": "Use it, or remove the export keyword (or the whole name). If only tests use it, test it through the code that does. If a CLI or an HTML page loads it by path, add it to the rule's entry list."
   },
   "roots": ["engine/"],
-  "files": ["**/*.mjs","**/*.js","**/*.cjs"],
+  "files": ["**/*.mjs","**/*.js","**/*.cjs","**/*.ts","**/*.tsx","**/*.mts","**/*.cts","**/*.py","**/*.rs"],
+  "shadow_langs": ["py","rs","ts"],
   "exclude": ["**/vendor/**"],
   "search": ["engine","tests"],
   "tests": ["tests/**"],
@@ -17,8 +18,8 @@
   "entry": [],
   "fixture": {
     "hit": {
-      "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"},
-      "head": {"engine/lib/a.mjs":"export const a = 1;\nexport const lonely = () => 2;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n"}
+      "base": {"engine/lib/a.mjs":"export const a = 1;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n","engine/lib/pa.py":"def used_py():\n    return 1\n","engine/lib/pb.py":"from engine.lib.pa import used_py\nused_py()\n","engine/lib/ta.ts":"export const usedTs = 1;\n","engine/lib/tb.ts":"import { usedTs } from './ta.ts';\nconsole.log(usedTs);\n","engine/core/Cargo.toml":"[package]\nname = \"core_x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n","engine/core/src/lib.rs":"pub mod util;\n","engine/core/src/util.rs":"pub fn used_rs() -> u8 { 1 }\n","engine/core/src/main.rs":"fn main() {\n    println!(\"{}\", core_x::util::used_rs());\n}\n"},
+      "head": {"engine/lib/a.mjs":"export const a = 1;\nexport const lonely = () => 2;\n","engine/lib/b.mjs":"import { a } from './a.mjs';\nprocess.stdout.write(String(a));\n","engine/lib/pa.py":"def used_py():\n    return 1\n\n\ndef lonely_py():\n    return 2\n","engine/lib/pb.py":"from engine.lib.pa import used_py\nused_py()\n","engine/lib/ta.ts":"export const usedTs = 1;\nexport function lonelyTs(): number { return 2; }\n","engine/lib/tb.ts":"import { usedTs } from './ta.ts';\nconsole.log(usedTs);\n","engine/core/Cargo.toml":"[package]\nname = \"core_x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n","engine/core/src/lib.rs":"pub mod util;\n","engine/core/src/util.rs":"pub fn used_rs() -> u8 { 1 }\npub fn lonely_rs() -> u8 { 2 }\n","engine/core/src/main.rs":"fn main() {\n    println!(\"{}\", core_x::util::used_rs());\n}\n"}
     },
     "miss": {
       "base": {"engine/dash/index.html":"<p>x</p>\n"},
@@ -29,7 +30,15 @@
         "tests/m.test.mjs": "import { grow } from '../engine/lib/m.mjs';\ngrow(1);\n",
         "engine/lib/k.mjs": "export const kay = 1;\n",
         "engine/lib/use.mjs": "import * as k from './k.mjs';\nprocess.stdout.write(String(k.kay));\n",
-        "engine/lib/index.mjs": "export * from './k.mjs';\n"
+        "engine/lib/index.mjs": "export * from './k.mjs';\n",
+        "engine/lib/mp.py": "__all__ = [\"grow_py\"]\n\n\ndef grow_py(n):\n    return n * 2\n\n\ndef hidden_py():\n    return 3\n\n\ndef _inner():\n    return hidden_py()\n",
+        "engine/lib/usep.py": "from engine.lib.mp import grow_py\ngrow_py(1)\n",
+        "engine/lib/k.ts": "export function growTs(n: number): number { return n * 2; }\nexport const selfTs = 1;\nconsole.log(selfTs);\n",
+        "engine/lib/use.ts": "import { growTs } from './k.ts';\ngrowTs(1);\n",
+        "engine/core/Cargo.toml": "[package]\nname = \"core_x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "engine/core/src/lib.rs": "pub mod util;\n",
+        "engine/core/src/util.rs": "pub fn grow_rs(n: u8) -> u8 { n * 2 }\npub(crate) fn inner_rs() -> u8 { 3 }\n",
+        "engine/core/src/main.rs": "fn main() {\n    println!(\"{}\", core_x::util::grow_rs(1));\n}\n"
       }
     }
   }

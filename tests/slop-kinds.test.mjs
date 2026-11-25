@@ -13,6 +13,7 @@ import { depsOf } from '../engine/lib/slop/kinds.mjs';
 import { eslintConfig, astGrepOut } from '../engine/lib/slop/tools.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
 
 const SYNTH = path.join(import.meta.dirname, 'fixtures', 'slop-project');
 const at = (t, s, cls) => classify(t)[t.indexOf(s)] === cls;
@@ -162,6 +163,27 @@ test('ast-grep S2: K11A, K21 and T3 find their lines in every language (shadow b
   }
   const t3 = AST.find(r => r.id === 'T3'), only = slopCheck({ repo: fxRepo(t3.fixture.hit), base: 'main', rules: [t3], tool: (run, side) => JSON.stringify(t3.fixture.hit.recorded[side]) });
   assert.deepEqual(only.blocks.filter(b => b.line >= 5).map(b => b.msg), [t3.match.js[2].message, t3.match.js[2].message], 'a JS test.only( / describe.skip( is held');
+});
+// slop-langs S6: K10 (layers, cycles), K4 (exports) and K9 (copied helpers) in py / rs / ts through the code graph's reader only; the
+// new languages are shadow (K10's py / ts were live since S3); the JS findings and fingerprints are those of the JS files alone
+test('graph rules S6: K10, K4 and K9 find their lines in all four languages (shadow by shadow_langs); each miss finds none; JS is unchanged', () => {
+  rustReady();
+  const want = { K10: { 'engine/lib/a.mjs': [1], 'engine/lib/pa.py': [1], 'engine/lib/ta.ts': [1], 'engine/lib/src/lib.rs': [1] },
+    K4: { 'engine/lib/a.mjs': [2], 'engine/lib/pa.py': [5], 'engine/lib/ta.ts': [2], 'engine/core/src/util.rs': [2] },
+    K9: { 'engine/lib/b.mjs': [1], 'engine/lib/pb.py': [1], 'engine/lib/tb.ts': [1], 'engine/lib/b.rs': [1] } };
+  const jsOnly = files => Object.fromEntries(Object.entries(files).filter(([f]) => !/\.(?:py|rs|ts|toml)$/.test(f)));
+  for (const rule of effectiveRules().filter(r => want[r.id])) {
+    for (const which of ['hit', 'miss']) {
+      const fx = rule.fixture[which], r = slopCheck({ repo: fxRepo(fx), base: 'main', rules: [rule], tool: () => null }), got = {};
+      assert.deepEqual(r.ran, [rule.id]);
+      for (const f of r.findings.filter(x => x.new && x.level === rule.level)) { (got[f.file] ||= []).push(f.line); assert.equal(!!f.shadow, rule.shadow_langs.some(p => f.file.endsWith(`.${p}`)), `${rule.id} ${f.file}: shadow by language`); }
+      assert.deepEqual(got, which === 'hit' ? want[rule.id] : {}, `${rule.id} ${which}: ${JSON.stringify(r.findings)}`);
+      const js = slopCheck({ repo: fxRepo({ base: jsOnly(fx.base), head: jsOnly(fx.head) }), base: 'main', rules: [rule], tool: () => null }), fps = x => x.findings.filter(f => f.file.endsWith('.mjs')).map(f => f.fp);
+      assert.deepEqual(fps(r), fps(js), `${rule.id} ${which}: the JS findings and fingerprints do not move`);
+    }
+  }
+  const d = mkTmp('slop-s6-rules-'); fs.writeFileSync(path.join(d, 'K4.json'), JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(RULES_DIR, 'K4.json'), 'utf8')), shadow_langs: ['cobol'] }));
+  assert.throws(() => effectiveRules({ dir: d }), /shadow_langs names packs/);
 });
 test('K21: allow is a param - a project\'s overrides.json names its own token and env table, and the listed names follow it', () => {
   const d = mkTmp('slop-k21-'); fs.mkdirSync(path.join(d, 'rules', 'slop'), { recursive: true });
