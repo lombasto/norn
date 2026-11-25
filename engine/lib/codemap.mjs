@@ -21,6 +21,9 @@ import { sha as sha256 } from './views.mjs';
 
 const PIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'tools', 'floorplan');
 export const MAP_REFRESH_MAX_PCT = 0.05;
+// the first map, drawn by the tick when a project has none (owner 2026-11-24: Norn draws it, no session has to): metered like a
+// refresh against its own cap (the spike's first map of a large repo: ~0.21 % of plan)
+export const MAP_FIRST_MAX_PCT = 0.5;
 const CALL_W = 0.6e6;   // weighted tokens per model job before a draw measured its own (the spike: 19.34 M over 32 calls)
 const CONC = 4, LOCK_STALE_MS = 2 * 3600e3, START_GAP_MS = 10 * 60e3;
 export const mapDir = state => path.join(state, 'code', 'map');
@@ -239,8 +242,7 @@ export async function drawMap({ state, repo, refresh = false, skill, ask, budget
   try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); } catch { return { drawn: false, why: 'a map draw is already running' }; }
   try {
     const prev = readJsonS(mapFile), head = git(repo, ['rev-parse', '--short=12', 'HEAD']), full = git(repo, ['rev-parse', 'HEAD']);
-    if (refresh && !prev?.sha) return { drawn: false, why: 'no map yet: `norn code map` draws the first one' };
-    if (refresh && prev.sha === head) return { drawn: false, sha: head, why: `the map is at ${head}` };
+    if (refresh && prev?.sha === head) return { drawn: false, sha: head, why: `the map is at ${head}` };
     const skip = why => { atomicWrite(mapFile, JSON.stringify({ ...prev, skipped: { at: new Date().toISOString(), sha: head, why } }));
       return { drawn: false, sha: head, skipped: why }; };   // the tick says it, once (tickMap)
     const per = Number((budget ?? readJsonS(machineBudgetFile(env)) ?? {}).cacheR_per_pct);
@@ -252,13 +254,13 @@ export async function drawMap({ state, repo, refresh = false, skill, ask, budget
     const first = !fs.existsSync(path.join(fp, 'index.html'));
     if (seed && (first || seed !== prev?.seed)) { fs.mkdirSync(fp, { recursive: true }); fs.copyFileSync(seedFile, path.join(fp, 'architecture.json')); }
     if (refresh) {   // the meter: the scripts count the jobs (no model) on a copy of the map's folder, put back before the real run
-      const keep = path.join(dir, 'floorplan.before');
-      fs.rmSync(keep, { recursive: true, force: true }); fs.cpSync(fp, keep, { recursive: true });
+      const keep = path.join(dir, 'floorplan.before'), had = fs.existsSync(fp), cap = prev?.sha ? MAP_REFRESH_MAX_PCT : MAP_FIRST_MAX_PCT;
+      fs.rmSync(keep, { recursive: true, force: true }); if (had) fs.cpSync(fp, keep, { recursive: true });
       let jobs;
-      try { jobs = refreshJobs(skill, work); } finally { fs.rmSync(fp, { recursive: true, force: true }); fs.renameSync(keep, fp); }
-      const pct = jobs * (prev.calls ? prev.weighted / prev.calls : CALL_W) / per;
-      say(`refresh at ${head}: ${jobs} model jobs, ~${pct.toFixed(3)} % of plan`);
-      if (pct > MAP_REFRESH_MAX_PCT) return skip(`~${+pct.toFixed(3)} % > ${MAP_REFRESH_MAX_PCT} % of plan (${jobs} model jobs)`);
+      try { jobs = refreshJobs(skill, work); } finally { fs.rmSync(fp, { recursive: true, force: true }); if (had) fs.renameSync(keep, fp); }
+      const pct = jobs * (prev?.calls ? prev.weighted / prev.calls : CALL_W) / per;
+      say(`${prev?.sha ? 'refresh' : 'first map'} at ${head}: ${jobs} model jobs, ~${pct.toFixed(3)} % of plan`);
+      if (pct > cap) return skip(`~${+pct.toFixed(3)} % > ${cap} % of plan (${jobs} model jobs)`);
     }
     const t0 = Date.now(), r = await runWorkflow({ skill, root: work, ask: ask ?? claudeAsk(work), log: say, seeded: Boolean(seed) });
     if (!r.done) throw new Error(`floorplan ${r.workflow} ended without a clean build (see ${path.join(dir, 'draw.log')})`);
@@ -281,18 +283,18 @@ export function mapAt(state) {
 /** GET /code-map/: the drawn index.html under its own CSP, revalidated by ETag (the file is ~3 MB) -> { status, headers, body } */
 export function codeMapPage(state, ifNoneMatch) {
   const m = readJsonS(path.join(mapDir(state), 'map.json')), file = path.join(mapDir(state), 'index.html');
-  if (!m?.sha || !fs.existsSync(file)) return { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'No map yet: `norn code map` draws it.' };
+  if (!m?.sha || !fs.existsSync(file)) return { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'No map yet: Norn draws the first one on its next tick (or run `norn code map` now).' };
   const headers = { 'content-type': 'text/html; charset=utf-8', 'Content-Security-Policy': mapCsp(m.csp), 'Cache-Control': 'no-cache', ETag: m.etag };
   if (ifNoneMatch && ifNoneMatch === m.etag) return { status: 304, headers, body: '' };
   return { status: 200, headers, body: fs.readFileSync(file) };
 }
 
 /** the tick's on-merge start: `norn code map --refresh` detached when HEAD moved past the drawn map, once per sha (the mark holds the
- *  sha tried and when); no map yet = nothing (the first map is the owner's) -> the tick-log words | null */
+ *  sha tried and when); no map yet = the same start, metered against MAP_FIRST_MAX_PCT (drawMap) -> the tick-log words | null */
 export function tickMap(p, state, { metaCmd, spawnFn, head, now = Date.now() } = {}) {
   const m = readJsonS(path.join(mapDir(state), 'map.json'));
-  if (!m?.sha || !head || head === m.sha) return null;
-  if (head === m.skipped?.sha) {   // the skipped refresh's one digest line, in the tick's log (the tick writes these words)
+  if (!head || head === m?.sha) return null;
+  if (head === m?.skipped?.sha) {   // the skipped refresh's one digest line, in the tick's log (the tick writes these words)
     const said = path.join(mapDir(state), 'skip.said');
     try { if (fs.readFileSync(said, 'utf8') === head) return null; } catch { /* not said yet */ }
     fs.writeFileSync(said, head);
@@ -300,9 +302,10 @@ export function tickMap(p, state, { metaCmd, spawnFn, head, now = Date.now() } =
   }
   const mark = path.join(mapDir(state), 'refresh.started'), [was, at] = (() => { try { return fs.readFileSync(mark, 'utf8').split(' '); } catch { return []; } })();
   if (was === head || now - Number(at) < START_GAP_MS) return null;
+  fs.mkdirSync(path.dirname(mark), { recursive: true });   // no map yet: its folder may not exist
   fs.writeFileSync(mark, `${head} ${now}`);
   const args = [metaCmd, 'code', 'map', '--refresh', '--project', p.file, '--state', state];
   let r = spawnFn ? spawnFn(process.execPath, args) : null;
   if (!r) { const c = spawn(process.execPath, args, { cwd: p.root, detached: true, stdio: 'ignore', windowsHide: true }); c.unref(); r = { pid: c.pid }; }
-  return `code map: refresh started pid ${r?.pid ?? '?'}`;
+  return `code map: ${m?.sha ? 'refresh' : 'first map'} started pid ${r?.pid ?? '?'}`;
 }

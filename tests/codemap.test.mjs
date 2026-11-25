@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { readPin, floorplanHome, drawMap, codeMapPage, mapCsp, tickMap, MAP_REFRESH_MAX_PCT } from '../engine/lib/codemap.mjs';
+import { readPin, floorplanHome, drawMap, codeMapPage, mapCsp, tickMap, MAP_REFRESH_MAX_PCT, MAP_FIRST_MAX_PCT } from '../engine/lib/codemap.mjs';
 import { codeCmd, codeAt } from '../engine/lib/codecli.mjs';
 
 test.after(cleanTmp);
@@ -163,9 +163,12 @@ test('codeMapPage: GET /code-map/ serves the map under its own sandboxed CSP (no
   assert.equal(mapCsp(''), "default-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-scripts");
 });
 
-test('tickMap: on a merge (HEAD past the map) it starts `norn code map --refresh` once per sha; no map yet = the owner\'s first draw, never the tick', async () => {
+test('tickMap: no map yet = the tick starts the first map itself; on a merge (HEAD past the map) it starts the refresh; once per sha', async () => {
   const w = world(), p = { file: 'kestrel.json', root: w.repo }, spawned = [], spawnFn = (exe, args) => { spawned.push(args.slice(1)); return { pid: 7 }; };
-  assert.equal(tickMap(p, w.state, { metaCmd: 'norn.mjs', spawnFn, head: w.head() }), null, 'no map: nothing');
+  assert.equal(tickMap(p, w.state, { metaCmd: 'norn.mjs', spawnFn, head: w.head() }), 'code map: first map started pid 7', 'no map: the tick draws it');
+  assert.equal(tickMap(p, w.state, { metaCmd: 'norn.mjs', spawnFn, head: w.head() }), null, 'the first map starts once per sha');
+  spawned.length = 0;
+  fs.rmSync(path.join(mapDir(w.state), 'refresh.started'), { force: true });
   await drawMap({ state: w.state, repo: w.repo, skill: w.skill, ask: w.ask, budget: w.budget, env: w.env });
   assert.equal(tickMap(p, w.state, { metaCmd: 'norn.mjs', spawnFn, head: w.head() }), null, 'the map is at HEAD');
   const s2 = w.commit(2);
@@ -182,4 +185,18 @@ test('norn code map: the verb\'s flags; codeAt\'s map part says what is drawn', 
   await drawMap({ state: w.state, repo: w.repo, skill: w.skill, ask: w.ask, budget: w.budget, env: w.env });
   const { map } = await codeAt({ name: 'kestrel', state: w.state }, new URL('http://x/api/code?part=map'));
   assert.deepEqual([map.sha, map.tool, map.calls, map.skipped], [w.head(), '9.9.9', 1, null]);
+});
+
+test('drawMap refresh with no map yet: the first map, metered against MAP_FIRST_MAX_PCT - under it the map is drawn, over it skipped with no model call', async () => {
+  assert.equal(MAP_FIRST_MAX_PCT, 0.5);
+  const w = world();
+  const r = await drawMap({ state: w.state, repo: w.repo, skill: w.skill, ask: w.ask, budget: { cacheR_per_pct: 1e9 }, env: w.env, refresh: true });
+  assert.equal(r.drawn, true, JSON.stringify(r));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(mapDir(w.state), 'map.json'), 'utf8')).sha, w.head());
+  assert.equal(codeMapPage(w.state).status, 200);
+  const t = world(); t.asked.length = 0;
+  const k = await drawMap({ state: t.state, repo: t.repo, skill: t.skill, ask: t.ask, budget: { cacheR_per_pct: 1 }, env: t.env, refresh: true });
+  assert.equal(k.drawn, false); assert.match(k.skipped, /% > 0\.5 % of plan/);
+  assert.deepEqual(t.asked, [], 'no model call for a skipped first map');
+  assert.equal(codeMapPage(t.state).status, 404); assert.match(codeMapPage(t.state).body, /Norn draws the first one on its next tick/);
 });
