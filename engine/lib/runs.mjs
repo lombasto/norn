@@ -37,7 +37,7 @@ import { resultDir, readResult, NO_RESULT } from './result.mjs';
 import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 import { claimWork, claimHold, renewWork, workKey, readSync, updateSync, leaderWhy } from './claims.mjs';
 import { ClaimsError, readClaims, fedOf } from './claimsref.mjs';
-import { touchedOf, workOf, gatherIntents, briefIntent, casesOf, rulingsOf, openCase, caseAction, itemStages } from './intents.mjs';
+import { touchedOf, workOf, gatherIntents, briefIntent, casesOf, rulingsOf, openCase, caseAction, itemStages, foldLines } from './intents.mjs';
 import { collisions, collidePolicy, holdsOf, holdTerm, workerLine, hitLines, caseKey } from './collide.mjs';
 import { prompt as basePrompt } from './harness/common.mjs';
 export { touchedOf };   // the tick renews claims with it; intents.mjs gathers every git fact of open work
@@ -904,6 +904,8 @@ export function startRun(o) {
     return { ...q, queued: true, why: n.why, collide: col.held.flatMap(h => hitLines(h, col.j.me)) };
   }
   if (col?.promptText) o = { ...o, promptText: col.promptText, collide_prompt: col.promptText };
+  // lane-collide S2b: a lane another was folded into tells its worker to read FOLDED-<lane>.md (and merge its branch) until a run here ends DONE
+  { const fl = collideExempt(o) ? [] : foldLines(o.state, o.lane); if (fl.length && (!o.promptText || o.promptText === o.collide_prompt)) { const pt = `${o.promptText ?? basePrompt(o)}\n\n${fl.join('\n')}`; o = { ...o, promptText: pt, collide_prompt: pt }; } }
   let claim;   // RM-46 S2b: the work claim, last before the worktree lock; a direct dispatch it holds waits queued, a fill's stays queued
   try { claim = claimDoor(o); } catch (e) {
     if (!(e instanceof ClaimHeld) || o.fromQueue) throw e;

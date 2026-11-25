@@ -17,13 +17,26 @@
 //            owner saw on rm29 and model-tab-residual-trail, never a resting state. A done lane that shipped ages out (archive).
 // An archive by the tick is the owner's Archive event by role `tick` with its why; the Lanes page Unarchive undoes it.
 //   path     (item 9, MAIL-20) a lane whose last work run ended DONE with commits not on main reaches a PR by code: lanepaths.mjs tickPaths.
+//   fold     (lane-collide S2b, SPEC 4A.4) norn collide fold: lane B's queued runs move to the kept lane, its brief and notes are copied into
+//            FOLDED-<B>.md there, its items link the kept lane too, B is archived (no commits of its own) or parked; behind a live run
+//            the fold is pending and foldPass (the tick) applies it when that run ends. No branch, worktree, source file or run is touched.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn, homeOfId, copyItems } from './records.mjs';
+import { loadState, record, readEvents, recordsFile, fold, idNum as runNum, homeOf, laneNameIn, homeOfId, copyItems, RecordError, laneId } from './records.mjs';
 import { makeEval } from './after.mjs';
 import { makeGit, workOnMain } from './dlvgit.mjs';
 import { laneShipped } from './dlvmerge.mjs';
 import { readJsonS } from './fsnap.mjs';
+import { queueRun, queueSpecPath, duplicateOf, RunRefused } from './runs.mjs';
+import { casesOf, rulingsOf, caseAction, pendingFolds, mainRef } from './intents.mjs';
+import { foldedText, foldedSources } from './collide.mjs';
+import { notesDirOf } from './laneout.mjs';
+import { briefObjective } from './purpose.mjs';
+import { loadRoadmap, setLink } from './roadmap.mjs';
+import { gitOut, lines } from './gitfacts.mjs';
+import { sha } from './views.mjs';
+import { runsOf } from './delegate.mjs';
+import { fwd } from './config.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
 const H = 3600e3, D = 24 * H;
@@ -221,4 +234,114 @@ export function pathWords(x, now = Date.now()) {
   if (x.state === 'at_risk') return { text: `work at risk: ${x.why}`, red: true };
   const h = ago(x.since, now);
   return h >= OFF_MAIN_H ? { text: `work not on main for ${h} h: no merge step - ${x.why}${risk}`, red: true } : { text: `done, not on main yet: ${x.why}${risk}`, red: !!x.risk };
+}
+
+// ---------- lane-collide S2b: fold (SPEC 4A.4 fold, steps 1 to 6 and the undo) ----------
+// lane park / unpark are the check-in's and the controller's events (records.mjs KINDS.lane): an owner's fold writes them as the controller's step
+const ckRole = by => (['checkin', 'controller'].includes(by) ? by : 'controller');
+const laneWork = (runs, lane) => Object.values(runs).filter(r => r.kind === 'run' && r.data?.lane === lane && r.data.role !== 'helper' && r.data.kind !== 'checkin').sort((a, b) => runNum(a.id) - runNum(b.id));
+const git1 = (wt, args) => (wt && fs.existsSync(wt) ? gitOut(wt, args) : null);
+/** the facts a fold of lane `lane` into `into` reads: B's live run, its newest worktree, branch, tip and commits not on main (git log
+ *  --oneline), the lanes that are declared parts of B, whether `into` is archived, B's queued runs, the kept lane's worktree and notes */
+export function foldFacts(state, { lane, into, repo = null, main = 'main', remote = 'origin' }) {
+  const runs = runsOf(state), mine = laneWork(runs, lane), keep = laneWork(runs, into), st = loadState(state);
+  const wt = mine.filter(r => r.data.worktree).at(-1)?.data.worktree ?? null, at = repo || (wt && fs.existsSync(wt) ? wt : null), ref = at ? mainRef(at, { main, remote }) : null;
+  const commits = ref?.sha ? lines(git1(wt, ['log', '--oneline', `${ref.sha}..HEAD`])) : [];
+  const leads = [...new Set([...Object.values(rulingsOf(casesOf(state))).filter(r => r.part?.of === lane).map(r => r.part.lane),
+    ...Object.values(runs).filter(r => r.kind === 'run' && r.data?.part_of === lane && LIVE.includes(r.state)).map(r => r.data.lane)])].filter(l => l !== into);
+  return { lane, into, live: mine.find(r => ['running', 'claimed'].includes(r.state))?.id ?? null, worktree: wt, branch: git1(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), tip: git1(wt, ['rev-parse', 'HEAD']),
+    commits, leads, keepArchived: st.items[laneId(into, state)]?.state === 'archived', queued: mine.filter(r => r.state === 'queued'),
+    keepWt: keep.filter(r => r.data.worktree).at(-1)?.data.worktree ?? null, keepNotes: keep.filter(r => r.data.notes).at(-1)?.data.notes ?? null, runs };
+}
+/** the source texts of lane B: its newest brief, then each notes file its runs named (a notes folder: its .md files but FOLDED-*) */
+function foldSources(mine) {
+  const brief = mine.filter(r => r.data.brief && fs.existsSync(r.data.brief)).at(-1)?.data.brief, out = brief ? [{ kind: 'brief', path: brief }] : [];
+  for (const n of [...new Set(mine.map(r => r.data.notes).filter(Boolean))]) {
+    let st; try { st = fs.statSync(n); } catch { continue; }
+    const xs = st.isDirectory() ? fs.readdirSync(n).filter(f => /\.md$/i.test(f) && !/^FOLDED-/.test(f)).sort().map(f => path.join(n, f)) : [n];
+    for (const f of xs) if (!out.some(x => path.resolve(x.path) === path.resolve(f))) out.push({ kind: 'notes', path: f });
+  }
+  return out.map(x => { const buf = fs.readFileSync(x.path); return { ...x, path: fwd(x.path), text: buf.toString('utf8'), sha256: sha(buf) }; });
+}
+/**
+ * steps 1 to 5 of a fold of lane B (f.lane) into f.into by role `by` -> the action's args, each step's before (the runs moved, the links
+ * added, the lane's state before) for undoFold. Refuses (RunRefused) before any write when a queued run of B cannot move; the fold file
+ * is read back and every copy's sha256 checked before anything else changes. Step 4 (the prompt line) is derived: intents.mjs foldLines.
+ */
+export function applyFold(state, { col, by, why, facts: f, now = new Date() }) {
+  const B = f.lane, K = f.into, mine = laneWork(f.runs, B), since_run = Math.max(0, ...Object.keys(f.runs).map(runNum).filter(Number.isFinite));
+  const specs = f.queued.map(r => { try { return { r, spec: JSON.parse(fs.readFileSync(queueSpecPath(state, r.id), 'utf8')) }; } catch { return { r, spec: null }; } });
+  for (const { r, spec } of specs) {
+    if (!spec) throw new RunRefused(`${r.id} (lane ${B}): its queue spec is missing - withdraw it first (norn stop ${r.id})`, 3);
+    if (!f.keepWt) throw new RunRefused(`lane ${K} has no worktree on record: ${r.id} cannot be queued there - start ${K} once, or fold the other way`, 3);
+    const dup = duplicateOf({ ...spec, state, lane: K, worktree: f.keepWt, replaces: r.id });
+    if (dup) throw new RunRefused(`lane ${K} already has ${dup.id} ${dup.state} for stage ${spec.stage}: ${r.id} cannot move there - withdraw one first`, 3);
+  }
+  // step 2 first: the copy, checked, before anything moves
+  const st = loadState(state), R = loadRoadmap(state), items = Object.entries(R.items).filter(([, it]) => (it.links || []).includes(`lane:${B}`));
+  const dir = notesDirOf(state, K, f.runs), file = path.join(dir, `FOLDED-${B}.md`), sources = foldSources(mine);
+  const head = sources.find(s => s.kind === 'brief')?.text.split(/\r?\n/).find(l => /^#\s/.test(l));
+  const text = foldedText({ lane: B, into: K, col, at: now.toISOString(), by, why, objective: head ? briefObjective(head) : null, branch: f.branch, tip: f.tip, commits: f.commits,
+    questions: Object.values(st.items).filter(i => i.kind === 'question' && i.state === 'open' && i.data?.lane === B).map(i => `${i.id} ${i.data.title}`),
+    decisions: Object.values(st.items).filter(i => i.kind === 'decision' && i.data?.lane === B).map(i => `${i.id} ${i.data.question ?? ''} -> ${i.data.choice ?? '?'}`),
+    links: items.map(([id, it]) => `${id} ${it.title ?? ''} (${it.state})`), sources });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, text);
+  const back = foldedSources(fs.readFileSync(file, 'utf8')), bad = sources.find(s => !back.some(b => b.path === s.path && sha(Buffer.from(b.text, 'utf8')) === s.sha256));
+  if (bad) { fs.rmSync(file, { force: true }); throw new RunRefused(`${bad.path} cannot be copied byte for byte (not UTF-8?): nothing was folded`, 3); }
+  // step 1: B's queued runs again on lane K, same brief and stage; each old one withdrawn naming its successor (its spec stays on disk)
+  const moved = [], reason = `folded into ${K} (${col})`;
+  for (const { r, spec } of specs) {
+    const { replaces: _x, ...keep } = spec, next = queueRun({ ...keep, state, lane: K, worktree: f.keepWt, notes: f.keepNotes ?? keep.notes, replaces: r.id }).run;
+    record(state, { kind: 'run', ev: 'withdraw', id: r.id, by, data: { why: reason, next } });
+    moved.push({ from: r.id, to: next, stage: spec.stage ?? null });
+  }
+  // step 3: the items that link lane:B link lane:K too (lane:B and every record that names B stay)
+  const linked = items.filter(([, it]) => it.state === 'open' && !it.links.includes(`lane:${K}`)).map(([id]) => id);
+  for (const id of linked) setLink(state, id, `lane:${K}`, true, by);
+  // step 5: B archived when it has no commits of its own, else parked (the tick archives it by today's rule once they are on main)
+  const lid = laneId(B, state), was = st.items[lid]?.state ?? null;
+  if (!was) record(state, { kind: 'lane', ev: 'create', id: lid, by, data: { name: B } });
+  let after = null, refusedWhy = null;
+  if (!f.commits.length && was !== 'archived') try { record(state, { kind: 'lane', ev: 'archive', id: lid, by, data: { why: reason, rule: 'fold' } }); after = 'archived'; } catch (e) { if (!(e instanceof RecordError)) throw e; refusedWhy = e.message; }
+  if (!after && (was ?? 'active') === 'active') { record(state, { kind: 'lane', ev: 'park', id: lid, by: ckRole(by), data: { why: reason } }); after = 'parked'; }
+  return { lane: B, into: K, since_run, file: fwd(file), sources: sources.map(({ text: _t, ...s }) => s), moved, linked, lane_before: was, lane_after: after,
+    ...(refusedWhy ? { archive_refused: refusedWhy.slice(0, 300) } : {}), branch: f.branch, tip: f.tip, commits_n: f.commits.length, commits: f.commits.slice(0, 20), keep_worktree: f.keepWt };
+}
+/** SPEC 4A.4 undo of an applied fold (its args a): B unarchived or unparked, the moved runs that have not started withdrawn and B's own
+ *  queued again from their kept specs, the links the fold added taken off; the prompt line goes with the undone action, the fold file stays
+ *  (a copy) -> the words for what stays */
+export function undoFold(state, a, { col, by }) {
+  const lid = laneId(a.lane, state), now = loadState(state).items[lid]?.state, out = [];
+  if (a.lane_after === 'archived' && now === 'archived') {
+    if (!['controller', 'owner', 'dashboard'].includes(by)) throw new RunRefused(`lane ${a.lane} was archived by the fold: to unarchive it is the controller's or the owner's (as today) - norn collide undo ${col} --as controller`, 3);
+    record(state, { kind: 'lane', ev: 'unarchive', id: lid, by, data: { why: `fold undone (${col})` } });
+  }
+  if (a.lane_after === 'parked' && now === 'parked') record(state, { kind: 'lane', ev: 'unpark', id: lid, by: ckRole(by), data: { why: `fold undone (${col})` } });
+  const runs = runsOf(state);
+  for (const m of a.moved || []) {
+    if (runs[m.to]?.state !== 'queued') { out.push(`${m.to} (from ${m.from}) is ${runs[m.to]?.state ?? 'gone'} on lane ${a.into}: it stays`); continue; }
+    record(state, { kind: 'run', ev: 'withdraw', id: m.to, by, data: { why: `fold undone (${col})` } });
+    const { replaces: _x, ...spec } = JSON.parse(fs.readFileSync(queueSpecPath(state, m.from), 'utf8'));
+    out.push(`${m.from} queued again on lane ${a.lane} as ${queueRun({ ...spec, state, replaces: m.to }).run}`);
+  }
+  const R = loadRoadmap(state);
+  for (const id of a.linked || []) if (R.items[id]?.links.includes(`lane:${a.into}`)) setLink(state, id, `lane:${a.into}`, false, by);
+  if (a.tip && a.keep_worktree && git1(a.keep_worktree, ['merge-base', '--is-ancestor', a.tip, 'HEAD']) !== null)
+    out.push(`a run on lane ${a.into} already merged ${a.branch ?? a.lane}: the merge commit stays; lane ${a.lane} continues from its own branch`);
+  return out;
+}
+/** the tick's step: each pending fold whose live run has ended is applied by the role that ruled it -> [{ col, lane, into } | { col, refused }] */
+export function foldPass(state, { project = {}, now = new Date() } = {}) {
+  const out = [], cfg = project.deliverables || {};
+  for (const p of pendingFolds(casesOf(state))) {
+    const f = foldFacts(state, { lane: p.lane, into: p.into, repo: cfg.repo || project.root || null, main: cfg.main, remote: cfg.remote });
+    if (f.live) continue;
+    try {
+      const args = applyFold(state, { col: p.col, by: p.by, why: p.why ?? `the pending fold of ${p.col}`, facts: f, now });
+      caseAction(state, p.col, 'fold', { by: p.by, auto: false, args: { ...args, pending_of: p.i, ...(p.dec ? { dec: p.dec } : {}) }, why: p.why ?? undefined });
+      out.push({ col: p.col, lane: p.lane, into: p.into });
+    } catch (e) { if (!(e instanceof RunRefused) && !(e instanceof RecordError)) throw e; out.push({ col: p.col, refused: e.message }); }
+  }
+  return out;
 }
