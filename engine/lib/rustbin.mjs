@@ -3,7 +3,8 @@
 // norn-code (engine/code-rs; the code graph, docs/code-graph.md). Each binary is named by its SOURCE CONTENT and kept in one store
 // that every checkout of this clone shares (NORN-RUST-FRESH, the measured choice: a cold norn-code is ~4 min and 166 MB of target/,
 // too much per lane worktree): <git common dir>/norn/rust/bin/<bin>-<source sha12>[.exe], built by `cargo build --release --locked`
-// (the committed Cargo.lock is what gets built) into the store's one target dir per part, then copied out. So a worktree whose part
+// (the committed Cargo.lock is what gets built) into the store's one target dir per part, then copied out, all under one lock per part
+// (no other checkout's build replaces the output before it is copied; docs/code-graph.md "The norn-code binary"). So a worktree whose part
 // equals main's costs no build; a pull that changes a part names a new binary, and a live run keeps executing the one it started with
 // (Windows cannot replace a running exe: cargo exit 101, os error 5 - cargo's own output file is never what a run executes). A process
 // pins the hash of its own engine's sources at first use: a supervisor whose checkout is pulled under it reads the binary of the
@@ -19,6 +20,7 @@ import { fwd, pathKey } from './config.mjs';
 import { which } from './paths.mjs';
 import { linuxFamily } from './prereqs.mjs';
 import { boundedAsync } from './bounded.mjs';
+import { withLock, withLockAsync } from './records.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const META_BIN = path.join(ENGINE, 'bin', 'norn.mjs');
@@ -30,6 +32,9 @@ export const RUST_PARTS = {
 export const CODE_STORE_SCHEMA = 3;
 /** the limit of one cargo build, the one named place (a cold norn-code: 224 s on a 20-core Windows machine; a CI runner is slower) */
 export const BUILD_MS = 600000;
+/** the build lock's timing: a holder's cargo dies at BUILD_MS, and its two `norn-code version` asks take 30 s each at most, so a lock
+ *  older than BUILD_MS + 2 min is a dead holder's and is broken; a waiter gives up after two such holders (its reason names the lock) */
+export const LOCK = { retryMs: 250, staleMs: BUILD_MS + 120000, timeoutMs: 2 * (BUILD_MS + 120000) };
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
 const part = p => { const x = RUST_PARTS[p]; if (!x) throw new Error(`unknown Rust part ${p}`); return x; };
@@ -51,6 +56,8 @@ export function storeOf(engine = ENGINE) {
 let STORE = null;
 const store = () => (STORE ??= storeOf());
 export const targetOf = (p, st = store()) => path.join(st, 'target', p);
+/** the build lock of part `p` in store `st` (records.mjs withLock): held from before cargo starts until the content-named file is stored */
+export const lockOf = (p, st = store()) => path.join(st, `${p}.lock`);
 
 // the source files of a crate dir, target/ left out, repo-style relative paths, sorted
 const files = (d, rel = '') => fs.readdirSync(path.join(d, rel), { withFileTypes: true })
@@ -106,7 +113,8 @@ export function ccProblem({ env = process.env, platform = process.platform, exis
 }
 
 // the build of part `p`, split so ensurePart (spawnSync) and ensurePartAsync (off the event loop: a supervisor's heartbeat beats on)
-// share every step: plan -> { done } when nothing is to build or it cannot start, else { args } for cargo; settle -> the result
+// share every step, both under the part's build lock: plan -> { done } when nothing is to build or it cannot start, else { args } for
+// cargo; settle -> the result
 function plan(p, o) {
   const { bin, why, cc: needsCc } = part(p);
   if (!partProblem(p, o)) return { done: { ok: true, built: false } };
@@ -141,22 +149,47 @@ function settle(p, r, o) {
   return left ? no(`${left} after its build (${buildOf(p, o)})`) : { ok: true, built: true };
 }
 const opts = (p, { err = () => {}, start = () => {}, run = spawnSync, cc = ccProblem, src = srcOf(p), store: st = store(), exe } = {}) => ({ err, start, run, cc, src, store: st, exe: exe ?? binOf(p, { src, store: st }) });
+// the race (NORN-DONE-FRESH S2): builds of DIFFERENT sources of one part share <target>/release/<bin>, and cargo's own lock covers its
+// build only, so between its release and our copy-out another build could replace that file and its binary be stored under this
+// source's name. One lock per part (records.mjs withLock: exclusive create, a stale one broken; LOCK above) is held from the plan
+// (its fingerprint drop) to the stored file. A fresh part takes no lock; a second build of the SAME sources waits, then finds the file
+// under the lock and builds nothing. A lock never had is the ONE reason, naming the lock file
+const lockBusy = (p, o, e) => ({ ok: false, built: false, part: p, why: `${part(p).bin} (${part(p).why}) cannot build: another build of it holds its lock (${e.message}); build command: ${buildOf(p, o)}` });
 
 /** build part `p` for `src` when its binary is missing -> { ok, built, part?, why? } (why: the ONE reason, naming the part, the cause
  *  and the build command; cargo's own output goes to err). run: spawnSync-shaped, for cargo and `norn-code version`; start(p) is said
  *  just before cargo runs (a caller names the wait: a cold norn-code takes minutes) */
 export function ensurePart(p, o = {}) {
-  const x = opts(p, o), pl = plan(p, x);
-  if (pl.done) return pl.done;
-  x.start(p);
-  return settle(p, x.run('cargo', pl.args, { encoding: 'utf8', windowsHide: true, timeout: BUILD_MS }), x);
+  const x = opts(p, o);
+  if (!partProblem(p, x)) return { ok: true, built: false };
+  fs.mkdirSync(x.store, { recursive: true });
+  let held = false;
+  try {
+    return withLock(lockOf(p, x.store), () => {
+      held = true;
+      const pl = plan(p, x);
+      if (pl.done) return pl.done;
+      x.start(p);
+      return settle(p, x.run('cargo', pl.args, { encoding: 'utf8', windowsHide: true, timeout: BUILD_MS }), x);
+    }, LOCK);
+  } catch (e) { if (held) throw e; return lockBusy(p, x, e); }
 }
-/** ensurePart without blocking the event loop: cargo (default boundedAsync: the tree dies at BUILD_MS) resolves spawnSync's shape */
+/** ensurePart without blocking the event loop: cargo (default boundedAsync: the tree dies at BUILD_MS) resolves spawnSync's shape; the
+ *  wait for the lock is a timer, so a supervisor's heartbeat beats on */
 export async function ensurePartAsync(p, { cargo = args => boundedAsync('cargo', args, { timeout: BUILD_MS }), ...o } = {}) {
-  const x = opts(p, o), pl = plan(p, x);
-  if (pl.done) return pl.done;
-  x.start(p);
-  return settle(p, await cargo(pl.args), x);
+  const x = opts(p, o);
+  if (!partProblem(p, x)) return { ok: true, built: false };
+  await fs.promises.mkdir(x.store, { recursive: true });
+  let held = false;
+  try {
+    return await withLockAsync(lockOf(p, x.store), async () => {
+      held = true;
+      const pl = plan(p, x);
+      if (pl.done) return pl.done;
+      x.start(p);
+      return settle(p, await cargo(pl.args), x);
+    }, LOCK);
+  } catch (e) { if (held) throw e; return lockBusy(p, x, e); }
 }
 
 /** the ONE condition on which a slop check reads the code graph, so needs norn-code: one of its `imports` rules (K10) has a root the

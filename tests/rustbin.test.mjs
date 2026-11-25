@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { storeOf, sourceHash, binOf, partsOf, partProblem, ensurePart, ensurePartAsync, ensureParts, targetOf, graphReads, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
+import { storeOf, sourceHash, binOf, partsOf, partProblem, ensurePart, ensurePartAsync, ensureParts, targetOf, lockOf, graphReads, BUILD_MS, CODE_STORE_SCHEMA } from '../engine/lib/rustbin.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
@@ -128,4 +128,84 @@ test('ensurePartAsync / ensurePart: start(p) is said once before cargo runs, nev
   const s2 = path.join(checkout(path.join(t, 'wt2'), { main: 'fn main() { }\n' }), 'hook-rs'), sync = [];
   ensurePart('hook', { src: s2, store, start: p => sync.push(p), run: (c, a) => { assert.deepEqual(sync, ['hook']); const d = a[a.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(d, 'release'), { recursive: true }); fs.writeFileSync(path.join(d, 'release', 'norn-hook' + EXE), 'b'); return { status: 0 }; } });
   assert.deepEqual(sync, ['hook'], 'the sync form says it too');
+});
+
+// NORN-DONE-FRESH S2: a fake cargo that models the store's shared target dir: ONE output file <target>/release/norn-hook for every
+// checkout's sources, and a package fingerprint that ignores the crate's path - any norn-hook-<16 hex> fingerprint reads "fresh" and
+// leaves the output as it is (what cargo did on home a, #238); else the output = the built source's main.rs, and the fingerprint is written
+function sharedCargo(log = []) {
+  return args => {
+    const t = args[args.indexOf('--target-dir') + 1], src = path.dirname(args[args.indexOf('--manifest-path') + 1]);
+    const rel = path.join(t, 'release'), fp = path.join(rel, '.fingerprint');
+    const fresh = fs.existsSync(fp) && fs.readdirSync(fp).some(d => /^norn-hook-[0-9a-f]{16}$/.test(d));
+    log.push(`${path.basename(path.dirname(path.dirname(src)))} ${fresh ? 'fresh' : 'built'}`);
+    if (!fresh) { fs.mkdirSync(path.join(fp, 'norn-hook-0123456789abcdef'), { recursive: true }); fs.writeFileSync(path.join(rel, 'norn-hook' + EXE), fs.readFileSync(path.join(src, 'src', 'main.rs'))); }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+}
+/** two checkouts a and b of one part with different sources, and one store */
+function twoSources(prefix) {
+  const t = mkTmp(prefix), store = path.join(t, 'store');
+  const [A, B] = ['a', 'b'].map(n => path.join(checkout(path.join(t, n), { main: `// ${n}\n` }), 'hook-rs'));
+  return { t, store, A, B, holds: s => fs.readFileSync(binOf('hook', { src: s, store }), 'utf8') };
+}
+const tick = () => new Promise(res => setImmediate(res));
+
+for (const form of ['sync', 'async']) {
+  test(`two sources of one part into one store (${form}): A B A, then A's entry deleted and A again - each entry holds its own source's output`, async () => {
+    const { store, A, B, holds } = twoSources('rb-two-'), log = [], cargo = sharedCargo(log);
+    const build = s => form === 'sync' ? ensurePart('hook', { src: s, store, run: (c, a) => cargo(a) }) : ensurePartAsync('hook', { src: s, store, cargo: async a => cargo(a) });
+    for (const s of [A, B, A]) assert.equal((await build(s)).ok, true);
+    assert.equal(holds(A), '// a\n'); assert.equal(holds(B), '// b\n');
+    assert.deepEqual(log, ['a built', 'b built'], 'the second A is its stored file: no build');
+    fs.rmSync(binOf('hook', { src: A, store }));
+    assert.deepEqual(await build(A), { ok: true, built: true });
+    assert.equal(holds(A), '// a\n', 'B\'s fingerprint was dropped: A was built, not called fresh with B\'s output');
+    assert.equal(holds(B), '// b\n');
+    assert.deepEqual(log, ['a built', 'b built', 'a built']);
+  });
+}
+
+test('the race: a build of other sources that would replace the shared output before the first build copies it cannot - one lock per part', async () => {
+  const { store, A, B, holds } = twoSources('rb-race-'), log = [], cargo = sharedCargo(log);
+  let pB;
+  const cargoA = async a => {
+    const r = cargo(a);   // A's output is in <target>/release; before it is copied out, B's build of the same part starts
+    pB = ensurePartAsync('hook', { src: B, store, cargo: async b => cargo(b) });
+    for (let i = 0; i < 10; i++) await tick();
+    return r;
+  };
+  assert.deepEqual(await ensurePartAsync('hook', { src: A, store, cargo: cargoA }), { ok: true, built: true });
+  assert.deepEqual(await pB, { ok: true, built: true });
+  assert.equal(holds(A), '// a\n', 'A\'s entry holds A\'s build, never B\'s');
+  assert.equal(holds(B), '// b\n');
+  assert.deepEqual(log, ['a built', 'b built']);
+  assert.equal(fs.existsSync(lockOf('hook', store)), false, 'released');
+});
+
+test('a held lock: the async form waits with its event loop free (a supervisor\'s heartbeat beats on); the sync form holds it over cargo', async () => {
+  const { store, A, B, holds } = twoSources('rb-held-'), lock = lockOf('hook', store), calls = [];
+  fs.mkdirSync(store, { recursive: true }); fs.writeFileSync(lock, JSON.stringify({ pid: 1, ts: new Date().toISOString() }));
+  let settled = false, beats = 0;
+  const p = ensurePartAsync('hook', { src: A, store, cargo: fakeCargo('norn-hook', calls) }).finally(() => { settled = true; });
+  for (; beats < 20; beats++) await tick();
+  assert.equal(beats, 20, 'the event loop ran while the build waited');
+  assert.equal(settled, false); assert.equal(calls.length, 0, 'no cargo while another build holds the part');
+  fs.unlinkSync(lock);
+  assert.deepEqual(await p, { ok: true, built: true });
+  assert.equal(calls.length, 1); assert.equal(fs.existsSync(lock), false, 'released');
+  let held = null;
+  assert.deepEqual(ensurePart('hook', { src: B, store, run: (c, a) => { held = JSON.parse(fs.readFileSync(lock, 'utf8')).pid; return sharedCargo()(a); } }), { ok: true, built: true });
+  assert.equal(held, process.pid, 'the sync form holds the lock while cargo runs');
+  assert.equal(holds(B), '// b\n'); assert.equal(fs.existsSync(lock), false, 'released');
+});
+
+test('a dead holder does not block: a lock older than any build can hold it is broken, in the sync and the async form', async () => {
+  const { store, A, B, holds } = twoSources('rb-dead-'), lock = lockOf('hook', store), dead = () => fs.writeFileSync(lock, JSON.stringify({ pid: 1, ts: new Date(Date.now() - 2 * BUILD_MS - 3600e3).toISOString() }));
+  fs.mkdirSync(store, { recursive: true });
+  dead();
+  assert.deepEqual(ensurePart('hook', { src: A, store, run: (c, a) => sharedCargo()(a) }), { ok: true, built: true });
+  dead();
+  assert.deepEqual(await ensurePartAsync('hook', { src: B, store, cargo: async a => sharedCargo()(a) }), { ok: true, built: true });
+  assert.equal(holds(A), '// a\n'); assert.equal(holds(B), '// b\n'); assert.equal(fs.existsSync(lock), false);
 });
