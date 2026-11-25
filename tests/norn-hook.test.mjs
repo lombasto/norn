@@ -12,6 +12,7 @@ import { record } from '../engine/lib/records.mjs';
 import { sendMail, ackMail, flagFile, loadMail } from '../engine/lib/mail.mjs';
 import { writeScopeFile, scopeFile, scopeCheck, denyJson } from '../engine/lib/scope.mjs';
 import { ensurePart, partProblem, hookEntry } from '../engine/lib/rustbin.mjs';
+import { writeWarnTable, warnsOf } from '../engine/lib/codewarn.mjs';
 
 const built = ensurePart('hook', { err: s => process.stderr.write(s + '\n') });
 const NO_NODE = path.join(mkTmp('meta-nohook-'), 'no-node.exe');
@@ -112,4 +113,48 @@ test('scope: the calls scope.mjs surely allows pass without Node; every other ca
   writeScopeFile(w.state, 'RUN-1', { ...spec, ctx_from: free });
   for (const p of [test, nt]) silent(hook('scope', w.state, { input: p, node: NO_NODE }), p);
   assert.equal(hook('scope', w.state, { input: judged[0], node: NO_NODE }).status, 1, 'the other checks stay');
+});
+
+// RM-a-67 warn-on-edit: the PostToolUse hook prints a risky file's line (codewarn.mjs's table) on a run's first edit of it, without Node
+function warnWorld(mode, { subdir = '' } = {}) {
+  const root = mkTmp('meta-hookwarn-'), wt = path.join(root, 'Wt'), state = path.join(root, 'state'), proj = path.join(root, 'project.json');
+  for (const d of [path.join(wt, subdir), path.join(state, 'runs')]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(proj, JSON.stringify({ schema: 1, name: 'demo', policy: mode ? { code: { warn: mode } } : {} }));
+  const runs = [1, 2].map(() => record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'fake', lane: 'demo' } }).id);   // RUN-1 odd, RUN-2 even
+  for (const run of runs) fs.writeFileSync(path.join(state, 'runs', `${run}.spec.json`), JSON.stringify({ run, worktree: wt, ctx_from: proj, state, ...(subdir ? { subdir } : {}) }));
+  const row = o => ({ landings: 9, partners: [], fixes: { n_90d: 0, n_365d: 0, last: [] }, fan_in: 0, ...o });
+  writeWarnTable(state, { at: '2026-11-24T00:00:00.000Z', sha: '1a2b3c4d5e6f', basis: 'measured', limits: { fix_short_days: 90 }, files: { 'lib/Core.mjs': row({ fan_in: 41 }), 'lib/calm.mjs': row({}) } });
+  const edit = (file, tool = 'Edit') => JSON.stringify({ session_id: 'S', hook_event_name: 'PostToolUse', tool_name: tool, tool_input: { file_path: file }, cwd: path.join(wt, subdir) });
+  return { state, edit, line: 'lib/Core.mjs: 41 files import this (measured at 1a2b3c4d5e6f)' };
+}
+const said = r => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout).hookSpecificOutput.additionalContext; };
+
+test('warn: switch on, the first edit of a file in the table shows its line once; other files, other tools and a second edit say nothing; the run record counts', () => {
+  const w = warnWorld('on', { subdir: 'apps/web' }), h = (input, run = 'RUN-1', node = NO_NODE) => hook('mail', w.state, { input, node, run });
+  assert.equal(said(h(w.edit('lib/Core.mjs'))), w.line, 'a monorepo project: the path is relative to its folder');
+  silent(h(w.edit('lib/Core.mjs', 'Write')), 'once per file per run');
+  silent(h(w.edit('lib/calm.mjs')), 'under every threshold');
+  silent(h(w.edit('../other/lib/Core.mjs')), 'outside the project folder');
+  silent(h(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls lib/Core.mjs' } })), 'not an edit');
+  assert.deepEqual(warnsOf(w.state, 'RUN-1'), { mode: 'on', group: 'warn', shown: 1, files: ['lib/Core.mjs'] });
+  // the flag up too: Node delivers the mail, the line goes first in the same answer; the mail hook alone after that
+  sendMail(w.state, { by: 'controller', to: 'RUN-2', subject: 'hello', body: 'b' });
+  const both = said(h(w.edit('lib/Core.mjs', 'NotebookEdit').replace('file_path', 'notebook_path'), 'RUN-2', process.execPath));
+  assert.ok(both.startsWith(`${w.line}\n\n`), both); assert.match(both, /MAIL-1 .*hello/);
+  silent(h(w.edit('lib/Core.mjs'), 'RUN-2'), 'shown once, the flag down');
+  assert.equal(warnsOf(w.state, 'RUN-2').shown, 1);
+});
+
+test('warn: the switch off (the default), no table, and the control group of ab say nothing and start no Node', () => {
+  const off = warnWorld(null);
+  silent(hook('mail', off.state, { input: off.edit('lib/Core.mjs'), node: NO_NODE }), 'switch off');
+  assert.equal(warnsOf(off.state, 'RUN-1'), null, 'an off run is not marked');
+  const none = warnWorld('on');
+  fs.rmSync(path.join(none.state, 'code', 'warn.json'));
+  silent(hook('mail', none.state, { input: none.edit('lib/Core.mjs'), node: NO_NODE }), 'no table');
+  const ab = warnWorld('ab');
+  silent(hook('mail', ab.state, { input: ab.edit('lib/Core.mjs'), node: NO_NODE, run: 'RUN-1' }), 'odd run: control');
+  assert.deepEqual(warnsOf(ab.state, 'RUN-1'), { mode: 'ab', group: 'control', shown: 0, files: [] });
+  assert.equal(said(hook('mail', ab.state, { input: ab.edit('lib/Core.mjs'), node: NO_NODE, run: 'RUN-2' })), ab.line, 'even run: the warn group');
+  assert.equal(warnsOf(ab.state, 'RUN-2').group, 'warn');
 });
