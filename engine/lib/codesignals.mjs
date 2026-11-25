@@ -114,16 +114,15 @@ function signalsAt(C, tip, ix, now) {
 
 // ---- the rank check ----
 const RANKS = { fix_first: { label: 'fix-first', order: (a, b) => b.fix_first - a.fix_first || b.importance - a.importance }, importance: { label: 'importance', order: (a, b) => b.importance - a.importance || b.churn_90d - a.churn_90d } };
-const dayOf = t => new Date(t).toISOString().slice(0, 10);
 /** C, head: the commits and HEAD; now -> { status: 'measured', basis, as_of, days, sha (the landing ranked), files (then), fixed (of them, fixed since),
  *  fix_first | importance: { status: 'measured', top: [{ file, rank, fixed }], hit } | { status: 'n/a', reason } } | { status: 'n/a', reason, ... } */
 function rankCheck(dir, C, head, now) {
-  const L = SIGNAL_LIMITS, then = now - L.check_days * DAY, span = `the last ${L.check_days} days`, base = { basis: 'measured', as_of: dayOf(then), days: L.check_days };
+  const L = SIGNAL_LIMITS, then = now - L.check_days * DAY, span = `the last ${L.check_days} days`, base = { basis: 'measured', as_of: new Date(then).toISOString().slice(0, 10), days: L.check_days };
   const na = (reason, o = {}) => ({ status: 'n/a', reason, ...base, ...o });
   let born = Infinity; for (const c of C.values()) born = Math.min(born, c.t);
-  if (now - born < L.check_min_history_days * DAY) return na(`the history starts ${dayOf(born)}: under ${L.check_min_history_days} days`);
+  if (now - born < L.check_min_history_days * DAY) return na(`the history starts ${new Date(born).toISOString().slice(0, 10)}: under ${L.check_min_history_days} days`);
   let tip = head; while (C.get(tip)?.t > then) tip = C.get(tip).p[0];   // main's tip on the check day: its newest landing at or before it
-  if (!C.has(tip)) return na(`no landing on or before ${dayOf(then)}`);
+  if (!C.has(tip)) return na(`no landing on or before ${new Date(then).toISOString().slice(0, 10)}`);
   const since = landingsOf(C, head, then, now), ty = typedOf(since), o = { sha: tip.slice(0, 12) };
   if (!ty.ok) return na(typedWhy(ty.typed, ty.own.length, span), o);
   const ix = codeIndex(dir, { now: then, rev: tip }), old = signalsAt(C, tip, ix, then), K = new Set(ix.files.map(x => x.file)), fixed = new Set();
