@@ -22,6 +22,9 @@ Records rules: {{records}} (the one home; read it once per session).
   that rules it names the Q: `norn_decision_add {answers: Q-n, owner_words}` (`norn rec add decision ... --answers Q-n --owner-words
   "<verbatim>"`) = the decision + the answer + the apply in one call. A decision carrying an owner pick on a lane with an open Q is
   refused (code 3, it names the Q): pass `answers` + `owner_words`, or `not_an_answer` when it truly answers nothing open.
+- A decision or directive that governs code: `norn rec add decision|directive ... --paths` with the repo-relative files or folders
+  it governs (`--paths engine/lib/digest.mjs,engine/prompts`); a process ruling (queue order, dispatch, "no second stage") takes
+  none. The command warns when the text names repo files and no `--paths` is given.
 
 ## Dispatch and runs
 - `norn_status` with `view: collide` before any `norn_run`: dispatch only what it lists under "Open now"; a "Would collide" row
