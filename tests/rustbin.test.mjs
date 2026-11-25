@@ -1,6 +1,6 @@
 // NORN-RUST-FRESH: Norn's Rust parts are named by their source content in one store every checkout of the clone shares, and built
 // (rustbin.mjs ensurePart / ensurePartAsync / ensureParts) when missing; one that cannot be had is ONE reason naming the part, the
-// cause and the build command. Fake crate dirs and an injected cargo only: no real cargo runs here.
+// cause and the build command. Fake crate dirs and an injected cargo, but for the last test: real cargo builds a tiny crate.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,8 +19,8 @@ function checkout(root, { dirs = ['hook-rs'], main = 'fn main() {}\n' } = {}) {
   }
   return path.join(root, 'engine');
 }
-// an injected cargo: records its args and writes <target-dir>/release/<bin> as a real build would
-const fakeCargo = (bin, calls) => async args => { calls.push(args); const t = args[args.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(t, 'release'), { recursive: true }); fs.writeFileSync(path.join(t, 'release', bin + EXE), 'bin'); return { status: 0, stdout: '', stderr: '' }; };
+// an injected cargo: records its args; a build writes <target-dir>/release/<bin> as a real build would, a clean succeeds
+const fakeCargo = (bin, calls) => async args => { calls.push(args); if (args[0] === 'clean') return { status: 0, stdout: '', stderr: '' }; const t = args[args.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(t, 'release'), { recursive: true }); fs.writeFileSync(path.join(t, 'release', bin + EXE), 'bin'); return { status: 0, stdout: '', stderr: '' }; };
 const noCargo = () => assert.fail('a fresh part costs no build');
 
 test('storeOf: the main checkout and each of its worktrees share <git common dir>/norn/rust; no git = the root\'s own', () => {
@@ -60,9 +60,8 @@ test('ensurePartAsync: a missing part is built into the store\'s target dir and 
   assert.match(partProblem('hook', { src, exe }), /^norn-hook is not built for its source \(/);
   const r = await ensurePartAsync('hook', { src, store, cargo: fakeCargo('norn-hook', calls) });
   assert.deepEqual(r, { ok: true, built: true });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].slice(0, 3), ['build', '--release', '--locked']);
-  assert.equal(calls[0][calls[0].indexOf('--target-dir') + 1], targetOf('hook', store));
+  assert.deepEqual(calls, ['clean', 'build'].map(c => [c, ...(c === 'clean' ? ['-p', 'norn-hook', '--release'] : ['--release', '--locked']), '--target-dir', targetOf('hook', store), '--manifest-path', path.join(src, 'Cargo.toml')]),
+    'the clean of the package by cargo itself, then the build: no layout of the target dir assumed');
   assert.equal(fs.readFileSync(exe, 'utf8'), 'bin');
   assert.equal(partProblem('hook', { src, exe }), null);
   assert.deepEqual(await ensurePartAsync('hook', { src, store, cargo: noCargo }), { ok: true, built: false });
@@ -77,12 +76,15 @@ test('ensurePartAsync: cargo absent, a failed build and no C compiler are each O
   assert.match(absent.why, /^norn-hook \(the per-tool-call hooks of every claude run\) cannot build: cargo is not on PATH \(install Rust: https:\/\/rustup\.rs\); /);
   assert.match(absent.why, cmd);
   const errs = [];
-  const failed = await ensurePartAsync('hook', { src, store, err: s => errs.push(s), cargo: async () => ({ status: 101, stdout: '', stderr: '   Compiling norn-hook\nerror: failed to remove file `x\\norn-hook.exe`\n\nCaused by:\n  Access is denied. (os error 5)\n' }) });
+  const failed = await ensurePartAsync('hook', { src, store, err: s => errs.push(s), cargo: async a => a[0] === 'clean' ? { status: 0 } : ({ status: 101, stdout: '', stderr: '   Compiling norn-hook\nerror: failed to remove file `x\\norn-hook.exe`\n\nCaused by:\n  Access is denied. (os error 5)\n' }) });
   assert.equal(failed.ok, false);
   assert.match(failed.why, /^norn-hook \(.*\) did not build \(cargo exit 101: error: failed to remove file `x\\norn-hook\.exe`\); /);
   assert.match(failed.why, cmd);
   assert.match(errs.join('\n'), /Access is denied/, 'cargo\'s own output goes to err');
   assert.equal(fs.existsSync(binOf('hook', { src, store })), false, 'a failed build stores nothing');
+  const unclean = await ensurePartAsync('hook', { src, store, cargo: async a => a[0] === 'clean' ? { status: 101, stdout: '', stderr: 'error: x is locked\n' } : assert.fail('no build after a failed clean') });
+  assert.match(unclean.why, /^norn-hook \(.*\) did not build \(cargo clean exit 101: error: x is locked\); clean command: cargo clean -p norn-hook --release --target-dir "[^"]+\/target\/hook" --manifest-path "[^"]+\/hook-rs\/Cargo\.toml"; /);
+  assert.match(unclean.why, cmd, 'a failed clean is the ONE reason, like a failed build');
   const csrc = path.join(eng, 'code-rs');
   const noCc = await ensurePartAsync('code', { src: csrc, store, cc: () => 'no C compiler found (x): install y', cargo: () => assert.fail('no cargo without a C compiler') });
   assert.match(noCc.why, /^norn-code \(the code graph \(docs\/code-graph\.md\)\) cannot build: no C compiler found \(x\): install y; build command: cargo build /);
@@ -120,7 +122,7 @@ test('graphReads: the ONE condition for norn-code - an `imports` rule with a roo
 
 test('ensurePartAsync / ensurePart: start(p) is said once before cargo runs, never for a fresh part', async () => {
   const t = mkTmp('rb-start-'), src = path.join(checkout(path.join(t, 'wt')), 'hook-rs'), store = path.join(t, 'store'), said = [], calls = [];
-  const cargo = fakeCargo('norn-hook', calls), seen = args => { assert.equal(calls.length, 0, 'said before cargo'); return cargo(args); };
+  const cargo = fakeCargo('norn-hook', calls), seen = args => { assert.deepEqual(said, ['hook'], 'said before cargo'); return cargo(args); };
   assert.deepEqual(await ensurePartAsync('hook', { src, store, start: p => said.push(p), cargo: seen }), { ok: true, built: true });
   assert.deepEqual(said, ['hook']);
   await ensurePartAsync('hook', { src, store, start: p => said.push(p), cargo: noCargo });
@@ -131,16 +133,18 @@ test('ensurePartAsync / ensurePart: start(p) is said once before cargo runs, nev
   assert.deepEqual(sync, ['hook'], 'the sync form says it too');
 });
 
-// NORN-DONE-FRESH S2: a fake cargo that models the store's shared target dir: ONE output file <target>/release/norn-hook for every
-// checkout's sources, and a package fingerprint that ignores the crate's path - any norn-hook-<16 hex> fingerprint reads "fresh" and
-// leaves the output as it is (what cargo did on home a, #238); else the output = the built source's main.rs, and the fingerprint is written
+// NORN-DONE-FRESH S2, S3: a fake cargo that models the store's shared target dir as cargo 1.100 was measured: ONE output file
+// <target>/release/norn-hook for every checkout's sources, and ONE build state of the package whatever its source path
+// (<target>/release/build/norn-hook/<hash>/) - while it is there a build reads "fresh" and leaves the output as it is; `clean -p` drops
+// it; else the build's output = the built source's main.rs, and the state is written. The real-cargo test below proves the real thing
 function sharedCargo(log = []) {
   return args => {
     const t = args[args.indexOf('--target-dir') + 1], src = path.dirname(args[args.indexOf('--manifest-path') + 1]);
-    const rel = path.join(t, 'release'), fp = path.join(rel, '.fingerprint');
-    const fresh = fs.existsSync(fp) && fs.readdirSync(fp).some(d => /^norn-hook-[0-9a-f]{16}$/.test(d));
+    const rel = path.join(t, 'release'), st = path.join(rel, 'build', 'norn-hook');
+    if (args[0] === 'clean') { fs.rmSync(st, { recursive: true, force: true }); return { status: 0, stdout: '', stderr: '' }; }
+    const fresh = fs.existsSync(st);
     log.push(`${path.basename(path.dirname(path.dirname(src)))} ${fresh ? 'fresh' : 'built'}`);
-    if (!fresh) { fs.mkdirSync(path.join(fp, 'norn-hook-0123456789abcdef'), { recursive: true }); fs.writeFileSync(path.join(rel, 'norn-hook' + EXE), fs.readFileSync(path.join(src, 'src', 'main.rs'))); }
+    if (!fresh) { fs.mkdirSync(path.join(st, '0123456789abcdef'), { recursive: true }); fs.writeFileSync(path.join(rel, 'norn-hook' + EXE), fs.readFileSync(path.join(src, 'src', 'main.rs'))); }
     return { status: 0, stdout: '', stderr: '' };
   };
 }
@@ -161,7 +165,7 @@ for (const form of ['sync', 'async']) {
     assert.deepEqual(log, ['a built', 'b built'], 'the second A is its stored file: no build');
     fs.rmSync(binOf('hook', { src: A, store }));
     assert.deepEqual(await build(A), { ok: true, built: true });
-    assert.equal(holds(A), '// a\n', 'B\'s fingerprint was dropped: A was built, not called fresh with B\'s output');
+    assert.equal(holds(A), '// a\n', 'the package was cleaned first: A was built, not called fresh with B\'s output');
     assert.equal(holds(B), '// b\n');
     assert.deepEqual(log, ['a built', 'b built', 'a built']);
   });
@@ -171,6 +175,7 @@ test('the race: a build of other sources that would replace the shared output be
   const { store, A, B, holds } = twoSources('rb-race-'), log = [], cargo = sharedCargo(log);
   let pB;
   const cargoA = async a => {
+    if (a[0] === 'clean') return cargo(a);
     const r = cargo(a);   // A's output is in <target>/release; before it is copied out, B's build of the same part starts
     pB = ensurePartAsync('hook', { src: B, store, cargo: async b => cargo(b) });
     for (let i = 0; i < 10; i++) await tick();
@@ -194,7 +199,7 @@ test('a held lock: the async form waits with its event loop free (a supervisor\'
   assert.equal(settled, false); assert.equal(calls.length, 0, 'no cargo while another build holds the part');
   fs.unlinkSync(lock);
   assert.deepEqual(await p, { ok: true, built: true });
-  assert.equal(calls.length, 1); assert.equal(fs.existsSync(lock), false, 'released');
+  assert.deepEqual(calls.map(a => a[0]), ['clean', 'build']); assert.equal(fs.existsSync(lock), false, 'released');
   let held = null;
   assert.deepEqual(ensurePart('hook', { src: B, store, run: (c, a) => { held = JSON.parse(fs.readFileSync(lock, 'utf8')).pid; return sharedCargo()(a); } }), { ok: true, built: true });
   assert.equal(held, process.pid, 'the sync form holds the lock while cargo runs');

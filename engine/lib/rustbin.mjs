@@ -3,11 +3,11 @@
 // norn-code (engine/code-rs; the code graph, docs/code-graph.md). Each binary is named by its SOURCE CONTENT and kept in one store
 // that every checkout of this clone shares (NORN-RUST-FRESH, the measured choice: a cold norn-code is ~4 min and 166 MB of target/,
 // too much per lane worktree): <git common dir>/norn/rust/bin/<bin>-<source sha12>[.exe], built by `cargo build --release --locked`
-// (the committed Cargo.lock is what gets built) into the store's one target dir per part, then copied out, all under one lock per part
-// (no other checkout's build replaces the output before it is copied; docs/code-graph.md "The norn-code binary"). So a worktree whose part
-// equals main's costs no build; a pull that changes a part names a new binary, and a live run keeps executing the one it started with
-// (Windows cannot replace a running exe: cargo exit 101, os error 5 - cargo's own output file is never what a run executes). A process
-// pins the hash of its own engine's sources at first use: a supervisor whose checkout is pulled under it reads the binary of the
+// (the committed Cargo.lock is what gets built; cargo's `clean -p` of the package first) into the store's one target dir per part,
+// then copied out, all under one lock per part (no other checkout's build replaces the output before it is copied; docs/code-graph.md
+// "The norn-code binary"). So a worktree whose part equals main's costs no build; a pull that changes a part names a new binary, and
+// a live run keeps executing the one it started with (Windows cannot replace a running exe: cargo exit 101, os error 5 - cargo's own
+// output file is never what a run executes). A process pins the hash of its own engine's sources at first use: a supervisor whose checkout is pulled under it reads the binary of the
 // engine it loaded, never a newer one. `norn setup`, every run start and every Done check build a missing one (ensurePart /
 // ensureParts); one that cannot be had is ONE reason naming the part, the cause and the build command. norn-code's grammars are C
 // (the cc crate), so its build needs a C compiler (DEC-a-574 Q1 a): it is checked first and this OS's install named.
@@ -32,8 +32,11 @@ export const RUST_PARTS = {
 export const CODE_STORE_SCHEMA = 3;
 /** the limit of one cargo build, the one named place (a cold norn-code: 224 s on a 20-core Windows machine; a CI runner is slower) */
 export const BUILD_MS = 600000;
-/** the build lock's timing: a holder's cargo dies at BUILD_MS, and its two `norn-code version` asks take 30 s each at most, so a lock
- *  older than BUILD_MS + 2 min is a dead holder's and is broken; a waiter gives up after two such holders (its reason names the lock) */
+/** the limit of the `cargo clean -p` before each build (well under a second measured; a slow disk gets a minute) */
+export const CLEAN_MS = 60000;
+/** the build lock's timing: a holder's clean dies at CLEAN_MS, its build at BUILD_MS, and its two `norn-code version` asks take 30 s
+ *  each at most, so a lock older than BUILD_MS + 2 min is a dead holder's and is broken; a waiter gives up after two such holders (its
+ *  reason names the lock) */
 export const LOCK = { retryMs: 250, staleMs: BUILD_MS + 120000, timeoutMs: 2 * (BUILD_MS + 120000) };
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
@@ -77,6 +80,9 @@ export const binOf = (p, { src = srcOf(p), store: st = store() } = {}) => path.j
 /** the command a BLOCK names: the build ensurePart runs (it then copies target/release/<bin> to binOf) */
 export const buildOf = (p, { src = srcOf(p), store: st = store() } = {}) =>
   `cargo build --release --locked --target-dir "${fwd(targetOf(p, st))}" --manifest-path "${fwd(path.join(src, 'Cargo.toml'))}"`;
+/** the clean ensurePart runs before that build (its package is named as its bin) */
+export const cleanOf = (p, { src = srcOf(p), store: st = store() } = {}) =>
+  `cargo clean -p ${part(p).bin} --release --target-dir "${fwd(targetOf(p, st))}" --manifest-path "${fwd(path.join(src, 'Cargo.toml'))}"`;
 
 /** the --settings hook entry of `sub` (mail | scope): Claude Code's exec form (command + args, spawned with no shell - seen on 2.1.329;
  *  Git Bash costs ~220 ms more per call on this machine). norn-hook reads the run from META_RUN_ID (the run's env); node + norn.mjs are
@@ -113,31 +119,33 @@ export function ccProblem({ env = process.env, platform = process.platform, exis
 }
 
 // the build of part `p`, split so ensurePart (spawnSync) and ensurePartAsync (off the event loop: a supervisor's heartbeat beats on)
-// share every step, both under the part's build lock: plan -> { done } when nothing is to build or it cannot start, else { args } for
-// cargo; settle -> the result
+// share every step, both under the part's build lock: plan -> { done } when nothing is to build or it cannot start, else { clean,
+// build } (cargo's args); failed -> the ONE reason of a cargo call that did not succeed (null: it did); settle -> the result.
+// The target dir is shared by every checkout, and cargo names a package's build state without its path: a build of another source of
+// it may be called fresh and its binary stored under this source's name (cargo 1.100 did, measured). No binary for this source = this
+// crate must compile: cargo's own `clean -p` of the package goes first. It assumes no layout of cargo's target dir, and the
+// dependencies stay built
 function plan(p, o) {
   const { bin, why, cc: needsCc } = part(p);
   if (!partProblem(p, o)) return { done: { ok: true, built: false } };
   const noCc = needsCc ? o.cc() : null;
   if (noCc) return { done: { ok: false, built: false, part: p, why: `${bin} (${why}) cannot build: ${noCc}; build command: ${buildOf(p, o)}` } };
-  // the target dir is shared by every checkout, and a crate's artifact name ignores its path: cargo, finding another checkout's
-  // fingerprint of this package, checks only the files THAT build listed (a new module is not among them) and may call it fresh, so
-  // the old binary would be stored under this source's name. No binary for this source = this crate must compile: drop its own
-  // fingerprints (its dependencies keep theirs and stay built)
-  const fp = path.join(targetOf(p, o.store), 'release', '.fingerprint');
-  let fps = []; try { fps = fs.readdirSync(fp); } catch { /* a cold target dir: nothing to drop */ }
-  for (const d of fps.filter(d => d.startsWith(`${bin}-`) && /^[0-9a-f]{16}$/.test(d.slice(bin.length + 1)))) fs.rmSync(path.join(fp, d), { recursive: true, force: true });
-  return { args: ['build', '--release', '--locked', '--target-dir', targetOf(p, o.store), '--manifest-path', path.join(o.src, 'Cargo.toml')] };
+  const at = ['--target-dir', targetOf(p, o.store), '--manifest-path', path.join(o.src, 'Cargo.toml')];
+  return { clean: ['clean', '-p', bin, '--release', ...at], build: ['build', '--release', '--locked', ...at] };
 }
 const lastError = s => { const ls = String(s ?? '').split(/\r?\n/).map(l => l.trim()).filter(Boolean); return ls.find(l => /^error\b/.test(l)) ?? ls.at(-1) ?? ''; };
-function settle(p, r, o) {
+function failed(p, r, o, step) {
   const { bin, why } = part(p), name = `${bin} (${why})`, no = w => ({ ok: false, built: false, part: p, why: w });
   if (r.error?.code === 'ENOENT') return no(`${name} cannot build: cargo is not on PATH (install Rust: https://rustup.rs); build command: ${buildOf(p, o)}`);
-  if (r.error || r.status !== 0) {
-    if (r.stderr) o.err(String(r.stderr).trimEnd());
-    const e = lastError(r.stderr);
-    return no(`${name} did not build (${r.error ? r.error.code || r.error.message : `cargo exit ${r.status}`}${e ? `: ${e}` : ''}); build command: ${buildOf(p, o)}`);
-  }
+  if (!r.error && r.status === 0) return null;
+  if (r.stderr) o.err(String(r.stderr).trimEnd());
+  const e = lastError(r.stderr), clean = step === 'clean';
+  return no(`${name} did not build (${r.error ? r.error.code || r.error.message : `cargo${clean ? ' clean' : ''} exit ${r.status}`}${e ? `: ${e}` : ''}); ${clean ? `clean command: ${cleanOf(p, o)}; ` : ''}build command: ${buildOf(p, o)}`);
+}
+function settle(p, r, o) {
+  const { bin, why } = part(p), name = `${bin} (${why})`, no = w => ({ ok: false, built: false, part: p, why: w });
+  const f = failed(p, r, o, 'build');
+  if (f) return f;
   // cargo's output is copied to the content-named file (temp + rename: a racer building the same sources leaves one whole file)
   const out = path.join(targetOf(p, o.store), 'release', part(p).bin + EXE), tmp = `${o.exe}.${process.pid}.tmp`;
   try { fs.mkdirSync(path.dirname(o.exe), { recursive: true }); fs.copyFileSync(out, tmp); fs.renameSync(tmp, o.exe); }
@@ -152,7 +160,7 @@ const opts = (p, { err = () => {}, start = () => {}, run = spawnSync, cc = ccPro
 // the race (NORN-DONE-FRESH S2): builds of DIFFERENT sources of one part share <target>/release/<bin>, and cargo's own lock covers its
 // build only, so between its release and our copy-out another build could replace that file and its binary be stored under this
 // source's name. One lock per part (records.mjs withLock: exclusive create, a stale one broken; LOCK above) is held from the plan
-// (its fingerprint drop) to the stored file. A fresh part takes no lock; a second build of the SAME sources waits, then finds the file
+// (and the clean) to the stored file. A fresh part takes no lock; a second build of the SAME sources waits, then finds the file
 // under the lock and builds nothing. A lock never had is the ONE reason, naming the lock file
 const lockBusy = (p, o, e) => ({ ok: false, built: false, part: p, why: `${part(p).bin} (${part(p).why}) cannot build: another build of it holds its lock (${e.message}); build command: ${buildOf(p, o)}` });
 
@@ -170,13 +178,14 @@ export function ensurePart(p, o = {}) {
       const pl = plan(p, x);
       if (pl.done) return pl.done;
       x.start(p);
-      return settle(p, x.run('cargo', pl.args, { encoding: 'utf8', windowsHide: true, timeout: BUILD_MS }), x);
+      const cargo = (args, timeout) => x.run('cargo', args, { encoding: 'utf8', windowsHide: true, timeout });
+      return failed(p, cargo(pl.clean, CLEAN_MS), x, 'clean') ?? settle(p, cargo(pl.build, BUILD_MS), x);
     }, LOCK);
   } catch (e) { if (held) throw e; return lockBusy(p, x, e); }
 }
-/** ensurePart without blocking the event loop: cargo (default boundedAsync: the tree dies at BUILD_MS) resolves spawnSync's shape; the
- *  wait for the lock is a timer, so a supervisor's heartbeat beats on */
-export async function ensurePartAsync(p, { cargo = args => boundedAsync('cargo', args, { timeout: BUILD_MS }), ...o } = {}) {
+/** ensurePart without blocking the event loop: cargo(args, timeout) (default boundedAsync: the tree dies at its timeout, CLEAN_MS or
+ *  BUILD_MS) resolves spawnSync's shape; the wait for the lock is a timer, so a supervisor's heartbeat beats on */
+export async function ensurePartAsync(p, { cargo = (args, timeout) => boundedAsync('cargo', args, { timeout }), ...o } = {}) {
   const x = opts(p, o);
   if (!partProblem(p, x)) return { ok: true, built: false };
   await fs.promises.mkdir(x.store, { recursive: true });
@@ -187,7 +196,7 @@ export async function ensurePartAsync(p, { cargo = args => boundedAsync('cargo',
       const pl = plan(p, x);
       if (pl.done) return pl.done;
       x.start(p);
-      return settle(p, await cargo(pl.args), x);
+      return failed(p, await cargo(pl.clean, CLEAN_MS), x, 'clean') ?? settle(p, await cargo(pl.build, BUILD_MS), x);
     }, LOCK);
   } catch (e) { if (held) throw e; return lockBusy(p, x, e); }
 }

@@ -99,7 +99,7 @@ test('norn done, the check reads the graph: norn-code is built first, said in on
     calls.push(args); const t = args[args.indexOf('--target-dir') + 1]; fs.mkdirSync(path.join(t, 'release'), { recursive: true }); fs.writeFileSync(path.join(t, 'release', 'norn-code' + EXE), 'bin'); return { status: 0 };
   };
   await doneSlop(fx.state, 'RUN-1', s => outs.push(s), s => outs.push(s), { parts, rust: { cargo, cc: () => null, run: says } });
-  assert.equal(calls.length, 1);
+  assert.deepEqual(calls.map(a => a[0]), ['clean', 'build'], 'the package cleaned, then built (rustbin.mjs plan)');
   assert.match(outs[0], /^norn done: building norn-code \(the code graph .*\) for this engine's sources before the branch check/);
   assert.equal(slopChecks(fx.state).length, 1, 'the check ran and is stored');
 });
@@ -110,7 +110,7 @@ test('norn done: a check that does not read the graph builds nothing; a part tha
   assert.doesNotMatch(outs.join('\n'), /building norn-code/);
   assert.equal(slopChecks(fx.state).length, 1);
   const gx = graphFixture(), gouts = [];
-  const refused = await doneSlop(gx.state, 'RUN-1', s => gouts.push(s), s => gouts.push(s), { parts: codePart(gx.root), rust: { cc: () => null, cargo: async () => ({ status: 101, stdout: '', stderr: 'error: linker `cc` not found\n' }) } });
+  const refused = await doneSlop(gx.state, 'RUN-1', s => gouts.push(s), s => gouts.push(s), { parts: codePart(gx.root), rust: { cc: () => null, cargo: async a => a[0] === 'clean' ? { status: 0 } : ({ status: 101, stdout: '', stderr: 'error: linker `cc` not found\n' }) } });
   assert.equal(refused, true);
   const all = gouts.join('\n');
   assert.match(all, /norn-code \(the code graph .*\) did not build \(cargo exit 101: error: linker `cc` not found\); build command: cargo build --release --locked /);
