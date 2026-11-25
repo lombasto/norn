@@ -6,12 +6,12 @@
 // Check-in runs (checkin-*) are not worker runs and are left out. Tokens are characters / 4 (an estimate, labelled so). A cut token
 // saves one 1 h cache write when it enters and one cache read per later API call of its session; dollars are that weighted share of
 // the run's recorded total_cost_usd (cost.mjs WEIGHTS). Upper bound: no compaction assumed. The filters here are the SPEC section 2
-// filters as a measuring stick only; the shipped ones (S2) live in norn-hook. Doc: docs/output-replay.md.
+// filters as a measuring stick only; the shipped ones (S2) live in norn-hook. Doc: docs/TESTING.md, "Output replay".
 import fs from 'node:fs';
 import path from 'node:path';
 import { WEIGHTS, fromUsage } from './cost.mjs';
 
-// every threshold of the replay, in one place (listed in docs/output-replay.md)
+// every threshold of the replay, in one place (listed in docs/TESTING.md, "Output replay")
 export const REPLAY = {
   chars_per_token: 4,                  // estimate, no tokenizer (the theme bans model calls)
   gate_share: 0.01,                    // gate: the test/build/install ceiling on wrap-eligible calls >= 1 % of the runs' cache reads
