@@ -11,6 +11,7 @@ import path from 'node:path';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { graphAt, cycles, symbols, callers, references, LOAD_KINDS } from './codegraph.mjs';
 import { readSignals } from './codesignals.mjs';
+import { cmp as byPath, r1 } from './codemapgraph.mjs';
 import { testsFor, IMPACT_FILE } from './testtimes.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { atomicWrite } from './policy.mjs';
@@ -35,9 +36,7 @@ export const TARGET_LIMITS = Object.freeze({
 export const TARGETS_FILE = 'targets.json';
 const KIND_ORDER = { split: 0, cycle: 1, extract: 2 }, CALLED = new Set(['function', 'method', 'class', 'struct', 'enum', 'trait']);
 const codeLines = t => (t || '').split('\n').filter(l => /\S/.test(l)).length;
-const byPath = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const join = xs => xs.join(', ');
-const r1 = n => Math.round(n * 10) / 10;
 
 // ---------- the reader's calls: direct (injected, tests), else a worker pool over codegraph.mjs ----------
 if (!isMainThread && workerData?.codetargets) {
