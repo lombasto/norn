@@ -1,6 +1,6 @@
 // SloppaChoppa stage F (RM-43, takes in RM-38 S2; audit REPORT sec. 5-6): the second voice - the `model` rule kind. ONE call per check
-// for every model rule the branch asks, no tools (or read-only in an empty folder), no standing context, through the project's executor routing (another model family
-// than the author's when the routing has one). The input is capped and ranked (sec. 5 budget); every finding must quote an added line
+// for every model rule the branch asks, no tools (or read-only in an empty folder), a lean launch (no standing context), by the reader
+// policy.slop.voice_reader chose: by default the author's own family at another model of the policy table, never another vendor. The input is capped and ranked (sec. 5 budget); every finding must quote an added line
 // verbatim or it is dropped (no invented findings), so its fingerprint (rule + file + quote) keeps new-only and waivers unchanged.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,10 +9,11 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { norm } from './scan.mjs';
 import { classExecutor } from '../critique.mjs';
+import { resolveShim } from '../paths.mjs';
 import { harnessOf, adapterFor } from '../harness/index.mjs';
 import { providersOf, typedExe, providerEnv, isOpenAI, cliMode } from '../executors.mjs';
 import { presetExe } from '../presets.mjs';
-import { withDefaults } from '../policy.mjs';
+import { withDefaults, allowedClasses } from '../policy.mjs';
 
 // the sec. 5 budget: about 3.3 bytes a token for this dense code (an estimate); the diff, the rest of the input (questions, rule hits,
 // brief lines, project quality lines), the answer; at most 10 findings kept. timeout_ms: one read waits this long, then it is skipped.
@@ -130,30 +131,46 @@ export function model(rule, ctx) {
 }
 
 /**
- * The route of the second voice and the mode it is called in, from the project's policy table (the review class first, then the
- * others; a route names a model or is the fake): another harness family than the author's with a no-tools mode; else another family
- * read-only (in the voice's own empty folder: voiceCall); else the author's family without tools. A route whose family can do neither
- * is never picked. cap: policy.slop.voice_reads_per_day (the run end counts the day's reads). -> { executor, family, mode, cap, model,
- * effort, exe, entry } | null (no route can read)
+ * The route of the second voice and the mode it is called in. policy.slop.voice_reader 'default': the author's own harness family
+ * without tools, at the first model of the policy table (the review class first, then the others) other than authorModel, else its
+ * same model, else the author executor at authorModel - never another family. A named reader ('<executor>[ <model>]'): only when it is
+ * allowed to do review work (allowedClasses; the Settings save refuses it too), no tools when its family has the mode, else read-only
+ * (in the voice's own empty folder: voiceCall). cap: policy.slop.voice_reads_per_day (the run end counts the day's reads).
+ * -> { executor, family, mode, cap, model, effort, exe, entry } | null (no route can read)
  */
-export function voiceRoute({ project, machine = null, author = 'claude', env = process.env }) {
+export function voiceRoute({ project, machine = null, author = 'claude', authorModel = null, env = process.env }) {
   const provs = providersOf(project), fam = ex => harnessOf(ex, provs[ex]), pol = withDefaults({ policy: project?.policy }).policy, classes = Object.keys(pol.executors);
   const routes = ['review', ...classes.filter(c => c !== 'review')].map(c => classExecutor(project, c)).filter(r => r.executor === 'fake' || r.model || provs[r.executor]?.model);
   // a family that has the mode; a cli entry must declare it too (its own modes)
-  const can = (x, m) => { try { const e = provs[x.executor]; return adapterFor(fam(x.executor)).caps.modes.includes(m) && (e?.type !== 'cli' || cliMode(e, m)[1].access === m); } catch { return false; } }, other = x => fam(x.executor) && fam(x.executor) !== fam(author);
-  const pick = [[x => other(x), 'no-tools'], [x => other(x), 'read-only'], [x => fam(x.executor) === fam(author), 'no-tools']].map(([ok, mode]) => ({ r: routes.find(x => ok(x) && can(x, mode)), mode })).find(p => p.r);
-  if (!pick) return null;
-  const { r, mode } = pick, entry = provs[r.executor] || null;
+  const can = (x, m) => { try { const e = provs[x.executor]; return adapterFor(fam(x.executor)).caps.modes.includes(m) && (e?.type !== 'cli' || cliMode(e, m)[1].access === m); } catch { return false; } };
+  const modelOf = x => x.model || provs[x.executor]?.model || (x.executor === 'fake' ? 'fake' : null);
+  const [name, named] = String(pol.slop.voice_reader || 'default').split(' ');
+  let r, mode = 'no-tools';
+  if (name === 'default') {
+    const own = routes.filter(x => fam(x.executor) && fam(x.executor) === fam(author) && can(x, 'no-tools'));
+    r = (authorModel && own.find(x => modelOf(x) !== authorModel)) || own[0] || (authorModel && can({ executor: author }, 'no-tools') ? { executor: author, model: authorModel } : null);
+  } else {
+    if (!allowedClasses(pol, name, Object.keys(provs)).includes('review')) return null;
+    const x = classExecutor({ ...project, policy: { ...project?.policy, executors: { ...project?.policy?.executors, review: { executor: name, model: named || '', effort: '' } } } }, 'review'), row = routes.find(y => y.executor === x.executor);
+    mode = can(x, 'no-tools') ? 'no-tools' : can(x, 'read-only') ? 'read-only' : null;
+    r = mode && { ...x, model: named || modelOf(row || x), effort: row?.effort };
+  }
+  if (!r?.model && !modelOf(r || {})) return null;
+  const entry = provs[r.executor] || null;
   const exe = entry?.preset ? presetExe(entry, env) : entry ? typedExe(entry, machine) : { claude: machine?.claude?.exe, 'codex-sol': machine?.codex?.exe, 'codex-astra': machine?.codex?.exe }[r.executor];
-  return { executor: r.executor, family: fam(r.executor), mode, cap: pol.slop.voice_reads_per_day, model: r.model || entry?.model || 'fake', effort: r.effort || entry?.effort || 'medium', exe, entry };
+  return { executor: r.executor, family: fam(r.executor), mode, cap: pol.slop.voice_reads_per_day, model: r.model || modelOf(r), effort: r.effort || entry?.effort || 'medium', exe, entry };
 }
+
+// the read sees the prompt and nothing else: the adapter's lean launch (harness profileArgs) - no MCP server, no user setup (its memory,
+// hooks, plugins), no skills, no dynamic system-prompt sections; an adapter without lean flags ignores it (its profileGap)
+export const VOICE_PROFILE = { name: 'voice', mcp: 'none', user_setup: false, skills: false, dynamic_prompt: false };
 
 /** the command of one read in dir: the brief and answer files in dir, the voice's working folder an empty one under it (a read-only
  *  voice reads nothing but stdin: the precedent is the check-in replay) -> { cmd, cwd, brief, final } */
 export function voiceCall(route, dir) {
   const a = adapterFor(route.family), brief = path.join(dir, 'voice.md'), final = path.join(dir, 'final.md'), cwd = fs.mkdtempSync(path.join(dir, 'cwd-'));
   const cmd = a.command({ exe: route.exe, mode: route.mode, model: route.model, effort: route.effort, brief, final, worktree: cwd, addDirs: [], session_id: crypto.randomUUID(),
-    remote: false, lane: 'slop', project: 'slop', executor: route.executor, ...(isOpenAI(route.entry) || route.entry?.type === 'cli' ? { provider: route.entry } : {}),
+    remote: false, lane: 'slop', project: 'slop', executor: route.executor, profile: VOICE_PROFILE, ...(isOpenAI(route.entry) || route.entry?.type === 'cli' ? { provider: route.entry } : {}),
     promptText: 'The diff and the questions are on stdin. Answer with the JSON object only.' });
   return { cmd, cwd, brief, final };
 }
@@ -166,7 +183,8 @@ export function askVoice(route, prompt, { env = process.env } = {}) {
     fs.writeFileSync(brief, prompt);
     const e = { ...env };
     if (route.entry && !isOpenAI(route.entry)) for (const [k, v] of Object.entries(providerEnv(route.entry, env).vars)) { if (v === null) delete e[k]; else e[k] = v; }
-    const r = spawnSync(cmd.exe, cmd.args, { cwd, env: e, input: prompt, encoding: 'utf8', windowsHide: true, timeout: VOICE.timeout_ms, maxBuffer: 1 << 26 });
+    const sp = resolveShim(cmd.exe, cmd.args);   // a Windows npm .cmd shim: node + its entry (spawnSync of a .cmd throws EINVAL), as the runs launch
+    const r = spawnSync(sp.exe, sp.args, { cwd, env: e, input: prompt, encoding: 'utf8', windowsHide: true, timeout: VOICE.timeout_ms, maxBuffer: 1 << 26 });
     if (r.error) throw r.error;
     if (r.status !== 0) throw new Error(`the voice (${route.executor} ${route.model}) exited ${r.status}: ${String(r.stderr || '').trim().split('\n').slice(-2).join(' ')}`);
     if (cmd.parse === 'claude') { try { return JSON.parse(r.stdout).result ?? ''; } catch { throw new Error(`the voice (${route.executor}) printed no result: ${norm(r.stdout).slice(0, 120)}`); } }
