@@ -155,7 +155,7 @@ test('callers (S3): each call site whose candidates hold the def, with its how; 
   assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:area' }).why, /defines 2 named area; name one by id/);
   assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/nope.mjs#x#0' }).why, /no definition has the id/);
   assert.equal(callers({ state: r.state, repo: r.repo }).ok, false);
-  assert.equal(TRUST['javascript/call/method-unique'], 'below bar'); assert.ok(['ambiguous', 'external', 'unresolved'].every(h => TRUST[`python/call/${h}`] === 'unmeasured'));
+  assert.equal(TRUST['javascript/call/method-unique'], 'below bar'); assert.deepEqual(CALL_HOWS.filter(h => TRUST[`python/call/${h}`] === 'unmeasured'), ['ambiguous', 'external', 'unresolved']);
 });
 
 test('norn code graph callers: the --json shape, the text line with its how, 2 on usage, 3 n/a', () => {

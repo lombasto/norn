@@ -95,17 +95,19 @@ struct Truth {
     cost: Map<String, Value>,
 }
 
+/// a draw: the sampled (key, language, stratum, row) and each (language, stratum)'s population
+type Drawn<T> = (
+    Vec<(u64, &'static str, String, T)>,
+    BTreeMap<(&'static str, String), usize>,
+);
+
 /// the seeded stratified draw of grade.rs over (language, stratum, row)
-#[allow(clippy::type_complexity)]
 fn draw<T: Clone>(
     rows: Vec<(&'static str, String, T)>,
     per_lang: usize,
     seed: u64,
     level: &str,
-) -> (
-    Vec<(u64, &'static str, String, T)>,
-    BTreeMap<(&'static str, String), usize>,
-) {
+) -> Drawn<T> {
     let mut by: BTreeMap<&'static str, BTreeMap<String, Vec<T>>> = BTreeMap::new();
     for (l, s, t) in rows {
         by.entry(l).or_default().entry(s).or_default().push(t);
