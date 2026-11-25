@@ -18,12 +18,12 @@ jobs:
   # makes `slop` a required status (engine/lib/slop/rules/README.md). This workflow has no path filter on purpose: a required status
   # a filter skips stays pending and blocks the PR. --ci skips the rules flagged `machine` in their data (K14 reads the machine's
   # generated files; a runner has none). META_ROOT pins Norn's tool cache (<META_ROOT>/state/tools, tools.mjs): the check installs
-  # the locked tool set tools/lint (npm ci --ignore-scripts) once per lock, and actions/cache carries it to the next run.
+  # the locked tool set tools/lint (npm ci --ignore-scripts) once per lock, and actions/cache carries it to the next run. META_ROOT
+  # is set on the step because a job's env has no `runner` context and GitHub rejects the whole file for it (the PR check did not
+  # run from 11-20 to this fix).
   slop:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      META_ROOT: ${{ runner.temp }}/norn
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +37,8 @@ jobs:
           path: ${{ runner.temp }}/norn/state/tools
           key: slop-tools-${{ runner.os }}-${{ hashFiles('tools/lint/package-lock.json') }}
       - name: slop check of the PR's diff from its merge base
+        env:
+          META_ROOT: ${{ runner.temp }}/norn
         shell: bash
         run: |
           base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
