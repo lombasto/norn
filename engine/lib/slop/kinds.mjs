@@ -17,20 +17,22 @@ function sideFiles(rule, ctx, side, keep = () => true) {
 const both = fn => ({ head: fn('head'), base: fn('base') });
 
 // ---------- lint + ast: one run per tool and side over the touched files of every such rule of the check ----------
-function lintSide(ctx, side, tool) {
-  const memo = ((ctx.lint ||= {})[tool] ||= {});
+// own: a rule whose tool reads that rule's own file per side (SARIF, fromFile): its run is its alone, and the file names each side's paths
+function lintSide(ctx, side, tool, own = null) {
+  const memo = ((ctx.lint ||= {})[own ? `${tool}:${own.id}` : tool] ||= {});
   if (side in memo) { if (memo[side] instanceof Error) throw memo[side]; return memo[side]; }
   try {
-    const rules = ctx.lintRules.filter(r => r.tool === tool), texts = new Map(), held = rules.filter(r => r.kind === 'lint'), cfg = held.find(r => r.config)?.config, t = LINTERS[tool];
-    for (const r of rules) for (const x of sideFiles(r, ctx, side)) texts.set(x.e.path, x.text);
+    const rules = own ? [own] : ctx.lintRules.filter(r => r.tool === tool), texts = new Map(), held = rules.filter(r => r.kind === 'lint'), cfg = held.find(r => r.config)?.config, t = LINTERS[tool];
+    const names = new Map();   // the path the tool names -> the head's path (own: the side's path, a rename)
+    for (const r of rules) for (const x of sideFiles(r, ctx, side)) { texts.set(x.e.path, x.text); names.set(own ? x.file : x.e.path, x.e.path); }
     if (!texts.size) return (memo[side] = new Map());
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
     const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...held.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null),
       selectors: rules.filter(r => r.kind === 'ast').flatMap(r => r.selectors.map(s => ({ selector: s.selector, message: `${r.id}: ${s.message}` }))) }
-      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, log: held.find(r => r.log)?.log, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
+      : { id, kind: 'lint', tool, git: ctx.gitDir(), head: ctx.head, base: ctx.base, log: held.find(r => r.log)?.log, configs: t.configs?.([...texts.keys()], ctx.tree('base'), f => ctx.text('base', f)) };
     const raw = ctx.tool(run, side, { texts, dir: ctx.repo }), by = new Map();
     if (raw === null) return (memo[side] = null);
-    for (const x of t.parse(raw, [...texts.keys()])) if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x);
+    for (const y of t.parse(raw, [...names.keys()])) { const x = { ...y, file: names.get(y.file) }; if (texts.has(x.file)) (by.get(x.file) || by.set(x.file, []).get(x.file)).push(x); }
     return (memo[side] = by);
   } catch (e) { memo[side] = e; throw e; }
 }
@@ -49,18 +51,21 @@ function astHit(rule, x, text) {
   const m = new RegExp(rule.token || '[\\s\\S]+').exec(src);
   return m && { msg: sel.message, token: m[1] ?? m[0] };
 }
-/** a lint rule's sub-rule -> { sub, level, shadow }: levels by name, `*` for the rest; shadow_rules by name, `*` = every one levels does not name */
-const subLevel = (rule, sub) => ({ sub, level: rule.levels?.[sub] ?? rule.levels?.['*'] ?? rule.level,
+/**
+ * a lint rule's sub-rule -> { sub, level, shadow }: levels by name, then by the tool's own level of the finding (SARIF: error, warning,
+ * note, none), `*` for the rest; shadow_rules by name, `*` = every one levels does not name
+ */
+const subLevel = (rule, sub, toolLevel) => ({ sub, level: rule.levels?.[sub] ?? rule.levels?.[toolLevel] ?? rule.levels?.['*'] ?? rule.level,
   shadow: (rule.shadow_rules || []).includes(sub) || (!(sub in (rule.levels || {})) && (rule.shadow_rules || []).includes('*')) });
 export function lint(rule, ctx) {
   const got = both(side => {
-    const by = lintSide(ctx, side, rule.tool);
+    const by = lintSide(ctx, side, rule.tool, LINTERS[rule.tool]?.fromFile ? rule : null);
     // a tool read from the head's log (clippy): no log is no evidence - a WARN, not a pass and not a hold (CI still gates it)
     if (by === null) return side === 'head' && rule.source === 'log' ? [{ file: '*', line: 0, snippet: 'no-evidence', msg: `no ${rule.tool} evidence for this head (no log at ${rule.log.join(', ')})`, ...subLevel(rule, 'no-evidence') }] : null;
     return sideFiles(rule, ctx, side).flatMap(({ e, text }) => (by.get(e.path) || []).flatMap(x => {
       // a file that does not parse has no lint findings: it is ONE BLOCK, of the first held lint rule that reads it (SPEC 1.3 F6, 3.4: LJ/parse)
       const f = x.rule === PARSE ? (ctx.lintRules.find(r => !r.shadow && ctx.inFiles(r, e.path)) === rule ? { msg: `does not parse: ${x.msg}`, level: 'BLOCK', ...(rule.kind === 'lint' ? { sub: PARSE } : {}) } : null)
-        : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule) }) : astHit(rule, x, text);
+        : rule.kind === 'lint' ? (x.rule === 'no-restricted-syntax' ? null : { msg: x.msg, ...subLevel(rule, x.rule, x.level) }) : astHit(rule, x, text);
       return f ? [{ file: e.path, line: x.line, snippet: lineText(text, x.line) + ' ' + x.msg, ...f }] : [];
     }));
   });
@@ -69,6 +74,9 @@ export function lint(rule, ctx) {
   const cfgOf = (side, f) => (f ? LINTERS[rule.tool].configOf(rule, f, () => ctx.text(side, f)) ?? null : null);
   if (rule.kind === 'lint' && got.head) for (const e of ctx.entries) if (cfgOf('base', e.old) !== cfgOf('head', e.status === 'D' ? null : e.path))
     got.head.push({ file: e.path, line: 0, snippet: 'config-changed', msg: `${e.path} changed: the check lints with the merge base's config; the owner approves a rule change (a waiver)`, ...subLevel(rule, 'config-changed') });
+  // a tool read at both sides (SARIF) with no file for the merge base: every head result counts as new, and the check says so once
+  if (LINTERS[rule.tool]?.fromFile && got.base === null && got.head?.some(f => f.sub !== 'no-evidence'))
+    got.head.push({ file: '*', line: 0, snippet: 'no-base', msg: `no ${rule.tool} file for the merge base ${ctx.base.slice(0, 12)} (none at ${rule.log.join(', ')}): every result on a touched file counts as new`, ...subLevel(rule, 'no-base') });
   return got;
 }
 

@@ -1,5 +1,5 @@
 // hook-fast S1: norn-hook (engine/hook-rs), the per-tool-call hooks of a claude run - the mail flag (Q-b-46 ruling) and the scope
-// fast path. The binary is built by ensureHook (cargo) when missing or stale; every case drives the real binary as Claude Code does
+// fast path. The binary is built by ensurePart('hook') (cargo --locked) when missing or stale; every case drives the real binary as Claude Code does
 // (the hook entry of the run's --settings: exec form, META_RUN_ID in the env, the payload on stdin). A --node that does not exist
 // proves a call never started Node: norn-hook would exit 1 naming it.
 import test from 'node:test';
@@ -11,9 +11,9 @@ import { mkTmp } from './helpers/tmp.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { sendMail, ackMail, flagFile, loadMail } from '../engine/lib/mail.mjs';
 import { writeScopeFile, scopeFile, scopeCheck, denyJson } from '../engine/lib/scope.mjs';
-import { ensureHook, hookProblem, hookEntry } from '../engine/lib/hookbin.mjs';
+import { ensurePart, partProblem, hookEntry } from '../engine/lib/rustbin.mjs';
 
-const built = ensureHook({ err: s => process.stderr.write(s + '\n') });
+const built = ensurePart('hook', { err: s => process.stderr.write(s + '\n') });
 const NO_NODE = path.join(mkTmp('meta-nohook-'), 'no-node.exe');
 const hook = (sub, state, { input = '', node = process.execPath, run = 'RUN-1' } = {}) => {
   const e = hookEntry(sub, state);
@@ -25,7 +25,7 @@ const silent = (r, what) => { assert.equal(r.status, 0, `${what}: ${r.stderr}`);
 
 test('norn setup builds norn-hook: it is there and newer than its source', () => {
   assert.ok(built.ok, built.why);
-  assert.equal(hookProblem(), null);
+  assert.equal(partProblem('hook'), null);
 });
 
 test('mail: a send raises the flag of each running run its address reaches (run, lane:, role:checkin); the hook runs Node only on the flag and clears it', () => {
