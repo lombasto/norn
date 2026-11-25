@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fwd } from './config.mjs';
+import { readJsonS } from './fsnap.mjs';
 import { globToRe } from './dlvgit.mjs';
 import { binOf, buildOf, partProblem, CODE_STORE_SCHEMA as STORE_SCHEMA } from './rustbin.mjs';
 
@@ -17,7 +18,7 @@ export const LOAD_KINDS = ['import', 'reexport', 'require', 'mod', 'cargo-dep'];
 export const FAN_KINDS = ALL_KINDS.filter(k => k !== 'package-init');
 export const LANGS = ['javascript', 'typescript', 'python', 'rust'];
 export const HOWS = ['exact', 'probed', 'config', 'name', 'ambiguous'];
-/** the precision of each (language, level, how) class, `<lang>/file/<how>`: measured by stage S4, "unmeasured" until then (never a made-up number) */
+/** the precision of each (language, level, how) class, `<lang>/file/<how>`: measured by stage S4 of RM-a-53, "unmeasured" before (never a made-up number) */
 export const TRUST = Object.fromEntries(LANGS.flatMap(l => HOWS.map(h => [`${l}/file/${h}`, 'unmeasured'])));
 /** the reader's thresholds, the one named place: rows = the most rows an answer holds (the rest is counted in `truncated`);
  *  index_ms = the wait for one norn-code index run (SPEC 6's hard cap of a cold index is 20 s) */
@@ -27,9 +28,7 @@ const TS = /\.(?:ts|tsx|mts|cts)$/i, LANG = { py: 'python', rs: 'rust' };
 const EXCLUDED = w => (/^(?:path segment|linguist-vendored)/.test(w) ? 'vendored' : /^(?:linguist-generated|generated header)/.test(w) ? 'generated' : 'config');
 const no = why => ({ ok: false, why });
 const git = (dir, args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', windowsHide: true, timeout: 60000 }); return r.status === 0 ? r.stdout.trim() : null; };
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const treeFile = (store, tree) => path.join(store, 'trees', `v${STORE_SCHEMA}`, `${tree}.json`);
-const iso = ms => new Date(ms).toISOString();
 /** the state folder norn-code writes <state>/code/graph under: the one given, else <git common dir>/norn (null: not a git work tree) */
 const stateOf = ({ state, repo }) => { if (state) return state; const common = git(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']); return common && path.join(common, 'norn'); };
 const headOf = store => { try { return fs.readFileSync(path.join(store, 'HEAD'), 'utf8').trim(); } catch { return null; } };
@@ -67,7 +66,7 @@ export function graphAt({ state = null, repo, at = 'HEAD', worktree = false, noI
   if (!commit) return no(`unknown rev ${at} in ${root}`);
   const bad = noIndex && !worktree ? null : partProblem('code');
   if (bad) return no(`${bad}: run norn setup (${buildOf('code')})`);
-  const stamp = (c, t, ms, extra = {}) => ({ commit: c, tree: t, indexed_at: iso(ms), age_s: Math.max(0, Math.round((Date.now() - ms) / 1000)), asked: at, exact: c === commit, worktree, ...extra });
+  const stamp = (c, t, ms, extra = {}) => ({ commit: c, tree: t, indexed_at: new Date(ms).toISOString(), age_s: Math.max(0, Math.round((Date.now() - ms) / 1000)), asked: at, exact: c === commit, worktree, ...extra });
   const ran = r => ({ parsed: r.parsed, reused: r.reused ?? null, ms: r.ms });
   if (worktree) {
     const r = index(['--repo', root, '--state', st, '--worktree']);
@@ -77,17 +76,17 @@ export function graphAt({ state = null, repo, at = 'HEAD', worktree = false, noI
   if (!fs.existsSync(f)) {
     if (noIndex) {   // the store's newest snapshot, said to be another commit's
       const head = headOf(store);
-      const row = head && (readJson(path.join(store, 'commits.json')) || []).find(e => e.commit === head);
+      const row = head && (readJsonS(path.join(store, 'commits.json')) || []).find(e => e.commit === head);
       if (!row || !fs.existsSync(treeFile(store, row.tree))) return no(`commit ${commit.slice(0, 12)} is not indexed and the store holds no other (--no-index): run norn code graph index`);
       f = treeFile(store, row.tree);
-      const snap = readJson(f);
+      const snap = readJsonS(f);
       return snap ? graphOf(snap, stamp(row.commit, row.tree, fs.statSync(f).mtimeMs), root, prefix, null) : no(`unreadable snapshot ${f}`);
     }
     const r = index(['--repo', root, '--state', st, ...(at === 'HEAD' ? [] : ['--at', commit])]);
     if (!r.ok) return r;
     indexed = ran(r);
   }
-  const snap = readJson(f);
+  const snap = readJsonS(f);
   if (!snap || snap.schema !== STORE_SCHEMA) return no(`unreadable snapshot ${f}`);
   return graphOf(snap, stamp(commit, tree, fs.statSync(f).mtimeMs), root, prefix, indexed);
 }
@@ -175,5 +174,5 @@ export function graphStatus({ state = null, repo } = {}) {
   if (!store) return no(`not a git work tree: ${repo}`);
   const bad = partProblem('code'), head = headOf(store);
   return { built: !bad, binary: fwd(binOf('code')), ...(bad ? { why: bad } : {}), store_schema: STORE_SCHEMA, store: fwd(store), head,
-    indexed: (readJson(path.join(store, 'commits.json')) || []).slice(0, 5).map(e => ({ ...e, indexed_at: iso(e.indexed_at * 1000) })) };
+    indexed: (readJsonS(path.join(store, 'commits.json')) || []).slice(0, 5).map(e => ({ ...e, indexed_at: new Date(e.indexed_at * 1000).toISOString() })) };
 }

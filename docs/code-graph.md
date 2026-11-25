@@ -103,7 +103,7 @@ Every file the graph knows is in `files`, excluded ones included (with `excluded
 | `type` | TS | `import type ...` |
 | `import-local` | Python | an import inside a function or under `if TYPE_CHECKING:` |
 | `package-init` | Python | the implicit edge to each ancestor `__init__.py` of an imported module (Python runs them on import) |
-| `native` | Python | a Python import of a Rust extension module, to its crate's `src/lib.rs` |
+| `native` | Python | a Python import of a Rust extension module, to its crate's library root (the crate's lib.rs) |
 | `mod` | Rust | `mod x;` (and `#[path]`) |
 | `use` | Rust | a `use` path to the module file it names, inside a crate or to another workspace / path-dependency crate |
 | `extern-crate` | Rust | `extern crate x;` of a repo crate |
@@ -139,7 +139,7 @@ The git-tracked blobs at the commit, minus (and each listed in `files` with `exc
 ### Resolution per language
 
 - **JavaScript / TypeScript** (`.js .mjs .cjs .jsx .ts .tsx .mts .cts`): relative with an extension `exact`; without one, probe
-  `.ts .tsx .mts .cts .js .mjs .cjs .jsx`, then `/index.*` (`probed`; a TS `./x.js` that is `x.ts` too); `#name` through the nearest
+  `.ts .tsx .mts .cts .js .mjs .cjs .jsx`, then `/index.*` (`probed`; also a TS import of a `.js` path whose file is the `.ts` one); `#name` through the nearest
   package.json `imports` (`config`); a workspace package or the package itself by name / `exports`, and tsconfig / jsconfig
   `paths` (`config`); any other bare name `external`; a non-literal `import(x)` `unresolved` / 'dynamic'.
 - **Python**: roots per pyproject.toml (`[tool.maturin] python-source`, `[tool.setuptools.packages.find] where`, else `src/` when it
