@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
-import { hookReady } from './helpers/hook.mjs';
+import { rustReady } from './helpers/rust.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 
@@ -18,7 +18,7 @@ const GIT_DIR = path.dirname(which('git'));
 
 /** a fresh machine: temp META_ROOT / HOME / config dir, a placeholder claude on PATH (+ git, node), no META_* inherited */
 function sandbox(extra = {}) {
-  hookReady();   // norn setup needs a built norn-hook; the sandbox PATH has no cargo
+  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-ootb-r2-');
   const d = { t, root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), code: path.join(t, 'code') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true });

@@ -1,0 +1,47 @@
+{
+  "edges": [
+    {"from":"packages/widgets/src/button.js","to":"packages/widgets/src/index.js","line":1,"col":1,"kind":"import","how":"config","spec":"@fx/widgets"},
+    {"from":"src/b.ts","to":"src/types.ts","line":1,"col":1,"kind":"type","how":"probed","spec":"./types"},
+    {"from":"src/b.ts","to":"src/dual.ts","line":2,"col":1,"kind":"import","how":"probed","spec":"./dual.js"},
+    {"from":"src/legacy.cjs","to":"src/a.mjs","line":1,"col":11,"kind":"require","how":"exact","spec":"./a.mjs"},
+    {"from":"src/main.mjs","to":"src/a.mjs","line":1,"col":1,"kind":"import","how":"exact","spec":"./a.mjs"},
+    {"from":"src/main.mjs","to":"src/b.ts","line":2,"col":1,"kind":"import","how":"probed","spec":"./b"},
+    {"from":"src/main.mjs","to":"src/lib/index.js","line":3,"col":1,"kind":"reexport","how":"probed","spec":"./lib"},
+    {"from":"src/main.mjs","to":"src/util/str.js","line":4,"col":1,"kind":"import","how":"config","spec":"#util/str"},
+    {"from":"src/main.mjs","to":"src/cfg.mjs","line":5,"col":1,"kind":"import","how":"config","spec":"#cfg"},
+    {"from":"src/main.mjs","to":"packages/widgets/src/index.js","line":6,"col":1,"kind":"import","how":"config","spec":"@fx/widgets"},
+    {"from":"src/main.mjs","to":"packages/widgets/src/button.js","line":7,"col":1,"kind":"import","how":"config","spec":"@fx/widgets/button"},
+    {"from":"src/main.mjs","to":"src/both.ts","line":10,"col":1,"kind":"import","how":"ambiguous","spec":"./both","alts":["src/both.js"]},
+    {"from":"src/main.mjs","to":"src/gen.js","line":11,"col":1,"kind":"import","how":"exact","spec":"./gen.js","to_kind":"excluded"},
+    {"from":"src/main.mjs","to":"src/vendored.js","line":12,"col":1,"kind":"import","how":"exact","spec":"./vendored.js","to_kind":"excluded"},
+    {"from":"src/main.mjs","to":"src/lazy.js","line":14,"col":20,"kind":"dynamic","how":"exact","spec":"./lazy.js"}
+  ],
+  "unresolved": [
+    {"from":"src/legacy.cjs","line":2,"kind":"require","how":"external","spec":"path","package":"path"},
+    {"from":"src/main.mjs","line":8,"kind":"import","how":"external","spec":"node:fs","package":"fs"},
+    {"from":"src/main.mjs","line":9,"kind":"import","how":"external","spec":"lodash/fp","package":"lodash"},
+    {"from":"src/main.mjs","line":13,"kind":"import","how":"unresolved","spec":"./gone.mjs","why":"missing"},
+    {"from":"src/main.mjs","line":15,"kind":"dynamic","how":"unresolved","spec":"import(fs.name)","why":"dynamic"}
+  ],
+  "files": {
+    "package.json": {"lang":"manifest"},
+    "packages/widgets/package.json": {"lang":"manifest"},
+    "packages/widgets/src/button.js": {"lang":"js"},
+    "packages/widgets/src/index.js": {"lang":"js"},
+    "src/a.mjs": {"lang":"js"},
+    "src/b.ts": {"lang":"js"},
+    "src/both.js": {"lang":"js"},
+    "src/both.ts": {"lang":"js"},
+    "src/cfg.cjs": {"lang":"js"},
+    "src/cfg.mjs": {"lang":"js"},
+    "src/dual.ts": {"lang":"js"},
+    "src/gen.js": {"lang":"js","excluded":"generated header"},
+    "src/lazy.js": {"lang":"js"},
+    "src/legacy.cjs": {"lang":"js"},
+    "src/lib/index.js": {"lang":"js"},
+    "src/main.mjs": {"lang":"js"},
+    "src/types.ts": {"lang":"js"},
+    "src/util/str.js": {"lang":"js"},
+    "src/vendored.js": {"lang":"js","excluded":"linguist-vendored"}
+  }
+}
