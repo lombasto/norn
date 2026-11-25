@@ -6,6 +6,7 @@
 // RM-a-58: `norn code links` refreshes <state>/code/declinks.json (declinks.mjs: each decision / directive tied to the paths it governs) and
 // prints its coverage; `norn code why <file>` lists a file's governing records. The hook starts `code links` when main or the records moved.
 // `norn code suspects` ranks the recent landings against a trace or symptom words (codesuspects.mjs, RM-a-61).
+// `norn code risk <base>..<head>` ranks a diff against the last 100 landings (coderisk.mjs, RM-a-68).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -15,9 +16,11 @@ import { projectHome } from './monorepo.mjs';
 import { codeIndex } from './codeindex.mjs';
 import { drawMap, tickMap, mapAt } from './codemap.mjs';
 import { codeSignals, writeSignals, readSignals } from './codesignals.mjs';
+import { graphAt, graphStatus, dependencies, dependents, cycles, reach, ALL_KINDS } from './codegraph.mjs';
 import { refreshLinks, whyOf, linksSummary, linksFresh } from './declinks.mjs';
 import { deliverableConfig } from './deliverables.mjs';
 import { suspects, suspectsLines } from './codesuspects.mjs';
+import { codeRisk } from './coderisk.mjs';
 
 export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [--repo DIR] [--json]   (history = <state>/code/index.json: per tracked text file '
   + 'its lines, growth over 26 weeks, churn over 90 days, fan-in and importance, from git)\n'
@@ -29,15 +32,19 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'to the paths it governs - stated (--paths), else its runs\' files, else its lane\'s landings - and whether one changed on main since)\n'
   + 'usage: norn code why <file> [--project P | --state D] [--repo DIR] [--json]   (the decisions and directives governing <file>, newest first, at most 10)\n'
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
-  + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)';
+  + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)\n'
+  + 'usage: norn code risk <base>..<head> [--project P | --state D] [--repo DIR] [--json]   (where the diff stands against the last 100 landings before '
+  + 'its merge base: a percentile, with the numbers that put it there; engine/lib/slop/rules/README.md)\n'
+  + 'usage: norn code graph index|deps|dependents|cycles|reach|status ...   (the code graph: the file imports of JS / TS, Python and Rust; '
+  + '`norn code graph` alone prints its usage; docs/code-graph.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
-const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'] }, START_GAP_MS = 10 * 60e3;
+const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);
 
 function parse(verb, argv) {
-  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = verb === 'signals' || verb === 'suspects' ? { _: [] } : {};
+  const spec = [...FLAGS[verb], 'project', 'state', 'repo', 'json!'], f = ['signals', 'suspects', 'risk'].includes(verb) ? { _: [] } : {};
   for (let i = 0; i < argv.length; i++) {
-    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words
+    if (f._ && !argv[i].startsWith('--')) { f._.push(argv[i]); continue; }   // signals: the files named; suspects: the symptom words; risk: the range
     const s = spec.find(x => '--' + x.replace(/!$/, '') === argv[i]);
     if (!s && verb === 'why' && f.file === undefined && !argv[i].startsWith('--')) { f.file = argv[i]; continue; }   // why's one operand
     if (!s) throw new Error(`unexpected ${argv[i]}`);
@@ -50,6 +57,7 @@ function parse(verb, argv) {
 /** o: { out, err, where(flags) -> { project, state }, now } -> exit code */
 export function codeCmd(argv, { out, err, where, now } = {}) {
   const verb = argv[0];
+  if (verb === 'graph') return graphCmd(argv.slice(1), { out, err, where });
   let f, w;
   try { if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb'); f = parse(verb, argv.slice(1)); w = where(f); }
   catch (e) { err('error: ' + e.message); err(CODE_USAGE); return 2; }
@@ -58,8 +66,10 @@ export function codeCmd(argv, { out, err, where, now } = {}) {
   if (verb === 'signals') return signalsCmd(f, w.state, { out, err });
   if (verb === 'links' || verb === 'why') return linksCmd(verb, f, w, dir, { out, err, now });
   if (verb === 'suspects') return suspectsCmd(f, w.state, dir, { out, err, now });
+  if (verb === 'risk') return riskCmd(f, w.state, dir, { out, err });
   let ix, sig;
-  try { ix = codeIndex(dir, { now: now ?? Date.now() }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
+  // the graph first: fan_in is its fan-in (norn-code indexes HEAD when the store does not hold it yet)
+  try { ix = codeIndex(dir, { now: now ?? Date.now(), graph: graphAt({ state: w.state, repo: dir }) }); sig = codeSignals(dir, ix, { now: now ?? Date.now() }); } catch (e) { err(`error: code history: ${String(e.stderr || e.message).trim()} (${dir})`); return 2; }
   const file = indexOf(w.state), ms = Date.now() - t0, lines = ix.files.reduce((n, x) => n + x.lines, 0);
   writeSignals(w.state, sig); atomicWrite(file, JSON.stringify(ix));   // the index last: its sha is what the tick checks
   if (f.json) out(JSON.stringify({ files: ix.files.length, lines, sha: ix.sha, ms }));
@@ -116,6 +126,19 @@ function suspectsCmd(f, state, dir, { out, err, now }) {
   if (f.json) out(JSON.stringify(r)); else suspectsLines(r).forEach(l => out(l));
   return r.found ? 0 : 1;
 }
+/** `norn code risk <base>..<head>`: coderisk.mjs's rank -> exit code (0 also when n/a: the line says why; 2 = no such range) */
+function riskCmd(f, state, dir, { out, err }) {
+  const m = f._.length === 1 && /^(.+?)\.\.(.+)$/.exec(f._[0]);
+  if (!m) { err('error: code risk: one range <base>..<head>'); err(CODE_USAGE); return 2; }
+  let r;
+  try { r = codeRisk({ dir, state, base: m[1], head: m[2] }); } catch (e) { err(`error: code risk: ${String(e.stderr || e.message).trim().split('\n')[0]}`); return 2; }
+  if (f.json) { out(JSON.stringify(r)); return 0; }
+  out(r.line);
+  const n = r.numbers;
+  out(`  ${n.files} files, ${n.lines} lines${n.fixes === undefined ? '' : `; fixes 365 d ${n.fixes ?? 'n/a'}, top fix first ${n.fix_first ?? 'n/a'}, companions left out ${n.companions}`}`);
+  for (const x of r.left_out) out(`  left out: ${x.partner} (changes with ${x.file}: ${x.shared} of ${x.landings} landings)`);
+  return 0;
+}
 /** one file's signals in words: the rank line, the fixes line, the partners line */
 function fileLines(file, s, na) {
   const x = s.files[file];
@@ -133,6 +156,64 @@ async function mapCmd(f, state, repo, { out, err }) {
   if (f.json) out(JSON.stringify(r));
   else out(r.drawn ? `code map: drew ${r.workflow} at ${r.sha} (${r.calls} model jobs${r.pct === null ? '' : `, ~${r.pct.toFixed(3)} % of plan`}) -> ${r.file}` : `code map: ${r.skipped ? `refresh skipped: ${r.skipped}` : r.why}`);
   return r.drawn || r.skipped || r.sha ? 0 : 2;
+}
+
+// ---- `norn code graph <verb>`: the code graph's reader (codegraph.mjs, docs/code-graph.md) on the command line ----
+export const GRAPH_USAGE = 'usage: norn code graph index | deps <file> [--depth N] [--kinds K,..] | dependents <file> [--depth N] [--kinds K,..] | cycles [--within GLOB]... [--kinds K,..]'
+  + ' | reach <file>... [--forward] [--to GLOB]... | status   common: [--project P | --state D] [--repo DIR] [--at REV] [--worktree] [--no-index] [--json]'
+  + '   (paths are relative to the repo root; exit 0 answer, 2 usage, 3 n/a; docs/code-graph.md)';
+const GRAPH_FLAGS = { index: [], deps: ['depth', 'kinds'], dependents: ['depth', 'kinds'], cycles: ['within*', 'kinds'], reach: ['forward!', 'to*'], status: [] };
+const GRAPH_ARGS = { index: [0, 0], deps: [1, 1], dependents: [1, 1], cycles: [0, 0], reach: [1, Infinity], status: [0, 0] };
+function graphArgs(verb, argv) {
+  const spec = [...GRAPH_FLAGS[verb], 'project', 'state', 'repo', 'at', 'worktree!', 'no-index!', 'json!'], f = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    if (!argv[i].startsWith('--')) { f._.push(argv[i].replace(/\\/g, '/').replace(/^\.\//, '')); continue; }
+    const s = spec.find(x => '--' + x.replace(/[!*]$/, '') === argv[i]), k = s?.replace(/[!*]$/, '');
+    if (!s) throw new Error(`unexpected ${argv[i]}`);
+    if (s.endsWith('!')) { f[k] = true; continue; }
+    if (i + 1 >= argv.length) throw new Error(`${argv[i]} needs a value`);
+    if (s.endsWith('*')) (f[k] ||= []).push(argv[++i]); else f[k] = argv[++i];
+  }
+  const [lo, hi] = GRAPH_ARGS[verb];
+  if (f._.length < lo || f._.length > hi) throw new Error(lo ? `${verb} needs ${hi === 1 ? 'one file' : 'one or more files'}` : `${verb} takes no file`);
+  if (f.depth !== undefined && !(Number.isInteger(Number(f.depth)) && Number(f.depth) > 0)) throw new Error('--depth needs a whole number over 0');
+  const bad = f.kinds?.split(',').filter(k => !ALL_KINDS.includes(k));
+  if (bad?.length) throw new Error(`unknown kind ${bad.join(', ')} (kinds: ${ALL_KINDS.join(', ')})`);
+  return f;
+}
+const ageOf = s => (s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`);
+const stampLine = s => `at ${s.commit.slice(0, 12)} (${ageOf(s.age_s)}), ${s.exact ? 'exact' : `asked ${s.asked}`}${s.worktree ? `, worktree (${s.dirty.length} changed)` : ''}`;
+const statusLines = s => [`norn-code: ${s.built ? 'built' : `not usable: ${s.why}`} (${s.binary}), store schema ${s.store_schema} at ${s.store}`, `head: ${s.head ?? 'none indexed'}`,
+  ...s.indexed.map(e => `  ${e.commit.slice(0, 12)} ${e.indexed_at.slice(0, 16)} ${e.counts?.files ?? '?'} files, ${e.counts?.edges ?? '?'} edges, parsed ${e.parsed}, ${e.ms} ms`)].join('\n');
+/** `norn code graph <verb>` -> exit code (0 answer, 2 usage, 3 n/a) */
+function graphCmd(argv, { out, err, where }) {
+  const verb = argv[0];
+  let f, w = { project: null, state: null };
+  try {
+    if (!GRAPH_FLAGS[verb]) throw new Error(verb ? `unknown graph verb ${verb}` : 'missing graph verb');
+    f = graphArgs(verb, argv.slice(1));
+    // no --project / --state and none found: the repo's own store (<git common dir>/norn), not an error
+    if (f.project || f.state) w = where(f); else try { w = where(f); } catch { /* the repo's own store */ }
+  } catch (e) { err('error: ' + e.message); err(GRAPH_USAGE); return 2; }
+  const repo = f.repo || (w.project?.root ? projectHome(w.project) : process.cwd()), na = why => { if (f.json) out(JSON.stringify({ ok: false, why })); else err(`n/a: ${why}`); return 3; };
+  if (verb === 'status') { const s = graphStatus({ state: w.state, repo }); if (s.ok === false) return na(s.why); out(f.json ? JSON.stringify(s) : statusLines(s)); return 0; }
+  const t0 = Date.now(), g = graphAt({ state: w.state, repo, at: f.at || 'HEAD', worktree: Boolean(f.worktree), noIndex: Boolean(f['no-index']) });
+  if (!g.ok) return na(g.why);
+  const kinds = f.kinds ? { kinds: f.kinds.split(',') } : {}, depth = f.depth === undefined ? 1 : Number(f.depth);
+  const r = verb === 'index' ? { stamp: g.stamp, files: g.files.size, edges: g.edges.length, unresolved: g.unresolved.length, parsed: g.indexed?.parsed ?? 0, reused: g.indexed?.reused ?? null, ms: g.indexed?.ms ?? Date.now() - t0 }
+    : verb === 'deps' ? dependencies(g, f._[0], { depth, ...kinds })
+      : verb === 'dependents' ? dependents(g, f._[0], { depth, ...kinds })
+        : verb === 'cycles' ? cycles(g, { within: f.within ?? null, ...kinds })
+          : reach(g, f._, { reverse: !f.forward, to: f.to ?? null });
+  if (r.ok === false) return na(r.why);
+  if (f.json) { out(JSON.stringify(r)); return 0; }
+  out(stampLine(r.stamp));
+  if (verb === 'index') out(`${r.files} files, ${r.edges} edges, ${r.unresolved} unresolved; ${g.indexed ? `parsed ${r.parsed}, reused ${r.reused} in ${r.ms} ms` : 'already indexed'}`);
+  else if (verb === 'cycles') { if (!r.cycles.length) out('no cycles'); for (const c of r.cycles) out(c.join(' -> ')); }
+  else if (verb === 'reach') { if (!r.rows.length) out('nothing'); for (const x of r.rows) out(`${String(x.depth).padStart(3)}  ${x.file}  (${x.path.join(f.forward ? ' -> ' : ' <- ')})`); }
+  else { if (!r.rows.length) out('none'); for (const x of r.rows) out(`${String(x.depth).padStart(3)}  ${x.file}  ${x.via.kind}/${x.via.how} ${x.via.from}:${x.via.line}`); }
+  if (r.truncated) out(`+${r.truncated} more`);
+  return 0;
 }
 
 /** the tick's hook: `norn code history` detached when HEAD is not the index's sha (not while one started in the last 10 min; the mark is
@@ -172,7 +253,7 @@ function tickLinks(p, state, { metaCmd, spawnFn, now }) {
 // ---- the Code tab's parts ----
 const areaOf = f => (f.includes('/') ? f.split('/')[0] : '.');
 const rowOf = (x, sg) => { const g = x.growth, d = g.at(-1) - g[0];   // sg: the file's signals (none stored for this index: null)
-  return { file: x.file, lines: x.lines, lang: x.lang, growth: g, delta: d, pct: g[0] ? Math.round(100 * d / g[0]) : null, churn_90d: x.churn_90d, rel_churn: x.rel_churn, commits_90d: x.commits_90d, fan_in: x.fan_in, importance: x.importance,
+  return { file: x.file, lines: x.lines, lang: x.lang, growth: g, delta: d, pct: g[0] ? Math.round(100 * d / g[0]) : null, churn_90d: x.churn_90d, rel_churn: x.rel_churn, commits_90d: x.commits_90d, fan_in: x.fan_in, fan_in_why: x.fan_in_why ?? null, importance: x.importance,
     fix_first: sg?.fix_first ?? null, fixes_365d: sg?.fixes?.n_365d ?? null }; };
 const SORT = { importance: (a, b) => b.importance - a.importance || b.churn_90d - a.churn_90d, fix_first: (a, b) => (b.fix_first ?? -1) - (a.fix_first ?? -1) || b.importance - a.importance, lines: (a, b) => b.lines - a.lines, growth: (a, b) => b.delta - a.delta,
   churn: (a, b) => b.churn_90d - a.churn_90d, fan_in: (a, b) => (b.fan_in ?? -1) - (a.fan_in ?? -1), file: () => 0 };

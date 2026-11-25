@@ -12,7 +12,7 @@ const ramp = (a, b) => WEEKS.map((_, i) => Math.round(a + (b - a) * i / 25));
 const row = (file, o) => ({ file, lines: 100, lang: 'javascript', growth: ramp(80, 100), delta: 20, pct: 25, churn_90d: 300, rel_churn: 3, commits_90d: 4, fan_in: 2, importance: 50, fix_first: 60, fixes_365d: 3, ...o });
 const base = o => ({ project: 'kestrel', index: { at: '2026-11-20T12:00:00Z', sha: 'abc123def456' }, total: { files: 783, lines: 98400, added_30d: 6100, hotspot: 'engine/dash/server.mjs' }, ...o });
 const LIST = { sort: 'importance', folder: '', folders: [['engine', 300], ['engine/dash', 40], ['tests', 252]], limit: 2, matched: 783, shown: 2,
-  rows: [row('engine/dash/server.mjs', { lines: 2180, delta: 640, pct: 41, churn_90d: 3900, importance: 98 }), row('docs/notes.md', { lang: 'markdown', fan_in: null, importance: 97 })] };
+  rows: [row('engine/dash/server.mjs', { lines: 2180, delta: 640, pct: 41, churn_90d: 3900, importance: 98 }), row('docs/notes.md', { lang: 'markdown', fan_in: null, fan_in_why: 'not a graph language', importance: 97 })] };
 
 test('K3 the summary and Files: at most 4 numbers; the table with growth sparkline + delta, churn, fan-in, importance; sorts, folder filter, show more', () => {
   const h = code(base({ sub: 'files', list: LIST }));
@@ -20,7 +20,7 @@ test('K3 the summary and Files: at most 4 numbers; the table with growth sparkli
   assert.equal((h.match(/class="subnum/g) || []).length, 4);
   assert.match(h, /id="code-sum"[^]*783[^]*files[^]*98,400[^]*lines[^]*\+6,100[^]*lines added in 30 days[^]*server\.mjs[^]*top hotspot/);
   assert.match(h, /<tr data-act="code-file" data-id="engine\/dash\/server\.mjs" tabindex="0"><td data-label="file"><span class="mono small">engine\/dash\/server\.mjs<\/span><\/td><td data-label="lines" class="num">2,180<\/td><td data-label="26 w" class="num"><span class="mono cspark" aria-hidden="true">[▁-█]{26}<\/span> \+41 %<\/td><td data-label="churn 90 d" class="num">3,900<\/td><td data-label="fan-in" class="num">2<\/td><td data-label="importance" class="num">98<\/td><td data-label="fixes 365 d" class="num">3<\/td><td data-label="fix first" class="num">60<\/td><\/tr>/);
-  assert.match(h, /data-id="docs\/notes\.md"[^]*?<td data-label="fan-in" class="num"><span class="mute">n\/a<\/span><\/td>/, 'fan-in is JS only');
+  assert.match(h, /data-id="docs\/notes\.md"[^]*?<td data-label="fan-in" class="num"><span class="mute" title="not a graph language">n\/a<\/span><\/td>/, 'no graph language: n/a, the reason as its title');
   assert.match(h, /data-act="code-sort" data-sort="importance" aria-pressed="true"[^]*data-sort="fix_first" aria-pressed="false">fix first<[^]*data-sort="lines" aria-pressed="false"/);
   assert.match(code(base({ sub: 'files', list: { ...LIST, sort: 'fix_first' } })), /data-sort="fix_first" aria-pressed="true"/);
   assert.match(h, /fix first = of churn, fan-in and fixes \(not built yet/, 'no signals stored: says so');

@@ -1,15 +1,14 @@
 // SloppaChoppa 2 S4 (SPEC 4.1 growth, 4.4 U1 / U2): growth and structure numbers, by code. The size line of a branch (net lines by
 // area, tests apart: git numstat + loc.mjs classes); the function and file ratchets, in SHADOW (recorded, never held: the replay
 // over the last merged branches sets their level); one point per landing on main; hotspots (commits in 30 days x the file's
-// complexity sum); fan-in and fan-out over the import graph (graph.mjs). The function numbers come from ESLint's own size rules run
+// complexity sum); fan-in and fan-out over the code graph (codegraph.mjs, every graph language). The function numbers come from ESLint's own size rules run
 // with every threshold at zero (one more ESLint pass over the touched files, the lint run's tool): each function reports its number
 // and the message carries it. JS only today: ruff's and clippy's numbers are a follow-up.
 import { gitRun, blobs, diffEntries } from './check.mjs';
 import { classOf, areaOf, landings, num, delta } from './loc.mjs';
 import { parseEslint } from './tools.mjs';
 import { masked, lineText, usesOf, isJs } from './scan.mjs';
-import { packOf } from './lang/index.mjs';
-import { importGraph, fans } from './graph.mjs';
+import { graphAt, fans } from '../codegraph.mjs';
 
 /** SPEC 4.1 b / c: the function caps, the file ratchet, the branch's WARN (growth.branch_warn); S4's replay proposes their levels */
 export const CAPS = { complexity: 20, lines: 80, depth: 4, params: 6 };
@@ -167,10 +166,12 @@ export function hotspots(repo, ref, { tool, days = 30, now = Date.now(), n = 5 }
   return files.map(f => { const complexity = functionsOf(by.get(f) || []).reduce((s, x) => s + x.complexity, 0); return { file: f, commits: commits.get(f), complexity, score: commits.get(f) * complexity }; })
     .filter(h => h.score).sort((a, b) => b.score - a.score || (a.file < b.file ? -1 : 1)).slice(0, n);
 }
-/** U2: fan-in and fan-out over the code files of the tree at ref (the language packs) -> { in: top n, out: top n } as [{ file, in, out }] */
-export function fanList(repo, ref, { n = 5 } = {}) {
-  const tree = gitRun(repo, ['ls-tree', '-r', '--name-only', ref]).split('\n').filter(Boolean), files = tree.filter(f => packOf(f) && classOf(f) === 'code');
-  const rows = [...fans(importGraph(files, blobs(repo, files.map(f => `${ref}:${f}`)), tree))].map(([file, x]) => ({ file, ...x }));
+/** U2: fan-in and fan-out of the code files over the code graph at ref -> { in: top n, out: top n } as [{ file, in, out }]; no graph
+ *  (norn-code not built, an index that failed) -> { in: [], out: [], why } (the section says n/a, never a guess) */
+export function fanList(repo, ref, { n = 5, state } = {}) {
+  const g = graphAt({ state, repo, at: ref });
+  if (!g.ok) return { in: [], out: [], why: g.why };
+  const rows = [...fans(g)].filter(([file]) => g.files.get(file)?.lang && !g.files.get(file).excluded && classOf(file) === 'code').map(([file, x]) => ({ file, ...x }));
   const top = k => rows.filter(r => r[k]).sort((a, b) => b[k] - a[k] || (a.file < b.file ? -1 : 1)).slice(0, n);
   return { in: top('in'), out: top('out') };
 }
@@ -193,7 +194,7 @@ export function renderGrowth(g) {
   L.push('', '## Hotspots: commits in 30 d x the file\'s complexity sum', '');
   g.hotspots.forEach((h, i) => L.push(`${i + 1}. \`${h.file}\` ${num(h.score)} = ${h.commits} commits x complexity ${num(h.complexity)}`));
   if (!g.hotspots.length) L.push('None (no JS code file changed in 30 d).');
-  L.push('', `## Fan-in / fan-out (the import graph; fan-out over ${FAN_OUT} is a split candidate)`, '', 'fan-in (imported by):', ...g.fan.in.map(r => `- \`${r.file}\` ${r.in}`), '', 'fan-out (imports):',
+  L.push('', `## Fan-in / fan-out (the code graph; fan-out over ${FAN_OUT} is a split candidate)`, '', ...(g.fan.why ? [`n/a: ${g.fan.why}`, ''] : []), 'fan-in (imported by):', ...g.fan.in.map(r => `- \`${r.file}\` ${r.in}`), '', 'fan-out (imports):',
     ...g.fan.out.map(r => `- \`${r.file}\` imports ${r.out}${r.out > FAN_OUT ? ` (over ${FAN_OUT})` : ''}`), '');
   return L;
 }
