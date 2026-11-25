@@ -29,6 +29,8 @@ export const TARGET_LIMITS = Object.freeze({
   min_group_symbols: 2,  // ... and this many top-level symbols
   max_cut: 0.25,         // ... and when at most this share of its call edges cross to the rest of the file
   groups_max: 3,         // groups proposed per split
+  per_file: 3,           // extract targets per file (the largest excess first; the rest counted)
+  tests: 8,              // test files a Tests line names; past it, those named for a Scope file and the `norn tests for` line
 });
 export const TARGETS_FILE = 'targets.json';
 const KIND_ORDER = { split: 0, cycle: 1, extract: 2 }, CALLED = new Set(['function', 'method', 'class', 'struct', 'enum', 'trait']);
@@ -152,8 +154,8 @@ async function cycleOf(c, ctx) {
   const rows = edges.map(e => {
     const w = wires.get(e.to), S = w.units.filter(u => w.users.get(u.id)?.has(e.from)).map(u => u.id);
     const T = new Set(S); for (let grew = true; grew;) { grew = false; for (const id of [...T]) for (const n of w.calls.get(id) || []) if (!T.has(n)) { T.add(n); grew = true; } }
-    return { e, w, S, T, n: e.kind === 'reexport' ? Infinity : S.length };
-  }).sort((a, b) => a.n - b.n || a.T.size - b.T.size || byPath(a.e.from + a.e.to, b.e.from + b.e.to));
+    return { e, w, S, T, n: e.kind === 'reexport' ? Infinity : T.size };   // what crosses once cut: the symbols used and what they call in their file
+  }).sort((a, b) => a.n - b.n || a.S.length - b.S.length || byPath(a.e.from + a.e.to, b.e.from + b.e.to));
   const best = rows[0];
   if (!best || best.n === Infinity) return { na: 'every edge of the cycle is a re-export: the symbols crossing are not counted' };
   const { e, w, S, T } = best, unit = new Map(w.units.map(u => [u.id, u])), names = ids => [...ids].map(id => nameOf(unit.get(id)));
@@ -182,10 +184,17 @@ function extractOf(c, ctx) {
 }
 
 // ---------- the brief of a target ----------
+// past TARGET_LIMITS.tests: the test files named for a Scope file (its stem starts the test's name), then the reader line for the rest
+function testsWords(tests, scope) {
+  if (tests.length <= TARGET_LIMITS.tests) return join(tests);
+  const stems = scope.map(f => path.posix.basename(f).replace(/\.[^.]+$/, '')), base = x => path.posix.basename(x);
+  const named = tests.filter(x => stems.some(s => base(x).startsWith(`${s}.`) || base(x).startsWith(`${s}-`))).slice(0, TARGET_LIMITS.tests);
+  return `${named.length ? `${join(named)} ` : ''}+${tests.length - named.length} more (\`norn tests for ${scope.join(' ')}\` lists all ${tests.length})`;
+}
 const rankWords = t => (t.rank === null ? `fix first n/a (${t.rank_na})` : `fix first ${t.rank}`);
 function briefOf(t, ctx) {
   const tests = ctx.im ? testsFor(ctx.im, t.scope).tests : null;
-  const testsLine = !ctx.im ? `n/a (${ctx.testsNa})` : tests.length ? join(tests) : 'none known (the tests index covers no file of the Scope: write the covering test first)';
+  const testsLine = !ctx.im ? `n/a (${ctx.testsNa})` : tests.length ? testsWords(tests, t.scope) : 'none known (the tests index covers no file of the Scope: write the covering test first)';
   const head = `## ${t.title} (${rankWords(t)})`, tail = [`Proposed by \`norn code targets\` from the code graph at ${ctx.stamp.graph} (call edges inferred, trust unmeasured): nothing is edited.`, `Scope: ${join(t.scope)}`, `Tests: ${testsLine}`, `Done: ${t.done}`];
   return { tests: tests ?? [], text: [head, ...t.body, ...tail].join('\n') };
 }
@@ -206,6 +215,7 @@ function dress(t, ctx) {
     const nums = Object.entries(t.metrics).map(([m, v]) => `${m} ${v} (cap ${CAPS[m]})`).join(', ');
     Object.assign(t, { title: `Extract from ${t.name} (${t.file}:${t.line})`, scope: [t.file], symbols: [t.name],
       body: [`${t.name} (${t.file}:${t.line}-${t.end}) is over the function ratchet: ${nums}.`,
+        ...(t.more ? [`- ${t.more} more function(s) of ${t.file} are over the ratchet too, with a smaller excess: they rank once these land`] : []),
         t.block ? `- extract lines ${t.block[0]}-${t.block[1]} (its largest nested block) into a named function of its own` : `- block boundaries: n/a (${t.block_na}); split it at its own steps`],
       done: `${t.name} is under every function cap (${cap})${t.block ? `; lines ${t.block[0]}-${t.block[1]} live in a function of their own` : ''}; the Tests pass` });
   }
@@ -249,7 +259,9 @@ export async function refactorTargets({ state, repo, top = TARGET_LIMITS.top, gr
     ctx.deps = new Set(g.edges.filter(e => e.to === c.file || c.cycle?.includes(e.to)).map(e => e.from));
     const r = c.kind === 'split' ? await splitOf(c, ctx) : c.kind === 'cycle' ? await cycleOf(c, ctx) : extractOf(c, ctx);
     if (r.na) { na.push({ kind: c.kind, file: rel(c.file), why: r.na }); continue; }
-    for (const t of (Array.isArray(r) ? r.sort((a, b) => b.excess - a.excess || a.line - b.line) : [r])) out.push(dress({ ...t, rank: c.rank, ...(c.rank === null ? { rank_na: c.na } : {}) }, ctx));
+    const ts = Array.isArray(r) ? r.sort((a, b) => b.excess - a.excess || a.line - b.line) : [r], more = ts.length - TARGET_LIMITS.per_file;
+    if (more > 0) ts[TARGET_LIMITS.per_file - 1].more = more;
+    for (const t of ts.slice(0, TARGET_LIMITS.per_file)) out.push(dress({ ...t, rank: c.rank, ...(c.rank === null ? { rank_na: c.na } : {}) }, ctx));
   }
   return { at: new Date().toISOString(), basis: 'inferred', stamp, limits: TARGET_LIMITS, ...(rank_na ? { rank_na } : {}), targets: out.slice(0, top), na, judged, candidates: cands.length };
 }

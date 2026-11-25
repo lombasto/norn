@@ -107,6 +107,24 @@ test('a measure run that fails: JS extract targets are n/a with its reason, noth
   assert.ok(!r.targets.some(t => t.file === 'lib/long.mjs')); assert.match(r.na.find(x => x.file === 'lib/long.mjs').why, /no eslint here/);
 });
 
+test('a file with many functions over the caps gives its per_file largest, the rest counted; a long Tests list keeps the tests named for it', async () => {
+  const w = world(), L = 'lib/long.mjs', many = Array.from({ length: TARGET_LIMITS.per_file + 2 }, (_, i) => `export function f${i}(a) { // c=${30 + i} l=10 d=0\n  return a;\n}\n`).join('');
+  const tests = [...Array.from({ length: TARGET_LIMITS.tests + 4 }, (_, i) => `tests/other${i}.test.mjs`), 'tests/long.test.mjs', 'tests/long-edge.test.mjs'];
+  const r = await run(w, { top: 10, text: f => (f === L ? many : w.text(f)), impact: { sha: 'e'.repeat(12), sources: { [L]: tests } } });
+  const mine = r.targets.filter(t => t.file === L);
+  assert.deepEqual(mine.map(t => t.name), [`f${TARGET_LIMITS.per_file + 1}`, `f${TARGET_LIMITS.per_file}`, `f${TARGET_LIMITS.per_file - 1}`], 'largest excess first');
+  assert.match(mine.at(-1).text, /2 more function\(s\)/);
+  assert.equal(parseReady(mine[0].text).tests, `tests/long-edge.test.mjs, tests/long.test.mjs +${TARGET_LIMITS.tests + 4} more (\`norn tests for lib/long.mjs\` lists all ${tests.length})`);
+});
+
+test('a cycle is cut where the fewest symbols move: the ones used and what they call in their own file', async () => {
+  const w = world(), X = 'lib/x.mjs', Y = 'lib/y.mjs', base = w.read.callers;
+  // h now calls x's useY: moving h means moving useY too (2), while x -> y moves f and g (2, but f, g call nothing): ties go to fewer used
+  w.read.callers = q => { const r = base(q); return r.symbol.name === 'useY' && r.symbol.file === X ? { ...r, rows: [{ file: X, line: 3, col: 3, how: 'local', candidates: 1, caller: def(X, 'h', 1, 5), depth: 1 }] } : r; };
+  const cy = (await run(w, { top: 10 })).targets.find(t => t.kind === 'cycle');
+  assert.deepEqual([cy.edge.from, cy.edge.to], [Y, X]); assert.deepEqual(cy.move.symbols, ['h', 'useY']); assert.equal(cy.move.to, Y, 'nothing else in x uses h or useY: both move into y');
+});
+
 test('groupsOf: greedy modularity keeps tight groups apart and leaves units with no edge where they are', () => {
   const g = groupsOf(['a', 'b', 'c', 'd', 'e', 'f', 'lone'], [['a', 'b', 1], ['b', 'c', 1], ['c', 'a', 1], ['d', 'e', 1], ['e', 'f', 1], ['f', 'd', 1], ['c', 'd', 1]]);
   assert.deepEqual(g.map(x => [...x].sort()), [['a', 'b', 'c'], ['d', 'e', 'f'], ['lone']]);
