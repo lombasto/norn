@@ -31,7 +31,7 @@ if (!g.ok) return na(g.why);
 dependents(g, 'engine/lib/a.mjs', { depth: 2 });
 ```
 
-Nothing in the reader throws for a graph that cannot be had (norn-code not built or stale, not a git work tree, unknown rev, an
+Nothing in the reader throws for a graph that cannot be had (norn-code not built for its source, not a git work tree, unknown rev, an
 index run that failed, an unknown file): it returns `{ ok: false, why }`. Never a partial or a guessed answer. Every answer
 carries the `stamp` of the commit it is for.
 
@@ -262,6 +262,25 @@ Call edges (`<lang>/call/<how>`): every language, every how of `CALL_HOWS`: unme
 - Freshness: an answer is always for the commit asked (indexed on demand) unless `noIndex` is given, and then `stamp.exact` says
   so. `norn code history` (run by the tick when HEAD moves) indexes HEAD first, because its `fan_in` is `fans()`.
 - No garbage collection yet: the store keeps every tree it wrote (a follow-up).
+
+### The norn-code binary (rustbin.mjs)
+
+```
+<git common dir of the engine's clone>/norn/rust/
+  bin/norn-code-<source sha12>[.exe]   the binary of one source content of engine/code-rs (every file but target/, Cargo.lock included)
+  target/code/                         cargo's one target dir for the part (--target-dir): its incremental cache, shared by every checkout
+```
+
+- One store for the main checkout and every lane worktree of the clone: a worktree whose engine/code-rs equals main's reads the
+  same file and builds nothing. A change to code-rs (a pull, or a lane's own edit) names a new file; the old one stays for the
+  runs still using it.
+- A process pins the hash of its own engine's sources the first time it asks (`binOf`), so a supervisor whose checkout is pulled
+  under it keeps reading the binary of the engine it loaded, whose store schema matches its reader.
+- Built when missing by `norn setup`, by every run start (when the run's end check reads the graph) and before the run end's slop
+  check, through `ensurePart` / `ensureParts`. A part that cannot be had (no cargo, no C compiler, a failed build) is ONE reason
+  naming the part, the cause and the build command: the run does not start, the branch is held "could not check".
+- Measured on a 20-core Windows machine: a cold build 224 s and 166 MB of target/, an incremental one 114 s (lto, one codegen
+  unit), a no-op 0.4 s; the binary is 7.3 MB.
 
 ## Thresholds
 
