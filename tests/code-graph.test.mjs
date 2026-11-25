@@ -1,7 +1,7 @@
 // code-graph S1b (SPEC code-graph 7.1-7.3, the contract docs/code-graph.md): the one reader engine/lib/codegraph.mjs over the
 // synthetic fixtures tests/fixtures/code-graph/{js,py,rs}, each committed into a fresh repo with its own store: the stamp, the walks
 // (dependencies / dependents / reach), cycles over LOAD_KINDS, fans, excluded, the { ok: false, why } answers, --no-index, and the
-// `norn code graph` verbs' exit codes and --json shapes.
+// `norn code graph` verbs' exit codes and --json shapes. S2: symbols() / references() and the symbols / refs verbs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { ensurePart } from '../engine/lib/rustbin.mjs';
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, ALL_KINDS, TRUST } from '../engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, ALL_KINDS, TRUST } from '../engine/lib/codegraph.mjs';
 import { codeCmd } from '../engine/lib/codecli.mjs';
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'code-graph');
@@ -111,4 +111,30 @@ test('norn code graph: exit 0 with the --json shapes, 2 on usage, 3 n/a with { o
   assert.equal(na.code, 3); assert.equal(JSON.parse(na.out).ok, false);
   assert.equal(run(['deps', ...at], r.state).code, 2); assert.equal(run(['nope', ...at], r.state).code, 2);
   assert.equal(run(['deps', 'src/main.mjs', '--kinds', 'bogus', ...at], r.state).code, 2);
+});
+
+test('symbols / references (S2): the stamp and the defs of a file; refs through the name index, unique when one def has the name; n/a', () => {
+  const r = repoOf('py'), s = symbols({ state: r.state, repo: r.repo, file: 'src/fx/models.py' });
+  assert.equal(s.stamp.commit, git(r.repo, 'rev-parse', 'HEAD')); assert.equal(s.stamp.exact, true); assert.equal(s.file, 'src/fx/models.py');
+  assert.deepEqual(s.defs.map(d => [d.qual, d.kind, d.line, d.end_line, d.exported]), [['fx.models.Model', 'class', 1, 1, true]]);
+  const x = references({ state: r.state, repo: r.repo, name: 'Model' });
+  assert.deepEqual(x.defs.map(d => d.id), ['src/fx/models.py#fx.models.Model#0']); assert.equal(x.truncated, 0);
+  assert.deepEqual(x.rows.map(o => [o.file, o.line, o.col, o.how, o.def_ids]), [['src/fx/core.py', 3, 21, 'unique', ['src/fx/models.py#fx.models.Model#0']], ['src/fx/core.py', 12, 27, 'unique', ['src/fx/models.py#fx.models.Model#0']]]);
+  assert.match(symbols({ state: r.state, repo: r.repo, file: 'nope.py' }).why, /unknown file nope\.py/);
+  assert.match(references({ state: r.state, repo: r.repo, name: 'nosuch' }).why, /no definition in the tree is named nosuch/);
+  assert.equal(symbols({ state: r.state, repo: r.repo }).ok, false); assert.equal(references({ state: r.state, repo: r.repo }).ok, false);
+});
+
+test('norn code graph symbols / refs: the --json shapes, the text lines with bounds, 2 on usage, 3 n/a', () => {
+  const r = repoOf('py'), at = ['--repo', r.repo, '--json'];
+  const s = run(['symbols', 'src/fx/core.py', ...at], r.state), sj = JSON.parse(s.out);
+  assert.equal(s.code, 0, s.err); assert.deepEqual(Object.keys(sj).sort(), ['defs', 'file', 'stamp']);
+  assert.deepEqual(Object.keys(sj.defs[0]).sort(), ['col', 'end_line', 'exported', 'file', 'hash', 'id', 'kind', 'line', 'name', 'qual', 'tokens']);
+  const x = run(['refs', 'Model', ...at], r.state), xj = JSON.parse(x.out);
+  assert.equal(x.code, 0, x.err); assert.deepEqual(Object.keys(xj).sort(), ['defs', 'name', 'rows', 'stamp', 'truncated']);
+  assert.deepEqual(Object.keys(xj.rows[0]).sort(), ['col', 'def_ids', 'file', 'how', 'line', 'name']);
+  const text = run(['symbols', 'src/fx/core.py', '--repo', r.repo], r.state);
+  assert.equal(text.code, 0); assert.match(text.out, /^function +fx\.core\.later {2}src\/fx\/core\.py:15\.\.17 {2}exported$/m);
+  assert.equal(run(['refs', ...at], r.state).code, 2); assert.equal(run(['symbols', 'src/fx/core.py', '--no-index', ...at], r.state).code, 2);
+  assert.equal(run(['refs', 'nosuch', ...at], r.state).code, 3);
 });
