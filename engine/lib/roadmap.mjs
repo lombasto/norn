@@ -64,7 +64,10 @@ export const loadRoadmap = stateDir => (homeOf(stateDir) ? (v => ({ ...foldRoadm
  *  old text back; one edit event, so the item's history keeps both */
 export const setCaveat = (stateDir, id, text, by) => record(stateDir, { kind: 'item', ev: 'edit', id, by, data: { caveat: text } });
 /** lane-collide S2a (SPEC 4A.4 part): one link on an item set (on) or taken off by code - norn collide part links lane:B, its undo unlinks it */
-export const setLink = (stateDir, id, link, on, by) => record(stateDir, { kind: 'item', ev: on ? 'link' : 'unlink', id, by, data: { links: [link] } });
+export const setLink = (stateDir, id, link, on, by) => record(stateDir, { kind: 'item', ev: on ? 'link' : 'unlink', id, by, data: { links: [linkForm(link, id, homeOf(stateDir))] } });
+/** ROAD-LINK-FORM: a link as typed here (lane:x or lane:<this home>/x = this home's lane x, lane:b/x = b's) -> the one form stored on item id:
+ *  its lanes as the item's home types them (its own bare, another home's b/x; hereLinks reads them back). No id = a new item (this home's) */
+export const linkForm = (t, id, home) => (!home || !/^lane:/.test(t) ? t : 'lane:' + laneNameIn(laneIdIn(t.slice(5), home.id), id ? homeOfId(id, home.bare_home) : home.id));
 /**
  * RM-46 S3: the fold as this home reads it. Another home's item names its lanes as that home types them (lane:x = its own x): here they
  * read lane:b/x, so derive() finds b's copied runs and DLVs; such a node carries home (its "on b" chip). A pending event on an item =
@@ -316,13 +319,16 @@ export function unplacedNow(stateDir, { now = Date.now(), items, dlv = [] } = {}
   return unplacedOf(nodes, worldOf({ now, items: items ?? loadState(stateDir).items, dlv, home: homeOf(stateDir)?.id }));
 }
 
-/** refuse links to what does not exist (SPEC sec. 1); a branch / sha needs the project's repo */
-export function checkLinks(stateDir, links, { project = {}, git, now } = {}) {
-  if (!links?.length) return;
+/** refuse links to what does not exist (SPEC sec. 1); a branch / sha needs the project's repo. A lane is checked as this home reads it
+ *  (lane:<this home>/x = x); -> the links in the form to store on item (linkForm; no item = a new one, this home's) */
+export function checkLinks(stateDir, links, { project = {}, git, now, item = null } = {}) {
+  if (!links?.length) return [];
+  const home = homeOf(stateDir);
   const W = world({ stateDir, project, git, now });
   if (!W.repo && links.some(t => /^(branch|sha):/.test(t))) throw new RoadmapError(`a branch / sha link needs the project's repo to check it (pass --project): ${links.filter(t => /^(branch|sha):/.test(t)).join(', ')}`);
-  const gone = goneLinks(links, W);
-  if (gone.length) throw new RoadmapError(`link to something that does not exist: ${gone.join(', ')}`);
+  const gone = links.filter(t => goneLinks([linkForm(t, null, home)], W).length);
+  if (gone.length) throw new RoadmapError(`link to something that does not exist: ${gone.join(', ')}${gone.some(t => /^lane:/.test(t)) ? ` (a lane: ${home ? `x or ${home.id}/x for this home's, b/x for home b's` : 'x, its name here'})` : ''}`);
+  return links.map(t => linkForm(t, item, home));
 }
 
 // ---------- the tree (themes -> items -> stages -> runs) ----------

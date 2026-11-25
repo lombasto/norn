@@ -25,7 +25,7 @@ import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecut
 import { hbPath, STALE_MS, startRun, stopRun, requeueRun, fillAll, fillWords, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf, readCpu, cpuLogFile, crewLoad } from '../lib/runs.mjs';
 import { withCrew, crewState, readCrew, CrewError } from '../lib/crew.mjs';
 import { parseAfter, parseInputs, AfterError, readyWords } from '../lib/after.mjs';
-import { loadRoadmap, setCaveat, setLink, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
+import { loadRoadmap, setCaveat, setLink, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, linkForm, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach, refreshRoadView, laneFit } from '../lib/roadmap.mjs';
 import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { collisions, staleCaveats, hitLines, ahead, UNREADABLE, applyRefusal, applyNeed, needsDecision, menuOf, REMEDIES, partRefusal, narrowScope, takenBy, namesDropped, collidePolicy, pairKey, foldRefusal, replayPairs, replayLine, collideReport, reportLines } from '../lib/collide.mjs';
 import { gatherIntents, briefIntent, casesOf, actionsOf, caseAction, caseView, historySides } from '../lib/intents.mjs';
@@ -2620,6 +2620,8 @@ function roadCmd(argv, env, out, err) {
       try { plan = JSON.parse(fs.readFileSync(id, 'utf8')); } catch (e) { throw new RunError(`${id}: ${e.message}`); }
       const { events, links, counts } = planEvents(plan, by);
       checkLinks(state, links, { project: P });
+      const home = homeOf(state);   // ROAD-LINK-FORM: a plan's creates are this home's new items, so each lane link is stored in its one form
+      for (const e of events) if (e.data.links) e.data.links = e.data.links.map(t => linkForm(t, null, home));
       record(state, events, { views: false });
       out(`applied ${counts.theme + counts.item} nodes (${counts.theme} theme${counts.theme === 1 ? '' : 's'}, ${counts.item} item${counts.item === 1 ? '' : 's'})`);
       view();
@@ -2637,7 +2639,7 @@ function roadCmd(argv, env, out, err) {
       }
       const data = { title, kind: flags.kind || 'item', ...(flags.theme ? { parent: flags.theme } : {}), ...(flags.first ? { after: null } : flags.after ? { after: flags.after } : {}),
         ...(flags.horizon ? { horizon: none(flags.horizon) } : {}), ...(flags.note ? { note: flags.note } : {}), links, ...(flags.stages ? { stages: stages(flags.stages) } : {}) };
-      checkLinks(state, links, { project: P });
+      data.links = checkLinks(state, links, { project: P });   // ROAD-LINK-FORM: the stored form (lane:<this home>/x = lane:x)
       out(put('create', undefined, data).id);
       view();
       return 0;
@@ -2653,8 +2655,8 @@ function roadCmd(argv, env, out, err) {
     }
     if (sub === 'link' || sub === 'unlink') {
       const terms = [...more, ...list(flags.links)];
-      if (sub === 'link') checkLinks(state, terms, { project: P });
-      put(sub, id, { links: terms });
+      // ROAD-LINK-FORM: link and unlink store / match the one form on this item (its home's typing; another home's lane keeps its prefix)
+      put(sub, id, { links: sub === 'link' ? checkLinks(state, terms, { project: P, item: id }) : terms.map(t => linkForm(t, id, homeOf(state))) });
     } else {
       if (more.length) throw new RunError(`unexpected ${more[0]}`);
       if (sub === 'edit') {

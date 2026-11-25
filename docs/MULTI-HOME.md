@@ -124,6 +124,8 @@ A lane whose branch is predicted to conflict with another home's open branch car
 - **Combined views.** Roadmap, Records, Inbox, Lanes and Runs show the other homes' rows with a home chip ("on b"). Their runs and
   deliverables are read-only. Answering another home's question from here is allowed: it shows "answered on a, pending b" until home b
   takes it. The Ledger page has a Homes block (head, last fetch, lag) and a Claims block. `norn runs --homes` lists the other homes' runs.
+- **Roadmap lane links.** On home a, type this home's lane as `lane:x` or `lane:a/x`, and home b's as `lane:b/x`. The link is stored
+  the way the item's home types its lanes: its own lanes bare, another home's with the prefix. A lane that is not known here is refused.
 - **Mail.** `norn mail --to RUN-b-12`, `lane:b/x` or `role:checkin@b` reaches the other home's run, lane or check-in at its next sync
   pass.
 - **The controller's wake.** While it waits on runs, the controller's session keeps `norn mail wait` running in the background. It

@@ -52,7 +52,7 @@ import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
 import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
 import { laneNow, lanePlan, laneAsks, lanePrs, ownerSummary, walkOutputs, groupOutputs, laneRuns, notesDirOf, lastRun, outcomeOf } from '../lib/laneout.mjs';
-import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
+import { loadRoadmap, checkLinks, linkForm, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError, dlvCopyRow } from '../lib/roadmap.mjs';
 import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, AGENT_FILES, laneNameOf } from '../lib/adopt.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
@@ -1510,12 +1510,13 @@ data: ${JSON.stringify(l)}
         if (JSON.stringify(now) !== JSON.stringify(data.order)) throw fail(409, `The order changed elsewhere (under ${dest || 'the root'}). Reload and move again.`);
         ev = { data: opt(opt(opt({}, 'parent'), 'after'), 'ref', data.ref || undefined) };
       }
-      if (op === 'link' || op === 'unlink') { ev = { data: { links: strs(data.links, 'links') } }; if (op === 'link') links = ev.data.links; }
+      if (op === 'link' || op === 'unlink') { ev = { data: { links: strs(data.links, 'links') } }; if (op === 'link') links = ev.data.links; else ev.data.links = ev.data.links.map(t => linkForm(t, id, homeIdOf(p.state))); }
       if (op === 'drop') { ev = { data: opt({ why: data.why }, 'ref', data.ref || undefined) }; if (typeof data.ref === 'string' && data.ref) links = refTerm(data.ref); }
       if (op === 'reopen') ev = { data: { why: data.why } };
       ev.ev = op;
     }
-    try { checkLinks(p.state, links, { project: p }); } catch (e) { if (e instanceof RoadmapError) throw fail(400, e.message); throw e; }
+    // ROAD-LINK-FORM: a link / add stores the form checkLinks returns (this home's lanes bare on its own items, another home's prefixed)
+    try { const st = checkLinks(p.state, links, { project: p, item: op === 'add' ? null : id }); if (op === 'add' || op === 'link') ev.data.links = st; } catch (e) { if (e instanceof RoadmapError) throw fail(400, e.message); throw e; }
     let r;
     try { r = await recordAsync(p.state, { kind: 'item', id, by: 'dashboard', ...ev }, { views: false }); }
     catch (e) { if (e instanceof RecordError) throw fail(e.code === 2 ? 400 : 409, e.message); throw e; }
