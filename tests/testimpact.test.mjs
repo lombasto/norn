@@ -138,7 +138,23 @@ test('graphIndex: the tests a source reaches through the import edges, nearest f
   assert.deepEqual([ix.cases.length, ix.files['py/tests/test_water.py'], ix.graph.commit, ix.partial], [5, { lines: 6, cases: 2 }, 'c'.repeat(40), []]);
 });
 
-test('graphIndex in a monorepo project: graph paths mapped by Graph.prefix, files outside the project left out', () => {
+test('graphIndex: a package __init__.py reached only by its implicit package-init edge is a leaf; one a test imports pulls in what it re-exports', () => {
+  const files = new Map(['pyproject.toml', 'pkg/__init__.py', 'pkg/a.py', 'pkg/b.py', 'pkg/deep/__init__.py', 'pkg/deep/c.py', 'tests/test_a.py', 'tests/test_pkg.py', 'tests/test_c.py']
+    .map(f => [f, { excluded: null, lang: f.endsWith('.py') ? 'python' : null }]));
+  const edges = [['pkg/__init__.py', 'pkg/a.py', 'import'], ['pkg/__init__.py', 'pkg/b.py', 'import'], ['pkg/deep/__init__.py', 'pkg/deep/c.py', 'import'],
+    ['tests/test_a.py', 'pkg/a.py', 'import'], ['tests/test_a.py', 'pkg/__init__.py', 'package-init'],
+    ['tests/test_pkg.py', 'pkg/__init__.py', 'import'],
+    ['tests/test_c.py', 'pkg/deep/c.py', 'import'], ['tests/test_c.py', 'pkg/deep/__init__.py', 'package-init'], ['tests/test_c.py', 'pkg/__init__.py', 'package-init']].map(([a, b, k]) => edge(a, b, k));
+  const texts = { 'tests/test_a.py': 'def test_a():\n    pass\n', 'tests/test_pkg.py': 'def test_p():\n    pass\n', 'tests/test_c.py': 'def test_c():\n    pass\n' };
+  const g = { ok: true, stamp: { commit: 'c'.repeat(40), tree: 't'.repeat(40) }, root: '/r', prefix: '', files, edges, unresolved: [] };
+  const ix = graphIndex(g, { read: f => texts[f] ?? (files.has(f) ? '' : null), tracked: [...files.keys()] });
+  assert.deepEqual(ix.sources['pkg/b.py'], ['tests/test_pkg.py'], 'test_a imports pkg.a: pkg/__init__ runs, but its re-exports are not what test_a covers');
+  assert.deepEqual(ix.sources['pkg/__init__.py'], ['tests/test_a.py', 'tests/test_c.py', 'tests/test_pkg.py'], 'the __init__ itself is still covered');
+  assert.deepEqual(ix.sources['pkg/a.py'], ['tests/test_a.py', 'tests/test_pkg.py']);
+  assert.deepEqual(ix.sources['pkg/deep/c.py'], ['tests/test_c.py'], 'a nested package: neither ancestor __init__ pulls in its package');
+});
+
+test('graphIndex in a monorepo project:graph paths mapped by Graph.prefix, files outside the project left out', () => {
   const { g, read, tracked } = graph('apps/eng/'), ix = graphIndex(g, { read, tracked });
   assert.deepEqual(ix.sources['py/pkg/sky.py'], ['py/tests/test_sky.py', 'py/tests/test_water.py']);
   assert.deepEqual([ix.tests['py/tests/test_sky.py'].dir, ix.tests['rs/pond/tests/it.rs'].dir], ['py', 'rs']);

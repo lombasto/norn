@@ -139,11 +139,16 @@ export function graphIndex(g, { read, tracked = [], kinds = ALL_KINDS }) {
   const hop = ks => { const memo = new Map(); return f => { if (!memo.has(f)) { const d = dependencies(g, f, { depth: 1, kinds: ks }); memo.set(f, d.ok === false ? [] : d.rows.map(r => r.file)); if (d.truncated) partial.add(own(f)); } return memo.get(f); }; };
   // a Rust `mod x;` declares a child and imports nothing into its parent: the walk takes `mod` edges only down the test file's own
   // module tree (tests/x.rs -> mod common), never out of a crate root it reaches (lib.rs -> every module of the crate)
-  const nextMod = hop(kinds.filter(k => k === 'mod')), next = hop(kinds.filter(k => k !== 'mod'));
-  const bfs = (seen, front, step) => { while (front.length) { const n = []; for (const f of front) for (const x of step(f)) if (!seen.has(x)) { seen.set(x, seen.get(f) + 1); n.push(x); } front = n; } };
+  // a package __init__.py reached only by its implicit `package-init` edge (importing pkg.a runs pkg/__init__) is a leaf: it is covered,
+  // but what it re-exports is not, else every test of a module pulled in its whole package (S2 replay: median full set 829 -> 509, no hit lost)
+  const nextMod = hop(kinds.filter(k => k === 'mod')), next = hop(kinds.filter(k => k !== 'mod' && k !== 'package-init')), nextInit = hop(kinds.filter(k => k === 'package-init'));
+  const bfs = (seen, front, step, leafStep = () => []) => {
+    const open = new Set(front), add = (f, x) => { if (!seen.has(x)) seen.set(x, seen.get(f) + 1); };
+    while (front.length) { const n = []; for (const f of front) { for (const x of leafStep(f)) add(f, x); for (const x of step(f)) { add(f, x); if (!open.has(x)) { open.add(x); n.push(x); } } } front = n; }
+  };
   for (const [t, st] of [...starts].sort(([a], [b]) => a.localeCompare(b))) {
     const seen = new Map(st.map(s => [s, s === t ? 0 : 1]));   // a conftest.py is one hop from its test
-    bfs(seen, [t], nextMod); bfs(seen, [...seen.keys()], next);
+    bfs(seen, [t], nextMod); bfs(seen, [...seen.keys()], next, nextInit);
     for (const [f, d] of seen) if (f !== t && inP(f) && !tests[own(f)]) (hits.get(own(f)) ?? hits.set(own(f), []).get(own(f))).push([own(t), d]);
   }
   const sources = Object.fromEntries([...hits].sort(([a], [b]) => a.localeCompare(b)).map(([f, ts]) => [f, ts.sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(x => x[0])]));
