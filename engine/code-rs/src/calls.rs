@@ -850,8 +850,22 @@ pub fn extract(lang: &str, tree: &Tree, src: &[u8], defs: &[Found]) -> Extracted
             _ => {
                 if n.kind() == "use_declaration" {
                     if let Some(a) = n.child_by_field_name("argument") {
+                        // `mod`: the inline modules around the `use` (`tests::inner`), where its `self` / `super` start
+                        let mut inl = vec![];
+                        let mut p = n.parent();
+                        while let Some(q) = p {
+                            if q.kind() == "mod_item" {
+                                if let Some(nm) = q.child_by_field_name("name") {
+                                    inl.push(text(nm, src));
+                                }
+                            }
+                            p = q.parent();
+                        }
+                        inl.reverse();
                         for (path, local) in use_binds(text(a, src)) {
-                            binds.push(json!({ "local": local, "path": path }));
+                            binds.push(
+                                json!({ "local": local, "path": path, "mod": inl.join("::") }),
+                            );
                         }
                     }
                 }
@@ -962,6 +976,14 @@ fn sep(lang: &str) -> &'static str {
     }
 }
 /// an in-file path's parent (`A.m` -> A, `a::<S as T>::f` -> a::<S as T>, `f` -> "")
+/// a Rust binding's inline modules (its `mod`, `tests::inner`), outermost first
+fn bind_mod(b: &Value) -> Vec<String> {
+    s(b, "mod")
+        .split("::")
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+        .collect()
+}
 fn parent_of(path: &str, lang: &str) -> String {
     path.rsplit_once(sep(lang))
         .map_or(String::new(), |(a, _)| a.to_string())
@@ -1202,7 +1224,7 @@ impl Graph {
 
     /// the module files a star / namespace binding names
     fn module_of(&self, file: &str, b: &Value, depth: usize) -> Vec<String> {
-        match self.follow(file, &json!({ "local": "*", "name": "*", "spec": b["spec"], "module": b["module"], "level": b["level"], "path": b["path"] }), depth) {
+        match self.follow(file, &json!({ "local": "*", "name": "*", "spec": b["spec"], "module": b["module"], "level": b["level"], "path": b["path"], "mod": b["mod"] }), depth) {
             Res::Module(m) => m,
             _ => vec![],
         }
@@ -1296,7 +1318,7 @@ impl Graph {
             _ => {
                 let segs: Vec<String> = s(b, "path").split("::").map(str::to_string).collect();
                 if name == "*" {
-                    return match self.rs_abs(file, &segs, depth + 1) {
+                    return match self.rs_abs(file, &bind_mod(b), &segs, depth + 1) {
                         Ok((t, abs)) => self
                             .rs_mod
                             .get(&(t, abs.join("::")))
@@ -1306,7 +1328,7 @@ impl Graph {
                         Err(r) => r,
                     };
                 }
-                self.rs_path(file, &segs, depth + 1)
+                self.rs_path(file, &bind_mod(b), &segs, depth + 1)
             }
         }
     }
@@ -1447,19 +1469,22 @@ impl Graph {
         ))
     }
 
-    /// a path written in `file` -> (crate target, absolute segments starting with `crate`)
+    /// a path written in `file` inside its inline modules `inl` (`tests::inner` -> [tests, inner]) -> (crate target, absolute
+    /// segments starting with `crate`): `self`, `super` and a relative head start at that inline module
     fn rs_abs(
         &self,
         file: &str,
+        inl: &[String],
         segs: &[String],
         depth: usize,
     ) -> Result<(String, Vec<String>), Res> {
         if depth > FOLLOW_MAX {
             return Err(Res::Unresolved(format!("use chain past {FOLLOW_MAX} hops")));
         }
-        let (t, module) = self
+        let (t, mut module) = self
             .rs_at(file)
             .ok_or(Res::Unresolved(format!("{file} is in no crate")))?;
+        module.extend(inl.iter().cloned());
         let head = segs[0].as_str();
         let rest = &segs[1..];
         let join =
@@ -1485,13 +1510,15 @@ impl Graph {
         if let Some(b) = self.binds(file, head).next() {
             let bs: Vec<String> = s(b, "path").split("::").map(str::to_string).collect();
             if bs.first().map(String::as_str) != Some(head) || bs.len() > 1 {
-                return self.rs_abs(file, &join(&bs, rest), depth + 1);
+                return self.rs_abs(file, &bind_mod(b), &join(&bs, rest), depth + 1);
             }
         }
         let mut here = module.clone();
         here.push(head.to_string());
         if self.rs_mod.contains_key(&(t.clone(), here.join("::")))
-            || self.files[file].by_path.contains_key(head)
+            || self.files[file]
+                .by_path
+                .contains_key(&join(inl, &segs[..1]).join("::"))
         {
             return Ok((t, join(&module, segs)));
         }
@@ -1530,8 +1557,8 @@ impl Graph {
     }
 
     /// a full path written in `file` (last segment the callee) -> its definitions
-    fn rs_path(&self, file: &str, segs: &[String], depth: usize) -> Res {
-        let (t, abs) = match self.rs_abs(file, segs, depth) {
+    fn rs_path(&self, file: &str, inl: &[String], segs: &[String], depth: usize) -> Res {
+        let (t, abs) = match self.rs_abs(file, inl, segs, depth) {
             Ok(x) => x,
             Err(r) => return r,
         };
@@ -1554,18 +1581,33 @@ impl Graph {
             if let Some(b) = self.binds(mf, name).next() {
                 if depth <= FOLLOW_MAX {
                     let bs: Vec<String> = s(b, "path").split("::").map(str::to_string).collect();
-                    return self.rs_path(mf, &bs, depth + 1);
+                    return self.rs_path(mf, &bind_mod(b), &bs, depth + 1);
                 }
             }
             for b in self.binds(mf, "*") {
                 let mut bs: Vec<String> = s(b, "path").split("::").map(str::to_string).collect();
                 bs.push(name.clone());
-                if let Res::Hit(h, d) = self.rs_path(mf, &bs, depth + 1) {
+                if let Res::Hit(h, d) = self.rs_path(mf, &bind_mod(b), &bs, depth + 1) {
                     return Res::Hit(h, d);
                 }
             }
         }
         Res::Unresolved(format!("no definition at {}", abs.join("::")))
+    }
+
+    /// the inline modules around def `inn` and itself (Rust), outermost first: the prefixes of its path that are module defs
+    fn rs_inl(&self, file: &str, inn: Option<usize>) -> Vec<String> {
+        let f = &self.files[file];
+        let Some(i) = inn else { return vec![] };
+        let p = s(&f.facts["defs"][i], "path");
+        let segs: Vec<&str> = p.split("::").collect();
+        (1..=segs.len())
+            .filter(|&k| {
+                f.at(&segs[..k].join("::"))
+                    .any(|j| s(&f.facts["defs"][j], "kind") == "module")
+            })
+            .map(|k| segs[k - 1].to_string())
+            .collect()
     }
 
     /// the type of the impl enclosing def `inn` (Rust)
@@ -1710,7 +1752,7 @@ impl Graph {
                     let mut bs: Vec<String> =
                         s(b, "path").split("::").map(str::to_string).collect();
                     bs.push(name.to_string());
-                    self.rs_path(file, &bs, 1)
+                    self.rs_path(file, &bind_mod(b), &bs, 1)
                 } else {
                     self.union(
                         self.module_of(file, b, 1)
@@ -1746,7 +1788,7 @@ impl Graph {
                     };
                 }
                 segs.push(name.to_string());
-                self.rs_path(file, &segs, 0)
+                self.rs_path(file, &self.rs_inl(file, inn), &segs, 0)
             }
             ("rs", _) => {
                 if recv == Some("self") {
