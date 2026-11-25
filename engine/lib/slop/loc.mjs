@@ -108,6 +108,8 @@ export function locReport(repo, { since = null, until = null, ref = null } = {})
 }
 
 export const num = n => n.toLocaleString('en-US');
+/** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
+export const delta = (now, then) => `${now - then >= 0 ? '+' : ''}${num(now - then)}${then ? ` (${now - then >= 0 ? '+' : ''}${(100 * (now - then) / then).toFixed(1)} %)` : ''}`;
 export function formatLoc(r) {
   const L = [`lines of code (non-blank, git) at ${r.ref} ${r.head.slice(0, 7)}: ${CLASSES.map(c => `${c} ${num(r.totals[c])}`).join(', ')}; apart: ${APART.map(c => `${c} ${num(r.apart[c])}`).join(', ')}`];
   L.push('', 'area                      ' + CLASSES.map(c => c.padStart(8)).join(''));
