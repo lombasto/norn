@@ -99,7 +99,7 @@ test('codecli: history writes <state>/code/index.json; codeAt serves the summary
 test('codeIndex fan_in for every graph language (.mjs, .py, .rs, Cargo.toml) with paths of a monorepo subfolder; no graph: n/a with its reason', () => {
   const d = mkTmp('meta-code-langs-'), repo = path.join(d, 'repo'), sub = path.join(repo, 'proj'), state = path.join(d, 'state');
   const w = (f, t) => { fs.mkdirSync(path.dirname(path.join(sub, f)), { recursive: true }); fs.writeFileSync(path.join(sub, f), t); };
-  const g = args => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  const g = args => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true });
   fs.mkdirSync(repo, { recursive: true }); g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']); g(['config', 'core.autocrlf', 'false']);
   fs.writeFileSync(path.join(repo, 'top.md'), 'outside the project\n');
   w('pyproject.toml', '[project]\nname = "pkg"\n'); w('pkg/__init__.py', ''); w('pkg/m.py', 'from . import n\n'); w('pkg/n.py', 'X = 1\n'); w('pkg/o.py', 'import pkg.n\n');
