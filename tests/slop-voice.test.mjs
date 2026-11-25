@@ -8,7 +8,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck, fingerprint, matchAny } from '../engine/lib/slop/check.mjs';
 import { makeTool } from '../engine/lib/slop/tools.mjs';
-import { VOICE, voicePrompt, parseHunks, voiceRoute, voiceCall, branchClass } from '../engine/lib/slop/voice.mjs';
+import { VOICE, voicePrompt, parseHunks, voiceRoute, voiceCall, askVoice, branchClass } from '../engine/lib/slop/voice.mjs';
+import { SETTINGS, applySettings, sectionOf } from '../engine/lib/policy.mjs';
 import { hostWrite, voiceFindings, voicePrecision, voiceReadsToday, RATING } from '../engine/lib/slop/host.mjs';
 import { endCheck } from '../engine/lib/slop/runend.mjs';
 import { guardRows } from '../engine/lib/guardview.mjs';
@@ -89,7 +90,7 @@ test('the run end calls the routed executor once, no tools (the fake executor); 
   const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'src/a.mjs': 'export const a = 1;\nexport const t = () => new Promise(r => setTimeout(r, 45000));\n' });
   const ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');
   fs.writeFileSync(ans, 'Here it is:\n```json\n' + answer([{ rule: 'M6', file: 'src/a.mjs', quote: 'export const t = () => new Promise(r => setTimeout(r, 45000));', why: 'a timeout the owner tunes' }]) + '\n```\n');
-  const route = voiceRoute({ project: { policy: { executors: { review: { executor: 'fake', model: '', effort: '' } } } }, author: 'claude' });
+  const route = voiceRoute({ project: { policy: { slop: { voice_reader: 'fake' } } }, author: 'claude' });
   assert.equal(route.executor, 'fake');
   const r = slopCheck({ repo, base: 'main', rules: MODEL, tool: makeTool({ voice: route, env: { ...process.env, FAKE_RESULT: ans } }) });
   assert.ok(!r.findings.some(f => f.unrun), 'every model rule ran');
@@ -101,45 +102,76 @@ test('the run end calls the routed executor once, no tools (the fake executor); 
   assert.deepEqual(none.blocks, [], 'the voice is advisory: it holds nothing (SPEC 3.4)');
 });
 
-test('the route carries its mode: another family with no-tools, else another family read-only, else the author family no-tools; never one that can do neither', () => {
-  const project = { policy: {} };   // the defaults: review = codex-sol (no no-tools mode), critical_implementation = implementer (claude) with a model
-  const ro = voiceRoute({ project, author: 'claude' });
-  assert.deepEqual([ro.executor, ro.mode, ro.cap], ['codex-sol', 'read-only', 15], 'codex has no no-tools mode: read-only, the default daily cap');
-  const other = voiceRoute({ project, author: 'codex-sol' });
-  assert.deepEqual([other.family, other.mode], ['claude', 'no-tools']);
-  assert.ok(other.model);
-  const withFake = { policy: { executors: { review: { executor: 'codex-sol', model: 'gpt-x', effort: 'low' }, docs: { executor: 'fake', model: '', effort: '' } }, slop: { voice_reads_per_day: 4 } } };
-  assert.deepEqual(['executor', 'mode', 'cap'].map(k => voiceRoute({ project: withFake, author: 'claude' })[k]), ['fake', 'no-tools', 4], 'another family with no-tools beats the review route read-only');
+test('with no reader set the route is the author family at another model of the policy table, no tools; never another family', () => {
+  const project = { policy: {} };   // the defaults: review = codex-sol, critical_implementation = implementer at Opus, docs = runner at Sonnet
+  const opus = voiceRoute({ project, author: 'claude', authorModel: 'claude-opus-5-5' });
+  assert.deepEqual([opus.executor, opus.family, opus.mode, opus.model, opus.cap], ['claude', 'claude', 'no-tools', 'claude-sonnet-5-5', 15], 'an Opus branch is read by the Sonnet row');
+  assert.equal(voiceRoute({ project, author: 'claude', authorModel: 'claude-sonnet-5-5' }).model, 'claude-opus-5-5', 'and the reverse');
   const all = c => ({ policy: { executors: Object.fromEntries(['implementation', 'critical_implementation', 'review', 'diagnosis', 'planning', 'chores', 'passfail', 'images', 'docs'].map(k => [k, c])) } });
-  const own = voiceRoute({ project: all({ executor: 'claude', model: 'claude-x', effort: 'low' }), author: 'claude' });
-  assert.deepEqual([own.executor, own.mode], ['claude', 'no-tools'], 'no other family: the author family without tools');
-  assert.equal(voiceRoute({ project: all({ executor: 'codex-sol', model: 'gpt-x', effort: 'low' }), author: 'codex-sol' }), null, 'only codex for a codex author: no route (never thrown at)');
+  const same = voiceRoute({ project: all({ executor: 'claude', model: 'claude-x', effort: 'low' }), author: 'claude', authorModel: 'claude-x' });
+  assert.deepEqual([same.executor, same.mode, same.model], ['claude', 'no-tools', 'claude-x'], 'the table names no other model: the same one');
+  const withFake = { policy: { executors: { review: { executor: 'fake', model: '', effort: '' } } } };
+  assert.equal(voiceRoute({ project: withFake, author: 'claude', authorModel: 'claude-opus-5-5' }).family, 'claude', 'another family with no-tools is never the default');
+  const typed = { executors: { tp: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', model: 'tp-1', key_env: 'TP_KEY' } }, policy: { executors: { chores: { executor: 'tp', model: 'tp-1', effort: '' } } } };
+  assert.equal(voiceRoute({ project: typed, author: 'claude', authorModel: 'claude-opus-5-5' }).family, 'claude', 'a typed executor on another account is never the default');
+  assert.equal(voiceRoute({ project: all({ executor: 'claude', model: 'claude-x', effort: 'low' }), author: 'claude' }).model, 'claude-x', 'the author model unknown: the first row of the family');
+  assert.equal(voiceRoute({ project, author: 'codex-sol', authorModel: 'gpt-x' }), null, 'the author family has no no-tools mode: no default read (never another vendor)');
 });
 
-test('a read-only read runs in its own empty folder; the prompt rides stdin, the brief and answer files sit outside it', () => {
-  const route = voiceRoute({ project: { policy: {} }, author: 'claude' });
-  const at = mkTmp('slop-voice-call-'), c = voiceCall({ ...route, exe: 'codex' }, at);
-  assert.ok(c.cmd.args.includes('read-only') && !c.cmd.args.includes('workspace-write'), c.cmd.args.join(' '));
+test('a named reader: allowed for review or never routed (the save refuses it, 400); read-only when its family has no no-tools mode', () => {
+  const named = voiceRoute({ project: { policy: { slop: { voice_reader: 'codex-sol gpt-x' } } }, author: 'claude', authorModel: 'claude-opus-5-5' });
+  assert.deepEqual([named.executor, named.mode, named.model], ['codex-sol', 'read-only', 'gpt-x'], 'a named reader with its model');
+  assert.equal(voiceRoute({ project: { policy: { slop: { voice_reader: 'codex-sol' } } }, author: 'claude' }).model, 'gpt-6.1-sol', 'no model named: its row of the policy table');
+  const typed = { executors: { tp: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', model: 'tp-1', key_env: 'TP_KEY' } } };
+  assert.equal(voiceRoute({ project: { ...typed, policy: { slop: { voice_reader: 'tp' } } }, author: 'claude' }), null, 'a typed executor does chores and pass/fail only: never a reader');
+  assert.equal(voiceRoute({ project: { ...typed, policy: { slop: { voice_reader: 'tp' }, allowed_classes: { tp: ['review'] } } }, author: 'claude' })?.executor, 'tp', 'allowed for review: routed');
+  const extra = { providers: ['tp'] };
+  assert.throws(() => applySettings({ policy: {} }, { 'policy.slop.voice_reader': 'tp' }, extra), e => e.status === 400 && /not allowed to do review/.test(e.message));
+  assert.throws(() => applySettings({ policy: {} }, { 'policy.slop.voice_reader': 'nobody' }, extra), e => e.status === 400, 'an unknown executor');
+  assert.throws(() => applySettings({ policy: { slop: { voice_reader: 'tp' }, allowed_classes: { tp: ['review'] } } }, { 'policy.allowed_classes.tp': ['chores'] }, extra), e => e.status === 400, 'narrowing the reader out of review is refused too');
+  assert.equal(applySettings({ policy: {} }, { 'policy.slop.voice_reader': 'codex-sol gpt-x' }, extra).policy.slop.voice_reader, 'codex-sol gpt-x');
+  assert.equal(applySettings({ policy: { slop: { voice_reader: 'codex-sol' } } }, { 'policy.slop.voice_reader': 'default' }, extra).policy.slop.voice_reader, 'default');
+  const row = SETTINGS.find(s => s.key === 'policy.slop.voice_reader');
+  assert.deepEqual([row.label, sectionOf(row).join('/'), SETTINGS.indexOf(row) - SETTINGS.findIndex(s => s.key === 'policy.slop.voice_reads_per_day')], ['Second voice: reader', 'voice/onoff', 1], 'beside the cap');
+});
+
+test('a read runs lean in its own empty folder: the prompt on stdin, no memory, skills, hooks or MCP servers; read-only in the empty folder', () => {
+  const route = voiceRoute({ project: { policy: {} }, author: 'claude', authorModel: 'claude-opus-5-5' });
+  const at = mkTmp('slop-voice-call-'), c = voiceCall({ ...route, exe: 'claude' }, at), a = c.cmd.args;
+  for (const flag of ['--strict-mcp-config', '--disable-slash-commands', '--exclude-dynamic-system-prompt-sections']) assert.ok(a.includes(flag), flag);
+  assert.equal(a[a.indexOf('--setting-sources') + 1], 'project,local', 'no user setup: no user memory, hooks, plugins');
+  assert.equal(a[a.indexOf('--tools') + 1], '', 'no tools');
+  assert.ok(!a.includes('--mcp-config') && !a.includes('--settings') && !a.includes('--agent'), a.join(' '));
+  assert.deepEqual(a.flatMap((x, i) => (x === '--add-dir' ? [a[i + 1]] : [])), [c.cwd], 'the empty folder only');
   assert.deepEqual(fs.readdirSync(c.cwd), [], 'nothing in the folder the voice reads');
   assert.ok(!c.brief.startsWith(c.cwd) && !c.final.startsWith(c.cwd));
+  const ro = voiceCall({ ...voiceRoute({ project: { policy: { slop: { voice_reader: 'codex-sol' } } }, author: 'claude' }), exe: 'codex' }, at);
+  assert.ok(ro.cmd.args.includes('read-only') && !ro.cmd.args.includes('workspace-write'), ro.cmd.args.join(' '));
   assert.equal(voiceCall({ executor: 'fake', family: 'fake', model: 'fake', effort: 'low', mode: 'no-tools' }, at).cmd.args.includes('--read-only'), false);
+});
+
+test('a reader whose exe is a Windows npm .cmd shim spawns (node + its entry, no shell)', { skip: process.platform !== 'win32' }, () => {
+  const bin = mkTmp('slop-voice-shim-');
+  fs.writeFileSync(path.join(bin, 'cli.js'), "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.stringify({result:s.length?'{\"findings\":[]}':'no stdin'})));\n");
+  fs.writeFileSync(path.join(bin, 'claude.cmd'), '@ECHO off\r\n"%_prog%"  "%dp0%\\cli.js" %*\r\n');
+  const route = { ...voiceRoute({ project: { policy: {} }, author: 'claude', authorModel: 'claude-opus-5-5' }), exe: path.join(bin, 'claude.cmd') };
+  assert.equal(askVoice(route, 'the prompt'), '{"findings":[]}');
 });
 
 test('a cli entry is picked only in a mode it declares, and its call carries the entry', () => {
   const cli = modes => ({ type: 'cli', exe: 'tool.exe', model: 'm-1', effort: 'low', brief: 'file', args: ['--prompt-file', '{brief}', '{mode}', '-m', '{model}'], modes });
-  const project = modes => ({ executors: { other: cli(modes) }, policy: { executors: { review: { executor: 'other', model: 'm-1', effort: 'low' } } } });
+  const project = modes => ({ executors: { other: cli(modes) }, policy: { allowed_classes: { other: ['review'] }, slop: { voice_reader: 'other' } } });
   const r = voiceRoute({ project: project({ rw: { access: 'write', args: ['--all'] }, quiet: { access: 'no-tools', args: ['--no-tools'] } }), author: 'claude' });
-  assert.deepEqual([r.executor, r.family, r.mode], ['other', 'cli', 'no-tools']);
+  assert.deepEqual([r.executor, r.family, r.mode, r.model], ['other', 'cli', 'no-tools', 'm-1']);
   assert.ok(voiceCall(r, mkTmp('slop-voice-cli-')).cmd.args.includes('--no-tools'));
-  const rw = voiceRoute({ project: project({ rw: { access: 'write', args: ['--all'] } }), author: 'claude' });
-  assert.notEqual(rw?.executor, 'other', 'a cli entry with neither no-tools nor read-only is never picked');
+  assert.equal(voiceRoute({ project: project({ rw: { access: 'write', args: ['--all'] } }), author: 'claude' }), null, 'a cli entry with neither no-tools nor read-only is never picked');
 });
 
 test('the daily cap: the reads of the day are counted from the stored checks; over it each model rule is the WARN could-not-run, no call', () => {
   const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'src/a.mjs': 'export const a = 2;\n' });
   const state = mkTmp('slop-voice-cap-'), ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');
   fs.writeFileSync(ans, answer([]));
-  const route = { ...voiceRoute({ project: { policy: { executors: { review: { executor: 'fake', model: '', effort: '' } } } }, author: 'claude' }), cap: 2 };
+  const route = { ...voiceRoute({ project: { policy: { slop: { voice_reader: 'fake' } } }, author: 'claude' }), cap: 2 };
   hostWrite(state, { type: 'check', branch: 'feat/old', base: 'b'.repeat(40), head: 'o'.repeat(40), hash: 'x', blocks: [], findings: [], voice_reads: 1, at: '2001-01-01T00:00:00.000Z' });
   hostWrite(state, { type: 'check', branch: 'feat/w', base: 'b'.repeat(40), head: 'w'.repeat(40), hash: 'x', blocks: [], findings: [], voice_reads: 1 });
   assert.equal(voiceReadsToday(state), 1, 'only today (UTC) counts');
