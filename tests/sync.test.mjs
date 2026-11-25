@@ -111,6 +111,24 @@ test('sync publish rejected (a second install with the same id): logged, publish
   assert.match(syncStep(a.cfg, 'tick'), /sync: publish stopped/);
 });
 
+test('sync publish refused while home/<id> did not move (a server-side refusal, e.g. a ref lock of a concurrent push): offline, not stopped; the next pass pushes', () => {
+  const remote = remoteRepo(), a = home('a', remote);
+  const first = publishHome(a.cfg, { now: T0 });
+  assert.ok(first.pushed, JSON.stringify(first));
+  // the remote refuses one push and accepts after: its tip stays our last push, an ancestor of the new head
+  w(path.join(remote, 'hooks', 'pre-receive'), '#!/bin/sh\nif [ -f refused-once ]; then exit 0; fi\ntouch refused-once\necho "cannot lock ref" >&2\nexit 1\n');
+  fs.chmodSync(path.join(remote, 'hooks', 'pre-receive'), 0o755);
+  fs.appendFileSync(path.join(a.st, 'records.jsonl'), '{"id":"Q-a-2"}\n');
+  const r = publishHome(a.cfg, { now: T0 });
+  assert.ok(r.sha && r.offline && !r.rejected && !r.pushed, JSON.stringify(r));
+  assert.ok(fs.existsSync(path.join(remote, 'refused-once')), 'the hook refused the push');
+  assert.ok(!fs.existsSync(path.join(a.cfg.dir, 'home-stopped.txt')));
+  assert.equal(g(remote, 'rev-parse', ref('a')).out, first.sha);
+  const r2 = publishHome(a.cfg, { now: T0 });
+  assert.ok(r2.pushed && !r2.stopped, JSON.stringify(r2));
+  assert.equal(g(remote, 'rev-parse', ref('a')).out, r.sha);
+});
+
 test('sync fetch failure: the last copies stay, the status says stale since the last good fetch; a vanished home is marked gone, its copies kept', () => {
   const remote = remoteRepo(), a = home('a', remote), b = home('b', remote);
   publishHome(a.cfg, { now: T0 });
