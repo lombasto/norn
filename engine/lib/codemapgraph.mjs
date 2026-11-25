@@ -150,7 +150,6 @@ export function drawGraphMap({ state, repo, graph } = {}) {
 }
 
 // ---- the map's own CSP ----
-const META = /<meta http-equiv="Content-Security-Policy"[^>]*\bcontent="([^"]*)"/i;
 /** the map's meta policy -> the /code-map/ header: that policy, no network (connect-src 'none'), no forms or base, framed only by the
  *  dashboard, sandboxed with scripts only (an opaque origin: no dashboard cookie, token or API) */
 export function mapCsp(meta) {
