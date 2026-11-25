@@ -45,8 +45,12 @@ main checkout> ruff` (VIRTUAL_ENV unset, never `uv sync`) on the touched files i
 
 ## The second voice (`model`)
 
-All `model` rules of a check share ONE model call at the run end: no tools, no standing context, the prompt on stdin, on the
-project's routing (another model family than the author's when the policy table has one). The input is ranked and capped
+All `model` rules of a check share ONE model call at the run end: no standing context, the prompt on stdin, on the project's
+routing (`voiceRoute`), in the mode its route carries. The order: another model family than the author's that has a no-tools
+mode; else another family read-only, run in the voice's own empty temp folder; else the author's family with no tools. A route
+whose family can do neither is never picked. A daily cap holds the quota: at most `policy.slop.voice_reads_per_day` calls (15 by
+default; Settings, beside the SloppaChoppa switch) per project and UTC day, counted from the stored checks (`voice_reads` on a
+check line); over it each model rule is the WARN "could not run: daily cap n reached". The input is ranked and capped
 (`VOICE`, `engine/lib/slop/voice.mjs`): the hunks other rules hit, then code, then tests, then the rest listed by name, plus the
 questions, the rule hits and the brief's Scope lines. A docs-only branch is not read; a test-only branch asks only the rules `on`
 `tests`. Every finding must quote an added line of its file verbatim, or the engine drops it; its fingerprint is rule + file +
